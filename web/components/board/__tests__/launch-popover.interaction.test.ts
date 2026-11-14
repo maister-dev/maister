@@ -450,31 +450,54 @@ describe("explicit package setup and immutable one-time preview", () => {
     availablePackageVersions: [packageVersion],
   });
 
-  it("revalidates a try-once package selection before enabling launch", async () => {
+  it("discards the old runner when previewing and launching a different package cut", async () => {
     const refreshed = deferredResponse();
 
     mocks.fetch
       .mockResolvedValueOnce(Response.json(packageOptions()))
-      .mockReturnValueOnce(refreshed.promise);
+      .mockResolvedValueOnce(
+        Response.json({
+          options: { ...packageOptions(), selectedRunnerId: "codex-other" },
+          enabledFlowRevisionId: "revision-1",
+        }),
+      )
+      .mockReturnValueOnce(refreshed.promise)
+      .mockResolvedValueOnce(Response.json({}, { status: 409 }));
     await openDialog();
+    await choose(primarySelect(), "codex-other");
+    expect(primarySelect().value).toBe("codex-other");
     await choose(packageSelect(), "try_once");
     expect(button("launch.createRun").disabled).toBe(true);
-    expect(
-      JSON.parse(
-        new URL(mocks.fetch.mock.calls[1][0], "http://test").searchParams.get(
-          "packageVersions",
-        ) ?? "null",
-      ),
-    ).toEqual({ "package-old": "try_once" });
+    expect(primarySelect().disabled).toBe(true);
+    const query = new URL(mocks.fetch.mock.calls[2][0], "http://test")
+      .searchParams;
+
+    expect(JSON.parse(query.get("packageVersions") ?? "null")).toEqual({
+      "package-old": "try_once",
+    });
+    expect(query.has("runnerId")).toBe(false);
     await act(async () =>
       refreshed.resolve(
         Response.json({
           ...packageOptions(),
+          selectedFlowRevisionId: "revision-2",
+          selectedRunnerId: "codex-ready",
           settingsToken: "selected-cut-token",
         }),
       ),
     );
+    expect(primarySelect().value).toBe("codex-ready");
+    expect(primarySelect().disabled).toBe(false);
     expect(button("launch.createRun").disabled).toBe(false);
+    await click(button("launch.createRun"));
+    const submitted = JSON.parse(mocks.fetch.mock.calls[3][1].body);
+
+    expect(submitted).toMatchObject({
+      expectedSettingsToken: "selected-cut-token",
+      packageVersions: { "package-old": "try_once" },
+    });
+    expect(submitted).not.toHaveProperty("runnerId");
+    expect(submitted).not.toHaveProperty("flowRunnerDraft");
   });
 
   it("applies adoption separately, then refreshes settings without launching", async () => {

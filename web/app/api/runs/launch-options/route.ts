@@ -339,7 +339,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    return taskLaunchErrorResponse(error);
+    const response = taskLaunchErrorResponse(error);
+
+    response.headers.set("Cache-Control", "no-store");
+
+    return response;
   }
 }
 

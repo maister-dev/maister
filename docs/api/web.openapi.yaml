@@ -1672,9 +1672,10 @@ paths:
     post:
       tags: [runs]
       operationId: postInteractiveRunLaunchOptions
-      summary: (Designed) Preview a browser launch with a revision-scoped runner draft
+      summary: (Implemented) Preview a browser launch with a revision-scoped runner draft
       description: |
-        Active session and same origin. Read-only, no-store. Accepts up to
+        Active session and same origin. Read-only. Every response carries
+        `Cache-Control: no-store`. Accepts up to
         64 KiB of JSON. The project comes from the authorized task. The
         selected revision, declared slots, catalog and settings token share
         one database observation. The token grants no launch authority.
@@ -1708,6 +1709,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TaskLaunchError" }
+        "500":
+          description: Unexpected failure. Uses a redacted error body. Typed failures may carry a launch reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: Required launch evidence could not be read.
           content:

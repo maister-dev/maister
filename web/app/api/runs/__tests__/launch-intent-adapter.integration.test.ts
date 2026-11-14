@@ -217,25 +217,25 @@ it("L2 bounds interactive preview input and requires same-origin JSON", async ()
       }),
     );
 
+  const refusals = await Promise.all([
+    send(JSON.stringify({ taskId: input.taskId }), "https://foreign.invalid"),
+    send(JSON.stringify({ taskId: input.taskId, runnerId: fixture.runnerId })),
+    send(JSON.stringify({ taskId: input.taskId }) + " ".repeat(65_536)),
+  ]);
+
+  expect(refusals.map((response) => response.status)).toEqual([403, 400, 400]);
   expect(
-    (
-      await send(
-        JSON.stringify({ taskId: input.taskId }),
-        "https://foreign.invalid",
-      )
-    ).status,
-  ).toBe(403);
-  expect(
-    (
-      await send(
-        JSON.stringify({ taskId: input.taskId, runnerId: fixture.runnerId }),
-      )
-    ).status,
-  ).toBe(400);
-  expect(
-    (await send(JSON.stringify({ taskId: input.taskId }) + " ".repeat(65_536)))
-      .status,
-  ).toBe(400);
+    await Promise.all(refusals.map((response) => response.json())),
+  ).toMatchObject([
+    {
+      code: "UNAUTHORIZED",
+      details: { reason: "launch_interactive_origin_required" },
+    },
+    { code: "CONFIG", details: { reason: "launch_request_invalid" } },
+    { code: "CONFIG", details: { reason: "launch_request_invalid" } },
+  ]);
+  for (const response of refusals)
+    expect(response.headers.get("cache-control")).toBe("no-store");
   expect(await countIntents(input.taskId)).toBe(0);
 });
 

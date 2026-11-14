@@ -711,7 +711,8 @@ export function LaunchPopover({
     setScheduleMode(false);
     setOpen(false);
   };
-  const [runnerId, setRunnerId] = useState("");
+  const runnerId =
+    flowRunnerDraft?.primaryRunnerId ?? options?.selectedRunnerId ?? "";
   const [baseBranch, setBaseBranch] = useState("");
   const [targetBranch, setTargetBranch] = useState("");
   const [policyStrategy, setPolicyStrategy] =
@@ -835,7 +836,6 @@ export function LaunchPopover({
 
         setOptions(payload);
         setFlowId(payload.selectedFlowId);
-        setRunnerId(payload.selectedRunnerId ?? "");
         setPreviewSelection({
           flowId: payload.selectedFlowId,
           runnerId: payload.selectedRunnerId ?? "",
@@ -895,14 +895,9 @@ export function LaunchPopover({
       return;
 
     const controller = new AbortController();
-    const hasRunnerOverride =
-      Boolean(runnerId) &&
-      (flowId !== options.selectedFlowId ||
-        runnerId !== (options.selectedRunnerId ?? ""));
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
-    if (hasRunnerOverride) query.set("runnerId", runnerId);
     if (packagePreview) query.set("packageVersions", packagePreview);
 
     const request = flowRunnerDraft
@@ -941,18 +936,15 @@ export function LaunchPopover({
       .then((payload) => {
         if (controller.signal.aborted) return;
         const resolvedRunnerId =
-          flowRunnerDraft?.primaryRunnerId ??
-          (hasRunnerOverride ? runnerId : (payload.selectedRunnerId ?? ""));
+          flowRunnerDraft?.primaryRunnerId ?? payload.selectedRunnerId ?? "";
 
         setOptions({
           ...payload,
           selectedFlowId: options.selectedFlowId,
-          selectedRunnerId:
-            flowRunnerDraft?.primaryRunnerId || hasRunnerOverride
-              ? options.selectedRunnerId
-              : payload.selectedRunnerId,
+          selectedRunnerId: flowRunnerDraft?.primaryRunnerId
+            ? options.selectedRunnerId
+            : payload.selectedRunnerId,
         });
-        if (!hasRunnerOverride) setRunnerId(resolvedRunnerId);
         setPreviewSelection({
           flowId,
           runnerId: resolvedRunnerId,
@@ -1086,6 +1078,9 @@ export function LaunchPopover({
       packageVersions: packagePreview,
       draftKey,
     });
+  const runnerTargetPending =
+    previewSelection?.flowId !== flowId ||
+    (previewSelection?.packageVersions ?? "") !== packagePreview;
 
   function chooseRunnerForLaunch(slotKey: string | null, value: string): void {
     const flowRevisionId = options?.selectedFlowRevisionId;
@@ -1375,8 +1370,7 @@ export function LaunchPopover({
         taskId,
         flowId,
         runnerId,
-        initialRunnerId:
-          flowId === options.selectedFlowId ? options.selectedRunnerId : null,
+        initialRunnerId: options.selectedRunnerId,
         baseBranch,
         targetBranch,
         deliveryPolicy: currentPolicy,
@@ -1828,7 +1822,6 @@ export function LaunchPopover({
                           onChange={(value) => {
                             setOptionsError(false);
                             setFlowRunnerDraft(null);
-                            setRunnerId("");
                             setFlowId(value);
                           }}
                         />
@@ -1850,7 +1843,12 @@ export function LaunchPopover({
                             ) : null}
                           </span>
                           <LaunchSelect
-                            disabled={busy || pending || savingBinding !== null}
+                            disabled={
+                              busy ||
+                              pending ||
+                              savingBinding !== null ||
+                              runnerTargetPending
+                            }
                             label={t("runnerModel")}
                             options={runnerOptions}
                             value={runnerId}
@@ -1860,7 +1858,6 @@ export function LaunchPopover({
                                 null,
                                 value === options.selectedRunnerId ? "" : value,
                               );
-                              setRunnerId(value);
                             }}
                           />
                           <span className="font-mono text-[10px] text-mute">
@@ -1883,7 +1880,6 @@ export function LaunchPopover({
                           variant="outline"
                           onClick={() => {
                             setFlowRunnerDraft(null);
-                            setRunnerId(options.selectedRunnerId ?? "");
                             setOptionsError(false);
                           }}
                         >
@@ -1947,7 +1943,10 @@ export function LaunchPopover({
                                   `session:${options.primarySessionName ?? "default"}` ? (
                                   <LaunchSelect
                                     disabled={
-                                      busy || pending || savingBinding !== null
+                                      busy ||
+                                      pending ||
+                                      savingBinding !== null ||
+                                      runnerTargetPending
                                     }
                                     label={t("runnerDraftSlot", {
                                       role: slot.label,
@@ -2262,6 +2261,7 @@ export function LaunchPopover({
                                     "keep"
                                   }
                                   onChange={(value: VersionChoice) => {
+                                    setOptionsError(false);
                                     setFlowRunnerDraft(null);
                                     setPackageVersions((prev) => ({
                                       ...prev,
