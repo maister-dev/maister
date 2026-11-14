@@ -31,7 +31,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import {
   causeReason,
   type RunReviewCause,
@@ -1604,6 +1607,7 @@ export async function crashRunningRun(
       .returning({
         id: runs.id,
         projectId: runs.projectId,
+        companyId: runs.companyId,
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
@@ -1631,18 +1635,21 @@ export async function crashRunningRun(
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.crashed",
-      projectId: rows[0].projectId,
-      runId,
-      data: { errorCode: reason ?? null },
-    });
+    const owner = runDomainEventScope(rows[0]);
+
+    if (owner.projectId !== undefined)
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.crashed",
+        projectId: owner.projectId,
+        runId,
+        data: { errorCode: reason ?? null },
+      });
 
     await emitDomainEvent({
       db: tx,
       kind: "run.crashed",
-      projectId: rows[0].projectId,
+      ...owner,
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },

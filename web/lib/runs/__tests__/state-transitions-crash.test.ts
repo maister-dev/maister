@@ -42,11 +42,16 @@ type Captured = {
   whereArg: unknown;
 };
 
-function mockDb(returningRows: Array<{ id: string }>): {
+function mockDb(runIds: Array<{ id: string }>): {
   db: unknown;
   captured: Captured;
 } {
   const captured: Captured = { setArg: null, whereArg: undefined };
+  const returningRows = runIds.map((run) => ({
+    ...run,
+    projectId: "project-1",
+    companyId: null,
+  }));
 
   const db: Record<string, unknown> = {
     select() {

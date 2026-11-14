@@ -146,6 +146,7 @@ import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { resumeRun } from "@/lib/runs/resume";
+import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
 import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
@@ -2000,6 +2001,90 @@ it("loads frozen company graph input and sessions without repository records, re
     compatibility.mockRestore();
   }
 });
+
+it("settles a company coordinator crash under its retained owner without project webhook fanout", async () => {
+  const supervisor = await startRealSupervisor({
+    runtimeRoot: join(root, "crash-owner-host"),
+    workspaceRoots: [join(root, "worktrees")],
+  });
+  const restoreUrl = useRealSupervisorUrl(supervisor.url);
+  const compatibility = vi.spyOn(engine, "isEngineCompatible");
+  const runnerId = randomUUID();
+
+  resetResolverForTests();
+  resetRegistrarStateForTests();
+  setDefaultTransportForTests(null);
+  try {
+    await database.db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "company-graph-crash-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await database.db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoNothing();
+    const hosts = createExecutionHosts({
+      db: database.db,
+      transport: createLocalDirectTransport(),
+    });
+    const input = await createFreshCompanyFlowRequest();
+    const { runId } = await reserveCompanyFlowRun(
+      database.db,
+      requesterId,
+      input,
+      hosts,
+    );
+
+    expect(await tryStartRun(runId, { db: database.db })).toMatchObject({
+      started: true,
+    });
+    await database.db
+      .update(runs)
+      .set({ currentStepId: "research" })
+      .where(eq(runs.id, runId));
+    await expect(
+      crashRunningRun(runId, "session-crashed", {
+        db: database.db,
+        causeSource: "graph",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(
+      (
+        await database.pool.query(
+          `SELECT execution.status,execution.resume_target_step_id,event.company_id,event.project_id,
+         (SELECT count(*)::int FROM webhook_events WHERE run_id=execution.id) AS webhooks
+       FROM runs execution JOIN domain_events event ON event.run_id=execution.id AND event.kind='run.crashed'
+       WHERE execution.id=$1`,
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        status: "Crashed",
+        resume_target_step_id: "research",
+        company_id: request.companyId,
+        project_id: null,
+        webhooks: 0,
+      },
+    ]);
+  } finally {
+    await database.pool.query(
+      "DELETE FROM platform_runtime_settings WHERE id='singleton' AND default_runner_id=$1",
+      [runnerId],
+    );
+    compatibility.mockRestore();
+    await stopRuntimeEventConsumers();
+    await supervisor.stop();
+    restoreUrl();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    setDefaultTransportForTests(null);
+  }
+}, 90_000);
 
 it("CBS-03 cancels a Pending company Flow with current authority, one attributed outcome and no ACP effect", async () => {
   const supervisor = await startRealSupervisor({
