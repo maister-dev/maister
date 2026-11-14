@@ -125,6 +125,12 @@ active with a current invocation ID.
 
 The platform intake API retains the current assignment input, target and
 component revisions, runbook witness, initiating authority and intent digest.
+Project specialists use the existing project admission and placement. Their
+stand scopes require a current project attachment, a stand responsibility,
+an appointed target in the exact retained input and explicit company target
+grants. The stand service and helper permit recheck the initiating user's
+current project and target permissions and the professional's current target
+permissions. Company execution retains its reviewed role action limits.
 Restart intake acquires the canonical resource in the same transaction. Exact
 replay returns the retained operation. A conflicting payload or held resource
 returns a typed conflict. The pending intent and exclusion survive assignment

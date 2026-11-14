@@ -148,6 +148,50 @@ const log = pino({
 // on attachment detach, and by GC. Expiry is a backstop for runs that idle
 // past every sweep.
 const AGENT_TOKEN_TTL_HOURS = 48;
+const STAND_AGENT_SCOPES = [
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
+] as const;
+
+/** Only an appointed project specialist with a stand target receives current stand scopes. */
+async function projectStandScopes(
+  tx: SqlTransaction,
+  runId: string,
+  nodeAttemptId: string | null,
+): Promise<(typeof STAND_AGENT_SCOPES)[number][]> {
+  const { rows } = await tx.execute(sql`
+    SELECT authority.action
+    FROM runs execution
+    JOIN specialist_run_links link ON link.run_id=execution.id
+    JOIN specialist_assignments subject ON subject.id=link.assignment_id
+      AND subject.project_id=execution.project_id
+    JOIN specialist_input_revisions input ON input.assignment_id=subject.id
+      AND input.revision=subject.input_revision
+    JOIN agents professional ON professional.id=CASE WHEN ${nodeAttemptId}::text IS NULL
+      THEN execution.source_agent_id ELSE (
+        SELECT attempt.knowledge_actor->>'agentId' FROM node_attempts attempt
+        WHERE attempt.id=${nodeAttemptId} AND attempt.run_id=execution.id
+      ) END AND professional.enabled AND professional.quarantined_at IS NULL
+    JOIN agent_project_links binding ON binding.agent_id=professional.id
+      AND binding.project_id=execution.project_id AND binding.enabled
+    JOIN stand_targets target ON target.enabled
+      AND input.objective_input->'targetIds' ? target.id
+    JOIN company_grants authority ON authority.company_id=target.company_id
+      AND authority.principal_type='agent' AND authority.principal_id=professional.id
+      AND authority.revoked_at IS NULL
+    WHERE execution.id=${runId}
+      AND professional.specialist->'targetClasses' ? 'stand'
+      AND specialist_run_has_input(execution.id,subject.id,input.revision,input.digest)
+      AND authority.action IN ('targets:read','targets:logs','targets:restart')
+  `);
+
+  return rows.some(({ action }) => action === "targets:read")
+    ? STAND_AGENT_SCOPES.filter((scope) =>
+        rows.some(({ action }) => action === scope),
+      )
+    : [];
+}
 
 // M37 (ADR-098, Phase 3): the orchestrator's run-bound token carries the agent
 // scope set PLUS the delegation toolset (run_delegate/run_collect/run_cancel
@@ -301,7 +345,10 @@ export async function issueAgentRunToken(args: {
       agent_id: args.agentId,
       prefix,
       token_hash: hash,
-      scopes: [...AGENT_TOKEN_SCOPES],
+      scopes: [
+        ...AGENT_TOKEN_SCOPES,
+        ...(await projectStandScopes(tx, args.runId, null)),
+      ],
       expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
     });
   });
@@ -459,7 +506,12 @@ async function issueNodeRunToken(
       prefix,
       token_hash: hash,
       knowledge_node_attempt_id: args.nodeAttemptId ?? null,
-      scopes: [...scopes],
+      scopes: [
+        ...scopes,
+        ...(args.nodeAttemptId
+          ? await projectStandScopes(tx, args.runId, args.nodeAttemptId)
+          : []),
+      ],
       expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
     });
   });

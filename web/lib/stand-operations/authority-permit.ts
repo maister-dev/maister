@@ -214,7 +214,7 @@ export async function authorizeStandCallback(
         command.runId,
         nodeAttemptId,
         target.companyId,
-        operation.initiatingUserId,
+        operation,
       );
       const [component] = await tx
         .select()

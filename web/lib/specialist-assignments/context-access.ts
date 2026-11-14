@@ -13,7 +13,7 @@ import type { AssignmentAuthoritySnapshot } from "./types";
 
 import { sql } from "drizzle-orm";
 
-import { projectAssignmentInitiatorPolicy } from "./project-initiator-policy";
+import { requireProjectAssignmentInitiator } from "./project-execution-initiator";
 import { authorizeAssignment } from "./access";
 
 import {
@@ -21,7 +21,6 @@ import {
   resolveNativeTokenPrincipal,
 } from "@/lib/brain/knowledge-access";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
-import { assignmentInputReadPolicy } from "@/lib/brain/knowledge-assignment-policy";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 
@@ -360,50 +359,10 @@ async function authorizeAssignmentActionGrants(
       "UNAUTHORIZED",
       "The executing role does not own this project appointment",
     );
-  const run = (
-    await tx.execute(
-      sql`SELECT original.actor->>'id' AS initiating_user_id
-      FROM runs execution JOIN specialist_run_links appointment ON appointment.run_id=execution.id
-      JOIN specialist_assignments requested ON requested.id=appointment.assignment_id
-      JOIN specialist_input_revisions original ON original.assignment_id=appointment.assignment_id AND original.revision=appointment.input_revision
-      WHERE execution.id=${identity.actor.runId} AND execution.project_id=${owner.projectId} AND execution.company_id IS NULL
-        AND requested.project_id=execution.project_id AND requested.company_id IS NULL
-        AND original.actor->>'kind'='user'
-        AND ((appointment.work_id IS NULL AND (${projectAssignmentInitiatorPolicy(
-          {
-            runId: sql`execution.id`,
-            createdByUserId: sql`execution.created_by_user_id`,
-            projectId: sql`execution.project_id`,
-            taskId: sql`execution.task_id`,
-            userId: sql`original.actor->>'id'`,
-            assignmentId: sql`original.assignment_id`,
-            inputRevision: sql`original.revision`,
-            inputSha256: sql`original.digest`,
-          },
-        )})) OR (appointment.work_id IS NOT NULL AND (${assignmentInputReadPolicy(
-          identity,
-          sql`original.assignment_id`,
-          sql`original.revision`,
-          sql`original.digest`,
-        )})))
-      FOR SHARE OF execution,appointment,requested,original`,
-    )
-  ).rows[0];
-
-  if (typeof run?.initiating_user_id !== "string")
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "The current initiating project principal is unavailable",
-    );
+  const userId = await requireProjectAssignmentInitiator(tx, identity);
 
   return {
-    ...(await authorizeAssignment(
-      tx,
-      run.initiating_user_id,
-      owner,
-      action,
-      executionPolicy,
-    )),
+    ...(await authorizeAssignment(tx, userId, owner, action, executionPolicy)),
     actor: identity.actor,
   };
 }

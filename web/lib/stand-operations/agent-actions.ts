@@ -199,7 +199,7 @@ async function authorizeSpecialistOperation(
           details: { reason: "stand_operation_unavailable" },
         },
       );
-    const { userId } = await resolveStandExecutionActor(
+    const { companyId, userId } = await resolveStandExecutionActor(
       tx,
       identity,
       operation.assignmentId,
@@ -214,7 +214,7 @@ async function authorizeSpecialistOperation(
       );
 
     return {
-      operation: { ...operation, companyId: identity.companyId },
+      operation: { ...operation, companyId },
       userId,
     };
   });

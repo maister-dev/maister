@@ -20,30 +20,40 @@ import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { requireActiveUserById, type SessionUser } from "@/lib/authz";
 import {
+  attachPackage,
   installPackageRevision,
   trustPackageRevision,
 } from "@/lib/packages/attach";
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
+import { attachAgent } from "@/lib/agents/project-links";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import {
   defaultTransport,
   setDefaultTransportForTests,
 } from "@/lib/execution-host/default-transport";
-import { platformAcpRunners, runs } from "@/lib/db/schema";
+import {
+  platformAcpRunners,
+  platformRuntimeSettings,
+  runs,
+} from "@/lib/db/schema";
 import { tryStartRun } from "@/lib/scheduler";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
 } from "@/test-support/fake-execution-host";
 import { reserveCompanyManualAssignment } from "@/lib/specialist-assignments/company-manual-intake";
+import { submitProjectManualAssignment } from "@/lib/specialist-assignments/project-manual-intake";
 import {
   appendSpecialistAssignmentInput,
   cancelSpecialistAssignment,
   createSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
 import { MaisterError } from "@/lib/errors";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { initRepo } from "@/test-support/git-fixture";
 import {
   applyMainMigration,
   startMainAndBrainPostgresTestDb,
@@ -1085,6 +1095,192 @@ it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and 
     vi.unstubAllEnvs();
   }
   browser.user = null;
+});
+
+it("IT-CBO-02 retains project-owned stand work with exact project and stand authority", async () => {
+  const { administratorId, userId, input, request } =
+    await createRegistryFixture();
+  const db = database.db as Db;
+  const { POST: register } = await import("@/app/api/stands/route");
+  const { createStandOperation } = await import("../operation-intake");
+  const { authorizeStandRestartProfessional } =
+    await import("../restart-dispatch");
+
+  browser.user = await requireActiveUserById(userId);
+  try {
+    const created = await register(request(input));
+
+    expect(created.status).toBe(201);
+    const target: { id: string } = await created.json();
+    const source = join(fixtureRoot, "project-stand-package");
+
+    await mkdir(join(source, "maister-agents"), { recursive: true });
+    await writeFile(
+      join(source, "maister-package.yaml"),
+      'schemaVersion: 1\nname: project-stand\ncompat: {engine_min: "3.12.0"}\nflows: []\n',
+    );
+    await writeFile(
+      join(source, "maister-agents/operator.md"),
+      "---\nname: Project stand operator\ndescription: Exercise a project stand appointment.\nkind: operational\ncompletion: {contract: operational_evidence_v2}\nspecialist: {responsibilities: [Maintain the appointed stand], targetClasses: [stand]}\nmode: session\nworkspace: none\ntriggers: [manual]\nrisk_tier: standard\n---\nReturn the retained maintenance result.\n",
+    );
+    const installed = await installPackageRevision({
+      source,
+      version: "project-stand/v1.0.0",
+      db,
+    });
+
+    await trustPackageRevision({ packageInstallId: installed.id, db });
+    const repoPath = await initRepo(join(fixtureRoot, "project-stand-repo"));
+    const project = await seedProjectRow(database.db, { repoPath });
+    const runnerId = randomUUID();
+    const agentId = "project-stand:operator";
+
+    await database.pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+      [randomUUID(), project.id, userId],
+    );
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "project-stand-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await db
+      .insert(platformRuntimeSettings)
+      .values({ id: "singleton", defaultRunnerId: runnerId })
+      .onConflictDoUpdate({
+        target: platformRuntimeSettings.id,
+        set: { defaultRunnerId: runnerId },
+      });
+    await attachPackage({
+      projectId: project.id,
+      projectSlug: project.slug,
+      packageInstallId: installed.id,
+      db,
+    });
+    const link = await attachAgent(
+      { projectId: project.id, agentId, runnerOverrideId: runnerId },
+      db,
+    );
+    const professional = await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: agentId,
+      actions: ["targets:read", "targets:restart"],
+      idempotencyKey: randomUUID(),
+    });
+
+    const { host } = await fakeExecutionHosts(db);
+
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) VALUES($1,now())",
+      [host.id],
+    );
+    const { assignment } = await submitProjectManualAssignment(db, userId, {
+      owner: { kind: "project", projectId: project.id },
+      specialistBindingId: link.linkId,
+      objective: "Diagnose the project stand",
+      expectedOutcome: "One verified restart",
+      input: "Use the appointed api component.",
+      targetIds: [target.id],
+      inputRefs: [],
+      constraints: [],
+      verification: [
+        { kind: "health", referenceId: target.id, required: true },
+      ],
+      idempotencyKey: randomUUID(),
+    });
+    const [runId] = assignment.runIds;
+
+    await database.pool.query(
+      "DELETE FROM execution_host_pressure WHERE execution_host_id=$1",
+      [host.id],
+    );
+    expect(await tryStartRun(runId, { db })).toEqual({ started: true });
+    const credential = await issueAgentRunToken({
+      db,
+      agentId,
+      projectId: project.id,
+      runId,
+    });
+    const restart = {
+      expectedRevision: assignment.revision,
+      inputRevision: assignment.inputRevision,
+      componentId: "api",
+      action: "restart",
+      idempotencyKey: randomUUID(),
+    };
+    const result = await createStandOperation(
+      db,
+      { tokenId: credential.tokenId },
+      assignment.id,
+      restart,
+    );
+
+    expect(result).toMatchObject({
+      duplicate: false,
+      operation: { effectState: "not_dispatched", assignmentId: assignment.id },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT initiating_execution FROM stand_operations WHERE id=$1",
+          [result.operation.id],
+        )
+      ).rows,
+    ).toEqual([
+      { initiating_execution: { agentId, runId, nodeAttemptId: null } },
+    ]);
+    const operation = {
+      assignmentId: assignment.id,
+      inputRevision: assignment.inputRevision,
+      initiatingUserId: userId,
+    };
+
+    await expect(
+      db.transaction((tx) =>
+        authorizeStandRestartProfessional(
+          tx,
+          runId,
+          null,
+          input.owner.companyId,
+          operation,
+        ),
+      ),
+    ).resolves.toBeUndefined();
+    const restartGrant = professional.page.items.find(
+      ({ action }) => action === "targets:restart",
+    )!;
+
+    await revokeCompanyGrant(db, administratorId, restartGrant.id, {
+      expectedRevision: restartGrant.revision,
+      reason: "Revoke the project's fixture restart authority.",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      createStandOperation(
+        db,
+        { tokenId: credential.tokenId },
+        assignment.id,
+        restart,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      db.transaction((tx) =>
+        authorizeStandRestartProfessional(
+          tx,
+          runId,
+          null,
+          input.owner.companyId,
+          operation,
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  } finally {
+    setDefaultTransportForTests(null);
+    browser.user = null;
+  }
 });
 
 it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exact authority and independent verification", async () => {

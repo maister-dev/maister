@@ -61,18 +61,14 @@ export async function claimStandReadAuthority(
           ? null
           : await resolveStandCredential(tx, principal.tokenId);
       const tokenId = typeof principal === "string" ? null : principal.tokenId;
-      const userId =
-        typeof principal === "string"
-          ? principal
-          : execution?.initiatingUser.id;
 
-      if (!userId || (execution && execution.companyId !== companyId))
-        throw new MaisterError(
-          "UNAUTHORIZED",
-          "The current stand read principal is unavailable",
+      if (typeof principal === "string")
+        await authorizeCompanyUserAction(
+          tx,
+          principal,
+          companyId,
+          "targets:read",
         );
-
-      await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
       const [stored] = await tx
         .select({ operation: standOperations })
         .from(standOperations)
@@ -94,21 +90,27 @@ export async function claimStandReadAuthority(
           "The retained stand operation is unavailable",
         );
       const { operation } = stored;
+      const actor = execution
+        ? await resolveStandExecutionActor(
+            tx,
+            execution,
+            operation.assignmentId,
+            operation.inputRevision,
+            purpose === "logs" ? "targets:logs" : "targets:read",
+          )
+        : null;
+      const userId = typeof principal === "string" ? principal : actor?.userId;
 
-      if (execution) {
-        if (userId !== operation.initiatingUserId)
-          throw new MaisterError(
-            "UNAUTHORIZED",
-            "The execution cannot read this operation",
-          );
-        await resolveStandExecutionActor(
-          tx,
-          execution,
-          operation.assignmentId,
-          operation.inputRevision,
-          purpose === "logs" ? "targets:logs" : "targets:read",
+      if (
+        !userId ||
+        (actor &&
+          (actor.companyId !== companyId ||
+            userId !== operation.initiatingUserId))
+      )
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The current stand read principal is unavailable",
         );
-      }
 
       if (
         expectedRevision !== undefined &&
@@ -208,23 +210,19 @@ export async function authorizeStandReadOwner(
       "The current stand read credential changed",
     );
   if (owner.tokenId) {
-    const execution = await resolveStandCredential(tx, owner.tokenId);
-
-    if (
-      execution.companyId !== companyId ||
-      execution.initiatingUser.id !== owner.actorId
-    )
-      throw new MaisterError(
-        "UNAUTHORIZED",
-        "The retained stand reader is no longer current",
-      );
-    await resolveStandExecutionActor(
+    const actor = await resolveStandExecutionActor(
       tx,
-      execution,
+      await resolveStandCredential(tx, owner.tokenId),
       operation.assignmentId,
       operation.inputRevision,
       purpose === "logs" ? "targets:logs" : "targets:read",
     );
+
+    if (actor.companyId !== companyId || actor.userId !== owner.actorId)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "The retained stand reader is no longer current",
+      );
   }
   const action = actionForRead(purpose, operation);
   const current = await authorizeCompanyUserAction(

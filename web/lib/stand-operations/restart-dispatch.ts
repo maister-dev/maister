@@ -16,11 +16,7 @@ import {
   retainStandUnknown,
 } from "./receipt-adoption";
 
-import {
-  requireCompanyFlowNodeKnowledgeOwner,
-  requireCompanyRunCredentialOwner,
-} from "@/lib/agents/company-run-credential-owner";
-import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { resolveKnowledgeRunIdentity } from "@/lib/brain/knowledge-run-identity";
 import {
   executionAssignments,
   executionHosts,
@@ -50,42 +46,29 @@ export async function authorizeStandRestartProfessional(
   runId: string,
   nodeAttemptId: string | null,
   companyId: string,
-  userId: string,
+  operation: Pick<
+    typeof standOperations.$inferSelect,
+    "initiatingUserId" | "assignmentId" | "inputRevision"
+  >,
 ): Promise<void> {
-  const root = await requireCompanyRunCredentialOwner(tx, runId);
+  const execution = await resolveKnowledgeRunIdentity(tx, runId, nodeAttemptId);
+  const actor = await resolveStandExecutionActor(
+    tx,
+    execution.identity,
+    operation.assignmentId,
+    operation.inputRevision,
+    "targets:restart",
+  );
 
   if (
-    root.companyId !== companyId ||
-    root.userId !== userId ||
-    (root.snapshot.schemaVersion === 2) !== (nodeAttemptId !== null)
+    actor.companyId !== companyId ||
+    actor.userId !== operation.initiatingUserId ||
+    (execution.runKind === "flow") !== (nodeAttemptId !== null)
   )
     throw new MaisterError(
       "UNAUTHORIZED",
       "Current stand execution identity is required",
     );
-  const professional = nodeAttemptId
-    ? await requireCompanyFlowNodeKnowledgeOwner(tx, root, nodeAttemptId)
-    : root;
-
-  if (!professional.actionLimits.includes("targets:restart"))
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "The current role cannot restart the configured stand",
-    );
-  const [grant] = (
-    await tx.execute(sql`
-    SELECT id FROM company_grants WHERE company_id=${companyId}
-    AND principal_type='agent' AND principal_id=${professional.agentId}
-    AND action='targets:restart' AND revoked_at IS NULL FOR SHARE
-  `)
-  ).rows;
-
-  if (!grant)
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "Current professional restart authority is required",
-    );
-  await authorizeCompanyUserAction(tx, userId, companyId, "targets:restart");
 }
 
 /** Commit the owner, observed precondition and command before transport. */
@@ -201,7 +184,7 @@ export async function prepareStandRestartDispatch(
         actor.runId,
         nodeAttemptId,
         target.companyId,
-        operation.initiatingUserId,
+        operation,
       );
       const [witness] = (
         await tx.execute(sql`
