@@ -523,9 +523,40 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       .get(`/api/specialist-assignments/${assignment.id}`)
       .then((response) => read(response, assignmentSchema));
 
-  await expect
-    .poll(async () => (await current()).status, { timeout: 420000 })
-    .toBe("awaiting_acceptance");
+  try {
+    await expect
+      .poll(async () => (await current()).status, { timeout: 420000 })
+      .toBe("awaiting_acceptance");
+  } catch (error) {
+    const snapshot = await withE2EDb(async (pool) => {
+      const [execution, results, nodes] = await Promise.all([
+        pool.query(
+          "SELECT status,current_step_id,operational_terminal->>'cause' AS cause,operational_terminal->'reasonCodes' AS reasons FROM runs WHERE id=$1",
+          [runId],
+        ),
+        pool.query(
+          "SELECT revision,validity,invalid_reason FROM run_results WHERE run_id=$1 ORDER BY revision",
+          [runId],
+        ),
+        pool.query(
+          "SELECT node_id,status FROM node_attempts WHERE run_id=$1 ORDER BY started_at,node_id",
+          [runId],
+        ),
+      ]);
+
+      return {
+        execution: execution.rows[0],
+        results: results.rows,
+        nodes: nodes.rows,
+      };
+    });
+
+    await testInfo.attach("pilot-settlement-diagnostics", {
+      body: JSON.stringify(snapshot),
+      contentType: "application/json",
+    });
+    throw error;
+  }
   const result = await withE2EDb(async (pool) => {
     const { rows } = await pool.query(
       "SELECT result.revision,result.value,run.project_id,run.task_id,run.company_id FROM run_results result JOIN runs run ON run.id=result.run_id WHERE run.id=$1 AND result.validity='valid'",
