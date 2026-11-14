@@ -12,6 +12,7 @@ import { createCompanyScheduleSource } from "./company-source-creation";
 import { companyCronScheduleInputSchema } from "./company-schedule-types";
 import { normalizeScheduledRequest } from "./scheduled-request";
 
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { resolveScheduledStandInspection } from "@/lib/stand-operations/scheduled-inspection";
@@ -52,6 +53,7 @@ export async function createCompanyCronSchedule(
           },
         );
       const selector = input.standInspection;
+
       if (
         selector &&
         (context.role.definition.kind !== "operational" ||
@@ -86,4 +88,35 @@ export async function createCompanyCronSchedule(
       );
     },
   );
+}
+
+/** Retire an exact reviewed inspection without changing the receipts of existing invocations. */
+export async function disableCompanyStandInspection(
+  db: SqlDatabase,
+  userId: string,
+  companyId: string,
+  scheduleId: string,
+  revision: number,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await authorizeCompanyUserAction(
+      tx,
+      userId,
+      companyId,
+      "specialists:manage",
+    );
+    await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
+    const updated = await tx.execute(sql`
+      UPDATE agent_schedules SET enabled=false,company_config_revision=company_config_revision+1,updated_at=clock_timestamp()
+      WHERE id=${scheduleId} AND company_id=${companyId}
+        AND company_config_revision=${revision} AND stand_inspection IS NOT NULL AND enabled
+      RETURNING id
+    `);
+
+    if (updated.rows.length !== 1)
+      throw new MaisterError(
+        "CONFLICT",
+        "The stand inspection schedule changed or is already disabled",
+      );
+  });
 }

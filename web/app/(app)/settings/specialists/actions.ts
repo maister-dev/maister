@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { revalidatePath } from "next/cache";
 
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import {
@@ -9,6 +10,11 @@ import {
 } from "@/lib/agents/company-binding-types";
 import { createCompanyFlowBinding } from "@/lib/agents/company-flow-bindings";
 import { companyFlowBindingCreateSchema } from "@/lib/agents/company-flow-binding-types";
+import {
+  createCompanyCronSchedule,
+  disableCompanyStandInspection,
+} from "@/lib/agents/company-schedules";
+import { companyCronScheduleInputSchema } from "@/lib/agents/company-schedule-types";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, type MaisterErrorCode } from "@/lib/errors";
@@ -53,6 +59,60 @@ export async function createCoordinatorBinding(
   if (!parsed.success) return { ok: false, code: "CONFIG" };
   try {
     await createCompanyFlowBinding(getDb(), id, parsed.data);
+
+    return { ok: true };
+  } catch (error) {
+    if (isMaisterError(error)) return { ok: false, code: error.code };
+    throw error;
+  }
+}
+
+export async function createStandInspectionSchedule(
+  value: unknown,
+): Promise<Receipt> {
+  const { id } = await requireActiveSession();
+  const parsed = companyCronScheduleInputSchema.safeParse(value);
+
+  if (!parsed.success || !parsed.data.standInspection)
+    return { ok: false, code: "CONFIG" };
+  try {
+    await createCompanyCronSchedule(getDb(), id, parsed.data);
+
+    revalidatePath("/settings/specialists");
+
+    return { ok: true };
+  } catch (error) {
+    if (isMaisterError(error)) return { ok: false, code: error.code };
+    throw error;
+  }
+}
+
+const disableInspectionInput = z
+  .object({
+    companyId: z.string().min(1).max(128),
+    scheduleId: z.uuid(),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+
+export async function disableStandInspectionSchedule(
+  value: unknown,
+): Promise<Receipt> {
+  const { id } = await requireActiveSession();
+  const parsed = disableInspectionInput.safeParse(value);
+
+  if (!parsed.success) return { ok: false, code: "CONFIG" };
+  try {
+    const { companyId, scheduleId, revision } = parsed.data;
+
+    await disableCompanyStandInspection(
+      getDb(),
+      id,
+      companyId,
+      scheduleId,
+      revision,
+    );
+    revalidatePath("/settings/specialists");
 
     return { ok: true };
   } catch (error) {

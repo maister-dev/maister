@@ -36,15 +36,12 @@ export default async function SpecialistAssignmentsPage({
   const [choices, requested, targets] = await Promise.all([
     listManualSpecialistChoices(db, user.id, project?.id),
     listRequestedSpecialistAssignments(db, user.id, project?.id),
-    slug
-      ? []
-      : listStandTargets(db, user.id, { limit: 50 })
-          .then(({ items }) => items.filter(({ enabled }) => enabled))
-          .catch((error: unknown) => {
-            if (isMaisterError(error) && error.code === "UNAUTHORIZED")
-              return [];
-            throw error;
-          }),
+    listStandTargets(db, user.id, { limit: 50 })
+      .then(({ items }) => items.filter(({ enabled }) => enabled))
+      .catch((error: unknown) => {
+        if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
+        throw error;
+      }),
   ]);
 
   return (

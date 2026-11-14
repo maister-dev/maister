@@ -19,6 +19,12 @@ Use MAIster engine 3.12.0 or later, a Ready Claude ACP runner, and a Linux stand
 4. Inspect the **Effect receipts** and **Verification receipts**. A successful restart has an applied receipt for the original operation and a separate healthy probe. Open the result and select **Accept verified outcome** when its evidence satisfies the requested checks.
 5. If the result contains a draft, select **Submit retained knowledge drafts**. Review the proposal and its evidence in [Knowledge](/guides/company-brain). Assignment acceptance, publication and factual confirmation have separate controls.
 
+## Schedule read-only health checks
+
+In **Settings → Company specialists and coordinators**, select a reviewed `stand-operations:inspector` binding and an allowed component. Enter the cron expression, time zone and recurring request, then enable the schedule. The specialist uses the component's configured health probe. A healthy result with no changes stays in assignment history. Repeated failed probes update one incident.
+
+Disable the old schedule and create a reviewed appointment when the target configuration changes.
+
 ## Recover an uncertain effect
 
 If a restart response is lost, open the original operation and select **Check the original receipt**. Its effect can remain unknown and hold the resource. An authorized operator can inspect the current service state, leave the hold in place or approve a separate recovery assignment when eligible. A successor requires a new exact approval. When an applied receipt is available, use **Run health check** for independent evidence.

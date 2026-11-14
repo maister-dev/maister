@@ -29,6 +29,7 @@ export type SpecialistChoice = Readonly<{
   id: string;
   name: string;
   owner: Owner;
+  supportsStand: boolean;
 }>;
 
 function accessRefused(error: unknown): boolean {
@@ -104,7 +105,7 @@ export async function listManualSpecialistChoices(
       }
       const rows = (
         await tx.execute(sql`
-      SELECT link.id,agent.name FROM agent_project_links link JOIN agents agent ON agent.id=link.agent_id
+      SELECT link.id,agent.name,agent.specialist->'targetClasses' ? 'stand' AS supports_stand FROM agent_project_links link JOIN agents agent ON agent.id=link.agent_id
       WHERE link.project_id=${projectId} AND link.enabled AND agent.enabled AND agent.quarantined_at IS NULL
         AND agent.specialist IS NOT NULL AND (agent.kind='operational' OR agent.flow_ref IS NOT NULL)
         AND agent.triggers ? 'manual'
@@ -112,9 +113,9 @@ export async function listManualSpecialistChoices(
     `)
       ).rows;
 
-      return rows.flatMap(({ id, name }) =>
+      return rows.flatMap(({ id, name, supports_stand }) =>
         typeof id === "string" && typeof name === "string"
-          ? [{ id, name, owner }]
+          ? [{ id, name, owner, supportsStand: supports_stand === true }]
           : [],
       );
     });
@@ -155,7 +156,14 @@ export async function listManualSpecialistChoices(
               selected,
             );
           else if (definition.kind !== "operational") continue;
-          result.push({ id: candidate.bindingId, name: candidate.name, owner });
+          result.push({
+            id: candidate.bindingId,
+            name: candidate.name,
+            owner,
+            supportsStand:
+              candidate.targetClasses.includes("stand") &&
+              candidate.grantActions.includes("targets:read"),
+          });
         } catch (error) {
           if (!accessRefused(error)) throw error;
         }

@@ -32,6 +32,8 @@ export function SpecialistAssignmentForm({
   const delivery = useRef<KnowledgeDelivery | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [selection, setSelection] = useState("");
+  const selectedSpecialist = choices.find(({ id }) => id === selection);
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -44,7 +46,10 @@ export function SpecialistAssignmentForm({
 
     if (
       !choice ||
-      (target && (!component || !target.componentIds.includes(component)))
+      (target &&
+        (!choice.supportsStand ||
+          !component ||
+          !target.componentIds.includes(component)))
     ) {
       setError(knowledge("errorInput"));
 
@@ -99,7 +104,13 @@ export function SpecialistAssignmentForm({
     >
       <label className="text-sm">
         {t("specialist")}
-        <select required className={field} defaultValue="" name="specialist">
+        <select
+          required
+          className={field}
+          name="specialist"
+          value={selection}
+          onChange={(event) => setSelection(event.target.value)}
+        >
           <option disabled value="">
             {t("selectSpecialist")}
           </option>
@@ -110,7 +121,7 @@ export function SpecialistAssignmentForm({
           ))}
         </select>
       </label>
-      {targets.length ? (
+      {selectedSpecialist?.supportsStand && targets.length ? (
         <label className="text-sm">
           {t("target")}
           <select className={field} name="component">

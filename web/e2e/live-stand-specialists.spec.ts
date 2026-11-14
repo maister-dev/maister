@@ -238,7 +238,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     "targets:logs",
   ];
   const bind = async (
-    role: "coordinator" | "diagnostic",
+    role: "coordinator" | "diagnostic" | "inspector",
     actions: readonly string[],
   ) => {
     const agentId = `stand-operations:${role}`;
@@ -289,6 +289,11 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   const coordinator = await bind("coordinator", coordinatorActions);
 
   await bind("diagnostic", diagnosticActions);
+  const inspector = await bind("inspector", [
+    "assignments:read",
+    "knowledge:read",
+    "targets:read",
+  ]);
   await read(
     await request.post("/api/company/flow-bindings", {
       headers: { Origin: origin },
@@ -690,7 +695,6 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     attribution: { kind: "user", id: admin.id, runId },
     confirmation: { state: "unconfirmed" },
   });
-  expect(browserLocaleErrors).toEqual([]);
   await testInfo.attach("stand-pilot-proof", {
     body: JSON.stringify(
       {
@@ -711,6 +715,108 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       null,
       2,
     ),
+    contentType: "application/json",
+  });
+  const cronToken = required("MAISTER_CRON_TOKEN");
+  await page.goto("/settings/specialists");
+  const recurring = page.locator("form").filter({
+    has: page.getByRole("heading", {
+      name: "Schedule a stand inspection",
+      exact: true,
+    }),
+  });
+
+  await recurring
+    .getByLabel("Responsible specialist")
+    .selectOption(inspector.bindingId);
+  await recurring
+    .getByLabel("Target component")
+    .selectOption(`${stand.id}/${configuredComponent.id}`);
+  await recurring.getByLabel("Cron expression").fill("*/5 * * * *");
+  await recurring.getByLabel("Time zone").fill("UTC");
+  await recurring
+    .getByLabel("Recurring inspection request")
+    .fill(
+      "Inspect the configured health. Keep unchanged healthy observations quiet.",
+    );
+  await recurring
+    .getByRole("button", { name: "Enable scheduled inspection" })
+    .click();
+  await expect(recurring.getByRole("status")).toHaveText(
+    "The inspection schedule is enabled.",
+  );
+  const scheduleId = await withE2EDb(async (pool) => {
+    const found = await pool.query<{ id: string }>(
+      "SELECT id FROM agent_schedules WHERE company_specialist_binding_id=$1 AND enabled AND stand_inspection->>'targetId'=$2",
+      [inspector.bindingId, stand.id],
+    );
+
+    expect(found.rows).toHaveLength(1);
+    const selected = found.rows[0]!.id;
+    await pool.query(
+      "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+      [selected],
+    );
+    await pool.query(
+      "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE id='agent_tick.dispatcher'",
+    );
+
+    return selected;
+  });
+  await read(
+    await request.post("/api/cron/tick?jobKind=agent_tick", {
+      headers: { "X-Maister-Cron-Token": cronToken },
+    }),
+    z.object({ succeededCount: z.number().int().min(1) }),
+  );
+  const scheduled = async () =>
+    withE2EDb(async (pool) => {
+      const found = await pool.query(
+        `SELECT invocation.id AS attempt_id, execution.id AS run_id, execution.status,
+        receipt.id AS delivery_id, event.fanout_at IS NOT NULL AND transport.id IS NULL AS suppressed,
+        operation.id AS operation_id, probe.id AS verification_id,
+        (SELECT count(*)::int FROM execution_commands WHERE kind='stand.dispatch' AND run_id=execution.id) AS commands
+       FROM agent_trigger_attempts invocation
+       JOIN runs execution ON execution.id=invocation.original_run_id
+       JOIN specialist_delivery_receipts receipt ON receipt.run_id=execution.id
+       JOIN webhook_events event ON event.id=receipt.outbox_event_id
+       LEFT JOIN webhook_deliveries transport ON transport.specialist_delivery_id=receipt.id
+       JOIN stand_operations operation ON operation.assignment_id=receipt.assignment_id AND operation.action='inspect'
+         AND operation.effect_state='not_dispatched'
+       JOIN stand_verifications probe ON probe.operation_id=operation.id AND probe.state='healthy' AND probe.effect_receipt_id IS NULL
+       WHERE invocation.schedule_id=$1`,
+        [scheduleId],
+      );
+
+      return z
+        .object({
+          attempt_id: z.uuid(),
+          run_id: z.uuid(),
+          status: z.string(),
+          delivery_id: z.uuid(),
+          suppressed: z.boolean(),
+          operation_id: z.uuid(),
+          verification_id: z.uuid(),
+          commands: z.literal(0),
+        })
+        .optional()
+        .parse(found.rows[0]);
+    });
+  await expect
+    .poll(scheduled, { timeout: 240_000 })
+    .toMatchObject({ status: "Done", suppressed: true });
+  const inspection = (await scheduled())!;
+  await page.getByRole("button", { name: "Switch language to RU" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Активные расписания проверок стенда" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Отключить расписание" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Активные расписания проверок стенда" }),
+  ).toHaveCount(0);
+  expect(browserLocaleErrors).toEqual([]);
+  await testInfo.attach("stand-inspection-proof", {
+    body: JSON.stringify({ scheduleId, ...inspection }),
     contentType: "application/json",
   });
 });

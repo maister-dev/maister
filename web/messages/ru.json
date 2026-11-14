@@ -6858,6 +6858,15 @@
     "noLaunch": "Время запуска неизвестно"
   },
   "specialistAssignments": {
+    "activeInspectionSchedules": "Активные расписания проверок стенда",
+    "disableInspection": "Отключить расписание",
+    "scheduleInspection": "Запланировать проверку стенда",
+    "inspectionCron": "Выражение cron",
+    "inspectionTimezone": "Часовой пояс",
+    "inspectionRequest": "Запрос для плановой проверки",
+    "enableInspection": "Включить плановую проверку",
+    "inspectionSaved": "Расписание проверок включено.",
+    "inspectionRefused": "Не удалось включить проверку. Проверьте расписание, специалиста и текущий доступ к стенду.",
     "incidents": "Инциденты стенда",
     "incidentOccurrences": "{count, plural, one {# наблюдение} few {# наблюдения} many {# наблюдений} other {# наблюдения}}",
     "incidentRecovery": "Изучите квитанции операции и выполните независимую проверку после восстановления.",

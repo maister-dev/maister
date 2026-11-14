@@ -1313,7 +1313,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
     await createRegistryFixture();
   const db = database.db;
   const { POST } = await import("@/app/api/stands/route");
-  const { createCompanyCronSchedule } =
+  const { createCompanyCronSchedule, disableCompanyStandInspection } =
     await import("@/lib/agents/company-schedules");
   const { claimCronAgentAttempt } =
     await import("@/lib/agents/trigger-attempts");
@@ -1321,13 +1321,16 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
     await import("@/lib/specialist-assignments/company-cron-intake");
   const { getSpecialistAssignmentInput } =
     await import("@/lib/specialist-assignments/store");
+
   browser.user = await requireActiveUserById(userId);
 
   try {
     const response = await POST(request(input));
+
     expect(response.status).toBe(201);
     const target: { id: string } = await response.json();
     const source = join(fixtureRoot, "stand-inspection-package");
+
     await mkdir(join(source, "maister-agents"), { recursive: true });
     await writeFile(
       join(source, "maister-package.yaml"),
@@ -1342,6 +1345,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       version: "stand-inspection-fixture/v1.0.0",
       db,
     });
+
     await trustPackageRevision({ packageInstallId: installed.id, db });
     const agentId = "stand-inspection-fixture:inspector";
     const role = await resolveInstalledAgentDefinition(db, {
@@ -1349,6 +1353,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       packageInstallId: installed.id,
     });
     const runnerId = randomUUID();
+
     await db.insert(platformAcpRunners).values({
       id: runnerId,
       adapter: "claude",
@@ -1368,6 +1373,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       "knowledge:read",
       "targets:read",
     ] as const;
+
     await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: agentId,
@@ -1395,6 +1401,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       idempotencyKey: randomUUID(),
       standInspection: { targetId: target.id, componentId: "api" },
     };
+
     await expect(
       createCompanyCronSchedule(db, userId, {
         ...recurring,
@@ -1412,6 +1419,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       now,
       new Date(now.getTime() + 300_000),
     );
+
     if (!claim) throw new Error("The reviewed stand schedule was not claimed");
     expect(claim.scheduledRequestSnapshot).toEqual({
       version: 1,
@@ -1433,6 +1441,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       work.assignment.id,
       work.inputRevision,
     );
+
     expect(captured.snapshot).toMatchObject({
       objectiveInput: {
         targetIds: [target.id],
@@ -1466,6 +1475,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       action: "inspect",
       idempotencyKey: randomUUID(),
     };
+
     await expect(
       createStandOperation(db, principal, work.assignment.id, {
         ...operationInput,
@@ -1485,6 +1495,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       )
     ).rows;
     const helperToken = randomBytes(32).toString("hex");
+
     vi.stubEnv("STAND_TEST_HELPER_TOKEN", helperToken);
     let pass = false;
     let sequence = 0;
@@ -1513,6 +1524,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
           },
         });
         const state = pass ? "healthy" : "unhealthy";
+
         return {
           id: randomUUID(),
           operationId: operation.id,
@@ -1527,18 +1539,21 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
         };
       },
     );
+
     setDefaultTransportForTests({
       ...defaultTransport(),
       verifyStandOperation: verifyTarget,
     });
     const failed = await verifySpecialistStand(db, token.tokenId, operation.id);
     const repeat = await verifySpecialistStand(db, token.tokenId, operation.id);
+
     pass = true;
     const recovered = await verifySpecialistStand(
       db,
       token.tokenId,
       operation.id,
     );
+
     expect(failed.verificationState).toBe("unhealthy");
     expect(repeat.verificationState).toBe("unhealthy");
     expect(recovered).toMatchObject({
@@ -1547,10 +1562,12 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       receiptIds: [],
     });
     const { readStandIncidentEpisodes } = await import("../incidents");
+
     expect(
       await readStandIncidentEpisodes(db, userId, work.assignment.id),
     ).toMatchObject([{ occurrenceCount: 2, state: "resolved" }]);
     const { invalidStandResultEvidence } = await import("../result-evidence");
+
     await expect(
       db.transaction((tx) =>
         invalidStandResultEvidence(tx, claim.reservedRunId, {
@@ -1584,6 +1601,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
       .from(runs)
       .where(eq(runs.id, claim.reservedRunId));
     const contract = run?.resultContract;
+
     if (!contract)
       throw new Error(
         "The scheduled inspector did not retain its result contract",
@@ -1612,6 +1630,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
         selection: [],
       },
     };
+
     await db.transaction(async (tx) => {
       await publishRunResult(tx, {
         runId: claim.reservedRunId,
@@ -1666,6 +1685,7 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
         runId: claim.reservedRunId,
       });
     const available = await inspectDelivery();
+
     expect(available.transport.state).toBe("awaiting_dispatch");
     await runWebhookDeliveryJob({ db });
     await database.pool.query(
@@ -1687,6 +1707,30 @@ it("IT-CBO-09 retains the reviewed company stand appointment through a cron clai
         )
       ).rows,
     ).toEqual([{ count: 0 }]);
+    await expect(
+      disableCompanyStandInspection(
+        db,
+        userId,
+        owner.companyId,
+        schedule.scheduleId,
+        2,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await disableCompanyStandInspection(
+      db,
+      userId,
+      owner.companyId,
+      schedule.scheduleId,
+      1,
+    );
+    await expect(
+      claimCronAgentAttempt(
+        db,
+        schedule.scheduleId,
+        new Date(now.getTime() + 600_000),
+        new Date(now.getTime() + 900_000),
+      ),
+    ).resolves.toBeNull();
     await expect(
       database.pool.query(
         "UPDATE agent_trigger_attempts SET stand_inspection=NULL WHERE id=$1",

@@ -5,6 +5,10 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
 import { BindingReviewForm } from "@/components/specialist-assignments/binding-review-form";
+import {
+  DisableStandInspection,
+  StandInspectionScheduleForm,
+} from "@/components/specialist-assignments/stand-inspection-schedule-form";
 import { listCompanySpecialists } from "@/lib/agents/company-binding-list";
 import { getCompanySpecialistBindingRevision } from "@/lib/agents/company-bindings";
 import { getCompanyFlowBindingRevision } from "@/lib/agents/company-flow-bindings";
@@ -24,6 +28,24 @@ export default async function SpecialistsSettings({
 
   const { page, flows, snapshot, companyId, canManage, kind } =
     await readSettings(user.id, await searchParams);
+
+  const inspectors = canManage
+    ? page.items.filter(
+        (item) =>
+          item.enabled &&
+          item.kind === "operational" &&
+          item.targetClasses.includes("stand") &&
+          item.grantActions.includes("targets:read") &&
+          !item.grantActions.includes("targets:restart") &&
+          item.coordinatorFlowRevisionId === null,
+      )
+    : [];
+  const schedules = canManage
+    ? await readInspectionSchedules(user.id, companyId)
+    : [];
+  const components = inspectors.length
+    ? await readInspectionComponents(user.id, companyId)
+    : [];
 
   return (
     <section className="mx-auto w-full max-w-4xl space-y-5">
@@ -89,6 +111,39 @@ export default async function SpecialistsSettings({
             {JSON.stringify(snapshot, null, 2)}
           </pre>
         </div>
+      ) : null}
+      {schedules.length ? (
+        <section className="space-y-3 rounded-xl border border-line bg-paper p-5">
+          <h2 className="font-semibold">{t("activeInspectionSchedules")}</h2>
+          <ul className="space-y-2">
+            {schedules.map((schedule) => (
+              <li
+                key={schedule.id}
+                className="flex flex-wrap items-center justify-between gap-3 text-sm"
+              >
+                <span>
+                  {schedule.component_id} · {schedule.cron_expr} ·{" "}
+                  {schedule.timezone}
+                </span>
+                <DisableStandInspection
+                  companyId={companyId}
+                  revision={schedule.revision}
+                  scheduleId={schedule.id}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {components.length ? (
+        <StandInspectionScheduleForm
+          companyId={companyId}
+          components={components}
+          inspectors={inspectors.map(({ bindingId, name }) => ({
+            id: bindingId,
+            name,
+          }))}
+        />
       ) : null}
       {canManage ? (
         <div className="grid gap-4 md:grid-cols-2">
@@ -189,6 +244,54 @@ async function readSettings(
       ["CONFIG", "UNAUTHORIZED", "PRECONDITION"].includes(error.code)
     )
       notFound();
+    throw error;
+  }
+}
+
+async function readInspectionComponents(userId: string, companyId: string) {
+  const db = getDb();
+
+  try {
+    return await db.transaction(async (tx) => {
+      await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
+
+      return (
+        await tx.execute<{ targetId: string; componentId: string }>(sql`
+        SELECT target.id AS "targetId",part.component_id AS "componentId"
+        FROM stand_targets target JOIN stand_components part
+          ON part.target_id=target.id AND part.config_revision=target.config_revision
+        WHERE target.company_id=${companyId} AND target.enabled AND part.config->'actions' ? 'inspect'
+        ORDER BY target.id,part.component_id LIMIT 100
+      `)
+      ).rows;
+    });
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
+    throw error;
+  }
+}
+
+async function readInspectionSchedules(userId: string, companyId: string) {
+  try {
+    return await getDb().transaction(async (tx) => {
+      await authorizeCompanyUserAction(tx, userId, companyId, "targets:read");
+
+      return (
+        await tx.execute<{
+          id: string;
+          component_id: string;
+          cron_expr: string;
+          timezone: string;
+          revision: number;
+        }>(sql`
+        SELECT id,stand_inspection->>'componentId' AS component_id,cron_expr,timezone,company_config_revision AS revision
+        FROM agent_schedules WHERE company_id=${companyId} AND enabled AND stand_inspection IS NOT NULL
+        ORDER BY next_fire_at,id LIMIT 100
+      `)
+      ).rows;
+    });
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
     throw error;
   }
 }
