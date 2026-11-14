@@ -5264,6 +5264,7 @@ async function driveAgentSession(
           cwd,
           snapshot.adapter,
           runId,
+          companyWorkspace ? snapshot.model : undefined,
         ).catch((err: unknown) => {
           if (run.agentKind === "operational") throw err;
           log.warn(

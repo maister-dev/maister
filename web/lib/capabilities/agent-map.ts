@@ -91,7 +91,9 @@ const PERMISSION_MODE_TO_DEFAULT_MODE: Record<
   deny: "plan",
 };
 
-function claudeSettingsModel(model: string | undefined): string | undefined {
+export function claudeSettingsModel(
+  model: string | undefined,
+): string | undefined {
   const trimmed = model?.trim();
 
   if (!trimmed || trimmed === "default") return undefined;

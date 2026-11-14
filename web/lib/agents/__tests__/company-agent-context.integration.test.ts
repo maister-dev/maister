@@ -9802,6 +9802,20 @@ it("CBS-02 dispatches a company assignment through the existing owned agent driv
         }),
       ]);
       const create = fake.callsOf("createSession")[0]?.envelope?.payload;
+      const [running] = await db
+        .select()
+        .from(runs)
+        .where(eq(runs.id, receipt.runId));
+      const { cwd } = await operationalWorkspace(db, running);
+      const settings: unknown = JSON.parse(
+        await readFile(join(cwd, ".claude/settings.local.json"), "utf8"),
+      );
+
+      expect(settings).toMatchObject({
+        model: "company-driver-fixture",
+        availableModels: ["company-driver-fixture"],
+        permissions: { deny: expect.arrayContaining(["Edit", "Write"]) },
+      });
       const descriptor = z
         .object({
           mcpServers: z.array(
