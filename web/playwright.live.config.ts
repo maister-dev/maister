@@ -50,12 +50,15 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `pnpm --dir .. --filter @maister/supervisor dev`,
+      command:
+        "exec node --import tsx --env-file-if-exists=../supervisor/.env ../supervisor/src/main.ts",
       url: `${SUPERVISOR_URL}/health`,
       timeout: 180_000,
       reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
       env: {
         MAISTER_SUPERVISOR_PORT: String(SUPERVISOR_PORT),
+        NODE_ENV: "production",
         MAISTER_RUNTIME_ROOT: path.join(worktreesRoot, "runtime", "supervisor"),
         // ADR-166: the lane owns its execution-host state dir and pins the
         // host identity (never a developer's supervisor state), and its

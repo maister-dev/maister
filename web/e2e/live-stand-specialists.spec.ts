@@ -294,6 +294,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     "knowledge:read",
     "targets:read",
   ]);
+
   await read(
     await request.post("/api/company/flow-bindings", {
       headers: { Origin: origin },
@@ -394,39 +395,48 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
     id,
   );
-  const body = {
-    owner,
-    specialistBindingId: coordinator.bindingId,
-    objective:
-      "Diagnose ambiguous fixture symptoms, restart the configured disposable component once and verify health.",
-    expectedOutcome:
-      "One confirmed restart, one independently healthy probe and an attributable reusable observation.",
-    input: `Component ID: ${configuredComponent.id}. Obtain the diagnostic specialist's bounded independent analysis before requesting operator review. Prepare a reusable knowledge draft.`,
-    targetIds: [stand.id],
-    inputRefs: [
-      {
-        kind: "knowledge",
-        id: runbook.acceptedRecordId,
-        revision: runbook.acceptedRecordRevision,
-      },
-    ],
-    constraints: [
-      "Use the existing operation ID on reconciliation.",
-      "Await the separate exact restart approval.",
-    ],
-    verification: [
-      { kind: "effect", referenceId: stand.id, required: true },
-      { kind: "health", referenceId: stand.id, required: true },
-    ],
-    idempotencyKey: randomUUID(),
-  };
-  const submit = () =>
-    request.post("/api/specialist-assignments", {
-      data: body,
+  const objective =
+    "Diagnose ambiguous fixture symptoms, restart the configured disposable component once and verify health.";
+  const expectedOutcome =
+    "One confirmed restart, one independently healthy probe and an attributable reusable observation.";
+
+  await page.goto("/specialist-assignments");
+  await page
+    .getByLabel("Responsible specialist")
+    .selectOption(coordinator.bindingId);
+  await page
+    .getByLabel("Target component")
+    .selectOption(`${stand.id}/${configuredComponent.id}`);
+  await page.getByLabel("Objective", { exact: true }).fill(objective);
+  await page
+    .getByLabel("Expected outcome", { exact: true })
+    .fill(expectedOutcome);
+  await page
+    .getByLabel("Additional instructions")
+    .fill(
+      "Obtain the diagnostic specialist's bounded independent analysis before operator review. Keep the original operation on reconciliation and wait for approval. Prepare a reusable knowledge draft.",
+    );
+
+  const submitted = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/specialist-assignments" &&
+      response.request().method() === "POST",
+  );
+
+  await page
+    .getByRole("button", { name: "Submit assignment", exact: true })
+    .click();
+  const submission = await submitted;
+
+  expect(submission.status()).toBe(201);
+  const assignment = assignmentSchema.parse(await submission.json());
+  const duplicate = await read(
+    await request.post("/api/specialist-assignments", {
+      data: submission.request().postDataJSON(),
       headers: { Origin: origin },
-    });
-  const assignment = await read(await submit(), assignmentSchema);
-  const duplicate = await read(await submit(), assignmentSchema);
+    }),
+    assignmentSchema,
+  );
   const runId = assignment.runIds[0]!;
 
   expect(duplicate.id).toBe(assignment.id);
@@ -505,18 +515,39 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await expect.poll(approvedStep, { timeout: 720_000 }).toBeDefined();
   const operation = (await approvedStep())!;
 
-  await read(
-    await request.post(`/api/stand-operations/${operation.id}/approval`, {
-      headers: { Origin: origin },
-      data: {
-        expectedRevision: operation.revision,
-        requestDigest: operation.request_digest,
-        reason: "Authorize this exact disposable qualification restart.",
-        idempotencyKey: randomUUID(),
-      },
-    }),
-    z.object({ operationId: z.literal(operation.id) }),
+  const decisionPage = await page.goto(
+    `/specialist-assignments/${assignment.id}`,
   );
+
+  expect(decisionPage?.ok()).toBe(true);
+  const approval = page.locator("form").filter({
+    has: page.getByRole("button", {
+      name: "Approve this restart",
+      exact: true,
+    }),
+  });
+
+  await expect(approval).toContainText(operation.request_digest);
+  await approval
+    .getByLabel("Reason", { exact: true })
+    .fill("Authorize this exact disposable qualification restart.");
+  const approvalResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/stand-operations/${operation.id}/approval` &&
+      response.request().method() === "POST",
+  );
+
+  await approval
+    .getByRole("button", { name: "Approve this restart", exact: true })
+    .click();
+  const approved = await approvalResponse;
+
+  expect(approved.ok()).toBe(true);
+  expect(await approved.json()).toMatchObject({ operationId: operation.id });
+  await expect(
+    page.getByText("Restart approval recorded", { exact: false }),
+  ).toBeVisible();
   await read(
     await request.post(`/api/runs/${runId}/hitl/${operation.hitl_id}/respond`, {
       data: { response: { decision: "continue" } },
@@ -598,30 +629,36 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     accepted_children: 1,
     healthy: 1,
   });
-  const ready = await current();
-
-  await read(
-    await request.post(
-      `/api/specialist-assignments/${assignment.id}/acceptance`,
-      {
-        data: {
-          expectedRevision: ready.revision,
-          inputRevision: ready.inputRevision,
-          contextRevision: ready.contextRevision,
-          result: { runId, revision: result.revision },
-          verificationIds: result.value.verificationIds,
-          reason: "Independent health and exact restart receipt verified.",
-          idempotencyKey: randomUUID(),
-        },
-      },
-    ),
-    z.object({ status: z.literal("completed") }),
-  );
   const detail = await page.goto(`/specialist-assignments/${assignment.id}`);
 
   expect(detail?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: objective })).toBeVisible();
+  const acceptance = page.locator("form").filter({
+    has: page.getByRole("heading", {
+      name: "Accept verified outcome",
+      exact: true,
+    }),
+  });
+
+  await acceptance
+    .getByLabel("Reason", { exact: true })
+    .fill("Independent health and exact restart receipt verified.");
+  const acceptanceResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname ===
+        `/api/specialist-assignments/${assignment.id}/acceptance` &&
+      response.request().method() === "POST",
+  );
+
+  await acceptance
+    .getByRole("button", { name: "Accept verified outcome", exact: true })
+    .click();
+  const accepted = await acceptanceResponse;
+
+  expect(accepted.ok()).toBe(true);
+  expect(await accepted.json()).toMatchObject({ status: "completed" });
   await expect(
-    page.getByRole("heading", { name: body.objective }),
+    page.getByRole("button", { name: "Submit retained knowledge drafts" }),
   ).toBeVisible();
   await page.getByText("Verification receipts (1)", { exact: true }).click({
     timeout: 20_000,
@@ -653,11 +690,13 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
       `Knowledge write-back failed: ${await writeBackAlert.first().innerText()}`,
     );
   await proposalLink.click({ timeout: 20_000 });
-  await expect(page.getByRole("main")).toContainText("Pending");
+  await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
 
   const proposalId = decodeURIComponent(
     new URL(page.url()).pathname.split("/").at(-1)!,
   );
+
+  await expect(page.getByText("Pending review", { exact: true })).toBeVisible();
   const workProposal = await read(
     await request.get(`/api/knowledge/proposals/${proposalId}`),
     z.object({
@@ -682,7 +721,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await page
     .getByRole("link", { name: "Published record", exact: true })
     .click();
-  await expect(page.getByRole("main")).toContainText("Unconfirmed");
+  await expect(page.getByText("Unconfirmed", { exact: true })).toBeVisible();
   const recordUrl = new URL(page.url());
   const recordId = decodeURIComponent(recordUrl.pathname.split("/").at(-1)!);
   const record = await read(
@@ -731,7 +770,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await recurring
     .getByLabel("Target component")
     .selectOption(`${stand.id}/${configuredComponent.id}`);
-  await recurring.getByLabel("Cron expression").fill("*/5 * * * *");
+  await recurring.getByLabel("Cron expression").fill("0 0 1 1 *");
   await recurring.getByLabel("Time zone").fill("UTC");
   await recurring
     .getByLabel("Recurring inspection request")
@@ -752,6 +791,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
     expect(found.rows).toHaveLength(1);
     const selected = found.rows[0]!.id;
+
     await pool.query(
       "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 second' WHERE id=$1",
       [selected],
@@ -792,10 +832,12 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         .optional()
         .parse(found.rows[0]);
     });
+
   await expect
     .poll(scheduled, { timeout: 240_000 })
     .toMatchObject({ status: "Done", suppressed: true });
   const inspection = (await scheduled())!;
+
   await page.getByRole("button", { name: "Switch language to RU" }).click();
   await expect(
     page.getByRole("heading", { name: "Активные расписания проверок стенда" }),
