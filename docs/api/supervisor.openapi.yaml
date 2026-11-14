@@ -928,6 +928,10 @@ paths:
                 requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
                 ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
                 componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+                kind:
+                  type: string
+                  enum: [inspection]
+                  description: Selects the read-only health endpoint. Omit for post-restart verification.
                 verificationNonce: { type: string, format: uuid }
                 issuedAt: { type: string, format: date-time }
       responses:

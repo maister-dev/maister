@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
 import type { Db } from "@/lib/execution-host/db";
 import type { StandComponentConfig, StandTarget } from "./target-types";
 
@@ -37,7 +39,7 @@ type TargetRow = typeof standTargets.$inferSelect;
 
 /** Resolve the exact accepted procedure and supporting witness under current access. */
 export async function readStandRunbookDigest(
-  db: Db,
+  db: SqlTransaction,
   userId: string,
   companyId: string,
   runbook: StandComponentConfig["runbook"],

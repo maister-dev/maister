@@ -262,6 +262,29 @@ test("IT-CBO-02 admits the exact configured restart over mTLS and returns the or
       "fixture-credential",
       `/operations/${body.operationId}/verification`,
     );
+  const inspection = {
+    ...verification,
+    operationId: randomUUID(),
+    verificationNonce: randomUUID(),
+  };
+  const observeHealth = (input: typeof inspection) =>
+    post(
+      input,
+      "fixture-credential",
+      `/operations/${inspection.operationId}/health`,
+    );
+
+  assert.equal(
+    (await observeHealth({ ...inspection, ownerEpoch: 1 })).status,
+    403,
+  );
+  const health = await observeHealth(inspection);
+
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).state, "healthy");
+  assert.equal(JSON.parse(health.body).nonce, inspection.verificationNonce);
+  assert.equal(journal.read(inspection.operationId), null);
+  assert.equal(effects, 1);
   const verified = await verify(verification);
   const observed = JSON.parse(verified.body);
 

@@ -237,6 +237,10 @@ Reconciliation dispositions are proved_applied, proved_not_applied, unresolved_h
 
 Use existing incident/outbox ownership with scope key target incarnation/canonical resource/failure condition. Repeated unchanged failure updates one episode without independent alerts; meaningful change, needed human action and evidenced recovery drive notifications. Unchanged routine healthy/no-action checks remain quiet. Delivery rechecks current recipient access.
 
+A reviewed company cron source may appoint one read-only stand specialist and one enabled component. The source and each invocation retain the target ID, incarnation, configuration revision and component ID. The scheduled request retains its existing v1 bytes. Intake rechecks the current user grant, exact target and supporting runbook, then supplies the references on the assignment input. A target revision change requires a new reviewed appointment.
+
+The helper checks a current operation-bound permit before inspecting health. It returns the platform nonce and its target sequence without opening a restart journal entry. The platform retains the independent probe with no effect receipt. The required health obligation needs the exact latest healthy receipt. Delivery suppresses a complete no-change Inbox result only if it cites that appointment and receipt and contains no diagnostics or proposed changes. Repeated failed probes use the same incident episode; recovery requires a later healthy probe.
+
 Failed verification and independently proved recovery each retain at most one
 Inbox notification per episode, requester and transition. The notification
 commits with its exact probe, retains a link to the contributing assignment

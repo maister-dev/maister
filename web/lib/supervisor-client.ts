@@ -1692,6 +1692,7 @@ export async function verifyStandOperation(
     ownerEpoch: number;
     componentId: string;
     verificationNonce: string;
+    kind?: "inspection";
     issuedAt: string;
   }>,
 ): Promise<unknown> {

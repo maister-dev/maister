@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
+import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { StandAction, StandOperation } from "./operation-types";
 
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -10,6 +11,7 @@ import {
   resolveStandCredential,
   resolveStandExecutionActor,
 } from "./execution-actor";
+import { standInspectionAppointmentSchema } from "./scheduled-inspection-types";
 import { standOperationInputSchema } from "./operation-types";
 import {
   readStandReceiptIds,
@@ -74,6 +76,32 @@ function operationScope(
   if (action === "restart") return "targets:restart";
 
   return "targets:read";
+}
+
+async function readAssignmentStandAppointment(
+  tx: SqlTransaction,
+  origin: { triggerAttemptId: string; scheduleId: string },
+) {
+  const [source] = (
+    await tx.execute(sql`
+    SELECT stand_inspection FROM agent_trigger_attempts
+    WHERE id=${origin.triggerAttemptId} AND schedule_id=${origin.scheduleId}
+  `)
+  ).rows;
+
+  return source?.stand_inspection == null
+    ? null
+    : standInspectionAppointmentSchema.parse(source.stand_inspection);
+}
+
+function unavailableInspectionAppointment(): MaisterError {
+  return new MaisterError(
+    "PRECONDITION",
+    "This scheduled assignment can only inspect its exact appointed component revision",
+    {
+      details: { reason: "stand_target_unavailable" },
+    },
+  );
 }
 
 /** Retain a request before any transport or approval action. No restart is authorized here. */
@@ -208,6 +236,17 @@ export async function createStandOperation(
         assignmentId,
         input.inputRevision,
       );
+      const appointment =
+        assignment.origin.kind === "schedule"
+          ? await readAssignmentStandAppointment(tx, assignment.origin)
+          : null;
+
+      if (
+        appointment &&
+        (input.action !== "inspect" ||
+          input.componentId !== appointment.componentId)
+      )
+        throw unavailableInspectionAppointment();
       const matches = await tx
         .select({ target: standTargets, component: standComponents })
         .from(standTargets)
@@ -236,6 +275,13 @@ export async function createStandOperation(
           { details: { reason: "stand_target_unavailable" } },
         );
       const { target, component } = matches[0]!;
+      if (
+        appointment &&
+        (appointment.targetId !== target.id ||
+          appointment.configRevision !== target.configRevision ||
+          appointment.incarnationId !== target.incarnationId)
+      )
+        throw unavailableInspectionAppointment();
 
       if (!component.config.actions.includes(input.action))
         throw new MaisterError(
@@ -374,7 +420,7 @@ export async function readStandOperationEvidence(
     id: string;
     observedAt: Date;
     state: typeof standVerifications.$inferSelect.state;
-    effectReceiptId: string;
+    effectReceiptId: string | null;
   }[];
 }> {
   return readStandOperation(db, userId, operationId);

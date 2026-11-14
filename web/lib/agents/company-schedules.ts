@@ -14,6 +14,7 @@ import { normalizeScheduledRequest } from "./scheduled-request";
 
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
+import { resolveScheduledStandInspection } from "@/lib/stand-operations/scheduled-inspection";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 
 /** Retain the original cron recipe and immutable receipt; actual dispatch rechecks current authority. */
@@ -50,10 +51,38 @@ export async function createCompanyCronSchedule(
             details: { reason: "company_scheduled_request_missing" },
           },
         );
+      const selector = input.standInspection;
+      if (
+        selector &&
+        (context.role.definition.kind !== "operational" ||
+          context.role.definition.completion?.contract !==
+            "operational_evidence_v2" ||
+          context.role.definition.riskTier !== "read_only" ||
+          !context.role.definition.specialist?.targetClasses.includes(
+            "stand",
+          ) ||
+          !context.role.grantActions.includes("targets:read") ||
+          context.role.grantActions.includes("targets:restart"))
+      )
+        throw new MaisterError(
+          "PRECONDITION",
+          "A scheduled inspection requires a reviewed read-only stand specialist",
+          {
+            details: { reason: "stand_specialist_unavailable" },
+          },
+        );
+      const inspection = selector
+        ? await resolveScheduledStandInspection(
+            tx,
+            userId,
+            input.owner.companyId,
+            selector,
+          )
+        : null;
       const next = nextFireAt(input.cronExpr, input.timezone, new Date());
 
       await tx.execute(
-        sql`INSERT INTO agent_schedules(id,agent_id,project_id,company_id,company_specialist_binding_id,company_flow_binding_id,company_config_revision,created_by,creation_key,creation_digest,trigger_type,request_at_launch,cron_expr,timezone,next_fire_at,enabled) VALUES(${context.sourceId},${context.role.agentId},NULL,${input.owner.companyId},${input.specialistBindingId},${input.coordinatorFlowBindingId},1,${context.actorId},${input.idempotencyKey},${digest},'cron',${input.requestAtLaunch},${input.cronExpr},${input.timezone},${next},${input.enabled})`,
+        sql`INSERT INTO agent_schedules(id,agent_id,project_id,company_id,company_specialist_binding_id,company_flow_binding_id,company_config_revision,created_by,creation_key,creation_digest,trigger_type,request_at_launch,cron_expr,timezone,next_fire_at,enabled,stand_inspection) VALUES(${context.sourceId},${context.role.agentId},NULL,${input.owner.companyId},${input.specialistBindingId},${input.coordinatorFlowBindingId},1,${context.actorId},${input.idempotencyKey},${digest},'cron',${input.requestAtLaunch},${input.cronExpr},${input.timezone},${next},${input.enabled},${inspection ? JSON.stringify(inspection.appointment) : null}::jsonb)`,
       );
     },
   );

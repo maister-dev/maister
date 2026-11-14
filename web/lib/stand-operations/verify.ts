@@ -46,8 +46,8 @@ const targetVerification = z
   })
   .strict();
 
-/** A fresh independently issued probe can advance health only after the exact applied receipt. */
-export async function verifyStandRestart(
+/** A fresh probe checks read-only health or verifies the exact applied restart. */
+export async function verifyStandHealth(
   db: Db,
   principal: string | Readonly<{ tokenId: string }>,
   operationId: string,
@@ -60,6 +60,7 @@ export async function verifyStandRestart(
     "verify",
     expectedRevision,
   );
+  const inspection = operation.action === "inspect";
   const verificationNonce = randomUUID();
   const [clock] = (
     await db.execute(
@@ -80,6 +81,7 @@ export async function verifyStandRestart(
       componentId: operation.componentId,
       requestDigest: operation.requestDigest,
       ownerEpoch,
+      ...(inspection ? { kind: "inspection" as const } : {}),
       verificationNonce,
       issuedAt,
     }),
@@ -121,7 +123,8 @@ export async function verifyStandRestart(
       if (
         !stored ||
         stored.operation.revision !== expectedRevision ||
-        stored.operation.effectState !== "confirmed_applied"
+        stored.operation.effectState !==
+          (inspection ? "not_dispatched" : "confirmed_applied")
       )
         throw new MaisterError(
           "CONFLICT",
@@ -135,12 +138,14 @@ export async function verifyStandRestart(
         ownerEpoch,
         typeof principal === "string" ? undefined : principal.tokenId,
       );
-      const [effect] = await tx
-        .select()
-        .from(standOperationReceipts)
-        .where(eq(standOperationReceipts.operationId, operationId))
-        .orderBy(desc(standOperationReceipts.targetSequence))
-        .limit(1);
+      const [effect] = inspection
+        ? []
+        : await tx
+            .select()
+            .from(standOperationReceipts)
+            .where(eq(standOperationReceipts.operationId, operationId))
+            .orderBy(desc(standOperationReceipts.targetSequence))
+            .limit(1);
       const [previous] = await tx
         .select({ sequence: standVerifications.targetSequence })
         .from(standVerifications)
@@ -149,10 +154,9 @@ export async function verifyStandRestart(
         .limit(1);
 
       if (
-        !effect ||
-        effect.receipt.effectState !== "confirmed_applied" ||
+        (!inspection && effect?.receipt.effectState !== "confirmed_applied") ||
         observation.targetSequence <=
-          Math.max(effect.targetSequence, previous?.sequence ?? 0)
+          Math.max(effect?.targetSequence ?? 0, previous?.sequence ?? 0)
       )
         throw new MaisterError(
           "CONFLICT",
@@ -162,7 +166,7 @@ export async function verifyStandRestart(
         .insert(standVerifications)
         .values({
           operationId,
-          effectReceiptId: effect.id,
+          effectReceiptId: effect?.id ?? null,
           actorId,
           nonce: verificationNonce,
           ownerEpoch,

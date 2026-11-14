@@ -16,7 +16,7 @@ import {
   deliverStandRestartCommand,
   prepareStandRestartDispatch,
 } from "./restart-dispatch";
-import { verifyStandRestart } from "./verify";
+import { verifyStandHealth } from "./verify";
 
 import {
   standComponents,
@@ -148,7 +148,7 @@ export async function verifySpecialistStand(
     "targets:read",
   );
 
-  return verifyStandRestart(db, { tokenId }, operationId, operation.revision);
+  return verifyStandHealth(db, { tokenId }, operationId, operation.revision);
 }
 
 export async function dispatchSpecialistStand(

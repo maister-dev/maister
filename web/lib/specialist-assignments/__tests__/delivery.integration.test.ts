@@ -1159,7 +1159,7 @@ it("IT-CBA-06 inspects an actual retained result before and after transport disp
   expect(delivered.transport).not.toHaveProperty("lastErrorMessage");
 });
 
-it("keeps a quiet scheduled stand decision inspectable after outbox retention", async () => {
+it("delivers a claimed no-change result without an authentic scheduled stand probe", async () => {
   const target = await recipient();
   const work = await readyResult(
     target,
@@ -1188,22 +1188,10 @@ it("keeps a quiet scheduled stand decision inspectable after outbox retention", 
 
   expect((await readDelivery()).transport.state).toBe("awaiting_dispatch");
   await runWebhookDeliveryJob({ db: database.db });
-  await database.pool.query(
-    `UPDATE webhook_events event SET fanout_at=now()-interval '8 days'
-     FROM specialist_delivery_receipts receipt
-     WHERE receipt.id=$1 AND event.id=receipt.outbox_event_id AND event.fanout_at IS NOT NULL`,
-    [work.deliveryId],
-  );
-  await runWebhookDeliveryJob({ db: database.db });
-
-  expect(await getUnreadInboxCount(target.userId, "member")).toBe(0);
+  expect(await getUnreadInboxCount(target.userId, "member")).toBe(1);
   expect((await readDelivery()).transport).toMatchObject({
-    id: null,
-    state: "suppressed",
-    attemptCount: 0,
-    lastAttemptNo: 0,
-    deliveredAt: null,
-    stateSha256: null,
+    state: "delivered",
+    attemptCount: 1,
   });
 });
 

@@ -74,7 +74,7 @@ const digest = /^[a-f0-9]{64}$/;
 const maximumRequestBytes = 65_536;
 const receiptPath = /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/;
 const operationReadPath =
-  /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(logs|verification|observations)$/;
+  /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(logs|verification|observations|health)$/;
 const requestFields = [
   "operationId",
   "targetIncarnation",
@@ -294,6 +294,27 @@ async function readVerification(
     ownerEpoch,
     nonce: verificationNonce,
     issuedAt,
+  };
+}
+
+function healthReceipt(
+  identity: Pick<RestartIntent, "operationId" | "targetIncarnation">,
+  nonce: string,
+  issuedAt: string,
+  state: Awaited<ReturnType<typeof checkHealth>>,
+  targetSequence: number,
+) {
+  return {
+    id: randomUUID(),
+    operationId: identity.operationId,
+    targetIncarnation: identity.targetIncarnation,
+    nonce,
+    issuedAt,
+    observedAt: new Date().toISOString(),
+    targetSequence,
+    state,
+    evidenceIds: [],
+    reason: state === "healthy" ? null : `verification_${state}`,
   };
 }
 
@@ -529,6 +550,37 @@ export function createStandHelper(options: StandHelperOptions): Server {
       });
       return;
     }
+    if (request.method === "POST" && selector?.[2] === "health") {
+      const { componentId, nonce, issuedAt, ...input } =
+        await readVerification(request);
+      const component = configuredComponent(componentId, "inspect");
+
+      if (
+        input.operationId !== selector[1] ||
+        input.targetIncarnation !== target.incarnationId
+      )
+        throw new HelperError(409, "CONFLICT", "target_identity_mismatch");
+      if (
+        !(await options.authorizeVerification({
+          ...input,
+          resourceKey: canonicalResourceKey(target, component),
+        }))
+      )
+        throw new HelperError(403, "PERMISSION", "authority_refused");
+      const targetSequence = options.journal.nextObservationSequence();
+      const state = await checkHealth(
+        options.manager,
+        component,
+        component.healthProbe,
+      );
+
+      json(
+        response,
+        200,
+        healthReceipt(input, nonce, issuedAt, state, targetSequence),
+      );
+      return;
+    }
     if (request.method === "POST" && selector?.[2] === "verification") {
       const input = await readVerification(request);
       const component = configuredComponent(input.componentId, "verify");
@@ -557,18 +609,17 @@ export function createStandHelper(options: StandHelperOptions): Server {
         component.healthProbe,
       );
 
-      json(response, 200, {
-        id: randomUUID(),
-        operationId: entry.operationId,
-        targetIncarnation: entry.targetIncarnation,
-        nonce: input.nonce,
-        issuedAt: input.issuedAt,
-        observedAt: new Date().toISOString(),
-        targetSequence,
-        state,
-        evidenceIds: [],
-        reason: state === "healthy" ? null : `verification_${state}`,
-      });
+      json(
+        response,
+        200,
+        healthReceipt(
+          entry,
+          input.nonce,
+          input.issuedAt,
+          state,
+          targetSequence,
+        ),
+      );
       return;
     }
     if (request.method !== "POST" || request.url !== "/operations")

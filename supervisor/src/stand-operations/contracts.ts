@@ -59,6 +59,7 @@ export type ObserveStandOperation = (
 export const StandVerifySelectorSchema = StandReceiptSelectorSchema.extend({
   componentId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
   verificationNonce: z.uuid(),
+  kind: z.literal("inspection").optional(),
   issuedAt: z.iso.datetime(),
 }).strict();
 export type StandVerifySelector = z.infer<typeof StandVerifySelectorSchema>;

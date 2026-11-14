@@ -1,3 +1,4 @@
+import type { StandInspectionAppointment } from "@/lib/stand-operations/scheduled-inspection-types";
 import type {
   AssignmentWorkDefinition,
   AssignmentWorkBounds,
@@ -1347,6 +1348,8 @@ export const agentSchedules = pgTable(
     triggerType: text("trigger_type", {
       enum: ["cron", "event", "mention"],
     }).notNull(),
+    standInspection:
+      jsonb("stand_inspection").$type<StandInspectionAppointment>(),
     requestAtLaunch: text("request_at_launch"),
     cronExpr: text("cron_expr"),
     timezone: text("timezone"),
@@ -1479,6 +1482,8 @@ export const agentTriggerAttempts = pgTable(
     scheduledRequestSnapshot: jsonb(
       "scheduled_request_snapshot",
     ).$type<ScheduledAgentRequestSnapshot>(),
+    standInspection:
+      jsonb("stand_inspection").$type<StandInspectionAppointment>(),
     fence: integer("fence").notNull(),
     deliveryKey: text("delivery_key").notNull(),
     triggerSource: text("trigger_source", {
@@ -11227,9 +11232,10 @@ export const standVerifications = pgTable(
     operationId: text("operation_id")
       .notNull()
       .references(() => standOperations.id, { onDelete: "restrict" }),
-    effectReceiptId: text("effect_receipt_id")
-      .notNull()
-      .references(() => standOperationReceipts.id, { onDelete: "restrict" }),
+    effectReceiptId: text("effect_receipt_id").references(
+      () => standOperationReceipts.id,
+      { onDelete: "restrict" },
+    ),
     actorId: text("actor_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),

@@ -355,13 +355,14 @@ async function verifyStand(
   target: Target,
   selector: StandVerifySelector,
 ): Promise<Record<string, unknown>> {
-  const body = JSON.stringify({ ...selector, action: "verify" });
+  const { kind, ...input } = selector;
+  const body = JSON.stringify({ ...input, action: "verify" });
   const result = await requestTarget(
     target,
     selector,
     {
       method: "POST",
-      path: `/operations/${selector.operationId}/verification`,
+      path: `/operations/${selector.operationId}/${kind === "inspection" ? "health" : "verification"}`,
       expectedStatus: 200,
       timeoutMs: 5000,
       body,

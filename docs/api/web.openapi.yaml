@@ -42523,6 +42523,14 @@ components:
             permissions. Server normalization folds CRLF/CR to LF and trims edges,
             then enforces at most 8000 Unicode code points; empty normalized text is
             null.
+        standInspection:
+          type: object
+          additionalProperties: false
+          required: [targetId, componentId]
+          properties:
+            targetId: { type: string, format: uuid }
+            componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+          description: Appoints one read-only component and freezes its reviewed target revision.
         enabled:
           default: false
           type: boolean

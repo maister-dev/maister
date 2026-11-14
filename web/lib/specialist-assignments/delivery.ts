@@ -23,7 +23,7 @@ export type AuthorizedAssignmentDelivery = Readonly<{
   projectTaskId: string | null;
 }>;
 
-/** Scheduled stand observations with complete coverage and no work or findings stay in history. */
+/** Quiet healthy inspections and observations already routed to an incident stay in assignment history. */
 export async function isQuietScheduledStandDelivery(
   tx: SqlTransaction,
   deliveryId: string,
@@ -31,17 +31,45 @@ export async function isQuietScheduledStandDelivery(
   const [row] = (
     await tx.execute(sql`
     SELECT assignment.origin->>'kind'='schedule'
-      AND (
-        EXISTS (SELECT 1 FROM stand_targets target WHERE (input.objective_input->'targetIds') ? target.id)
-        OR (input.standing_definition->'definition'->'specialist'->'targetClasses') = '["stand"]'::jsonb
+      AND EXISTS (
+        SELECT 1 FROM agent_trigger_attempts invocation
+        JOIN stand_operations operation ON operation.assignment_id=assignment.id
+          AND operation.input_revision=input.revision AND operation.input_sha256=input.digest
+          AND operation.action='inspect' AND operation.effect_state='not_dispatched'
+          AND operation.target_id=invocation.stand_inspection->>'targetId'
+          AND operation.component_id=invocation.stand_inspection->>'componentId'
+          AND to_jsonb(operation.config_revision)=invocation.stand_inspection->'configRevision'
+          AND operation.target_incarnation=invocation.stand_inspection->>'incarnationId'
+        JOIN stand_verifications probe ON probe.operation_id=operation.id AND probe.effect_receipt_id IS NULL
+        WHERE invocation.id=assignment.origin->>'triggerAttemptId'
+          AND invocation.schedule_id=assignment.origin->>'scheduleId'
+          AND (result.value->'operationIds') ? operation.id AND (result.value->'verificationIds') ? probe.id
+          AND NOT EXISTS (
+            SELECT 1 FROM stand_verifications later WHERE later.operation_id=operation.id
+              AND later.target_sequence>probe.target_sequence
+          )
+          AND (
+            (probe.state='healthy' AND result.value->>'outcome'='success'
+              AND result.value->'coverage'->>'state'='complete'
+              AND result.value->'diagnostics'='[]'::jsonb
+              AND result.value->'findings'->'findings'='[]'::jsonb
+              AND result.value->'findings'->'knowledgeProposals'='[]'::jsonb)
+            OR (probe.state<>'healthy' AND result.value->>'outcome' IN ('blocked','failed')
+              AND EXISTS (
+                SELECT 1 FROM stand_incident_episodes episode
+                JOIN inbox_items notice ON notice.stand_incident_id=episode.id
+                  AND notice.event_kind='stand_incident_opened'
+                  AND notice.recipient_id=assignment.requester->>'id'
+                WHERE episode.resource_key=operation.resource_key
+                  AND episode.reason='verification_'||probe.state
+                  AND probe.observed_at BETWEEN episode.first_at AND episode.last_at
+              ))
+          )
       )
-      AND result.value->'schemaVersion'='2'::jsonb AND result.value->>'outcome'='success'
-      AND result.value->'coverage'->>'state'='complete'
+      AND result.value->'schemaVersion'='2'::jsonb
       AND result.value->'counts'->'attempted'='0'::jsonb
-      AND result.value->'diagnostics'='[]'::jsonb
-      AND result.value->'operationIds'='[]'::jsonb AND result.value->'verificationIds'='[]'::jsonb
-      AND result.value->'findings'->'findings'='[]'::jsonb
-      AND result.value->'findings'->'knowledgeProposals'='[]'::jsonb AS quiet
+      AND jsonb_array_length(result.value->'operationIds')=1
+      AND jsonb_array_length(result.value->'verificationIds')=1 AS quiet
     FROM specialist_delivery_receipts delivery JOIN specialist_assignments assignment ON assignment.id=delivery.assignment_id
     JOIN specialist_input_revisions input ON input.assignment_id=assignment.id AND input.revision=delivery.input_revision
     JOIN run_results result ON result.run_id=delivery.run_id AND result.revision=delivery.result_revision

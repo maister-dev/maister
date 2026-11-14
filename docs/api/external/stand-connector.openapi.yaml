@@ -296,6 +296,55 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+  /operations/{operationId}/health:
+    post:
+      operationId: standHelperInspectHealth
+      summary: Observe health for a read-only component appointment
+      description: Checks a fresh operation-bound verification permit and the component's configured
+        inspection action before running its configured health probe. Issues a target sequence and echoes
+        the platform nonce. The read creates no restart journal entry and does not execute a mutation.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound verification authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetVerification"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBVerification"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
 components:
   securitySchemes:
     platformCredential:

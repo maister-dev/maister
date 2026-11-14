@@ -32,10 +32,17 @@ function actionForRead(
   operation: Operation,
 ): "targets:read" | "targets:logs" | "targets:recover" {
   if (purpose === "logs") return "targets:logs";
-  if (purpose === "verify" && operation.effectState !== "confirmed_applied")
+  if (
+    purpose === "verify" &&
+    operation.effectState !== "confirmed_applied" &&
+    !(
+      operation.action === "inspect" &&
+      operation.effectState === "not_dispatched"
+    )
+  )
     throw new MaisterError(
       "CONFLICT",
-      "Verification requires a confirmed restart effect",
+      "Verification requires a read-only inspection or a confirmed restart effect",
     );
   if (purpose === "reconcile" && operation.effectState !== "not_dispatched")
     return "targets:recover";

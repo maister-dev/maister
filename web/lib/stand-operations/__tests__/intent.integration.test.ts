@@ -1308,6 +1308,397 @@ it("IT-CBO-02 retains project-owned stand work with exact project and stand auth
   }
 });
 
+it("IT-CBO-09 retains the reviewed company stand appointment through a cron claim", async () => {
+  const { administratorId, userId, owner, input, request } =
+    await createRegistryFixture();
+  const db = database.db;
+  const { POST } = await import("@/app/api/stands/route");
+  const { createCompanyCronSchedule } =
+    await import("@/lib/agents/company-schedules");
+  const { claimCronAgentAttempt } =
+    await import("@/lib/agents/trigger-attempts");
+  const { reserveCompanyCronAssignment } =
+    await import("@/lib/specialist-assignments/company-cron-intake");
+  const { getSpecialistAssignmentInput } =
+    await import("@/lib/specialist-assignments/store");
+  browser.user = await requireActiveUserById(userId);
+
+  try {
+    const response = await POST(request(input));
+    expect(response.status).toBe(201);
+    const target: { id: string } = await response.json();
+    const source = join(fixtureRoot, "stand-inspection-package");
+    await mkdir(join(source, "maister-agents"), { recursive: true });
+    await writeFile(
+      join(source, "maister-package.yaml"),
+      'schemaVersion: 1\nname: stand-inspection-fixture\ncompat: {engine_min: "3.12.0"}\nflows: []\n',
+    );
+    await writeFile(
+      join(source, "maister-agents/inspector.md"),
+      "---\nname: Stand inspector\ndescription: Inspect the scheduled stand.\nkind: operational\ncompletion: {contract: operational_evidence_v2}\nspecialist: {responsibilities: [Inspect stand health], targetClasses: [stand]}\nmode: session\nworkspace: none\ntriggers: [cron]\nrisk_tier: read_only\n---\nInspect only the exact appointed component.\n",
+    );
+    const installed = await installPackageRevision({
+      source,
+      version: "stand-inspection-fixture/v1.0.0",
+      db,
+    });
+    await trustPackageRevision({ packageInstallId: installed.id, db });
+    const agentId = "stand-inspection-fixture:inspector";
+    const role = await resolveInstalledAgentDefinition(db, {
+      agentId,
+      packageInstallId: installed.id,
+    });
+    const runnerId = randomUUID();
+    await db.insert(platformAcpRunners).values({
+      id: runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "stand-inspection-fixture",
+      provider: { kind: "anthropic" },
+      readinessStatus: "Ready",
+    });
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "user",
+      principalId: userId,
+      actions: ["specialists:read", "specialists:manage"],
+      idempotencyKey: randomUUID(),
+    });
+    const grantActions = [
+      "assignments:read",
+      "knowledge:read",
+      "targets:read",
+    ] as const;
+    await createCompanyGrants(db, administratorId, {
+      principalKind: "agent",
+      principalId: agentId,
+      actions: [...grantActions],
+      idempotencyKey: randomUUID(),
+    });
+    const binding = await createCompanySpecialistBinding(db, userId, agentId, {
+      owner,
+      packageInstallId: installed.id,
+      packageRevision: installed.resolvedRevision,
+      definitionSha256: agentDefinitionSha256(role.parsed),
+      configuration: {},
+      enabled: true,
+      grantActions: [...grantActions],
+      runnerId,
+      idempotencyKey: randomUUID(),
+    });
+    const recurring = {
+      owner,
+      specialistBindingId: binding.specialist.bindingId,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      requestAtLaunch: "Проверь состояние.\nKeep the source text separate.",
+      enabled: true,
+      idempotencyKey: randomUUID(),
+      standInspection: { targetId: target.id, componentId: "api" },
+    };
+    await expect(
+      createCompanyCronSchedule(db, userId, {
+        ...recurring,
+        standInspection: {
+          ...recurring.standInspection,
+          componentId: "missing",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const schedule = await createCompanyCronSchedule(db, userId, recurring);
+    const now = new Date(Date.now() + 10 * 60_000);
+    const claim = await claimCronAgentAttempt(
+      db,
+      schedule.scheduleId,
+      now,
+      new Date(now.getTime() + 300_000),
+    );
+    if (!claim) throw new Error("The reviewed stand schedule was not claimed");
+    expect(claim.scheduledRequestSnapshot).toEqual({
+      version: 1,
+      scheduleId: schedule.scheduleId,
+      triggerAttemptId: claim.id,
+      requestAtLaunch: recurring.requestAtLaunch,
+    });
+    const { hosts } = await fakeExecutionHosts(db, {
+      fake: createFakeExecutionHost(),
+    });
+    const work = await reserveCompanyCronAssignment(
+      db,
+      { attemptId: claim.id, runId: claim.reservedRunId },
+      hosts,
+    );
+    const captured = await getSpecialistAssignmentInput(
+      db,
+      userId,
+      work.assignment.id,
+      work.inputRevision,
+    );
+    expect(captured.snapshot).toMatchObject({
+      objectiveInput: {
+        targetIds: [target.id],
+        inputRefs: [
+          {
+            kind: "knowledge",
+            id: input.components[0]!.runbook.recordId,
+            revision: 1,
+          },
+          { kind: "witness", id: input.components[0]!.runbook.witnessId },
+        ],
+      },
+      scheduledRequest: claim.scheduledRequestSnapshot,
+    });
+    expect(await tryStartRun(claim.reservedRunId, { db })).toEqual({
+      started: true,
+    });
+    const { issueCompanyAgentRunToken } = await import("@/lib/agents/tokens");
+    const token = await issueCompanyAgentRunToken({
+      db,
+      runId: claim.reservedRunId,
+    });
+    const { createStandOperation } = await import("../operation-intake");
+    const { verifySpecialistStand } = await import("../agent-actions");
+    const { authorizeStandCallback } = await import("../authority-permit");
+    const principal = { tokenId: token.tokenId };
+    const operationInput = {
+      expectedRevision: work.assignment.revision,
+      inputRevision: work.inputRevision,
+      componentId: "api",
+      action: "inspect",
+      idempotencyKey: randomUUID(),
+    };
+    await expect(
+      createStandOperation(db, principal, work.assignment.id, {
+        ...operationInput,
+        componentId: "api-alias",
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    const { operation } = await createStandOperation(
+      db,
+      principal,
+      work.assignment.id,
+      operationInput,
+    );
+    const [identity] = (
+      await database.pool.query<{ resource_key: string }>(
+        "SELECT resource_key FROM stand_operations WHERE id=$1",
+        [operation.id],
+      )
+    ).rows;
+    const helperToken = randomBytes(32).toString("hex");
+    vi.stubEnv("STAND_TEST_HELPER_TOKEN", helperToken);
+    let pass = false;
+    let sequence = 0;
+    const verifyTarget = vi.fn(
+      async (selector: {
+        operationId: string;
+        targetIncarnation: string;
+        requestDigest: string;
+        ownerEpoch: number;
+        verificationNonce: string;
+        issuedAt: string;
+        kind?: string;
+      }) => {
+        expect(selector.kind).toBe("inspection");
+        await authorizeStandCallback(db, {
+          operationId: operation.id,
+          helperToken,
+          peerFingerprint: input.helperCertificateSha256,
+          body: {
+            targetIncarnation: selector.targetIncarnation,
+            resourceKey: identity!.resource_key,
+            requestDigest: selector.requestDigest,
+            ownerEpoch: selector.ownerEpoch,
+            purpose: "verify",
+            nonce: randomUUID(),
+          },
+        });
+        const state = pass ? "healthy" : "unhealthy";
+        return {
+          id: randomUUID(),
+          operationId: operation.id,
+          targetIncarnation: selector.targetIncarnation,
+          nonce: selector.verificationNonce,
+          state,
+          issuedAt: selector.issuedAt,
+          observedAt: new Date().toISOString(),
+          targetSequence: ++sequence,
+          evidenceIds: [],
+          reason: pass ? null : "verification_unhealthy",
+        };
+      },
+    );
+    setDefaultTransportForTests({
+      ...defaultTransport(),
+      verifyStandOperation: verifyTarget,
+    });
+    const failed = await verifySpecialistStand(db, token.tokenId, operation.id);
+    const repeat = await verifySpecialistStand(db, token.tokenId, operation.id);
+    pass = true;
+    const recovered = await verifySpecialistStand(
+      db,
+      token.tokenId,
+      operation.id,
+    );
+    expect(failed.verificationState).toBe("unhealthy");
+    expect(repeat.verificationState).toBe("unhealthy");
+    expect(recovered).toMatchObject({
+      effectState: "not_dispatched",
+      verificationState: "healthy",
+      receiptIds: [],
+    });
+    const { readStandIncidentEpisodes } = await import("../incidents");
+    expect(
+      await readStandIncidentEpisodes(db, userId, work.assignment.id),
+    ).toMatchObject([{ occurrenceCount: 2, state: "resolved" }]);
+    const { invalidStandResultEvidence } = await import("../result-evidence");
+    await expect(
+      db.transaction((tx) =>
+        invalidStandResultEvidence(tx, claim.reservedRunId, {
+          outcome: "success",
+          operationIds: [],
+          verificationIds: [],
+        }),
+      ),
+    ).resolves.toBe("verificationIds");
+    await expect(
+      db.transaction((tx) =>
+        invalidStandResultEvidence(tx, claim.reservedRunId, {
+          outcome: "success",
+          operationIds: [operation.id],
+          verificationIds: [recovered.verificationIds.at(-1)!],
+        }),
+      ),
+    ).resolves.toBeNull();
+    const { publishRunResult } = await import("@/lib/run-results/ledger");
+    const { emitDomainEvent } = await import("@/lib/domain-events/outbox");
+    const { dispatchDomainEvents } =
+      await import("@/lib/domain-events/dispatch");
+    const { specialistAssignmentDeliveryConsumer } =
+      await import("@/lib/specialist-assignments/delivery-capture");
+    const { runWebhookDeliveryJob } =
+      await import("@/lib/scheduler/handlers/webhook-delivery");
+    const { getSpecialistAssignmentDelivery } =
+      await import("@/lib/specialist-assignments/delivery-read");
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, claim.reservedRunId));
+    const contract = run?.resultContract;
+    if (!contract)
+      throw new Error(
+        "The scheduled inspector did not retain its result contract",
+      );
+    const result = {
+      schemaVersion: 2,
+      outcome: "success",
+      summary: "The component is healthy.",
+      coverage: { state: "complete", remainingKnown: 0 },
+      counts: {
+        scanned: 1,
+        attempted: 0,
+        completed: 0,
+        failed: 0,
+        skipped: 1,
+        created: 0,
+      },
+      diagnostics: [],
+      references: [],
+      operationIds: [operation.id],
+      verificationIds: [recovered.verificationIds.at(-1)!],
+      findings: {
+        schemaVersion: 1,
+        findings: [],
+        knowledgeProposals: [],
+        selection: [],
+      },
+    };
+    await db.transaction(async (tx) => {
+      await publishRunResult(tx, {
+        runId: claim.reservedRunId,
+        contract,
+        value: result,
+        valueBytes: Buffer.byteLength(JSON.stringify(result)),
+        producerKind: "agent_session",
+        producerRef: "default",
+      });
+      await tx
+        .update(runs)
+        .set({
+          status: "Done",
+          endedAt: new Date(),
+          operationalTerminal: {
+            version: 1,
+            status: "Done",
+            cause: "completed",
+            effectiveOutcome: "success",
+            successful: true,
+            validation: "valid",
+            integrity: "clean",
+            baselineGeneration: null,
+            resultRevision: 1,
+            reasonCodes: [],
+            evidenceIds: [],
+          },
+        })
+        .where(eq(runs.id, claim.reservedRunId));
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.done",
+        companyId: owner.companyId,
+        runId: claim.reservedRunId,
+        parentRunId: null,
+        actor: { type: "system", id: null },
+        payload: {
+          runId: claim.reservedRunId,
+          resultStatus: "valid",
+          cause: "completed",
+        },
+      });
+    });
+    expect(
+      await dispatchDomainEvents({
+        db,
+        consumers: [specialistAssignmentDeliveryConsumer],
+      }),
+    ).toMatchObject({ failures: 0 });
+    const inspectDelivery = () =>
+      getSpecialistAssignmentDelivery(db, userId, work.assignment.id, {
+        runId: claim.reservedRunId,
+      });
+    const available = await inspectDelivery();
+    expect(available.transport.state).toBe("awaiting_dispatch");
+    await runWebhookDeliveryJob({ db });
+    await database.pool.query(
+      `UPDATE webhook_events event SET fanout_at=now()-interval '8 days'
+       FROM specialist_delivery_receipts receipt WHERE receipt.id=$1 AND event.id=receipt.outbox_event_id`,
+      [available.deliveryId],
+    );
+    await runWebhookDeliveryJob({ db });
+    expect((await inspectDelivery()).transport).toMatchObject({
+      state: "suppressed",
+      attemptCount: 0,
+      id: null,
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::int AS count FROM execution_commands WHERE kind='stand.dispatch' AND run_id=$1",
+          [claim.reservedRunId],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }]);
+    await expect(
+      database.pool.query(
+        "UPDATE agent_trigger_attempts SET stand_inspection=NULL WHERE id=$1",
+        [claim.id],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+  } finally {
+    setDefaultTransportForTests(null);
+    browser.user = null;
+  }
+});
+
 it("IT-CBO-02 IT-CBO-04 IT-CBO-05 recovers the original native restart under exact authority and independent verification", async () => {
   const { administratorId, userId, owner, authority, input, request } =
     await createRegistryFixture();

@@ -389,7 +389,7 @@ it.skipIf(!standSource || !standRevision)(
       packageInstallId: installed.id,
       db: database.db,
     });
-    for (const role of ["coordinator", "diagnostic"]) {
+    for (const role of ["coordinator", "diagnostic", "inspector"]) {
       const definition = await resolveInstalledAgentDefinition(database.db, {
         agentId: `stand-operations:${role}`,
         packageInstallId: installed.id,
@@ -400,7 +400,11 @@ it.skipIf(!standSource || !standRevision)(
       expect(definition.parsed.flow).toBe(
         role === "coordinator" ? "stand-maintenance" : null,
       );
-      if (role === "diagnostic") {
+      if (role === "inspector") {
+        expect(definition.parsed.triggers).toEqual(["cron"]);
+        expect(definition.parsed.riskTier).toBe("read_only");
+      }
+      if (role !== "coordinator") {
         expect(buildOperationalContract(definition)).toMatchObject({
           kind: "agent_operational",
           contractName: "operational_evidence_v2",

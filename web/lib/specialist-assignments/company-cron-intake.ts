@@ -17,6 +17,8 @@ import { reserveCompanyTriggerAssignment } from "./company-trigger-intake";
 import { companyTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
 import { scheduledRequestSnapshotSchema } from "@/lib/agents/scheduled-request";
 import { createExecutionHosts } from "@/lib/execution-host";
+import { resolveScheduledStandInspection } from "@/lib/stand-operations/scheduled-inspection";
+import { standInspectionAppointmentSchema } from "@/lib/stand-operations/scheduled-inspection-types";
 import { MaisterError } from "@/lib/errors";
 
 const identity = z.string().min(1).max(128);
@@ -31,6 +33,7 @@ const invocationSchema = z.object({
   outcome: z.string().nullable(),
   created_by: identity,
   binding_snapshot: companyTriggerBindingSnapshotSchema,
+  stand_inspection: standInspectionAppointmentSchema.nullable(),
   scheduled_request_snapshot: scheduledRequestSnapshotSchema,
 });
 
@@ -49,7 +52,7 @@ async function loadCompanyCronInvocation(
     (
       await tx.execute(sql`
     SELECT attempt.id,attempt.company_id,attempt.project_id,attempt.schedule_id,attempt.source_agent_id,attempt.reserved_run_id,
-      attempt.trigger_source,attempt.outcome,attempt.binding_snapshot,attempt.scheduled_request_snapshot,source.created_by
+      attempt.trigger_source,attempt.outcome,attempt.binding_snapshot,attempt.stand_inspection,attempt.scheduled_request_snapshot,source.created_by
     FROM agent_trigger_attempts attempt JOIN agent_schedules source ON source.id=attempt.schedule_id
       AND source.company_id=attempt.company_id AND source.project_id IS NULL
     WHERE attempt.id=${invocation.attemptId} FOR SHARE OF attempt,source
@@ -81,6 +84,29 @@ async function loadCompanyCronInvocation(
     scheduleId: attempt.schedule_id,
     triggerAttemptId: attempt.id,
   };
+  const appointment = attempt.stand_inspection;
+  const inspection = appointment
+    ? await resolveScheduledStandInspection(
+        tx,
+        attempt.created_by,
+        attempt.company_id,
+        appointment,
+      )
+    : null;
+
+  if (
+    appointment &&
+    inspection &&
+    (appointment.configRevision !== inspection.appointment.configRevision ||
+      appointment.incarnationId !== inspection.appointment.incarnationId)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The scheduled stand appointment requires review after a configuration change",
+      {
+        details: { reason: "stand_target_unavailable" },
+      },
+    );
   // Keep the complete Unicode request in its existing v1 plane. The objective is
   // an invocation label, not a copy that could truncate or reinterpret that text.
   const request: CompanyAssignmentRequest = {
@@ -89,11 +115,31 @@ async function loadCompanyCronInvocation(
     objective: `Execute the recurring request retained for invocation ${attempt.id}`,
     expectedOutcome:
       "Produce the specialist's required structured result for this exact scheduled request.",
-    input: "",
-    inputRefs: [],
-    targetIds: [],
+    input: appointment ? `Component ID: ${appointment.componentId}` : "",
+    inputRefs: inspection
+      ? [
+          {
+            kind: "knowledge",
+            id: inspection.runbook.recordId,
+            revision: inspection.runbook.revision,
+          },
+          { kind: "witness", id: inspection.runbook.witnessId },
+        ]
+      : [],
+    targetIds: appointment ? [appointment.targetId] : [],
     constraints: [],
-    verification: [{ kind: "result", referenceId: null, required: true }],
+    verification: [
+      { kind: "result", referenceId: null, required: true },
+      ...(appointment
+        ? [
+            {
+              kind: "health" as const,
+              referenceId: appointment.targetId,
+              required: true,
+            },
+          ]
+        : []),
+    ],
   };
 
   return { attempt, request, origin, scheduled };
@@ -118,7 +164,9 @@ export async function reserveCompanyCronAssignment(
         request: source.request,
         origin: source.origin,
         scheduledRequest: source.scheduled,
-        sourceRestrictions: [],
+        sourceRestrictions: source.attempt.stand_inspection
+          ? [{ kind: "stand_target", companyId: source.attempt.company_id }]
+          : [],
         triggerSource: "cron",
       };
     },

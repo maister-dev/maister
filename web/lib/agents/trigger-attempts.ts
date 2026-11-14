@@ -78,6 +78,7 @@ async function insertClaim(
               requestAtLaunch: binding.requestAtLaunch,
             }
           : null,
+      standInspection: binding.standInspection,
       projectId: binding.projectId,
       companyId: binding.companyId,
       sourceAgentId: binding.agentId,

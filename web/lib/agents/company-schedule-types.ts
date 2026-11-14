@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { standInspectionSelectorSchema } from "@/lib/stand-operations/scheduled-inspection-types";
 import { knowledgeDeliveryKeySchema } from "@/lib/brain/knowledge-types";
 import { ownerSchema } from "@/lib/company/types";
 import { postgresTextSchema } from "@/lib/text-schema";
@@ -16,6 +17,7 @@ export const companyCronScheduleInputSchema = z
     cronExpr: postgresTextSchema.min(1).max(128),
     timezone: postgresTextSchema.min(1).max(64),
     requestAtLaunch: postgresTextSchema.nullable().default(null),
+    standInspection: standInspectionSelectorSchema.optional(),
     enabled: z.boolean().default(false),
     idempotencyKey: knowledgeDeliveryKeySchema,
   })

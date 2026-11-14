@@ -14,7 +14,7 @@ import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 import { STAND_OPERATION_BODY_MAX_BYTES } from "@/lib/stand-operations/operation-types";
-import { verifyStandRestart } from "@/lib/stand-operations/verify";
+import { verifyStandHealth } from "@/lib/stand-operations/verify";
 import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 
 const verificationRequest = z
@@ -39,7 +39,7 @@ export async function POST(
         "CONFIG",
         "Select an exact operation revision for verification",
       );
-    const operation = await verifyStandRestart(
+    const operation = await verifyStandHealth(
       getDb(),
       user.id,
       operationId,

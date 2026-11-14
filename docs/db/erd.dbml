@@ -230,6 +230,7 @@ table agent_schedules {
   creation_digest text
   project_source_review jsonb
   trigger_type text [not null]
+  stand_inspection jsonb
   request_at_launch text
   cron_expr text
   timezone text
@@ -274,6 +275,7 @@ table agent_trigger_attempts {
   binding_snapshot jsonb [not null]
   specialist_assignment jsonb
   scheduled_request_snapshot jsonb
+  stand_inspection jsonb
   fence integer [not null]
   delivery_key text [not null]
   trigger_source text [not null]
@@ -3645,7 +3647,7 @@ table stand_targets {
 table stand_verifications {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   operation_id text [not null]
-  effect_receipt_id text [not null]
+  effect_receipt_id text
   actor_id text [not null]
   nonce text [not null, unique]
   owner_epoch bigint [not null]

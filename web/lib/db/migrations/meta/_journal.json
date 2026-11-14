@@ -2304,6 +2304,20 @@
       "when": 1794620026866,
       "tag": "0332_company_cancellation_command_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 333,
+      "version": "7",
+      "when": 1794620294726,
+      "tag": "0333_scheduled_stand_inspection",
+      "breakpoints": true
+    },
+    {
+      "idx": 334,
+      "version": "7",
+      "when": 1794620502290,
+      "tag": "0334_stand_inspection_health",
+      "breakpoints": true
     }
   ]
 }
