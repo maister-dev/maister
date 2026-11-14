@@ -1222,6 +1222,18 @@ it("IT-CBO-02 retains project-owned stand work with exact project and stand auth
       duplicate: false,
       operation: { effectState: "not_dispatched", assignmentId: assignment.id },
     });
+    const { authorizeSourceRestrictions } =
+      await import("@/lib/brain/knowledge-restrictions");
+    const targetEvidence = [
+      { kind: "stand_target", companyId: input.owner.companyId },
+    ] as const;
+    const principal = { kind: "token", tokenId: credential.tokenId } as const;
+
+    await expect(
+      db.transaction((tx) =>
+        authorizeSourceRestrictions(tx, principal, targetEvidence),
+      ),
+    ).resolves.toMatchObject({ visited: expect.any(Array) });
     expect(
       (
         await database.pool.query(
@@ -1252,6 +1264,9 @@ it("IT-CBO-02 retains project-owned stand work with exact project and stand auth
     const restartGrant = professional.page.items.find(
       ({ action }) => action === "targets:restart",
     )!;
+    const readGrant = professional.page.items.find(
+      ({ action }) => action === "targets:read",
+    )!;
 
     await revokeCompanyGrant(db, administratorId, restartGrant.id, {
       expectedRevision: restartGrant.revision,
@@ -1277,6 +1292,16 @@ it("IT-CBO-02 retains project-owned stand work with exact project and stand auth
         ),
       ),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await revokeCompanyGrant(db, administratorId, readGrant.id, {
+      expectedRevision: readGrant.revision,
+      reason: "Withdraw project access to the retained stand evidence.",
+      idempotencyKey: randomUUID(),
+    });
+    await expect(
+      db.transaction((tx) =>
+        authorizeSourceRestrictions(tx, principal, targetEvidence),
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   } finally {
     setDefaultTransportForTests(null);
     browser.user = null;
