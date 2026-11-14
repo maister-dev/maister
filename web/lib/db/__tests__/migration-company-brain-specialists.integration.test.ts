@@ -18,6 +18,7 @@ import {
   claimEventAgentAttempt,
 } from "@/lib/agents/trigger-attempts";
 import { projectSourceContentDigest } from "@/lib/agents/project-source-review";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
   startMainPostgresTestDb,
   declareCurrentTestDatabaseWriter,
@@ -201,10 +202,8 @@ it("IT-CBX-01 event review upgrade retains historical approval without inventing
       )
     ).rows[0]!;
 
-    // Historical bytes are asserted above; today's writer also requires its additive nullable source envelope.
-    await legacy.db.transaction((tx) =>
-      applyMainMigration(tx, "0267_specialist_source_handoff"),
-    );
+    // Compare the historical bytes before exercising the current writer on a fully upgraded database.
+    await upgradeMainTestDb(legacy, "0258_project_event_context");
     await expect(
       claimEventAgentAttempt(
         legacy.db,
@@ -388,10 +387,7 @@ it("IT-CBX-01 project source review upgrade preserves legacy bytes and permits p
       "UPDATE agent_schedules SET project_source_review=$1::jsonb WHERE id='legacy-review-source'",
       [JSON.stringify(review)],
     );
-    // Upgrade the additive writer envelope only after comparing the historical review migration bytes.
-    await legacy.db.transaction((tx) =>
-      applyMainMigration(tx, "0267_specialist_source_handoff"),
-    );
+    await upgradeMainTestDb(legacy, "0257_project_trigger_review");
     const reviewed = await claimCronAgentAttempt(
       legacy.db,
       "legacy-review-source",

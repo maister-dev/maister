@@ -710,6 +710,7 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
       ...historicalTrigger,
       company_id: null,
       specialist_assignment: null,
+      stand_inspection: null,
     });
     await expect(
       partial.pool.query(

@@ -185,7 +185,7 @@ describe("the queued-message invariant (D-A6)", () => {
     const responseFile = path.join(logDir, "triager-response.txt");
     const templateId = await seedAgentRun(db, {
       runtimeRoot: supervisor.runtimeRoot,
-      definition: `---\nname: Qualifier\ndescription: qualify requests\nkind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: qualifier}\nworkspace: repo_read\nworkspace_ref: task_target\nmode: session\nplatform_mcp: false\ntriggers: [manual]\nrisk_tier: read_only\n---\nfixture-output:${JSON.stringify({ bytes: 0, textFile: responseFile })}\n`,
+      definition: `---\nname: Qualifier\ndescription: qualify requests\nkind: operational\ncompletion: {contract: operational_v1}\ntask_qualification: {contract: v1, role: qualifier}\nworkspace: repo_read\nworkspace_ref: task_target\nmode: session\nplatform_mcp: true\ntriggers: [manual]\nrisk_tier: read_only\n---\nfixture-output:${JSON.stringify({ bytes: 0, textFile: responseFile })}\n`,
       workspace: "repo_read",
       operational: true,
       resultContract: null,

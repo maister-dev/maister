@@ -119,6 +119,7 @@ describe("scheduled request additive migration", () => {
       creation_key: null,
       creation_digest: null,
       project_source_review: null,
+      stand_inspection: null,
     });
     expect(schedule.request_at_launch).toBeNull();
     expect(
