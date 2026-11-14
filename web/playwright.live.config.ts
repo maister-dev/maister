@@ -8,7 +8,7 @@ import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
 // The opt-in LIVE lane (ADR-166 T6.2): a REAL supervisor with the operator's
-// configured adapter behind a dev web server. Specs gate themselves on
+// configured adapter behind a production Web build. Specs gate themselves on
 // E2E_LIVE_SUPERVISOR=1; nothing here is stubbed.
 const WEB_PORT = Number(process.env.E2E_LIVE_WEB_PORT ?? 3101);
 const SUPERVISOR_PORT = Number(process.env.MAISTER_SUPERVISOR_PORT ?? 7777);
@@ -75,11 +75,12 @@ export default defineConfig({
       },
     },
     {
-      command: `pnpm exec next dev -p ${WEB_PORT}`,
+      command: "exec node --import tsx e2e/web-server.ts",
       url: BASE_URL,
       timeout: 180_000,
       reuseExistingServer: false,
       env: {
+        PORT: String(WEB_PORT),
         DB_URL: databaseUrl,
         AUTH_SECRET,
         MAISTER_RUNTIME_ROOT: webRuntimeRoot,
