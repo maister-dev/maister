@@ -76,16 +76,14 @@ rail. It preloads launch options from the selected task and shows:
 - a human-readable launchability banner for states such as active run,
   relation blocker, missing Flow revision, or installed-but-not-enabled Flow;
 - Flow, runner/model, and execution preset controls are initially visible;
-- logical sessions and consensus runner roles show their resolved runner or a
-  localized binding requirement. Selecting a ready runner saves its binding
-  automatically for project administrators, including when no binding row
-  exists yet. Each row shows saving, saved, or a localized error with a neutral
-  retry action. A failed save keeps the choice visible and blocks launch until
-  it is saved or replaced. The choice persists for this project and Flow revision;
-  selecting automatic resolution clears the binding. Other project members see the role
-  status and an administrator-remediation hint. Unresolved roles disable normal
-  and force launch; saving a binding or changing Flow or the main runner
-  refreshes this preview before submission;
+- logical sessions and consensus roles show configured and effective runners
+  or a localized binding requirement. Runner choices are for this launch.
+  Project administrators can explicitly save or clear a project mapping for
+  the enabled revision. A failed save keeps the choice visible for retry.
+  Changing the Flow or package cut clears the one-run choices and disables
+  runner selection and submission until the new preview arrives. An unresolved
+  role blocks ordinary and concurrent launch. Scheduling requires clearing the
+  one-run choices;
 - base/target branch, delivery policy, budget, and advanced execution controls
   are behind explicit disclosures that preserve their selected values;
 - non-blocking runner-resolution warnings when a Flow slot launches on a
@@ -151,11 +149,13 @@ Task-bound agent controls use `GET /api/task-launch-intents/options` and the
 same POST contract with their actual `agentId`; a genuine Flow facade is resolved
 by the server. See [admission](../../system-analytics/task-launch-admission.md).
 
-`launch-options` returns
+`GET /api/runs/launch-options` returns
 `runnerSlots` (logical sessions and consensus roles), `selectedFlowRevisionId`, and
 `canConfigureRunnerBindings`, and accepts optional `flowId`/`runnerId` selections
-for read-only preview. `consensusRunnerSlots` retains the consensus-only subset
-for existing clients. Slot assignments use the existing project-scoped
+for compatibility. `consensusRunnerSlots` retains the consensus-only subset
+for existing clients. The browser sends draft choices through the no-store
+`POST /api/runs/launch-options` and submits the matching settings token.
+Project mapping changes use the existing project-scoped
 `PATCH /api/projects/{slug}/flow-runner-remaps`, guarded by `editSettings`.
 The consensus admission contract is described in
 [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).

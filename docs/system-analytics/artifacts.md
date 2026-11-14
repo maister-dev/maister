@@ -341,11 +341,11 @@ sequenceDiagram
 
 - `{{ artifacts.<id>.content }}` MUST resolve the body of the **`current`** row
   only; no current row + no `?? default` → strict `CONFIG`.
-- The cap (256 KiB, `MAISTER_ARTIFACT_INLINE_MAX_BYTES`) MUST be applied ONLY at
-  the injection seam, NEVER inside `resolveArtifactContent` and NEVER on the payload
-  route; on the injection path a `file` OR `git-log` read MUST be bounded to the cap
-  (at most `cap + 1` bytes) so a huge payload never loads fully into the web process
-  and an oversized log truncates instead of throwing.
+- Apply the configurable 256 KiB prompt cap and injection marker in
+  `capForInline`. The shared resolver accepts a separate source read budget.
+  The Web preview has a fixed 64 KiB budget, with one file lookahead byte to
+  detect an exact-limit payload. Git output stops on overflow. Raw downloads
+  preserve the original representation.
 - The content scan MUST cover the field each gate EXECUTOR renders
   (`ai_judgment`→`prompt`, `skill_check`/`command_check`→`command`), so load-time
   detection cannot drift from runtime rendering.
@@ -382,9 +382,9 @@ sequenceDiagram
 - **Payload gone/notfound on a POLICY-SKIPPED gate's ref** → the gate is excluded
   from the resolution set (`checks=skip`), so the ref is never resolved and never
   fails the node — the skipped gate does no content work.
-- **Body over 256 KiB (`file`) or oversized `git-log`** → truncated + in-band marker
-  AT INJECTION (git-log truncates instead of throwing); the same artifact over the
-  payload API route returns FULL, untruncated (contract preserved).
+- **Oversized file or Git output** → prompt injection includes its truncation
+  marker. The HTTP preview returns a clipped prefix with the truncation header.
+  For a file, the raw download returns the full body.
 - **Manual `{{…content}}` + `inline:true` for the same id** → single injection +
   `WARN` (manual wins).
 - **Stale / non-`current` referenced id** → not satisfied → strict `CONFIG`.

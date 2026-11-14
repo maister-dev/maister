@@ -38,7 +38,9 @@ Cancel before confirmation has no repository effect. Busy confirmation blocks
 duplicate submit, Escape, backdrop and cancel. Focus remains within the dialog
 and returns to its opener. The client records operation identity before POST;
 reload after a lost response reads that receipt. Explicit recovery inspects the
-same accepted operation instead of creating another commit.
+same accepted operation. Refresh status updates the checkout and the selected
+receipt in place, including a push that becomes unknown or settles, while
+keeping the current review.
 
 After local success, separate push review shows origin URL, destination,
 recorded SHA, remote base and every outgoing commit. Its own confirmation
