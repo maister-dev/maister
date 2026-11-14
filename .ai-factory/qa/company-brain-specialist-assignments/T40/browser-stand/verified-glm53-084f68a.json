@@ -1,0 +1,143 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "5ad8574a8ab023c2b13fe8ca321f74443d2fcb5e94a65d366350c0aac31ce57a",
+  "mcpBundleSha256": "aa4b8b62e0d5949468d33b564b3fff15cb273d9e1b478b90a3bc850509e98eee",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T15:39:45.059974+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T15:45:16.421609+00:00",
+  "status": "verified_combined_glm53_faults",
+  "browser": {
+    "startTime": "2026-11-14T15:39:51.806Z",
+    "duration": 324203.261,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "observations": {
+    "stand-clarification-proof": {
+      "assignmentId": "5519f6c4-f904-4b6f-bcce-8aab9004efb2",
+      "runId": "91341f2b-15e4-4378-95bb-ee7df8c3fcd8",
+      "questionId": "3033ade0-887f-4148-8fb0-65679658564d",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "5519f6c4-f904-4b6f-bcce-8aab9004efb2",
+      "runId": "91341f2b-15e4-4378-95bb-ee7df8c3fcd8",
+      "operationId": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+      "oldWebPid": 85155,
+      "newWebPid": 89209,
+      "acceptedDiagnostic": {
+        "id": "f2115955-fdb8-4493-be75-dfef7adb3811",
+        "childRunId": "558ab312-66ce-4a48-9dd6-9f3371a08057",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "86956a32-f135-420d-9109-dfa3f02dd814",
+      "operationId": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "stand-reconciliation-proof": {
+      "operationId": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+      "runId": "91341f2b-15e4-4378-95bb-ee7df8c3fcd8",
+      "unknown": {
+        "id": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "fdccf6f2-7820-4022-82a3-b468bd19d5be"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    },
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "5519f6c4-f904-4b6f-bcce-8aab9004efb2",
+      "runId": "91341f2b-15e4-4378-95bb-ee7df8c3fcd8",
+      "operationId": "27d7fa8e-d61e-4732-98b0-6709764fb095",
+      "resultRevision": 1,
+      "deliveryId": "b6bbc169-986b-4a6a-8d71-e51568cf2b81",
+      "verificationIds": [
+        "0f2c7da9-3abd-44c8-8ad9-fc20a1d1406e"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "2048452e-092e-4584-85b4-7195d036f6c2",
+      "knowledgeRecordId": "b7ae1195-33c6-404f-bbac-ae4b943380da",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "dc10ed27-7a50-4132-a2fa-afe4b493fbb6",
+      "attempt_id": "a8d24821-14aa-4d6e-bb3c-0275272d8ee9",
+      "run_id": "da2dccb3-af45-4afe-9c0e-01a8103a7344",
+      "status": "Done",
+      "delivery_id": "0f96a2d8-93b2-4307-b8d4-7e458089906c",
+      "suppressed": true,
+      "operation_id": "2912622b-6b13-4d56-8cec-8700b7378f36",
+      "verification_id": "dbc93f79-14d1-4cae-acd0-ba3f11e289cd",
+      "commands": 0
+    },
+    "stand-runtime-model-proof": [
+      {
+        "runId": "558ab312-66ce-4a48-9dd6-9f3371a08057",
+        "sessionId": "378d9983-1edd-4afb-ace1-0ba09d762c27",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "91341f2b-15e4-4378-95bb-ee7df8c3fcd8",
+        "sessionId": "e71dcb17-33f2-444b-9cd4-477b707a1936",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "da2dccb3-af45-4afe-9c0e-01a8103a7344",
+        "sessionId": "f0153950-d192-4914-aa7f-49bded1a9d6b",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      }
+    ]
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  }
+}

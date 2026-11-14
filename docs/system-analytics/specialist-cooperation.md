@@ -261,8 +261,9 @@ Native execution mutations check the current placement and its lease. The
 placement handoff retires the old Run's native mutation credentials in the
 same transaction. Context revisions record the originating Run's
 `executionEpoch` when available, and exact replay retains the original epoch.
-Historical revisions without a placement witness stay readable. The separate
-business-owner claim and replacement recovery remain open.
+Historical revisions without a placement witness stay readable. The business
+executor lease and predispatch replacement use the existing Run placement
+and retry ledgers, as described below.
 
 The budget watchdog reconciles usage across the assignment's retained Runs.
 At the token, elapsed-time, or consecutive-failure ceiling it rechecks the
@@ -316,6 +317,14 @@ current coordinator wake claim. A company event can wake only the actual
 parent on the same company assignment and exact delegated work revision.
 Repeated delivery converges on the same wait-resume placement. The coordinator
 resumes its retained node and can collect the settled child's result revision.
+If the last child fails before the current coordinator turn parks, the
+persisted failure wake still forces one continuation before finalization.
+Collection exposes `recoveryMode: recover_interrupted` only for a first
+read-only company attempt with an accepted crash and retired placement.
+The coordinator can request one continuation of that logical work. It
+preserves the original input, role and failure receipt; it still consumes
+the remaining assignment budget. A changed objective, missing crash witness
+or an effect-taking child cannot use this recovery mode.
 The reconcile sweep uses the same wake claim for a parked company coordinator
 whose children have settled, even after the grace period. Capacity refusal
 keeps the Run parked with its existing durable resume request.
