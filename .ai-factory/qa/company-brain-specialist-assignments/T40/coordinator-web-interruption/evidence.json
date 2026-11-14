@@ -1,0 +1,84 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "4dcfeb8f3cd59428f2406b59cb28320d95bb1a991a47bf7407e80779cbab1ac0",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "07a7dc5f58d01adfda55aa52e2c7ee8546ec6d5e",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:32:48.290879+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:36:25.170332+00:00",
+  "invocationId": "910cf1ae-351b-44d4-8e91-aa951d9e99cf",
+  "status": "owner_restart_retained_child_and_operation_assignment_not_accepted",
+  "observations": {
+    "stand-clarification-proof": {
+      "assignmentId": "5b1704bd-412e-4708-8e11-d1384564eb95",
+      "runId": "ea8e696e-0d61-4cba-b138-ec9bb62b9ce1",
+      "questionId": "a3e261ed-cd55-4074-b8fe-80f36f5cccc4",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "5b1704bd-412e-4708-8e11-d1384564eb95",
+      "runId": "ea8e696e-0d61-4cba-b138-ec9bb62b9ce1",
+      "operationId": "411d9ff7-3f61-4435-a56a-090fefc11133",
+      "oldWebPid": 14687,
+      "newWebPid": 36396,
+      "acceptedDiagnostic": {
+        "id": "9555b1ed-12c9-44b6-b0a8-472c361e9481",
+        "childRunId": "ceb9ca3f-e851-4dd2-b46b-6233406ea1b5",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "3a3fac5c-4fb4-4b45-bb46-5cae9c7140cc",
+      "operationId": "411d9ff7-3f61-4435-a56a-090fefc11133",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "pilot-settlement-diagnostics": {
+      "execution": {
+        "status": "Failed",
+        "current_step_id": null,
+        "cause": null,
+        "reasons": null
+      },
+      "results": [],
+      "nodes": [
+        {
+          "node_id": "coordinate",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "authorize",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "execute",
+          "status": "Failed"
+        }
+      ]
+    }
+  },
+  "originalOperationPermitCounts": {
+    "dispatch": 1,
+    "verify": 1
+  },
+  "publicationRefusal": {
+    "path": "knowledgeProposals[0].evidence[0]",
+    "reason": "reference_unavailable",
+    "referenceKind": "verification",
+    "schemaSha256": "32d6e84e1f6ca4ce2c54eb3ce56351b7276a818d156fa791841cfb3a41c4109e"
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "scope": "The Web execution owner was stopped after diagnostic acceptance. This is not a SIGKILL of either ACP adapter. Exchange, approval and effect remained under the original operation. The test did not prove assignment acceptance or quiet recurring inspection."
+}
