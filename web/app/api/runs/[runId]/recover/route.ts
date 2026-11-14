@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireProjectAction } from "@/lib/authz";
+import { authorizeCompanyRunUserAction } from "@/lib/agents/company-run-read-access";
 import { interactiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import { interactiveTaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
 import {
@@ -51,7 +52,10 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
       err.details?.reason === "launch_origin_configuration_invalid"
     )
       return taskLaunchErrorResponse(err);
-    const status = httpStatusForCode(err.code);
+    const status =
+      err.details?.reason === "run_unavailable"
+        ? 404
+        : httpStatusForCode(err.code);
 
     log.warn(
       { ...ctx, code: err.code, message: err.message, status },
@@ -89,6 +93,7 @@ export async function POST(
     const rows = await db
       .select({
         id: runs.id,
+        companyId: runs.companyId,
         projectId: runs.projectId,
         status: runs.status,
         currentStepId: runs.currentStepId,
@@ -105,10 +110,30 @@ export async function POST(
       );
     }
 
-    await requireProjectAction(run.projectId, "recoverRun");
+    if (run.companyId !== null) {
+      await authorizeCompanyRunUserAction(
+        db,
+        principal.userId,
+        runId,
+        "assignments:recover",
+      );
+      if (run.runKind !== "flow")
+        return NextResponse.json(
+          {
+            code: "CONFLICT",
+            message: "This company Run requires its own recovery action",
+          },
+          { status: 409 },
+        );
+    } else await requireProjectAction(run.projectId, "recoverRun");
 
     const r = await resumeCrashedRun(runId, {
-      recoveryAuthority: interactiveTaskLaunchRecoveryAuthority(principal),
+      ...(run.companyId !== null
+        ? { companyRecoveryPrincipal: principal }
+        : {
+            recoveryAuthority:
+              interactiveTaskLaunchRecoveryAuthority(principal),
+          }),
     });
 
     log.info({ runId, state: r.state }, "recover handled");

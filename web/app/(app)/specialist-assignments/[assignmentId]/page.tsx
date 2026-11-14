@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFormatter, getTranslations } from "next-intl/server";
 
+import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { AssignmentAcceptanceForm } from "@/components/specialist-assignments/assignment-acceptance-form";
 import { AssignmentKnowledge } from "@/components/specialist-assignments/assignment-knowledge";
 import { AssignmentLifecycle } from "@/components/specialist-assignments/assignment-lifecycle";
@@ -23,6 +24,7 @@ import {
   canChangeAssignment,
   listVisibleAssignmentRunIds,
   readAssignmentReview,
+  readRecoverableCompanyCoordinator,
   readAssignmentStandChoices,
 } from "@/lib/specialist-assignments/workspace-view";
 import { readStandOperationEvidence } from "@/lib/stand-operations/operation-intake";
@@ -43,6 +45,7 @@ export default async function SpecialistAssignmentPage({
   const {
     assignment,
     recovery,
+    coordinatorRecovery,
     context,
     input,
     runs,
@@ -303,6 +306,13 @@ export default async function SpecialistAssignmentPage({
       {assignment.status === "completed" && assignment.acceptedResult ? (
         <AssignmentKnowledge assignmentId={assignment.id} />
       ) : null}
+      {coordinatorRecovery ? (
+        <RunRecoverActions
+          canRecover
+          canDiscard={false}
+          runId={coordinatorRecovery}
+        />
+      ) : null}
       {!live && canChange ? (
         <AssignmentLifecycle
           action={recovery ? "reopen" : "cancel"}
@@ -363,6 +373,11 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
           ? getSpecialistAssignmentAdmission(db, userId, assignmentId)
           : null,
       ]);
+    const coordinatorRecovery = await readRecoverableCompanyCoordinator(
+      db,
+      userId,
+      assignment,
+    );
     const operations = await Promise.all(
       stand.operationIds.map((id) =>
         readStandOperationEvidence(db, userId, id).catch((error: unknown) => {
@@ -383,6 +398,7 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
     return {
       assignment,
       recovery,
+      coordinatorRecovery,
       context,
       input,
       runs,

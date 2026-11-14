@@ -270,7 +270,18 @@ async function assertStandRuntimeModels(
   return proof;
 }
 
-async function interruptDiagnostic(assignmentId: string, runId: string) {
+const livePrompt = z.object({
+  runId: z.string(),
+  sessionId: z.string(),
+  commandId: z.string(),
+  placementId: z.string(),
+  placementEpoch: z.number().int(),
+});
+
+async function interruptStandPrompt(
+  findPrompt: () => Promise<z.infer<typeof livePrompt> | null>,
+  caseName: string,
+) {
   const invocation = invocationFromEnvironment();
 
   if (!invocation)
@@ -281,38 +292,15 @@ async function interruptDiagnostic(assignmentId: string, runId: string) {
     .min(1)
     .max(65535)
     .parse(required("MAISTER_SUPERVISOR_PORT"))}`;
-  const diagnosticAppointment = async () =>
-    z
-      .object({
-        childRunId: z.string(),
-        workId: z.string(),
-        revision: z.number().int(),
-        sessionId: z.string(),
-        placementId: z.string(),
-        placementEpoch: z.number().int(),
-      })
-      .nullable()
-      .parse(
-        await singleValue<unknown>(
-          `SELECT jsonb_build_object('childRunId',work.child_run_id,'workId',work.id,
-          'revision',work.work_revision,'sessionId',session.host_session_id,
-          'placementId',placement.id,'placementEpoch',placement.epoch) AS value
-         FROM specialist_work work JOIN run_sessions session ON session.run_id=work.child_run_id
-         JOIN execution_assignments placement ON placement.id=session.execution_assignment_id
-         JOIN execution_commands prompt ON prompt.run_id=work.child_run_id AND prompt.execution_assignment_id=placement.id
-          AND prompt.kind='session.prompt' AND prompt.state='accepted'
-         WHERE work.assignment_id=$1 AND work.parent_run_id=$2
-          AND work.logical_work_id='diagnose-stand' AND session.host_session_id IS NOT NULL`,
-          [assignmentId, runId],
-        ),
-      );
 
   await expect
-    .poll(diagnosticAppointment, { timeout: 180_000, intervals: [150, 300] })
+    .poll(findPrompt, { timeout: 180_000, intervals: [150, 300] })
     .not.toBeNull();
-  const work = (await diagnosticAppointment())!;
+  const work = await findPrompt();
+
+  if (!work) throw new Error("The exact prompt ended before interruption");
   const inventory = await fetch(
-    `${supervisorUrl}/sessions?runId=${encodeURIComponent(work.childRunId)}`,
+    `${supervisorUrl}/sessions?runId=${encodeURIComponent(work.runId)}`,
     { signal: AbortSignal.timeout(3_000) },
   );
 
@@ -326,7 +314,7 @@ async function interruptDiagnostic(assignmentId: string, runId: string) {
     .find((row) => row.sessionId === work.sessionId);
 
   if (!session)
-    throw new Error("The diagnostic session is absent from its host");
+    throw new Error("The selected ACP session is absent from its host");
   const gate = await findProcessIdentity(invocation, session.pid);
   const supervisor = gate && (await findProcessIdentity(invocation, gate.ppid));
 
@@ -337,7 +325,7 @@ async function interruptDiagnostic(assignmentId: string, runId: string) {
     !supervisor.inspected
   )
     throw new Error(
-      "The diagnostic gate and supervisor must belong to this invocation",
+      "The selected ACP gate and supervisor must belong to this invocation",
     );
   const { adapter } = await captureOwnedAdapterProcess({
     invocation,
@@ -356,12 +344,12 @@ async function interruptDiagnostic(assignmentId: string, runId: string) {
           ),
           bootId: supervisor.started,
           logFile: join(invocation.directory, "stand-adapter-interruption.log"),
-          caseName: "stand-diagnostic-interruption",
+          caseName,
         }),
     },
     sessionId: work.sessionId,
     expected: {
-      runId: work.childRunId,
+      runId: work.runId,
       assignmentId: work.placementId,
       assignmentEpoch: work.placementEpoch,
     },
@@ -384,6 +372,38 @@ async function interruptDiagnostic(assignmentId: string, runId: string) {
   return { ...work, adapterPid: adapter.pid };
 }
 
+async function findDiagnosticPrompt(assignmentId: string, runId: string) {
+  return livePrompt.nullable().parse(
+    await singleValue<unknown>(
+      `SELECT jsonb_build_object('runId',work.child_run_id,'sessionId',session.host_session_id,
+         'placementId',placement.id,'placementEpoch',placement.epoch,'commandId',prompt.id) AS value
+     FROM specialist_work work JOIN run_sessions session ON session.run_id=work.child_run_id
+     JOIN execution_assignments placement ON placement.id=session.execution_assignment_id
+     JOIN execution_commands prompt ON prompt.run_id=work.child_run_id AND prompt.execution_assignment_id=placement.id
+       AND prompt.target_session_id=session.host_session_id AND prompt.kind='session.prompt' AND prompt.state='accepted'
+     WHERE work.assignment_id=$1 AND work.parent_run_id=$2 AND work.logical_work_id='diagnose-stand'`,
+      [assignmentId, runId],
+    ),
+  );
+}
+
+async function findCoordinatorPrompt(assignmentId: string, runId: string) {
+  return livePrompt.nullable().parse(
+    await singleValue<unknown>(
+      `SELECT jsonb_build_object('runId',run.id,'sessionId',session.host_session_id,
+         'placementId',placement.id,'placementEpoch',placement.epoch,'commandId',prompt.id) AS value
+     FROM runs run JOIN run_sessions session ON session.run_id=run.id
+     JOIN execution_assignments placement ON placement.id=session.execution_assignment_id
+     JOIN execution_commands prompt ON prompt.run_id=run.id AND prompt.execution_assignment_id=placement.id
+       AND prompt.target_session_id=session.host_session_id AND prompt.kind='session.prompt' AND prompt.state='accepted'
+     WHERE run.id=$1 AND run.current_step_id='coordinate'
+       AND EXISTS (SELECT 1 FROM stand_operations operation WHERE operation.assignment_id=$2
+         AND operation.action='restart' AND operation.effect_state='not_dispatched')`,
+      [runId, assignmentId],
+    ),
+  );
+}
+
 test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disposable stand", async ({
   request,
   page,
@@ -397,6 +417,12 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     process.env.E2E_STAND_RESTART_WEB_ON_SIGKILL === "1";
   const checkDiagnosticInterruption =
     process.env.E2E_STAND_KILL_DIAGNOSTIC === "1";
+  const checkAcpCoordinatorInterruption =
+    process.env.E2E_STAND_KILL_COORDINATOR === "1";
+
+  expect(checkAcpCoordinatorInterruption && checkDiagnosticInterruption).toBe(
+    false,
+  );
   const sourceUrl = required("E2E_STAND_GIT_URL");
   const tag = required("E2E_STAND_TAG");
   const expectedCommit = z
@@ -829,10 +855,77 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     });
   }
   if (checkDiagnosticInterruption) {
-    const killed = await interruptDiagnostic(assignment.id, runId);
+    const killed = await interruptStandPrompt(
+      () => findDiagnosticPrompt(assignment.id, runId),
+      "stand-diagnostic-interruption",
+    );
 
     await testInfo.attach("stand-diagnostic-interruption", {
-      body: JSON.stringify({ assignmentId: assignment.id, runId, ...killed }),
+      body: JSON.stringify({
+        assignmentId: assignment.id,
+        coordinatorRunId: runId,
+        ...killed,
+      }),
+      contentType: "application/json",
+    });
+  }
+  if (checkAcpCoordinatorInterruption) {
+    const killed = await interruptStandPrompt(
+      () => findCoordinatorPrompt(assignment.id, runId),
+      "stand-acp-coordinator-interruption",
+    );
+
+    await testInfo.attach("stand-acp-coordinator-interruption", {
+      body: JSON.stringify({ assignmentId: assignment.id, ...killed }),
+      contentType: "application/json",
+    });
+    await expect
+      .poll(
+        () =>
+          withE2EDb(async (pool) => {
+            const row = await pool.query(
+              `SELECT execution.status,operation.effect_state,
+                      command.application_state, placement.state AS placement_state
+                 FROM runs execution
+                 JOIN execution_assignments placement ON placement.id=execution.execution_assignment_id
+                 JOIN execution_commands command ON command.id=$2 AND command.execution_assignment_id=placement.id
+                 JOIN stand_operations operation ON operation.assignment_id=$3 AND operation.action='restart'
+                WHERE execution.id=$1`,
+              [runId, killed.commandId, assignment.id],
+            );
+
+            return row.rows[0];
+          }),
+        { timeout: 90_000 },
+      )
+      .toMatchObject({
+        status: "Crashed",
+        effect_state: "not_dispatched",
+        application_state: "applied",
+        placement_state: "released",
+      });
+    expect(
+      (await page.goto(`/specialist-assignments/${assignment.id}`))?.ok(),
+    ).toBe(true);
+    await page.getByTestId("recover-button").click();
+    const recoveryResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/runs/${runId}/recover` &&
+        response.request().method() === "POST",
+      { timeout: 180_000 },
+    );
+
+    await page.getByTestId("recover-confirm-submit").click();
+    const recovered = await recoveryResponse;
+
+    expect([200, 202], await recovered.text()).toContain(recovered.status());
+    await testInfo.attach("stand-acp-coordinator-recovery", {
+      body: JSON.stringify({
+        assignmentId: assignment.id,
+        runId,
+        status: recovered.status(),
+        ...(await recovered.json()),
+      }),
       contentType: "application/json",
     });
   }

@@ -106,15 +106,24 @@ export async function authorizeCompanyRunUserAction(
   runId: string,
   action: "assignments:answer" | "assignments:recover" | "assignments:cancel",
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
-    const [owner] = (
-      await tx.execute(sql`SELECT company_id FROM runs WHERE id=${runId}`)
-    ).rows;
+  await db.transaction((tx) =>
+    authorizeCompanyRunUserActionInTransaction(tx, userId, runId, action),
+  );
+}
 
-    if (typeof owner?.company_id !== "string") throw unavailableCompanyRun();
-    await authorizeCompanyUserAction(tx, userId, owner.company_id, action);
-  });
+export async function authorizeCompanyRunUserActionInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  runId: string,
+  action: "assignments:answer" | "assignments:recover" | "assignments:cancel",
+): Promise<void> {
+  await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
+  const [owner] = (
+    await tx.execute(sql`SELECT company_id FROM runs WHERE id=${runId}`)
+  ).rows;
+
+  if (typeof owner?.company_id !== "string") throw unavailableCompanyRun();
+  await authorizeCompanyUserAction(tx, userId, owner.company_id, action);
 }
 
 /** Reuse the retained company Run/input ownership witness without requiring Brain SQL functions. */

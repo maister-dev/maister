@@ -1,0 +1,53 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "ca3ac5a7d713b4cb4531aeaf784784f1cb8ea0255cc1a9365f4dbafbb61ee7d2",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "ff0a63e41cef53e5d9822b4f666583e23b1d5c41",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T14:41:20.026335+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T14:42:57.483534+00:00",
+  "status": "same_run_coordinator_recovered_diagnostic_result_invalid",
+  "observations": {
+    "stand-acp-coordinator-interruption": {
+      "assignmentId": "ac501bde-daec-4d7b-906f-013ac3acddc7",
+      "runId": "f6a522d6-cb9d-4ca2-9e4b-7be6cb6716ab",
+      "sessionId": "f686b678-1cd1-4217-aa25-3c41f23198bd",
+      "commandId": "747d708d-cbff-4619-bcf7-a5514facfeff",
+      "placementId": "38a78a14-dfbb-4f7a-bfc0-537ae502a826",
+      "placementEpoch": 1,
+      "adapterPid": 19352
+    },
+    "stand-acp-coordinator-recovery": {
+      "assignmentId": "ac501bde-daec-4d7b-906f-013ac3acddc7",
+      "runId": "f6a522d6-cb9d-4ca2-9e4b-7be6cb6716ab",
+      "status": 200,
+      "ok": true,
+      "state": "resumed",
+      "runStatus": "Running"
+    },
+    "pilot-terminal-diagnostics": {
+      "id": "db71b1e5-955a-4ded-a3de-b8f3dbc696e8",
+      "status": "Failed",
+      "cause": "operational_result_invalid",
+      "reason_codes": [
+        "malformed_json",
+        "operational_result_invalid"
+      ],
+      "validation_diagnostics": [
+        {
+          "code": "malformed_json",
+          "path": "$"
+        }
+      ],
+      "result_reason": "malformed_json"
+    }
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "scope": "Company Flow crash and authorized browser recovery returned 200 under a new placement with the original restart intent. No restart was dispatched. A subsequent diagnostic emitted malformed JSON; the full interruption journey remains unqualified."
+}

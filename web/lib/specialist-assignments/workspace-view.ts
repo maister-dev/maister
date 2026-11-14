@@ -18,6 +18,7 @@ import {
 } from "./company-intake";
 
 import { listCompanySpecialists } from "@/lib/agents/company-binding-list";
+import { authorizeCompanyRunUserActionInTransaction } from "@/lib/agents/company-run-read-access";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
@@ -225,6 +226,47 @@ export async function listVisibleAssignmentRunIds(
   }
 
   return result;
+}
+
+/** Show recovery only for the current readable crashed company coordinator. */
+export async function readRecoverableCompanyCoordinator(
+  db: Db,
+  userId: string,
+  assignment: SpecialistAssignment,
+): Promise<string | null> {
+  if (assignment.owner.kind !== "company") return null;
+  const companyId = assignment.owner.companyId;
+
+  try {
+    return await db.transaction(async (tx: Db) => {
+      const [row] = (
+        await tx.execute(sql`
+          SELECT run.id FROM runs run
+          WHERE run.id=specialist_current_root_id(${assignment.id},${assignment.inputRevision})
+            AND run.company_id=${companyId} AND run.run_kind='flow'
+            AND run.status='Crashed' AND run.resume_target_step_id IS NOT NULL
+            AND run.company_cancellation_intent IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM stand_operations operation WHERE operation.assignment_id=${assignment.id}
+                AND operation.action='restart' AND operation.effect_state<>'not_dispatched'
+            )
+        `)
+      ).rows;
+
+      if (typeof row?.id !== "string") return null;
+      await authorizeCompanyRunUserActionInTransaction(
+        tx,
+        userId,
+        row.id,
+        "assignments:recover",
+      );
+
+      return row.id;
+    });
+  } catch (error) {
+    if (accessRefused(error)) return null;
+    throw error;
+  }
 }
 
 export type AssignmentReview = Readonly<{

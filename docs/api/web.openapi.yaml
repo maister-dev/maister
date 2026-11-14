@@ -10901,6 +10901,12 @@ paths:
       description: |
         (Implemented, M19 — ADR-034.)
         Requires canonical same-origin session authorization before creating recovery authority or dispatch effects.
+        For a company-owned coordinator, requires current assignment read and recover authority
+        and current access to the exact retained input and its sources. The recovery claim requires
+        the current assignment appointment and available budget. A restart that has left
+        `not_dispatched` must be resolved through stand operation controls; this endpoint will
+        not replay that workflow. Recovery retains the same Run, child results and operation
+        identity. The endpoint does not recover standalone company agents.
 
         Recovers a `Crashed` flow run via a hybrid plan decided by
         `classifyRecover(run, nodeKind, retrySafe, consensusEvidence)` over the

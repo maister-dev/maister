@@ -117,6 +117,7 @@ import { POST as inboundAgentEventPost } from "@/app/api/agents/[agentId]/event/
 import { issueUserAccessToken } from "@/lib/tokens/issue";
 import { specialistAssignmentSchema } from "@/lib/specialist-assignments/types";
 import { POST as stopRunPost } from "@/app/api/runs/[runId]/stop/route";
+import { POST as recoverRunPost } from "@/app/api/runs/[runId]/recover/route";
 import { POST as respondHitlPost } from "@/app/api/runs/[runId]/hitl/[hitlRequestId]/respond/route";
 import { GET as retainedResultGet } from "@/app/api/runs/[runId]/results/[revision]/route";
 import { loadRetainedResultForUser } from "@/lib/run-results/retained-result";
@@ -2071,6 +2072,42 @@ it("settles a company coordinator crash under its retained owner without project
         webhooks: 0,
       },
     ]);
+    browserUserId = requesterId;
+    const recover = (): Promise<Response> =>
+      recoverRunPost(
+        new NextRequest(`http://localhost/api/runs/${runId}/recover`, {
+          method: "POST",
+          headers: { Origin: "http://localhost", Host: "localhost" },
+        }),
+        { params: Promise.resolve({ runId }) },
+      );
+    const grantReceipt = await createCompanyGrants(
+      database.db,
+      administratorId,
+      {
+        principalKind: "user",
+        principalId: requesterId,
+        actions: ["assignments:recover"],
+        idempotencyKey: randomUUID(),
+      },
+    );
+
+    try {
+      const response = await recover();
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "discard_only" },
+      });
+    } finally {
+      const grant = grantReceipt.page.items[0]!;
+      await revokeCompanyGrant(database.db, administratorId, grant.id, {
+        expectedRevision: grant.revision,
+        idempotencyKey: randomUUID(),
+        reason: "Test recovery revocation",
+      });
+    }
+    expect((await recover()).status).toBe(403);
   } finally {
     await database.pool.query(
       "DELETE FROM platform_runtime_settings WHERE id='singleton' AND default_runner_id=$1",
