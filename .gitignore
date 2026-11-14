@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/stand-connector/node_modules/
 /.pnpm-store
 /.pnp
 .pnp.js

@@ -2726,9 +2726,14 @@ describe("Flow prompt owners through the production graph driver", () => {
     },
     110_000,
   );
-  it("owner-flow-node: validates the original tail result beyond the stdout preview", async () => {
+  it("owner-flow-node: validates original tail output at its assistant message boundary", async () => {
     const payload = { verdict: "pass", score: 0.95 };
-    const prompt = `fixture-output:${JSON.stringify({ bytes: 1_999_983, chunkSize: 400_000, text: `\n\`\`\`json maister:output\n${JSON.stringify(payload)}\n\`\`\`` })}`;
+    const prompt = `fixture-output:${JSON.stringify({
+      bytes: 0,
+      chunkSize: 7,
+      previousAssistantMessage: 1_049_000,
+      text: `\`\`\`json maister:output\n${JSON.stringify(payload)}\n\`\`\``,
+    })}`;
     const seeded = await seedOwnerFlow(
       [
         {

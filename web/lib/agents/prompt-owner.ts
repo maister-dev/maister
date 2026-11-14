@@ -71,7 +71,7 @@ import {
   PromptOwnerDeferred,
 } from "@/lib/execution-host/prompt-owners";
 import {
-  appendSentinelOutput,
+  appendAssistantSentinelOutput,
   emptySentinelOutput,
   finishSentinelOutput,
 } from "@/lib/flows/graph/node-output-stream";
@@ -823,7 +823,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         const text = agentMessageText(event.payload?.update);
 
         if (text !== null)
-          sentinel = appendSentinelOutput(sentinel, text, maxBytes);
+          sentinel = appendAssistantSentinelOutput(
+            sentinel,
+            event.payload?.update,
+            text,
+            maxBytes,
+          );
       }
     }
     const succeeded =
@@ -849,6 +854,7 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       })
       .from(runs)
       .where(eq(runs.id, ref.runId));
+
     if (run?.companyCancellationIntent)
       throw new PromptOwnerDeferred("company_cancellation_pending");
     const persistent = run?.persistent ?? false;

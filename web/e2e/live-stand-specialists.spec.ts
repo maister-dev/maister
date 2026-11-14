@@ -13,7 +13,10 @@ import { loadNativeCompanyBrainFixtures } from "./_seed/native-company-brain-fix
 import { withE2EDb } from "./_seed/db";
 
 import { parseAgentDefinition } from "@/lib/agents/definition";
-import { knowledgeWitnessSchema } from "@/lib/brain/knowledge-read-types";
+import {
+  knowledgeRecordSchema,
+  knowledgeWitnessSchema,
+} from "@/lib/brain/knowledge-read-types";
 import { operationalEvidenceV2Schema } from "@/lib/run-results/operational-schema";
 import {
   standComponentSchema,
@@ -560,6 +563,45 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     .getByRole("link", { name: "Open proposal 1", exact: true })
     .click();
   await expect(page.getByRole("main")).toContainText("Pending");
+  const proposalId = decodeURIComponent(
+    new URL(page.url()).pathname.split("/").at(-1)!,
+  );
+  const proposal = await read(
+    await request.get(`/api/knowledge/proposals/${proposalId}`),
+    z.object({
+      id: z.literal(proposalId),
+      status: z.literal("pending"),
+      attribution: z.object({
+        kind: z.literal("user"),
+        id: z.literal(admin.id),
+        runId: z.literal(runId),
+      }),
+    }),
+  );
+  await page
+    .getByLabel("Decision reason", { exact: true })
+    .fill(
+      "Publish the verified observation from the controlled maintenance pilot.",
+    );
+  await page
+    .getByRole("button", { name: "Accept proposal", exact: true })
+    .click();
+  await page
+    .getByRole("link", { name: "Published record", exact: true })
+    .click();
+  await expect(page.getByRole("main")).toContainText("Unconfirmed");
+  const recordUrl = new URL(page.url());
+  const recordId = decodeURIComponent(recordUrl.pathname.split("/").at(-1)!);
+  const record = await read(
+    await request.get(`/api/knowledge/${recordId}${recordUrl.search}`),
+    knowledgeRecordSchema,
+  );
+
+  expect(record).toMatchObject({
+    owner,
+    attribution: { kind: "user", id: admin.id, runId },
+    confirmation: { state: "unconfirmed" },
+  });
   await testInfo.attach("stand-pilot-proof", {
     body: JSON.stringify(
       {
@@ -572,6 +614,10 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
         resultRevision: result.revision,
         verificationIds: result.value.verificationIds,
         acceptedChildren: execution.accepted_children,
+        knowledgeProposalId: proposal.id,
+        knowledgeRecordId: record.id,
+        knowledgeRecordRevision: record.revision,
+        knowledgeConfirmation: record.confirmation.state,
       },
       null,
       2,

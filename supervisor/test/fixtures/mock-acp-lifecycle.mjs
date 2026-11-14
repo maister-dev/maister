@@ -3,7 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   appendFile,
-  mkdir, open, readFile, realpath, rename, writeFile,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  writeFile,
 } from "node:fs/promises";
 import path, { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -651,6 +656,23 @@ class LifecycleAgent {
         glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
         "x".repeat(spec.bytes % Buffer.byteLength(glyph)) +
         responseText;
+      if (spec.previousAssistantMessage !== undefined)
+        for (
+          let remaining = spec.previousAssistantMessage;
+          remaining > 0;
+          remaining -= 250_000
+        )
+          await this.connection.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "previous-assistant-message",
+              content: {
+                type: "text",
+                text: "x".repeat(Math.min(remaining, 250_000)),
+              },
+            },
+          });
       const chunks =
         spec.chunkSize && !spec.tool
           ? Array.from(
@@ -678,6 +700,9 @@ class LifecycleAgent {
               }
             : {
                 sessionUpdate: "agent_message_chunk",
+                ...(spec.previousAssistantMessage !== undefined
+                  ? { messageId: "final-assistant-message" }
+                  : {}),
                 content: { type: "text", text: chunk },
               },
         });

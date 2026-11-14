@@ -66,9 +66,9 @@ const operationalExample: z.input<typeof operationalEvidenceV2Schema> = {
   verificationIds: [],
 };
 const OPERATIONAL_APPENDIX = `Native completion contract: operational_evidence_v2.
-For the completing turn, use the exact json maister:output fence and object shape below. This example illustrates shape only. Replace its text and local finding ID with your actual result. All objects reject extra fields.
+Emit the exact json maister:output fence and object shape below as the only final assistant message. This example illustrates shape only. Replace its text and local finding ID with your actual result. All objects reject extra fields.
 Put knowledge, witness and result references inside the nested findings. A knowledge or result citation requires its exact revision; an immutable witness ID is sufficient when its version or digest was not requested. Keep report limitations and missing evidence explicit. A direct child's finding is identified by its exact childRunId, resultRevision and findingId. Preserve original evidence when filling findings.selection; a leaf leaves selection and each sourceFindings array empty.
-Use top-level operationIds and verificationIds only for exact retained stand identities. Keep top-level references empty when there are only Brain or stand references. Successful outcomes require complete coverage, remainingKnown 0, no failed work and no error diagnostic. A blocked outcome includes an actionable error diagnostic. The example does not supply evidence or authorize any action.
+Use top-level operationIds and verificationIds only for exact retained stand identities. Do not use operation or verification references inside producer findings. Keep top-level references empty when there are only Brain or stand references. Successful outcomes require complete coverage, remainingKnown 0, no failed work and no error diagnostic. A blocked outcome includes an actionable error diagnostic. The example does not supply evidence or authorize any action.
 Native operational result example (shape only):
 ${["```json maister:output", JSON.stringify(operationalExample), "```"].join("\n")}
 Native operational result JSON Schema:
