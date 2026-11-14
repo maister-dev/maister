@@ -2005,7 +2005,8 @@ it("loads frozen company graph input and sessions without repository records, re
 
 it("settles a company coordinator crash under its retained owner without project webhook fanout", async () => {
   const supervisor = await startRealSupervisor({
-    runtimeRoot: join(root, "crash-owner-host"),
+    // This suite retains live placements on this host across supervisor boots.
+    runtimeRoot: join(root, "reservation-host"),
     workspaceRoots: [join(root, "worktrees")],
   });
   const restoreUrl = useRealSupervisorUrl(supervisor.url);
