@@ -1,0 +1,28 @@
+{
+  "revision": "a1f07b100d36f5378affdeda93d715671a4ab5d6",
+  "buildId": "ceftUmaeZILlzilAjnGjs",
+  "invocationId": "861e5db8-4290-4a35-8725-e17f68362977",
+  "startedAt": "2026-11-14T11:52:39.034Z",
+  "finishedAt": "2026-11-14T14:16:43.598Z",
+  "mcpSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "node": "24.15.0",
+  "maxWorkers": 1,
+  "files": {
+    "passed": 692,
+    "skipped": 2,
+    "total": 694
+  },
+  "tests": {
+    "passed": 6377,
+    "skipped": 3,
+    "total": 6380
+  },
+  "exitCode": 0,
+  "duration": "8638.31s (tests 96%, import 4%)",
+  "candidateUnchanged": true,
+  "cleanup": {
+    "leaks": 0,
+    "errors": []
+  },
+  "scope": "Complete Web integration on this exact prior implementation revision. Later model and knowledge/dispatch fixes and the newer master are covered by separate frozen invocations."
+}

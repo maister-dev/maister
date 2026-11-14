@@ -1,0 +1,147 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "ab42773debea5d4101146936dc50db9cde3d9884315d8ed4f97f75e6aa3866b4",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "ff0a63e41cef53e5d9822b4f666583e23b1d5c41",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T14:11:26.175437+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T14:17:58.777052+00:00",
+  "invocationId": "fba8be00-03cd-45d1-a2fc-8c89f59e6bb4",
+  "buildId": "pm7IuoL6zqtyK8tGFD5mq",
+  "status": "passed_glm53_stand_faults_web_owner_restart_and_quiet_inspection",
+  "browserPassed": 2,
+  "browserUnexpected": 0,
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "physicalFault": {
+    "event": "qualification_restart_ack_dropped",
+    "operationId": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+    "sequence": 4,
+    "beforeInvocation": "f3f8b8dae77c4ac985bb7ed10f47557c",
+    "afterInvocation": "b4285f248ba54805aed75dc76a50579a"
+  },
+  "observations": {
+    "stand-clarification-proof": {
+      "assignmentId": "99629559-a983-4993-815e-aff93ac4fa87",
+      "runId": "88192331-33cb-4f8e-9b58-fd3483343451",
+      "questionId": "62319824-df73-4af8-8e50-b847d3ec55c0",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "99629559-a983-4993-815e-aff93ac4fa87",
+      "runId": "88192331-33cb-4f8e-9b58-fd3483343451",
+      "operationId": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+      "oldWebPid": 92708,
+      "newWebPid": 96425,
+      "acceptedDiagnostic": {
+        "id": "62438a1e-5d1b-49f3-8926-0fe8e3f80e79",
+        "childRunId": "68be9850-9850-4b69-b81e-ed636f331911",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "01681d29-05a5-4e10-b642-db49f97f5bdd",
+      "operationId": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "stand-reconciliation-proof": {
+      "operationId": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+      "runId": "88192331-33cb-4f8e-9b58-fd3483343451",
+      "unknown": {
+        "id": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "e2720a95-9721-4ec7-8576-9269b40e663d"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    },
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "ff0a63e41cef53e5d9822b4f666583e23b1d5c41",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "99629559-a983-4993-815e-aff93ac4fa87",
+      "runId": "88192331-33cb-4f8e-9b58-fd3483343451",
+      "operationId": "c2d2d1bc-e01f-49e3-b201-0fc6dcde14bc",
+      "resultRevision": 1,
+      "deliveryId": "74b67538-7155-4bc0-b09c-3442d207313e",
+      "verificationIds": [
+        "b1efad06-e1e9-42d1-99c8-6cefeb405e52"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "acbcd5ee-2af9-4fc9-8339-dab0d7e9756d",
+      "knowledgeRecordId": "f46aeb09-5461-4550-a59c-027d17681228",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "200f3fc6-9b8c-4096-b16b-6dfbc24ab524",
+      "attempt_id": "0bd5550b-410f-437b-9ac9-f437c2fb8984",
+      "run_id": "8874b45d-582d-4c93-b8dc-0f8840a9c941",
+      "status": "Done",
+      "delivery_id": "cbb36089-9870-48df-9307-44b062b93a94",
+      "suppressed": true,
+      "operation_id": "f445331c-bc5a-46d0-8445-314af16b02b9",
+      "verification_id": "de46cff8-71ba-4387-8f8a-caae66f8faff",
+      "commands": 0
+    },
+    "stand-runtime-model-proof": [
+      {
+        "runId": "68be9850-9850-4b69-b81e-ed636f331911",
+        "sessionId": "b520b8c3-e398-4346-a448-e27e54a05c54",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "88192331-33cb-4f8e-9b58-fd3483343451",
+        "sessionId": "71d209d1-0e8a-49f8-8f3e-edb74a3b6c03",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "8874b45d-582d-4c93-b8dc-0f8840a9c941",
+        "sessionId": "81116e92-7bb6-4640-a356-47a8816d9eed",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      }
+    ]
+  },
+  "scope": "All required roles have nonempty exact SDK model evidence. This result includes Web SIGKILL, not an independent ACP coordinator or diagnostic process restart."
+}
