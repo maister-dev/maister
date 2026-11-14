@@ -28,6 +28,8 @@ import {
 import { readStandOperationEvidence } from "@/lib/stand-operations/operation-intake";
 import { readStandIncidentEpisodes } from "@/lib/stand-operations/incidents";
 
+const receiptTime = { dateStyle: "medium", timeStyle: "short" } as const;
+
 export default async function SpecialistAssignmentPage({
   params,
 }: {
@@ -231,7 +233,7 @@ export default async function SpecialistAssignmentPage({
                 {approvedAt ? (
                   <p className="mt-3 text-sm">
                     {t("approvalRecorded")} ·{" "}
-                    {format.dateTime(approvedAt, "short")}
+                    {format.dateTime(approvedAt, receiptTime)}
                   </p>
                 ) : null}
                 {effect.length ? (
@@ -244,7 +246,7 @@ export default async function SpecialistAssignmentPage({
                         <li key={id} className="break-all">
                           <p>
                             {t(`effectState.${receipt.effectState}`)} ·{" "}
-                            {format.dateTime(capturedAt, "short")}
+                            {format.dateTime(capturedAt, receiptTime)}
                           </p>
                           <p className="text-xs text-mute">{id}</p>
                           {receipt.beforeInvocation ? (
@@ -273,7 +275,7 @@ export default async function SpecialistAssignmentPage({
                           <li key={id} className="break-all">
                             <p>
                               {t(`health.${state}`)} ·{" "}
-                              {format.dateTime(observedAt, "short")}
+                              {format.dateTime(observedAt, receiptTime)}
                             </p>
                             <p className="text-xs text-mute">{id}</p>
                             <p className="text-xs">

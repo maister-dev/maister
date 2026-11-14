@@ -426,6 +426,12 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
   expect(duplicate.id).toBe(assignment.id);
   expect(duplicate.runIds).toEqual([runId]);
+  const browserLocaleErrors: string[] = [];
+
+  page.on("console", (message) => {
+    if (message.type() === "error" && message.text().includes("MISSING_FORMAT"))
+      browserLocaleErrors.push(message.text());
+  });
   const approvedStep = async () =>
     withE2EDb(async (pool) => {
       const terminal = await pool.query(
@@ -575,10 +581,18 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     ),
     z.object({ status: z.literal("completed") }),
   );
-  await page.goto(`/specialist-assignments/${assignment.id}`);
+  const detail = await page.goto(`/specialist-assignments/${assignment.id}`);
+
+  expect(detail?.status()).toBe(200);
+  await expect(
+    page.getByRole("heading", { name: body.objective }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(result.value.verificationIds[0]!, { exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Submit retained knowledge drafts" })
-    .click();
+    .click({ timeout: 20_000 });
   await page
     .getByRole("link", { name: "Open proposal 1", exact: true })
     .click();
@@ -624,6 +638,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     attribution: { kind: "user", id: admin.id, runId },
     confirmation: { state: "unconfirmed" },
   });
+  expect(browserLocaleErrors).toEqual([]);
   await testInfo.attach("stand-pilot-proof", {
     body: JSON.stringify(
       {
