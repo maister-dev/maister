@@ -7,7 +7,10 @@ import type { Db } from "@/lib/execution-host/db";
 import type { DelegateBody } from "@/lib/orchestrator/delegation-request";
 import type { DelegatedWorkRequest } from "./delegated-intake";
 
+import { setTimeout } from "node:timers/promises";
+
 import { sql } from "drizzle-orm";
+import pino from "pino";
 
 import { readAuthorizedAssignmentInput } from "./context";
 import {
@@ -27,8 +30,38 @@ import {
 } from "@/lib/agents/company-flow-context";
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { lockDelegationParent } from "@/lib/orchestrator/admission";
+
+const log = pino({
+  name: "company-child-dispatch",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+/** A rolled-back lock refusal can retry the same work outside the tree lock. */
+async function retryDelegationContention<T>(
+  parentRunId: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  for (const retryDelayMs of [50, 150, 350]) {
+    try {
+      return await work();
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        error.details?.reason !== "delegation_execution_busy"
+      )
+        throw error;
+      log.warn(
+        { parentRunId, retryDelayMs },
+        "retrying company child admission after execution contention",
+      );
+      await setTimeout(retryDelayMs);
+    }
+  }
+
+  return work();
+}
 
 /** Derive the exact child target and parent authority from the verified company credential. */
 export async function dispatchCompanyAssignmentChild(
@@ -60,8 +93,8 @@ export async function dispatchCompanyAssignmentChild(
       "Company work requires a bounded workspace-none agent or result-only Flow request",
     );
 
-  const request = await db.transaction(
-    async (tx): Promise<DelegatedWorkRequest> => {
+  const request = await retryDelegationContention(parentRunId, () =>
+    db.transaction(async (tx): Promise<DelegatedWorkRequest> => {
       await lockDelegationParent(tx, parentRunId);
       const principal = await resolveAssignmentContextPrincipal(
         tx,
@@ -121,14 +154,17 @@ export async function dispatchCompanyAssignmentChild(
           },
         },
       };
-    },
+    }),
   );
 
-  const receipt = await (request.prepared.target.kind === "company_flow"
-    ? reserveCompanyDelegatedFlowRun(db, request)
-    : reserveCompanyDelegatedAgentRun(db, request));
+  const receipt = await retryDelegationContention(parentRunId, () =>
+    request.prepared.target.kind === "company_flow"
+      ? reserveCompanyDelegatedFlowRun(db, request)
+      : reserveCompanyDelegatedAgentRun(db, request),
+  );
 
   if (receipt.status === "Pending") runEventWakeBus.wakeProjection();
+
   return receipt;
 }
 

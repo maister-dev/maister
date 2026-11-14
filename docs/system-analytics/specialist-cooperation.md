@@ -160,6 +160,10 @@ execution-event foreign-key locks. A terminal ancestor refuses new admission wit
 waiting while holding the tree key and creating a root/nested-writer deadlock.
 After the competing writer settles, the caller must re-enter current admission;
 a stale snapshot or guessed child outcome is not used.
+Native company child dispatch retries this specific rollback up to three times
+with the original work selector. It opens a new transaction after each delay,
+revalidates the same authority and budgets, and returns the last conflict when
+contention persists.
 
 Task-parent qualification acquires the same rooted fence before its parent row.
 Input/source classification locks use non-key mode as well, retaining existing

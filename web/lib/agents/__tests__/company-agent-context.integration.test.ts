@@ -12948,19 +12948,47 @@ async function qualifyCompanyCooperation(
         .mockReturnValue(hosts);
 
       try {
+        const body = {
+          target: { agentId: receivingRoleId },
+          mode: "run" as const,
+          prompt: prepared.objectiveInput.objective,
+          assignmentWork: {
+            selector: workRequest.selector,
+            expectedOutcome: prepared.objectiveInput.expectedOutcome,
+          },
+        };
+        const { dispatchCompanyAssignmentChild } =
+          await import("@/lib/specialist-assignments/company-child-dispatch");
+        const blocker = await database.pool.connect();
+
+        try {
+          await blocker.query("BEGIN");
+          await blocker.query(
+            "SELECT id FROM runs WHERE id=$1 FOR NO KEY UPDATE",
+            [appointment.runId],
+          );
+          const result = dispatchCompanyAssignmentChild(db, {
+            companyId: request.companyId,
+            parentRunId: appointment.runId,
+            tokenId: appointment.credential.tokenId,
+            body,
+          }).then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error }),
+          );
+
+          await new Promise<void>((resolve) => setTimeout(resolve, 150));
+          await blocker.query("ROLLBACK");
+          expect(await result).toEqual({ value: first });
+        } finally {
+          await blocker.query("ROLLBACK");
+          blocker.release();
+        }
         const replay = await delegateExternalRun(
           new NextRequest("http://localhost/api/v1/ext/runs/delegate", {
             method: "POST",
             headers,
-            body: JSON.stringify({
-              target: { agentId: receivingRoleId },
-              mode: "run",
-              prompt: prepared.objectiveInput.objective,
-              assignmentWork: {
-                selector: workRequest.selector,
-                expectedOutcome: prepared.objectiveInput.expectedOutcome,
-              },
-            }),
+            body: JSON.stringify(body),
           }),
           {},
         );
@@ -13050,16 +13078,24 @@ async function qualifyCompanyCooperation(
           "DELETE FROM run_cost_rollups WHERE run_id=$1",
           [appointment.runId],
         );
-        const { startTaskLaunchWorker } = await import("@/lib/tasks/launch-worker");
+        const { startTaskLaunchWorker } =
+          await import("@/lib/tasks/launch-worker");
         const launch = await import("@/lib/agents/launch");
-        const start = vi.spyOn(launch, "startAgentSession").mockResolvedValue(undefined);
+        const start = vi
+          .spyOn(launch, "startAgentSession")
+          .mockResolvedValue(undefined);
         const worker = startTaskLaunchWorker({ db });
 
         try {
-          await vi.waitFor(() => expect(start).toHaveBeenCalledWith(first.childRunId, { db }), {
-            timeout: 6_000,
-          });
-          expect(start.mock.calls.filter(([id]) => id === first.childRunId)).toHaveLength(1);
+          await vi.waitFor(
+            () => expect(start).toHaveBeenCalledWith(first.childRunId, { db }),
+            {
+              timeout: 6_000,
+            },
+          );
+          expect(
+            start.mock.calls.filter(([id]) => id === first.childRunId),
+          ).toHaveLength(1);
         } finally {
           await worker.stop();
           start.mockRestore();
