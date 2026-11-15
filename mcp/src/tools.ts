@@ -40,6 +40,21 @@ const standOperationSelector: ToolSpec["inputSchema"] = {
   properties: { operationId: { type: "string", minLength: 1, maxLength: 128 } },
 };
 
+// ADR-206: mirrors `TaskSourceInput` in the external OpenAPI.
+const TASK_SOURCE_PROPERTIES = {
+  kind: { type: "string", pattern: "^[a-z][a-z0-9_-]{1,31}$" },
+  instance: {
+    type: "string",
+    minLength: 1,
+    maxLength: 253,
+    pattern: "^[a-z0-9][a-z0-9._-]*$",
+  },
+  scope: { type: "string", minLength: 1, maxLength: 256 },
+  externalId: { type: "string", minLength: 1, maxLength: 256 },
+  externalKey: { type: "string", minLength: 1, maxLength: 64 },
+  url: { type: "string", maxLength: 2048, pattern: "^https://[^/@\\s]+(/|$)" },
+};
+
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   ...TASK_LAUNCH_TOOL_SPECS,
   ...KNOWLEDGE_TOOL_SPECS,
@@ -151,6 +166,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           maxLength: 128,
           description:
             "Idempotency key for this effect (sent as the Idempotency-Key header). Required when acting as the librarian: reuse the SAME key when retrying the same effect, and a new key for a new effect.",
+        },
+        source: {
+          type: "object",
+          description:
+            "Structured external source identity (ADR-206). Identity is kind+instance+externalId within the project; a bound identity is refused 409 source_already_bound naming the existing task.",
+          properties: TASK_SOURCE_PROPERTIES,
+          required: ["kind", "instance", "scope", "externalId"],
         },
       },
       required: ["slug", "title"],
@@ -308,6 +330,34 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         slug: { type: "string" },
       },
       required: ["slug"],
+    },
+  },
+  task_find_by_source: {
+    description:
+      "Find the task bound to an external source identity (kind + instance + externalId) in a project, across every task status. Returns {task: null} when the identity is unbound — look up before creating an imported task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", minLength: 1 },
+        kind: TASK_SOURCE_PROPERTIES.kind,
+        instance: TASK_SOURCE_PROPERTIES.instance,
+        externalId: TASK_SOURCE_PROPERTIES.externalId,
+      },
+      required: ["slug", "kind", "instance", "externalId"],
+    },
+  },
+  task_source_bind: {
+    description:
+      "Bind an external source identity to an unbound task (ADR-206). Same identity → no-op; a task bound to another identity → 409 source_conflict; an identity bound to another task → 409 source_already_bound. There is no tool to detach.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", minLength: 1 },
+        taskId: { type: "string", format: "uuid" },
+        ...TASK_SOURCE_PROPERTIES,
+        expectedRevision: { type: "integer", minimum: 0 },
+      },
+      required: ["slug", "taskId", "kind", "instance", "scope", "externalId"],
     },
   },
   task_get: {
@@ -1545,7 +1595,7 @@ function resolveRouting(
   name: string,
   args: Record<string, unknown>,
 ): {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
 } {
@@ -1631,18 +1681,20 @@ function resolveRouting(
       return { method: "GET", path: `/api/v1/ext/activity/feed${suffix}` };
     }
     case "task_create": {
-      const { slug, title, prompt, statement, flowId } = args as {
+      const { slug, title, prompt, statement, flowId, source } = args as {
         slug: string;
         title: string;
         prompt?: string;
         statement?: Record<string, unknown>;
         flowId?: string;
+        source?: Record<string, unknown>;
       };
       const body: Record<string, unknown> = { title };
 
       if (prompt !== undefined) body.prompt = prompt;
       if (statement !== undefined) body.statement = statement;
       if (flowId !== undefined) body.flowId = flowId;
+      if (source !== undefined) body.source = source;
 
       return {
         method: "POST",
@@ -1744,6 +1796,45 @@ function resolveRouting(
       const { slug } = args as { slug: string };
 
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/tasks` };
+    }
+    case "task_find_by_source": {
+      const { slug, kind, instance, externalId } = args as {
+        slug: string;
+        kind: string;
+        instance: string;
+        externalId: string;
+      };
+      const sp = new URLSearchParams({ kind, instance, externalId });
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/tasks/by-source?${sp.toString()}`,
+      };
+    }
+    case "task_source_bind": {
+      const { slug, taskId, ...rest } = args as {
+        slug: string;
+        taskId: string;
+      } & Record<string, unknown>;
+      const body: Record<string, unknown> = {};
+
+      for (const key of [
+        "kind",
+        "instance",
+        "scope",
+        "externalId",
+        "externalKey",
+        "url",
+        "expectedRevision",
+      ]) {
+        if (rest[key] !== undefined) body[key] = rest[key];
+      }
+
+      return {
+        method: "PUT",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/source`,
+        body,
+      };
     }
     case "task_get": {
       const { slug, taskId } = args as { slug: string; taskId: string };

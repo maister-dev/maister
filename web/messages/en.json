@@ -5999,6 +5999,8 @@
     "kinds": {
       "task_created": "task created",
       "task_completed": "task completed",
+      "delivery_completion_not_applied": "PR merged — completion needs a decision",
+      "source_detached": "External source detached",
       "comment_added": "comment",
       "task_mentioned": "mentioned",
       "relation_added": "relation added",

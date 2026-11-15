@@ -5999,6 +5999,8 @@
     "kinds": {
       "task_created": "задача создана",
       "task_completed": "задача завершена",
+      "delivery_completion_not_applied": "PR слит — завершение требует решения",
+      "source_detached": "Внешний источник отвязан",
       "comment_added": "комментарий",
       "task_mentioned": "упоминание",
       "relation_added": "связь добавлена",

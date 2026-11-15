@@ -135,11 +135,13 @@ describe("TOOL_SPECS registry", () => {
         "stand_operation_verify",
         "task_complete",
         "task_create",
+        "task_find_by_source",
         "task_get",
         "task_list",
         "task_publish_excerpt",
         "task_search",
         "task_send_to_triage",
+        "task_source_bind",
         "task_statement_accept",
         "task_update",
         "triage_set",
@@ -358,6 +360,84 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       title: "Fix bug",
       prompt: "Do the thing",
       flowId: "bugfix",
+    });
+  });
+
+  it("task_create forwards the structured source to the strict route (ADR-206)", async () => {
+    const source = {
+      kind: "github",
+      instance: "github.com",
+      scope: "acme/widgets",
+      externalId: "I_1",
+      externalKey: "#7",
+      url: "https://github.com/acme/widgets/issues/7",
+    };
+
+    mockOnce({ taskId: "t1", source }, 201);
+    await dispatchTool({
+      name: "task_create",
+      args: { slug: "demo", title: "Fix", prompt: "p", source },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      title: "Fix",
+      prompt: "p",
+      source,
+    });
+  });
+
+  it("task_find_by_source → GET …/tasks/by-source with only the identity triple", async () => {
+    mockOnce({ task: null }, 200);
+    await dispatchTool({
+      name: "task_find_by_source",
+      args: {
+        slug: "demo",
+        kind: "github",
+        instance: "github.com",
+        externalId: "I_1",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/by-source?kind=github&instance=github.com&externalId=I_1`,
+    );
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("task_source_bind → PUT …/tasks/{taskId}/source with the source and expectedRevision", async () => {
+    mockOnce({ task: { id: "t1" } }, 200);
+    await dispatchTool({
+      name: "task_source_bind",
+      args: {
+        slug: "demo",
+        taskId: "t1",
+        kind: "github",
+        instance: "github.com",
+        scope: "acme/widgets",
+        externalId: "I_1",
+        expectedRevision: 3,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("PUT");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/tasks/t1/source`);
+    expect(parsedBody(init)).toEqual({
+      kind: "github",
+      instance: "github.com",
+      scope: "acme/widgets",
+      externalId: "I_1",
+      expectedRevision: 3,
     });
   });
 

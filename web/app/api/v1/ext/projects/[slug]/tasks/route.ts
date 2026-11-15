@@ -18,6 +18,7 @@ import {
   taskStatementSchema,
 } from "@/lib/tasks/statement";
 import { createTask } from "@/lib/services/tasks";
+import { taskSourceInputSchema } from "@/lib/tasks/external-source/validate";
 import { listTaskDTOs } from "@/lib/services/tasks";
 import { tokenAuditIdentity } from "@/lib/tokens/audit";
 import {
@@ -39,6 +40,8 @@ const postBodySchema = z
     // M34 (ADR-089): optional — simple-intent creation; the task classifies
     // as `unconfigured` until triage (or a human) fills the flow.
     flowId: z.string().min(1).optional(),
+    // ADR-206: structured external source identity, bound in the create tx.
+    source: taskSourceInputSchema.optional(),
   })
   .strict();
 
@@ -95,6 +98,17 @@ export async function POST(
           { status: 422 },
         );
       }
+      // Librarian tasks originate in a conversation, never an external tracker.
+      if (librarian && body.source) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: "a librarian token cannot attach an external source",
+            details: { reason: "source_not_allowed_for_token" },
+          },
+          { status: 422 },
+        );
+      }
       if (!librarian && !body.prompt) {
         return NextResponse.json(
           { code: "CONFIG", message: "prompt is required" },
@@ -148,7 +162,7 @@ export async function POST(
         : {};
 
       try {
-        const { taskId } = await (db as TransactionalDb).transaction(
+        const { taskId, source } = await (db as TransactionalDb).transaction(
           async (tx) => {
             const created = await createTask(
               {
@@ -157,6 +171,7 @@ export async function POST(
                   ? renderStatementPrompt(body.statement)
                   : body.prompt!,
                 flowId,
+                source: body.source,
               },
               {
                 projectId: ctx.projectId,
@@ -235,11 +250,14 @@ export async function POST(
           },
         );
 
-        return NextResponse.json({ taskId, ...receipt }, { status: 201 });
+        return NextResponse.json(
+          { taskId, ...receipt, ...(body.source ? { source } : {}) },
+          { status: 201 },
+        );
       } catch (err) {
         if (isMaisterError(err)) {
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            { code: err.code, message: err.message, details: err.details },
             { status: httpStatusForExtCode(err.code) },
           );
         }
