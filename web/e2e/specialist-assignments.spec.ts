@@ -82,7 +82,7 @@ test("E2E-CBU-02 lists, filters and opens accessible specialist work", async ({
   await expect(page.getByText("Authority at submission")).toBeAttached();
 });
 
-test("E2E-CBU-02 cancels and reopens through confirmed, replay-safe controls", async ({
+test("E2E-CBU-02 cancels through confirmed controls and directs follow-up to the retained work", async ({
   page,
 }) => {
   await page.goto(`/specialist-assignments/${assignmentId}`);
@@ -113,26 +113,14 @@ test("E2E-CBU-02 cancels and reopens through confirmed, replay-safe controls", a
   );
   await expect(page.getByText("Assignment cancelled").first()).toBeVisible();
 
-  await page
-    .getByRole("button", { name: "Reopen assignment", exact: true })
-    .click();
-  const reopenDialog = page.getByRole("dialog", {
-    name: "Reopen this assignment?",
-  });
-
-  await reopenDialog
-    .getByLabel("Reason", { exact: true })
-    .fill("The check is needed again.");
-  const reopened = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname ===
-        `/api/specialist-assignments/${assignmentId}/continue` &&
-      response.request().method() === "POST",
-  );
-
-  await reopenDialog.getByRole("button", { name: "Reopen assignment" }).click();
-  expect((await reopened).status()).toBe(202);
-  await expect(page.locator('[data-status="queued"]')).toHaveText("Queued");
+  await expect(
+    page.getByText(
+      "Reconcile any unresolved Stand operation and finish any Run in Review before submitting a new assignment.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Reopen assignment" }),
+  ).toHaveCount(0);
 });
 
 test("E2E-CBU-02 hides an existing assignment from another user", async ({

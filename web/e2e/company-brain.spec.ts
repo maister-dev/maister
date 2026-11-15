@@ -290,7 +290,13 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
         { name: "NEXT_LOCALE", value: locale, url: new URL(page.url()).origin },
       ]);
       await page.goto(`/runs/${runId}`);
-      const panel = page.getByTestId("native-input-inspection");
+      const shell = page.getByTestId("run-shell").filter({ visible: true });
+
+      await shell.getByTestId("run-header-inspector-toggle").click();
+      const inspector = shell.getByTestId("run-shell-inspector");
+
+      await expect(inspector).toBeVisible();
+      const panel = inspector.getByTestId("native-input-inspection");
 
       await panel.getByText(title, { exact: true }).click();
       await expect(panel.getByText(input.title, { exact: true })).toBeVisible();
@@ -313,6 +319,9 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
       [runId],
     );
     await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Требуется доступ к источникам" }),
+    ).toBeVisible();
     await expect(page.getByTestId("native-input-inspection")).toHaveCount(0);
     expect(await page.content()).not.toContain(input.prompt);
   } finally {

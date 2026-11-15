@@ -136,6 +136,24 @@ jobs:
           # Keep container/exec output namespaces disabled; diagnose the unchanged probe deadline.
           DEBUG: testcontainers
 
+  company-brain-specialist-acceptance:
+    name: Company Brain and specialist browser acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maister-web exec playwright install --with-deps chromium
+      - run: pnpm --filter maister-web test:e2e --project=authed e2e/company-brain.spec.ts e2e/specialist-assignments.spec.ts
+
   execution-data-plane:
     name: A/B web (Node ${{ matrix.node }}, shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
