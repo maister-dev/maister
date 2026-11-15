@@ -15,6 +15,16 @@ Two kinds of view live here (ADR-159):
   If a domain diagram disagrees with the Drizzle schema, the schema wins —
   open a PR to fix the ERD.
 
+Database invariants enforced in SQL — guard functions and their triggers — are
+redefined across many migrations, so the effective body is whatever the last
+migration wrote. `web/lib/db/canonical/` holds that effective definition, one
+file per function plus `_triggers.sql`, **generated** from a freshly migrated
+main + Brain database. Review a guard there, not in migration history. After a
+migration that adds, replaces or drops a function or trigger, regenerate with
+`pnpm --filter maister-web db:canonical-sql`; the integration test
+`lib/db/__tests__/canonical-sql.integration.test.ts` (or `db:canonical-sql
+--check`) fails on drift.
+
 ## Files
 
 | File | Scope |
