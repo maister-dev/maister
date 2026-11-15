@@ -367,4 +367,25 @@ describe("task external source binding (ADR-206)", () => {
       db,
     );
   });
+
+  it("S6: a Jira source binds on a GitVerse-hosted project — the source is independent of the code host", async () => {
+    const projectId = await seedProject();
+
+    await db
+      .update(schema.projects)
+      .set({ provider: "gitverse", repoUrl: "https://gitverse.ru/acme/app.git" })
+      .where(eq(schema.projects.id, projectId));
+
+    const created = await createTask(
+      {
+        title: "From Jira",
+        prompt: "p",
+        source: { kind: "jira", instance: "acme.atlassian.net", scope: "OPS", externalId: "10007", externalKey: "OPS-7" },
+      },
+      { projectId, actor: user },
+      db,
+    );
+
+    expect(created.source).toMatchObject({ kind: "jira", externalKey: "OPS-7" });
+  });
 });
