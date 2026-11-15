@@ -16,7 +16,7 @@ export const RANKER_VERSION = "hybrid-v1";
 
 // Hybrid score weights (tune-on-real-runs). vector similarity dominates; the
 // lexical leg breaks ties and covers items not yet re-embedded mid-reindex; a
-// small confidence term rewards reinforced memories.
+// small confidence term favours higher-confidence memories.
 const RANK_WEIGHTS = { vector: 1.0, lexical: 0.25, confidence: 0.1 } as const;
 const INDEXED_CONFIDENCE = 1;
 

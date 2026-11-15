@@ -510,8 +510,8 @@ depends on it** — a fresh, cleared, or resumed session reconstructs identical
 state from the ledger + worktree. `brain` is the ONE exception to the
 byte-identical-regeneration claim: it is a live-recall projection computed in
 `runner-graph.ts` and passed into `writeRunContext` as plain data (so
-`buildRunContext` stays pure), and its content can change with decay/reinforcement
-between rewrites; the terminal (post-loop) rewrite preserves the last ambient
+`buildRunContext` stays pure), and its content can change with decay and new
+retains between rewrites; the terminal (post-loop) rewrite preserves the last ambient
 projection, so `run.json` does not drop `brain` at run end. The runner appends a
 one-line pointer `[Run context: <abs run.json path>]`
 to each agent node's resolved prompt (after `renderStrict`, before dispatch; graph

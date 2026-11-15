@@ -1366,11 +1366,10 @@ paths:
       summary: (ADR-122/127, Implemented) Retain a project-brain memory
       description: |
         Scope `memory:write`. Retains owned-tier memory only. Identical active
-        `content_hash` is an idempotent no-op. For `lesson`/`observation`,
-        semantically-near active items of the same kind reinforce in place
-        (cosine > τ=0.85 → confidence +0.1, push `expires_at`). For changed
-        near `state_fact`, the newer fact is inserted active and the prior active
-        fact becomes `superseded`. `decision`/`direction` are accepted only when
+        `content_hash` is an idempotent no-op. A semantically-near active item
+        of the same kind (cosine > τ=0.85) is never reinforced or superseded:
+        the new item is inserted active and a `potential_conflict` review
+        candidate is recorded against the near item. `decision`/`direction` are accepted only when
         project home-resolution has no canonical source; a covering source
         returns 422 `CONFIG` naming the source and proposal path. Provenance actor
         is derived from the token — the body carries NO project id.
@@ -1397,7 +1396,7 @@ paths:
             schema: { $ref: "#/components/schemas/ExtMemoryRetainBody" }
       responses:
         "200":
-          description: The retained, reinforced, or superseding item.
+          description: The retained item (new, or the existing exact duplicate).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtMemoryRetainResult" }
@@ -9791,7 +9790,7 @@ components:
       properties:
         reinforced:
           type: boolean
-          description: true = an existing near lesson/observation was reinforced; false = exact no-op, insert, or state_fact supersede-on-change.
+          description: Retained for compatibility; always false (retain no longer reinforces near items).
         item:
           type: object
           required: [id, kind, status]

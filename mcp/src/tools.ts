@@ -473,7 +473,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   memory_retain: {
     description:
-      "Retain a project-memory item (ADR-122). Embeds and dedup-or-reinforces. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
+      "Retain a project-memory item (ADR-122). Embeds; an exact duplicate is a no-op, a near item is recorded as a review candidate, never merged. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
     inputSchema: {
       type: "object",
       properties: {

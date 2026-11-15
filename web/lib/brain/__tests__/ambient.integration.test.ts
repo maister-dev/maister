@@ -27,6 +27,7 @@ import {
   resetAmbientCache,
   selectAmbientItems,
 } from "@/lib/brain/ambient";
+import { BRAIN_POLICY } from "@/lib/brain/policy";
 import { retain } from "@/lib/brain/retain";
 import { writeRunContext } from "@/lib/flows/graph/run-context";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
@@ -74,13 +75,6 @@ beforeEach(async () => {
     { kind: "lesson", content: "ambient-worthy lesson" },
     {},
     { db: ctx.db, client },
-  );
-  // Ambient injection is floored at BRAIN_POLICY.ambientMinConfidence (0.4) —
-  // an item must have been reinforced at least once. Simulate the recurrence
-  // promotion directly (a near-dup reinforce is not reachable with orthogonal
-  // one-hot test vectors).
-  await ctx.db.execute(
-    sql`UPDATE brain_items SET confidence = 0.5 WHERE project_id = ${projectId}`,
   );
 });
 
@@ -236,15 +230,17 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     expect(Number(snaps.rows[0]?.n)).toBe(0);
   });
 
-  it("floors ambient injection at ambientMinConfidence: a fresh (never-reinforced) item is NOT injected", async () => {
-    // A brand-new project with one fresh retain at confidence₀ = 0.3 — below
-    // the 0.4 auto-injection floor ("recurrence promotes").
+  it("injects a freshly retained item: the ambient floor never exceeds the initial confidence", async () => {
+    // Retain no longer reinforces, so nothing can lift an item above confidence₀.
+    expect(BRAIN_POLICY.ambientMinConfidence).toBeLessThanOrEqual(
+      BRAIN_POLICY.initialConfidence,
+    );
     const freshProject = await seedBrainProject(ctx.db);
     const freshRun = await seedRun(freshProject);
 
     await retain(
       freshProject,
-      { kind: "lesson", content: "unvetted fresh lesson" },
+      { kind: "lesson", content: "fresh lesson" },
       {},
       { db: ctx.db, client },
     );
@@ -254,8 +250,35 @@ describe("getAmbientBrainProjection (T4.3)", () => {
       projectId: freshProject,
       brainContext: true,
       taskTitle: "Fix",
-      taskPrompt: "unvetted fresh lesson",
+      taskPrompt: "fresh lesson",
       runId: freshRun,
+      client,
+    });
+
+    expect(brain?.map((entry) => entry.content)).toEqual(["fresh lesson"]);
+  });
+
+  it("floors ambient injection at ambientMinConfidence: an item below the floor is NOT injected", async () => {
+    const lowProject = await seedBrainProject(ctx.db);
+    const lowRun = await seedRun(lowProject);
+
+    await retain(
+      lowProject,
+      { kind: "lesson", content: "low-confidence lesson" },
+      {},
+      { db: ctx.db, client },
+    );
+    await ctx.db.execute(
+      sql`UPDATE brain_items SET confidence = ${BRAIN_POLICY.ambientMinConfidence - 0.1} WHERE project_id = ${lowProject}`,
+    );
+
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId: lowProject,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "low-confidence lesson",
+      runId: lowRun,
       client,
     });
 

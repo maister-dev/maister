@@ -283,8 +283,9 @@ minConfidence?: number(0..1) }` — an unknown `kinds` value → 422 `CONFIG`
     `{ slug: string, content: string(≤ 32000 chars), kind:
 "lesson"|"observation"|"state_fact"|"decision"|"direction", title?:
 string(1..512), tags?: string[] (≤ 10 items, each ≤ 64 chars) }` — body
-    carries NO project id. Embeds and **dedup-or-reinforces** or inserts at
-    confidence₀. `decision`/`direction` retain is refused when a registered
+    carries NO project id. Embeds, no-ops an exact duplicate, otherwise inserts
+    at confidence₀ (a near same-kind item gets a `potential_conflict` review
+    candidate, never a reinforce). `decision`/`direction` retain is refused when a registered
     canonical home covers the kind.
   - `memory_clusters` (scope `memory:read`, `GET
 /api/v1/ext/projects/{slug}/memory/clusters`): server-computed recurring

@@ -14,9 +14,11 @@ export const BRAIN_POLICY = {
   // Sub-project B: indexed chunks fill only leftover ambient slots.
   ambientIndexedMax: 2,
   ambientIndexedMinScore: 0.25,
-  // Legacy ambient retrieval floor. It never indicates factual confirmation.
+  // Ambient retrieval floor. It never indicates factual confirmation. It must not
+  // exceed initialConfidence: retain no longer reinforces, so nothing raises an
+  // item's confidence and a higher floor would exclude every new item.
   // Explicit recall (ext route / MCP) is NOT floored; callers pass their own.
-  ambientMinConfidence: 0.4,
+  ambientMinConfidence: 0.3,
   // brain_snapshots older than this are pruned by the decay sweep (audit
   // evidence, not source of truth — unbounded growth otherwise: ambient writes
   // one row per run × generation).

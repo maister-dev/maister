@@ -77,7 +77,7 @@ harvested and does not enqueue source reindex work.
   marker outlives `domain_events` GC), harvested_at }`, PK `(project_id,
   domain_event_id)`. Claimed as the FIRST step of `retain`'s transaction so an
   at-least-once redelivery is a no-op across ALL retain outcomes
-  (insert / reinforce / exact-dup).
+  (insert / exact-dup).
 - **Shared-table columns (Implemented, migrations `0088`, `0091`)** — `platform_runtime_settings`
   gains `embedding_base_url`, `embedding_model`, `embedding_dimensions`,
   `embedding_api_key_ref`, `distill_base_url`, `distill_model`,
@@ -117,10 +117,11 @@ harvested and does not enqueue source reindex work.
   authored_draft_id?, task_id?, run_id?, created_at, updated_at, resolved_at,
   applied_at }`. Proposal status is a closed FSM; publishing is not part of
   Brain.
-- **Policy constants** (Implemented) — `web/lib/brain/policy.ts`: τ=0.85 (dedup cosine),
-  confidence₀=0.3, TTL=30d, reinforce=+0.1 confidence / +30d `expires_at`, ambient
-  K=5, `ambientMinConfidence`=0.4 (ambient-inject floor — one reinforce above
-  confidence₀; explicit recall is unaffected), `snapshotTtlDays`=30 (snapshot GC).
+- **Policy constants** (Implemented) — `web/lib/brain/policy.ts`: τ=0.85 (near-claim
+  review-candidate cosine), confidence₀=0.3, TTL=30d, ambient K=5,
+  `ambientMinConfidence`=0.3 (ambient-inject floor, equal to confidence₀ because no
+  writer raises confidence; explicit recall is unaffected), `snapshotTtlDays`=30
+  (snapshot GC).
   Named constants, tune-on-real-runs; not env, not DB in A.
 - **`RecallRanker`** (Implemented) — the DIP seam (`web/lib/brain/recall-ranker.ts`):
   a swappable ranking interface with a default pgvector hybrid implementation.
@@ -129,19 +130,20 @@ harvested and does not enqueue source reindex work.
 
 ### `brain_items` lifecycle (Implemented)
 
-An item is inserted `active` at confidence₀; a semantically-near retain of the SAME
-kind reinforces `lesson`/`observation` in place (self-loop, no new row), while a
-changed near `state_fact` inserts the newer fact and marks the prior active fact
-`superseded`. The decay sweep expires decayed kinds past `expires_at`.
+An item is inserted `active` at confidence₀. A semantically-near retain of the
+SAME kind no longer reinforces or supersedes: it inserts its own active item and
+records a `potential_conflict` review candidate (`brain_edges`) against the near
+item, so similarity never merges claims or decides which is true. The decay sweep
+expires decayed kinds past `expires_at`. Legacy `superseded` rows and
+`reinforcement_count` values remain readable; retain no longer writes them.
 
 ```mermaid
 stateDiagram-v2
     [*] --> active: retain insert (confidence0 0.3, expires_at now+TTL)
-    active --> active: lesson/observation reinforce (same kind, cosine > tau) — confidence +0.1, reinforcement_count++, expires_at +30d
-    active --> expired: decay sweep — now > expires_at AND not reinforced
-    active --> superseded: state_fact changed near-duplicate retained
+    active --> active: near same-kind retain — separate item + potential_conflict candidate edge
+    active --> expired: decay sweep — now > expires_at
     expired --> [*]: excluded from recall (terminal)
-    superseded --> [*]: excluded from recall (terminal)
+    superseded --> [*]: legacy rows only — excluded from recall (terminal)
 ```
 
 Embedding generations are immutable: an item's `active` status is orthogonal to how
@@ -197,7 +199,7 @@ sequenceDiagram
     H->>L: build prompt from run/gate ids + review_comments + rework chain + task title/prompt
     L-->>H: {content, kind, tags} (schema-validated) OR invalid
     H->>R: retain(projectId, item, provenance FKs)
-    R-->>H: inserted or reinforced (idempotent via the brain_harvested_events ledger)
+    R-->>H: inserted or exact no-op (idempotent via the brain_harvested_events ledger)
     H->>D: cursor advances (permanent success) — or throws (transient) so cursor holds
 ```
 
@@ -206,13 +208,14 @@ rework chain) is FENCED between explicit `BEGIN/END UNTRUSTED RUN DATA` markers 
 a data-not-instructions instruction, and the distill completion request carries
 `max_tokens` (bounds respend on a runaway provider).
 
-### (b) `retain` — atomic retain, reinforce, or supersede (Implemented)
+### (b) `retain` — atomic retain with near-claim review candidates (Implemented)
 
 `retain` embeds OUTSIDE the transaction, then serializes per-project writes with an
-advisory lock. Exact active `content_hash` duplicates no-op. Near
-`lesson`/`observation` retains reinforce the active item. Near changed
-`state_fact` retains insert a new active fact and mark the prior active fact
-`superseded`; only active rows participate in recall.
+advisory lock. Exact active `content_hash` duplicates no-op. A near same-kind
+retain inserts its own active item and records a `potential_conflict` candidate
+edge to the nearest active item; neither row is modified. Only active rows
+participate in recall. The response field `reinforced` is retained for
+compatibility and is always `false`.
 
 ```mermaid
 flowchart TD
@@ -229,15 +232,11 @@ flowchart TD
     LED -- no / not harvest --> HASH{exact content_hash active dup?}
     HASH -- yes --> NOOP[idempotent no-op]
     HASH -- no --> NEAR{cosine-sim > tau to an active item of the SAME kind?}
-    NEAR -- yes, lesson/observation --> REIN[reinforce UPDATE re-checks status=active RETURNING]
-    NEAR -- yes, state_fact --> SUP[insert new active fact + mark prior fact superseded]
-    REIN -- row returned --> OK[confidence +0.1, count++, expires_at +30d]
-    REIN -- no row: racing decay expired it --> INS
+    NEAR -- yes --> CAND[insert item + potential_conflict candidate edge to the near item]
     NEAR -- no --> INS[insert item confidence0 0.3 + TTL + embedding generations]
     RED --> COMMIT[(commit)]
     NOOP --> COMMIT
-    OK --> COMMIT
-    SUP --> COMMIT
+    CAND --> COMMIT
     INS --> COMMIT
 ```
 
@@ -272,9 +271,9 @@ projection is passed INTO `writeRunContext` as plain data — `buildRunContext` 
 pure. The whole ambient step — including the `projects.brain_enabled` re-check —
 runs inside one best-effort try: any DB/provider error degrades to no-injection and
 NEVER fails the run, and a recall/provider failure is negative-cached for 60s per
-process. Only items with `confidence >= 0.4` (`BRAIN_POLICY.ambientMinConfidence` —
-one reinforce above confidence₀, so an item must have recurred at least once before
-it is auto-injected; explicit recall is unaffected) are injected. The query embedding
+process. Only items with `confidence >= 0.3` (`BRAIN_POLICY.ambientMinConfidence`,
+equal to confidence₀ so freshly retained items qualify; explicit recall is
+unaffected) are injected. The query embedding
 is memoized per runner process, keyed by
 `hash(query + embedding_model + embedding_dimensions)`, and exactly ONE snapshot row
 is written per `(run, query_hash, embedding_model)` — repeated node iterations do not
@@ -292,7 +291,7 @@ sequenceDiagram
     EN-->>RG: no / any error — brain field absent, run never fails (failure negative-cached 60s)
     EN-->>RG: yes — continue
     RG->>RC: recall(project, query = task title + prompt) [memoized query embedding]
-    RC-->>RG: top-K items with confidence >= 0.4 + ONE brain_snapshots row per (run, query_hash, model) — trigger=ambient, node_attempt_id NULL
+    RC-->>RG: top-K items with confidence >= 0.3 + ONE brain_snapshots row per (run, query_hash, model) — trigger=ambient, node_attempt_id NULL
     RG->>WC: writeRunContext(ctx, brain=topK)
     WC-->>RG: .maister/run.json carries brain top-K (git-excluded, preserved by the terminal rewrite)
 ```
@@ -323,7 +322,7 @@ flowchart TD
 `runBrainDecaySweep()` is folded into `runSystemSweep()`. The 60s system tick
 self-throttles the sweep to hourly via a last-run stamp; decay is expiry-only in A —
 confidence never decreases and there is no per-tick decrement. Items past
-`expires_at` without reinforcement become `expired` and drop out of recall. The same
+`expires_at` become `expired` and drop out of recall. The same
 sweep prunes `brain_snapshots` older than 30 days (`BRAIN_POLICY.snapshotTtlDays`).
 A sweep error is caught into the sweep summary, never thrown.
 
@@ -446,13 +445,13 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
   MUST create a new embedding generation, NEVER mutate a row — and both the owned
   item arm and indexed chunk arm carry UNIQUE generation keys, so an overlapping
   reindex sweep never writes a duplicate generation row. (Implemented)
-- **E-3** — `retain` MUST be idempotent on identical `content_hash`;
-  semantically-near active `lesson`/`observation` items of the SAME kind above
-  threshold τ=0.85 reinforce in place, while changed near `state_fact` items
-  supersede the prior active fact and insert a fresh active fact. (Implemented)
+- **E-3** — `retain` MUST be idempotent on identical `content_hash`; a
+  semantically-near active item of the SAME kind above threshold τ=0.85 MUST NOT be
+  merged, reinforced or superseded — the new item is inserted and a
+  `potential_conflict` review candidate edge is recorded. (Implemented)
 - **E-4** — Harvested `lesson`/`observation` items MUST start at confidence₀=0.3
-  (below any auto-apply threshold) and MUST become `expired` at `expires_at` unless
-  reinforced. (Implemented)
+  (below any auto-apply threshold) and MUST become `expired` at `expires_at`.
+  (Implemented)
 - **E-6** — Recall MUST perform NO LLM call at read time. (Implemented)
 - **E-7** — Harvest MUST be event-driven off `domain_events` over exactly
   `RUN_TERMINAL_EVENT_KINDS` + `gate.failed` (`run.review` MUST NOT be harvested)
@@ -548,19 +547,18 @@ implemented in this branch unless a bullet explicitly names a later deferral.)*
   `MaisterError("CONFIG")` (misconfiguration, not an outage).
 - **Exact-dup / near-dup retain race** → the DB partial UNIQUEs collapse the race:
   exact `content_hash` → `MaisterError("CONFLICT")`-mapped constraint (idempotent
-  no-op); the per-project advisory lock serializes near-dup reinforcement and
-  `state_fact` supersede-on-change.
-- **Near-dup across kinds** → dedup is KIND-SCOPED: a `state_fact` never reinforces
-  a `lesson` — a cross-kind near-duplicate inserts a separate item.
-- **Reinforce vs decay race** → the reinforce UPDATE re-checks `status='active'`
-  (`RETURNING`); if a racing decay sweep expired the item mid-transaction, retain
-  falls through and INSERTS a fresh item instead of reinforcing an invisible one.
-- **State fact updates** → changed near-duplicate `state_fact` retains insert a
-  new active row and mark exactly one prior active fact `superseded`; superseded
-  rows stay excluded from recall.
+  no-op); the per-project advisory lock serializes near-claim candidate recording.
+- **Near-dup across kinds** → candidate matching is KIND-SCOPED: a cross-kind
+  near-duplicate inserts a separate item with no candidate edge.
+- **Near-claim vs decay race** → the candidate edge is inserted only if the near
+  item still exists in the owner scope; a racing expiry leaves the new item intact.
+- **State fact updates** → a changed near-duplicate `state_fact` inserts a new
+  active row and a `potential_conflict` candidate; both facts stay active and
+  recallable until a reviewer resolves the conflict. Legacy `superseded` rows stay
+  excluded from recall.
 - **Ambient recall failure** → the enable-check runs INSIDE the best-effort try:
   any DB/provider error degrades to no-injection (the run NEVER fails) and is
-  negative-cached for 60s per process; items below `confidence` 0.4
+  negative-cached for 60s per process; items below `confidence` 0.3
   (`ambientMinConfidence`) are not injected.
 - **Oversized/abusive ext input** → the ext memory routes + MCP mirror cap
   `content` ≤ 32000 chars, `title` 1..512, `tags` ≤ 10 items × ≤ 64 chars, recall

@@ -22,8 +22,8 @@ import { usesNativeKnowledgeTransport } from "./knowledge-execution-access";
 // degrades to an undefined projection; it never fails the run. Enablement is
 // runs.brain_context (opt-in; null = off in A) AND the live projects.
 // brain_enabled kill switch, re-checked here on every call. Injection is
-// floored at BRAIN_POLICY.ambientMinConfidence — an item must have been
-// reinforced at least once before it is auto-injected (explicit recall is not
+// floored at BRAIN_POLICY.ambientMinConfidence, which equals the initial
+// confidence so freshly retained items qualify (explicit recall is not
 // floored). The query embedding is memoized per runner process keyed by
 // hash(query + model + dimensions); a failure is negative-cached for
 // AMBIENT_FAILURE_TTL_MS so a provider outage does not add a full retry storm
@@ -137,8 +137,7 @@ export async function getAmbientBrainProjection(
       client,
       queryEmbedding,
       limit: BRAIN_POLICY.ambientK,
-      // Auto-injection floor: only items reinforced at least once (confidence₀
-      // + one step). Explicit recall is deliberately NOT floored.
+      // Auto-injection floor (== confidence₀). Explicit recall is deliberately NOT floored.
       minConfidence: BRAIN_POLICY.ambientMinConfidence,
     });
 

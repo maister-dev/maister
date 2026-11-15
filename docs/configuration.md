@@ -209,7 +209,7 @@ response, logged, or streamed — the same `env:NAME` policy as
 `platform_mcp_servers` / `platform_acp_runners`. A runtime embedding model **or
 dimension** switch is a reindex generation, not a migration. Behavior policy
 constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
-`ambientMinConfidence` 0.4 (ambient-inject floor) and `snapshotTtlDays` 30 (the
+`ambientMinConfidence` 0.3 (ambient-inject floor, equal to the initial confidence) and `snapshotTtlDays` 30 (the
 `brain_snapshots` GC horizon). See
 [`system-analytics/project-brain.md`](system-analytics/project-brain.md).
 

@@ -27,7 +27,7 @@ works for company ownership without a repository and keeps explicit access separ
 | Tier | Contents | Authority |
 | --- | --- | --- |
 | Indexed | Typed chunks from canonical repository sources such as project documentation, decisions, and code-oriented sources. | The repository remains canonical. Recall returns a preview and source pointer. |
-| Owned memory | Lessons, observations, and state facts retained from Runs, gates, or explicit agent operations. | MAIster owns lifecycle, confidence, reinforcement, and expiry. |
+| Owned memory | Lessons, observations, and state facts retained from Runs, gates, or explicit agent operations. | MAIster owns lifecycle, confidence, and expiry. |
 
 Decisions and directions prefer a declared canonical home. When such a home
 exists, an agent must propose a change to that source instead of silently
@@ -75,15 +75,16 @@ snapshot of the query, model, returned item IDs, scores, and pointers so later
 audits can reconstruct which knowledge was supplied.
 
 A Flow Run can opt into ambient Brain context. MAIster recalls against the task
-title and prompt, adds only sufficiently reinforced items to `.maister/run.json`,
+title and prompt, adds the top-ranked active items to `.maister/run.json`,
 and marks them as background context rather than instructions. A provider outage
 does not fail the Run; it omits ambient context and leaves a diagnostic signal.
 
 ## Retention and improvement
 
-Terminal Run and gate events can be distilled into a bounded lesson. Near
-duplicate lessons and observations reinforce an existing item. A changed state
-fact supersedes the old fact. Time-limited items expire through the scheduler;
+Terminal Run and gate events can be distilled into a bounded lesson. A near
+duplicate of an existing item is stored separately and flagged as a potential
+conflict for review; similarity never merges items or decides which is true.
+Time-limited items expire through the scheduler;
 state facts do not decay in the same way.
 
 Recurring evidence can become an improvement proposal:
