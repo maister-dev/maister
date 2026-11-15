@@ -104,8 +104,8 @@
     {
       "path": "docs/system-analytics/specialist-assignments.md",
       "qualifiedSha256": "e05f1920b4660670329fa5c2edc7958ba83fbcaf7a92e22097d2e50fa9494ce8",
-      "currentSha256": "b3507e3a8ae3ea692e3bdf1e702d808e66ae1586eee162cfcf7309dd09a1a717",
-      "reason": "Review fixes: operator list/input/continue/cancel/work controls with idempotency receipts (migration 0338), cancel precondition-before-stop, Review counted as stopped for cancel, assignment_run_unstoppable, hidden 404 on writes (CBA-08, EDGE-CBA-06). Not part of the T43 live qualification; covered by IT-CBA integration tests."
+      "currentSha256": "4a0112259a5782f5036a6594998d39363fc500275b980684fba4070b254cd34a",
+      "reason": "Review fixes: operator list/input/continue/cancel/work controls with idempotency receipts (migration 0338), cancel precondition-before-stop, Review counted as stopped for cancel, assignment_run_unstoppable, hidden 404 on writes (CBA-08, EDGE-CBA-06). Not part of the T43 live qualification; covered by IT-CBA integration tests. Docs-only review fix: state-machine transitions with no application writer (failed, reconciling, waiting_children, waiting_resource, pre-admission question, awaiting_acceptance rework) tagged Designed; the implemented waiting_input -> active answer path and the active-after-root-end retry/cancel-reopen recovery documented."
     }
   ]
 }

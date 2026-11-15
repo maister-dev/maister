@@ -29,29 +29,38 @@ described below. Full installed-package qualification has its own gate.
 ## State machine
 
 Assignment transitions are business state, not additional `runs.status` values.
+The database head guard admits every transition below; transitions tagged
+`(Designed)` have no application writer yet, so their target states are not
+reached in practice.
 
 ```mermaid
 stateDiagram-v2
     [*] --> queued
     queued --> active: existing run admitted
-    queued --> waiting_input: durable pre-admission question
+    queued --> waiting_input: durable pre-admission question (Designed)
     active --> waiting_input: durable question
-    active --> waiting_children: governed child work
-    active --> waiting_resource: conflicting resource claim
-    active --> reconciling: uncertain external effect
+    active --> waiting_children: governed child work (Designed)
+    active --> waiting_resource: conflicting resource claim (Designed)
+    active --> reconciling: uncertain external effect (Designed)
     active --> awaiting_acceptance: expected result available
-    waiting_input --> queued: answer appended and continuation requested
-    waiting_children --> queued: child settled wakes coordinator
-    waiting_resource --> queued: evidenced release
-    reconciling --> queued: evidence or authorized successor ready
+    waiting_input --> active: answer appended as the next input revision
+    waiting_input --> queued: answer appended and continuation requested (Designed)
+    waiting_children --> queued: child settled wakes coordinator (Designed)
+    waiting_resource --> queued: evidenced release (Designed)
+    reconciling --> queued: evidence or authorized successor ready (Designed)
     awaiting_acceptance --> completed: exact result and obligations accepted
-    awaiting_acceptance --> queued: bounded rework
-    active --> failed: stopped execution and unrecoverable refusal
+    awaiting_acceptance --> queued: bounded rework (Designed)
+    active --> failed: stopped execution and unrecoverable refusal (Designed)
     queued --> cancelled: authorized cancel
     active --> cancelled: stopped agent and retained effects
     failed --> queued: explicit authorized recovery revision
     cancelled --> queued: explicit authorized recovery revision
 ```
+
+Until the `failed` classifier exists, an assignment whose root Run ends stays
+`active` (Implemented). That is the state the pre-dispatch replacement retry
+requires (`company-retry`, `project-specialist-retry`); when no retry applies,
+the operator cancels and then reopens the assignment.
 
 ## Process flows
 
@@ -118,13 +127,13 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Transition group | Allowed source and current authority | Commit and wake |
 | --- | --- | --- |
 | Admit | queued, active company/project binding and expected input | Existing run reservation/claim linked atomically; active only after actual admission |
-| Park for input/children/resource/reconcile | active with current coordinator epoch | Persist question/work/blocker/operation pointer and state/CAS/outbox together; release slot only by owning run contract |
-| Continue parked work | corresponding wait state, expected input and evidence/reply, current authority | Append input or accepted evidence; queue existing governed continuation; cap-gated activation |
+| Park for input (Implemented); children/resource/reconcile (Designed) | active with current coordinator epoch | Persist question/work/blocker/operation pointer and state/CAS/outbox together; release slot only by owning run contract |
+| Continue parked work (input: Implemented as `waiting_input` → `active`; other waits Designed) | corresponding wait state, expected input and evidence/reply, current authority | Append input or accepted evidence; queue existing governed continuation; cap-gated activation |
 | Result ready | active or reconciling after coordinator evaluation | Exact valid result revision and obligation set; awaiting_acceptance, never completed automatically |
 | Accept | awaiting_acceptance, responsible/current acceptance authority, exact input/context/result and satisfied policy obligations | Acceptance/state/completion timestamp/delivery outbox in one transaction |
-| Request rework | awaiting_acceptance or settled work item, current responsible actor, remaining budget | New work/input revision; old result immutable; governed continuation |
+| Request rework (settled work item: Implemented; `awaiting_acceptance`: Designed) | awaiting_acceptance or settled work item, current responsible actor, remaining budget | New work/input revision; old result immutable; governed continuation |
 | Cancel | Not completed, failed or cancelled; current cancel authority and expected revision, all checked before any stop; stop owned agents first | Record cancelled with reason, close owned waits/claims/outbox; preserve confirmed/unknown effects for independent reconciliation |
-| Fail | Nonterminal state, stopped execution and classified unrecoverable error | Preserve diagnostic/effect history; failed reason/time, never infer not-applied |
+| Fail (Designed) | Nonterminal state, stopped execution and classified unrecoverable error | Preserve diagnostic/effect history; failed reason/time, never infer not-applied |
 | Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
