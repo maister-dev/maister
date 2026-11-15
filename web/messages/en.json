@@ -6956,6 +6956,7 @@
     "approvalRecorded": "Restart approval recorded",
     "cancel": "Cancel assignment",
     "workPages": "Delegated work pages",
+    "runLaunchTimeUnavailable": "Launch time unavailable",
     "firstWorkPage": "First page",
     "nextWorkPage": "Next page",
     "accept": "Accept verified outcome",

@@ -48,6 +48,7 @@ import {
   listAccessibleSpecialistAssignments,
   listSpecialistAssignmentWork,
 } from "../pages";
+import { readAssignmentRunSummaries } from "../workspace-view";
 
 import { contentDigest } from "@/lib/evaluations/digest";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
@@ -2470,6 +2471,33 @@ async function seedLinkedProjectAssignment(label: string): Promise<{
 function cancelControl(reason: string) {
   return { expectedRevision: 2, reason, idempotencyKey: randomUUID() };
 }
+
+it("IT-CBA-04 shows a linked Run's real launch time and keeps missing historical time explicit", async () => {
+  const { assignmentId, runId } =
+    await seedLinkedProjectAssignment("linked-run-time");
+  const read = async () => {
+    const assignment = await getVisibleSpecialistAssignment(
+      database.db,
+      requesterId,
+      assignmentId,
+    );
+
+    return readAssignmentRunSummaries(database.db, assignment.runIds);
+  };
+
+  await expect(read()).resolves.toEqual([
+    { id: runId, status: "Running", runKind: "flow", launchedAt: null },
+  ]);
+  const launchedAt = new Date("2026-11-04T10:30:00Z");
+  await database.pool.query("UPDATE runs SET launched_at=$2 WHERE id=$1", [
+    runId,
+    launchedAt,
+  ]);
+
+  await expect(read()).resolves.toEqual([
+    { id: runId, status: "Running", runKind: "flow", launchedAt },
+  ]);
+});
 
 it("IT-CBA-04 returns no pagination continuation through a wholly unreadable project", async () => {
   const { assignmentId } = await seedLinkedProjectAssignment(

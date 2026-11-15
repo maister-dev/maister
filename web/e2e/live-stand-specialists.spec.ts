@@ -1322,6 +1322,9 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     );
 
     expect(decisionPage?.ok()).toBe(true);
+    await expect(
+      page.getByRole("heading", { name: "Stand operations" }),
+    ).toBeVisible();
     await page
       .getByRole("button", { name: "Approve this restart", exact: true })
       .click();

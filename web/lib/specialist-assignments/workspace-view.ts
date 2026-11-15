@@ -5,7 +5,7 @@ import type { Owner } from "@/lib/company/types";
 import type { SpecialistAssignment } from "./types";
 import type { AssignmentAction } from "./access";
 
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 
 import { authorizeAssignment } from "./access";
 import {
@@ -23,6 +23,7 @@ import { authorizeCompanyRunUserActionInTransaction } from "@/lib/agents/company
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
+import { runs } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
@@ -455,7 +456,7 @@ export type AssignmentRunSummary = Readonly<{
   id: string;
   status: string;
   runKind: string;
-  createdAt: string;
+  launchedAt: Date | null;
 }>;
 
 /** Status and kind for runs the caller was already authorized to see. */
@@ -464,25 +465,17 @@ export async function readAssignmentRunSummaries(
   visibleRunIds: readonly string[],
 ): Promise<AssignmentRunSummary[]> {
   if (!visibleRunIds.length) return [];
-  const rows = (
-    await db.execute(sql`
-      SELECT id,status,run_kind,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
-      FROM runs WHERE id=ANY(${sql.param([...visibleRunIds])}::text[])
-      ORDER BY created_at DESC,id
-    `)
-  ).rows as {
-    id: string;
-    status: string;
-    run_kind: string;
-    created_at: string;
-  }[];
 
-  return rows.map((row) => ({
-    id: row.id,
-    status: row.status,
-    runKind: row.run_kind,
-    createdAt: row.created_at,
-  }));
+  return db
+    .select({
+      id: runs.id,
+      status: runs.status,
+      runKind: runs.runKind,
+      launchedAt: runs.launchedAt,
+    })
+    .from(runs)
+    .where(inArray(runs.id, visibleRunIds))
+    .orderBy(sql`${runs.activitySortAt} DESC NULLS LAST`, runs.id);
 }
 
 /** Display names for context authors; unknown or removed principals keep their ID. */

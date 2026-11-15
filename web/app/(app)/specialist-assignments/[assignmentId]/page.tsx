@@ -420,7 +420,9 @@ export default async function SpecialistAssignmentPage({
                   href={`/runs/${encodeURIComponent(run.id)}`}
                 >
                   {t(`runKind.${run.runKind === "agent" ? "agent" : "flow"}`)} ·{" "}
-                  {format.dateTime(new Date(run.createdAt), receiptTime)}
+                  {run.launchedAt
+                    ? format.dateTime(run.launchedAt, receiptTime)
+                    : t("runLaunchTimeUnavailable")}
                 </Link>
                 <span className="text-mute">{run.status}</span>
               </li>
