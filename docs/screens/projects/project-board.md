@@ -384,4 +384,4 @@ New task follows the [modal interaction contract](../../system-analytics/tasks.m
 
 ## Package 2 presentation (Implemented)
 
-The project header exposes tasks before retained work details. Open Runs and working copies for grouped attempts and individual workbench links.
+The project header exposes tasks before retained work details. Open Runs and working copies for grouped attempts and individual workbench links. (Designed — ADR-209) The disclosure also lists `Done`/`Abandoned` Runs whose workspace is not removed and carries `scheduled_removal_at`, so work that left the active rail stays reachable until GC. Task detail is specified in [`task-detail.md`](task-detail.md).

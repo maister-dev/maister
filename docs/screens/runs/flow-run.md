@@ -515,6 +515,15 @@ object.
 All strings are EN + RU; icons follow the repo's icon-affordance convention and a
 success state renders as a green check glyph, never the word.
 
+## Run timing facts (Designed — ADR-208)
+
+The header's "Active time" (a sum of node-attempt durations) is replaced by
+**Duration** (wall clock, live while the Run is active) and **Execution**
+(union of execution intervals minus waits, with `≈` for `partial` and `—` plus a
+reason for `unavailable`). An icon button beside Execution opens the breakdown
+popover (admission, human input, idle/checkpoint, child Runs, other). See
+[run timing](../../system-analytics/runs.md#run-timing).
+
 ## Linked artifacts
 
 - Blocks: [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md).

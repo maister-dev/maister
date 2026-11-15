@@ -1141,6 +1141,27 @@ already-inserted run) — never an orphan worktree or live ACP session.
 - Operational Runs take their identity from the frozen Run kind and use the canonical operational projection, including older Runs without a public result contract. Flow and code-delivery Runs surface retained changes and applicable stages. Scratch surfaces its turn and retained changes and gives interrupt and stop distinct labels.
 - A terminal failure can retain successful intermediate results. A failed or stale read cannot be displayed as absence or success.
 
+## Run timing
+
+(Designed — [ADR-208](../decisions.md#adr-208-run-duration-and-execution-time))
+
+Every Run exposes two metrics computed by the pure projection
+`web/lib/runs/run-timing.ts` from evidence batch-loaded by
+`web/lib/queries/run-timing.ts`. No schema change.
+
+| Metric | Definition |
+| --- | --- |
+| **Duration** | `end − start`, `start = runs.started_at`, `end = runs.ended_at ?? now` (live Runs are labeled live and tick on refresh) |
+| **Execution** | measure of `(⋃ execution intervals) − (⋃ wait intervals)`, clipped to `[start, end]` |
+
+- Execution intervals: `node_attempts` of `node_type ∈ {ai_coding, judge, cli, check, orchestrator, consensus}` (`human`/`form` excluded), open attempts clipped to `end`; agent and scratch Runs use `agent_turns [created_at, completed_at ?? end]`; child Runs (`parent_run_id`) contribute their own execution intervals clipped to the parent window.
+- Wait intervals: `hitl_requests [created_at, responded_at ?? superseded_at ?? end]`; checkpoint idle `[checkpoint_at, resume_started_at ?? end]`; admission `[start, first execution interval start]`.
+- Quality: `exact`; `partial` when an interval is open on a terminal Run (clipped to `ended_at`) or the Run has evidence gaps — rendered with `≈`; `unavailable` when no execution evidence exists (legacy pre-ledger Run) — rendered `—` with a reason. Missing evidence is never rendered as `0`.
+- Breakdown (detail popover only): admission/queue, human input, idle/checkpoint, waiting for child Runs, other non-execution (`duration − execution − known waits`, floored at 0).
+- `runs.launched_at` is agent-activity provenance and is not a timing input.
+- Surfaces: task-page Run history (exactly two time columns, Duration and Execution), the Run header (replaces the summed "Active time"), and the `/runs` ledger (Duration + Execution). The breakdown opens from an icon button (HeroUI Popover; mouse, Enter/Space, touch; Escape restores focus).
+- Formatting uses one shared `formatDurationMs` (`web/lib/format/duration.ts`).
+
 ## Expectations
 
 - `runs.status` values exactly match the enum in `web/lib/db/schema.ts`;

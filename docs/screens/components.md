@@ -192,7 +192,22 @@ own task. Do not convert a bar to this pattern in passing.
   Observatory is a read-only view where that trade is acceptable; weigh it
   before adopting the pattern elsewhere.
 
-### Where this is used
+### Numeric cells and local time (Designed)
+
+- **Numeric cells** use the inline convention `text-right tabular-nums` on both
+  the `<th>` and the `<td>` (durations, tokens, counts). IDs, statuses and dates
+  stay left-aligned. Missing values render `—`, never `0`. No shared variant
+  module.
+- **`<LocalTime iso>`** (`web/components/ui/local-time.tsx`, client) renders a
+  stored UTC instant after mount in the viewer's browser zone with
+  `Intl.DateTimeFormat(locale, {dateStyle, timeStyle, timeZoneName:"short"})`
+  inside `<time dateTime>`, with the full zone in `title`. The server render is
+  the UTC string labeled "UTC", so the pre-hydration text is never an unlabeled
+  different time. Used on the task page (history, timeline, activity log), home
+  activity/work tables and `/runs`. Views that are explicitly labeled UTC
+  (agent/admin) are unchanged.
+
+## Where this is used
 
 - Observatory portfolio and project routes
   (`web/components/observatory/observatory-filter-bar.tsx`) — period presets +

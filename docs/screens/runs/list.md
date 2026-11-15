@@ -67,6 +67,9 @@ flowchart TD
    the browser back button works.
 3. **Run history table** - recent runs first. Columns show run/task identity,
    project, status, source, started time, duration, runner, and token total.
+   (Designed — ADR-208) The single duration column becomes **Duration** and
+   **Execution** ([run timing](../../system-analytics/runs.md#run-timing)),
+   right-aligned with `tabular-nums`; started time renders through `<LocalTime>`.
 4. **Pagination** - page-based previous/next controls, with page number in the
    URL.
 

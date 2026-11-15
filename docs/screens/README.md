@@ -48,6 +48,7 @@ docs/screens/
     workbench.md     # shared Files/Diff/Evidence/Timeline workbench
   projects/          # project onboarding + settings surfaces
     project-board.md # /projects/:slug board + card editing
+    task-detail.md # /projects/:slug/tasks/:number task page
     add-project.md   # /projects/new add-project form
     project-settings-git.md # /projects/:slug?tab=settings Git section (block)
   inbox.md           # /inbox
@@ -199,6 +200,7 @@ flowchart TD
 | [`projects/project-agent-history.md`](projects/project-agent-history.md) | Agent detail and retained run/attempt history | `/projects/{slug}/agents/{agentId}` | Implemented (ADR-196) |
 | [`projects/incoming-requests.md`](projects/incoming-requests.md) | Incoming requests before accepted backlog | `/projects/{slug}?tab=incoming` | Implemented (ADR-198) |
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
+| [`projects/task-detail.md`](projects/task-detail.md) | Task page: state, next action, result, Run history | `/projects/{slug}/tasks/{number}` | Designed (ADR-207/204) |
 | [`projects/project-automations.md`](projects/project-automations.md) | Project Automations (one-time task launches, recurring schedules, agent binding links) | `/projects/{slug}?tab=automations` | Implemented (ADR-139) |
 | [`projects/project-mcps-hub.md`](projects/project-mcps-hub.md) | Project MCP hub (3-source list, requirements ledger, match/connect/overlay, test-connection) | `/projects/{slug}?tab=mcps` | Implemented (list + ADR-129 hub) |
 | [`projects/project-evaluations.md`](projects/project-evaluations.md) | Evaluation Lab (Studies list, Study Lab, controlled-launch dialog, verdict) | `/projects/{slug}/evaluations` and `/projects/{slug}/evaluations/{studyId}` | Implemented (ADR-142..147/150) |

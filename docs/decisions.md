@@ -245,6 +245,10 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-203](#adr-203-durable-specialist-assignments-and-company-coordinator-flows) | Durable specialist assignments and company coordinator Flows | Accepted | 2026-11-02 |
 | [ADR-204](#adr-204-native-evidence-findings-and-governed-reduction) | Native evidence findings and governed reduction | Accepted | 2026-11-02 |
 | [ADR-205](#adr-205-stand-operation-intents-and-independent-verification) | Stand operation intents and independent verification | Accepted | 2026-11-02 |
+| [ADR-206](#adr-206-provider-neutral-task-external-source-binding) | Provider-neutral task external source binding | Accepted | 2026-11-15 |
+| [ADR-207](#adr-207-task-completion-after-a-confirmed-pull-request-merge) | Task completion after a confirmed pull-request merge | Accepted | 2026-11-15 |
+| [ADR-208](#adr-208-run-duration-and-execution-time) | Run duration and execution time | Accepted | 2026-11-15 |
+| [ADR-209](#adr-209-active-sidebar-membership-by-attention-reason) | Active sidebar membership by attention reason | Accepted | 2026-11-15 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2362,5 +2366,41 @@ Full record: [`decisions/adr-204.md`](decisions/adr-204.md)
 **Date:** 2026-11-02
 
 Full record: [`decisions/adr-205.md`](decisions/adr-205.md)
+
+---
+
+### ADR-206: Provider-neutral task external source binding
+
+**Status:** Accepted
+**Date:** 2026-11-15
+
+Full record: [`decisions/adr-206.md`](decisions/adr-206.md)
+
+---
+
+### ADR-207: Task completion after a confirmed pull-request merge
+
+**Status:** Accepted
+**Date:** 2026-11-15
+
+Full record: [`decisions/adr-207.md`](decisions/adr-207.md)
+
+---
+
+### ADR-208: Run duration and execution time
+
+**Status:** Accepted
+**Date:** 2026-11-15
+
+Full record: [`decisions/adr-208.md`](decisions/adr-208.md)
+
+---
+
+### ADR-209: Active sidebar membership by attention reason
+
+**Status:** Accepted
+**Date:** 2026-11-15
+
+Full record: [`decisions/adr-209.md`](decisions/adr-209.md)
 
 ---

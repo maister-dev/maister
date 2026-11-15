@@ -710,6 +710,21 @@ toolset at the session seam. The toolset, the instructions and the L1
 allow-list come from one source with a drift test
 (`web/lib/librarian/instructions.ts`).
 
+## Task external source operations (Designed — ADR-206)
+
+| Route (MCP tool) | Scope | Contract | Identifiers |
+| --- | --- | --- | --- |
+| `POST /projects/{slug}/tasks` (`task_create`) | `tasks:create` | optional strict `source {kind, instance, scope, externalId, externalKey?, url?}`; 201 receipt carries `source`; 409 `source_already_bound` (+ `existingTaskId`, `existingTaskKey`); 422 `CONFIG` invalid shape; 422 `source_not_allowed_for_token` for librarian tokens (the only token kind with `Idempotency-Key` replay); for every other token a repeated create for a bound identity is the 409 above | slug `url-param`; actor `auth-context`; project `server-state`; `source.*` `body-controlled` (validated, identity scoped to the server-state project, never fetched) |
+| `GET /projects/{slug}/tasks/by-source?kind=&instance=&externalId=` (`task_find_by_source`) | `tasks:read` | 200 `{task: TaskDTO \| null}` across all task statuses; 422 invalid query | slug `url-param`; query `body-controlled`; project `server-state` |
+| `PUT /projects/{slug}/tasks/{taskId}/source` (`task_source_bind`) | `tasks:update` | bind an unbound task; same identity → 200 no-op; other identity on the task → 409 `source_conflict`; identity bound elsewhere → 409 `source_already_bound`; optional `expectedRevision` → 409 `stale_revision` | slug, taskId `url-param`; project/task `server-state`; body `body-controlled` |
+
+`TaskDTO` (and MCP `task_get`/`task_list`) gains nullable
+`source {kind, instance, scope, externalId, externalKey, url}`. No new scopes;
+`CROSS_PROJECT_AGENT_SCOPES` is unchanged and identity is always project-scoped.
+Detach is session-only (`DELETE /api/projects/{slug}/tasks/{number}/source`);
+no token can detach. MCP `task_update` stays title/prompt only. See
+[`tasks.md`](tasks.md#external-source-binding).
+
 ## Expectations
 
 - `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never bcrypt,

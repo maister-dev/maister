@@ -432,6 +432,9 @@ Per-cron current input and immutable claim/run retention are specified in [sched
   MUST leave it untouched), MUST NEVER launch an ACP session or call the
   supervisor client, and MUST run on a per-project cadence of
   `PR_STATE_SCAN_CADENCE_SECONDS` (300s) rather than as a global singleton.
+- `pr_state_scan` (**Designed, ADR-207**) MUST emit exactly one `run.pr_merged`
+  domain event in the same transaction as its merged edge, and none for a failed
+  read, a closed-unmerged PR or a re-scan of an already-merged workspace.
 - Clock resolution is one contract shared by boot and UI: unset timer plus no
   cron token selects the 60-second `fallback_timer`; unset timer plus a token
   selects `external_tick`; explicit `true` selects the fallback even with a

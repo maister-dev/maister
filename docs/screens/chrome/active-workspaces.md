@@ -179,6 +179,30 @@ the row only when attention is required):
 `Failed`, `Done` and `Abandoned` rows carry the TTL badge while their worktree
 counts down to the GC sweep (a `Failed` one since ADR-181, owner 2026-09-23).
 
+### Attention membership (Designed — ADR-209)
+
+Rows **and** the block counter come from one predicate
+(`web/lib/runs/active-attention.ts`: SQL fragment + `satisfies Record<RunStatus, …>`
+classifier). This supersedes the TTL-row and unconditional-`Failed` membership above.
+
+| Run | Member | Reason label (EN / RU) |
+| --- | --- | --- |
+| Running (even if the task is closed) | yes | Executing / Выполняется |
+| NeedsInput / NeedsInputIdle | yes | Needs input / Нужен ответ |
+| HumanWorking | yes | Being edited / Редактируется |
+| WaitingOnChildren | yes | Waiting on child Runs / Ждёт дочерние запуски |
+| Review | yes | Awaiting review / Ждёт ревью; closed task: Unpromoted work on a closed task / Непродвинутая работа по закрытой задаче |
+| Crashed | only newest attempt of an open task, or task-less | Recover or discard / Восстановить или удалить |
+| Failed | only newest attempt of an open task, or task-less with a retained workspace | Failed — retry or inspect / Ошибка — повторить или посмотреть |
+| Crashed/Failed superseded by a newer attempt, or task Done/Abandoned | no | — |
+| Done / Abandoned (with or without TTL) | no | — |
+| Pending | no (unchanged) | — |
+
+Excluded Runs stay reachable from the task Run history, `/runs`, the Run page,
+the inbox and the project "Runs and working copies" disclosure. A completion or
+new attempt writes `task_activity`, which wakes `/api/attention/stream`, so live
+refresh and a full reload show the same rows and counter.
+
 ## Data & APIs
 
 - `getRailWorkspaceGroups(userId, role)`

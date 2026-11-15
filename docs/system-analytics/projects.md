@@ -258,6 +258,7 @@ flowchart TD
 ## Project work summary (Implemented)
 
 - The project counts distinct executing Run IDs using the actual Running status, the actor's scoped decision count, and retained workspace rows independently. These counts can overlap.
+- (Designed — ADR-209) The Runs and working copies retained set is `ACTIVE_RUN_STATUSES` plus `Done | Abandoned` Runs whose workspace has `removed_at IS NULL` and `scheduled_removal_at IS NOT NULL`.
 - Closed Runs and working copies disclosure has the same header height with 0 or 50 retained items. Open disclosure is bounded. Group by real task ID and label with canonical key and title. Preserve individual links and supported actions, with standalone and scratch items separate.
 - Board tabs and filters keep their existing URLs. `workspaces=open` controls disclosure and browser history restores it.
 
