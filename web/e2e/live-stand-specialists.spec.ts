@@ -872,11 +872,16 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
 
     await page.goto("/specialist-assignments");
     await page
+      .getByText("New assignment", { exact: true })
+      .click({ timeout: 15_000 });
+    await page
       .getByLabel("Responsible specialist")
-      .selectOption(coordinator.bindingId);
+      .selectOption(coordinator.bindingId, { timeout: 15_000 });
     await page
       .getByLabel("Target component")
-      .selectOption(`${stand.id}/${configuredComponent.id}`);
+      .selectOption(`${stand.id}/${configuredComponent.id}`, {
+        timeout: 15_000,
+      });
     await page.getByLabel("Objective", { exact: true }).fill(objective);
     await page
       .getByLabel("Expected outcome", { exact: true })
