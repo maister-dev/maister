@@ -1292,7 +1292,7 @@ plus `ON CONFLICT DO NOTHING`, so redelivery of the same
 `inbox_items_event_kind_check` is deliberately NOT widened — the kind never
 fans out.
 
-**(ADR-206/203 — Designed, migration `0341`)** `delivery_completion_not_applied`
+**(ADR-206/203 — Implemented, migration `0341`)** `delivery_completion_not_applied`
 (automatic completion after a confirmed PR merge was refused; payload
 `{runId, reason}`) and `source_detached` (audited human detach; payload
 `{kind, instance, externalId, externalKey}`) join the kind set.
@@ -1304,7 +1304,7 @@ fans out.
 
 ### `task_external_sources`
 
-**(ADR-206 — Designed, migration `0340`)** At most one structured external
+**(ADR-206 — Implemented, migration `0340`)** At most one structured external
 source per task. See [`system-analytics/tasks.md`](system-analytics/tasks.md#external-source-binding).
 
 ```ts

@@ -1143,7 +1143,7 @@ already-inserted run) — never an orphan worktree or live ACP session.
 
 ## Run timing
 
-(Designed — [ADR-208](../decisions.md#adr-208-run-duration-and-execution-time))
+(Implemented — [ADR-208](../decisions.md#adr-208-run-duration-and-execution-time))
 
 Every Run exposes two metrics computed by the pure projection
 `web/lib/runs/run-timing.ts` from evidence batch-loaded by

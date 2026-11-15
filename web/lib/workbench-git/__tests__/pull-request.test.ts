@@ -110,7 +110,8 @@ describe("pullRequestDefaults — closing reference (ADR-207)", () => {
 
   it("appends the closing reference to the default body", () => {
     expect(
-      pullRequestDefaults({ ...base, closingReference: "Closes acme/app#7" }).body,
+      pullRequestDefaults({ ...base, closingReference: "Closes acme/app#7" })
+        .body,
     ).toBe(
       "http://localhost/runs/run-1\n\nPublished feature/x → main (run run-1).\n\nCloses acme/app#7",
     );

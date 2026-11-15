@@ -277,7 +277,7 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
 `run_not_found`. The ext twin `POST /api/v1/ext/runs/sync` keeps
 `status='Review'` eligibility and has no `onto`.
 
-## Task resolution and closing references (Designed — ADR-207)
+## Task resolution and closing references (Implemented — ADR-207)
 
 - Open PR (and Promote) sends the operator's "Partial work — keep the task open"
   choice to `PATCH /api/runs/{runId}/delivery-policy` as `resolvesTask:false`

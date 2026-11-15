@@ -6,10 +6,7 @@ import type { TaskSource, TaskSourceIdentity, TaskSourceOrigin } from "./model";
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
-import {
-  githubClosingReference,
-  projectGithubHost,
-} from "./closing-reference";
+import { githubClosingReference, projectGithubHost } from "./closing-reference";
 import { parseTaskSourceInput } from "./validate";
 
 import { getDb } from "@/lib/db/client";

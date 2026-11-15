@@ -3847,7 +3847,7 @@ paths:
       tags: [tasks]
       summary: (ADR-206) Detach a task's external source binding
       description: |
-        (Designed — ADR-206) Session users only (no project, agent or librarian
+        (Implemented — ADR-206) Session users only (no project, agent or librarian
         token), with the `editTask` project action. Deletes the binding and
         records `task_activity` `source_detached` in the same transaction; the
         identity is then free for a later import. A task without a binding is
@@ -8549,7 +8549,7 @@ paths:
       tags: [runs]
       summary: Switch an auto delivery policy to manual, or set task resolution
       description: |
-        (Designed — ADR-207) `{action:"set_task_resolution", resolvesTask}`
+        (Implemented — ADR-207) `{action:"set_task_resolution", resolvesTask}`
         records whether the Run's delivery resolves its task; it is refused
         `409 CONFLICT {details.reason:"delivery_already_started"}` once the
         workspace `promotion_state` is `claiming|done` or a PR is recorded, and
@@ -26938,7 +26938,7 @@ components:
         resolvesTask:
           type: boolean
           description: |
-            (Designed — ADR-207) Whether a confirmed merge of this Run's PR may
+            (Implemented — ADR-207) Whether a confirmed merge of this Run's PR may
             complete its task. Absent on legacy Runs, read as `true`.
     DeliveryPolicyOverride:
       type: object
@@ -30571,7 +30571,7 @@ components:
             The server's defaults for `POST /api/runs/{runId}/pr` — the panel
             pre-fills its dialog from exactly these. The body's run link is
             built from the request's origin. Null without a workspace row.
-            (Designed — ADR-207) The body ends with `Closes <owner>/<repo>#<n>`
+            (Implemented — ADR-207) The body ends with `Closes <owner>/<repo>#<n>`
             when the task's binding is `github` on the project's own GitHub
             host with a numeric key and the Run resolves its task.
           required: [title, body, targetBranch]
@@ -30584,7 +30584,7 @@ components:
           type: object
           nullable: true
           description: |
-            (Designed — ADR-207) Null for a task-less Run. `resolvesTask` is the
+            (Implemented — ADR-207) Null for a task-less Run. `resolvesTask` is the
             Run's snapshot flag (absent ⇒ true); `frozen` is true once a PR is
             recorded or promotion is claiming/done, after which
             `PATCH …/delivery-policy` refuses `delivery_already_started`.
@@ -30790,7 +30790,7 @@ components:
               enum: [switch_to_manual]
         - type: object
           description: |
-            (Designed — ADR-207) Mark whether this Run's delivery resolves its
+            (Implemented — ADR-207) Mark whether this Run's delivery resolves its
             task. Refused `409 CONFLICT {reason:"delivery_already_started"}`
             once `promotion_state` is `claiming|done` or a PR is recorded.
           required: [action, resolvesTask]

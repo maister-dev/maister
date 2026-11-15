@@ -156,11 +156,11 @@ sequenceDiagram
     end
 ```
 
-## PR body closing reference (Designed — ADR-207)
+## PR body closing reference (Implemented — ADR-207)
 
 Promotion-generated PR bodies (`pull_request` and the ai-rebase/sync paths that
 open a PR) append the same `Closes <scope_key>#<n>` line as the Run Git panel
-under the rule in [`workbench-git.md`](workbench-git.md#task-resolution-and-closing-references-designed--adr-207).
+under the rule in [`workbench-git.md`](workbench-git.md#task-resolution-and-closing-references-implemented--adr-207).
 Sync and rebase never rewrite an existing PR body.
 
 ## Expectations

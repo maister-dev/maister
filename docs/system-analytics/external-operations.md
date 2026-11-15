@@ -710,7 +710,7 @@ toolset at the session seam. The toolset, the instructions and the L1
 allow-list come from one source with a drift test
 (`web/lib/librarian/instructions.ts`).
 
-## Task external source operations (Designed — ADR-206)
+## Task external source operations (Implemented — ADR-206)
 
 | Route (MCP tool) | Scope | Contract | Identifiers |
 | --- | --- | --- | --- |

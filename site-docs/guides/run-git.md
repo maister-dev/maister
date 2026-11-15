@@ -72,6 +72,20 @@ confirmation and does not assert that readiness checks passed.
 Finalization checks the recorded PR's actual head. A closed PR is refused; a
 merged PR missing later local commits requires a new PR for those commits.
 
+### When the task completes
+
+The task moves to **Done** by itself once the provider reports the PR as
+merged **and** the Run is finalized — in either order. It completes only when
+this Run is still the task's newest attempt. Check **Partial work — keep the
+task open** before opening the PR (or before promoting) when the PR does not
+finish the task; the choice cannot be changed once a PR exists. If an automatic
+completion is refused, the task page says why and **Complete** stays available.
+
+When the task came from a GitHub issue on the same GitHub host, the generated
+description ends with `Closes owner/repo#N`. GitHub closes the issue only when
+the PR is merged into the repository's default branch; MAIster does not report
+the issue as closed.
+
 ## 5. Restore a removed worktree
 
 When the worktree is missing, **Reattach** replaces the other panel sections.

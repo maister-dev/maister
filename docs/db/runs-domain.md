@@ -115,7 +115,7 @@ erDiagram
     TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-078)"
     TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-078)"
     TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-078)"
-    TASKS ||--o| TASK_EXTERNAL_SOURCES : "external source binding (ADR-206 Designed, 0340)"
+    TASKS ||--o| TASK_EXTERNAL_SOURCES : "external source binding (ADR-206 Implemented, 0340)"
     PROJECTS ||--o{ TASK_EXTERNAL_SOURCES : "identity namespace (ADR-206)"
 
     PROJECTS {
@@ -801,11 +801,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   (payload->>'triggerEventId')) WHERE event_kind = 'agent_summon_suppressed'`
   — the structural backstop that keeps one mention-summon suppression note
   per `(task, agent, event)` under at-least-once event redelivery.
-- **(ADR-207, Designed — migration `0341`)** `task_activity_delivery_refusal_uq`
+- **(ADR-207, Implemented — migration `0341`)** `task_activity_delivery_refusal_uq`
   partial UNIQUE on `(task_id, (payload->>'runId'), (payload->>'reason'))
   WHERE event_kind = 'delivery_completion_not_applied'` — one completion
   refusal note per `(task, run, reason)` under at-least-once redelivery.
-- **(ADR-206, Designed — migration `0340`)** `task_external_sources_identity_uq`
+- **(ADR-206, Implemented — migration `0340`)** `task_external_sources_identity_uq`
   UNIQUE `(project_id, source_kind, source_instance, external_id)` and
   `task_external_sources_task_uq` UNIQUE `(task_id)`; generated CHECK
   `task_external_sources_shape_check`.

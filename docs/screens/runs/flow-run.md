@@ -515,7 +515,7 @@ object.
 All strings are EN + RU; icons follow the repo's icon-affordance convention and a
 success state renders as a green check glyph, never the word.
 
-## Run timing facts (Designed — ADR-208)
+## Run timing facts (Implemented — ADR-208)
 
 The header's "Active time" (a sum of node-attempt durations) is replaced by
 **Duration** (wall clock, live while the Run is active) and **Execution**

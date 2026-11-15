@@ -1843,10 +1843,7 @@ async function promotePullRequestSideEffect(args: {
       sourceBranch: publicBranch,
       targetBranch: claim.resolvedTarget,
       title: prTitle(claim),
-      body: prBody(
-        claim,
-        await closingReferenceForRun(db, claim.run, project),
-      ),
+      body: prBody(claim, await closingReferenceForRun(db, claim.run, project)),
       draft: false,
     });
 

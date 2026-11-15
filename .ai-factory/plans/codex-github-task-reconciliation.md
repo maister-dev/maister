@@ -1,5 +1,8 @@
 # Implementation Plan: GitHub intake and task lifecycle reconciliation
 
+> **Hand-off from UX Package 3 (2026-11-15, `feature/ui-improvements-package-3`):** the provider-neutral identity core is delivered — `task_external_sources` (migrations `0340`/`0341`, ADR-206) with UNIQUE `(project_id, source_kind, source_instance, external_id)`, create-with-source / `task_find_by_source` / `task_source_bind` / session detach, the `tasks:backfill-sources` legacy backfill, and MAIster-side completion after a confirmed PR merge (`run.pr_merged`, ADR-207). Re-base this plan's D2 identity onto `task_external_sources` (add lifecycle columns/tables to it rather than a competing table); its observations, leases, admission holds, conflicts, external closure dispositions, receipt intents and `external_task_sync` capability remain here. The design below is unchanged.
+
+
 Branch: `codex/github-task-reconciliation`
 Created: 2026-10-31
 Status: Designed; implementation has not started.

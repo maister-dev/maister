@@ -2,7 +2,7 @@
 
 - **Type:** screen.
 - **Route:** `/projects/{slug}/tasks/{number}` (session-required).
-- **Status:** Designed — [ADR-207](../../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge), [ADR-208](../../decisions.md#adr-208-run-duration-and-execution-time).
+- **Status:** Implemented — [ADR-207](../../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge), [ADR-208](../../decisions.md#adr-208-run-duration-and-execution-time).
 - **Source:** `web/app/(app)/projects/[slug]/tasks/[number]/page.tsx` (composition), `web/lib/queries/task-detail.ts` (single loader), `web/lib/tasks/task-next-action.ts` (state → actions), `web/components/tasks/*`.
 
 ## JTBD

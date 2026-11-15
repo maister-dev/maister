@@ -179,7 +179,7 @@ the row only when attention is required):
 `Failed`, `Done` and `Abandoned` rows carry the TTL badge while their worktree
 counts down to the GC sweep (a `Failed` one since ADR-181, owner 2026-09-23).
 
-### Attention membership (Designed — ADR-209)
+### Attention membership (Implemented — ADR-209)
 
 Rows **and** the block counter come from one predicate
 (`web/lib/runs/active-attention.ts`: SQL fragment + `satisfies Record<RunStatus, …>`

@@ -434,32 +434,40 @@ describe("promoteRun — pull_request happy path (github)", () => {
   it.each([
     ["resolving", undefined, true],
     ["partial", false, false],
-  ])("a %s Run's PR body and the bound issue's closing reference", async (_name, resolvesTask, closes) => {
-    const runId = seedGithubFlowRun();
+  ])(
+    "a %s Run's PR body and the bound issue's closing reference",
+    async (_name, resolvesTask, closes) => {
+      const runId = seedGithubFlowRun();
 
-    dbState.tables.runs[0].deliveryPolicySnapshot = {
-      strategy: "pull_request",
-      push: "on_success",
-      trigger: "manual",
-      targetBranch: "main",
-      ...(resolvesTask === undefined ? {} : { resolvesTask }),
-    };
-    dbState.tables.task_external_sources.push({
-      taskId: "task-1",
-      kind: "github",
-      instance: "github.com",
-      scope: "org/repo",
-      externalId: "I_7",
-      externalKey: "#7",
-      url: "https://github.com/org/repo/issues/7",
-    });
+      dbState.tables.runs[0].deliveryPolicySnapshot = {
+        strategy: "pull_request",
+        push: "on_success",
+        trigger: "manual",
+        targetBranch: "main",
+        ...(resolvesTask === undefined ? {} : { resolvesTask }),
+      };
+      dbState.tables.task_external_sources.push({
+        taskId: "task-1",
+        kind: "github",
+        instance: "github.com",
+        scope: "org/repo",
+        externalId: "I_7",
+        externalKey: "#7",
+        url: "https://github.com/org/repo/issues/7",
+      });
 
-    await callPromote(runId, { mode: "pull_request", reviewedTargetCommit: "tip00000" });
+      await callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      });
 
-    const body = (createOrUpdatePr.mock.calls[0] as unknown as [{ body: string }])[0].body;
+      const body = (
+        createOrUpdatePr.mock.calls[0] as unknown as [{ body: string }]
+      )[0].body;
 
-    expect(body.endsWith("\n\nCloses org/repo#7")).toBe(closes);
-  });
+      expect(body.endsWith("\n\nCloses org/repo#7")).toBe(closes);
+    },
+  );
 
   it("records a PR artifact carrying pr_url/pr_number in its payload", async () => {
     const runId = seedGithubFlowRun();

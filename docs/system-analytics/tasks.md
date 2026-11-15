@@ -407,7 +407,7 @@ Heroicons add affordance (UX-02A–B).
 
 ## External source binding
 
-(Designed — [ADR-206](../decisions.md#adr-206-provider-neutral-task-external-source-binding))
+(Implemented — [ADR-206](../decisions.md#adr-206-provider-neutral-task-external-source-binding))
 
 A task may carry at most one structured external source binding
 (`task_external_sources`, ERD in [`../db/runs-domain.md`](../db/runs-domain.md)).
@@ -473,7 +473,7 @@ relations or activity. The report lists task keys and classes, never prompt text
 
 ## Completion after a confirmed merge
 
-(Designed — [ADR-207](../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge))
+(Implemented — [ADR-207](../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge))
 
 Two triggers feed one consumer (`taskDeliveryCompletion`): `run.pr_merged`
 (emitted by `pr_state_scan` in the merged-edge transaction) and `run.done`
@@ -741,7 +741,7 @@ Task detail lists open, answered and cancelled requests — see
   [`task-clarifications.md`](task-clarifications.md),
   [`librarian-operations.md`](librarian-operations.md).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables, `task_external_sources`).
-- (Designed) [ADR-206 Provider-neutral task external source binding](../decisions.md#adr-206-provider-neutral-task-external-source-binding),
+- (Implemented) [ADR-206 Provider-neutral task external source binding](../decisions.md#adr-206-provider-neutral-task-external-source-binding),
   [ADR-207 Task completion after a confirmed pull-request merge](../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge).
 - Wire: [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
   (`task_create.source`, `GET …/tasks/by-source`, `PUT …/tasks/{taskId}/source`),

@@ -373,19 +373,31 @@ describe("task external source binding (ADR-206)", () => {
 
     await db
       .update(schema.projects)
-      .set({ provider: "gitverse", repoUrl: "https://gitverse.ru/acme/app.git" })
+      .set({
+        provider: "gitverse",
+        repoUrl: "https://gitverse.ru/acme/app.git",
+      })
       .where(eq(schema.projects.id, projectId));
 
     const created = await createTask(
       {
         title: "From Jira",
         prompt: "p",
-        source: { kind: "jira", instance: "acme.atlassian.net", scope: "OPS", externalId: "10007", externalKey: "OPS-7" },
+        source: {
+          kind: "jira",
+          instance: "acme.atlassian.net",
+          scope: "OPS",
+          externalId: "10007",
+          externalKey: "OPS-7",
+        },
       },
       { projectId, actor: user },
       db,
     );
 
-    expect(created.source).toMatchObject({ kind: "jira", externalKey: "OPS-7" });
+    expect(created.source).toMatchObject({
+      kind: "jira",
+      externalKey: "OPS-7",
+    });
   });
 });

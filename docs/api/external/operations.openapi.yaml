@@ -169,7 +169,7 @@ paths:
 
         Writes a `token_audit_log` row with scope `tasks:create` after success.
 
-        (Designed — ADR-206) Optional `source` binds a structured external
+        (Implemented — ADR-206) Optional `source` binds a structured external
         identity in the same transaction. For project, personal and agent
         tokens the binding itself is the deduplication: a repeated create for
         a bound identity is `409 CONFLICT {reason:"source_already_bound"}`
@@ -239,7 +239,7 @@ paths:
                     allOf:
                       - $ref: "#/components/schemas/TaskSource"
                     nullable: true
-                    description: (Designed — ADR-206) The binding created with the task, or null.
+                    description: (Implemented — ADR-206) The binding created with the task, or null.
                   launchability:
                     allOf:
                       - $ref: "#/components/schemas/TaskLaunchability"
@@ -309,7 +309,7 @@ paths:
       tags: [tasks]
       summary: Find a task by its external source identity
       description: |
-        (Designed — ADR-206) Scope `tasks:read`. Looks up the task bound to
+        (Implemented — ADR-206) Scope `tasks:read`. Looks up the task bound to
         `(kind, instance, externalId)` in the project identified by `slug`,
         across every task status. The project is derived from the URL slug and
         the token (mismatch → 404).
@@ -362,7 +362,7 @@ paths:
       tags: [tasks]
       summary: Bind an external source to an unbound task
       description: |
-        (Designed — ADR-206) Scope `tasks:update`. Binds the identity to the
+        (Implemented — ADR-206) Scope `tasks:update`. Binds the identity to the
         task. Same identity already bound to this task → 200 no-op. The task
         bound to a different identity → `409 CONFLICT {reason:"source_conflict"}`;
         the identity bound to another task → `409 CONFLICT
@@ -10294,7 +10294,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/TaskSource"
           nullable: true
-          description: (Designed — ADR-206) Structured external source binding, or null.
+          description: (Implemented — ADR-206) Structured external source binding, or null.
         id:
           type: string
           format: uuid
@@ -11133,7 +11133,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-206) Identity is `(kind, instance, externalId)` within
+        (Implemented — ADR-206) Identity is `(kind, instance, externalId)` within
         the project; `scope`, `externalKey` and `url` are display and
         closing-reference inputs only.
       required: [kind, instance, scope, externalId]
@@ -11183,7 +11183,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-206) `TaskSourceInput` plus an optional
+        (Implemented — ADR-206) `TaskSourceInput` plus an optional
         `expectedRevision` guard.
       required: [kind, instance, scope, externalId]
       properties:
@@ -11253,7 +11253,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/TaskSourceInput"
           description: |
-            (Designed — ADR-206) Structured external source identity. Bound in
+            (Implemented — ADR-206) Structured external source identity. Bound in
             the task-creation transaction; an identity already bound in the
             project refuses `409 CONFLICT {reason:"source_already_bound"}` and
             creates no task. Refused `422 CONFIG

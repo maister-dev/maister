@@ -65,7 +65,9 @@ test.describe("multi-run cost and delivery policy UI", () => {
     // D10: a Done task leads with its result; relaunching is the "More" menu's
     // "Start a new attempt".
     await page.getByTestId("task-more-actions").locator("> summary").click();
-    const newAttempt = page.getByRole("button", { name: /Start a new attempt/i });
+    const newAttempt = page.getByRole("button", {
+      name: /Start a new attempt/i,
+    });
 
     await expect(newAttempt).toBeVisible();
     await expect(page.getByRole("main").getByText("2 runs")).toBeVisible();

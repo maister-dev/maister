@@ -26,7 +26,9 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
         fx.projectId,
         number,
         `D10 ${status} ${suffix}`,
-        Array.from({ length: 12 }, (_, i) => `Statement line ${i + 1}`).join("\n"),
+        Array.from({ length: 12 }, (_, i) => `Statement line ${i + 1}`).join(
+          "\n",
+        ),
         fx.flowId,
         status,
       ],
@@ -51,7 +53,13 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
       `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path,
          promotion_mode, promotion_state, pr_number, pr_url, pr_state)
        VALUES ($1, $2, $3, $4, $5, '/tmp/d10', 'pull_request', 'done', 7, 'https://github.com/acme/app/pull/7', 'merged')`,
-      [`ws-${runId}`, runId, fx.projectId, `maister/d10-${suffix}`, `/tmp/d10-${suffix}`],
+      [
+        `ws-${runId}`,
+        runId,
+        fx.projectId,
+        `maister/d10-${suffix}`,
+        `/tmp/d10-${suffix}`,
+      ],
     );
     await pool.query(
       `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
@@ -62,13 +70,24 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
       await pool.query(
         `INSERT INTO task_activity (id, task_id, project_id, actor_type, event_kind, payload, created_at)
          VALUES ($1, $2, $3, 'system', 'run_launched', $4::jsonb, now() - interval '50 minutes' + ($5 || ' seconds')::interval)`,
-        [`act-${runId}-${i}`, taskId, fx.projectId, JSON.stringify({ attemptNumber: i + 1 }), String(i)],
+        [
+          `act-${runId}-${i}`,
+          taskId,
+          fx.projectId,
+          JSON.stringify({ attemptNumber: i + 1 }),
+          String(i),
+        ],
       );
     }
     await pool.query(
       `INSERT INTO task_activity (id, task_id, project_id, actor_type, event_kind, payload)
        VALUES ($1, $2, $3, 'system', 'task_completed', $4::jsonb)`,
-      [`act-${runId}-done`, taskId, fx.projectId, JSON.stringify({ runId, cause: "pr_merged", prNumber: 7 })],
+      [
+        `act-${runId}-done`,
+        taskId,
+        fx.projectId,
+        JSON.stringify({ runId, cause: "pr_merged", prNumber: 7 }),
+      ],
     );
     await pool.query(
       `INSERT INTO task_external_sources (id, project_id, task_id, source_kind, source_instance, scope_key,
@@ -97,15 +116,24 @@ test.describe("task detail around state and result (D10)", () => {
       "href",
       "https://github.com/acme/app/pull/7",
     );
-    await expect(page.getByTestId("task-primary-action")).toContainText("View result");
+    await expect(page.getByTestId("task-primary-action")).toContainText(
+      "View result",
+    );
     // S2: a binding without a URL renders as text, never a link.
     await expect(page.getByTestId("task-source-chip")).toHaveText("GitHub #7");
-    await expect(page.locator('a[data-testid="task-source-chip"]')).toHaveCount(0);
+    await expect(page.locator('a[data-testid="task-source-chip"]')).toHaveCount(
+      0,
+    );
     // One relaunch entry, behind More.
     await page.getByTestId("task-more-actions").locator("> summary").click();
-    await expect(page.getByRole("button", { name: /Start a new attempt/i })).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: /Start a new attempt/i }),
+    ).toHaveCount(1);
     // A Done statement opens collapsed.
-    await expect(page.getByTestId("task-statement")).not.toHaveAttribute("open", "");
+    await expect(page.getByTestId("task-statement")).not.toHaveAttribute(
+      "open",
+      "",
+    );
     // The diff mounts only once opened.
     await expect(page.getByTestId("task-run-diff")).toHaveCount(0);
     await page.getByTestId("task-run-diff-toggle").click();
@@ -121,10 +149,14 @@ test.describe("task detail around state and result (D10)", () => {
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
     await expect(
-      page.getByTestId("task-primary-action").getByRole("button", { name: /Launch/ }),
+      page
+        .getByTestId("task-primary-action")
+        .getByRole("button", { name: /Launch/ }),
     ).toBeVisible();
     await page.getByTestId("task-more-actions").locator("> summary").click();
-    await expect(page.getByRole("button", { name: "Send to triage" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Send to triage" }),
+    ).toBeVisible();
   });
 
   test("P-4: repetitive system events collapse into one row that keeps every entry", async ({
@@ -153,11 +185,15 @@ test.describe("task detail around state and result (D10)", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
-    const opener = page.getByTestId(`task-run-timing-${seeded.runId}-breakdown-open`);
+    const opener = page.getByTestId(
+      `task-run-timing-${seeded.runId}-breakdown-open`,
+    );
 
     await opener.focus();
     await page.keyboard.press("Enter");
-    const breakdown = page.getByTestId(`task-run-timing-${seeded.runId}-breakdown`);
+    const breakdown = page.getByTestId(
+      `task-run-timing-${seeded.runId}-breakdown`,
+    );
 
     await expect(breakdown).toContainText("Execution");
     await page.keyboard.press("Escape");
