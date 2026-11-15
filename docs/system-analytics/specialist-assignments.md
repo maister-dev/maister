@@ -53,14 +53,12 @@ stateDiagram-v2
     active --> failed: stopped execution and unrecoverable refusal (Designed)
     queued --> cancelled: authorized cancel
     active --> cancelled: stopped agent and retained effects
-    failed --> queued: explicit authorized recovery revision
-    cancelled --> queued: explicit authorized recovery revision
 ```
 
 Until the `failed` classifier exists, an assignment whose root Run ends stays
 `active` (Implemented). That is the state the pre-dispatch replacement retry
-requires (`company-retry`, `project-specialist-retry`); when no retry applies,
-the operator cancels and then reopens the assignment.
+requires (`company-retry`, `project-specialist-retry`). Once terminal, a further independent request
+creates a new assignment. Retained stand operations and Review Runs have their own recovery controls.
 
 ## Process flows
 
@@ -132,9 +130,9 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Result ready | active or reconciling after coordinator evaluation | Exact valid result revision and obligation set; awaiting_acceptance, never completed automatically |
 | Accept | awaiting_acceptance, responsible/current acceptance authority, exact input/context/result and satisfied policy obligations | Acceptance/state/completion timestamp/delivery outbox in one transaction |
 | Request rework (settled work item: Implemented; `awaiting_acceptance`: Designed) | awaiting_acceptance or settled work item, current responsible actor, remaining budget | New work/input revision; old result immutable; governed continuation |
-| Cancel | Not completed, failed or cancelled; current cancel authority and expected revision, all checked before any stop; stop owned agents first | Record cancelled with reason, close owned waits/claims/outbox; preserve confirmed/unknown effects for independent reconciliation |
+| Cancel | Current cancel and native Run stop authority, exact revision, nonterminal assignment and stoppable linked work | Retain cancellation first, stop owned runs, then mark cancelled when statuses and placements prove teardown. Preserve external effects for independent reconciliation |
 | Fail (Designed) | Nonterminal state, stopped execution and classified unrecoverable error | Preserve diagnostic/effect history; failed reason/time, never infer not-applied |
-| Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
+| Recover retained work | Current authority and the exact Run, input or operation required by its native owner | Use same-Run recovery, an eligible replacement retry, Run Review, or stand effect reconciliation. Terminal assignments without an owner retain their history and require a fresh request for further work |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
 The assignment store requires linked Runs to be terminal and their placements
@@ -1127,33 +1125,13 @@ Web session clients and global personal user tokens share one control surface
 (see [web OpenAPI](../api/web.openapi.yaml) and [external operations
 OpenAPI](../api/external/operations.openapi.yaml)):
 
-- `GET …/specialist-assignments` lists assignments the caller can currently read,
-  newest first, behind an opaque access-bound keyset cursor. The store decides access
-  per row, so a page may hold fewer items than `limit` while `nextCursor` is set.
+- `GET …/specialist-assignments` applies exact owner and inherited-source authorization before keyset pagination. Linked Run IDs and child work use the receiving reader's current source access.
 - `POST …/{assignmentId}/inputs` appends one correlated input revision.
-- `POST …/{assignmentId}/continue` reopens failed or cancelled work as queued intent
-  (`202`); it never launches a Run or repeats an external effect.
-- `POST …/{assignmentId}/cancel` first checks the revision, cancel authority and a
-  cancellable state (`assignment_already_terminal` otherwise), so a refusal stops
-  nothing. It then stops the live linked Runs through the existing operator stop and
-  records the cancellation; a Run parked in `Review` counts as stopped. Teardown
-  another owner is still settling (`company_stop_owned`,
-  `budget_termination_pending`) answers `202` with the current revision and no
-  receipt, so the caller retries with the same key. A Run the stop refuses outright,
-  such as one in `HumanWorking`, answers `409 assignment_run_unstoppable`.
-- `GET …/{assignmentId}/work` lists delegated work. Its state derives from the
-  persisted decision plus the child Run and its validated results; no second
-  execution status exists.
+- `POST …/{assignmentId}/continue` replays historically retained receipts. New calls identify the next authorized action with a typed conflict. Unresolved restart effects go to the stand operation; a retained Review Run goes to Run review; active recoverable work uses its existing owner. A terminal assignment without a continuation owner requires a fresh request.
+- `POST …/{assignmentId}/cancel` validates the current assignment and linked Run stop eligibility before retaining a pending receipt. A Run the native stop refuses, such as `HumanWorking`, returns `409 assignment_run_unstoppable` during preflight. Live Runs stop through their existing owners. A released Run in `Review` counts as stopped and retains its diff. The existing system sweep resumes interruptions and returns a previously successful stop to the settlement check without repeating it. A pending receipt stays `202` on replay until teardown is verified. New business writes and dispatch commands are fenced while the receipt is pending.
+- `GET …/{assignmentId}/work` pages currently visible work. Only a Done Run's exact valid, collected result under the pinned schema is ready. Decision controls also require current work and input revisions, an open decision and an active decision state. Acceptance additionally requires satisfied verification.
 
-Input, continue and cancel carry an `idempotencyKey`. The first committed control
-writes one `specialist_assignment_control_receipts` row in the same transaction as
-the state change (migration `0338`). An exact replay returns that receipt with
-`duplicate: true` after rechecking current read access, and the same key with a
-different request refuses `CONFLICT` (`assignment_control_key_reused`). All three
-controls resolve visibility before the revision lock, so an unreadable assignment
-answers the same `404` as a missing one and never exposes its revision. Token clients
-need `assignments:update`, `assignments:recover` or `assignments:cancel`
-respectively; cancellation and recovery are never in a machine grant set.
+All controls lock the assignment head before inspecting a receipt or expected revision. Under that lock they recheck current visibility before comparing the payload digest. A different request under the same key returns `assignment_control_key_reused`. Missing and unreadable assignments return the same `404`. Migration `0339` extends the control receipt from `0338` with one pending cancellation per assignment. Token clients require the corresponding human control scope.
 
 ## Expectations
 
@@ -1164,7 +1142,7 @@ respectively; cancellation and recovery are never in a machine grant set.
 - **CBA-05:** Clarification resumes the exact assignment/question/input and releases failed owned deferreds, enforced by existing human-ask/HITL delivery with assignment subjects (`IT-CBA-05`).
 - **CBA-06:** Origin delivery is current-access-filtered, durable and cannot repeat business effects, enforced by typed destinations/outbox receipts (`IT-CBA-06`).
 - **CBA-07:** Completion requires exact expected result and verification acceptance, enforced by transactional acceptance and terminal CHECKs (`IT-CBA-07`).
-- **CBA-08:** A refused cancel stops no Run, and a recorded cancel leaves no live linked execution, enforced by the shared `assertAssignmentCancellable` verdict before any stop and the `stopped` settlement guard in the cancel transaction (`IT-CBA-01`).
+- **CBA-08:** A preflight refusal stops no Run. Pending intent survives lost responses and can be recovered by one processor. A settled cancel leaves no live linked execution (`IT-CBA-01`).
 - **CBU-02:** EN/RU assignment UX exposes responsibility, questions, children, accepted evidence and authorized recovery, enforced by existing agent/history/Inbox extensions (`E2E-CBU-02`).
 
 ## Edge cases

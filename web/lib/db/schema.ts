@@ -10734,6 +10734,7 @@ export const specialistAssignmentControlReceipts = pgTable(
     revision: integer("revision").notNull(),
     status: text("status").notNull(),
     reason: text("reason"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -10743,6 +10744,16 @@ export const specialistAssignmentControlReceipts = pgTable(
       name: "specialist_assignment_control_receipts_pk",
       columns: [t.assignmentId, t.actorUserId, t.action, t.idempotencyKey],
     }),
+    pendingCancel: uniqueIndex("specialist_assignment_pending_cancel")
+      .on(t.assignmentId)
+      .where(sql`${t.nextAttemptAt} IS NOT NULL`),
+    dueCancel: index("specialist_assignment_due_cancel")
+      .on(t.nextAttemptAt, t.assignmentId)
+      .where(sql`${t.nextAttemptAt} IS NOT NULL`),
+    pendingShape: check(
+      "specialist_assignment_pending_cancel_shape",
+      sql`${t.nextAttemptAt} IS NULL OR (${t.action}='cancel' AND ${t.status}='active' AND ${t.reason} IS NOT NULL)`,
+    ),
     shape: check(
       "specialist_assignment_control_receipts_shape_check",
       sql`${t.action} IN ('input','continue','cancel') AND ${t.revision} BETWEEN 1 AND 2147483647 AND ${t.requestSha256} ~ '^[0-9a-f]{64}$' AND ${t.idempotencyKey} ~ '^[A-Za-z0-9._:-]{8,128}$'`,

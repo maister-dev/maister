@@ -109,6 +109,7 @@ import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/pro
 import { collectChild } from "@/lib/run-results/collect";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
+import { listSpecialistAssignmentWork } from "@/lib/specialist-assignments/pages";
 import { requestTaskRequalificationIfCurrent } from "@/lib/tasks/qualification-requalification";
 import {
   getSpecialistAssignment,
@@ -14349,6 +14350,16 @@ async function qualifyCompanyCooperation(
         }
         expect(continuationPrompt.prompts).toHaveLength(1);
         expect(continuationPrompt.prompts[0]).toContain(reworkBody.prompt);
+        const readContinuation = async () =>
+          (
+            await listSpecialistAssignmentWork(db, userId, assignment.id, {})
+          ).items.find((item) => item.childRunId === continuation.childRunId);
+
+        await expect(readContinuation()).resolves.toMatchObject({
+          resultRevision: null,
+          canAccept: false,
+          canReject: false,
+        });
         const continuationResult = await collectExternalRun(
           new NextRequest("http://localhost/api/v1/ext/runs/collect", {
             method: "POST",
@@ -14381,6 +14392,13 @@ async function qualifyCompanyCooperation(
           },
         ]);
         const [ready] = completed;
+
+        await expect(readContinuation()).resolves.toMatchObject({
+          state: "result_ready",
+          resultRevision: ready.resultRevision,
+          canAccept: true,
+          canReject: true,
+        });
         const acceptBody = {
           decision: "accept",
           expectedRevision: ready.assignmentWork.revision,

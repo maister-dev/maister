@@ -13,7 +13,7 @@ import {
   readPrivateJson,
 } from "@/lib/api/private-json";
 import { submitManualSpecialistAssignment } from "@/lib/specialist-assignments/manual-intake";
-import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
+import { getVisibleSpecialistAssignment } from "@/lib/specialist-assignments/store";
 import { assignmentPageQuery } from "@/lib/specialist-assignments/http";
 import { listAccessibleSpecialistAssignments } from "@/lib/specialist-assignments/pages";
 
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (receipt.projectAdmission?.kind === "accepted")
       wakeAcceptedTaskLaunch(getDb(), receipt.projectAdmission.receipt);
-    const assignment = await getSpecialistAssignment(
+    const assignment = await getVisibleSpecialistAssignment(
       getDb(),
       user.id,
       receipt.assignment.id,

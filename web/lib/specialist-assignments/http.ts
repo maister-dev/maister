@@ -25,12 +25,9 @@ export function assignmentPageQuery(
   };
 }
 
-/** Replays and recorded controls answer 200; accepted-but-pending intent answers 202. */
+/** Pending intent stays HTTP 202, including on exact replay. */
 export function assignmentControlResponse(
   outcome: AssignmentControlOutcome,
 ): NextResponse {
-  return privateJson(
-    outcome.receipt,
-    outcome.receipt.duplicate || outcome.settled ? 200 : 202,
-  );
+  return privateJson(outcome.receipt, outcome.settled ? 200 : 202);
 }

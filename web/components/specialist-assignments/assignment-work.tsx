@@ -37,10 +37,14 @@ export function AssignmentWork({
   assignmentId,
   items,
   canDecide,
+  nextCursor,
+  paged,
 }: {
   assignmentId: string;
   items: readonly SpecialistWorkItem[];
   canDecide: boolean;
+  nextCursor: string | null;
+  paged: boolean;
 }): ReactElement {
   const t = useTranslations("specialistAssignments");
   const knowledge = useTranslations("knowledge");
@@ -110,7 +114,10 @@ export function AssignmentWork({
   }
 
   return (
-    <section className="rounded-xl border border-line bg-paper p-5">
+    <section
+      className="rounded-xl border border-line bg-paper p-5"
+      id="assignment-work"
+    >
       <h2 className="font-semibold">{t("work")}</h2>
       {items.length === 0 ? (
         <p className="mt-2 text-sm text-mute">{t("noWork")}</p>
@@ -166,28 +173,32 @@ export function AssignmentWork({
                     )}
                   </td>
                   <td className="py-2">
-                    {canDecide && work.state === "result_ready" ? (
+                    {canDecide && (work.canAccept || work.canReject) ? (
                       <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onPress={() =>
-                            setDeciding({ work, decision: "accept" })
-                          }
-                        >
-                          <CheckIcon aria-hidden="true" className="size-4" />
-                          {t("acceptWork")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger-soft"
-                          onPress={() =>
-                            setDeciding({ work, decision: "reject" })
-                          }
-                        >
-                          <XMarkIcon aria-hidden="true" className="size-4" />
-                          {t("rejectWork")}
-                        </Button>
+                        {work.canAccept ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onPress={() =>
+                              setDeciding({ work, decision: "accept" })
+                            }
+                          >
+                            <CheckIcon aria-hidden="true" className="size-4" />
+                            {t("acceptWork")}
+                          </Button>
+                        ) : null}
+                        {work.canReject ? (
+                          <Button
+                            size="sm"
+                            variant="danger-soft"
+                            onPress={() =>
+                              setDeciding({ work, decision: "reject" })
+                            }
+                          >
+                            <XMarkIcon aria-hidden="true" className="size-4" />
+                            {t("rejectWork")}
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                   </td>
@@ -197,6 +208,29 @@ export function AssignmentWork({
           </table>
         </div>
       )}
+      {paged || nextCursor ? (
+        <nav
+          aria-label={t("workPages")}
+          className="mt-3 flex justify-end gap-4"
+        >
+          {paged ? (
+            <Link
+              className="underline"
+              href={`/specialist-assignments/${encodeURIComponent(assignmentId)}#assignment-work`}
+            >
+              {t("firstWorkPage")}
+            </Link>
+          ) : null}
+          {nextCursor ? (
+            <Link
+              className="underline"
+              href={`?workCursor=${encodeURIComponent(nextCursor)}#assignment-work`}
+            >
+              {t("nextWorkPage")}
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
       {deciding ? (
         <ConfirmDialog
           body={t(`workDecisionBody.${deciding.decision}`)}

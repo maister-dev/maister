@@ -69,6 +69,8 @@ import { durableWorkersHealth } from "@/lib/workers/health";
 import { sweepOperationalDispositions } from "@/lib/gc/operational-disposition";
 import { sweepTaskLaunchPreparationCleanup } from "@/lib/tasks/launch-preparation-cleanup";
 import { recoverInterruptedStandOperations } from "@/lib/stand-operations/recovery-sweep";
+import { stopRunForUser } from "@/lib/runs/stop";
+import { reconcileAssignmentCancellations } from "@/lib/specialist-assignments/controls";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -367,6 +369,19 @@ export async function runSystemSweep(
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
   let pressure: HostPressureSweepSummary | null = null;
+
+  try {
+    await reconcileAssignmentCancellations(getDb(), stopRunForUser);
+  } catch (error) {
+    const message = "assignment cancellation reconciliation failed";
+
+    errors.push(message);
+    bundleErrors.push(message);
+    log.error(
+      { errorType: error instanceof Error ? error.name : typeof error },
+      message,
+    );
+  }
 
   if (process.env.MAISTER_STAND_AUTHORITY_PORT) {
     try {

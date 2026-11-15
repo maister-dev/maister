@@ -60,6 +60,7 @@ CREATE TRIGGER execution_commands_coordinator_context_guard BEFORE INSERT OR UPD
 CREATE TRIGGER execution_commands_immutable_create_intent BEFORE UPDATE ON public.execution_commands FOR EACH ROW EXECUTE FUNCTION guard_immutable_session_create_intent();
 CREATE TRIGGER execution_commands_immutable_request BEFORE UPDATE OF id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, target_session_id, created_at, owner_kind, owner_ref, logical_operation_key, request_schema, request_sha256, request_canonical_json ON public.execution_commands FOR EACH ROW EXECUTE FUNCTION guard_immutable_command_request();
 CREATE TRIGGER execution_commands_immutable_terminal_evidence BEFORE UPDATE OF receipt_evidence, terminal_event_id, terminal_evidence_sha256, settled_from, state, result, last_error, completed_at ON public.execution_commands FOR EACH ROW EXECUTE FUNCTION guard_prompt_terminal_evidence();
+CREATE TRIGGER specialist_cancellation_command_guard BEFORE INSERT ON public.execution_commands FOR EACH ROW WHEN ((new.kind = ANY (ARRAY['session.create'::text, 'session.prompt'::text, 'session.input'::text, 'session.steer'::text, 'stand.dispatch'::text]))) EXECUTE FUNCTION check_specialist_cancellation_run_write();
 CREATE TRIGGER execution_data_plane_imports_complete_is_final BEFORE UPDATE OF state, source_fingerprint, last_source_position, imported_count ON public.execution_data_plane_imports FOR EACH ROW EXECUTE FUNCTION maister_execution_data_plane_imports_complete_is_final();
 CREATE TRIGGER execution_data_plane_imports_writer_gate BEFORE INSERT OR UPDATE ON public.execution_data_plane_imports FOR EACH ROW EXECUTE FUNCTION maister_execution_data_plane_imports_writer_gate();
 CREATE TRIGGER execution_events_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.execution_events FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('execution', 'run_id,run_sequence,ingest_disposition');
@@ -120,6 +121,7 @@ CREATE TRIGGER runs_task_launch_execution_reservation BEFORE UPDATE OF status ON
 CREATE TRIGGER runs_task_launch_shared_reservation BEFORE INSERT OR UPDATE OF status, task_id, run_kind, agent_kind, task_launch_intent_id ON public.runs FOR EACH ROW EXECUTE FUNCTION guard_task_launch_shared_reservation();
 CREATE TRIGGER runs_task_launch_writer BEFORE INSERT OR UPDATE ON public.runs FOR EACH ROW EXECUTE FUNCTION guard_task_launch_writer();
 CREATE TRIGGER runs_taskless_agent_carrier_immutable BEFORE UPDATE ON public.runs FOR EACH ROW EXECUTE FUNCTION guard_taskless_agent_carrier_immutable();
+CREATE TRIGGER specialist_cancellation_resume_guard BEFORE UPDATE OF status, execution_assignment_id ON public.runs FOR EACH ROW WHEN (((new.status = ANY (ARRAY['Pending'::text, 'Running'::text, 'NeedsInput'::text])) AND ((new.status IS DISTINCT FROM old.status) OR (new.execution_assignment_id IS DISTINCT FROM old.execution_assignment_id)))) EXECUTE FUNCTION check_specialist_cancellation_run_write();
 CREATE TRIGGER specialist_executor_on_run AFTER UPDATE OF execution_assignment_id, status ON public.runs FOR EACH ROW WHEN (((new.execution_assignment_id IS NOT NULL) AND (new.status = ANY (ARRAY['Pending'::text, 'Running'::text, 'NeedsInput'::text])) AND ((new.execution_assignment_id IS DISTINCT FROM old.execution_assignment_id) OR (old.status <> ALL (ARRAY['Pending'::text, 'Running'::text, 'NeedsInput'::text]))))) EXECUTE FUNCTION appoint_specialist_executor_on_run();
 CREATE TRIGGER specialist_root_recovery_guard BEFORE UPDATE OF status ON public.runs FOR EACH ROW WHEN (((old.status = 'Crashed'::text) AND (new.status = ANY (ARRAY['Pending'::text, 'Running'::text])))) EXECUTE FUNCTION guard_specialist_root_recovery();
 CREATE CONSTRAINT TRIGGER specialist_acceptance_completed_head AFTER INSERT ON public.specialist_acceptances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION require_specialist_accepted_head();
@@ -129,6 +131,7 @@ CREATE CONSTRAINT TRIGGER specialist_assignment_context_head AFTER INSERT OR UPD
 CREATE TRIGGER specialist_assignments_head_guard BEFORE UPDATE ON public.specialist_assignments FOR EACH ROW EXECUTE FUNCTION guard_specialist_assignment_head();
 CREATE CONSTRAINT TRIGGER specialist_assignments_input_head AFTER INSERT OR UPDATE ON public.specialist_assignments DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION assert_specialist_input_head();
 CREATE TRIGGER specialist_assignments_project_task_guard BEFORE INSERT OR UPDATE ON public.specialist_assignments FOR EACH ROW EXECUTE FUNCTION guard_specialist_project_task();
+CREATE TRIGGER specialist_cancellation_head_guard BEFORE UPDATE ON public.specialist_assignments FOR EACH ROW EXECUTE FUNCTION check_specialist_cancellation_head();
 CREATE TRIGGER specialist_context_00_execution_epoch_guard BEFORE INSERT ON public.specialist_context_revisions FOR EACH ROW EXECUTE FUNCTION guard_specialist_context_execution_epoch();
 CREATE TRIGGER specialist_context_01_owner_epoch_guard BEFORE INSERT ON public.specialist_context_revisions FOR EACH ROW EXECUTE FUNCTION guard_specialist_context_owner_epoch();
 CREATE TRIGGER specialist_context_history_guard BEFORE DELETE OR UPDATE ON public.specialist_context_revisions FOR EACH ROW EXECUTE FUNCTION guard_specialist_context_history();
@@ -139,6 +142,7 @@ CREATE TRIGGER specialist_delivery_receipt_guard BEFORE INSERT OR DELETE OR UPDA
 CREATE TRIGGER specialist_input_revisions_immutable BEFORE DELETE OR UPDATE ON public.specialist_input_revisions FOR EACH ROW EXECUTE FUNCTION guard_specialist_input_history();
 CREATE TRIGGER specialist_intake_receipts_guard BEFORE INSERT OR DELETE OR UPDATE ON public.specialist_intake_receipts FOR EACH ROW EXECUTE FUNCTION guard_specialist_intake_receipt();
 CREATE TRIGGER specialist_owner_epoch_start BEFORE INSERT OR UPDATE ON public.specialist_owner_claims FOR EACH ROW EXECUTE FUNCTION set_specialist_epoch_start();
+CREATE TRIGGER specialist_cancellation_link_guard BEFORE INSERT ON public.specialist_run_links FOR EACH ROW EXECUTE FUNCTION check_specialist_cancellation_link();
 CREATE TRIGGER specialist_executor_on_link AFTER INSERT ON public.specialist_run_links FOR EACH ROW WHEN ((new.root_appointment_epoch IS NOT NULL)) EXECUTE FUNCTION appoint_specialist_executor_on_link();
 CREATE TRIGGER specialist_root_link_guard BEFORE INSERT ON public.specialist_run_links FOR EACH ROW EXECUTE FUNCTION guard_specialist_root_link();
 CREATE TRIGGER specialist_run_links_immutable BEFORE DELETE OR UPDATE ON public.specialist_run_links FOR EACH ROW EXECUTE FUNCTION guard_specialist_run_link();
@@ -149,6 +153,7 @@ CREATE CONSTRAINT TRIGGER specialist_work_enrollment_check AFTER INSERT OR UPDAT
 CREATE TRIGGER specialist_work_guard BEFORE INSERT OR DELETE OR UPDATE ON public.specialist_work FOR EACH ROW EXECUTE FUNCTION guard_specialist_work();
 CREATE CONSTRAINT TRIGGER specialist_work_rework_continuation_guard AFTER INSERT ON public.specialist_work_decisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION require_specialist_work_rework_continuation();
 CREATE TRIGGER specialist_work_rework_decision_guard BEFORE INSERT OR DELETE OR UPDATE ON public.specialist_work_decisions FOR EACH ROW EXECUTE FUNCTION guard_specialist_work_rework_decision();
+CREATE TRIGGER specialist_cancellation_dispatch_permit_guard BEFORE INSERT ON public.stand_authorization_permits FOR EACH ROW WHEN ((new.purpose = 'dispatch'::text)) EXECUTE FUNCTION check_specialist_cancellation_dispatch_permit();
 CREATE TRIGGER stand_authorization_permit_guard BEFORE INSERT OR DELETE OR UPDATE ON public.stand_authorization_permits FOR EACH ROW EXECUTE FUNCTION guard_stand_authorization_permit();
 CREATE TRIGGER stand_permit_observation_guard BEFORE INSERT ON public.stand_authorization_permits FOR EACH ROW EXECUTE FUNCTION guard_stand_permit_observation();
 CREATE TRIGGER stand_component_immutable BEFORE DELETE OR UPDATE ON public.stand_components FOR EACH ROW EXECUTE FUNCTION guard_stand_config_history();

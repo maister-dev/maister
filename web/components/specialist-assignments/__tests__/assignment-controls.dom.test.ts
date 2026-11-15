@@ -93,7 +93,6 @@ describe("AssignmentLifecycle", () => {
       createElement(AssignmentLifecycle, {
         assignmentId: "assignment-1",
         revision: 4,
-        action: "cancel",
         live: true,
       }),
     );
@@ -115,30 +114,6 @@ describe("AssignmentLifecycle", () => {
     );
   });
 
-  it("keeps the dialog open with an error when reopening is refused", async () => {
-    respond(409, { code: "CONFLICT", message: "stale" });
-    mount(
-      createElement(AssignmentLifecycle, {
-        assignmentId: "assignment-1",
-        revision: 2,
-        action: "reopen",
-        live: false,
-      }),
-    );
-    await click(button("reopen"));
-    fill("Resume the request.");
-    await click(button("reopen"));
-
-    expect(vi.mocked(fetch).mock.calls[0]![0]).toBe(
-      "/api/specialist-assignments/assignment-1/continue",
-    );
-    expect(
-      document.querySelector('[role="dialog"] [role="alert"]'),
-    ).not.toBeNull();
-    expect(feedback.error).toHaveBeenCalledOnce();
-    expect(router.refresh).not.toHaveBeenCalled();
-  });
-
   it("explains a cancel refused because a linked run cannot be stopped", async () => {
     respond(409, {
       code: "CONFLICT",
@@ -149,7 +124,6 @@ describe("AssignmentLifecycle", () => {
       createElement(AssignmentLifecycle, {
         assignmentId: "assignment-1",
         revision: 2,
-        action: "cancel",
         live: true,
       }),
     );
@@ -178,16 +152,27 @@ describe("AssignmentWork", () => {
       state: "result_ready" as const,
       childRunId: "run-1",
       resultRevision: 3,
+      canAccept: true,
+      canReject: true,
       limitations: [],
     };
 
     mount(
       createElement(AssignmentWork, {
         assignmentId: "assignment-1",
+        nextCursor: null,
+        paged: false,
         canDecide: true,
         items: [
           ready,
-          { ...ready, id: "work-2", state: "running", resultRevision: null },
+          {
+            ...ready,
+            id: "work-2",
+            state: "running",
+            resultRevision: null,
+            canAccept: false,
+            canReject: false,
+          },
         ],
       }),
     );
@@ -218,6 +203,8 @@ describe("AssignmentWork", () => {
     const view = mount(
       createElement(AssignmentWork, {
         assignmentId: "assignment-1",
+        nextCursor: null,
+        paged: false,
         canDecide: false,
         items: [
           {
@@ -229,6 +216,8 @@ describe("AssignmentWork", () => {
             state: "result_ready",
             childRunId: "run-1",
             resultRevision: 3,
+            canAccept: true,
+            canReject: true,
             limitations: [],
           },
         ],
@@ -242,6 +231,8 @@ describe("AssignmentWork", () => {
     const view = mount(
       createElement(AssignmentWork, {
         assignmentId: "assignment-1",
+        nextCursor: null,
+        paged: false,
         canDecide: true,
         items: [
           {
@@ -253,6 +244,8 @@ describe("AssignmentWork", () => {
             state: "cancelled",
             childRunId: "run-1",
             resultRevision: 3,
+            canAccept: false,
+            canReject: false,
             limitations: ["rejected_without_rework"],
           },
         ],

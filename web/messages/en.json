@@ -6955,7 +6955,9 @@
     "authorizeSuccessor": "Authorize recovery assignment",
     "approvalRecorded": "Restart approval recorded",
     "cancel": "Cancel assignment",
-    "reopen": "Reopen assignment",
+    "workPages": "Delegated work pages",
+    "firstWorkPage": "First page",
+    "nextWorkPage": "Next page",
     "accept": "Accept verified outcome",
     "reviewResult": "Inspect the result before accepting",
     "configuration": "Retained configuration and authority",
@@ -7041,23 +7043,21 @@
       "hold": "Record hold",
       "successor": "Authorize successor"
     },
+    "terminalRecovery": "Reconcile any unresolved Stand operation and finish any Run in Review before submitting a new assignment.",
     "cancelPending": "Stopping running work; the cancellation is recorded once it has stopped.",
     "cancelUnstoppable": "A linked run can't be stopped from its current state. Settle it from the run page, then cancel again.",
     "workLimitation": {
       "rejected_without_rework": "The coordinator rejected this result without rework."
     },
     "lifecycleDone": {
-      "cancel": "Assignment cancelled",
-      "reopen": "Assignment reopened"
+      "cancel": "Assignment cancelled"
     },
-    "cancelStopsWork": "Cancelling stops this assignment's running work first. Confirmed or unknown external effects are kept for reconciliation.",
+    "cancelStopsWork": "Cancellation records your request and stops owned work. Confirmed or unknown external effects are kept for reconciliation.",
     "lifecycleTitle": {
-      "cancel": "Cancel this assignment?",
-      "reopen": "Reopen this assignment?"
+      "cancel": "Cancel this assignment?"
     },
     "lifecycleBody": {
-      "cancel": "Running work is stopped and the assignment is recorded as cancelled with your reason. You can reopen it later.",
-      "reopen": "The assignment returns to the queue. Nothing is launched or repeated automatically."
+      "cancel": "Your request is retained before running work is stopped. The assignment is marked cancelled once teardown is confirmed."
     },
     "work": "Delegated work",
     "noWork": "No work has been delegated yet.",

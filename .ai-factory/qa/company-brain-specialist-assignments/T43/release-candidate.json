@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "locally_qualified",
+  "status": "review_fixes_pending_qualification",
   "specs": {
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
     "docs/system-analytics/company-brain-specialists-traceability.md": "eb7a8356e494d3637b8ad2b4e6621a88b7181dffbb35601657c02584285bd805",
@@ -83,7 +83,7 @@
   },
   "releasePublished": false,
   "finalContractAudit": {
-    "testOnlyChangesAfterFullWeb": true,
+    "testOnlyChangesAfterFullWeb": false,
     "standPostgresTestsPassed": 5,
     "connectorTestsPassed": 9,
     "healthDeadline": "A stalled real HTTP peer returns inconclusive after the configured deadline. The owning PostgreSQL scenario retains the existing applied effect and sends no second restart."
@@ -104,8 +104,21 @@
     {
       "path": "docs/system-analytics/specialist-assignments.md",
       "qualifiedSha256": "e05f1920b4660670329fa5c2edc7958ba83fbcaf7a92e22097d2e50fa9494ce8",
-      "currentSha256": "4a0112259a5782f5036a6594998d39363fc500275b980684fba4070b254cd34a",
-      "reason": "Review fixes: operator list/input/continue/cancel/work controls with idempotency receipts (migration 0338), cancel precondition-before-stop, Review counted as stopped for cancel, assignment_run_unstoppable, hidden 404 on writes (CBA-08, EDGE-CBA-06). Not part of the T43 live qualification; covered by IT-CBA integration tests. Docs-only review fix: state-machine transitions with no application writer (failed, reconciling, waiting_children, waiting_resource, pre-admission question, awaiting_acceptance rework) tagged Designed; the implemented waiting_input -> active answer path and the active-after-root-end retry/cancel-reopen recovery documented."
+      "currentSha256": "529e2191cf41fcffde61593043e829d0cfe9e9a81fb1b1f38b54a7c1b2cbcb64",
+      "reason": "Review fix: readable keysets and results, exact decision availability, durable cancellation intent and explicit native recovery routing. Historical qualification receipts retain their original source."
+    },
+    {
+      "path": "docs/system-analytics/company-brain-specialists-qualification.md",
+      "qualifiedSha256": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
+      "currentSha256": "3424e8553d37ee96ed6d44b2ba68a019550cbc9b3523b02015ddae589dd64bb8",
+      "reason": "Review fix: add main migrations 0337–0339 and the authenticated browser CI job. Historical qualification receipts retain their original source."
     }
-  ]
+  ],
+  "reviewCandidate": {
+    "parent": "345237cf6ca16a798936d71d0f13d74a5e37bdb7",
+    "lastMigration": "0339_specialist_assignment_cancellation_intent",
+    "fullWeb": "pending",
+    "browserCI": "pending",
+    "liveGLM53": "pending"
+  }
 }

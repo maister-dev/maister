@@ -42,7 +42,7 @@ flowchart TD
 
 ### Migration execution manifest
 
-Assignment storage precedes binding storage (T18→T19). Execution resolves the current binding service; retained binding/pin references alone grant no authority. Main migrations through `0336_specialist_interrupted_work` and Brain migrations through `0011_proposal_source_access` are implemented locally. The following units identify the migration boundaries and drill-down contracts. Deployment and installed-package qualification have separate evidence requirements. Exact keys and guards belong to the linked [knowledge](../db/company-brain-domain.md), [assignment](../db/specialist-assignments-domain.md) and [operation](../db/stand-operations-domain.md) persistence contracts. Apply the complete main lineage before Brain; main-side knowledge pointers never FK a new Brain table. Recheck journal collisions before generation or integration.
+Assignment storage precedes binding storage (T18→T19). Execution resolves the current binding service; retained binding/pin references alone grant no authority. Main migrations through `0339_specialist_assignment_cancellation_intent` and Brain migrations through `0011_proposal_source_access` are implemented locally. The following units identify the migration boundaries and drill-down contracts. Deployment and installed-package qualification have separate evidence requirements. Exact keys and guards belong to the linked [knowledge](../db/company-brain-domain.md), [assignment](../db/specialist-assignments-domain.md) and [operation](../db/stand-operations-domain.md) persistence contracts. Apply the complete main lineage before Brain; main-side knowledge pointers never FK a new Brain table. Recheck journal collisions before generation or integration.
 
 | Unit | Dependency and responsible slice | Preservation and failure oracle |
 | --- | --- | --- |
@@ -92,6 +92,9 @@ Assignment storage precedes binding storage (T18→T19). Execution resolves the 
 | Main 0299–0334 | Governed cooperation; T31–39 | Versioned target/operation/probe persistence, authenticated permit, resource exclusion, recovery, incident projection and scheduled read-only appointments preserve unknown effects independently of Run retirement. See [stand persistence](../db/stand-operations-domain.md). |
 | Main 0335 company_pending_pool_index | Native child reservation; T27/T41 | Lets the existing worker find pending company Runs within its bounded scan. Existing pool admission retains capacity and budget checks. |
 | Main 0336 specialist_interrupted_work | Native rework; T40/T41 | Binds a read-only child continuation to its retired original prompt and retains the same input and objective. Old decisions retain a null interruption pointer. |
+| Main 0337 stand_recovery_attempts | Stand recovery sweep | Retained recovery attempts bound repeated reconciliation. |
+| Main 0338 specialist_assignment_control_receipts | Human assignment controls | Records exact input, continuation and cancellation replays. |
+| Main 0339 specialist_assignment_cancellation_intent | 0338 and native Run owners | Preserves settled receipts. Pending cancellation fences new work and survives lost stop responses until physical settlement. |
 | Brain 0007 company_records | Main 0230; T06 | Stable IDs and honest legacy provenance; unknown authorship/basis/time never becomes confirmation or a historical acceptance event. |
 | Brain 0008 company_evidence | Brain 0007; T07/T08 | Immutable witnesses/observation groups remain separate from mutable anchors and cannot manufacture independent support. |
 | Brain 0009 knowledge_review | Brain 0008; T08/T09 | Existing improvement drafts remain intact; native add/correct/confirm receipts are attributable, idempotent and CAS protected. |
@@ -125,7 +128,7 @@ Native additive tools map to the same HTTP/domain services: `knowledge_search/ge
 
 ### Executable proof and acceptance scenarios
 
-The [traceability matrix](company-brain-specialists-traceability.md) fixes primary file/title/runner and task mappings for every requirement and edge. Existing file allocations were inspected; new paths are explicitly Planned. Web integration uses `web/vitest.workspace.ts` lib/app integration globs, MCP uses its src integration glob, Node contracts use `node --test`; normal browser cases use existing Playwright configuration. Live cases use `web/playwright.live.config.ts` project `live-supervisor` and the `live-*.spec.ts` pattern. Required discovery and nonzero execution counts are retained.
+The [traceability matrix](company-brain-specialists-traceability.md) fixes primary file/title/runner and task mappings for every requirement and edge. Existing file allocations were inspected; new paths are explicitly Planned. Web integration uses `web/vitest.workspace.ts` lib/app integration globs, MCP uses its src integration glob, Node contracts use `node --test`; normal browser cases use the existing Playwright configuration. Pull requests run the authenticated Company Brain and specialist acceptance specs as a CI job. Live cases use `web/playwright.live.config.ts` project `live-supervisor` and the `live-*.spec.ts` pattern. Required discovery and nonzero execution counts are retained.
 
 | Original acceptance | Primary requirement proof |
 | --- | --- |

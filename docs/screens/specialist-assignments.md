@@ -9,7 +9,7 @@ Source: `web/app/(app)/specialist-assignments/`,
 
 When I hand durable work to a company or project specialist, I want to find it
 again by status and owner, see who is responsible, what it is waiting for and what
-it produced, so I can answer, accept, stop or reopen it without reading run logs.
+it produced, so I can answer, accept, stop or recover it without reading run logs.
 When a stand restart is involved, I want to approve, inspect and recover the exact
 operation with an explicit confirmation, so an external effect never happens by a
 stray click.
@@ -95,7 +95,7 @@ stateDiagram-v2
     Listed --> Expired: stale cursor
     Expired --> Listed: first page
     Listed --> Detail
-    Detail --> Confirming: cancel / reopen / approve / decide
+    Detail --> Confirming: cancel / approve / decide
     Confirming --> Detail: success toast
     Confirming --> Confirming: refused, inline alert
 ```

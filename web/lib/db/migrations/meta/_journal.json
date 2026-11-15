@@ -2346,6 +2346,13 @@
       "when": 1794693731614,
       "tag": "0338_specialist_assignment_control_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 339,
+      "version": "7",
+      "when": 1794776732397,
+      "tag": "0339_specialist_assignment_cancellation_intent",
+      "breakpoints": true
     }
   ]
 }

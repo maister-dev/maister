@@ -52,7 +52,14 @@ export async function getSpecialistAssignmentToken(
         ...restrictionsForKnowledgeAccess(inspection.access),
       ]);
 
-      return inspection.value;
+      const runId = principal.source.runId;
+
+      return {
+        ...inspection.value,
+        runIds: inspection.value.runIds.filter(
+          (linkedRunId) => linkedRunId === runId,
+        ),
+      };
     });
   } catch (error) {
     throw redactQueryError(error);

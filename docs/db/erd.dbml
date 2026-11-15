@@ -3195,10 +3195,14 @@ table specialist_assignment_control_receipts {
   revision integer [not null]
   status text [not null]
   reason text
+  next_attempt_at "timestamp with time zone"
   created_at "timestamp with time zone" [not null, default: `now()`]
 
   indexes {
     (assignment_id, actor_user_id, action, idempotency_key) [pk]
+    assignment_id [name: 'specialist_assignment_pending_cancel', unique]
+    (next_attempt_at, assignment_id) [name: 'specialist_assignment_due_cancel']
+
 
   }
 }

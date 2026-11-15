@@ -493,6 +493,7 @@ cases:
       inputRevision: 2
       contextRevision: 4
       status: waiting_input
+      cancellationPending: false
       targetIds: [target_example]
       verification: []
       runIds: [run_example]

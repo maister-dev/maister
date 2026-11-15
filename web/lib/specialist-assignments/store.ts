@@ -33,6 +33,7 @@ import {
 import { decodeAssignmentInput, retainAssignmentInput } from "./input-snapshot";
 import { assertProjectCoordinatorProvider } from "./project-flow-provider";
 
+import { assertCompanyRunReadAccessInTransaction } from "@/lib/agents/company-run-read-access";
 import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
@@ -273,6 +274,7 @@ async function inspectAssignmentInTransaction(
     inputRevision: head.input_revision,
     contextRevision: head.context_revision,
     status: head.status,
+    cancellationPending: false,
     targetIds: objective.data.targetIds,
     inputRefs: objective.data.inputRefs,
     constraints: objective.data.constraints,
@@ -333,7 +335,31 @@ export async function getVisibleSpecialistAssignmentInTransaction(
   assignmentId: string,
 ): Promise<SpecialistAssignment> {
   try {
-    return await getSpecialistAssignmentInTransaction(tx, userId, assignmentId);
+    const assignment = await getSpecialistAssignmentInTransaction(
+      tx,
+      userId,
+      assignmentId,
+    );
+    const runIds: string[] = [];
+
+    for (const runId of assignment.runIds) {
+      if (
+        await isReadableAssignmentRun(tx, userId, assignment.owner.kind, runId)
+      )
+        runIds.push(runId);
+    }
+
+    const [state] = (
+      await tx.execute(sql`
+      SELECT specialist_assignment_cancellation_pending(${assignmentId}) AS pending
+    `)
+    ).rows;
+
+    return {
+      ...assignment,
+      runIds,
+      cancellationPending: state?.pending === true,
+    };
   } catch (error) {
     if (isMaisterError(error) && error.code === "UNAUTHORIZED")
       throw unavailableAssignment();
@@ -358,6 +384,52 @@ export async function getVisibleSpecialistAssignment(
     });
   } catch (error) {
     throw redactQueryError(error);
+  }
+}
+
+export async function isReadableAssignmentRun(
+  tx: SqlTransaction,
+  userId: string,
+  owner: SpecialistAssignment["owner"]["kind"],
+  runId: string,
+): Promise<boolean> {
+  try {
+    if (owner === "company") {
+      await assertCompanyRunReadAccessInTransaction(tx, userId, runId);
+    } else {
+      const [input] = (
+        await tx.execute(sql`
+        SELECT link.assignment_id,link.input_revision,input.digest
+        FROM specialist_run_links link JOIN specialist_input_revisions input
+          ON input.assignment_id=link.assignment_id AND input.revision=link.input_revision
+        WHERE link.run_id=${runId}
+      `)
+      ).rows;
+
+      if (!input) return false;
+      await authorizeSourceRestrictions(tx, { kind: "user", userId }, [
+        {
+          kind: "assignment_input",
+          assignmentId: String(input.assignment_id),
+          inputRevision: Number(input.input_revision),
+          inputSha256: String(input.digest),
+        },
+      ]);
+      await authorizeRunKnowledgeDisclosure(
+        tx,
+        { kind: "user", userId },
+        runId,
+      );
+    }
+
+    return true;
+  } catch (error) {
+    if (
+      isMaisterError(error) &&
+      (error.code === "UNAUTHORIZED" || error.code === "PRECONDITION")
+    )
+      return false;
+    throw error;
   }
 }
 
@@ -610,7 +682,7 @@ export async function lockSpecialistAssignment(
   return head;
 }
 
-async function lockAssignmentHead(
+export async function lockAssignmentHead(
   tx: SqlTransaction,
   assignmentId: string,
 ): Promise<Readonly<Record<string, unknown>>> {

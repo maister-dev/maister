@@ -206,6 +206,7 @@ export const specialistAssignmentSchema = z
     inputRevision: knowledgeRevisionSchema,
     contextRevision: z.number().int().min(0).max(2147483647),
     status: z.enum(SPECIALIST_ASSIGNMENT_STATUSES),
+    cancellationPending: z.boolean(),
     targetIds: z.array(identity).max(32),
     inputRefs: z.array(knowledgeReferenceSchema).max(64),
     constraints: z.array(nonblank.max(2000)).max(32),

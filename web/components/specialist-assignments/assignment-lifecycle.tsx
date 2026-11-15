@@ -3,10 +3,7 @@
 import type { ReactElement } from "react";
 import type { KnowledgeDelivery } from "@/components/brain/knowledge-client";
 
-import {
-  ArrowUturnLeftIcon,
-  StopCircleIcon,
-} from "@heroicons/react/24/outline";
+import { StopCircleIcon } from "@heroicons/react/24/outline";
 import { useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import { useTranslations } from "next-intl";
@@ -20,16 +17,14 @@ import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 import { useFeedback } from "@/components/feedback/feedback-provider";
 import { MaisterError, isMaisterErrorCode } from "@/lib/errors-core";
 
-/** Cancel stops the assignment's running work first; reopen queues failed or cancelled work again. */
+/** Retain cancellation intent and stop the assignment through its native Run owners. */
 export function AssignmentLifecycle({
   assignmentId,
   revision,
-  action,
   live,
 }: {
   assignmentId: string;
   revision: number;
-  action: "cancel" | "reopen";
   live: boolean;
 }): ReactElement {
   const t = useTranslations("specialistAssignments");
@@ -51,7 +46,7 @@ export function AssignmentLifecycle({
     setError(null);
     try {
       const response = await fetch(
-        `/api/specialist-assignments/${encodeURIComponent(assignmentId)}/${action === "cancel" ? "cancel" : "continue"}`,
+        `/api/specialist-assignments/${encodeURIComponent(assignmentId)}/cancel`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -80,12 +75,10 @@ export function AssignmentLifecycle({
           typeof reason === "string" ? { details: { reason } } : undefined,
         );
       }
-      const pendingTeardown = action === "cancel" && response.status === 202;
+      const pendingTeardown = response.status === 202;
 
       feedback.success({
-        message: t(
-          pendingTeardown ? "cancelPending" : `lifecycleDone.${action}`,
-        ),
+        message: t(pendingTeardown ? "cancelPending" : "lifecycleDone.cancel"),
         mutationId: idempotencyKey,
       });
       setOpen(false);
@@ -105,28 +98,23 @@ export function AssignmentLifecycle({
     }
   }
 
-  const Icon = action === "cancel" ? StopCircleIcon : ArrowUturnLeftIcon;
-
   return (
     <div className="space-y-2 rounded-xl border border-line bg-paper p-5">
-      {action === "cancel" && live ? (
+      {live ? (
         <p className="text-sm text-mute">{t("cancelStopsWork")}</p>
       ) : null}
-      <Button
-        variant={action === "cancel" ? "danger-soft" : "secondary"}
-        onPress={() => setOpen(true)}
-      >
-        <Icon aria-hidden="true" className="size-4" />
-        {t(action)}
+      <Button variant="danger-soft" onPress={() => setOpen(true)}>
+        <StopCircleIcon aria-hidden="true" className="size-4" />
+        {t("cancel")}
       </Button>
       {open ? (
         <ConfirmDialog
-          body={t(`lifecycleBody.${action}`)}
+          body={t("lifecycleBody.cancel")}
           busy={busy}
           cancelLabel={t("dismiss")}
-          testId={`assignment-${action}-${assignmentId}`}
-          title={t(`lifecycleTitle.${action}`)}
-          titleId={`assignment-${action}-title-${assignmentId}`}
+          testId={`assignment-cancel-${assignmentId}`}
+          title={t("lifecycleTitle.cancel")}
+          titleId={`assignment-cancel-title-${assignmentId}`}
           onClose={() => setOpen(false)}
         >
           <label className="block text-sm">
@@ -148,11 +136,11 @@ export function AssignmentLifecycle({
           ) : null}
           <Button
             isDisabled={busy || !reason.trim()}
-            variant={action === "cancel" ? "danger" : "primary"}
+            variant="danger"
             onPress={() => void submit()}
           >
-            <Icon aria-hidden="true" className="size-4" />
-            {t(action)}
+            <StopCircleIcon aria-hidden="true" className="size-4" />
+            {t("cancel")}
           </Button>
         </ConfirmDialog>
       ) : null}

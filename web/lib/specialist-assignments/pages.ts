@@ -2,6 +2,8 @@ import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { SpecialistAssignment, SpecialistAssignmentStatus } from "./types";
+import type { KnowledgePrincipalIdentity } from "@/lib/brain/knowledge-access";
+import type { SQL } from "drizzle-orm";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -9,18 +11,23 @@ import { z } from "zod";
 import {
   beginAssignmentTransaction,
   getVisibleSpecialistAssignmentInTransaction,
+  isReadableAssignmentRun,
 } from "./store";
+import { exactCollectedWorkResult, isWorkDecisionState } from "./work-result";
 
 import { redactQueryError } from "@/lib/db/pg-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/keyset-cursor";
 import { isSettledRunStatus } from "@/lib/runs/run-status-sets";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { knowledgeSourceReadPolicy } from "@/lib/brain/knowledge-query-policy";
+import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 
 const assignmentCursorNamespace = "maister.specialist-assignments.v1";
 const workCursorNamespace = "maister.specialist-work.v1";
-/** Candidates inspected per page; access is decided per row by the store. */
-const scanFactor = 4;
+
+type AssignmentReader = Extract<KnowledgePrincipalIdentity, { kind: "user" }>;
 
 const pageInputSchema = z
   .object({
@@ -55,6 +62,8 @@ export type SpecialistWorkItem = Readonly<{
     | "cancelled";
   childRunId: string | null;
   resultRevision: number | null;
+  canAccept: boolean;
+  canReject: boolean;
   limitations: SpecialistWorkLimitation[];
 }>;
 
@@ -77,6 +86,49 @@ function refusedRead(error: unknown): boolean {
   );
 }
 
+async function assignmentReader(
+  tx: SqlTransaction,
+  userId: string,
+): Promise<AssignmentReader> {
+  const identity = await resolveKnowledgePrincipal(
+    tx,
+    { kind: "user", userId },
+    "knowledge:read",
+  );
+
+  if (identity.kind !== "user")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Assignment lists require a current user",
+    );
+
+  return identity;
+}
+
+function readableAssignmentInput(
+  identity: AssignmentReader,
+  assignmentId: SQL,
+  revision: SQL,
+  digest: SQL,
+): SQL {
+  return knowledgeSourceReadPolicy(
+    identity,
+    sql`jsonb_build_object(
+    'kind','assignment_input','assignmentId',${assignmentId},
+    'inputRevision',${revision},'inputSha256',${digest})`,
+  );
+}
+
+function readableRestrictions(
+  identity: AssignmentReader,
+  restrictions: SQL,
+): SQL {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM native_knowledge_source_restrictions(${restrictions}) source
+    WHERE NOT (${knowledgeSourceReadPolicy(identity, sql`source`)})
+  )`;
+}
+
 async function upperBound(tx: SqlTransaction): Promise<string> {
   return String(
     (
@@ -88,9 +140,7 @@ async function upperBound(tx: SqlTransaction): Promise<string> {
 }
 
 /**
- * Lists assignments the user can currently read, newest first. The store's
- * per-row authorization decides access, so a page may hold fewer than `limit`
- * items while `nextCursor` is still non-null.
+ * Apply current source access before computing the page boundary.
  */
 export async function listAccessibleSpecialistAssignments(
   db: SqlDatabase,
@@ -112,30 +162,33 @@ export async function listAccessibleSpecialistAssignments(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
+      const identity = await assignmentReader(tx, userId);
+
+      await tx.execute(sql`SET LOCAL jit=off`);
       const after = cursor
         ? decodeKeysetCursor(assignmentCursorNamespace, cursor, scope)
         : null;
       const upper = after?.upper ?? (await upperBound(tx));
       const candidates = (
         await tx.execute(sql`
-          SELECT id,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
-          FROM specialist_assignments
-          WHERE created_at<=${upper}::timestamptz
-            ${projectId ? sql`AND project_id=${projectId}` : sql``}
-            ${status ? sql`AND status=${status}` : sql``}
-            ${owner === "company" ? sql`AND project_id IS NULL` : owner === "project" ? sql`AND project_id IS NOT NULL` : sql``}
-            ${requestedBy ? sql`AND requester->>'kind'='user' AND requester->>'id'=${requestedBy}` : sql``}
-            ${after ? sql`AND (created_at,id)<(${after.at}::timestamptz,${after.id})` : sql``}
-          ORDER BY created_at DESC,id DESC
-          LIMIT ${limit * scanFactor + 1}
+          SELECT head.id,to_char(head.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
+          FROM specialist_assignments head
+          JOIN specialist_input_revisions input ON input.assignment_id=head.id AND input.revision=head.input_revision
+          WHERE head.created_at<=${upper}::timestamptz
+            AND (${readableAssignmentInput(identity, sql`head.id`, sql`input.revision`, sql`input.digest`)})
+            ${projectId ? sql`AND head.project_id=${projectId}` : sql``}
+            ${status ? sql`AND head.status=${status}` : sql``}
+            ${owner === "company" ? sql`AND head.project_id IS NULL` : owner === "project" ? sql`AND head.project_id IS NOT NULL` : sql``}
+            ${requestedBy ? sql`AND head.requester->>'kind'='user' AND head.requester->>'id'=${requestedBy}` : sql``}
+            ${after ? sql`AND (head.created_at,head.id)<(${after.at}::timestamptz,${after.id})` : sql``}
+          ORDER BY head.created_at DESC,head.id DESC
+          LIMIT ${limit + 1}
         `)
       ).rows as { id: string; at: string }[];
       const items: SpecialistAssignment[] = [];
       let last: { id: string; at: string } | undefined;
 
-      for (const candidate of candidates.slice(0, limit * scanFactor)) {
-        if (items.length === limit) break;
-        last = candidate;
+      for (const candidate of candidates.slice(0, limit)) {
         try {
           items.push(
             await getVisibleSpecialistAssignmentInTransaction(
@@ -144,17 +197,16 @@ export async function listAccessibleSpecialistAssignments(
               candidate.id,
             ),
           );
+          last = candidate;
         } catch (error) {
           if (!refusedRead(error)) throw error;
         }
       }
-      const exhausted =
-        candidates.length <= limit * scanFactor && last === candidates.at(-1);
 
       return {
         items,
         nextCursor:
-          last && !exhausted
+          last && candidates.length > limit
             ? encodeKeysetCursor(assignmentCursorNamespace, {
                 version: 1,
                 scope,
@@ -187,11 +239,14 @@ export async function listSpecialistAssignmentWork(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      await getVisibleSpecialistAssignmentInTransaction(
+      const assignment = await getVisibleSpecialistAssignmentInTransaction(
         tx,
         userId,
         assignmentId,
       );
+      const identity = await assignmentReader(tx, userId);
+
+      await tx.execute(sql`SET LOCAL jit=off`);
       const after = cursor
         ? decodeKeysetCursor(workCursorNamespace, cursor, scope)
         : null;
@@ -204,23 +259,59 @@ export async function listSpecialistAssignmentWork(
           SELECT work.id,work.logical_work_id,work.revision,work.input_revision,work.work_revision,
             work.decision_state,work.child_run_id,child.status AS child_status,
             (SELECT max(result.revision) FROM run_results result
-              WHERE result.run_id=work.child_run_id AND result.validity='valid') AS result_revision,
+              WHERE result.run_id=work.child_run_id
+                AND ${exactCollectedWorkResult(
+                  sql`work.definition#>>'{objectiveInput,expectedResult,schemaRef}'`,
+                  sql`work.definition#>>'{objectiveInput,expectedResult,schemaVersion}'`,
+                  sql`work.definition#>>'{objectiveInput,expectedResult,sha256}'`,
+                )}) AS result_revision,
+            work.definition#>>'{objectiveInput,expectedResult,required}'='true'
+              AND NOT EXISTS (
+                SELECT 1 FROM jsonb_array_elements(work.definition#>'{objectiveInput,verification}') obligation
+                WHERE obligation->>'required'='true' AND obligation->>'kind'<>'result'
+              ) AS verification_eligible,
             to_char(work.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
           FROM specialist_work work
+          JOIN specialist_input_revisions input ON input.assignment_id=work.assignment_id AND input.revision=work.input_revision
           LEFT JOIN runs child ON child.id=work.child_run_id
           WHERE work.assignment_id=${assignmentId} AND work.created_at<=${upper}::timestamptz
+            AND ${readableAssignmentInput(identity, sql`work.assignment_id`, sql`input.revision`, sql`input.digest`)}
+            AND ${readableRestrictions(identity, sql`work.source_restrictions`)}
+            AND (work.child_run_id IS NULL OR (
+              child.knowledge_access IS NULL AND child.result_contract->>'nativeContract' IS DISTINCT FROM ${FINDINGS_CONTRACT}
+              OR child.workspace_mode IS DISTINCT FROM 'shared'
+                AND child.knowledge_access->>'state'='complete'
+                AND jsonb_typeof(child.knowledge_access->'restrictions')='array'
+                AND ${readableRestrictions(identity, sql`CASE WHEN jsonb_typeof(child.knowledge_access->'restrictions')='array' THEN child.knowledge_access->'restrictions' END`)}
+            ))
             ${after ? sql`AND (work.created_at,work.id,work.work_revision)>(${after.at}::timestamptz,${afterId},${afterRevision}::int)` : sql``}
           ORDER BY work.created_at,work.id,work.work_revision
           LIMIT ${limit + 1}
         `)
       ).rows as (WorkRow & { at: string })[];
-      const selected = rows.slice(0, limit);
+      const selected: typeof rows = [];
+
+      for (const row of rows) {
+        if (
+          row.child_run_id === null ||
+          (await isReadableAssignmentRun(
+            tx,
+            userId,
+            assignment.owner.kind,
+            row.child_run_id,
+          ))
+        )
+          selected.push(row);
+      }
+      const hasNext = selected.length > limit;
+
+      if (hasNext) selected.pop();
       const last = selected.at(-1);
 
       return {
-        items: selected.map(workItem),
+        items: selected.map((row) => workItem(row, assignment)),
         nextCursor:
-          rows.length > limit && last
+          hasNext && last
             ? encodeKeysetCursor(workCursorNamespace, {
                 version: 1,
                 scope,
@@ -246,9 +337,13 @@ type WorkRow = {
   child_run_id: string | null;
   child_status: string | null;
   result_revision: number | null;
+  verification_eligible: boolean | null;
 };
 
-function workItem(row: WorkRow): SpecialistWorkItem {
+function workItem(
+  row: WorkRow,
+  assignment: SpecialistAssignment,
+): SpecialistWorkItem {
   const resultRevision =
     row.result_revision === null ? null : Number(row.result_revision);
   const limitations: SpecialistWorkLimitation[] = [];
@@ -274,6 +369,16 @@ function workItem(row: WorkRow): SpecialistWorkItem {
       else state = "interrupted";
   }
 
+  const canReject =
+    row.decision_state === "open" &&
+    state === "result_ready" &&
+    row.input_revision === assignment.inputRevision &&
+    row.revision < 2147483647 &&
+    assignment.revision < 2147483647 &&
+    assignment.contextRevision < 2147483647 &&
+    !assignment.cancellationPending &&
+    isWorkDecisionState(assignment.status);
+
   return {
     id: row.id,
     logicalWorkId: row.logical_work_id,
@@ -283,6 +388,8 @@ function workItem(row: WorkRow): SpecialistWorkItem {
     state,
     childRunId: row.child_run_id,
     resultRevision,
+    canAccept: canReject && row.verification_eligible === true,
+    canReject,
     limitations,
   };
 }

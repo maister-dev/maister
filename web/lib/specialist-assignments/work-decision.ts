@@ -27,6 +27,7 @@ import {
   unavailableAssignment,
 } from "./store";
 import { assignmentWorkDefinitionSchema } from "./work-types";
+import { exactCollectedWorkResult, isWorkDecisionState } from "./work-result";
 
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import {
@@ -101,10 +102,8 @@ async function readWorkResult(
     await tx.execute(sql`
     SELECT result.id,result.value,child.knowledge_access,child.result_contract
     FROM runs child JOIN run_results result ON result.run_id=child.id
-    WHERE child.id=${childRunId} AND child.status='Done' AND result.revision=${resultRevision}
-      AND result.validity='valid' AND result.first_collected_at IS NOT NULL
-      AND result.schema_ref=${expected.schemaRef} AND result.schema_version=${expected.schemaVersion}
-      AND result.schema_sha256=${expected.sha256}
+    WHERE child.id=${childRunId} AND result.revision=${resultRevision}
+      AND ${exactCollectedWorkResult(sql`${expected.schemaRef}`, sql`${String(expected.schemaVersion)}`, sql`${expected.sha256}`)}
     FOR SHARE OF result
   `)
   ).rows;
@@ -294,9 +293,7 @@ async function decideWork(
       work.revision !== decision.expectedRevision ||
       work.decision_state !== "open" ||
       decision.inputRevision !== assignment.inputRevision ||
-      !["active", "waiting_children", "awaiting_acceptance"].includes(
-        assignment.status,
-      ) ||
+      !isWorkDecisionState(assignment.status) ||
       decision.expectedRevision === 2147483647 ||
       assignment.revision === 2147483647 ||
       assignment.contextRevision === 2147483647

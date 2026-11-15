@@ -22,7 +22,7 @@ import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/a
 import { getSpecialistAssignmentDelivery } from "@/lib/specialist-assignments/delivery-read";
 import { listSpecialistAssignmentWork } from "@/lib/specialist-assignments/pages";
 import {
-  getSpecialistAssignment,
+  getVisibleSpecialistAssignment,
   getSpecialistAssignmentInput,
 } from "@/lib/specialist-assignments/store";
 import {
@@ -43,10 +43,20 @@ const receiptTime = { dateStyle: "medium", timeStyle: "short" } as const;
 
 export default async function SpecialistAssignmentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ assignmentId: string }>;
+  searchParams: Promise<{ workCursor?: string | string[] }>;
 }): Promise<ReactElement> {
   const { assignmentId } = await params;
+  const { workCursor } = await searchParams;
+
+  if (
+    Array.isArray(workCursor) ||
+    (workCursor !== undefined &&
+      (workCursor.length === 0 || workCursor.length > 2048))
+  )
+    notFound();
   const user = await requireActiveSession();
   const t = await getTranslations("specialistAssignments");
   const format = await getFormatter();
@@ -71,7 +81,7 @@ export default async function SpecialistAssignmentPage({
     canReplay,
     actorNames,
     successorChoices,
-  } = await readAssignmentPage(user.id, assignmentId);
+  } = await readAssignmentPage(user.id, assignmentId, workCursor);
   const authority = input.snapshot.authoritySnapshot;
   const actorLabel = (actor: { kind: string; id: string | null }) =>
     (actor.id && actorNames[actor.id]) ??
@@ -350,7 +360,9 @@ export default async function SpecialistAssignmentPage({
       <AssignmentWork
         assignmentId={assignment.id}
         canDecide={canDecide}
-        items={work}
+        items={work.items}
+        nextCursor={work.nextCursor}
+        paged={workCursor !== undefined}
       />
       {delivery ? (
         <AssignmentDelivery
@@ -359,22 +371,36 @@ export default async function SpecialistAssignmentPage({
           delivery={delivery}
         />
       ) : null}
-      {review && runs.some(({ id }) => id === review.result.runId) ? (
+      {!assignment.cancellationPending &&
+      review &&
+      runs.some(({ id }) => id === review.result.runId) ? (
         <AssignmentAcceptanceForm assignmentId={assignmentId} review={review} />
       ) : null}
       {assignment.status === "completed" && assignment.acceptedResult ? (
         <AssignmentKnowledge assignmentId={assignment.id} />
       ) : null}
-      {coordinatorRecovery ? (
+      {coordinatorRecovery && !assignment.cancellationPending ? (
         <RunRecoverActions
           canRecover
           canDiscard={false}
           runId={coordinatorRecovery}
         />
       ) : null}
-      {canChange ? (
+      {assignment.cancellationPending ? (
+        <p
+          className="rounded-xl border border-line bg-paper p-5 text-sm"
+          role="status"
+        >
+          {t("cancelPending")}
+        </p>
+      ) : null}
+      {recovery ? (
+        <p className="rounded-xl border border-line bg-paper p-5 text-sm">
+          {t("terminalRecovery")}
+        </p>
+      ) : null}
+      {canChange && !assignment.cancellationPending ? (
         <AssignmentLifecycle
-          action={recovery ? "reopen" : "cancel"}
           assignmentId={assignmentId}
           live={live}
           revision={assignment.revision}
@@ -406,11 +432,19 @@ export default async function SpecialistAssignmentPage({
   );
 }
 
-async function readAssignmentPage(userId: string, assignmentId: string) {
+async function readAssignmentPage(
+  userId: string,
+  assignmentId: string,
+  workCursor?: string,
+) {
   const db = getDb();
 
   try {
-    const assignment = await getSpecialistAssignment(db, userId, assignmentId);
+    const assignment = await getVisibleSpecialistAssignment(
+      db,
+      userId,
+      assignmentId,
+    );
     const recovery =
       assignment.status === "cancelled" || assignment.status === "failed";
     const [context, input, runs, stand, review, live, canChange, admission] =
@@ -428,14 +462,9 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
         readAssignmentStandChoices(db, userId, assignment),
         readAssignmentReview(db, userId, assignmentId),
         assignmentHasLiveWork(db, assignmentId),
-        assignment.status === "completed"
+        recovery || assignment.status === "completed"
           ? false
-          : canChangeAssignment(
-              db,
-              userId,
-              assignment,
-              recovery ? "assignments:recover" : "assignments:cancel",
-            ),
+          : canChangeAssignment(db, userId, assignment, "assignments:cancel"),
         assignment.owner.kind === "project"
           ? getSpecialistAssignmentAdmission(db, userId, assignmentId)
           : null,
@@ -463,7 +492,10 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
       : [];
     const [work, canDecide, canReplay, actorNames, successorChoices] =
       await Promise.all([
-        listSpecialistAssignmentWork(db, userId, assignmentId, { limit: 50 }),
+        listSpecialistAssignmentWork(db, userId, assignmentId, {
+          limit: 50,
+          cursor: workCursor,
+        }),
         canChangeAssignment(db, userId, assignment, "assignments:accept"),
         canChangeAssignment(db, userId, assignment, "assignments:recover"),
         resolveAssignmentActorNames(db, [
@@ -509,7 +541,7 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
       admission,
       operations,
       incidents,
-      work: work.items,
+      work,
       canDecide,
       delivery,
       canReplay,

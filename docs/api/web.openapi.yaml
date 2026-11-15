@@ -21273,7 +21273,7 @@ paths:
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Visibility is resolved before the revision lock, so an
+        accessible receipt, changed payload conflicts. Visibility is checked while holding the assignment lock and before disclosing receipts or revisions, so an
         unreadable assignment answers the same 404 as a missing one.
       x-implementation-status: Implemented
       x-required-scope: assignments:update
@@ -21318,13 +21318,15 @@ paths:
   /api/specialist-assignments/{assignmentId}/continue:
     post:
       operationId: specialistAssignmentContinue
-      summary: Continue authorized recoverable work
-      description: Requires current assignments:recover. URL identifiers are
-        untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
-        target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Visibility is resolved before the revision lock, so an
-        unreadable assignment answers the same 404 as a missing one.
+      summary: Resolve the supported assignment recovery action
+      description: >-
+        Requires current assignments:recover and an exact business revision. A matching historically
+        retained receipt replays. New requests return an actionable conflict without changing the
+        assignment or scheduling work. Reconcile unresolved restart effects under Stand operations
+        (assignment_effect_reconciliation_required), settle a retained Review Run at its Run page
+        (assignment_run_review_required), use an available native recovery action
+        (assignment_use_current_recovery), or submit a fresh independent request after a terminal
+        outcome (assignment_new_request_required). Missing and unreadable assignments both return 404.
       x-implementation-status: Implemented
       x-required-scope: assignments:recover
       requestBody:
@@ -21337,12 +21339,6 @@ paths:
         "200":
           description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
             work; state remains explicit.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CBReceipt"
-        "202":
-          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
           content:
             application/json:
               schema:
@@ -21382,7 +21378,9 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Revision, authority and a cancellable state (not
         completed, failed or cancelled; `assignment_already_terminal`) are checked before any Run is stopped. A
-        linked Run the stop refuses outright answers 409 `assignment_run_unstoppable`. An unreadable assignment
+        linked Run whose state does not allow native stop answers 409 `assignment_run_unstoppable` before effects.
+        The server retains one pending cancellation before stopping any Run and resumes it in the existing
+        system sweep. Assignment writes, Run admissions and new effect dispatch are fenced while pending. An unreadable assignment
         answers the same 404 as a missing one.
       x-implementation-status: Implemented
       x-required-scope: assignments:cancel
@@ -21402,8 +21400,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/CBReceipt"
         "202":
-          description: Linked Run teardown is still settling under another owner. No receipt is recorded; retry
-            with the same idempotency key. Never proof of success.
+          description: Cancellation intent is durable and teardown still needs confirmation. An exact replay
+            remains 202 until settled; the existing scheduler resumes the owned teardown.
           content:
             application/json:
               schema:
@@ -37171,6 +37169,7 @@ components:
         - inputRevision
         - contextRevision
         - status
+        - cancellationPending
         - targetIds
         - verification
         - runIds
@@ -37189,6 +37188,9 @@ components:
         responses compare their own subject revisions as declared by their endpoint; reads expose the business
         value for safe continuation.
       properties:
+        cancellationPending:
+          type: boolean
+          description: Durable cancellation is awaiting confirmation of physical Run teardown.
         revision:
           type: integer
           minimum: 1
@@ -40207,7 +40209,15 @@ components:
         - childRunId
         - resultRevision
         - limitations
+        - canAccept
+        - canReject
       properties:
+        canAccept:
+          type: boolean
+          description: Exact collected result and verification permit accepting this work revision, subject to current decision authority.
+        canReject:
+          type: boolean
+          description: Exact collected result permits rejecting this work revision, subject to current decision authority.
         id:
           type: string
           minLength: 1
