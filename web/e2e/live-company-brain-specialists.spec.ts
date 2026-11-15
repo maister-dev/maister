@@ -972,9 +972,9 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
     ).toBe(true);
     for (const { flowId, runId } of browserRuns) {
       await page.goto(`/runs/${runId}`);
-      const findingsPanel = page
+      const shell = page.getByTestId("run-shell").filter({ visible: true });
+      const findingsPanel = shell
         .getByTestId("run-shell-inspector")
-        .filter({ visible: true })
         .getByTestId("native-findings");
 
       for (const locale of ["en", "ru"] as const) {
@@ -986,6 +986,7 @@ test("QL-CBX-03 the real pinned RAH package retrieves structured company knowled
           },
         ]);
         await page.reload();
+        await shell.getByTestId("run-header-inspector-toggle").click();
         await expect(findingsPanel).toHaveCount(1);
         await expect(findingsPanel).toBeVisible();
         await expect(
