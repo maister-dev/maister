@@ -1,0 +1,104 @@
+{
+  "sourceHead": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+  "candidateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mcpBundleSha256": "977542eeec787b25654cd23f49f4273572468420ff9c14971452ddae45536354",
+  "modes": [
+    "E2E_STAND_CLARIFICATION",
+    "E2E_STAND_RECOVERY",
+    "E2E_STAND_RESOURCE_CONFLICT",
+    "E2E_STAND_RESTART_WEB_ON_SIGKILL"
+  ],
+  "startedAt": "2026-11-15T22:52:05.430753+00:00",
+  "finishedAt": "2026-11-15T23:00:36.460017+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "browser": {
+    "startTime": "2026-11-15T22:52:13.598Z",
+    "duration": 502437.784,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "2539626d-a9f6-4a6a-8cf8-5667cf0661cf"
+  },
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "tests": [
+    "QL-CBX-04"
+  ],
+  "confirmations": {
+    "stand-clarification-proof": {
+      "assignmentId": "152444a7-df00-4d0b-a9c9-2883cf26de97",
+      "runId": "2d524d67-2e5f-475c-8732-be795672eb99",
+      "questionId": "ac858c70-654e-41e6-ab45-3744a676be3a",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "952701ab-69b0-4f26-9cb6-77f8469d923f",
+      "operationId": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "152444a7-df00-4d0b-a9c9-2883cf26de97",
+      "runId": "2d524d67-2e5f-475c-8732-be795672eb99",
+      "operationId": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+      "oldWebPid": 36402,
+      "newWebPid": 46345,
+      "acceptedDiagnostic": {
+        "id": "a13c0a84-116b-49f6-ae16-5492c7aba37c",
+        "childRunId": "e4151a7f-8473-4173-ae75-df55ca962246",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-reconciliation-proof": {
+      "operationId": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+      "runId": "2d524d67-2e5f-475c-8732-be795672eb99",
+      "unknown": {
+        "id": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "72ecc3ce-de05-4fe9-9f89-335c5f74e7b6"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    }
+  },
+  "result": {
+    "assignmentId": "152444a7-df00-4d0b-a9c9-2883cf26de97",
+    "runId": "2d524d67-2e5f-475c-8732-be795672eb99",
+    "operationId": "6c2d048f-7ff6-44cf-9efc-ef825045135d",
+    "resultRevision": 1,
+    "deliveryId": "8f851634-487b-4075-ae6e-fa7075e622f9",
+    "verificationIds": [
+      "1ec6433c-f95d-444e-a331-837bd2c35946"
+    ],
+    "knowledgeProposalId": "5b5587dc-3ef8-43f8-9903-af6ee866db8a",
+    "knowledgeRecordId": "9299ea23-652c-4954-95e7-c76e03938591",
+    "knowledgeRecordRevision": 1,
+    "knowledgeConfirmation": "unconfirmed"
+  },
+  "runtimeModelWitnesses": 3,
+  "quietInspection": true
+}

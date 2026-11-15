@@ -1,0 +1,17 @@
+{
+  "sourceHead": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+  "exitCode": 0,
+  "project": "authed",
+  "tests": {
+    "passed": 10,
+    "failed": 0
+  },
+  "suites": [
+    "e2e/company-brain.spec.ts",
+    "e2e/specialist-assignments.spec.ts"
+  ],
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "13efdc7a-9be4-460d-8a52-24892443650f"
+  }
+}

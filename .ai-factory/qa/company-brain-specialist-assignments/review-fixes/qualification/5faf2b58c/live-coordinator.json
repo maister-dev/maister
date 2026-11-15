@@ -1,0 +1,66 @@
+{
+  "sourceHead": "f4d3d5c0402dfe1288bf86b490b580a74913b996",
+  "candidateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mcpBundleSha256": "977542eeec787b25654cd23f49f4273572468420ff9c14971452ddae45536354",
+  "modes": [
+    "E2E_STAND_KILL_COORDINATOR"
+  ],
+  "startedAt": "2026-11-15T22:07:55.732892+00:00",
+  "finishedAt": "2026-11-15T22:14:24.677252+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "browser": {
+    "startTime": "2026-11-15T22:08:03.499Z",
+    "duration": 380828.29,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "e9992b27-7c58-4825-8e02-4d51127a9712"
+  },
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "tests": [
+    "QL-CBX-04"
+  ],
+  "confirmations": {
+    "stand-acp-coordinator-interruption": {
+      "assignmentId": "04677906-eac3-4c94-9534-47a0a9818f72",
+      "runId": "331171a4-6be9-4f7c-8cfa-2c936cc106ea",
+      "sessionId": "8ef4a598-6004-49ff-9ff3-e494efe252c7",
+      "commandId": "1d473f4e-95f7-46b7-b794-c7e166fc70b9",
+      "placementId": "51852a5b-76a8-4958-b7e7-6bec7aee0cd5",
+      "placementEpoch": 1,
+      "adapterPid": 89795
+    },
+    "stand-acp-coordinator-recovery": {
+      "assignmentId": "04677906-eac3-4c94-9534-47a0a9818f72",
+      "runId": "331171a4-6be9-4f7c-8cfa-2c936cc106ea",
+      "status": 200,
+      "ok": true,
+      "state": "resumed",
+      "runStatus": "Running"
+    }
+  },
+  "result": {
+    "assignmentId": "04677906-eac3-4c94-9534-47a0a9818f72",
+    "runId": "331171a4-6be9-4f7c-8cfa-2c936cc106ea",
+    "operationId": "75923015-aad4-427f-94d0-eca766b50714",
+    "resultRevision": 1,
+    "deliveryId": "78875eeb-961c-4769-a8ff-c597c65105bd",
+    "verificationIds": [
+      "e3813e87-73de-457a-82f7-ebb95ad188e8"
+    ],
+    "knowledgeProposalId": "7fdf322c-1135-4e74-b7c6-802924468fc4",
+    "knowledgeRecordId": "61ac6b41-d885-449d-9bfe-c84e77763b12",
+    "knowledgeRecordRevision": 1,
+    "knowledgeConfirmation": "unconfirmed"
+  },
+  "runtimeModelWitnesses": 3,
+  "quietInspection": true
+}

@@ -53,6 +53,41 @@
       "path": "T41/web-integration-current-master/evidence.json",
       "sha256": "bd5b2fdbaa55963e43c59b7f4d70adf0b24fd0e123921ee083165bcc3146de4b",
       "exitCode": 0
+    },
+    "review_full_web_first_attempt": {
+      "path": "review-fixes/qualification/5faf2b58c/full-web-first-attempt.json",
+      "sha256": "01623e59b8bbba0eb2ec34cf236accb5c08d3a163382f9d307c439c6cb33d316",
+      "exitCode": 1
+    },
+    "review_browser": {
+      "path": "review-fixes/qualification/5faf2b58c/browser.json",
+      "sha256": "da3e3e05ed5b59d4621cf1e85382db81de406310fb906f35ba65c1aa6c842f84",
+      "exitCode": 0
+    },
+    "review_live_cb0": {
+      "path": "review-fixes/qualification/5faf2b58c/live-cb0.json",
+      "sha256": "83e9d3459ded4511f97ae8c5e621d9f38b8ccf79aca48f098c136c336be38532",
+      "exitCode": 0
+    },
+    "review_live_combined": {
+      "path": "review-fixes/qualification/5faf2b58c/live-combined.json",
+      "sha256": "ad1b2d6883a5db74c1609ced715f5cba7f6e859fccc21e8de7f6f8545963c10f",
+      "exitCode": 0
+    },
+    "review_live_coordinator": {
+      "path": "review-fixes/qualification/5faf2b58c/live-coordinator.json",
+      "sha256": "3cee8d68d4d90888dd849d6da62e68563d6dbe72ad4e76d689d864551dd33aa6",
+      "exitCode": 0
+    },
+    "review_live_diagnostic": {
+      "path": "review-fixes/qualification/5faf2b58c/live-diagnostic.json",
+      "sha256": "5a1d1ea4b5fcf5f1fa829dc38db0e07e0a9285521db9e9498035cc5bf55edd5b",
+      "exitCode": 0
+    },
+    "review_live_successor": {
+      "path": "review-fixes/qualification/5faf2b58c/live-successor.json",
+      "sha256": "2431ec3c5a30ce0945d02aab2564b24a328cd8e116a47c37c0a5fa3b0159b9fa",
+      "exitCode": 0
     }
   },
   "currentMaster": {
@@ -117,8 +152,32 @@
   "reviewCandidate": {
     "parent": "345237cf6ca16a798936d71d0f13d74a5e37bdb7",
     "lastMigration": "0339_specialist_assignment_cancellation_intent",
-    "fullWeb": "pending",
-    "browserCI": "pending",
-    "liveGLM53": "pending"
+    "fullWeb": "rerun_in_progress",
+    "browserCI": "passed_locally",
+    "liveGLM53": "passed",
+    "revision": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+    "tree": "1307ac5587cd14e7b2a97d6172fbebe08d7abc46",
+    "mainMigrationCount": 336,
+    "browserTests": {
+      "passed": 10,
+      "failed": 0
+    },
+    "liveSourceRevisions": {
+      "review_live_cb0": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+      "review_live_combined": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+      "review_live_coordinator": "f4d3d5c0402dfe1288bf86b490b580a74913b996",
+      "review_live_diagnostic": "1d03dfc056138d7eb6793d11f7d2ea8e8ab2031a",
+      "review_live_successor": "1d03dfc056138d7eb6793d11f7d2ea8e8ab2031a"
+    },
+    "packagePins": {
+      "rah": {
+        "tag": "rah/v1.0.9",
+        "commit": "88b38dc3080b1b2ab4c060e364a2199dd02bf393"
+      },
+      "stand": {
+        "tag": "stand-operations/v0.1.0",
+        "commit": "084f68a587a91befd31f94c1ce7759e6b31d265a"
+      }
+    }
   }
 }

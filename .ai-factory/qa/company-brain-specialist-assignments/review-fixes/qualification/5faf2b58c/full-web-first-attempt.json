@@ -1,0 +1,19 @@
+{
+  "sourceHead": "f4d3d5c0402dfe1288bf86b490b580a74913b996",
+  "exitCode": 1,
+  "reason": "Two native permission-recovery cases reached their polling deadline when the full run shared the host with live qualification.",
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "4bfab048-52d5-4550-b903-891f66e07986"
+  },
+  "passed": 6398,
+  "failed": [
+    "Agent owned prompts through the production launcher owner-agent-permission retains its exact source through launcher_restart",
+    "Agent owned prompts through the production launcher owner-agent-permission retains its exact source through input_ack_restart"
+  ],
+  "skipped": 2,
+  "focusedSameRevision": {
+    "passed": 3,
+    "failed": 0
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "sourceHead": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+  "candidateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mcpBundleSha256": "977542eeec787b25654cd23f49f4273572468420ff9c14971452ddae45536354",
+  "modes": [],
+  "startedAt": "2026-11-15T22:36:59.423871+00:00",
+  "finishedAt": "2026-11-15T22:59:57.501032+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "packageTag": "rah/v1.0.9",
+  "packageCommit": "88b38dc3080b1b2ab4c060e364a2199dd02bf393",
+  "model": "glm-5.3",
+  "browser": {
+    "startTime": "2026-11-15T22:37:07.093Z",
+    "duration": 1369845.5550000002,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "f70a642d-4e6d-45fd-8623-9fd44a10a15e"
+  },
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "tests": [
+    "QL-CBX-03"
+  ],
+  "assertions": [
+    "pinned package installed",
+    "structured retrieval",
+    "depth-two reduction",
+    "missing evidence",
+    "source revocation",
+    "attributed proposals"
+  ],
+  "runtimeModelWitnesses": 11,
+  "typedResultTrees": [
+    3,
+    7,
+    1
+  ],
+  "nativeProposalCount": 2,
+  "sourceEvidenceDigest": "bbbc8fed669df34ca61d62336d81af3b1c32a094a75f157b48b09b4522e239fd"
+}
