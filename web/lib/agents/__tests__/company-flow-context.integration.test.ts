@@ -2434,7 +2434,7 @@ it("IT-CBS-03 executes a native company graph through the existing driver, real 
     expect((await inspect(randomUUID())).status).toBe(404);
     browserUserId = outsiderId;
     try {
-      expect((await inspect(assignment.id)).status).toBe(403);
+      expect((await inspect(assignment.id)).status).toBe(404);
     } finally {
       browserUserId = requesterId;
     }

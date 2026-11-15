@@ -7,7 +7,7 @@ import { resolveAssignmentContextPrincipal } from "./context-access";
 import { readSpecialistAssignmentContextInTransaction } from "./context";
 import {
   beginAssignmentTransaction,
-  getSpecialistAssignmentInTransaction,
+  getVisibleSpecialistAssignmentInTransaction,
   inspectExecutingAssignmentInTransaction,
 } from "./store";
 
@@ -31,7 +31,7 @@ export async function getSpecialistAssignmentToken(
       );
 
       if (principal.source.kind === "user")
-        return getSpecialistAssignmentInTransaction(
+        return getVisibleSpecialistAssignmentInTransaction(
           tx,
           principal.source.userId,
           assignmentId,

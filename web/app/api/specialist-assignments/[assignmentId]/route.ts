@@ -4,7 +4,7 @@ import { type NextRequest, type NextResponse } from "next/server";
 
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { getSpecialistAssignment } from "@/lib/specialist-assignments/store";
+import { getVisibleSpecialistAssignment } from "@/lib/specialist-assignments/store";
 import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 
 export async function GET(
@@ -16,7 +16,7 @@ export async function GET(
     const { assignmentId } = await context.params;
 
     return privateJson(
-      await getSpecialistAssignment(getDb(), user.id, assignmentId),
+      await getVisibleSpecialistAssignment(getDb(), user.id, assignmentId),
     );
   } catch (error) {
     return privateErrorResponse(error, "GET /api/specialist-assignments/:id");

@@ -2525,7 +2525,6 @@
     },
     "sourceUnavailableTitle": "Source access required",
     "sourceUnavailableDescription": "This execution used evidence that is unavailable or that you cannot currently access. Restore the required access to inspect its findings, files, and transcript.",
-
     "outcomeHeading": "Outcome and next action",
     "outcomeUnknown": "Recorded outcome unavailable",
     "outcomeRunning": "Execution in progress",
@@ -7014,7 +7013,134 @@
       "inactive": "Inactive",
       "failed": "Failed",
       "unknown": "Unknown"
-    }
+    },
+    "successorRequired": "Choose the successor assignment first.",
+    "noSuccessorChoices": "No open assignment you can read targets this stand. Create one for the same target before authorizing a successor.",
+    "selectSuccessor": "Select an open assignment",
+    "dismiss": "Cancel",
+    "actionDone": {
+      "approval": "Restart approved",
+      "reconcile": "Receipt reconciled",
+      "verification": "Health check recorded",
+      "recovery-inspections": "Inspection recorded",
+      "hold": "Hold recorded",
+      "successor": "Successor authorized"
+    },
+    "confirmTitle": {
+      "approval": "Approve this restart?",
+      "hold": "Hold this unknown restart?",
+      "successor": "Authorize a successor restart?"
+    },
+    "confirmBody": {
+      "approval": "The helper will restart the exact component shown below on the configured stand. This is an external effect and cannot be undone.",
+      "hold": "The original outcome stays unknown and the resource stays reserved until someone reconciles or authorizes a successor.",
+      "successor": "A new restart operation is created for the chosen assignment and takes over the resource. The original unknown outcome stays visible."
+    },
+    "confirmAction": {
+      "approval": "Approve restart",
+      "hold": "Record hold",
+      "successor": "Authorize successor"
+    },
+    "cancelPending": "Stopping running work; the cancellation is recorded once it has stopped.",
+    "lifecycleDone": {
+      "cancel": "Assignment cancelled",
+      "reopen": "Assignment reopened"
+    },
+    "cancelStopsWork": "Cancelling stops this assignment's running work first. Confirmed or unknown external effects are kept for reconciliation.",
+    "lifecycleTitle": {
+      "cancel": "Cancel this assignment?",
+      "reopen": "Reopen this assignment?"
+    },
+    "lifecycleBody": {
+      "cancel": "Running work is stopped and the assignment is recorded as cancelled with your reason. You can reopen it later.",
+      "reopen": "The assignment returns to the queue. Nothing is launched or repeated automatically."
+    },
+    "work": "Delegated work",
+    "noWork": "No work has been delegated yet.",
+    "workItem": "Work",
+    "workState": "State",
+    "workResult": "Result",
+    "workActions": "Actions",
+    "openRun": "Open run",
+    "openResult": "Open result",
+    "acceptWork": "Accept",
+    "rejectWork": "Reject",
+    "workStateLabel": {
+      "queued": "Queued",
+      "running": "Running",
+      "needs_clarification": "Needs clarification",
+      "result_ready": "Result ready",
+      "accepted": "Accepted",
+      "rework_requested": "Rework requested",
+      "interrupted": "Interrupted",
+      "cancelled": "Cancelled"
+    },
+    "workDecisionDone": {
+      "accept": "Work accepted",
+      "reject": "Work rejected"
+    },
+    "workDecisionTitle": {
+      "accept": "Accept this result?",
+      "reject": "Reject this result?"
+    },
+    "workDecisionBody": {
+      "accept": "The collected result becomes accepted working context for this assignment.",
+      "reject": "The result is rejected without rework. It stays inspectable."
+    },
+    "delivery": "Result delivery",
+    "deliveryState": {
+      "awaiting_dispatch": "Awaiting dispatch",
+      "pending": "Pending",
+      "delivered": "Delivered",
+      "dead": "Failed",
+      "suppressed": "Suppressed"
+    },
+    "deliveryAttempts": "Attempts",
+    "deliveryLastStatus": "Last response",
+    "deliveryResult": "Result",
+    "deliveryError": {
+      "timeout": "Timed out",
+      "network": "Network error",
+      "http": "HTTP error",
+      "config": "Configuration error"
+    },
+    "replayDelivery": "Replay delivery",
+    "replayDeliveryBody": "The same result notification is queued again for its original destination.",
+    "deliveryReplayed": "Delivery queued again",
+    "authority": "Authority at submission",
+    "authorityActor": "Submitted by",
+    "executionPreset": "Execution policy",
+    "preset": {
+      "supervised": "Supervised",
+      "assisted": "Assisted",
+      "unattended": "Unattended"
+    },
+    "witness": {
+      "project_membership": "Project member",
+      "project_administrator": "Project administrator"
+    },
+    "actorKind": {
+      "user": "User",
+      "agent": "Agent",
+      "system": "System",
+      "legacy_unknown": "Unknown"
+    },
+    "runKind": {
+      "agent": "Agent run",
+      "flow": "Flow run"
+    },
+    "newAssignment": "New assignment",
+    "filterStatus": "Status",
+    "filterAny": "Any",
+    "filterMine": "Requested by me",
+    "applyFilters": "Apply",
+    "clearFilters": "Clear filters",
+    "pageExpired": "This page link no longer matches your filters or access.",
+    "firstPage": "First page",
+    "noVisibleOnPage": "Nothing on this page is visible to you. Try the next page.",
+    "updated": "Updated",
+    "pagination": "Assignment pages",
+    "nextPage": "Next page"
   },
   "knowledge": {
     "title": "Company Brain",

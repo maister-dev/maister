@@ -319,6 +319,45 @@ export async function inspectExecutingAssignmentInTransaction(
   return inspectAssignmentInTransaction(tx, principal, assignmentId);
 }
 
+/**
+ * Viewer-facing read: an assignment the user may not read answers exactly like
+ * a missing one, so the response never reveals that it exists. Internal flows
+ * keep the explicit refusal of `getSpecialistAssignmentInTransaction`.
+ */
+export async function getVisibleSpecialistAssignmentInTransaction(
+  tx: SqlTransaction,
+  userId: string,
+  assignmentId: string,
+): Promise<SpecialistAssignment> {
+  try {
+    return await getSpecialistAssignmentInTransaction(tx, userId, assignmentId);
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "UNAUTHORIZED")
+      throw unavailableAssignment();
+    throw error;
+  }
+}
+
+export async function getVisibleSpecialistAssignment(
+  db: SqlDatabase,
+  userId: string,
+  assignmentId: string,
+): Promise<SpecialistAssignment> {
+  try {
+    return await db.transaction(async (tx) => {
+      await beginAssignmentTransaction(tx);
+
+      return getVisibleSpecialistAssignmentInTransaction(
+        tx,
+        userId,
+        assignmentId,
+      );
+    });
+  } catch (error) {
+    throw redactQueryError(error);
+  }
+}
+
 export async function getSpecialistAssignment(
   db: SqlDatabase,
   userId: string,

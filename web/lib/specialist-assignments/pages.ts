@@ -1,14 +1,14 @@
 import "server-only";
 
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
-import type { SpecialistAssignment } from "./types";
+import type { SpecialistAssignment, SpecialistAssignmentStatus } from "./types";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
   beginAssignmentTransaction,
-  getSpecialistAssignmentInTransaction,
+  getVisibleSpecialistAssignmentInTransaction,
 } from "./store";
 
 import { redactQueryError } from "@/lib/db/pg-error";
@@ -29,6 +29,13 @@ const pageInputSchema = z
   .strict();
 
 export type Page<T> = Readonly<{ items: T[]; nextCursor: string | null }>;
+
+export type AssignmentListFilters = Readonly<{
+  projectId?: string;
+  status?: SpecialistAssignmentStatus;
+  owner?: "company" | "project";
+  requestedBy?: string;
+}>;
 
 export type SpecialistWorkItem = Readonly<{
   id: string;
@@ -85,10 +92,18 @@ export async function listAccessibleSpecialistAssignments(
   db: SqlDatabase,
   userId: string,
   raw: unknown,
-  projectId?: string,
+  filters: AssignmentListFilters = {},
 ): Promise<Page<SpecialistAssignment>> {
   const { cursor, limit } = parsePage(raw);
-  const scope = contentDigest({ userId, limit, projectId: projectId ?? null });
+  const { projectId, status, owner, requestedBy } = filters;
+  const scope = contentDigest({
+    userId,
+    limit,
+    projectId: projectId ?? null,
+    status: status ?? null,
+    owner: owner ?? null,
+    requestedBy: requestedBy ?? null,
+  });
 
   try {
     return await db.transaction(async (tx) => {
@@ -103,6 +118,9 @@ export async function listAccessibleSpecialistAssignments(
           FROM specialist_assignments
           WHERE created_at<=${upper}::timestamptz
             ${projectId ? sql`AND project_id=${projectId}` : sql``}
+            ${status ? sql`AND status=${status}` : sql``}
+            ${owner === "company" ? sql`AND project_id IS NULL` : owner === "project" ? sql`AND project_id IS NOT NULL` : sql``}
+            ${requestedBy ? sql`AND requester->>'kind'='user' AND requester->>'id'=${requestedBy}` : sql``}
             ${after ? sql`AND (created_at,id)<(${after.at}::timestamptz,${after.id})` : sql``}
           ORDER BY created_at DESC,id DESC
           LIMIT ${limit * scanFactor + 1}
@@ -116,7 +134,7 @@ export async function listAccessibleSpecialistAssignments(
         last = candidate;
         try {
           items.push(
-            await getSpecialistAssignmentInTransaction(
+            await getVisibleSpecialistAssignmentInTransaction(
               tx,
               userId,
               candidate.id,
@@ -165,7 +183,11 @@ export async function listSpecialistAssignmentWork(
   try {
     return await db.transaction(async (tx) => {
       await beginAssignmentTransaction(tx);
-      await getSpecialistAssignmentInTransaction(tx, userId, assignmentId);
+      await getVisibleSpecialistAssignmentInTransaction(
+        tx,
+        userId,
+        assignmentId,
+      );
       const after = cursor
         ? decodeKeysetCursor(workCursorNamespace, cursor, scope)
         : null;

@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import type { StandSuccessorChoice } from "@/lib/specialist-assignments/workspace-view";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +7,9 @@ import { getFormatter, getTranslations } from "next-intl/server";
 
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { AssignmentAcceptanceForm } from "@/components/specialist-assignments/assignment-acceptance-form";
+import { AssignmentDelivery } from "@/components/specialist-assignments/assignment-delivery";
+import { AssignmentWork } from "@/components/specialist-assignments/assignment-work";
+import { AssignmentStatusPill } from "@/components/specialist-assignments/assignment-status-pill";
 import { AssignmentKnowledge } from "@/components/specialist-assignments/assignment-knowledge";
 import { AssignmentLifecycle } from "@/components/specialist-assignments/assignment-lifecycle";
 import { AssignmentLiveRefresh } from "@/components/specialist-assignments/assignment-live-refresh";
@@ -15,6 +19,8 @@ import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
+import { getSpecialistAssignmentDelivery } from "@/lib/specialist-assignments/delivery-read";
+import { listSpecialistAssignmentWork } from "@/lib/specialist-assignments/pages";
 import {
   getSpecialistAssignment,
   getSpecialistAssignmentInput,
@@ -22,10 +28,13 @@ import {
 import {
   assignmentHasLiveWork,
   canChangeAssignment,
+  listStandSuccessorChoices,
   listVisibleAssignmentRunIds,
   readAssignmentReview,
+  readAssignmentRunSummaries,
   readRecoverableCompanyCoordinator,
   readAssignmentStandChoices,
+  resolveAssignmentActorNames,
 } from "@/lib/specialist-assignments/workspace-view";
 import { readStandOperationEvidence } from "@/lib/stand-operations/operation-intake";
 import { readStandIncidentEpisodes } from "@/lib/stand-operations/incidents";
@@ -56,23 +65,35 @@ export default async function SpecialistAssignmentPage({
     admission,
     operations,
     incidents,
+    work,
+    canDecide,
+    delivery,
+    canReplay,
+    actorNames,
+    successorChoices,
   } = await readAssignmentPage(user.id, assignmentId);
+  const authority = input.snapshot.authoritySnapshot;
+  const actorLabel = (actor: { kind: string; id: string | null }) =>
+    (actor.id && actorNames[actor.id]) ??
+    actor.id ??
+    t(`actorKind.${actor.kind}`);
 
   return (
-    <section className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+    <section className="mx-auto flex w-full max-w-5xl flex-col gap-5">
       <header className="space-y-2">
         <Link className="text-sm text-mute" href="/specialist-assignments">
           {t("title")}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-semibold">{assignment.objective}</h1>
-          <span className="rounded-full border border-line px-3 py-1 text-sm">
-            {t(`status.${assignment.status}`)}
-          </span>
+          <AssignmentStatusPill
+            label={t(`status.${assignment.status}`)}
+            status={assignment.status}
+          />
           <AssignmentLiveRefresh
             assignmentId={assignment.id}
             revision={assignment.revision}
-            runId={live ? (runs.at(-1) ?? null) : null}
+            runId={live ? (runs.at(0)?.id ?? null) : null}
           />
         </div>
         <p className="text-sm text-mute">{assignment.expectedOutcome}</p>
@@ -133,9 +154,31 @@ export default async function SpecialistAssignmentPage({
             </dd>
           </div>
         </dl>
-        <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs">
-          {JSON.stringify(input.snapshot.authoritySnapshot, null, 2)}
-        </pre>
+        <h3 className="mt-4 text-sm font-semibold">{t("authority")}</h3>
+        <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-mute">{t("authorityActor")}</dt>
+            <dd>{actorLabel(authority.actor)}</dd>
+          </div>
+          <div>
+            <dt className="text-mute">{t("executionPreset")}</dt>
+            <dd>{t(`preset.${authority.executionPolicy.preset}`)}</dd>
+          </div>
+        </dl>
+        <ul className="mt-2 flex flex-wrap gap-2 text-xs">
+          {authority.witnesses.map((witness, index) => (
+            <li
+              key={`${witness.kind}:${index}`}
+              className="rounded-full border border-line px-2 py-0.5"
+            >
+              {witness.kind === "company_grant"
+                ? witness.action
+                : witness.kind === "project_membership"
+                  ? `${t("witness.project_membership")} · ${witness.role}`
+                  : t("witness.project_administrator")}
+            </li>
+          ))}
+        </ul>
       </details>
       {assignment.status === "waiting_input" ? (
         <p className="rounded-xl border border-line bg-paper p-4 text-sm">
@@ -163,8 +206,8 @@ export default async function SpecialistAssignmentPage({
               <li key={entry.id} className="space-y-1 py-3 text-sm">
                 <p>{entry.text}</p>
                 <p className="text-xs text-mute">
-                  {t(`entry.${entry.kind}`)} · {actor.id} · {t("revision")}{" "}
-                  {introducedRevision}
+                  {t(`entry.${entry.kind}`)} · {actorLabel(actor)} ·{" "}
+                  {t("revision")} {introducedRevision}
                 </p>
                 {entry.kind === "accepted" ? (
                   <Link
@@ -293,14 +336,28 @@ export default async function SpecialistAssignmentPage({
                 <StandOperationControls
                   canRecover={stand.canRecover}
                   canRestart={stand.canRestart}
+                  canVerify={stand.canVerify}
                   needsApproval={action === "restart" && !approvedAt}
                   operation={operation}
+                  successorChoices={successorChoices[operation.id] ?? []}
                 />
               </article>
             ))}
         </div>
       ) : null}
-      {review && runs.includes(review.result.runId) ? (
+      <AssignmentWork
+        assignmentId={assignment.id}
+        canDecide={canDecide}
+        items={work}
+      />
+      {delivery ? (
+        <AssignmentDelivery
+          assignmentId={assignment.id}
+          canReplay={canReplay}
+          delivery={delivery}
+        />
+      ) : null}
+      {review && runs.some(({ id }) => id === review.result.runId) ? (
         <AssignmentAcceptanceForm assignmentId={assignmentId} review={review} />
       ) : null}
       {assignment.status === "completed" && assignment.acceptedResult ? (
@@ -313,25 +370,31 @@ export default async function SpecialistAssignmentPage({
           runId={coordinatorRecovery}
         />
       ) : null}
-      {!live && canChange ? (
+      {canChange ? (
         <AssignmentLifecycle
           action={recovery ? "reopen" : "cancel"}
           assignmentId={assignmentId}
+          live={live}
           revision={assignment.revision}
         />
       ) : null}
       {runs.length ? (
         <div className="rounded-xl border border-line bg-paper p-5">
           <h2 className="font-semibold">{t("runs")}</h2>
-          <ul className="mt-2 space-y-2 text-sm">
-            {runs.map((runId) => (
-              <li key={runId}>
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {runs.map((run) => (
+              <li
+                key={run.id}
+                className="flex flex-wrap items-baseline justify-between gap-2 py-2"
+              >
                 <Link
                   className="underline"
-                  href={`/runs/${encodeURIComponent(runId)}`}
+                  href={`/runs/${encodeURIComponent(run.id)}`}
                 >
-                  {runId}
+                  {t(`runKind.${run.runKind === "agent" ? "agent" : "flow"}`)} ·{" "}
+                  {format.dateTime(new Date(run.createdAt), receiptTime)}
                 </Link>
+                <span className="text-mute">{run.status}</span>
               </li>
             ))}
           </ul>
@@ -357,7 +420,9 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
           assignmentId,
           assignment.inputRevision,
         ),
-        listVisibleAssignmentRunIds(userId, assignment.runIds),
+        listVisibleAssignmentRunIds(userId, assignment.runIds).then((ids) =>
+          readAssignmentRunSummaries(db, ids),
+        ),
         readAssignmentStandChoices(db, userId, assignment),
         readAssignmentReview(db, userId, assignmentId),
         assignmentHasLiveWork(db, assignmentId),
@@ -394,6 +459,39 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
     const incidents = stand.operationIds.length
       ? await readStandIncidentEpisodes(db, userId, assignmentId)
       : [];
+    const [work, canDecide, canReplay, actorNames, successorChoices] =
+      await Promise.all([
+        listSpecialistAssignmentWork(db, userId, assignmentId, { limit: 50 }),
+        canChangeAssignment(db, userId, assignment, "assignments:accept"),
+        canChangeAssignment(db, userId, assignment, "assignments:recover"),
+        resolveAssignmentActorNames(db, [
+          input.snapshot.authoritySnapshot.actor,
+          ...context.entries.map(({ actor }) => actor),
+        ]),
+        stand.canRecover && stand.canRestart
+          ? listStandSuccessorChoices(db, userId, stand.operationIds)
+          : ({} as Record<string, StandSuccessorChoice[]>),
+      ]);
+    let delivery = null;
+
+    for (const run of runs) {
+      delivery = await getSpecialistAssignmentDelivery(
+        db,
+        userId,
+        assignmentId,
+        {
+          runId: run.id,
+        },
+      ).catch((error: unknown) => {
+        if (
+          isMaisterError(error) &&
+          ["UNAUTHORIZED", "PRECONDITION"].includes(error.code)
+        )
+          return null;
+        throw error;
+      });
+      if (delivery) break;
+    }
 
     return {
       assignment,
@@ -409,6 +507,12 @@ async function readAssignmentPage(userId: string, assignmentId: string) {
       admission,
       operations,
       incidents,
+      work: work.items,
+      canDecide,
+      delivery,
+      canReplay,
+      actorNames,
+      successorChoices,
     };
   } catch (error) {
     if (

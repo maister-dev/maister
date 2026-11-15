@@ -192,6 +192,8 @@ flowchart TD
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
 | [`company-brain.md`](company-brain.md)                                       | Native knowledge, evidence, proposal review and company authority                                             | `/knowledge`, `/settings/company-grants`                                                    | Implemented locally; runtime qualification separate                |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
+| [`specialist-assignments.md`](specialist-assignments.md) | Specialist assignment list, detail, delegated work, delivery and stand operation controls | `/specialist-assignments`, `/specialist-assignments/{assignmentId}` | Implemented |
+| [`settings-specialists.md`](settings-specialists.md) | Settings → company specialist and coordinator bindings, stand inspection schedules | `/settings/specialists` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (ADR-071) |
 | [`admin/execution-host.md`](admin/execution-host.md) | Execution-host and event-plane diagnostics (admin) | `/admin/execution-host` | Implemented (P0-7) |
 | [`projects/project-agent-history.md`](projects/project-agent-history.md) | Agent detail and retained run/attempt history | `/projects/{slug}/agents/{agentId}` | Implemented (ADR-196) |

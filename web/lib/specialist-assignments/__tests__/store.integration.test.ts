@@ -2,10 +2,10 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { PreparedSpecialistAssignment } from "../types";
 import type { Db } from "@/lib/execution-host/db";
 
-import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -57,20 +57,11 @@ import { GET as workGet } from "@/app/api/specialist-assignments/[assignmentId]/
 import { GET as externalAssignmentsGet } from "@/app/api/v1/ext/specialist-assignments/route";
 import { POST as externalCancelPost } from "@/app/api/v1/ext/specialist-assignments/[assignmentId]/cancel/route";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { prepareCompanySpecialistAssignment } from "@/test-support/specialist-assignment-seed";
 import { MaisterError } from "@/lib/errors";
-import {
-  agentDefinitionSha256,
-  buildAgentActivitySnapshot,
-} from "@/lib/agents/activity-snapshot";
+import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
-import { parseAgentDefinition } from "@/lib/agents/definition";
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
-import { readFormSchemaDocWithBytes } from "@/lib/config";
-import {
-  installPackageRevision,
-  trustPackageRevision,
-} from "@/lib/packages/attach";
-import { buildFlowExportContract } from "@/lib/run-results/contract";
 import { resumeCrashedRun } from "@/lib/runs/recover";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import { retrySafetyReason } from "@/lib/agents/retry-guards";
@@ -128,102 +119,11 @@ beforeAll(async () => {
       `${requesterId}@example.test`,
     ],
   );
-  const grants = await createCompanyGrants(database.db, administratorId, {
-    principalKind: "user",
-    principalId: requesterId,
-    actions: [
-      "assignments:read",
-      "assignments:submit",
-      "assignments:update",
-      "assignments:cancel",
-      "assignments:recover",
-    ],
-    idempotencyKey: randomUUID(),
-  });
-  const installed = await installPackageRevision({
-    source: resolve("test-fixtures/rah-native"),
+  prepared = await prepareCompanySpecialistAssignment(database.db, {
+    administratorId,
+    requesterId,
     version: "rah/assignment-store",
-    db: database.db,
   });
-
-  await trustPackageRevision({
-    packageInstallId: installed.id,
-    db: database.db,
-  });
-  const pin = (
-    await database.pool.query<{
-      installed_path: string;
-      resolved_revision: string;
-    }>(
-      "SELECT installed_path,resolved_revision FROM package_installs WHERE id=$1",
-      [installed.id],
-    )
-  ).rows[0]!;
-  const agentId = "rah:evidence-researcher";
-  const definition = parseAgentDefinition(
-    agentId,
-    await readFile(
-      join(pin.installed_path, "maister-agents/evidence-researcher.md"),
-      "utf8",
-    ),
-  );
-  const flow = (
-    await database.pool.query<{ id: string; installed_path: string }>(
-      "SELECT id,installed_path FROM flow_revisions WHERE resolved_revision=$1 AND flow_ref_id='rah-control'",
-      [pin.resolved_revision],
-    )
-  ).rows[0]!;
-  const { schema, bytes } = await readFormSchemaDocWithBytes(
-    flow.installed_path,
-    "./schemas/evidence-findings.v1.json",
-  );
-  const contract = buildFlowExportContract({
-    flowRefId: "rah-control",
-    resolvedRevision: pin.resolved_revision,
-    flowRevisionId: flow.id,
-    schemaPath: "./schemas/evidence-findings.v1.json",
-    schema,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    required: true,
-    producerNodeIds: ["research"],
-    nativeContract: "evidence_findings_v1",
-  });
-
-  prepared = {
-    owner: { kind: "company", companyId: grants.page.companyId },
-    specialistBindingId: randomUUID(),
-    responsibleAgentId: agentId,
-    objectiveInput: {
-      objective: "Inspect the configured stand runbook",
-      expectedOutcome: "Evidence-linked findings with explicit limitations",
-      input: "No maintenance action is authorized.",
-      targetIds: [],
-      inputRefs: [],
-      constraints: ["Research only."],
-      expectedResult: {
-        schemaRef: contract.schemaRef,
-        schemaVersion: contract.schemaVersion,
-        sha256: contract.sha256,
-        required: true,
-      },
-      verification: [],
-    },
-    standingDefinition: {
-      schemaVersion: 1,
-      agentId,
-      packageInstallId: installed.id,
-      packageName: installed.name,
-      packageRevision: pin.resolved_revision,
-      definitionSha256: agentDefinitionSha256(definition),
-      definition,
-      configuration: null,
-    },
-    scheduledRequest: null,
-    sourceRestrictions: [],
-    executionPolicy: { preset: "supervised" },
-    origin: { kind: "manual", interactionId: randomUUID() },
-    destination: { kind: "inbox", userId: requesterId },
-  };
 }, 180000);
 
 afterAll(async () => {

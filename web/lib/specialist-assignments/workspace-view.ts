@@ -46,7 +46,7 @@ export async function canChangeAssignment(
   assignment: SpecialistAssignment,
   action: Extract<
     AssignmentAction,
-    "assignments:cancel" | "assignments:recover"
+    "assignments:cancel" | "assignments:recover" | "assignments:accept"
   >,
 ): Promise<boolean> {
   try {
@@ -176,38 +176,6 @@ export async function listManualSpecialistChoices(
     if (accessRefused(error)) return [];
     throw error;
   }
-}
-
-export async function listRequestedSpecialistAssignments(
-  db: Db,
-  userId: string,
-  projectId?: string,
-): Promise<SpecialistAssignment[]> {
-  return db.transaction(async (tx) => {
-    await beginAssignmentTransaction(tx);
-    const candidates = (
-      await tx.execute(sql`
-      SELECT id FROM specialist_assignments
-      WHERE requester->>'kind'='user' AND requester->>'id'=${userId}
-        ${projectId ? sql`AND project_id=${projectId}` : sql``}
-      ORDER BY updated_at DESC,id LIMIT 50
-    `)
-    ).rows;
-    const result: SpecialistAssignment[] = [];
-
-    for (const row of candidates) {
-      if (typeof row.id !== "string") continue;
-      try {
-        result.push(
-          await getSpecialistAssignmentInTransaction(tx, userId, row.id),
-        );
-      } catch (error) {
-        if (!accessRefused(error)) throw error;
-      }
-    }
-
-    return result;
-  });
 }
 
 export async function listVisibleAssignmentRunIds(
@@ -346,6 +314,7 @@ export async function readAssignmentStandChoices(
   operationIds: string[];
   canRestart: boolean;
   canRecover: boolean;
+  canVerify: boolean;
 }> {
   return db.transaction(async (tx) => {
     const companyId = await installationCompany(tx);
@@ -363,7 +332,12 @@ export async function readAssignmentStandChoices(
     };
 
     if (!(await allowed("targets:read")))
-      return { operationIds: [], canRestart: false, canRecover: false };
+      return {
+        operationIds: [],
+        canRestart: false,
+        canRecover: false,
+        canVerify: false,
+      };
     const operationIds = (
       await tx.execute(sql`
       SELECT id FROM stand_operations WHERE assignment_id=${assignment.id}
@@ -375,6 +349,124 @@ export async function readAssignmentStandChoices(
       operationIds,
       canRestart: operationIds.length > 0 && (await allowed("targets:restart")),
       canRecover: operationIds.length > 0 && (await allowed("targets:recover")),
+      canVerify: operationIds.length > 0,
     };
   });
+}
+
+export type StandSuccessorChoice = Readonly<{
+  id: string;
+  objective: string;
+  revision: number;
+  inputRevision: number;
+}>;
+
+/**
+ * Open, readable assignments that cite each operation's target; the
+ * recovery decision rechecks every condition when the operator submits.
+ */
+export async function listStandSuccessorChoices(
+  db: Db,
+  userId: string,
+  operationIds: readonly string[],
+): Promise<Record<string, StandSuccessorChoice[]>> {
+  if (!operationIds.length) return {};
+
+  return db.transaction(async (tx) => {
+    await beginAssignmentTransaction(tx);
+    const targets = (
+      await tx.execute(sql`
+        SELECT id,target_id FROM stand_operations
+        WHERE id=ANY(${sql.param([...operationIds])}::text[])
+      `)
+    ).rows as { id: string; target_id: string }[];
+    const candidates = (
+      await tx.execute(sql`
+        SELECT id FROM specialist_assignments
+        WHERE status NOT IN ('completed','failed','cancelled')
+        ORDER BY updated_at DESC,id LIMIT 50
+      `)
+    ).rows as { id: string }[];
+    const readable: SpecialistAssignment[] = [];
+
+    for (const { id } of candidates) {
+      try {
+        readable.push(
+          await getSpecialistAssignmentInTransaction(tx, userId, id),
+        );
+      } catch (error) {
+        if (!accessRefused(error)) throw error;
+      }
+    }
+
+    return Object.fromEntries(
+      targets.map(({ id, target_id }) => [
+        id,
+        readable
+          .filter((assignment) => assignment.targetIds.includes(target_id))
+          .map((assignment) => ({
+            id: assignment.id,
+            objective: assignment.objective,
+            revision: assignment.revision,
+            inputRevision: assignment.inputRevision,
+          })),
+      ]),
+    );
+  });
+}
+
+export type AssignmentRunSummary = Readonly<{
+  id: string;
+  status: string;
+  runKind: string;
+  createdAt: string;
+}>;
+
+/** Status and kind for runs the caller was already authorized to see. */
+export async function readAssignmentRunSummaries(
+  db: Db,
+  visibleRunIds: readonly string[],
+): Promise<AssignmentRunSummary[]> {
+  if (!visibleRunIds.length) return [];
+  const rows = (
+    await db.execute(sql`
+      SELECT id,status,run_kind,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+      FROM runs WHERE id=ANY(${sql.param([...visibleRunIds])}::text[])
+      ORDER BY created_at DESC,id
+    `)
+  ).rows as {
+    id: string;
+    status: string;
+    run_kind: string;
+    created_at: string;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    runKind: row.run_kind,
+    createdAt: row.created_at,
+  }));
+}
+
+/** Display names for context authors; unknown or removed principals keep their ID. */
+export async function resolveAssignmentActorNames(
+  db: Db,
+  actors: readonly Readonly<{ kind: string; id: string | null }>[],
+): Promise<Record<string, string>> {
+  const userIds = [
+    ...new Set(
+      actors.flatMap(({ kind, id }) => (kind === "user" && id ? [id] : [])),
+    ),
+  ];
+
+  if (!userIds.length) return {};
+  const rows = (
+    await db.execute(sql`
+      SELECT id,coalesce(nullif(name,''),email) AS label FROM users
+      WHERE id=ANY(${sql.param(userIds)}::text[])
+    `)
+  ).rows as { id: string; label: string }[];
+
+  return Object.fromEntries(rows.map(({ id, label }) => [id, label]));
 }

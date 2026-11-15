@@ -12,7 +12,7 @@ import {
   appendSpecialistAssignmentInputInTransaction,
   beginAssignmentTransaction,
   cancelSpecialistAssignmentInTransaction,
-  getSpecialistAssignmentInTransaction,
+  getVisibleSpecialistAssignmentInTransaction,
   recoverSpecialistAssignmentInTransaction,
 } from "./store";
 import { assignmentInputUpdateSchema } from "./types";
@@ -100,7 +100,11 @@ async function priorReceipt(
       { details: { reason: "assignment_control_key_reused" } },
     );
   // Replay still requires current read access; the receipt itself is content-free.
-  await getSpecialistAssignmentInTransaction(tx, key.userId, key.assignmentId);
+  await getVisibleSpecialistAssignmentInTransaction(
+    tx,
+    key.userId,
+    key.assignmentId,
+  );
 
   return {
     id: key.assignmentId,
@@ -277,7 +281,7 @@ export async function cancelAssignmentExecution(
     const replay = await priorReceipt(tx, key);
 
     if (replay) return replay;
-    const assignment = await getSpecialistAssignmentInTransaction(
+    const assignment = await getVisibleSpecialistAssignmentInTransaction(
       tx,
       userId,
       assignmentId,

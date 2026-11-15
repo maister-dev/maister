@@ -1,8 +1,17 @@
 "use client";
 
-import type { FormEvent, ReactElement } from "react";
+import type { ReactElement } from "react";
 import type { StandOperation } from "@/lib/stand-operations/operation-types";
+import type { StandSuccessorChoice } from "@/lib/specialist-assignments/workspace-view";
 
+import {
+  ArrowPathIcon,
+  ArrowRightCircleIcon,
+  CheckBadgeIcon,
+  HandRaisedIcon,
+  HeartIcon,
+  MagnifyingGlassIcon,
+} from "@heroicons/react/24/outline";
 import { useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import { useTranslations } from "next-intl";
@@ -13,6 +22,8 @@ import {
   knowledgeDeliveryKey,
   type KnowledgeDelivery,
 } from "@/components/brain/knowledge-client";
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
 import { MaisterError, isMaisterErrorCode } from "@/lib/errors-core";
 
 type Action =
@@ -23,67 +34,78 @@ type Action =
   | "hold"
   | "successor";
 type Inspection = Readonly<{ id: string; state: string }>;
+type Decision = "approval" | "hold" | "successor";
+
+const writesDecision = (action: Action): boolean =>
+  action === "approval" || action === "hold" || action === "successor";
 
 export function StandOperationControls({
   operation,
   needsApproval,
   canRestart,
   canRecover,
+  canVerify,
+  successorChoices,
 }: {
   operation: StandOperation;
   needsApproval: boolean;
   canRestart: boolean;
   canRecover: boolean;
+  canVerify: boolean;
+  successorChoices: readonly StandSuccessorChoice[];
 }): ReactElement {
   const t = useTranslations("specialistAssignments");
   const knowledge = useTranslations("knowledge");
   const router = useRouter();
+  const feedback = useFeedback();
   const delivery = useRef<KnowledgeDelivery | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
   const [inspection, setInspection] = useState<Inspection | null>(null);
+  const [confirming, setConfirming] = useState<Decision | null>(null);
+  const [reason, setReason] = useState("");
+  const [successorId, setSuccessorId] = useState("");
 
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (pending) return;
-    const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute(
-      "value",
-    ) as Action | undefined;
-
-    if (!action) return;
-    const form = new FormData(event.currentTarget);
+  async function run(action: Action): Promise<boolean> {
+    if (pending) return false;
     const base = { expectedRevision: operation.revision };
-    const reason = String(form.get("reason") ?? "");
+    const successor = successorChoices.find(({ id }) => id === successorId);
     const body =
       action === "approval"
         ? { ...base, requestDigest: operation.requestDigest, reason }
         : action === "hold"
           ? { ...base, decision: "hold", inspectionIds: [], reason }
-          : action === "successor" && inspection
+          : action === "successor" && inspection && successor
             ? {
                 ...base,
                 decision: "authorize_successor",
                 inspectionIds: [inspection.id],
                 reason,
                 successor: {
-                  assignmentId: String(form.get("successorAssignment") ?? ""),
-                  expectedRevision: Number(form.get("successorRevision")),
-                  inputRevision: Number(form.get("successorInputRevision")),
+                  assignmentId: successor.id,
+                  expectedRevision: successor.revision,
+                  inputRevision: successor.inputRevision,
                 },
               }
             : base;
-    const writesDecision =
-      action === "approval" || action === "hold" || action === "successor";
 
-    if (writesDecision && !reason.trim()) {
+    if (writesDecision(action) && !reason.trim()) {
       setError(knowledge("errorInput"));
 
-      return;
+      return false;
+    }
+    if (action === "successor" && !successor) {
+      setError(t("successorRequired"));
+
+      return false;
     }
     const endpoint =
       action === "hold" || action === "successor"
         ? "recovery-decisions"
         : action;
+    const idempotencyKey = writesDecision(action)
+      ? knowledgeDeliveryKey(delivery, body)
+      : undefined;
 
     setPending(action);
     setError(null);
@@ -94,12 +116,7 @@ export function StandOperationControls({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            writesDecision
-              ? {
-                  ...body,
-                  idempotencyKey: knowledgeDeliveryKey(delivery, body),
-                }
-              : body,
+            idempotencyKey ? { ...body, idempotencyKey } : body,
           ),
         },
       );
@@ -130,10 +147,31 @@ export function StandOperationControls({
         setInspection(null);
         router.refresh();
       }
-    } catch (error) {
-      setError(knowledge(knowledgeClientErrorKey(error)));
+      feedback.success({
+        message: t(`actionDone.${action}`),
+        mutationId: idempotencyKey ?? `${operation.id}:${action}`,
+      });
+
+      return true;
+    } catch (failure) {
+      const message = knowledge(knowledgeClientErrorKey(failure));
+
+      setError(message);
+      feedback.error({
+        message,
+        mutationId: idempotencyKey ?? `${operation.id}:${action}`,
+      });
+
+      return false;
     } finally {
       setPending(null);
+    }
+  }
+
+  async function confirm(): Promise<void> {
+    if (confirming && (await run(confirming))) {
+      setConfirming(null);
+      setReason("");
     }
   }
 
@@ -143,35 +181,22 @@ export function StandOperationControls({
   const approval =
     canRestart && needsApproval && operation.effectState === "not_dispatched";
   const recovery = canRecover && unknown;
-  const verify = operation.effectState === "confirmed_applied";
+  const verify = canVerify && operation.effectState === "confirmed_applied";
+  const successorAvailable =
+    recovery && canRestart && inspection?.state === "active";
 
   if (!approval && !recovery && !verify) return <></>;
 
   return (
-    <form className="mt-4 space-y-3" onSubmit={submit}>
-      {approval || recovery ? (
-        <label className="block text-sm">
-          {t("reason")}
-          <input
-            className="mt-1 block w-full rounded-lg border border-line bg-paper px-3 py-2"
-            maxLength={2000}
-            name="reason"
-          />
-        </label>
-      ) : null}
-      {approval ? (
-        <p className="break-all text-xs text-mute">
-          {t("approvalDigest")} {operation.requestDigest}
-        </p>
-      ) : null}
+    <div className="mt-4 space-y-3">
       <div className="flex flex-wrap gap-2">
         {approval ? (
           <Button
             isDisabled={pending !== null}
             size="sm"
-            type="submit"
-            value="approval"
+            onPress={() => setConfirming("approval")}
           >
+            <CheckBadgeIcon aria-hidden="true" className="size-4" />
             {t("approveRestart")}
           </Button>
         ) : null}
@@ -180,94 +205,131 @@ export function StandOperationControls({
             <Button
               isDisabled={pending !== null}
               size="sm"
-              type="submit"
-              value="reconcile"
               variant="secondary"
+              onPress={() => void run("reconcile")}
             >
+              <ArrowPathIcon aria-hidden="true" className="size-4" />
               {t("reconcile")}
             </Button>
             <Button
               isDisabled={pending !== null}
               size="sm"
-              type="submit"
-              value="recovery-inspections"
               variant="secondary"
+              onPress={() => void run("recovery-inspections")}
             >
+              <MagnifyingGlassIcon aria-hidden="true" className="size-4" />
               {t("inspect")}
             </Button>
             <Button
               isDisabled={pending !== null}
               size="sm"
-              type="submit"
-              value="hold"
               variant="secondary"
+              onPress={() => setConfirming("hold")}
             >
+              <HandRaisedIcon aria-hidden="true" className="size-4" />
               {t("hold")}
             </Button>
           </>
+        ) : null}
+        {successorAvailable ? (
+          <Button
+            isDisabled={pending !== null || successorChoices.length === 0}
+            size="sm"
+            variant="secondary"
+            onPress={() => setConfirming("successor")}
+          >
+            <ArrowRightCircleIcon aria-hidden="true" className="size-4" />
+            {t("authorizeSuccessor")}
+          </Button>
         ) : null}
         {verify ? (
           <Button
             isDisabled={pending !== null}
             size="sm"
-            type="submit"
-            value="verification"
             variant="secondary"
+            onPress={() => void run("verification")}
           >
+            <HeartIcon aria-hidden="true" className="size-4" />
             {t("verify")}
           </Button>
         ) : null}
       </div>
       {inspection ? (
         <p className="text-sm" role="status">
-          {t("inspection")} {t(`serviceState.${inspection.state}`)} ·{" "}
-          {inspection.id}
+          {t("inspection")} {t(`serviceState.${inspection.state}`)}
         </p>
       ) : null}
-      {recovery && canRestart && inspection?.state === "active" ? (
-        <fieldset className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-3">
-          <legend className="px-1 text-sm">{t("successor")}</legend>
-          <label className="text-sm">
-            {t("assignmentId")}
-            <input
-              className="block w-full rounded border border-line px-2 py-1"
-              name="successorAssignment"
-            />
-          </label>
-          <label className="text-sm">
-            {t("revision")}
-            <input
-              className="block w-full rounded border border-line px-2 py-1"
-              min={1}
-              name="successorRevision"
-              type="number"
-            />
-          </label>
-          <label className="text-sm">
-            {t("inputRevision")}
-            <input
-              className="block w-full rounded border border-line px-2 py-1"
-              min={1}
-              name="successorInputRevision"
-              type="number"
-            />
-          </label>
-          <Button
-            isDisabled={pending !== null}
-            size="sm"
-            type="submit"
-            value="successor"
-            variant="secondary"
-          >
-            {t("authorizeSuccessor")}
-          </Button>
-        </fieldset>
+      {successorAvailable && successorChoices.length === 0 ? (
+        <p className="text-sm text-mute">{t("noSuccessorChoices")}</p>
       ) : null}
-      {error ? (
+      {error && !confirming ? (
         <p className="text-sm text-danger" role="alert">
           {error}
         </p>
       ) : null}
-    </form>
+      {confirming ? (
+        <ConfirmDialog
+          body={t(`confirmBody.${confirming}`)}
+          busy={pending !== null}
+          cancelLabel={t("dismiss")}
+          testId={`stand-confirm-${confirming}-${operation.id}`}
+          title={t(`confirmTitle.${confirming}`)}
+          titleId={`stand-confirm-title-${operation.id}`}
+          onClose={() => setConfirming(null)}
+        >
+          {confirming === "approval" ? (
+            <p className="break-all text-xs text-mute">
+              {t("approvalDigest")} {operation.requestDigest}
+            </p>
+          ) : null}
+          {confirming === "successor" ? (
+            <label className="block text-sm">
+              {t("successor")}
+              <select
+                className="mt-1 block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+                disabled={pending !== null}
+                value={successorId}
+                onChange={(event) => setSuccessorId(event.target.value)}
+              >
+                <option value="">{t("selectSuccessor")}</option>
+                {successorChoices.map((choice) => (
+                  <option key={choice.id} value={choice.id}>
+                    {choice.objective}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="block text-sm">
+            {t("reason")}
+            <textarea
+              required
+              className="mt-1 block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm"
+              disabled={pending !== null}
+              maxLength={2000}
+              rows={3}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </label>
+          {error ? (
+            <p className="text-sm text-danger" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <Button
+            isDisabled={
+              pending !== null ||
+              !reason.trim() ||
+              (confirming === "successor" && !successorId)
+            }
+            variant={confirming === "approval" ? "primary" : "secondary"}
+            onPress={() => void confirm()}
+          >
+            {t(`confirmAction.${confirming}`)}
+          </Button>
+        </ConfirmDialog>
+      ) : null}
+    </div>
   );
 }

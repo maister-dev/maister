@@ -1317,11 +1317,11 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     );
 
     expect(decisionPage?.ok()).toBe(true);
-    const approval = page.locator("form").filter({
-      has: page.getByRole("button", {
-        name: "Approve this restart",
-        exact: true,
-      }),
+    await page
+      .getByRole("button", { name: "Approve this restart", exact: true })
+      .click();
+    const approval = page.getByRole("dialog", {
+      name: "Approve this restart?",
     });
 
     await expect(approval).toContainText(operation.request_digest);
@@ -1336,7 +1336,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     );
 
     await approval
-      .getByRole("button", { name: "Approve this restart", exact: true })
+      .getByRole("button", { name: "Approve restart", exact: true })
       .click();
     const approved = await approvalResponse;
 
@@ -1359,6 +1359,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
   await approveAndContinue();
   if (checkSuccessor) {
     const predecessorId = operation.id;
+
     originalRecoveryRunId = runId;
 
     await expect

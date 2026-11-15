@@ -7057,7 +7057,7 @@ paths:
       description: Requires an active specialist appointment, exact input and current professional and
         initiating user logs grants. The reader is checked again before disclosure.
       x-implementation-status: Implemented
-      x-required-scope: targets:logs
+      x-required-scope: targets:read
       security:
         - projectToken: []
       parameters:
@@ -7130,7 +7130,7 @@ paths:
       summary: Send one exact approved restart under the current specialist and placement fences. A replay returns the retained operation.
       description: Requires a current execution-bound company specialist token and appointed input.
       x-implementation-status: Implemented
-      x-required-scope: targets:restart
+      x-required-scope: targets:read
       security:
         - projectToken: []
       parameters:

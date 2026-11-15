@@ -31,16 +31,11 @@ export async function POST(
   const { operationId, action } = await params;
   const endpoint = "POST /api/v1/ext/stand-operations/[operationId]/[action]";
 
-  const scopeLabel =
-    action === "dispatch"
-      ? "targets:restart"
-      : action === "logs"
-        ? "targets:logs"
-        : "targets:read";
-
+  // Company credentials carry targets:read for every stand tool; restart and
+  // logs are enforced against current grants inside each action.
   return handleOwnedExt(
     request,
-    { endpoint, scopeLabel, method: "POST" },
+    { endpoint, scopeLabel: "targets:read", method: "POST" },
     async ({ actor }) => {
       if (action === "logs")
         return privateJson(

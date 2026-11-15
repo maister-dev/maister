@@ -102,7 +102,8 @@ export default defineConfig({
     // Playwright waits for this process; exec keeps it alive through owned cleanup.
     command: "exec node --import tsx e2e/web-server.ts",
     url: BASE_URL,
-    timeout: 180_000,
+    // Includes the production build; slow hosts raise it explicitly.
+    timeout: Number(process.env.E2E_WEB_SERVER_TIMEOUT_MS ?? 180_000),
     reuseExistingServer: false,
     gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
     env: {
