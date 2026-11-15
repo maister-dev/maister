@@ -123,13 +123,16 @@ All assignments require nonblank objective (<=8000 characters), expected outcome
 | Result ready | active or reconciling after coordinator evaluation | Exact valid result revision and obligation set; awaiting_acceptance, never completed automatically |
 | Accept | awaiting_acceptance, responsible/current acceptance authority, exact input/context/result and satisfied policy obligations | Acceptance/state/completion timestamp/delivery outbox in one transaction |
 | Request rework | awaiting_acceptance or settled work item, current responsible actor, remaining budget | New work/input revision; old result immutable; governed continuation |
-| Cancel | Any non-completed state, current cancel authority, expected revision; stop owned agents first | Record cancelled with reason, close owned waits/claims/outbox; preserve confirmed/unknown effects for independent reconciliation |
+| Cancel | Not completed, failed or cancelled; current cancel authority and expected revision, all checked before any stop; stop owned agents first | Record cancelled with reason, close owned waits/claims/outbox; preserve confirmed/unknown effects for independent reconciliation |
 | Fail | Nonterminal state, stopped execution and classified unrecoverable error | Preserve diagnostic/effect history; failed reason/time, never infer not-applied |
 | Explicit reopen | failed/cancelled only, current recovery authority and fresh recovery/input revision | New owner epoch; preserve original terminal event; outstanding unknown effect routes to reconciling, not dispatch |
 | Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
 
 The assignment store requires linked Runs to be terminal and their placements
-to be released before standalone input changes, cancellation, or reopening.
+to be released before standalone input changes or reopening. Cancellation needs
+only stopped execution: a linked Run an operator stop parked in `Review` keeps
+its diff for a human promote-or-drop decision and does not block it, while an
+active placement still does.
 An active placement on a crashed Run still blocks these changes. An authorized
 answer to a retained clarification uses its own checkpoint and input-lineage
 contract.
@@ -1121,10 +1124,14 @@ OpenAPI](../api/external/operations.openapi.yaml)):
 - `POST …/{assignmentId}/inputs` appends one correlated input revision.
 - `POST …/{assignmentId}/continue` reopens failed or cancelled work as queued intent
   (`202`); it never launches a Run or repeats an external effect.
-- `POST …/{assignmentId}/cancel` stops the assignment's live linked Runs through the
-  existing operator stop, then records the cancellation. Teardown that has not settled
-  answers `202` with the current revision and no receipt, so the caller retries with
-  the same key.
+- `POST …/{assignmentId}/cancel` first checks the revision, cancel authority and a
+  cancellable state (`assignment_already_terminal` otherwise), so a refusal stops
+  nothing. It then stops the live linked Runs through the existing operator stop and
+  records the cancellation; a Run parked in `Review` counts as stopped. Teardown
+  another owner is still settling (`company_stop_owned`,
+  `budget_termination_pending`) answers `202` with the current revision and no
+  receipt, so the caller retries with the same key. A Run the stop refuses outright,
+  such as one in `HumanWorking`, answers `409 assignment_run_unstoppable`.
 - `GET …/{assignmentId}/work` lists delegated work. Its state derives from the
   persisted decision plus the child Run and its validated results; no second
   execution status exists.
@@ -1133,7 +1140,9 @@ Input, continue and cancel carry an `idempotencyKey`. The first committed contro
 writes one `specialist_assignment_control_receipts` row in the same transaction as
 the state change (migration `0338`). An exact replay returns that receipt with
 `duplicate: true` after rechecking current read access, and the same key with a
-different request refuses `CONFLICT` (`assignment_control_key_reused`). Token clients
+different request refuses `CONFLICT` (`assignment_control_key_reused`). All three
+controls resolve visibility before the revision lock, so an unreadable assignment
+answers the same `404` as a missing one and never exposes its revision. Token clients
 need `assignments:update`, `assignments:recover` or `assignments:cancel`
 respectively; cancellation and recovery are never in a machine grant set.
 
@@ -1146,6 +1155,7 @@ respectively; cancellation and recovery are never in a machine grant set.
 - **CBA-05:** Clarification resumes the exact assignment/question/input and releases failed owned deferreds, enforced by existing human-ask/HITL delivery with assignment subjects (`IT-CBA-05`).
 - **CBA-06:** Origin delivery is current-access-filtered, durable and cannot repeat business effects, enforced by typed destinations/outbox receipts (`IT-CBA-06`).
 - **CBA-07:** Completion requires exact expected result and verification acceptance, enforced by transactional acceptance and terminal CHECKs (`IT-CBA-07`).
+- **CBA-08:** A refused cancel stops no Run, and a recorded cancel leaves no live linked execution, enforced by the shared `assertAssignmentCancellable` verdict before any stop and the `stopped` settlement guard in the cancel transaction (`IT-CBA-01`).
 - **CBU-02:** EN/RU assignment UX exposes responsibility, questions, children, accepted evidence and authorized recovery, enforced by existing agent/history/Inbox extensions (`E2E-CBU-02`).
 
 ## Edge cases
@@ -1155,6 +1165,7 @@ respectively; cancellation and recovery are never in a machine grant set.
 - **EDGE-CBA-03:** Two context writers cannot silently lose a decision; loser sees `CONFLICT` with safe current revision (`IT-CBA-04`).
 - **EDGE-CBA-04:** Child Done, stale result or missing independent verification cannot satisfy completion (`IT-CBA-07`).
 - **EDGE-CBA-05:** Lost origin ACK repeats only delivery, not accepted work or external mutation (`IT-CBA-06`).
+- **EDGE-CBA-06:** A linked Run the operator stop refuses (`HumanWorking`) makes cancel answer `CONFLICT` `assignment_run_unstoppable` instead of an endless `202` (`IT-CBA-01`).
 
 ## Linked artifacts
 

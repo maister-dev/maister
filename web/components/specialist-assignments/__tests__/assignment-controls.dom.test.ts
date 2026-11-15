@@ -138,6 +138,32 @@ describe("AssignmentLifecycle", () => {
     expect(feedback.error).toHaveBeenCalledOnce();
     expect(router.refresh).not.toHaveBeenCalled();
   });
+
+  it("explains a cancel refused because a linked run cannot be stopped", async () => {
+    respond(409, {
+      code: "CONFLICT",
+      message: "unstoppable",
+      details: { reason: "assignment_run_unstoppable" },
+    });
+    mount(
+      createElement(AssignmentLifecycle, {
+        assignmentId: "assignment-1",
+        revision: 2,
+        action: "cancel",
+        live: true,
+      }),
+    );
+    await click(button("cancel"));
+    fill("Stop the maintenance.");
+    await click(button("cancel"));
+
+    expect(
+      document.querySelector('[role="dialog"] [role="alert"]')?.textContent,
+    ).toBe("cancelUnstoppable");
+    expect(feedback.error).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "cancelUnstoppable" }),
+    );
+  });
 });
 
 describe("AssignmentWork", () => {
@@ -210,5 +236,31 @@ describe("AssignmentWork", () => {
     );
 
     expect(view.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("renders server limitation codes through the localized catalog", () => {
+    const view = mount(
+      createElement(AssignmentWork, {
+        assignmentId: "assignment-1",
+        canDecide: true,
+        items: [
+          {
+            id: "work-1",
+            logicalWorkId: "survey",
+            revision: 2,
+            inputRevision: 1,
+            workRevision: 1,
+            state: "cancelled",
+            childRunId: "run-1",
+            resultRevision: 3,
+            limitations: ["rejected_without_rework"],
+          },
+        ],
+      }),
+    );
+
+    expect(view.textContent).toContain(
+      "workLimitation.rejected_without_rework",
+    );
   });
 });

@@ -71,8 +71,26 @@ test("CT-CBX-05 the release manifest identifies unchanged specifications and rec
   if (manifest.currentMaster.fullWeb === "passed") {
     assert.equal(manifest.receipts.current_master_web?.exitCode, 0);
   }
+  // A specification edited after qualification must be declared: the qualified
+  // digest stays as recorded and the amendment names the current one, so the
+  // manifest never claims coverage of text it did not qualify.
+  const amendments = new Map(
+    (manifest.postQualificationAmendments ?? []).map((amendment) => [
+      amendment.path,
+      amendment,
+    ]),
+  );
+
+  for (const amendment of amendments.values()) {
+    assert.equal(amendment.qualifiedSha256, manifest.specs[amendment.path], amendment.path);
+    assert.ok(amendment.reason?.trim(), amendment.path);
+  }
   for (const [path, sha256] of Object.entries(manifest.specs)) {
-    assert.equal(digest(readFileSync(join(repoRoot, path))), sha256, path);
+    assert.equal(
+      digest(readFileSync(join(repoRoot, path))),
+      amendments.get(path)?.currentSha256 ?? sha256,
+      path,
+    );
   }
   for (const [role, { path, sha256, exitCode }] of Object.entries(manifest.receipts)) {
     const data = readFileSync(join(qualificationRoot, path));
@@ -261,13 +279,13 @@ test("CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable s
   );
 });
 
-test("CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks", () => {
+test("CT-CBX-05 company group discovers all 86 contracts and 45 enforcing tasks", () => {
   const group = COVERAGE_GROUPS["company-brain-specialists"];
   assert.ok(group, "company group must be registered");
   const result = checkGroupCoverage(group);
   assert.deepEqual(result.failures, []);
-  assert.equal(result.ids.length, 84);
-  assert.equal(result.rows.size, 84);
+  assert.equal(result.ids.length, 86);
+  assert.equal(result.rows.size, 86);
   assert.equal(result.tasks.filter((id) => group.implementationPhases.test(id)).length, 45);
   assert.ok(result.tasks.includes("T04.1"));
   assert.ok(result.tasks.includes("T20.1"));

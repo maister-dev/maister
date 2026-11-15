@@ -52,7 +52,10 @@ import { contentDigest } from "@/lib/evaluations/digest";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { executionPolicySchema } from "@/lib/runs/execution-policy";
-import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
+import {
+  isSettledRunStatus,
+  isTerminalRunStatus,
+} from "@/lib/runs/run-status-sets";
 import { postgresTextSchema } from "@/lib/text-schema";
 
 const log = pino({
@@ -624,10 +627,21 @@ async function lockAssignmentHead(
   return head;
 }
 
+/**
+ * `terminal` is required before input changes and reopening. Cancellation only
+ * needs execution stopped: an operator stop parks a flow Run in `Review` with
+ * its diff retained for a human decision, and that is settled for cancel.
+ */
+type LinkedRunSettlement = "terminal" | "stopped";
+
 async function assertNoUnsettledAssignmentRuns(
   tx: SqlTransaction,
   assignmentId: string,
+  settlement: LinkedRunSettlement = "terminal",
 ): Promise<void> {
+  const settled =
+    settlement === "stopped" ? isSettledRunStatus : isTerminalRunStatus;
+
   const runs = (
     await tx.execute(
       sql`SELECT execution.id,execution.status FROM runs execution JOIN specialist_run_links link ON link.run_id=execution.id WHERE link.assignment_id=${assignmentId} ORDER BY execution.id FOR SHARE OF execution`,
@@ -636,7 +650,7 @@ async function assertNoUnsettledAssignmentRuns(
 
   // Placement mint takes the Run lock. Read active placements after locking
   // the linked Runs so a concurrent mint cannot hide behind the prior snapshot.
-  if (runs.every((run) => isTerminalRunStatus(String(run.status)))) {
+  if (runs.every((run) => settled(String(run.status)))) {
     const activePlacements = await tx.execute(sql`
       SELECT 1 FROM specialist_run_links link
       JOIN execution_assignments placement ON placement.run_id=link.run_id
@@ -827,6 +841,16 @@ export async function cancelSpecialistAssignment(
   }
 }
 
+/** The one cancellable-state verdict; callers check it before any stop effect. */
+export function assertAssignmentCancellable(status: string): void {
+  if (["completed", "failed", "cancelled"].includes(status))
+    throw new MaisterError(
+      "CONFLICT",
+      "Assignment is already terminal; inspect its retained outcome",
+      { details: { reason: "assignment_already_terminal" } },
+    );
+}
+
 export async function cancelSpecialistAssignmentInTransaction(
   tx: SqlTransaction,
   userId: string,
@@ -847,12 +871,8 @@ export async function cancelSpecialistAssignmentInTransaction(
     "assignments:cancel",
     { preset: "supervised" },
   );
-  if (["completed", "failed", "cancelled"].includes(String(head.status)))
-    throw new MaisterError(
-      "CONFLICT",
-      "Assignment is already terminal; inspect its retained outcome",
-    );
-  await assertNoUnsettledAssignmentRuns(tx, assignmentId);
+  assertAssignmentCancellable(String(head.status));
+  await assertNoUnsettledAssignmentRuns(tx, assignmentId, "stopped");
   await tx.execute(
     sql`UPDATE specialist_assignments SET status='cancelled',revision=revision+1,terminal_reason=${reason},updated_at=clock_timestamp() WHERE id=${assignmentId}`,
   );

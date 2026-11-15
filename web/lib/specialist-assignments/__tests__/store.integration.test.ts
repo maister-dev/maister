@@ -37,7 +37,11 @@ import {
   beginSpecialistExecutor,
   renewSpecialistExecutor,
 } from "../executor-lease";
-import { cancelAssignmentExecution } from "../controls";
+import {
+  cancelAssignmentExecution,
+  continueAssignment,
+  submitAssignmentInput,
+} from "../controls";
 
 import { contentDigest } from "@/lib/evaluations/digest";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
@@ -2074,7 +2078,7 @@ it("IT-CBA-03 retains cancellation and recovery facts and original input rather 
   ).rejects.toMatchObject({ code: "23514" });
 });
 
-it("IT-CBA-03 serves list, input, continue, cancel and work controls with exact replay over web and personal tokens", async () => {
+it("IT-CBA-04 serves list, input, continue, cancel and work controls with exact replay over web and personal tokens", async () => {
   const assignment = await createSpecialistAssignment(
     database.db,
     requesterId,
@@ -2246,7 +2250,7 @@ it("IT-CBA-03 serves list, input, continue, cancel and work controls with exact 
   }
 });
 
-it("IT-CBA-03 stops live linked runs before cancelling and reports unsettled teardown as pending intent", async () => {
+it("IT-CBA-01 stops live linked runs before cancelling and reports unsettled teardown as pending intent", async () => {
   const projectId = randomUUID();
   const runId = randomUUID();
 
@@ -2327,6 +2331,220 @@ it("IT-CBA-03 stops live linked runs before cancelling and reports unsettled tea
     settled: true,
   });
   expect(settlingStop).toHaveBeenCalledWith(runId);
+});
+
+async function seedLinkedProjectAssignment(label: string): Promise<{
+  assignmentId: string;
+  runId: string;
+}> {
+  const projectId = randomUUID();
+  const runId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO projects(id,slug,name,repo_path,maister_yaml_path,task_key) VALUES($1,$1,$2,$3,$4,$5)",
+    [
+      projectId,
+      label,
+      join(root, `${projectId}-repository`),
+      join(root, `${projectId}-repository/maister.yaml`),
+      `K${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    ],
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'owner')",
+    [randomUUID(), projectId, requesterId],
+  );
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,flow_version,status) VALUES($1,$2,'flow',$3,'Running')",
+    [runId, projectId, label],
+  );
+  const assignment = await createSpecialistAssignment(
+    database.db,
+    requesterId,
+    { ...prepared, owner: { kind: "project", projectId } },
+  );
+
+  await linkSpecialistAssignmentRun(database.db, requesterId, assignment.id, {
+    expectedRevision: 1,
+    inputRevision: 1,
+    runId,
+    role: "coordinator",
+    work: null,
+  });
+
+  return { assignmentId: assignment.id, runId };
+}
+
+function cancelControl(reason: string) {
+  return { expectedRevision: 2, reason, idempotencyKey: randomUUID() };
+}
+
+it("IT-CBA-01 refuses cancelling a terminal assignment before stopping any linked run", async () => {
+  const { assignmentId } = await seedLinkedProjectAssignment("cancel-terminal");
+
+  // A Run admitted around a terminal write: the refusal must not stop it.
+  await database.pool.query(
+    "UPDATE specialist_assignments SET status='failed',revision=revision+1,terminal_reason='Classified unrecoverable.' WHERE id=$1",
+    [assignmentId],
+  );
+  const stop = vi.fn(async () => undefined);
+  const refused = await cancelAssignmentExecution(
+    database.db,
+    requesterId,
+    assignmentId,
+    { ...cancelControl("Cancel the failed work."), expectedRevision: 3 },
+    stop,
+  ).catch((error: unknown) => error);
+
+  expect(refused).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_already_terminal" },
+  });
+  expect(stop).not.toHaveBeenCalled();
+});
+
+it("IT-CBA-01 records cancellation once the operator stop parks a linked flow run in Review", async () => {
+  const { assignmentId, runId } =
+    await seedLinkedProjectAssignment("cancel-review");
+  const stopToReview = vi.fn(async (stopped: string) => {
+    await database.pool.query("UPDATE runs SET status='Review' WHERE id=$1", [
+      stopped,
+    ]);
+  });
+  const control = cancelControl("Stop and keep the diff for review.");
+
+  expect(
+    await cancelAssignmentExecution(
+      database.db,
+      requesterId,
+      assignmentId,
+      control,
+      stopToReview,
+    ),
+  ).toMatchObject({
+    receipt: { revision: 3, status: "cancelled", duplicate: false },
+    settled: true,
+  });
+  expect(stopToReview).toHaveBeenCalledOnce();
+  expect(stopToReview).toHaveBeenCalledWith(runId);
+  const { rows } = await database.pool.query(
+    "SELECT status FROM runs WHERE id=$1",
+    [runId],
+  );
+
+  expect(rows[0]?.status).toBe("Review");
+  const replayStop = vi.fn(async () => undefined);
+
+  expect(
+    await cancelAssignmentExecution(
+      database.db,
+      requesterId,
+      assignmentId,
+      control,
+      replayStop,
+    ),
+  ).toMatchObject({ receipt: { duplicate: true }, settled: true });
+  expect(replayStop).not.toHaveBeenCalled();
+});
+
+it("EDGE-CBA-06 refuses cancellation with assignment_run_unstoppable when the stop refuses a live run", async () => {
+  const { assignmentId, runId } =
+    await seedLinkedProjectAssignment("cancel-unstoppable");
+  const refusingStop = vi.fn(async () => {
+    throw new MaisterError(
+      "CONFLICT",
+      "run is HumanWorking and cannot be cancelled",
+    );
+  });
+  const refused = await cancelAssignmentExecution(
+    database.db,
+    requesterId,
+    assignmentId,
+    cancelControl("Cancel while a reviewer holds the run."),
+    refusingStop,
+  ).catch((error: unknown) => error);
+
+  expect(refused).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "assignment_run_unstoppable" },
+  });
+  expect(refusingStop).toHaveBeenCalledWith(runId);
+  const { rows } = await database.pool.query(
+    "SELECT a.status,a.revision,(SELECT count(*)::int FROM specialist_assignment_control_receipts r WHERE r.assignment_id=a.id) AS receipts FROM specialist_assignments a WHERE a.id=$1",
+    [assignmentId],
+  );
+
+  expect(rows[0]).toEqual({ status: "queued", revision: 2, receipts: 0 });
+  const settlingStop = vi.fn(async () => {
+    throw new MaisterError(
+      "CONFLICT",
+      "Company Run cancellation is owned by another operator",
+      { details: { reason: "company_stop_owned" } },
+    );
+  });
+
+  expect(
+    await cancelAssignmentExecution(
+      database.db,
+      requesterId,
+      assignmentId,
+      cancelControl("Another operator is already stopping it."),
+      settlingStop,
+    ),
+  ).toMatchObject({ receipt: { status: "active" }, settled: false });
+});
+
+it("IT-CBA-04 hides an unreadable assignment behind the missing-reference refusal on every control", async () => {
+  const { assignmentId } =
+    await seedLinkedProjectAssignment("control-outsider");
+  const outsiderId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [outsiderId, `${outsiderId}@example.test`],
+  );
+  const unavailable = {
+    code: "PRECONDITION",
+    details: { reason: "assignment_reference_unavailable" },
+  };
+  const stop = vi.fn(async () => undefined);
+
+  for (const expectedRevision of [1, 2]) {
+    const control = {
+      expectedRevision,
+      reason: "Probe the assignment.",
+      idempotencyKey: randomUUID(),
+    };
+
+    await expect(
+      submitAssignmentInput(database.db, outsiderId, assignmentId, {
+        expectedRevision,
+        input: "Probe the assignment.",
+        references: [],
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject(unavailable);
+    await expect(
+      continueAssignment(database.db, outsiderId, assignmentId, control),
+    ).rejects.toMatchObject(unavailable);
+    await expect(
+      cancelAssignmentExecution(
+        database.db,
+        outsiderId,
+        assignmentId,
+        control,
+        stop,
+      ),
+    ).rejects.toMatchObject(unavailable);
+  }
+  await expect(
+    continueAssignment(database.db, outsiderId, randomUUID(), {
+      expectedRevision: 1,
+      reason: "Probe a missing assignment.",
+      idempotencyKey: randomUUID(),
+    }),
+  ).rejects.toMatchObject(unavailable);
+  expect(stop).not.toHaveBeenCalled();
 });
 
 it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carriers for company work and never treats run success as assignment completion", async () => {
@@ -2428,18 +2646,21 @@ it("IT-CBA-01 links existing same-owner runs exactly once, refuses project carri
       code: "CONFLICT",
       details: { reason: "assignment_root_unsettled" },
     });
-    await expect(
-      cancelSpecialistAssignment(
-        database.db,
-        requesterId,
-        project.id,
-        2,
-        "Requires execution teardown first",
-      ),
-    ).rejects.toMatchObject({
-      code: "CONFLICT",
-      details: { reason: "assignment_execution_unsettled" },
-    });
+    // A Run stopped into Review is settled for cancel (covered separately);
+    // live statuses still require teardown first.
+    if (status !== "Review")
+      await expect(
+        cancelSpecialistAssignment(
+          database.db,
+          requesterId,
+          project.id,
+          2,
+          "Requires execution teardown first",
+        ),
+      ).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "assignment_execution_unsettled" },
+      });
   }
   await expect(
     database.pool.query(

@@ -142,7 +142,7 @@ export function AssignmentWork({
                     ) : null}
                     {work.limitations.map((limitation) => (
                       <p key={limitation} className="text-xs text-mute">
-                        {limitation}
+                        {t(`workLimitation.${limitation}`)}
                       </p>
                     ))}
                   </td>

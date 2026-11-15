@@ -23,7 +23,7 @@ stray click.
 | `assignments:accept` | Accept the final result; accept or reject a ready delegated result |
 | `assignments:cancel` | **Cancel assignment** (stops running work first) |
 | `assignments:recover` | **Reopen assignment**; replay a delivered or dead result delivery |
-| `targets:read` | Stand operations, receipts and **Verify** health |
+| `targets:read` + access to the operation's retained input | Stand operations, receipts and **Verify** health |
 | `targets:restart` | **Approve this restart** and successor authorization |
 | `targets:recover` | **Check the original receipt**, **Inspect**, **Hold** |
 
@@ -71,7 +71,9 @@ block with package revision, definition digest and a readable authority summary
 - **Result delivery**: transport state, attempts, last response, **Replay delivery**;
 - final acceptance form, knowledge write-back, coordinator recovery;
 - **Cancel assignment** or **Reopen assignment**; while work is running a note says
-  cancelling stops it first;
+  cancelling stops it first. A run that only stops into Review keeps its diff for a
+  human decision. A run the stop cannot end (a reviewer holds it) refuses the cancel
+  with a localized error;
 - runs with kind, start time and status.
 
 ### Stand operation controls
@@ -80,7 +82,7 @@ Icon + label buttons. **Approve this restart** opens a confirmation showing the
 exact request digest and requires a reason. **Hold** and successor authorization
 also confirm with a reason. A successor is chosen from open assignments the user can
 read that cite the same target, never typed as an ID. **Verify** appears only with
-read authority on a confirmed effect. Completion shows a green-check toast.
+read authority and access to the operation's retained input, on a confirmed effect. Completion shows a green-check toast.
 
 ## States
 

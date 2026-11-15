@@ -2447,6 +2447,25 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/db/canonical-sql.ts",
+      "build-tooling",
+      "Reads the committed canonical function/trigger SQL under lib/db/canonical for the drift test and generator; never runs inside the web process",
+      [
+        ["readCommittedCanonicalSql", "node:fs.readdirSync", "list"],
+        ["readCommittedCanonicalSql", "node:fs.readFileSync", "read"],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-canonical-sql.ts",
+      "build-tooling",
+      "build/CI tooling over the checkout (.next artifacts, generated docs, image smoke); never runs inside the web process",
+      [
+        ["main", "node:fs.rmSync", "remove"],
+        ["main", "node:fs.mkdirSync", "write"],
+        ["main", "node:fs.writeFileSync", "write"],
+      ],
+    ),
+    ...classified(
       "scripts/generate-erd-dbml.ts",
       "build-tooling",
       "build/CI tooling over the checkout (.next artifacts, generated docs, image smoke); never runs inside the web process",
@@ -2626,6 +2645,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [
+    ["readCommittedCanonicalSql", false],
+  ]),
   ...wrappers("lib/specialist-assignments/store.ts", "repository-worktree", [
     ["createSpecialistAssignment", false],
     ["createSpecialistAssignmentInTransaction", false],

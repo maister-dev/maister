@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { authorizeAssignment } from "./access";
 import {
   beginAssignmentTransaction,
+  getSpecialistAssignmentInputInTransaction,
   getSpecialistAssignmentInTransaction,
 } from "./store";
 import {
@@ -314,9 +315,11 @@ export async function readAssignmentStandChoices(
   operationIds: string[];
   canRestart: boolean;
   canRecover: boolean;
-  canVerify: boolean;
+  /** Operations whose verification read this viewer passes: target read plus retained input access. */
+  verifiableOperationIds: string[];
 }> {
   return db.transaction(async (tx) => {
+    await beginAssignmentTransaction(tx);
     const companyId = await installationCompany(tx);
     const allowed = async (
       action: "targets:read" | "targets:restart" | "targets:recover",
@@ -336,20 +339,45 @@ export async function readAssignmentStandChoices(
         operationIds: [],
         canRestart: false,
         canRecover: false,
-        canVerify: false,
+        verifiableOperationIds: [],
       };
-    const operationIds = (
+    const operations = (
       await tx.execute(sql`
-      SELECT id FROM stand_operations WHERE assignment_id=${assignment.id}
+      SELECT id,input_revision FROM stand_operations WHERE assignment_id=${assignment.id}
       ORDER BY created_at DESC,id LIMIT 32
     `)
-    ).rows.flatMap(({ id }) => (typeof id === "string" ? [id] : []));
+    ).rows.flatMap(({ id, input_revision }) =>
+      typeof id === "string"
+        ? [{ id, inputRevision: Number(input_revision) }]
+        : [],
+    );
+    const operationIds = operations.map(({ id }) => id);
+    // Verification also reads the retained input revision (claimStandReadAuthority).
+    const readableInput = new Map<number, boolean>();
+
+    for (const { inputRevision } of operations) {
+      if (readableInput.has(inputRevision)) continue;
+      try {
+        await getSpecialistAssignmentInputInTransaction(
+          tx,
+          userId,
+          assignment.id,
+          inputRevision,
+        );
+        readableInput.set(inputRevision, true);
+      } catch (error) {
+        if (!accessRefused(error)) throw error;
+        readableInput.set(inputRevision, false);
+      }
+    }
 
     return {
       operationIds,
       canRestart: operationIds.length > 0 && (await allowed("targets:restart")),
       canRecover: operationIds.length > 0 && (await allowed("targets:recover")),
-      canVerify: operationIds.length > 0,
+      verifiableOperationIds: operations.flatMap(({ id, inputRevision }) =>
+        readableInput.get(inputRevision) ? [id] : [],
+      ),
     };
   });
 }
@@ -380,11 +408,19 @@ export async function listStandSuccessorChoices(
         WHERE id=ANY(${sql.param([...operationIds])}::text[])
       `)
     ).rows as { id: string; target_id: string }[];
+    const targetIds = [...new Set(targets.map(({ target_id }) => target_id))];
+
+    if (!targetIds.length) return {};
+    // Filter by cited target before the bound so unrelated open work cannot
+    // push a valid successor out of the candidate window.
     const candidates = (
       await tx.execute(sql`
-        SELECT id FROM specialist_assignments
-        WHERE status NOT IN ('completed','failed','cancelled')
-        ORDER BY updated_at DESC,id LIMIT 50
+        SELECT assignment.id FROM specialist_assignments assignment
+        JOIN specialist_input_revisions input ON input.assignment_id=assignment.id
+          AND input.revision=assignment.input_revision
+        WHERE assignment.status NOT IN ('completed','failed','cancelled')
+          AND input.objective_input->'targetIds' ?| ${sql.param(targetIds)}::text[]
+        ORDER BY assignment.updated_at DESC,assignment.id LIMIT 50
       `)
     ).rows as { id: string }[];
     const readable: SpecialistAssignment[] = [];

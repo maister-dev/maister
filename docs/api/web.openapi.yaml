@@ -21273,7 +21273,8 @@ paths:
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
+        accessible receipt, changed payload conflicts. Visibility is resolved before the revision lock, so an
+        unreadable assignment answers the same 404 as a missing one.
       x-implementation-status: Implemented
       x-required-scope: assignments:update
       requestBody:
@@ -21322,7 +21323,8 @@ paths:
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
+        accessible receipt, changed payload conflicts. Visibility is resolved before the revision lock, so an
+        unreadable assignment answers the same 404 as a missing one.
       x-implementation-status: Implemented
       x-required-scope: assignments:recover
       requestBody:
@@ -21378,7 +21380,10 @@ paths:
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
         compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
+        accessible receipt, changed payload conflicts. Revision, authority and a cancellable state (not
+        completed, failed or cancelled; `assignment_already_terminal`) are checked before any Run is stopped. A
+        linked Run the stop refuses outright answers 409 `assignment_run_unstoppable`. An unreadable assignment
+        answers the same 404 as a missing one.
       x-implementation-status: Implemented
       x-required-scope: assignments:cancel
       requestBody:
@@ -21389,14 +21394,16 @@ paths:
               $ref: "#/components/schemas/CBControlInput"
       responses:
         "200":
-          description: Exact content-guarded replay returns the currently accessible prior receipt without repeating
-            work; state remains explicit.
+          description: The cancellation was recorded after every live linked Run stopped (a Run an operator stop
+            parks in Review counts as stopped and keeps its diff), or an exact content-guarded replay returns
+            the currently accessible prior receipt without repeating work.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CBReceipt"
         "202":
-          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          description: Linked Run teardown is still settling under another owner. No receipt is recorded; retry
+            with the same idempotency key. Never proof of success.
           content:
             application/json:
               schema:
@@ -21889,6 +21896,13 @@ paths:
             minimum: 1
             maximum: 50
             default: 20
+        - name: enabledOnly
+          in: query
+          schema:
+            type: boolean
+            enum:
+              - true
+          description: When `true`, lists only enabled targets. The value is part of the cursor scope.
     post:
       operationId: standCreate
       summary: Register explicit stand component policy
@@ -40240,10 +40254,11 @@ components:
           nullable: true
         limitations:
           type: array
+          description: Server-derived limitation codes, localized by the receiving UI.
           items:
             type: string
-            minLength: 1
-            maxLength: 1000
+            enum:
+              - rejected_without_rework
           maxItems: 32
     CBExactCollectedWorkDecision:
       type: object

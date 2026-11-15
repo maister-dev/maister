@@ -50,6 +50,7 @@ import {
   appendSpecialistAssignmentInput,
   cancelSpecialistAssignment,
   createSpecialistAssignment,
+  getSpecialistAssignment,
 } from "@/lib/specialist-assignments/store";
 import { MaisterError } from "@/lib/errors";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
@@ -512,6 +513,29 @@ it("IT-CBO-02 IT-CBO-03 IT-CBO-07 retains one restart intent across aliases and 
     verificationState: "not_checked",
     disposition: "pending",
   });
+  const unrelated = await newAssignment([]);
+  const { listStandSuccessorChoices, readAssignmentStandChoices } =
+    await import("@/lib/specialist-assignments/workspace-view");
+  const successors = await listStandSuccessorChoices(database.db, userId, [
+    accepted.id,
+  ]);
+
+  // Only open assignments citing the operation's target are offered.
+  expect(successors[accepted.id]?.map(({ id }) => id).sort()).toEqual(
+    [first.id, second.id].sort(),
+  );
+  expect(successors[accepted.id]?.map(({ id }) => id)).not.toContain(
+    unrelated.id,
+  );
+  expect(
+    (
+      await readAssignmentStandChoices(
+        database.db,
+        userId,
+        await getSpecialistAssignment(database.db, userId, winner.id),
+      )
+    ).verifiableOperationIds,
+  ).toEqual([accepted.id]);
   const { authenticateStandOperationPeer } = await import("../authority-peer");
   const { authorizeStandCallback } = await import("../authority-permit");
 

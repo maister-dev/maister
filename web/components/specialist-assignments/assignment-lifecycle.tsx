@@ -65,10 +65,19 @@ export function AssignmentLifecycle({
           value && typeof value === "object" && "code" in value
             ? value.code
             : null;
+        const details =
+          value && typeof value === "object" && "details" in value
+            ? value.details
+            : null;
+        const reason =
+          details && typeof details === "object" && "reason" in details
+            ? details.reason
+            : null;
 
         throw new MaisterError(
           isMaisterErrorCode(code) ? code : "CRASH",
           "The assignment action was refused",
+          typeof reason === "string" ? { details: { reason } } : undefined,
         );
       }
       const pendingTeardown = action === "cancel" && response.status === 202;
@@ -83,7 +92,11 @@ export function AssignmentLifecycle({
       setReason("");
       router.refresh();
     } catch (failure) {
-      const message = knowledge(knowledgeClientErrorKey(failure));
+      const message =
+        failure instanceof MaisterError &&
+        failure.details?.reason === "assignment_run_unstoppable"
+          ? t("cancelUnstoppable")
+          : knowledge(knowledgeClientErrorKey(failure));
 
       setError(message);
       feedback.error({ message, mutationId: idempotencyKey });

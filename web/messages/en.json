@@ -7042,6 +7042,10 @@
       "successor": "Authorize successor"
     },
     "cancelPending": "Stopping running work; the cancellation is recorded once it has stopped.",
+    "cancelUnstoppable": "A linked run can't be stopped from its current state. Settle it from the run page, then cancel again.",
+    "workLimitation": {
+      "rejected_without_rework": "The coordinator rejected this result without rework."
+    },
     "lifecycleDone": {
       "cancel": "Assignment cancelled",
       "reopen": "Assignment reopened"

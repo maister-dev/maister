@@ -10,6 +10,7 @@ import { z } from "zod";
 import { authorizeAssignment } from "./access";
 import {
   appendSpecialistAssignmentInputInTransaction,
+  assertAssignmentCancellable,
   beginAssignmentTransaction,
   cancelSpecialistAssignmentInTransaction,
   getVisibleSpecialistAssignmentInTransaction,
@@ -24,7 +25,7 @@ import {
 import { redactQueryError } from "@/lib/db/pg-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
-import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
+import { isSettledRunStatus } from "@/lib/runs/run-status-sets";
 import { postgresTextSchema } from "@/lib/text-schema";
 
 const log = pino({
@@ -176,6 +177,13 @@ export async function submitAssignmentInput(
       const replay = await priorReceipt(tx, key);
 
       if (replay) return { receipt: replay, settled: true };
+      // Resolve visibility before the revision lock so an unreadable assignment
+      // answers like a missing one instead of exposing its revision.
+      await getVisibleSpecialistAssignmentInTransaction(
+        tx,
+        userId,
+        assignmentId,
+      );
       const assignment = await appendSpecialistAssignmentInputInTransaction(
         tx,
         userId,
@@ -225,6 +233,11 @@ export async function continueAssignment(
       const replay = await priorReceipt(tx, key);
 
       if (replay) return { receipt: replay, settled: true };
+      await getVisibleSpecialistAssignmentInTransaction(
+        tx,
+        userId,
+        assignmentId,
+      );
       const state = await recoverSpecialistAssignmentInTransaction(
         tx,
         userId,
@@ -251,10 +264,19 @@ export async function continueAssignment(
   }
 }
 
+/** Stop refusals that mean another owner is already tearing the Run down. */
+const settlingStopReasons = new Set([
+  "company_stop_owned",
+  "budget_termination_pending",
+]);
+
 /**
- * Cancel stops the assignment's live linked runs first, then records the
- * cancellation. Teardown that has not settled yet is reported as pending
- * intent (202) with no receipt, so the same key retries safely.
+ * Cancel validates the whole precondition (revision, authority, cancellable
+ * state) before stopping anything, then stops the assignment's live linked
+ * runs and records the cancellation. A Run an operator stop parks in `Review`
+ * is settled for cancel. Teardown another owner is still finishing answers
+ * pending intent (202) with no receipt, so the same key retries safely; a Run
+ * the stop refuses outright answers `assignment_run_unstoppable` (409).
  */
 export async function cancelAssignmentExecution(
   db: SqlDatabase,
@@ -298,6 +320,7 @@ export async function cancelAssignmentExecution(
       "assignments:cancel",
       { preset: "supervised" },
     );
+    assertAssignmentCancellable(assignment.status);
     const linked = (
       await tx.execute(sql`
         SELECT execution.id,execution.status FROM runs execution
@@ -308,21 +331,39 @@ export async function cancelAssignmentExecution(
     ).rows as { id: string; status: string }[];
 
     return linked
-      .filter(({ status }) => !isTerminalRunStatus(status))
+      .filter(({ status }) => !isSettledRunStatus(status))
       .map(({ id }) => id);
   });
 
   if (!Array.isArray(liveRunIds)) return { receipt: liveRunIds, settled: true };
+  const refusedRunIds: string[] = [];
+
   for (const runId of liveRunIds) {
     try {
       await stopRun(runId);
     } catch (error) {
-      // A stop another owner already finished, or one still tearing down, is
-      // settled by the guarded cancellation below rather than here.
-      if (!isMaisterError(error) || error.code !== "CONFLICT") throw error;
+      if (
+        !isMaisterError(error) ||
+        (error.code !== "CONFLICT" && error.code !== "PRECONDITION")
+      )
+        throw error;
+      const reason = error.details?.reason;
+      const settling =
+        typeof reason === "string" && settlingStopReasons.has(reason);
+
+      // A refusal raced by a concurrent terminal write is re-read by the
+      // guarded cancellation below; only a Run still live there is refused.
+      if (!settling) refusedRunIds.push(runId);
       log.warn(
-        { assignmentId, runId, actorId: userId },
-        "linked run stop did not settle during assignment cancellation",
+        {
+          assignmentId,
+          runId,
+          actorId: userId,
+          code: error.code,
+          reason: typeof reason === "string" ? reason : null,
+          settling,
+        },
+        "[FIX:assignment-cancel] linked run stop did not settle during assignment cancellation",
       );
     }
   }
@@ -361,6 +402,21 @@ export async function cancelAssignmentExecution(
       return { receipt, settled: true };
     });
   } catch (error) {
+    if (
+      isMaisterError(error) &&
+      error.details?.reason === "assignment_execution_unsettled" &&
+      refusedRunIds.length
+    ) {
+      log.warn(
+        { assignmentId, actorId: userId, refusedRunIds },
+        "[FIX:assignment-cancel] assignment cancellation refused: a linked run cannot be stopped",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        "A linked Run cannot be stopped from its current state; settle it from the Run before cancelling",
+        { details: { reason: "assignment_run_unstoppable" } },
+      );
+    }
     if (
       isMaisterError(error) &&
       error.details?.reason === "assignment_execution_unsettled"

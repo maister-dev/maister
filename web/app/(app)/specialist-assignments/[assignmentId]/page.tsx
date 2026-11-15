@@ -336,7 +336,9 @@ export default async function SpecialistAssignmentPage({
                 <StandOperationControls
                   canRecover={stand.canRecover}
                   canRestart={stand.canRestart}
-                  canVerify={stand.canVerify}
+                  canVerify={stand.verifiableOperationIds.includes(
+                    operation.id,
+                  )}
                   needsApproval={action === "restart" && !approvedAt}
                   operation={operation}
                   successorChoices={successorChoices[operation.id] ?? []}

@@ -1,11 +1,14 @@
 import "server-only";
 
+import type { BoundedJsonMessages } from "@/lib/http/bounded-json";
+
 import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { httpStatusForAuthz } from "@/lib/authz";
-import { isMaisterError, MaisterError } from "@/lib/errors";
+import { isMaisterError } from "@/lib/errors";
 import { queryErrorDiagnostics } from "@/lib/db/pg-error";
+import { readBoundedJson } from "@/lib/http/bounded-json";
 
 const log = pino({
   name: "api:private-json",
@@ -101,13 +104,7 @@ export function privateErrorResponse(
   return privateJson({ code: "CRASH", message: "Request failed" }, 500);
 }
 
-export type PrivateJsonMessages = Readonly<{
-  contentType: string;
-  missing: string;
-  tooLarge: string;
-  tooLargeReason: string;
-  invalid: string;
-}>;
+export type PrivateJsonMessages = BoundedJsonMessages;
 
 const defaultMessages: PrivateJsonMessages = {
   contentType: "This request requires application/json",
@@ -118,50 +115,9 @@ const defaultMessages: PrivateJsonMessages = {
 };
 
 /** Reads at most 256 KiB of strict UTF-8 JSON, refusing other content types. */
-export async function readPrivateJson(
+export function readPrivateJson(
   request: Request,
   messages: PrivateJsonMessages = defaultMessages,
 ): Promise<unknown> {
-  if (
-    request.headers
-      .get("content-type")
-      ?.split(";", 1)[0]
-      ?.trim()
-      .toLowerCase() !== "application/json"
-  )
-    throw new MaisterError("CONFIG", messages.contentType);
-  if (!request.body) throw new MaisterError("CONFIG", messages.missing);
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let complete = false;
-
-  try {
-    for (;;) {
-      const next = await reader.read();
-
-      if (next.done) {
-        complete = true;
-        break;
-      }
-      length += next.value.byteLength;
-      if (length > maximumBodyBytes)
-        throw new MaisterError("CONFIG", messages.tooLarge, {
-          details: { reason: messages.tooLargeReason },
-        });
-      chunks.push(next.value);
-    }
-  } finally {
-    if (!complete) await reader.cancel();
-    reader.releaseLock();
-  }
-  try {
-    return JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
-    );
-  } catch (error) {
-    if (error instanceof SyntaxError || error instanceof TypeError)
-      throw new MaisterError("CONFIG", messages.invalid);
-    throw error;
-  }
+  return readBoundedJson(request, maximumBodyBytes, messages);
 }

@@ -15,6 +15,7 @@ import { redactQueryError } from "@/lib/db/pg-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/keyset-cursor";
+import { isSettledRunStatus } from "@/lib/runs/run-status-sets";
 
 const assignmentCursorNamespace = "maister.specialist-assignments.v1";
 const workCursorNamespace = "maister.specialist-work.v1";
@@ -54,8 +55,11 @@ export type SpecialistWorkItem = Readonly<{
     | "cancelled";
   childRunId: string | null;
   resultRevision: number | null;
-  limitations: string[];
+  limitations: SpecialistWorkLimitation[];
 }>;
+
+/** Server-derived limitation codes; the receiving UI localizes them. */
+export type SpecialistWorkLimitation = "rejected_without_rework";
 
 function parsePage(raw: unknown): z.infer<typeof pageInputSchema> {
   const parsed = pageInputSchema.safeParse(raw);
@@ -232,14 +236,6 @@ export async function listSpecialistAssignmentWork(
   }
 }
 
-const terminalChildStatuses = new Set([
-  "Done",
-  "Review",
-  "Failed",
-  "Crashed",
-  "Abandoned",
-]);
-
 type WorkRow = {
   id: string;
   logical_work_id: string;
@@ -255,7 +251,7 @@ type WorkRow = {
 function workItem(row: WorkRow): SpecialistWorkItem {
   const resultRevision =
     row.result_revision === null ? null : Number(row.result_revision);
-  const limitations: string[] = [];
+  const limitations: SpecialistWorkLimitation[] = [];
   let state: SpecialistWorkItem["state"];
 
   switch (row.decision_state) {
@@ -269,12 +265,11 @@ function workItem(row: WorkRow): SpecialistWorkItem {
       break;
     case "rejected":
       state = "cancelled";
-      limitations.push("The coordinator rejected this result without rework.");
+      limitations.push("rejected_without_rework");
       break;
     default:
       if (row.child_run_id === null) state = "queued";
-      else if (!terminalChildStatuses.has(String(row.child_status)))
-        state = "running";
+      else if (!isSettledRunStatus(String(row.child_status))) state = "running";
       else if (resultRevision !== null) state = "result_ready";
       else state = "interrupted";
   }

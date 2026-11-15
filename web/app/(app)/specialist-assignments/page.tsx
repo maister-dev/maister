@@ -27,6 +27,28 @@ type SearchParams = {
 
 const pageSize = 25;
 
+/** Every enabled target the form may cite, followed across keyset pages. */
+async function listEnabledStandTargets(
+  db: ReturnType<typeof getDb>,
+  userId: string,
+): Promise<Awaited<ReturnType<typeof listStandTargets>>["items"]> {
+  const items: Awaited<ReturnType<typeof listStandTargets>>["items"] = [];
+  let cursor: string | null = null;
+
+  do {
+    const page = await listStandTargets(db, userId, {
+      limit: 50,
+      enabledOnly: true,
+      ...(cursor ? { cursor } : {}),
+    });
+
+    items.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+
+  return items;
+}
+
 function isStatus(
   value: string | undefined,
 ): value is SpecialistAssignmentStatus {
@@ -83,12 +105,10 @@ export default async function SpecialistAssignmentsPage({
         return null;
       throw error;
     }),
-    listStandTargets(db, user.id, { limit: 50, enabledOnly: true })
-      .then(({ items }) => items)
-      .catch((error: unknown) => {
-        if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
-        throw error;
-      }),
+    listEnabledStandTargets(db, user.id).catch((error: unknown) => {
+      if (isMaisterError(error) && error.code === "UNAUTHORIZED") return [];
+      throw error;
+    }),
   ]);
   const filterHref = (cursor?: string) => {
     const params = new URLSearchParams();
