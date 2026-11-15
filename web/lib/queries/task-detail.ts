@@ -4,10 +4,12 @@ import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
+import type { RunTiming } from "@/lib/runs/run-timing";
 
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
+import { loadRunTimings } from "@/lib/queries/run-timing";
 import * as schemaModule from "@/lib/db/schema";
 import {
   activeSessionCapabilityAgent,
@@ -153,7 +155,8 @@ export type TaskRunRow = {
   deliveryStatus: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
-  durationMs: number | null;
+  // ADR-208: Duration + Execution (with quality and breakdown).
+  timing: RunTiming | null;
   tokenTotal: number;
 };
 
@@ -229,15 +232,6 @@ function tokenTotal(row: {
     (row.cacheReadTokens ?? 0) +
     (row.cacheCreationTokens ?? 0)
   );
-}
-
-function durationMs(row: {
-  startedAt: Date | null;
-  endedAt: Date | null;
-}): number | null {
-  if (!row.startedAt || !row.endedAt) return null;
-
-  return Math.max(0, row.endedAt.getTime() - row.startedAt.getTime());
 }
 
 function runnerModelLabel(row: {
@@ -457,6 +451,10 @@ export async function getTaskDetail(
     cacheCreationTokens: number | null;
   }>;
 
+  const timings = await loadRunTimings(
+    db,
+    runRows.map((row) => row.id),
+  );
   const latest = runRows[0] ?? null;
   // Totals over ALL runs (SQL aggregate), not just the 10 display rows. pg
   // returns count/sum as strings — coerce to JS numbers (safe to 2^53).
@@ -505,7 +503,7 @@ export async function getTaskDetail(
       deliveryStatus: deliveryStatusLabel(row),
       startedAt: row.startedAt,
       endedAt: row.endedAt,
-      durationMs: durationMs(row),
+      timing: timings.get(row.id) ?? null,
       tokenTotal: tokenTotal(row),
     })),
     latestFlowRun: latest

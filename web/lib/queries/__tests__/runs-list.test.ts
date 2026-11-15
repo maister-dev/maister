@@ -163,7 +163,6 @@ describe("runs list query", () => {
       expect.objectContaining({
         branch: "maister/TASK-7",
         cutoverFailedAt: new Date("2026-06-20T10:05:00.000Z"),
-        durationMs: 300_000,
         flowLabel: "aif-implement · v1.2.0",
         href: "/runs/run-1",
         projectSlug: "web",

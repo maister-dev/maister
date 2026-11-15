@@ -1,6 +1,7 @@
 import type { RunsListFilters, RunsListRow } from "@/lib/queries/runs-list";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
+import type { RunTiming } from "@/lib/runs/run-timing";
 
 import { FunnelIcon } from "@heroicons/react/24/outline";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -19,6 +20,10 @@ import {
 } from "@/lib/queries/runs-list";
 import { filtersToParams } from "@/lib/runs/list-params";
 import { RUN_OUTCOME_BUCKETS } from "@/lib/runs/outcome-bucket";
+import { RunTimingFacts } from "@/components/runs/run-timing-detail";
+import { getDb } from "@/lib/db/client";
+import { formatDurationMs } from "@/lib/format/duration";
+import { loadRunTimings } from "@/lib/queries/run-timing";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -57,20 +62,6 @@ function formatDateTime(locale: string, value: Date): string {
   }).format(value);
 }
 
-function formatDuration(ms: number | null): string {
-  if (ms === null) return "—";
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-
-  return `${hours}h ${remainingMinutes}m`;
-}
-
 function compactId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
 }
@@ -87,11 +78,12 @@ export default async function RunsPage({
   searchParams: SearchParams;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
-  const [params, t, tBucket, tKind, locale] = await Promise.all([
+  const [params, t, tBucket, tKind, tTiming, locale] = await Promise.all([
     searchParams,
     getTranslations("runsList"),
     getTranslations("runBucket"),
     getTranslations("runKind"),
+    getTranslations("runTiming"),
     getLocale(),
   ]);
   const filters = normalizeRunsListFilters(params);
@@ -100,6 +92,16 @@ export default async function RunsPage({
     pageSize: PAGE_SIZE,
     user: { id: user.id, role: user.role },
   });
+  // ADR-208: the same projection as the task page and the Run header.
+  const timings = await loadRunTimings(
+    getDb(),
+    page.rows.map((row) => row.runId),
+  );
+  const units = {
+    h: tTiming("units.h"),
+    min: tTiming("units.min"),
+    s: tTiming("units.s"),
+  };
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -246,7 +248,8 @@ export default async function RunsPage({
                 <th className="px-4 py-3">{t("table.state")}</th>
                 <th className="px-4 py-3">{t("table.source")}</th>
                 <th className="px-4 py-3">{t("table.started")}</th>
-                <th className="px-4 py-3">{t("table.duration")}</th>
+                <th className="px-4 py-3 text-right">{tTiming("duration")}</th>
+                <th className="px-4 py-3 text-right">{tTiming("execution")}</th>
                 <th className="px-4 py-3">{t("table.runner")}</th>
                 <th className="px-5 py-3 text-right">{t("table.cost")}</th>
               </tr>
@@ -256,14 +259,21 @@ export default async function RunsPage({
                 <tr>
                   <td
                     className="px-5 py-10 text-center font-mono text-[11.5px] text-mute"
-                    colSpan={8}
+                    colSpan={9}
                   >
                     {t("table.empty")}
                   </td>
                 </tr>
               ) : (
                 page.rows.map((row) => (
-                  <RunRow key={row.runId} locale={locale} row={row} t={t} />
+                  <RunRow
+                    key={row.runId}
+                    locale={locale}
+                    row={row}
+                    t={t}
+                    timing={timings.get(row.runId) ?? null}
+                    units={units}
+                  />
                 ))
               )}
             </tbody>
@@ -344,10 +354,14 @@ function RunRow({
   locale,
   row,
   t,
+  timing,
+  units,
 }: {
   locale: string;
   row: RunsListRow;
   t: Awaited<ReturnType<typeof getTranslations>>;
+  timing: RunTiming | null;
+  units: { h: string; min: string; s: string };
 }): ReactElement {
   return (
     <tr className="border-b border-line align-middle last:border-b-0">
@@ -409,8 +423,15 @@ function RunRow({
       >
         {formatDateTime(locale, row.startedAt)}
       </td>
-      <td className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute">
-        {formatDuration(row.durationMs)}
+      <td className="px-4 py-3.5 text-right font-mono text-[10.5px] tabular-nums text-mute">
+        {formatDurationMs(timing?.durationMs ?? null, units)}
+      </td>
+      <td className="px-4 py-3.5 text-right font-mono text-[10.5px] text-mute">
+        {timing ? (
+          <RunTimingFacts testId={`runs-timing-${row.runId}`} timing={timing} />
+        ) : (
+          "—"
+        )}
       </td>
       <td className="px-4 py-3.5">
         <div className="max-w-[220px] truncate font-mono text-[10.5px] text-ink-2">

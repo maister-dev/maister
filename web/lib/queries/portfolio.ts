@@ -70,6 +70,13 @@ import {
   type WorkbenchRunStatus,
 } from "@/lib/workbench-lifecycle/policy";
 import { operationalActiveWorkspacePredicate } from "@/lib/run-results/operational-visibility";
+import {
+  activeAttentionPredicate,
+  activeAttentionReason,
+  newestAttemptSql,
+  taskOpenSql,
+  type ActiveAttentionReason,
+} from "@/lib/runs/active-attention";
 
 const {
   actorIdentities,
@@ -117,10 +124,9 @@ const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
   "Review",
 ] as const;
 
-// M19 Phase 5: terminal run statuses the left rail lists ONLY while their
-// surviving workspace carries a GC removal date (`Failed` is listed through
-// ACTIVE_RUN_STATUSES; every countdown comes from `deriveTtlInfo`).
-export const RAIL_TTL_STATUSES = ["Abandoned", "Done"] as const;
+// ADR-209: terminal run statuses the project's retained surface lists while
+// their surviving workspace carries a GC removal date (the rail no longer does).
+export const RETAINED_TTL_STATUSES = ["Abandoned", "Done"] as const;
 
 export type PortfolioStatus = "running" | "idle";
 export type AgentRole = AdapterId | "dev";
@@ -868,6 +874,8 @@ export interface RailWorkspaceRow {
   launchedBy: string | null;
   statusLabel: string;
   statusTone: RailWorkspaceTone;
+  // ADR-209: why this Run is in the rail (rows and counter share one rule).
+  attentionReason: ActiveAttentionReason;
   time: string;
   href: string;
   latestActivityAt: Date;
@@ -1028,6 +1036,8 @@ export async function getRailWorkspaceGroups(
       prUrl: workspaces.prUrl,
       prState: workspaces.prState,
       promotionState: workspaces.promotionState,
+      taskOpen: taskOpenSql,
+      newestAttempt: newestAttemptSql,
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
@@ -1041,19 +1051,13 @@ export async function getRailWorkspaceGroups(
     )
     .leftJoin(flows, eq(flows.id, runs.flowId));
 
-  // Rail = active workspaces PLUS terminal (Abandoned/Done) workspaces still on
-  // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
-  // before the sweeper prunes them.
+  // ADR-209: Rail = Runs that need someone. Finished work (Done/Abandoned, a
+  // superseded or closed-task failure) leaves it and stays reachable from the
+  // project's retained surface, the task history and /runs.
   const railFilter = and(
     sql`NOT ((${runs.runKind}='agent' OR (${runs.runKind}='flow' AND ${runs.sourceAgentId} IS NOT NULL)) AND ${runs.status} IN ${ACTIVE_AGENT_RUN_STATUSES})`,
     operationalActiveWorkspacePredicate(),
-    or(
-      inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-      and(
-        inArray(runs.status, [...RAIL_TTL_STATUSES]),
-        isNotNull(workspaces.scheduledRemovalAt),
-      ),
-    ),
+    activeAttentionPredicate(),
     isNull(workspaces.removedAt),
   );
 
@@ -1131,6 +1135,11 @@ export async function getRailWorkspaceGroups(
       ),
       statusLabel: status.label,
       statusTone: status.tone,
+      // Non-null by the predicate above; the classifier is its TS twin.
+      attentionReason: activeAttentionReason(row.status, {
+        taskOpen: row.taskOpen,
+        newestAttempt: row.newestAttempt,
+      })!,
       time: relativeTime(row.startedAt, now),
       href:
         row.runKind === "scratch"

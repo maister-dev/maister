@@ -971,6 +971,16 @@
       "busy": "Saving…",
       "cancel": "Cancel",
       "error": "Rename failed"
+    },
+    "attentionReason": {
+      "executing": "Executing",
+      "needs_input": "Needs input",
+      "being_edited": "Being edited",
+      "waiting_on_children": "Waiting on child Runs",
+      "awaiting_review": "Awaiting review",
+      "unpromoted_closed_task": "Unpromoted work on a closed task",
+      "recover_or_discard": "Recover or discard",
+      "failed": "Failed — retry or inspect"
     }
   },
   "runsList": {
@@ -1010,7 +1020,6 @@
       "state": "State",
       "source": "Source",
       "started": "Started",
-      "duration": "Duration",
       "runner": "Runner",
       "cost": "Tokens",
       "empty": "No runs match the current filters."
@@ -2716,7 +2725,6 @@
     "cacheReadTokens": "Cache-read tokens",
     "cacheCreationTokens": "Cache-creation tokens",
     "resumeTax": "Resume tax",
-    "activeTime": "Active time",
     "wallClock": "Wall-clock",
     "duration": "Duration",
     "tokenTotal": "Token total",
@@ -5360,7 +5368,6 @@
     "runsRunnerModel": "Runner / Model",
     "runsStatus": "Status",
     "runsDelivery": "Delivery",
-    "runsDuration": "Duration",
     "runsTokenTotal": "Token total",
     "runsStarted": "Started",
     "runsEnded": "Ended",
@@ -7391,5 +7398,24 @@
     "notCollected": "Never collected",
     "value": "Recorded value",
     "noValue": "No retained value for this publication attempt."
+  },
+  "runTiming": {
+    "duration": "Duration",
+    "durationLive": "Duration (live)",
+    "execution": "Execution",
+    "breakdownOpen": "Show the timing breakdown",
+    "breakdownTitle": "Timing breakdown",
+    "admission": "Queue / admission",
+    "humanInput": "Human input",
+    "idle": "Idle / checkpoint",
+    "childExecution": "Of which child Runs",
+    "other": "Other non-execution",
+    "unavailable": "Execution time is unavailable for this Run (no execution evidence).",
+    "partial": "≈ An interval was still open when the Run ended; the value is clipped to its end.",
+    "units": {
+      "h": "h",
+      "min": "min",
+      "s": "s"
+    }
   }
 }

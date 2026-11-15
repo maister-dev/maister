@@ -73,7 +73,6 @@ export type RunsListProjectOption = {
 
 export type RunsListRow = {
   branch: string | null;
-  durationMs: number | null;
   endedAt: Date | null;
   flowLabel: string | null;
   href: string;
@@ -510,7 +509,6 @@ function toRunsListRow(row: RawRunsListRow): RunsListRow {
 
   return {
     branch: row.branch,
-    durationMs: endedAt ? endedAt.getTime() - startedAt.getTime() : null,
     endedAt,
     flowLabel: flowLabel(row),
     href: hrefFor(row),

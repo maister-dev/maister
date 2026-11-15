@@ -57,6 +57,8 @@ import {
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/execution-host";
 import { formatTokenCount } from "@/lib/runs/cost-summary-facts";
+import { formatDurationMs } from "@/lib/format/duration";
+import { RunTimingFacts } from "@/components/runs/run-timing-detail";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 
 const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
@@ -140,19 +142,6 @@ function formatAt(at: Date | null): string {
   return at ? at.toISOString().slice(0, 16).replace("T", " ") : "—";
 }
 
-function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return "—";
-  const seconds = Math.round(durationMs / 1000);
-
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-
-  return `${hours}h`;
-}
-
 export default async function TaskDetailPage({
   params,
 }: PageProps): Promise<ReactElement> {
@@ -225,11 +214,12 @@ export default async function TaskDetailPage({
           person.projectRole === "owner"),
     ]),
   );
-  const [t, tLaunch, tBoard, locale, platformStatus, launchConfig] =
+  const [t, tLaunch, tBoard, tTiming, locale, platformStatus, launchConfig] =
     await Promise.all([
       getTranslations("taskDetail"),
       getTranslations("launch"),
       getTranslations("board"),
+      getTranslations("runTiming"),
       getLocale(),
       getPlatformStatus(),
       resolveTaskLaunchConfig(detail.task.id),
@@ -837,10 +827,13 @@ export default async function TaskDetailPage({
                   <th className="px-3 py-2 font-semibold">
                     {t("runsDelivery")}
                   </th>
-                  <th className="px-3 py-2 font-semibold">
-                    {t("runsDuration")}
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {tTiming("duration")}
                   </th>
-                  <th className="px-3 py-2 font-semibold">
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {tTiming("execution")}
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
                     {t("runsTokenTotal")}
                   </th>
                   <th className="px-3 py-2 font-semibold">
@@ -868,10 +861,24 @@ export default async function TaskDetailPage({
                         ? tLaunch("strategyPublishBranch")
                         : (run.deliveryStatus ?? "—")}
                     </td>
-                    <td className="px-3 py-2 font-mono">
-                      {formatDuration(run.durationMs)}
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      {formatDurationMs(run.timing?.durationMs ?? null, {
+                        h: tTiming("units.h"),
+                        min: tTiming("units.min"),
+                        s: tTiming("units.s"),
+                      })}
                     </td>
-                    <td className="px-3 py-2 font-mono">
+                    <td className="px-3 py-2 text-right font-mono">
+                      {run.timing ? (
+                        <RunTimingFacts
+                          testId={`task-run-timing-${run.id}`}
+                          timing={run.timing}
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
                       {formatTokenCount(locale, run.tokenTotal)}
                     </td>
                     <td

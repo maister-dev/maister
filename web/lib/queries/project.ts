@@ -12,7 +12,9 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   isNull,
+  or,
   sql,
 } from "drizzle-orm";
 
@@ -33,6 +35,7 @@ import {
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import {
   ACTIVE_RUN_STATUSES,
+  RETAINED_TTL_STATUSES,
   type PortfolioWorkspace,
   lifecycleActionsForWorkspace,
   presenceForRows,
@@ -408,7 +411,15 @@ export async function getProjectPageData(
       .where(
         and(
           eq(runs.projectId, project.id),
-          inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+          // ADR-209: work that left the rail (finished, TTL-scheduled) stays
+          // reachable here until the GC removes its workspace.
+          or(
+            inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
+            and(
+              inArray(runs.status, [...RETAINED_TTL_STATUSES]),
+              isNotNull(workspaces.scheduledRemovalAt),
+            ),
+          ),
           operationalActiveWorkspacePredicate(),
           isNull(workspaces.removedAt),
         ),
@@ -579,7 +590,7 @@ export async function getProjectPageData(
       prState: row.prState ?? null,
       promotionState: row.promotionState,
     }),
-    // ACTIVE_RUN_STATUSES excludes Done/Abandoned; a gate-less run → "ready".
+    // A gate-less run → "ready"; retained Done/Abandoned rows never show it.
     readiness: readinessByRun.get(row.runId) ?? "ready",
     autoPromotedLane: row.promotionLane ?? null,
     prState: row.prState ?? null,

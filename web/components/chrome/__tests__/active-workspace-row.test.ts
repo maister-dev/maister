@@ -26,6 +26,7 @@ function baseRow(over: Partial<RailWorkspaceRow> = {}): RailWorkspaceRow {
     launchedBy: "User",
     statusLabel: "Running",
     statusTone: "running",
+    attentionReason: "executing",
     time: "3m",
     href: "/runs/run-1",
     latestActivityAt: new Date("2026-06-15T10:00:00.000Z"),
@@ -54,6 +55,7 @@ function baseLabels(
 ): ActiveWorkspaceRowLabels {
   return {
     statusWord: "Running",
+    reasonLabel: "Executing",
     attention: false,
     flowLabel: "flow-x",
     flowTooltip: "flow-x · v1.0.0",
@@ -87,6 +89,21 @@ describe("ActiveWorkspaceRow", () => {
     expect(html).toContain('data-status-tone="running"');
     expect(html).toContain("animate-[pulse-dot");
     expect(html).not.toContain('data-testid="status-word"');
+  });
+
+  it("names why the Run is in the rail (ADR-209)", () => {
+    const html = render(
+      baseRow({
+        statusLabel: "Failed",
+        statusTone: "crashed",
+        attentionReason: "failed",
+      }),
+      baseLabels({ reasonLabel: "Failed — retry or inspect" }),
+    );
+
+    expect(html).toMatch(
+      /data-testid="active-workspace-reason"[^>]*>.*Failed — retry or inspect/,
+    );
   });
 
   it("an attention state uses the warm attention dot tone with a tone-tinted status tooltip", () => {

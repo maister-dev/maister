@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACTIVE_RUN_STATUSES,
-  RAIL_TTL_STATUSES,
+  RETAINED_TTL_STATUSES,
 } from "@/lib/queries/portfolio";
 
 // ADR-181 D2 — `Failed` is a parked workbench. The array is consumed by the
@@ -16,6 +16,6 @@ describe("ACTIVE_RUN_STATUSES", () => {
   });
 
   it("never gives Failed the terminal GC countdown", () => {
-    expect(RAIL_TTL_STATUSES).not.toContain("Failed");
+    expect(RETAINED_TTL_STATUSES).not.toContain("Failed");
   });
 });
