@@ -175,6 +175,13 @@ pnpm --filter maister-web test:e2e:librarian
 Isolation needs the supported kernel driver described below. Its CI preflight
 remains a separate prerequisite. Live-provider and load qualification remain
 explicit opt-ins, with their existing credentials and environment gates.
+Real external-package qualification lives in `*.qualification.test.ts` files
+under the separate `qualification` project (`pnpm --filter maister-web
+test:qualification`). Ordinary lanes never select it, and a qualification whose
+inputs are missing (for example `STAND_PACKAGE_CANDIDATE` and
+`STAND_PACKAGE_REVISION`) fails its suite instead of skipping. On a host where
+the production build exceeds the default e2e web-server wait, set
+`E2E_WEB_SERVER_TIMEOUT_MS`.
 `test:integration` still selects the complete web integration project; do not
 run it in addition to the partitioned commands above. The remainder discovers
 new ordinary integration files automatically, excludes files owned by A/B,
