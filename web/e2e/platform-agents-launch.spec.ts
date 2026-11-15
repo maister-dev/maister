@@ -53,6 +53,8 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
   const fx = loadFixtures().byKey.platformAgents;
 
   await page.goto(`/projects/${fx.projectSlug}/tasks/${fx.manualTaskNumber}`);
+  // D10: "Run agent" is a secondary action under "More".
+  await page.getByTestId("task-more-actions").locator("> summary").click();
   await expect(
     page.getByRole("combobox", { name: "Agent to run" }),
   ).toBeVisible();

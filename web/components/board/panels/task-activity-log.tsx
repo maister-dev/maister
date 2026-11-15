@@ -3,6 +3,7 @@ import type { TaskActivityLogRow } from "@/lib/queries/activity";
 
 import Link from "next/link";
 
+import { LocalTime } from "@/components/ui/local-time";
 import { NumberedPagination } from "@/components/navigation/numbered-pagination";
 
 export interface TaskActivityLogLabels {
@@ -158,11 +159,8 @@ export function TaskActivityLog({
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id} className="border-b border-line-soft">
-                  <td
-                    suppressHydrationWarning
-                    className="px-3 py-1.5 text-mute"
-                  >
-                    {row.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                  <td className="px-3 py-1.5 text-mute">
+                    <LocalTime iso={row.createdAt} />
                   </td>
                   <td className="px-3 py-1.5">
                     <Link

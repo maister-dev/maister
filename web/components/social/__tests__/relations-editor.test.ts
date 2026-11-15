@@ -11,6 +11,7 @@ vi.mock("next/navigation", () => ({
 import { RelationsEditor } from "@/components/social/relations-editor";
 
 const labels = {
+  openForm: "Add relation",
   title: "Relations",
   empty: "No relations yet.",
   add: "Add",
@@ -113,6 +114,24 @@ describe("RelationsEditor", () => {
 
     expect(html).not.toContain("Search tasks");
     expect(html).not.toContain(">Add<");
+  });
+
+  // D10: the create form opens on demand; the list is always shown.
+  it("keeps the create form closed behind Add relation for editors", () => {
+    const html = renderToStaticMarkup(
+      createElement(RelationsEditor, {
+        slug: "maister",
+        taskNumber: 1,
+        relations,
+        relationCandidates,
+        canEdit: true,
+        collapsedForm: true,
+        labels,
+      }),
+    );
+
+    expect(html).toContain(">Add relation<");
+    expect(html).not.toContain("Search tasks");
   });
 
   it("renders the empty state", () => {

@@ -9,6 +9,7 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { NumberedPagination } from "@/components/navigation/numbered-pagination";
+import { LocalTime } from "@/components/ui/local-time";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireActiveSession } from "@/lib/authz";
 import {
@@ -53,13 +54,6 @@ function pageHref(filters: RunsListFilters, page: number): string {
   const query = params.toString();
 
   return query ? `/runs?${query}` : "/runs";
-}
-
-function formatDateTime(locale: string, value: Date): string {
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(value);
 }
 
 function compactId(id: string): string {
@@ -417,11 +411,8 @@ function RunRow({
           </div>
         ) : null}
       </td>
-      <td
-        suppressHydrationWarning
-        className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute"
-      >
-        {formatDateTime(locale, row.startedAt)}
+      <td className="px-4 py-3.5 font-mono text-[10.5px] tabular-nums text-mute">
+        <LocalTime iso={row.startedAt} />
       </td>
       <td className="px-4 py-3.5 text-right font-mono text-[10.5px] tabular-nums text-mute">
         {formatDurationMs(timing?.durationMs ?? null, units)}

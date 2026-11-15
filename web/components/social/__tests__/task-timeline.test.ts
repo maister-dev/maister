@@ -197,3 +197,57 @@ describe("TaskTimeline agent mentions (ADR-151)", () => {
     expect(html).toContain("already working here");
   });
 });
+
+// P-4 (D10): repetitive system events collapse into one expandable row that
+// keeps every entry; people's activity and comments are never grouped.
+describe("TaskTimeline grouping", () => {
+  const system = { type: "system", id: null, label: "system" } as const;
+  const activity = (
+    id: string,
+    eventKind: string,
+    actor: { type: string; id: string | null; label: string } = system,
+  ): TimelineItem => ({
+    kind: "activity",
+    id,
+    eventKind,
+    payload: { attemptNumber: Number(id.slice(1)) },
+    actor: actor as Extract<TimelineItem, { kind: "activity" }>["actor"],
+    createdAt: at,
+  });
+
+  it("groups consecutive system events of one kind and keeps each entry", () => {
+    const html = renderToStaticMarkup(
+      createElement(TaskTimeline, {
+        items: [
+          activity("a1", "run_launched"),
+          activity("a2", "run_launched"),
+          activity("a3", "run_launched"),
+          activity("a4", "task_created"),
+        ],
+        labels,
+      }),
+    );
+
+    expect(html.match(/data-timeline-group="run_launched"/g)).toHaveLength(1);
+    expect(html).toContain("×3");
+    for (const n of [1, 2, 3])
+      expect(html).toContain(`launched run attempt ${n}`);
+    expect(html.match(/data-timeline-kind="activity"/g)).toHaveLength(4);
+  });
+
+  it("does not group a single event or a person's repeated events", () => {
+    const user = { type: "user", id: "u1", label: "Ann" } as const;
+    const html = renderToStaticMarkup(
+      createElement(TaskTimeline, {
+        items: [
+          activity("a1", "run_launched"),
+          activity("a2", "relation_added", user),
+          activity("a3", "relation_added", user),
+        ],
+        labels,
+      }),
+    );
+
+    expect(html).not.toContain("data-timeline-group");
+  });
+});

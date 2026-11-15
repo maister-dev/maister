@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import type { TokenAuditEntry } from "@/lib/tokens/audit-list";
 
+import { LocalTime } from "@/components/ui/local-time";
 import { NumberedPagination } from "@/components/navigation/numbered-pagination";
 
 export interface TokenAuditLabels {
@@ -137,11 +138,8 @@ export function TokenAuditTable({
                   key={row.id}
                   className="border-b border-line-soft last:border-b-0 text-ink-2"
                 >
-                  <td
-                    suppressHydrationWarning
-                    className="px-4 py-3 tabular-nums text-mute"
-                  >
-                    {row.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                  <td className="px-4 py-3 tabular-nums text-mute">
+                    <LocalTime iso={row.createdAt} />
                   </td>
                   <td className="px-4 py-3 font-semibold text-ink">
                     {row.actorLabel}

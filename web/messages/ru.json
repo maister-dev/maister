@@ -5302,7 +5302,19 @@
       "runLaunched": "запустил(а) попытку %attempt%",
       "experimentConcluded": "завершил(а) эксперимент",
       "agentSummonSuppressed": "не стал(а) вызывать %agent% — он уже работает над этой задачей",
-      "taskCompleted": "завершил(а) задачу после доставки результата"
+      "taskCompleted": "завершил(а) задачу после доставки результата",
+      "commentAdded": "оставил(а) комментарий",
+      "triageSet": "задал(а) вердикт триажа",
+      "triageRequeued": "вернул(а) задачу в триаж",
+      "agentQuarantined": "изолировал(а) запуск агента, изменивший read-only копию",
+      "runPrMerged": "увидел(а) слияние pull request #%pr%",
+      "evaluationDecided": "записал(а) решение оценки",
+      "statementAccepted": "принял(а) постановку задачи",
+      "clarificationRequested": "запросил(а) уточнение",
+      "clarificationAnswered": "ответил(а) на уточнение",
+      "clarificationCancelled": "отменил(а) уточнение",
+      "deliveryCompletionNotApplied": "не завершил(а) задачу после слияния: %reason%",
+      "sourceDetached": "отвязал(а) внешний источник"
     },
     "composerPlaceholder": "Напишите комментарий… KEY-N станет ссылкой, @agent вызовет агента.",
     "composerSubmit": "Комментировать",
@@ -5381,7 +5393,44 @@
     "sendToTriage": "Отправить на триаж",
     "agentActionBusy": "Выполняется…",
     "agentActionFailed": "Не удалось выполнить действие. Повторите.",
-    "agentPickerLabel": "Агент для запуска"
+    "agentPickerLabel": "Агент для запуска",
+    "moreActions": "Ещё",
+    "action": {
+      "qualify": "Квалифицировать задачу",
+      "openRun": "Открыть запуск",
+      "respond": "Ответить",
+      "openReview": "Открыть ревью",
+      "openPr": "Открыть PR #{number}",
+      "viewResult": "Посмотреть результат"
+    },
+    "startNewAttempt": "Начать новую попытку",
+    "startNewAttemptHint": "Повторный запуск вернёт задачу в работу.",
+    "resultTitle": "Результат",
+    "resolvingRun": "Решивший запуск",
+    "resolvingUnknown": "Решивший запуск неизвестен",
+    "openChanges": "Открыть изменения",
+    "completionRefused": "PR слит — завершение требует решения ({reason}).",
+    "refusalReason": {
+      "task_not_in_flight": "задача не в работе",
+      "superseded_by_newer_attempt": "есть более новая попытка",
+      "partial_resolution": "запуск отмечен как частичная работа"
+    },
+    "statementShowFull": "Показать постановку полностью",
+    "relationsOpenForm": "Добавить связь",
+    "qualificationTitle": "Квалификация",
+    "nextLaunchSettings": "Настройки следующего запуска",
+    "nextLaunchSettingsHint": "Значения для следующей попытки; прошлые запуски сохраняют свои настройки.",
+    "runsTokensLine": "Токены {total} · вход {input} · выход {output} · кэш {cache}",
+    "resolvingBadge": "Решил задачу",
+    "notDelivered": "Не доставлено",
+    "mergedLocally": "Слито",
+    "runDiffTitle": "Изменения последнего запуска",
+    "sourceKind": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "jira": "Jira",
+      "gitverse": "GitVerse"
+    }
   },
   "projectLog": {
     "title": "Журнал задач",

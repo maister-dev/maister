@@ -183,3 +183,216 @@ describe("getTaskDetail — runs-history cap + true totals (ADR-119, integration
     ]);
   });
 });
+
+// P-1/P-2 (D10): the task page's data model — resolving attempt from the
+// completion activity, intended strategy vs actual artifact, the source chip and
+// a refused automatic completion.
+describe("getTaskDetail — result model (D10)", () => {
+  async function seedTask(number: number, status: "InFlight" | "Done") {
+    const id = `task-d10-${number}`;
+
+    await db.insert(schema.tasks).values({
+      id,
+      projectId: "proj-cap",
+      number,
+      title: `d10 ${number}`,
+      prompt: "p",
+      status,
+    });
+
+    return id;
+  }
+
+  async function seedRun(
+    taskId: string,
+    runId: string,
+    minute: number,
+    opts: {
+      status: string;
+      strategy: string;
+      workspace?: Record<string, unknown>;
+      mergeCommitSha?: string;
+    },
+  ) {
+    await db.insert(schema.runs).values({
+      id: runId,
+      runKind: "flow",
+      projectId: "proj-cap",
+      taskId,
+      flowVersion: "v1.0.0",
+      status: opts.status,
+      startedAt: new Date(Date.UTC(2026, 10, 1, 10, minute)),
+      endedAt: new Date(Date.UTC(2026, 10, 1, 11, minute)),
+      mergeCommitSha: opts.mergeCommitSha ?? null,
+      deliveryPolicySnapshot: {
+        strategy: opts.strategy,
+        push: "on_success",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+    await db.insert(schema.workspaces).values({
+      id: `ws-${runId}`,
+      runId,
+      projectId: "proj-cap",
+      branch: `b-${runId}`,
+      worktreePath: `/tmp/${runId}`,
+      parentRepoPath: "/repos/proj-cap",
+      ...opts.workspace,
+    });
+  }
+
+  it("P-1: a Done task's resolving attempt comes from its completion activity, not the newest Run", async () => {
+    const taskId = await seedTask(501, "Done");
+
+    await seedRun(taskId, "d10-merged", 1, {
+      status: "Done",
+      strategy: "pull_request",
+      workspace: {
+        promotionMode: "pull_request",
+        promotionState: "done",
+        prNumber: 5,
+        prUrl: "https://github.com/a/b/pull/5",
+        prState: "merged",
+      },
+    });
+    await seedRun(taskId, "d10-later-failed", 2, {
+      status: "Failed",
+      strategy: "pull_request",
+    });
+    await db.insert(schema.taskActivity).values({
+      taskId,
+      projectId: "proj-cap",
+      actorType: "system",
+      eventKind: "task_completed",
+      payload: { runId: "d10-merged", cause: "pr_merged", prNumber: 5 },
+    });
+    await db.insert(schema.taskExternalSources).values({
+      projectId: "proj-cap",
+      taskId,
+      sourceKind: "github",
+      sourceInstance: "github.com",
+      scopeKey: "a/b",
+      externalId: "I_501",
+      externalKey: "#7",
+      origin: "import",
+      createdByActorType: "system",
+    });
+
+    const detail = (await getTaskDetail("proj-cap", 501, "u-1"))!;
+
+    expect(detail.resolvingRunId).toBe("d10-merged");
+    expect(detail.task.source).toEqual({
+      kind: "github",
+      instance: "github.com",
+      scope: "a/b",
+      externalId: "I_501",
+      externalKey: "#7",
+      url: null,
+    });
+    expect(
+      detail.runs.map(({ id, resolving, delivery }) => ({
+        id,
+        resolving,
+        delivery,
+      })),
+    ).toEqual([
+      {
+        id: "d10-later-failed",
+        resolving: false,
+        delivery: { strategy: "pull_request", artifact: { kind: "none" } },
+      },
+      {
+        id: "d10-merged",
+        resolving: true,
+        delivery: {
+          strategy: "pull_request",
+          artifact: {
+            kind: "pr",
+            number: 5,
+            url: "https://github.com/a/b/pull/5",
+            state: "merged",
+          },
+        },
+      },
+    ]);
+  });
+
+  it("P-1: a legacy completion without a runId leaves the resolving attempt unknown", async () => {
+    const taskId = await seedTask(502, "Done");
+
+    await seedRun(taskId, "d10-legacy", 1, {
+      status: "Done",
+      strategy: "merge",
+    });
+    await db.insert(schema.taskActivity).values({
+      taskId,
+      projectId: "proj-cap",
+      actorType: "system",
+      eventKind: "task_completed",
+      payload: {},
+    });
+
+    expect(
+      (await getTaskDetail("proj-cap", 502, "u-1"))!.resolvingRunId,
+    ).toBeNull();
+  });
+
+  it("P-2: delivery separates the intended strategy from the actual artifact, and exposes a refused completion", async () => {
+    const taskId = await seedTask(503, "InFlight");
+
+    await seedRun(taskId, "d10-local", 1, {
+      status: "Done",
+      strategy: "merge",
+      mergeCommitSha: "abc1234",
+      workspace: { promotionMode: "local_merge", promotionState: "done" },
+    });
+    await seedRun(taskId, "d10-published", 2, {
+      status: "Done",
+      strategy: "publish_branch",
+      workspace: {
+        promotionState: "done",
+        publishedBranch: "feature/x",
+        publishedRemote: "origin",
+        publishedAt: new Date(),
+      },
+    });
+    await seedRun(taskId, "d10-partial", 3, {
+      status: "Done",
+      strategy: "pull_request",
+      workspace: {
+        promotionState: "done",
+        prNumber: 9,
+        prUrl: "https://github.com/a/b/pull/9",
+        prState: "merged",
+      },
+    });
+    await db.insert(schema.taskActivity).values({
+      taskId,
+      projectId: "proj-cap",
+      actorType: "system",
+      eventKind: "delivery_completion_not_applied",
+      payload: { runId: "d10-partial", reason: "partial_resolution" },
+    });
+
+    const detail = (await getTaskDetail("proj-cap", 503, "u-1"))!;
+    const artifacts = Object.fromEntries(
+      detail.runs.map((r) => [r.id, r.delivery.artifact]),
+    );
+
+    expect(artifacts).toEqual({
+      "d10-partial": {
+        kind: "pr",
+        number: 9,
+        url: "https://github.com/a/b/pull/9",
+        state: "merged",
+      },
+      "d10-published": { kind: "published", branch: "feature/x" },
+      "d10-local": { kind: "merged", commit: "abc1234" },
+    });
+    expect(detail.completionRefusal).toEqual({
+      runId: "d10-partial",
+      reason: "partial_resolution",
+    });
+  });
+});

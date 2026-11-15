@@ -5302,7 +5302,19 @@
       "runLaunched": "launched run attempt %attempt%",
       "experimentConcluded": "concluded an experiment",
       "agentSummonSuppressed": "skipped summoning %agent% — it is already working on this task",
-      "taskCompleted": "completed this task after delivery"
+      "taskCompleted": "completed this task after delivery",
+      "commentAdded": "commented",
+      "triageSet": "set the triage verdict",
+      "triageRequeued": "sent the task back to triage",
+      "agentQuarantined": "quarantined an agent run that changed a read-only checkout",
+      "runPrMerged": "saw the pull request #%pr% merged",
+      "evaluationDecided": "recorded an evaluation decision",
+      "statementAccepted": "accepted the task statement",
+      "clarificationRequested": "asked for a clarification",
+      "clarificationAnswered": "answered a clarification",
+      "clarificationCancelled": "cancelled a clarification",
+      "deliveryCompletionNotApplied": "did not complete the task after the merge: %reason%",
+      "sourceDetached": "detached the external source"
     },
     "composerPlaceholder": "Write a comment… KEY-N references become links, @agent summons an agent.",
     "composerSubmit": "Comment",
@@ -5381,7 +5393,44 @@
     "sendToTriage": "Send to triage",
     "agentActionBusy": "Working…",
     "agentActionFailed": "Action failed. Try again.",
-    "agentPickerLabel": "Agent to run"
+    "agentPickerLabel": "Agent to run",
+    "moreActions": "More",
+    "action": {
+      "qualify": "Qualify the task",
+      "openRun": "Open run",
+      "respond": "Respond",
+      "openReview": "Open review",
+      "openPr": "Open PR #{number}",
+      "viewResult": "View result"
+    },
+    "startNewAttempt": "Start a new attempt",
+    "startNewAttemptHint": "Launching again returns the task to In flight.",
+    "resultTitle": "Result",
+    "resolvingRun": "Resolving run",
+    "resolvingUnknown": "Resolving run unknown",
+    "openChanges": "Open changes",
+    "completionRefused": "PR merged — completion needs a decision ({reason}).",
+    "refusalReason": {
+      "task_not_in_flight": "the task is not in flight",
+      "superseded_by_newer_attempt": "a newer attempt exists",
+      "partial_resolution": "the run was marked as partial work"
+    },
+    "statementShowFull": "Show full statement",
+    "relationsOpenForm": "Add relation",
+    "qualificationTitle": "Qualification",
+    "nextLaunchSettings": "Next launch settings",
+    "nextLaunchSettingsHint": "Defaults for the next attempt; each past run keeps the settings it used.",
+    "runsTokensLine": "Tokens {total} · input {input} · output {output} · cache {cache}",
+    "resolvingBadge": "Resolved the task",
+    "notDelivered": "Not delivered",
+    "mergedLocally": "Merged",
+    "runDiffTitle": "Changes of the latest run",
+    "sourceKind": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "jira": "Jira",
+      "gitverse": "GitVerse"
+    }
   },
   "projectLog": {
     "title": "Task log",

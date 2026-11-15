@@ -5,11 +5,13 @@ import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
 import type { RunTiming } from "@/lib/runs/run-timing";
+import type { TaskSource } from "@/lib/tasks/external-source/model";
 
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import { loadRunTimings } from "@/lib/queries/run-timing";
+import { loadTaskSources } from "@/lib/tasks/external-source/service";
 import * as schemaModule from "@/lib/db/schema";
 import {
   activeSessionCapabilityAgent,
@@ -152,12 +154,26 @@ export type TaskRunRow = {
   flowRef: string | null;
   flowVersion: string | null;
   runnerModel: string | null;
-  deliveryStatus: string | null;
+  // D10: intended strategy (muted) vs what actually happened.
+  delivery: TaskRunDelivery;
+  // The attempt named by the latest task_completed activity.
+  resolving: boolean;
   startedAt: Date | null;
   endedAt: Date | null;
   // ADR-208: Duration + Execution (with quality and breakdown).
   timing: RunTiming | null;
   tokenTotal: number;
+};
+
+export type TaskRunArtifact =
+  | { kind: "pr"; number: number | null; url: string; state: string | null }
+  | { kind: "published"; branch: string }
+  | { kind: "merged"; commit: string | null }
+  | { kind: "none" };
+
+export type TaskRunDelivery = {
+  strategy: string | null;
+  artifact: TaskRunArtifact;
 };
 
 export type TaskRunTotals = {
@@ -203,8 +219,14 @@ export type TaskDetailData = {
     triageConfidence: number | null;
     clarifications: TaskClarificationHistory[];
     awaitingClarification: boolean;
+    // ADR-206: structured external source binding, or null.
+    source: TaskSource | null;
   };
   keyRef: string;
+  // D10: run id from the latest task_completed activity; null when unknown.
+  resolvingRunId: string | null;
+  // ADR-207: a refused automatic completion for the newest flow Run.
+  completionRefusal: { runId: string; reason: string } | null;
   relations: TaskRelationView[];
   relationCandidates: TaskRelationCandidate[];
   openBlockers: Array<{ key: string; number: number }>;
@@ -254,12 +276,16 @@ function runnerModelLabel(row: {
   return model;
 }
 
-function deliveryStatusLabel(row: {
+function runDelivery(row: {
   promotionMode: string | null;
+  promotionState: string | null;
   prUrl: string | null;
   prNumber: number | null;
+  prState: string | null;
+  publishedBranch: string | null;
+  mergeCommitSha: string | null;
   deliveryPolicySnapshot: unknown | null;
-}): string | null {
+}): TaskRunDelivery {
   const snapshot =
     row.deliveryPolicySnapshot !== null &&
     typeof row.deliveryPolicySnapshot === "object" &&
@@ -270,11 +296,27 @@ function deliveryStatusLabel(row: {
     typeof snapshot?.strategy === "string"
       ? snapshot.strategy
       : row.promotionMode;
+  const artifact: TaskRunArtifact = row.prUrl
+    ? { kind: "pr", number: row.prNumber, url: row.prUrl, state: row.prState }
+    : row.publishedBranch
+      ? { kind: "published", branch: row.publishedBranch }
+      : row.promotionState === "done" && strategy !== "publish_branch"
+        ? { kind: "merged", commit: row.mergeCommitSha }
+        : { kind: "none" };
 
-  if (row.prNumber !== null) return `PR #${row.prNumber}`;
-  if (row.prUrl) return "pull_request";
+  return { strategy, artifact };
+}
 
-  return strategy;
+function latestPayloadRunId(
+  rows: Array<{ eventKind: string; payload: Record<string, unknown> }>,
+  eventKind: string,
+): { runId: string; payload: Record<string, unknown> } | null {
+  const row = rows.filter((r) => r.eventKind === eventKind).at(-1);
+  const runId = row?.payload?.runId;
+
+  return row && typeof runId === "string"
+    ? { runId, payload: row.payload }
+    : null;
 }
 
 export async function getTaskDetail(
@@ -413,6 +455,8 @@ export async function getTaskDetail(
       prState: workspaces.prState,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
+      publishedBranch: workspaces.publishedBranch,
+      mergeCommitSha: runs.mergeCommitSha,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
@@ -441,6 +485,8 @@ export async function getTaskDetail(
     prState: string | null;
     prUrl: string | null;
     prNumber: number | null;
+    publishedBranch: string | null;
+    mergeCommitSha: string | null;
     deliveryPolicySnapshot: unknown | null;
     startedAt: Date | null;
     endedAt: Date | null;
@@ -451,9 +497,18 @@ export async function getTaskDetail(
     cacheCreationTokens: number | null;
   }>;
 
-  const timings = await loadRunTimings(
-    db,
-    runRows.map((row) => row.id),
+  const [timings, sources] = await Promise.all([
+    loadRunTimings(
+      db,
+      runRows.map((row) => row.id),
+    ),
+    loadTaskSources(db, [taskId]),
+  ]);
+  const resolvingRunId =
+    latestPayloadRunId(activityRows, "task_completed")?.runId ?? null;
+  const refusal = latestPayloadRunId(
+    activityRows,
+    "delivery_completion_not_applied",
   );
   const latest = runRows[0] ?? null;
   // Totals over ALL runs (SQL aggregate), not just the 10 display rows. pg
@@ -486,8 +541,14 @@ export async function getTaskDetail(
       clarifications: clarificationContext.history,
       awaitingClarification: clarificationContext.awaitingClarification,
       status: resolved.task.status,
+      source: sources.get(taskId) ?? null,
     },
     keyRef: `${resolved.project.taskKey}-${resolved.task.number}`,
+    resolvingRunId,
+    completionRefusal:
+      refusal && refusal.runId === runRows[0]?.id
+        ? { runId: refusal.runId, reason: String(refusal.payload.reason) }
+        : null,
     relations,
     relationCandidates,
     openBlockers,
@@ -500,7 +561,8 @@ export async function getTaskDetail(
       flowRef: row.flowRef,
       flowVersion: row.flowVersion,
       runnerModel: runnerModelLabel(row),
-      deliveryStatus: deliveryStatusLabel(row),
+      delivery: runDelivery(row),
+      resolving: row.id === resolvingRunId,
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       timing: timings.get(row.id) ?? null,
