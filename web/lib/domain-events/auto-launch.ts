@@ -39,6 +39,7 @@ import {
 } from "@/lib/orchestrator/delegation-spec";
 import { isTerminalLaunchRefusal } from "@/lib/scheduler/c2-eligibility";
 import { launchRun } from "@/lib/services/runs";
+import { completeTaskFromConfirmedMerge } from "@/lib/services/task-completion";
 import {
   acceptServerTaskLaunch,
   serverTaskLaunchRequest,
@@ -206,6 +207,20 @@ async function autoPromoteAsPlanChild(
   }
 }
 
+async function deliversByPullRequest(
+  db: Db,
+  runId: string | null,
+): Promise<boolean> {
+  if (!runId) return false;
+  const [run] = await db
+    .select({ deliveryPolicySnapshot: runs.deliveryPolicySnapshot })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const snapshot = run?.deliveryPolicySnapshot as { strategy?: string } | null;
+
+  return snapshot?.strategy === "pull_request";
+}
+
 // The auto_launch_run_plan outbox consumer (ADR-098): a child terminal event
 // releases the orchestrator's as-plan siblings whose success-gated `requires`
 // blockers have all cleared. The dispatcher is a singleton
@@ -234,8 +249,11 @@ export function buildAutoLaunchRunPlanConsumer(
       const promote = opts.promote ?? promoteChildRunForToken;
 
       for (const event of events) {
-        // React to the SETTLED set (terminal kinds + run.review).
-        if (!isRunSettledEventKind(event.kind)) continue;
+        // React to the SETTLED set (terminal kinds + run.review), plus the
+        // confirmed merge of a PR-delivered as-plan child (ADR-207).
+        const prMerged = event.kind === "run.pr_merged";
+
+        if (!isRunSettledEventKind(event.kind) && !prMerged) continue;
 
         const payload = (event.payload ?? {}) as Record<string, unknown>;
 
@@ -288,7 +306,23 @@ export function buildAutoLaunchRunPlanConsumer(
         // orchestrator is woken to handle it (Phase 5). Gated to as-plan tasks
         // (launch_mode='auto') so normal task lifecycles are untouched. Runs
         // BEFORE discovery so a dependent released by THIS terminal launches now.
-        if (event.kind === "run.done" && typeof event.taskId === "string") {
+        //
+        // ADR-207: a PR-delivered child is not done when its PR opens — it
+        // completes through the confirmed-merge evaluation (the same idempotent
+        // entry point the task_delivery_completion consumer uses), here, BEFORE
+        // discovery so the merge itself releases its dependents.
+        if (prMerged && typeof event.taskId === "string" && event.runId) {
+          const taskId = event.taskId;
+          const runId = event.runId;
+
+          await _db.transaction((tx: Db) =>
+            completeTaskFromConfirmedMerge(taskId, runId, tx),
+          );
+        } else if (
+          event.kind === "run.done" &&
+          typeof event.taskId === "string" &&
+          !(await deliversByPullRequest(_db, event.runId))
+        ) {
           await _db
             .update(tasks)
             .set({ status: "Done", updatedAt: new Date() })

@@ -5,7 +5,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getPrState } from "@/lib/runs/pr-adapter";
-import { readRecordedPullRequest } from "@/lib/workbench-git/pull-request";
+import {
+  pullRequestDefaults,
+  readRecordedPullRequest,
+} from "@/lib/workbench-git/pull-request";
 
 vi.mock("@/lib/runs/pr-adapter", () => ({
   getPrState: vi.fn(),
@@ -91,5 +94,31 @@ describe("readRecordedPullRequest", () => {
       details: { reason: "provider_unsupported" },
     });
     expect(getPrState).not.toHaveBeenCalled();
+  });
+});
+
+describe("pullRequestDefaults — closing reference (ADR-207)", () => {
+  const base = {
+    run: { id: "run-1", runKind: "flow" },
+    internalBranch: "maister/x",
+    sourceBranch: "feature/x",
+    targetBranch: "main",
+    taskKey: "ABC-1",
+    taskTitle: "Fix it",
+    origin: "http://localhost",
+  };
+
+  it("appends the closing reference to the default body", () => {
+    expect(
+      pullRequestDefaults({ ...base, closingReference: "Closes acme/app#7" }).body,
+    ).toBe(
+      "http://localhost/runs/run-1\n\nPublished feature/x → main (run run-1).\n\nCloses acme/app#7",
+    );
+  });
+
+  it("leaves the body untouched without one", () => {
+    expect(pullRequestDefaults({ ...base, closingReference: null }).body).toBe(
+      "http://localhost/runs/run-1\n\nPublished feature/x → main (run run-1).",
+    );
   });
 });

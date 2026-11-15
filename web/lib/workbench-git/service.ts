@@ -25,6 +25,7 @@ import {
   reviveWorktreeForWorkspace,
   type ReviveSource,
 } from "@/lib/runs/revive-worktree";
+import { closingReferenceForRun } from "@/lib/tasks/external-source/service";
 import { WORKTREE_TTL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import { publishedTarget } from "@/lib/workbench-git/publication";
@@ -672,6 +673,11 @@ export async function openPullRequest(
         : null,
     taskTitle: ctx.task?.title ?? null,
     origin: options.origin,
+    closingReference: await closingReferenceForRun(
+      git.db(),
+      ctx.run,
+      ctx.project,
+    ),
   });
   const draft = input.draft === true;
   const claim = await deps.claimLifecycleOperation({

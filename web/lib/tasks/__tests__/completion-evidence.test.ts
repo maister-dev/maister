@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  evaluateMergeCompletion,
   taskCompletionEvidence,
+  type MergeCompletionDecision,
+  type MergeCompletionState,
   type TaskCompletionRunEvidence,
 } from "@/lib/tasks/completion-evidence";
 
@@ -80,5 +83,93 @@ describe("taskCompletionEvidence", () => {
         }),
       ),
     ).toMatchObject({ ok: false, reason: "pull_request_not_merged" });
+  });
+});
+
+describe("evaluateMergeCompletion (ADR-207)", () => {
+  const prDone = run({
+    promotionMode: "pull_request",
+    prState: "merged",
+    deliveryPolicySnapshot: {
+      strategy: "pull_request",
+      push: "on_success",
+      trigger: "manual",
+      targetBranch: "main",
+    },
+  });
+
+  function state(
+    over: Partial<MergeCompletionState> = {},
+  ): MergeCompletionState {
+    return {
+      taskStatus: "InFlight",
+      mergedRun: { id: "run-1", runKind: "flow", prState: "merged" },
+      newest: prDone,
+      ...over,
+    };
+  }
+
+  it.each<[string, Partial<MergeCompletionState>, MergeCompletionDecision]>([
+    [
+      "eligible newest merged attempt (legacy snapshot: no resolvesTask ⇒ resolves)",
+      {},
+      { kind: "apply", runId: "run-1" },
+    ],
+    ["missing run", { mergedRun: null }, { kind: "skip", reason: "not_flow" }],
+    [
+      "agent run",
+      { mergedRun: { id: "run-1", runKind: "agent", prState: "merged" } },
+      { kind: "skip", reason: "not_flow" },
+    ],
+    [
+      "PR not merged (run.done of a PR open)",
+      { mergedRun: { id: "run-1", runKind: "flow", prState: "open" } },
+      { kind: "skip", reason: "not_merged" },
+    ],
+    [
+      "PR closed unmerged",
+      { mergedRun: { id: "run-1", runKind: "flow", prState: "closed" } },
+      { kind: "skip", reason: "not_merged" },
+    ],
+    [
+      "task already Done",
+      { taskStatus: "Done" },
+      { kind: "skip", reason: "already_done" },
+    ],
+    [
+      "merged before finalize (Run parked)",
+      { newest: run({ ...prDone, status: "Review", promotionState: "none" }) },
+      { kind: "skip", reason: "run_not_done" },
+    ],
+    [
+      "task Backlog",
+      { taskStatus: "Backlog" },
+      { kind: "refuse", reason: "task_not_in_flight" },
+    ],
+    [
+      "task Abandoned",
+      { taskStatus: "Abandoned" },
+      { kind: "refuse", reason: "task_not_in_flight" },
+    ],
+    [
+      "newer attempt exists",
+      { newest: run({ ...prDone, id: "run-2" }) },
+      { kind: "refuse", reason: "superseded_by_newer_attempt" },
+    ],
+    [
+      "partial resolution",
+      {
+        newest: run({
+          ...prDone,
+          deliveryPolicySnapshot: {
+            ...(prDone.deliveryPolicySnapshot as object),
+            resolvesTask: false,
+          },
+        }),
+      },
+      { kind: "refuse", reason: "partial_resolution" },
+    ],
+  ])("%s", (_name, over, expected) => {
+    expect(evaluateMergeCompletion(state(over))).toEqual(expected);
   });
 });

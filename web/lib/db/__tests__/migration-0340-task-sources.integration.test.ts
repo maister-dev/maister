@@ -11,8 +11,9 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-// Package 3 migrations (ADR-206/207): `0340_task_external_sources` and
-// `0341_task_activity_source_completion_kinds`, seeded on the 0339 schema so
+// Package 3 migrations (ADR-206/207): `0340_task_external_sources`,
+// `0341_task_activity_source_completion_kinds` and
+// `0342_domain_event_run_pr_merged`, seeded on the 0339 schema so
 // legacy rows are proven to survive the new constraints.
 
 let testDatabase: StartedPostgresTestDb;
@@ -85,16 +86,23 @@ beforeAll(async () => {
       (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'stand_incident_opened', '{"kind":"stand","id":"s"}'::jsonb),
       (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'stand_incident_resolved', '{"kind":"stand","id":"s"}'::jsonb)
   `);
+  await db.execute(sql`
+    INSERT INTO domain_events (kind, company_id, payload, occurred_at)
+    SELECT kinds.kind, companies.id, '{}'::jsonb, now()
+    FROM companies
+    CROSS JOIN (VALUES ('knowledge.record_changed'), ('specialist.assignment_changed')) AS kinds(kind)
+  `);
 
   await applyMainMigration(db, "0340_task_external_sources");
   await applyMainMigration(db, "0341_task_activity_source_completion_kinds");
+  await applyMainMigration(db, "0342_domain_event_run_pr_merged");
 }, 180_000);
 
 afterAll(async () => {
   await testDatabase?.stop();
 });
 
-describe("migrations 0340–0341 — task external sources and activity kinds", () => {
+describe("migrations 0340–0342 — task external sources and activity kinds", () => {
   it("keeps every pre-existing task, activity and inbox row", async () => {
     const counts = await db.execute(sql`
       SELECT
@@ -181,5 +189,25 @@ describe("migrations 0340–0341 — task external sources and activity kinds", 
           'source_detached', '{"kind":"activity","id":"a"}'::jsonb)
       `),
     ).toBe("inbox_items_event_kind_check");
+  });
+
+  it("admits run.pr_merged in domain_events and still refuses an unknown kind", async () => {
+    const insert = (kind: string) => sql`
+      INSERT INTO domain_events (kind, project_id, task_id, payload, occurred_at)
+      VALUES (${kind}, ${projectId}, ${taskId}, '{}'::jsonb, now())
+    `;
+
+    await db.execute(insert("run.pr_merged"));
+    const companyKinds = await db.execute(sql`
+      SELECT DISTINCT kind FROM domain_events WHERE company_id IS NOT NULL ORDER BY kind
+    `);
+
+    expect(companyKinds.rows).toEqual([
+      { kind: "knowledge.record_changed" },
+      { kind: "specialist.assignment_changed" },
+    ]);
+    expect(await refusal(insert("run.pr_reopened"))).toBe(
+      "domain_events_kind_check",
+    );
   });
 });

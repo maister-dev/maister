@@ -36,6 +36,11 @@ export function GitPrSection({
     () => state.prDefaults?.targetBranch ?? "",
   );
   const [prDraft, setPrDraft] = useState(false);
+  // ADR-207: "Partial work — keep the task open"; recorded on the Run before
+  // the PR exists, because the flag freezes once a PR is recorded.
+  const [prPartial, setPrPartial] = useState(false);
+  const resolutionEditable =
+    state.taskResolution !== null && !state.taskResolution.frozen;
   const [prReused, setPrReused] = useState(false);
   const [driftRefused, setDriftRefused] = useState(false);
   const [finalizeOpen, setFinalizeOpen] = useState(false);
@@ -61,6 +66,13 @@ export function GitPrSection({
         // C18: an existing PR came back untouched — say so, never "applied".
         setPrReused(result?.reused === true);
       },
+      resolutionEditable && prPartial
+        ? {
+            path: "delivery-policy",
+            method: "PATCH",
+            body: { action: "set_task_resolution", resolvesTask: false },
+          }
+        : undefined,
     );
   }
 
@@ -141,6 +153,17 @@ export function GitPrSection({
             />
             {t("pr.draft")}
           </label>
+          {resolutionEditable ? (
+            <label className="flex items-center gap-2 font-mono text-[10px] text-ink-2">
+              <input
+                checked={prPartial}
+                data-testid="git-panel-pr-partial"
+                type="checkbox"
+                onChange={(event) => setPrPartial(event.target.checked)}
+              />
+              {t("pr.partial")}
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {actionButton({
               id: "openPr",

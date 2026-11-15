@@ -199,6 +199,7 @@ describe("GET /api/runs/{runId}/git-state", () => {
         "internalBranch",
         "pr",
         "prDefaults",
+        "taskResolution",
         "publicBranch",
         "publishedAt",
         "publishedRemote",
@@ -257,6 +258,8 @@ describe("GET /api/runs/{runId}/git-state", () => {
         body: `http://localhost/runs/${run.runId}\n\nPublished ${PUBLIC} → main (run ${run.runId}).`,
         targetBranch: "main",
       },
+      // ADR-207: a task Run before any PR — editable, resolving by default.
+      taskResolution: { resolvesTask: true, frozen: false },
     });
     expect(state.commands.checkout).toEqual([
       `git -C ${repo.parent} fetch origin ${PUBLIC}`,

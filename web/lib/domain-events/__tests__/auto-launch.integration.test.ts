@@ -518,6 +518,127 @@ describe("auto_launch_run_plan consumer", () => {
   // may not. A cross-project as-plan candidate is a human's coordination link,
   // not a launch instruction — skip it (never throw: the consumer's idempotent
   // contract means a throw redelivers the window forever).
+  // C7 (ADR-207): a PR-delivered as-plan child completes only on merge, and its
+  // dependents are released by that merge, not by the PR-opening run.done.
+  it("(5d) a pull-request as-plan child is Done only after merge, which releases its dependent", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const taskA = await seedAsPlanTask({ orchTaskId, title: "A (PR)" });
+    const taskB = await seedAsPlanTask({ orchTaskId, title: "B" });
+    const childRunId = randomUUID();
+
+    await addRequires(taskB, taskA);
+    await pool.query(
+      `UPDATE "tasks" SET "status" = 'InFlight' WHERE "id" = $1`,
+      [taskA],
+    );
+    const admission = await historicalChildFixtureAdmission(
+      db as unknown as import("@/lib/execution-host/db").Db,
+      projectId,
+      taskA,
+    );
+
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status",
+         "flow_version", "parent_run_id", "root_run_id", "launch_mode", "delivery_policy_snapshot",
+         "task_admission_snapshot", "task_admission_checked_at")
+       VALUES ($1, 'flow', $2, $3, 'Done', 'v1.0.0', $4, $4, 'auto', $5::jsonb, $6::jsonb, $7)`,
+      [
+        childRunId,
+        projectId,
+        taskA,
+        parentRunId,
+        JSON.stringify({
+          strategy: "pull_request",
+          push: "on_success",
+          trigger: "manual",
+          targetBranch: "main",
+        }),
+        admission ? JSON.stringify(admission) : null,
+        admission ? new Date() : null,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path",
+         "parent_repo_path", "promotion_mode", "promotion_state", "pr_state", "pr_number", "pr_url")
+       VALUES ($1, $2, $3, $4, $5, '/tmp/repo', 'pull_request', 'done', 'open', 9, 'https://github.com/a/b/pull/9')`,
+      [
+        randomUUID(),
+        childRunId,
+        projectId,
+        `pr-${childRunId}`,
+        `/tmp/${childRunId}`,
+      ],
+    );
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+    const taskStatus = async (id: string) =>
+      (await pool.query(`SELECT "status" FROM "tasks" WHERE "id" = $1`, [id]))
+        .rows[0].status;
+    const emitted = async (kind: "run.done" | "run.pr_merged") => {
+      const payload = {
+        runKind: "flow",
+        status: "Done",
+        completion: "promoted",
+      };
+
+      if (kind === "run.done") {
+        await emitDomainEvent({
+          db,
+          kind,
+          projectId,
+          taskId: taskA,
+          runId: childRunId,
+          actor: { type: "system", id: null },
+          parentRunId,
+          payload,
+        });
+      } else {
+        await emitDomainEvent({
+          db,
+          kind,
+          projectId,
+          taskId: taskA,
+          runId: childRunId,
+          actor: { type: "system", id: null },
+          payload: {
+            runKind: "flow",
+            parentRunId,
+            runId: childRunId,
+            taskId: taskA,
+            prNumber: 9,
+          },
+        });
+      }
+
+      return (
+        (await db
+          .select()
+          .from(schema.domainEvents)
+          .where(
+            and(
+              eq(schema.domainEvents.runId, childRunId),
+              eq(schema.domainEvents.kind, kind),
+            ),
+          )) as DomainEventRow[]
+      )[0];
+    };
+
+    await consumer.handle([await emitted("run.done")]);
+    expect(await taskStatus(taskA)).toBe("InFlight");
+    expect(await runCount(taskB)).toBe(0);
+
+    await pool.query(
+      `UPDATE "workspaces" SET "pr_state" = 'merged' WHERE "run_id" = $1`,
+      [childRunId],
+    );
+    await consumer.handle([await emitted("run.pr_merged")]);
+    await bindPendingPlanIntentsForRunChecks(
+      db as unknown as import("@/lib/execution-host/db").Db,
+    );
+
+    expect(await taskStatus(taskA)).toBe("Done");
+    expect(await runCount(taskB)).toBe(1);
+  });
+
   it("never auto-launches a cross-project as-plan candidate", async () => {
     const { parentRunId, orchTaskId } = await seedOrchestrator();
     const sameProject = await seedAsPlanTask({ orchTaskId, title: "same" });

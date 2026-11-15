@@ -11932,6 +11932,9 @@ paths:
 
                     Published feature/ABC-12-fix-login-redirect → main (run 7c9e6679-7425-40de-944b-e07fc1f90ae7).
                   targetBranch: main
+                taskResolution:
+                  resolvesTask: true
+                  frozen: false
                 commands:
                   checkout:
                     - git -C /srv/repos/app fetch origin feature/ABC-12-fix-login-redirect
@@ -30380,6 +30383,7 @@ components:
         - rescueRefs
         - actions
         - prDefaults
+        - taskResolution
         - commands
         - warnings
       properties:
@@ -30567,12 +30571,28 @@ components:
             The server's defaults for `POST /api/runs/{runId}/pr` — the panel
             pre-fills its dialog from exactly these. The body's run link is
             built from the request's origin. Null without a workspace row.
+            (Designed — ADR-207) The body ends with `Closes <owner>/<repo>#<n>`
+            when the task's binding is `github` on the project's own GitHub
+            host with a numeric key and the Run resolves its task.
           required: [title, body, targetBranch]
           additionalProperties: false
           properties:
             title: { type: string }
             body: { type: string }
             targetBranch: { type: string }
+        taskResolution:
+          type: object
+          nullable: true
+          description: |
+            (Designed — ADR-207) Null for a task-less Run. `resolvesTask` is the
+            Run's snapshot flag (absent ⇒ true); `frozen` is true once a PR is
+            recorded or promotion is claiming/done, after which
+            `PATCH …/delivery-policy` refuses `delivery_already_started`.
+          required: [resolvesTask, frozen]
+          additionalProperties: false
+          properties:
+            resolvesTask: { type: boolean }
+            frozen: { type: boolean }
         commands:
           type: object
           required: [checkout, restoreRescue]

@@ -6,15 +6,20 @@ import type { TaskSource, TaskSourceIdentity, TaskSourceOrigin } from "./model";
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  githubClosingReference,
+  projectGithubHost,
+} from "./closing-reference";
 import { parseTaskSourceInput } from "./validate";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { snapshotResolvesTask } from "@/lib/runs/delivery-policy";
 import { recordTaskActivity } from "@/lib/social/activity";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches services/tasks.ts).
-const { projects, taskExternalSources, tasks } =
+const { projects, runs, taskExternalSources, tasks } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): narrow after the repository converges on one drizzle peer.
@@ -329,4 +334,27 @@ export async function loadTaskSources(
       toSource(row),
     ]),
   );
+}
+
+/** ADR-207: the closing reference a generated PR body for this Run carries. */
+export async function closingReferenceForRun(
+  db: Db,
+  run: { id: string; taskId: string | null },
+  project: { provider?: string | null; repoUrl?: string | null },
+): Promise<string | null> {
+  if (!run.taskId) return null;
+  const sources = await loadTaskSources(db, [run.taskId]);
+  const source = sources.get(run.taskId) ?? null;
+
+  if (!source) return null;
+  const [snapshot] = await db
+    .select({ deliveryPolicySnapshot: runs.deliveryPolicySnapshot })
+    .from(runs)
+    .where(eq(runs.id, run.id));
+
+  return githubClosingReference({
+    source,
+    projectGithubHost: projectGithubHost(project),
+    resolvesTask: snapshotResolvesTask(snapshot?.deliveryPolicySnapshot),
+  });
 }

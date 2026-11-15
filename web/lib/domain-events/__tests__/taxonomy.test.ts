@@ -3,6 +3,8 @@ import type { EmitDomainEventInput } from "@/lib/domain-events/outbox";
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_TRIGGER_EVENT_KINDS,
+  isAgentTriggerEventKind,
   ATTENTION_EVENT_KINDS,
   OPERATIONAL_ATTENTION_EVENT_KINDS,
   causeReason,
@@ -165,6 +167,7 @@ describe("domain-event taxonomy", () => {
       "gate.failed",
       "run.operational_attention_acknowledged",
       "run.operational_cleanup_changed",
+      "run.pr_merged",
     ]);
     expect(isDomainEventKind("specialist.assignment_changed")).toBe(true);
     expect(isAgentTriggerEventKind("specialist.assignment_changed")).toBe(
@@ -173,6 +176,15 @@ describe("domain-event taxonomy", () => {
     expect([...NON_ATTENTION_EVENT_KINDS]).toContain(
       "specialist.assignment_changed",
     );
+  });
+
+  // ADR-207: completion is platform-owned, and the merge must never look like
+  // a settled child to the orchestrator, cost, memory or reindex consumers.
+  it("keeps run.pr_merged out of agent triggers and the settled/terminal sets", () => {
+    expect([...AGENT_TRIGGER_EVENT_KINDS]).not.toContain("run.pr_merged");
+    expect(isAgentTriggerEventKind("run.pr_merged")).toBe(false);
+    expect(isRunSettledEventKind("run.pr_merged")).toBe(false);
+    expect(isRunTerminalEventKind("run.pr_merged")).toBe(false);
   });
 
   // ADR-160: a claim/return is a lifecycle fact, NOT a settled child. Adding

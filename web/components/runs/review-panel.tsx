@@ -91,6 +91,8 @@ export type ReviewPanelSync = {
 export interface ReviewPanelProps {
   id?: string;
   runId: string;
+  // ADR-207: a task Run whose delivery has not started may record partial work.
+  taskResolutionEditable?: boolean;
   branchDeliveryError?: string | null;
   branchDeliveryAttempted?: boolean;
   baseBranch: string | null;
@@ -185,6 +187,7 @@ function selectionKey(key: Key | null, fallback: PromotionMode): PromotionMode {
 export function ReviewPanel({
   id,
   runId,
+  taskResolutionEditable = false,
   branchDeliveryError,
   branchDeliveryAttempted,
   baseBranch,
@@ -224,6 +227,8 @@ export function ReviewPanel({
   >(null);
   const [truncationAck, setTruncationAck] = useState(false);
   const [autoFinalize, setAutoFinalize] = useState(false);
+  const [partialWork, setPartialWork] = useState(false);
+  const offersPartialWork = taskResolutionEditable && mode === "pull_request";
   const syncClaimed = sync?.inProgress != null;
   const [conflictState, setConflictState] =
     useState<ReviewPanelConflict | null>(
@@ -275,6 +280,28 @@ export function ReviewPanel({
     setPromotionSlow(false);
 
     try {
+      // The flag freezes once the PR exists, so it lands before the promotion.
+      if (offersPartialWork && partialWork) {
+        const recorded = await fetch(`/api/runs/${runId}/delivery-policy`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "set_task_resolution",
+            resolvesTask: false,
+          }),
+        });
+
+        if (!recorded.ok) {
+          const data = (await recorded.json().catch(() => null)) as {
+            code?: string;
+          } | null;
+
+          setError(t(resolveUiErrorMessageKey(data?.code)));
+
+          return;
+        }
+      }
+
       const res = await fetch(`/api/runs/${runId}/promote`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -661,6 +688,20 @@ export function ReviewPanel({
                   </ListBox>
                 </Select.Popover>
               </Select>
+            </label>
+          ) : null}
+
+          {offersPartialWork ? (
+            <label
+              className="flex items-center gap-2 font-mono text-[11px] text-ink-2"
+              data-testid="review-partial-work"
+            >
+              <input
+                checked={partialWork}
+                type="checkbox"
+                onChange={(e) => setPartialWork(e.target.checked)}
+              />
+              {t("promotePartialWork")}
             </label>
           ) : null}
 

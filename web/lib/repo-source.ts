@@ -76,7 +76,7 @@ function gitExecOptions(timeoutMs: number, signal?: AbortSignal) {
 }
 
 // Extract the host from both scp-like (git@host:org/repo) and URL forms.
-function parseHost(url: string): string | null {
+export function parseHost(url: string): string | null {
   const scp = /^[^/@]+@([^/:]+):/.exec(url);
 
   if (scp) return scp[1].toLowerCase();

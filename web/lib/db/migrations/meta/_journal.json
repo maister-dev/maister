@@ -2367,6 +2367,13 @@
       "when": 1794838779481,
       "tag": "0341_task_activity_source_completion_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 342,
+      "version": "7",
+      "when": 1794838876078,
+      "tag": "0342_domain_event_run_pr_merged",
+      "breakpoints": true
     }
   ]
 }

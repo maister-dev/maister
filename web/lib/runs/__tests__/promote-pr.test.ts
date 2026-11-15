@@ -10,6 +10,7 @@ import {
   projects as projectsTable,
   runs as runsTable,
   scratchRuns as scratchRunsTable,
+  taskExternalSources as taskExternalSourcesTable,
   tasks as tasksTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
@@ -63,6 +64,8 @@ type Tables = {
   projects: Row[];
   // ADR-181 D5: the public name's `{task_key}` / `{slug}` come from the task.
   tasks: Row[];
+  // ADR-207: the task's binding feeds the PR body's closing reference.
+  task_external_sources: Row[];
 };
 
 function emptyTables(): Tables {
@@ -72,6 +75,7 @@ function emptyTables(): Tables {
     workspaces: [],
     projects: [],
     tasks: [],
+    task_external_sources: [],
   };
 }
 
@@ -83,6 +87,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === workspacesTable) return "workspaces";
   if (t === projectsTable) return "projects";
   if (t === tasksTable) return "tasks";
+  if (t === taskExternalSourcesTable) return "task_external_sources";
   throw new Error("unknown table");
 }
 
@@ -422,6 +427,38 @@ describe("promoteRun — pull_request happy path (github)", () => {
         pullRequestUrl: "https://github.com/org/repo/pull/77",
       },
     });
+  });
+
+  // C8 (ADR-207): the generated body closes the bound GitHub issue on the
+  // project's own host, and only when the Run resolves the task.
+  it.each([
+    ["resolving", undefined, true],
+    ["partial", false, false],
+  ])("a %s Run's PR body and the bound issue's closing reference", async (_name, resolvesTask, closes) => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].deliveryPolicySnapshot = {
+      strategy: "pull_request",
+      push: "on_success",
+      trigger: "manual",
+      targetBranch: "main",
+      ...(resolvesTask === undefined ? {} : { resolvesTask }),
+    };
+    dbState.tables.task_external_sources.push({
+      taskId: "task-1",
+      kind: "github",
+      instance: "github.com",
+      scope: "org/repo",
+      externalId: "I_7",
+      externalKey: "#7",
+      url: "https://github.com/org/repo/issues/7",
+    });
+
+    await callPromote(runId, { mode: "pull_request", reviewedTargetCommit: "tip00000" });
+
+    const body = (createOrUpdatePr.mock.calls[0] as unknown as [{ body: string }])[0].body;
+
+    expect(body.endsWith("\n\nCloses org/repo#7")).toBe(closes);
   });
 
   it("records a PR artifact carrying pr_url/pr_number in its payload", async () => {

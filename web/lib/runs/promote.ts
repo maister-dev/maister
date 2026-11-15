@@ -30,6 +30,7 @@ import {
 } from "@/lib/runs/lifecycle-claim";
 import { type SyncActor } from "@/lib/runs/sync-target";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { closingReferenceForRun } from "@/lib/tasks/external-source/service";
 import {
   deliveryPolicyFromLegacyPromotionMode,
   effectivePromotionModeFromPolicy,
@@ -1842,7 +1843,10 @@ async function promotePullRequestSideEffect(args: {
       sourceBranch: publicBranch,
       targetBranch: claim.resolvedTarget,
       title: prTitle(claim),
-      body: prBody(claim),
+      body: prBody(
+        claim,
+        await closingReferenceForRun(db, claim.run, project),
+      ),
       draft: false,
     });
 
@@ -1921,8 +1925,10 @@ function prTitle(claim: FlowClaim): string {
   return `MAIster: promote ${claim.workspace.branch} → ${claim.resolvedTarget}`;
 }
 
-function prBody(claim: FlowClaim): string {
-  return `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.workspace.runId}).`;
+function prBody(claim: FlowClaim, closingReference: string | null): string {
+  const promotes = `Promotes \`${claim.workspace.branch}\` into \`${claim.resolvedTarget}\` (run ${claim.workspace.runId}).`;
+
+  return closingReference ? `${promotes}\n\n${closingReference}` : promotes;
 }
 
 // ADR-181 D12: ONE finalize for a PR-backed run, reached from a `pull_request`

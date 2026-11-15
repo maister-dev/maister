@@ -2,7 +2,7 @@ import type { PrStateReadResult } from "@/lib/runs/pr-adapter";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   afterAll,
@@ -67,6 +67,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   vi.clearAllMocks();
+  await db.delete(schema.domainEvents);
   await db.delete(schema.webhookEvents);
   await db.delete(schema.taskActivity);
   await db.delete(schema.workspaces);
@@ -202,6 +203,25 @@ describe("runPrStateScanJob", () => {
     expect(allActivity).toHaveLength(1);
     expect(allActivity[0].taskId).toBe(merged.taskId);
 
+    // C1 (ADR-207): exactly one run.pr_merged, only for the merged edge.
+    const mergedEvents = await prMergedEvents(projectId);
+
+    expect(mergedEvents).toHaveLength(1);
+    expect(mergedEvents[0]).toMatchObject({
+      runId: merged.runId,
+      taskId: merged.taskId,
+      payload: {
+        runId: merged.runId,
+        taskId: merged.taskId,
+        workspaceId: merged.workspaceId,
+        prNumber: 101,
+        mergeCommitSha: "merge-sha-101",
+        mergedAt: "2026-07-14T00:00:00.000Z",
+        runKind: "flow",
+        parentRunId: null,
+      },
+    });
+
     // FR-A5: the provider merge commit lives on the workspace ONLY; the run's
     // repo_delivery_scan-owned merge_commit_sha is never written here.
     const mergedRun = (
@@ -219,6 +239,28 @@ describe("runPrStateScanJob", () => {
     expect(supervisorSpies.deleteSession).not.toHaveBeenCalled();
     expect(supervisorSpies.deleteSessionIfPresent).not.toHaveBeenCalled();
     expect(supervisorSpies.checkpointSession).not.toHaveBeenCalled();
+  });
+
+  it("C1: a merged PR of a task-less run emits no run.pr_merged (nothing to complete)", async () => {
+    const projectId = await seedProject();
+
+    await seedCandidate({ projectId, prNumber: 901, runKind: "agent" });
+    await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: scripted({
+        901: {
+          kind: "state",
+          state: "merged",
+          mergedAt: "2026-07-14T00:00:00.000Z",
+          mergeCommitSha: "merge-sha-901",
+          hasConflicts: false,
+          headSha: null,
+        },
+      }),
+    });
+
+    expect(await prMergedEvents(projectId)).toHaveLength(0);
   });
 
   it("is idempotent: a re-scan with the same results emits no new webhooks or activity", async () => {
@@ -286,6 +328,7 @@ describe("runPrStateScanJob", () => {
       .where(eq(schema.taskActivity.taskId, merged.taskId as string));
 
     expect(activity).toHaveLength(1);
+    expect(await prMergedEvents(projectId)).toHaveLength(1);
   });
 
   // C2: a FAILED READ MAY NOT GUESS AT PR STATE. Providers answer
@@ -318,6 +361,7 @@ describe("runPrStateScanJob", () => {
     expect((await workspace(unreadable.workspaceId)).prState).toBeNull();
 
     expect(await webhooks(projectId)).toHaveLength(0);
+    expect(await prMergedEvents(projectId)).toHaveLength(0);
 
     // BOTH stay eligible: an unreadable PR is retried at cursor rate, never
     // abandoned — recovery must not require hand-written SQL.
@@ -705,6 +749,18 @@ async function seedProject(opts?: {
   });
 
   return projectId;
+}
+
+async function prMergedEvents(projectId: string) {
+  return db
+    .select()
+    .from(schema.domainEvents)
+    .where(
+      and(
+        eq(schema.domainEvents.projectId, projectId),
+        eq(schema.domainEvents.kind, "run.pr_merged"),
+      ),
+    );
 }
 
 async function seedCandidate(opts: {

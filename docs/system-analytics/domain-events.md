@@ -466,16 +466,18 @@ The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi
 ## Confirmed PR merge event (Designed — ADR-207)
 
 `run.pr_merged` is emitted by `pr_state_scan` inside the merged-edge transaction
-(same transaction as `workspaces.pr_state='merged'`), exactly once per workspace
-(column-guarded edge). Payload: `{runId, taskId, workspaceId, prNumber,
-mergeCommitSha, mergedAt}`. It is distinct from the outbound webhook of the same
+(same transaction as `workspaces.pr_state='merged'` and the `run_pr_merged`
+task_activity twin), exactly once per workspace (column-guarded edge), and only
+for a task-bound Run — a task-less Run has nothing to complete. Payload:
+`{runId, taskId, workspaceId, prNumber, mergeCommitSha, mergedAt, runKind,
+parentRunId}`. It is distinct from the outbound webhook of the same
 name (ADR-140), which is unchanged.
 
 | Membership | Decision |
 | --- | --- |
-| `DOMAIN_EVENT_KINDS` + `domain_events_kind_check` | member (migration `0341`) |
-| Agent triggers (`AGENT_TRIGGER_EVENT_KINDS`) | **excluded** — completion is platform-owned |
-| `ATTENTION_PLANE_EVENT_KINDS` | member — it changes what the board shows |
+| `DOMAIN_EVENT_KINDS` + `domain_events_kind_check` | member (migration `0342`) |
+| Agent triggers (`AGENT_TRIGGER_EVENT_KINDS`) | **excluded** via `PLATFORM_ONLY_EVENT_KINDS` — completion is platform-owned |
+| `ATTENTION_PLANE_EVENT_KINDS` | member through `OPERATIONAL_ATTENTION_EVENT_KINDS` (invalidate-only, never counted — the `run_pr_merged` activity twin is the counted fact; `ATTENTION_EVENT_KINDS` would double-count it) |
 | `RUN_TERMINAL_EVENT_KINDS` / `RUN_SETTLED_EVENT_KINDS` | **not** a member (orchestrator resume, cost rollup, memory harvest and source reindex never see it) |
 | Ext activity pulse (`PulseEventKind`, `mapDomainEvent`) | member, mapped as a run update |
 

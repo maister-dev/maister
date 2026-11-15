@@ -123,6 +123,7 @@ function gitState(over: Record<string, unknown> = {}): Record<string, unknown> {
       body: "http://localhost/runs/run-1",
       targetBranch: "main",
     },
+    taskResolution: { resolvesTask: true, frozen: false },
     commands: { checkout: [], restoreRescue: null },
     warnings: [],
     ...over,
@@ -1177,6 +1178,61 @@ describe("WorkbenchGitPanel — Pull request", () => {
     ]);
     expect(feedbackSuccess).toHaveBeenCalledTimes(1);
     expect(byTestId("git-panel-pr-reused")).toBeNull();
+  });
+
+  // ADR-207: partial work is recorded on the Run BEFORE the PR exists, because
+  // the flag freezes once a PR is recorded.
+  it("records partial work on the Run before opening the PR", async () => {
+    states = [published()];
+    mutation = (call) =>
+      call.method === "PATCH"
+        ? json({ ok: true, runId: RUN, deliveryPolicy: {} })
+        : json(OPENED);
+    render();
+    await settle();
+
+    await click(must("git-panel-pr-partial"));
+    await click(must("git-panel-action-openPr"));
+
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([
+      {
+        url: `/api/runs/${RUN}/delivery-policy`,
+        method: "PATCH",
+        body: { action: "set_task_resolution", resolvesTask: false },
+      },
+      expect.objectContaining({ url: `/api/runs/${RUN}/pr`, method: "POST" }),
+    ]);
+  });
+
+  it("opens no PR when recording partial work is refused", async () => {
+    states = [published()];
+    mutation = () =>
+      json(
+        { code: "CONFLICT", details: { reason: "delivery_already_started" } },
+        409,
+      );
+    render();
+    await settle();
+
+    await click(must("git-panel-pr-partial"));
+    await click(must("git-panel-action-openPr"));
+
+    expect(posts()).toEqual([]);
+    expect(must("git-panel-error").textContent).not.toBe("");
+  });
+
+  it.each([
+    ["a task-less run", { taskResolution: null }],
+    [
+      "a run whose delivery started",
+      { taskResolution: { resolvesTask: true, frozen: true } },
+    ],
+  ])("offers no partial choice for %s", async (_name, over) => {
+    states = [published(over)];
+    render();
+    await settle();
+
+    expect(byTestId("git-panel-pr-partial")).toBeNull();
   });
 
   it("keeps a typed PR title across a git-state refresh tick", async () => {

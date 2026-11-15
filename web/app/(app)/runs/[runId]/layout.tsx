@@ -2368,6 +2368,11 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               sync={syncPanel?.sync ?? null}
               targetBranch={reviewData.targetBranch}
+              taskResolutionEditable={
+                detail.taskNumber !== null &&
+                detail.prNumber === null &&
+                !detail.prUrl
+              }
               updateHref={gitPanelHref({
                 runId: detail.runId,
                 runKind: detail.runKind,

@@ -98,5 +98,13 @@ export async function recordTaskActivityOnce(
   tx: any,
   input: TaskActivityInput,
 ): Promise<boolean> {
-  return (await insertActivity(tx, input, true)) !== null;
+  return (await insertTaskActivityOnce(tx, input)) !== null;
+}
+
+/** `recordTaskActivityOnce` that returns the new row id (null when collapsed). */
+export async function insertTaskActivityOnce(
+  tx: any,
+  input: TaskActivityInput,
+): Promise<string | null> {
+  return (await insertActivity(tx, input, true)) as string | null;
 }

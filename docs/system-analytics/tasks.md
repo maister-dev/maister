@@ -522,7 +522,11 @@ Decision table (skip = no activity; refuse = one deduplicated
 
 As-plan child tasks (`launch_mode='auto'`) delivered by pull request complete
 only through this path (dependents wait for the merge); other as-plan children
-keep the direct `Done` on `run.done`.
+keep the direct `Done` on `run.done`. The `auto_launch_run_plan` consumer also
+reacts to `run.pr_merged` of an as-plan child: it calls the same idempotent
+`completeTaskFromConfirmedMerge` **before** dependent discovery, so the merge
+itself releases the dependents (the two consumers have separate cursors, and
+discovery must not race the completion).
 
 A one-time reconciliation (`pnpm --filter maister-web tasks:reconcile-merged`,
 dry-run by default) applies the same entry point to InFlight tasks whose newest

@@ -82,7 +82,10 @@ const UPDATE_HREF = "/runs/run-1?git=update";
 
 const roots: Root[] = [];
 
-function render(promotionMode: ReviewPanelProps["promotionMode"]): void {
+function render(
+  promotionMode: ReviewPanelProps["promotionMode"],
+  extra: Partial<ReviewPanelProps> = {},
+): void {
   const container = document.createElement("div");
   const root = createRoot(container);
 
@@ -133,6 +136,7 @@ function render(promotionMode: ReviewPanelProps["promotionMode"]): void {
     },
     sync: { inProgress: null },
     updateHref: UPDATE_HREF,
+    ...extra,
   } as unknown as ReviewPanelProps;
 
   act(() => {
@@ -278,4 +282,53 @@ describe("ReviewPanel — a refused Promote", () => {
       expect(byTestId("review-publication-diverged")).toBeNull();
     },
   );
+});
+
+// ADR-207: partial work is recorded on the Run before the promotion opens the PR.
+describe("ReviewPanel — partial work on a pull-request promotion", () => {
+  it("records resolvesTask=false before promoting when the box is checked", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    render("pull_request", { taskResolutionEditable: true });
+
+    const partial = byTestId("review-partial-work")?.querySelector("input");
+
+    if (!partial) throw new Error("missing the partial-work checkbox");
+    await act(async () => {
+      partial.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await promote();
+
+    const requests = fetchMock.mock.calls.map(([url, init]) => [
+      url,
+      init.method,
+      JSON.parse(String(init.body)),
+    ]);
+
+    expect(requests[0]).toEqual([
+      "/api/runs/run-1/delivery-policy",
+      "PATCH",
+      { action: "set_task_resolution", resolvesTask: false },
+    ]);
+    expect(requests[1].slice(0, 2)).toEqual([
+      "/api/runs/run-1/promote",
+      "POST",
+    ]);
+  });
+
+  it.each([
+    ["a merge promotion", "merge" as const, true],
+    ["a run whose resolution is not editable", "pull_request" as const, false],
+  ])("offers no partial choice for %s", (_name, mode, editable) => {
+    render(mode, { taskResolutionEditable: editable });
+
+    expect(byTestId("review-partial-work")).toBeNull();
+  });
 });

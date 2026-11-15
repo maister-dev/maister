@@ -14,7 +14,7 @@ import {
   type DeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
 
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "api-run-delivery-policy",
@@ -23,9 +23,16 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ runId: string }> };
 
-const patchBodySchema = z
-  .object({ action: z.literal("switch_to_manual") })
-  .strict();
+const patchBodySchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("switch_to_manual") }).strict(),
+  // ADR-207: whether a confirmed merge of this Run's PR may complete its task.
+  z
+    .object({
+      action: z.literal("set_task_resolution"),
+      resolvesTask: z.boolean(),
+    })
+    .strict(),
+]);
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -48,7 +55,7 @@ function httpStatusForCode(code: string): number {
 function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      { code: err.code, message: err.message, details: err.details },
       { status: httpStatusForCode(err.code) },
     );
   }
@@ -64,6 +71,66 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   );
 }
 
+// The flag rendered into a PR body (closing reference) must never change after
+// delivery starts; the run row lock serializes it against a concurrent promote.
+async function setTaskResolution(
+  runId: string,
+  resolvesTask: boolean,
+): Promise<DeliveryPolicy> {
+  const db = getDb() as any;
+
+  return db.transaction(async (tx: any) => {
+    const [run] = await tx
+      .select({
+        taskId: runs.taskId,
+        deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
+      })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("update");
+
+    if (!run.taskId) {
+      throw new MaisterError("PRECONDITION", "run has no task to resolve", {
+        details: { reason: "run_has_no_task" },
+      });
+    }
+
+    const [workspace] = await tx
+      .select({
+        promotionState: workspaces.promotionState,
+        prNumber: workspaces.prNumber,
+      })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
+
+    if (
+      workspace &&
+      (workspace.promotionState === "claiming" ||
+        workspace.promotionState === "done" ||
+        workspace.prNumber !== null)
+    ) {
+      throw new MaisterError(
+        "CONFLICT",
+        "delivery already started; task resolution is frozen",
+        { details: { reason: "delivery_already_started" } },
+      );
+    }
+
+    const deliveryPolicy = {
+      ...(run.deliveryPolicySnapshot as DeliveryPolicy),
+      resolvesTask,
+    };
+
+    await tx
+      .update(runs)
+      .set({ deliveryPolicySnapshot: deliveryPolicy })
+      .where(eq(runs.id, runId));
+    log.info({ runId, resolvesTask }, "run task resolution recorded");
+
+    return deliveryPolicy;
+  });
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: RouteParams,
@@ -71,8 +138,10 @@ export async function PATCH(
   const { runId } = await params;
 
   try {
+    let body: z.infer<typeof patchBodySchema>;
+
     try {
-      patchBodySchema.parse(await req.json());
+      body = patchBodySchema.parse(await req.json());
     } catch (err) {
       throw new MaisterError(
         "CONFIG",
@@ -106,6 +175,12 @@ export async function PATCH(
     }
 
     await requireProjectAction(row.projectId, "promoteRun");
+
+    if (body.action === "set_task_resolution") {
+      const deliveryPolicy = await setTaskResolution(runId, body.resolvesTask);
+
+      return NextResponse.json({ ok: true, runId, deliveryPolicy });
+    }
 
     if (
       row.status !== "Review" ||

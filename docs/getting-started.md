@@ -225,6 +225,9 @@ install-authored-flow-package # install an exported authored package as
 tasks:backfill-sources   # ADR-206: classify legacy GitHub intake markers and
                          # (with --apply) bind them as task external sources;
                          # dry-run by default, prints a JSON report
+tasks:reconcile-merged   # ADR-207: complete InFlight tasks whose newest PR
+                         # merged before run.pr_merged existed; dry-run by
+                         # default (--apply), prints a JSON report
 ```
 
 > **Engine 3 upgrade:** do **not** run `backfill-flow-revisions`. It is retired
