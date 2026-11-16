@@ -12,7 +12,13 @@ type FeatureCopy = {
   meta: string;
 };
 
-export type TourShotId = "portfolio" | "board" | "run" | "inbox" | "review";
+export type TourShotId =
+  | "portfolio"
+  | "board"
+  | "run"
+  | "inbox"
+  | "review"
+  | "knowledge";
 
 type LandingContent = {
   meta: {
@@ -319,14 +325,14 @@ const CONTENT = {
           label: "Run",
           title: "A Flow you can inspect while it runs.",
           body: "The Run page shows the graph, the current node, readiness, tokens, and the branch the work lives on. Every attempt stays in the ledger.",
-          alt: "MAIster Run page with the Flow graph, readiness state, and the run inspector",
+          alt: "MAIster Run page with the outcome, flow verification, and the Flow graph",
         },
         {
           id: "inbox",
           label: "Inbox",
           title: "Give each teammate one queue for decisions.",
           body: "When an agent needs a human decision, MAIster opens the request in the inbox and on the Run page: a permission, form, review, or escalation. The answer returns to the originating Run.",
-          alt: "MAIster inbox with two human review requests waiting for a decision",
+          alt: "MAIster inbox with a held task and two operations that need attention",
         },
         {
           id: "review",
@@ -334,6 +340,13 @@ const CONTENT = {
           title: "Artifact review and deliberate landing.",
           body: "Review the diff, reports, plans, and other production artifacts together. Approve the result, return the Run for rework with actionable comments, or deliver it through a PR, a local merge, or a published branch.",
           alt: "MAIster review workspace with the changed files tree and the diff viewer",
+        },
+        {
+          id: "knowledge",
+          label: "Knowledge",
+          title: "Knowledge you can trace to its evidence.",
+          body: "Company Brain lists company and project knowledge with its basis, confirmation, and freshness. Open a record to inspect the source it came from, propose a correction, or review a proposal.",
+          alt: "MAIster Company Brain with knowledge search filters and a list of records",
         },
       ],
     },
@@ -782,14 +795,14 @@ const CONTENT = {
           label: "Запуск",
           title: "Flow, который можно рассмотреть прямо во время работы.",
           body: "Страница запуска показывает граф, текущий узел, готовность, токены и ветку, в которой идёт работа. Каждая попытка остаётся в реестре.",
-          alt: "Страница запуска MAIster с графом Flow, состоянием готовности и инспектором запуска",
+          alt: "Страница запуска MAIster с результатом, проверкой Flow и графом Flow",
         },
         {
           id: "inbox",
           label: "Входящие",
           title: "Одна очередь решений вместо обхода терминалов.",
           body: "Когда агенту нужно решение человека, MAIster открывает запрос во «Входящих» и на странице запуска: разрешение, форму, проверку или уведомление о проблеме. Ответ возвращается в исходный запуск.",
-          alt: "Раздел «Входящие» MAIster с двумя запросами на проверку, ожидающими решения",
+          alt: "Раздел «Входящие» MAIster с удержанной задачей и двумя операциями, требующими внимания",
         },
         {
           id: "review",
@@ -797,6 +810,13 @@ const CONTENT = {
           title: "Проверка артефактов и доставка результата.",
           body: "Проверяйте вместе изменения, отчёты, планы и другие производственные артефакты. Результат можно принять, вернуть запуск на доработку с конкретными комментариями или доставить через PR, локальное слияние либо публикацию ветки.",
           alt: "Рабочая область проверки MAIster с деревом изменённых файлов и просмотром изменений",
+        },
+        {
+          id: "knowledge",
+          label: "Знания",
+          title: "Знания, которые можно проследить до доказательств.",
+          body: "Мозг компании показывает знания компании и проектов с их основанием, подтверждением и актуальностью. Откройте запись, чтобы проверить источник, предложить исправление или рассмотреть предложение.",
+          alt: "Мозг компании MAIster с фильтрами поиска знаний и списком записей",
         },
       ],
     },
