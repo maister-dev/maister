@@ -103,7 +103,7 @@ The lower workbench provides these views:
 | --- | --- |
 | Files | Read git-tracked files from the Run workspace. |
 | Diff | Review changes for the whole Run, the current review, or the last node. |
-| Evidence | Trace test reports, checks, judgments, review notes, and produced artifacts back to a node attempt. |
+| Results and checks | Read recorded verification and retained output, including after a failed execution, and every blocker that affects readiness. Artifact previews show up to 64 KiB with a link to the original. **Provenance graph** traces each result back to a node attempt. |
 | Timeline | Read state changes, human decisions, retries, interrupts, and promotion events in order. |
 
 The right inspector contains actions that apply to the current state: respond

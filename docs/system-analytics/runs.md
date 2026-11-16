@@ -766,7 +766,12 @@ detail even when the project default later changes.
 
 ```ts
 type DeliveryPolicy = {
-  strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+  strategy:
+    | "merge"
+    | "rebase_merge"
+    | "pull_request"
+    | "ai_rebase_merge"
+    | "publish_branch";
   push: "never" | "on_success";
   trigger: "manual" | "auto_on_ready";
   targetBranch?: string;
@@ -793,6 +798,15 @@ readiness re-gate, target-drift token, conflict assignment, and finalize-token
 behavior. `rebase_merge` runs a rebase before the final merge and restores or
 aborts cleanly on conflict. Conflict/degradation UI shows the failing command,
 paths, and status at parity with the current merge-conflict surface.
+
+`publish_branch` (Implemented, migration `0228`) is selectable only when a task
+run is launched; a run whose snapshot holds another strategy, or a task-less
+run, is refused `PRECONDITION`. It keeps the promotion claim and the readiness
+re-gate, skips the target-drift token (the target branch is never written),
+stores the destination in `workspaces.branch_delivery` before pushing, and
+never force-pushes: a rejected push leaves the run in `Review` with the Git
+error and a retry that reuses the stored destination. It does not complete the
+task ([task completion](tasks.md)).
 
 `ai_rebase_merge` is separable but runs on the same durable promotion substrate:
 the policy mode is preserved for audit/API responses, the git side effect uses

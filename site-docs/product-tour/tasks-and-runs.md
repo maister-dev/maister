@@ -29,6 +29,9 @@ triage state, and the active or latest Run. Automated steps do not create Inbox
 noise. The Inbox receives an item only when a permission, form, review,
 escalation, or assignment needs a person.
 
+**Runs and working copies** above the board groups the project's active Runs
+and retained working copies, with a link to each Run.
+
 ## Create and configure a task
 
 ![Task editor with delivery settings](/assets/screens/en/task-editor.png)

@@ -3077,9 +3077,13 @@ numerator.
   publishedBranch?,               // ADR-181 (migration 0179): the public
                                  //   name the internal branch carries on the remote
   publishedRemote?,               // ADR-181 (migration 0179): the remote
-  publishedAt?                    // ADR-181 (migration 0179): written only
+  publishedAt?,                   // ADR-181 (migration 0179): written only
                                  //   after a successful push; the three are co-null
                                  //   (workspaces_published_shape_check)
+  branchDelivery?                 // migration 0228: publish_branch delivery —
+                                 //   { target: { remote, remoteBranch } | null,
+                                 //   error }; the destination is pinned before
+                                 //   the push so a retry reuses it
 }
 ```
 
