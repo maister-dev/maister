@@ -52,6 +52,8 @@ later project default changes.
 
 ## Read the task page
 
+![Task page with the result card, relations, and Run history](/assets/screens/en/task-page.png)
+
 The task page leads with the task's state and one primary next action; other
 actions are under **More**:
 
