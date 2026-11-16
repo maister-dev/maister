@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "review_fixes_pending_qualification",
+  "status": "locally_qualified",
   "specs": {
     "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
     "docs/system-analytics/company-brain-specialists-traceability.md": "eb7a8356e494d3637b8ad2b4e6621a88b7181dffbb35601657c02584285bd805",
@@ -56,7 +56,7 @@
     },
     "review_full_web_first_attempt": {
       "path": "review-fixes/qualification/5faf2b58c/full-web-first-attempt.json",
-      "sha256": "01623e59b8bbba0eb2ec34cf236accb5c08d3a163382f9d307c439c6cb33d316",
+      "sha256": "10a9a147ac3daddeddbcca8dd62d64f52c762a4059a65aba8f96f01d5dc53233",
       "exitCode": 1
     },
     "review_browser": {
@@ -87,6 +87,11 @@
     "review_live_successor": {
       "path": "review-fixes/qualification/5faf2b58c/live-successor.json",
       "sha256": "2431ec3c5a30ce0945d02aab2564b24a328cd8e116a47c37c0a5fa3b0159b9fa",
+      "exitCode": 0
+    },
+    "review_full_web": {
+      "path": "review-fixes/qualification/5faf2b58c/full-web.json",
+      "sha256": "d7aaaeb4d114d8488184be2a176c71d2f752aca99c7d3f5a62fa0e170f8f5397",
       "exitCode": 0
     }
   },
@@ -152,7 +157,7 @@
   "reviewCandidate": {
     "parent": "345237cf6ca16a798936d71d0f13d74a5e37bdb7",
     "lastMigration": "0339_specialist_assignment_cancellation_intent",
-    "fullWeb": "rerun_in_progress",
+    "fullWeb": "passed",
     "browserCI": "passed_locally",
     "liveGLM53": "passed",
     "revision": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
@@ -178,6 +183,15 @@
         "tag": "stand-operations/v0.1.0",
         "commit": "084f68a587a91befd31f94c1ce7759e6b31d265a"
       }
-    }
+    },
+    "fullWebTests": {
+      "passed": 6400,
+      "failed": 0,
+      "skipped": 2,
+      "files": 697,
+      "passedFiles": 695,
+      "skippedFiles": 2
+    },
+    "fullWebLogLevel": "info"
   }
 }

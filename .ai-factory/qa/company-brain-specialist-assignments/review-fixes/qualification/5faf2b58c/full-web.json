@@ -1,0 +1,21 @@
+{
+  "sourceHead": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+  "startedAt": "2026-11-15T23:20:54.094Z",
+  "finishedAt": "2026-11-16T00:30:11.711Z",
+  "runtime": "darwin-arm64, Node 24.15.0",
+  "mcpBundleSha256": "977542eeec787b25654cd23f49f4273572468420ff9c14971452ddae45536354",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "008d8ebe-43d2-44bb-bfdd-5be633f63324"
+  },
+  "tests": {
+    "passed": 6400,
+    "failed": 0,
+    "skipped": 2,
+    "files": 697,
+    "passedFiles": 695,
+    "skippedFiles": 2
+  }
+}

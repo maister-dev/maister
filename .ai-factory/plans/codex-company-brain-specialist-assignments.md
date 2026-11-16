@@ -947,6 +947,8 @@ Phase exit: full owning suites plus targeted EN/RU browser E2E green; a single o
 
   T43 local qualification complete. The [release manifest](../qa/company-brain-specialist-assignments/T43/release-candidate.json) pins the current-master runtime, specification digests, passing and failed receipts, and the exact locally installable companion commit. The 226 master migration units remain byte-for-byte intact, 107 feature units extend the journal through 0336, and all seven PostgreSQL lineage cases passed. Web types, build, 9,057 Web unit tests, 489 MCP tests, the connector and the actual package compatibility gate passed. Package publication and deployment remain outside this local qualification.
 
+  **Review follow-up verified.** Candidate `5faf2b58c` passed full Web integration with 6,400 tests passed and two skipped. The authenticated CB0/CB1 browser gate passed ten checks. Live GLM-5.3 qualified the pinned RAH package and the combined stand scenario on that revision. The retained interruption and successor receipts name their exact source revisions. The main schema includes migration `0339_specialist_assignment_cancellation_intent`. The [release manifest](../qa/company-brain-specialist-assignments/T43/release-candidate.json) records both failed and passing qualification attempts.
+
 ## Review remediation checkpoint (2026-11-09)
 
 - [x] F1: defer execution-writer contention through direct/scheduler claims, binding and first dispatch; preserve accepted identity and failure budget. Five actual PostgreSQL-lock REDs now pass; full owning integration is 54/2. Existing continuation recovery resumes the same materialized agent Run.
