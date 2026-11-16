@@ -5426,6 +5426,12 @@
     "notDelivered": "Not delivered",
     "mergedLocally": "Merged",
     "runDiffTitle": "Changes of the latest run",
+    "sourceDetach": "Detach source",
+    "sourceDetachTitle": "Detach the external source?",
+    "sourceDetachBody": "The task keeps its title, statement and history. The external item can then be imported again as a new task.",
+    "sourceDetachConfirm": "Detach",
+    "sourceDetaching": "Detaching…",
+    "sourceDetachFailed": "The source could not be detached. Refresh the page and try again.",
     "sourceKind": {
       "github": "GitHub",
       "gitlab": "GitLab",

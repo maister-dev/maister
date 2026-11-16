@@ -5426,6 +5426,12 @@
     "notDelivered": "Не доставлено",
     "mergedLocally": "Слито",
     "runDiffTitle": "Изменения последнего запуска",
+    "sourceDetach": "Отвязать источник",
+    "sourceDetachTitle": "Отвязать внешний источник?",
+    "sourceDetachBody": "Задача сохранит заголовок, постановку и историю. После этого внешний объект можно снова импортировать как новую задачу.",
+    "sourceDetachConfirm": "Отвязать",
+    "sourceDetaching": "Отвязываем…",
+    "sourceDetachFailed": "Не удалось отвязать источник. Обновите страницу и повторите.",
     "sourceKind": {
       "github": "GitHub",
       "gitlab": "GitLab",

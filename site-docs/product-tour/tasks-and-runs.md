@@ -81,7 +81,9 @@ A task imported from an external tracker shows its source next to the status,
 for example the GitHub issue number. MAIster stores this identity separately
 from the title and prompt, so editing them keeps the link. One external item
 maps to one task in a project: a repeated import is refused and identifies the
-existing task instead of creating a duplicate.
+existing task instead of creating a duplicate. A project member can remove the
+link with **Detach source** next to it; the external item can then be imported
+again as a new task.
 
 A long statement shows a preview with **Show full statement**. The relation form
 opens from **Add relation**, qualification shows a summary with details on

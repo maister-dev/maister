@@ -16,7 +16,7 @@ to decide.
 | Role | Capabilities |
 | --- | --- |
 | Viewer | Read everything, including the source chip and Run history |
-| Member with `editTask` | Primary/secondary actions, edit, relations. Detaching the source is the session route below; the page renders no detach control |
+| Member with `editTask` | Primary/secondary actions, edit, relations, detach source |
 | Agent / project token | No UI; uses the ext API (see [external operations](../../system-analytics/external-operations.md)) |
 
 ## Navigation
@@ -29,7 +29,9 @@ Run page tabs directly.
 
 1. **Header** — `KEY-N`, title, status chip, source chip (label = localized kind
    or raw `source_kind`; text = `external_key ?? external_id`; link only when
-   `external_url` is set), one primary action and a "More" menu.
+   `external_url` is set) with an icon-only **Detach source** control for
+   members (`web/components/tasks/task-source-detach.tsx`; shared confirmation
+   dialog, then `router.refresh()`), one primary action and a "More" menu.
 2. **Result card** (Done) — resolving Run (from the latest `task_completed`
    activity's `runId`; legacy completion without one shows "Resolving Run
    unknown"), merged PR link `#N` with its PR state chip, diff stat, "Open
