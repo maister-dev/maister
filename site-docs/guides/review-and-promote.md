@@ -34,6 +34,11 @@ The project chooses one promotion mode:
 MAIster does not deploy the merged result. Deployment remains in your existing
 CI/CD system.
 
+With `pull_request`, the task completes by itself after the provider reports
+the merge. Check **Partial work — keep the task open** before promoting when
+the pull request does not finish the task. See
+[when the task completes](/guides/run-git#when-the-task-completes).
+
 ## Publish before finalization
 
 Use the [Run Git panel](/guides/run-git) to publish a branch and open a PR before

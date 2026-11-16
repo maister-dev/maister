@@ -617,7 +617,13 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   / context mounts (M49, ADR-155/156/157) · RU user manual (ADR-158) ·
   generated DBML ERD + docs gates (ADR-159) · local execution-host contract
   — durable host identity, epoch-fenced assignments, command ledger, opaque
-  adopted workspaces, strict envelope (Stage A, ADR-166).
+  adopted workspaces, strict envelope (Stage A, ADR-166) · Company Brain
+  records/evidence/review + specialist assignments + evidence findings +
+  stand operations (ADR-202..205; `company-brain.md`,
+  `specialist-assignments.md`, `stand-maintenance.md`) · task external source
+  binding, completion after a confirmed PR merge, run duration/execution
+  timing, active-rail attention membership (ADR-206..209; `tasks.md`,
+  `runs.md`).
 
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
 Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies

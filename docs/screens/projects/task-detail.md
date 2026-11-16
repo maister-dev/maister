@@ -16,7 +16,7 @@ to decide.
 | Role | Capabilities |
 | --- | --- |
 | Viewer | Read everything, including the source chip and Run history |
-| Member with `editTask` | Primary/secondary actions, edit, relations, detach source |
+| Member with `editTask` | Primary/secondary actions, edit, relations. Detaching the source is the session route below; the page renders no detach control |
 | Agent / project token | No UI; uses the ext API (see [external operations](../../system-analytics/external-operations.md)) |
 
 ## Navigation

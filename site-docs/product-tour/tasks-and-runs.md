@@ -47,6 +47,45 @@ The effective values are shown even when the task inherits project defaults.
 Task fields can be edited before work starts; Run snapshots do not change when a
 later project default changes.
 
+## Read the task page
+
+The task page leads with the task's state and one primary next action; other
+actions are under **More**:
+
+| Task state | Primary action |
+| --- | --- |
+| Needs qualification | **Qualify the task**, or the blocking reason |
+| Backlog | **Launch**, or the reason launch is blocked |
+| In flight, running or queued | **Open run** |
+| In flight, waiting for a person | **Respond** |
+| In flight, in review | **Open review** |
+| In flight, latest Run finished | **Open PR** or **Open run**; **Complete task** when completion is ready |
+| In flight, latest Run failed, crashed, or abandoned | **Run again** |
+| Done | **View result** |
+
+A **Done** task shows a **Result** card: the Run that resolved it, the merged
+pull request and its state, the change size, and a link to the changes. **Start
+a new attempt** launches again and returns the task to in flight.
+
+A task whose Run was delivered through a pull request completes by itself once
+the provider reports the merge and the Run is finalized; see
+[when the task completes](/guides/run-git#when-the-task-completes). If that
+completion is refused, the page shows **PR merged — completion needs a
+decision** with the reason, so you can complete the task yourself or start
+another attempt.
+
+A task imported from an external tracker shows its source next to the status,
+for example the GitHub issue number. MAIster stores this identity separately
+from the title and prompt, so editing them keeps the link. One external item
+maps to one task in a project: a repeated import is refused and identifies the
+existing task instead of creating a duplicate.
+
+A long statement shows a preview with **Show full statement**. The relation form
+opens from **Add relation**, qualification shows a summary with details on
+demand, and **Next launch settings** is collapsed. Those settings are defaults
+for the next attempt; each Run in the history keeps the runner and model it
+used.
+
 ## Launch deliberately
 
 Selecting a Flow or runner configures the task; it does not start execution.
@@ -112,6 +151,13 @@ A task keeps its full Run history. Launching again creates another immutable
 attempt; it does not overwrite the previous runner, Flow revision, evidence,
 cost, or decisions. This supports retries, an alternative implementation, or a
 controlled comparison across runners, models, and Flows.
+
+Each history row shows the Run's status, **Duration** (wall clock from start to
+end) and **Execution** (time agents and automated steps were working, without
+queueing, human input, or idle checkpoints), the intended delivery strategy,
+and what was delivered: a pull request with its state, a published branch, a
+merged commit, or **Not delivered**. The Run that completed the task is marked
+**Resolved the task**.
 
 Use the task page for history and discussion. Use an
 [Evaluation Study](/evaluation/run-comparison) when the choice should be made

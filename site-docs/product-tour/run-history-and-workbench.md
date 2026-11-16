@@ -7,6 +7,13 @@ MAIster records each execution attempt as a Run. The active-workspaces rail
 shows current work; the Run ledger also keeps finished, failed, scheduled, and
 scratch attempts.
 
+Each rail row names why the Run needs attention: it is executing, needs input,
+is being edited, waits on child Runs, awaits review, or failed or crashed as the
+latest attempt of an open task. Finished and abandoned Runs, failed or crashed
+attempts replaced by a newer one, and failed or crashed attempts of a closed
+task leave the rail. They stay in the ledger, the task's Run history, and the
+project's **Runs and working copies** list.
+
 ## Find a Run
 
 ![Run history with filters](/assets/screens/en/runs-history.png)
@@ -16,8 +23,15 @@ project, state, source, runner, and date range. The URL stores the filters, so
 you can send the same view to another project member.
 
 Each row shows the task or Run identity, project, status, source, start time,
-duration, runner, and token count. Flow and platform-agent rows open
-`/runs/{runId}`. Scratch rows open `/scratch-runs/{runId}`.
+duration, execution time, runner, and token count. Times use your browser's
+time zone. Flow and platform-agent rows open `/runs/{runId}`. Scratch rows open
+`/scratch-runs/{runId}`.
+
+**Duration** is the wall clock from start to end. **Execution** counts only the
+time agents and automated steps were working: queueing, human input, and idle
+checkpoints are excluded, and parallel branches are not counted twice. The
+button beside Execution opens the breakdown. A value marked `≈` was still open
+when the Run ended; `—` means no execution evidence was recorded.
 
 The task page has a narrower history: it lists every Run created for that one
 task. A retry creates another attempt and keeps the previous revision, cost,
@@ -32,7 +46,7 @@ Start with the header and primary result:
 - task title, project, branch, state, current node, and chosen Flow;
 - pinned package and Flow revision;
 - runner and model snapshots for the sessions that performed the work;
-- total duration, token usage, and recorded cost.
+- duration, execution time, token usage, and recorded cost.
 
 The graph shows the route taken through the Flow. Select a node to inspect its
 attempts, resolved prompt, structured result, output artifacts, gates, and
