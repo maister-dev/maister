@@ -44,6 +44,7 @@ import { LazyDisclosure } from "@/components/tasks/lazy-disclosure";
 import { TaskResultCard } from "@/components/tasks/task-result-card";
 import { TaskRunArtifactView } from "@/components/tasks/task-run-artifact";
 import { TaskSourceChip } from "@/components/tasks/task-source-chip";
+import { LocalTime } from "@/components/ui/local-time";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { projectMembers, users } from "@/lib/db/schema";
@@ -151,10 +152,6 @@ function parseTaskNumber(raw: string): number | null {
   return Number.isInteger(parsed) && parsed >= 1 && String(parsed) === raw
     ? parsed
     : null;
-}
-
-function formatAt(at: Date | null): string {
-  return at ? at.toISOString().slice(0, 16).replace("T", " ") : "—";
 }
 
 export default async function TaskDetailPage({
@@ -1124,19 +1121,15 @@ export default async function TaskDetailPage({
                       )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
-                      {formatTokenCount(locale, run.tokenTotal)}
+                      {run.tokenTotal === null
+                        ? "—"
+                        : formatTokenCount(locale, run.tokenTotal)}
                     </td>
-                    <td
-                      suppressHydrationWarning
-                      className="px-3 py-2 font-mono"
-                    >
-                      {formatAt(run.startedAt)}
+                    <td className="px-3 py-2 font-mono">
+                      <LocalTime iso={run.startedAt} />
                     </td>
-                    <td
-                      suppressHydrationWarning
-                      className="px-3 py-2 font-mono"
-                    >
-                      {formatAt(run.endedAt)}
+                    <td className="px-3 py-2 font-mono">
+                      <LocalTime iso={run.endedAt} />
                     </td>
                     <td className="px-3 py-2">
                       <Link

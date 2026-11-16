@@ -162,7 +162,7 @@ export type TaskRunRow = {
   endedAt: Date | null;
   // ADR-208: Duration + Execution (with quality and breakdown).
   timing: RunTiming | null;
-  tokenTotal: number;
+  tokenTotal: number | null;
 };
 
 export type TaskRunArtifact =
@@ -247,13 +247,17 @@ function tokenTotal(row: {
   outputTokens: number | null;
   cacheReadTokens: number | null;
   cacheCreationTokens: number | null;
-}): number {
-  return (
-    (row.inputTokens ?? 0) +
-    (row.outputTokens ?? 0) +
-    (row.cacheReadTokens ?? 0) +
-    (row.cacheCreationTokens ?? 0)
-  );
+}): number | null {
+  const values = [
+    row.inputTokens,
+    row.outputTokens,
+    row.cacheReadTokens,
+    row.cacheCreationTokens,
+  ].filter((value): value is number => value !== null);
+
+  return values.length === 0
+    ? null
+    : values.reduce((total, value) => total + value, 0);
 }
 
 function runnerModelLabel(row: {

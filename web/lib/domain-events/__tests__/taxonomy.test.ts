@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_TRIGGER_EVENT_KINDS,
-  isAgentTriggerEventKind,
   ATTENTION_EVENT_KINDS,
   OPERATIONAL_ATTENTION_EVENT_KINDS,
   causeReason,

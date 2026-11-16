@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import * as fullSchema from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -627,6 +628,15 @@ describe("AT-10 state-aware command retirement", () => {
     expect(before.requestCanonicalJson).not.toBeNull();
     expect(before.receiptEvidence).not.toBeNull();
     expect(before.result).not.toBeNull();
+    const receipt = z
+      .object({ receivedAt: z.iso.datetime() })
+      .parse(before.receiptEvidence);
+
+    // Simulate a command settled from its receipt before the ACK was stored.
+    await db
+      .update(schema.executionCommands)
+      .set({ acceptedAt: null })
+      .where(eq(schema.executionCommands.id, commandId));
 
     // `completed_at` is frozen by the evidence trigger once the digest is set,
     // so the replay grace is crossed by moving the clock, not the row.
@@ -652,6 +662,7 @@ describe("AT-10 state-aware command retirement", () => {
       state: "succeeded",
       applicationState: "applied",
       completedAt: before.completedAt,
+      acceptedAt: new Date(receipt.receivedAt),
     });
     // The host half is a tombstone too: repeating its retirement is a no-op.
     const again = await hosts.local().retireCommand(commandId, {

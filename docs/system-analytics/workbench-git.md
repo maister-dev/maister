@@ -285,7 +285,8 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   the route refuses `409 CONFLICT {reason:"delivery_already_started"}`.
 - The PR body prefill appends `Closes <scope_key>#<n>` when the task's binding is
   `github`, its `source_instance` equals the project's GitHub host, `external_key`
-  is numeric and `resolvesTask` is true. The body stays editable.
+  is numeric, `scope_key` is a GitHub owner/repository pair and `resolvesTask`
+  is true. The body stays editable.
 - A panel PR merged on the provider **before** `pr/finalize` completes its task
   when finalize emits `run.done`; the earlier `run.pr_merged` skips silently
   because the Run is not yet `Done` (see [`tasks.md`](tasks.md#completion-after-a-confirmed-merge)).

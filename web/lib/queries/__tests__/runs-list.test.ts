@@ -122,6 +122,7 @@ describe("runs list query", () => {
             capability_agent: "claude",
             cutover_failed_at: "2026-06-20T10:05:00.000Z",
             ended_at: "2026-06-20T10:05:00.000Z",
+            task_completed_at: "2026-06-20T10:12:00.000Z",
             flow_ref_id: "aif-implement",
             flow_version: "v1.2.0",
             input_tokens: 5,
@@ -170,6 +171,7 @@ describe("runs list query", () => {
         sourceKind: "scheduled",
         sourceLabel: "Nightly build",
         taskLabel: "WEB-7 Ship landing page",
+        taskCompletedAt: new Date("2026-06-20T10:12:00.000Z"),
         tokensTotal: 17,
       }),
     ]);

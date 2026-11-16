@@ -14,6 +14,7 @@
 import type { WorkTableRow } from "@/lib/queries/work-table";
 import type { Root } from "react-dom/client";
 
+import { NextIntlClientProvider } from "next-intl";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -57,17 +58,25 @@ function row(over: Partial<WorkTableRow> = {}): WorkTableRow {
 let container: HTMLDivElement;
 let root: Root;
 
-function mount(rows: WorkTableRow[], expandable: boolean): void {
+function mount(
+  rows: WorkTableRow[],
+  expandable: boolean,
+  groupBy: Parameters<typeof groupWorkTableRows>[1] = "none",
+): void {
   act(() => {
     root.render(
-      createElement(WorkRowsTable, {
-        expandable,
-        groupBy: "none",
-        groups: groupWorkTableRows(rows, "none"),
-        labels,
+      createElement(NextIntlClientProvider, {
         locale: "en",
-        now: NOW,
-        panels: { "task-1": createElement("div", null, "PANEL BODY") },
+        // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
+        children: createElement(WorkRowsTable, {
+          expandable,
+          groupBy,
+          groups: groupWorkTableRows(rows, groupBy),
+          labels,
+          locale: "en",
+          now: NOW,
+          panels: { "task-1": createElement("div", null, "PANEL BODY") },
+        }),
       }),
     );
   });
@@ -307,19 +316,7 @@ describe("T-D11 the panel cell spans the FULL column count", () => {
     // CSS-hidden — so it genuinely leaves the DOM and the span must follow it
     // down by one. This is the case a blanket "always the full count" would get
     // wrong in the other direction.
-    act(() => {
-      root.render(
-        createElement(WorkRowsTable, {
-          expandable: true,
-          groupBy: "project",
-          groups: groupWorkTableRows([row()], "project"),
-          labels,
-          locale: "en",
-          now: NOW,
-          panels: { "task-1": createElement("div", null, "PANEL BODY") },
-        }),
-      );
-    });
+    mount([row()], true, "project");
     act(() => {
       firstRow().click();
     });

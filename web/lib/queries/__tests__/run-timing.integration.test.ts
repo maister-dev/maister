@@ -1,11 +1,15 @@
 // ADR-208 loader: maps each evidence table into the pure projection, batched.
 // The interval algebra is owned by lib/runs/__tests__/run-timing.test.ts.
+import type { Db } from "@/lib/execution-host/db";
+
 import { randomUUID } from "node:crypto";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
+import { mintAssignment } from "@/lib/execution-host/assignments";
+import { seedLocalHost } from "@/test-support/execution-host-seed";
 import { loadRunTimings } from "@/lib/queries/run-timing";
 import {
   startMainPostgresTestDb,
@@ -128,7 +132,137 @@ describe("loadRunTimings (T-1..T-5 evidence mapping)", () => {
     });
   });
 
-  it("ignores superseded agent turns (they never ran) and measures a live agent Run to now", async () => {
+  it("uses accepted agent and scratch prompts and excludes queue time and unaccepted commands", async () => {
+    const { id: hostId } = await seedLocalHost(db);
+    const agent = await seedRun({ runKind: "agent", endedMin: 10 });
+    const scratch = await seedRun({ runKind: "scratch", endedMin: null });
+    const reconciled = await seedRun({ runKind: "agent", endedMin: 10 });
+
+    for (const evidence of [
+      {
+        runId: agent,
+        ownerKind: "agent_turn",
+        acceptedAt: at(6),
+        completedAt: at(9),
+        receiptAt: null,
+      },
+      {
+        runId: scratch,
+        ownerKind: "scratch_message",
+        acceptedAt: at(7),
+        completedAt: null,
+        receiptAt: null,
+      },
+      {
+        runId: reconciled,
+        ownerKind: "agent_turn",
+        acceptedAt: null,
+        completedAt: at(9),
+        receiptAt: at(5),
+      },
+    ] as const) {
+      const { runId, ownerKind, acceptedAt, completedAt, receiptAt } = evidence;
+      const assignment = await db.transaction((tx) =>
+        mintAssignment(tx as unknown as Db, {
+          runId,
+          hostId,
+          reason: "launch",
+        }),
+      );
+      const ownerRef = {
+        version: 1,
+        variant: "initial",
+        runId,
+        turnId: randomUUID(),
+        runSessionId: randomUUID(),
+        incarnationId: randomUUID(),
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        promptOrdinal: 0,
+        ...(ownerKind === "scratch_message"
+          ? { scratchRunId: randomUUID() }
+          : {}),
+      };
+      const command = {
+        runId,
+        executionAssignmentId: assignment.id,
+        executionHostId: hostId,
+        assignmentEpoch: assignment.epoch,
+        kind: "session.prompt",
+        targetSessionId: randomUUID(),
+        ownerKind,
+        ownerRef,
+        requestSchema: "maister.command.request.v1",
+        requestSha256: "b".repeat(64),
+        maxAttempts: 3,
+      };
+
+      const commandId = randomUUID();
+      const settlement =
+        receiptAt && completedAt
+          ? {
+              terminalEvidenceSha256: "c".repeat(64),
+              settledFrom: "host_span",
+              receiptEvidence: {
+                commandId,
+                runId,
+                kind: "session.prompt",
+                assignmentEpoch: assignment.epoch,
+                phase: "completed",
+                httpStatus: 200,
+                body: {},
+                receivedAt: receiptAt.toISOString(),
+                completedAt: completedAt.toISOString(),
+              },
+            }
+          : {};
+
+      await db.insert(schema.executionCommands).values([
+        {
+          ...command,
+          ...settlement,
+          id: commandId,
+          logicalOperationKey: `accepted:${runId}`,
+          state: completedAt ? "succeeded" : "accepted",
+          createdAt: at(1),
+          acceptedAt,
+          completedAt,
+        },
+        {
+          ...command,
+          id: randomUUID(),
+          logicalOperationKey: `queued:${runId}`,
+          state: "queued",
+          createdAt: at(2),
+        },
+      ]);
+    }
+
+    const timings = await loadRunTimings(
+      db,
+      [agent, scratch, reconciled],
+      at(10),
+    );
+
+    expect(timings.get(agent)).toMatchObject({
+      durationMs: 10 * MIN,
+      executionMs: 3 * MIN,
+      live: false,
+      breakdown: { admissionMs: 6 * MIN },
+    });
+    expect(timings.get(scratch)).toMatchObject({
+      durationMs: 10 * MIN,
+      executionMs: 3 * MIN,
+      live: true,
+      breakdown: { admissionMs: 7 * MIN },
+    });
+    expect(timings.get(reconciled)).toMatchObject({
+      executionMs: 4 * MIN,
+      breakdown: { admissionMs: 5 * MIN },
+    });
+  });
+
+  it("reports execution as unavailable for an agent Run without acceptance evidence", async () => {
     const agent = await seedRun({ runKind: "agent", endedMin: null });
 
     await db.insert(schema.agentTurns).values({

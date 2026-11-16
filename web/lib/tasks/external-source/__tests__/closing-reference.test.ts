@@ -51,6 +51,19 @@ describe("githubClosingReference (C8)", () => {
       }),
     ).toBe(expected);
   });
+
+  it.each(["widgets", "acme/..", "acme/widgets/another", "acme/widgets\n"])(
+    "skips malformed repository scope %j",
+    (scope) => {
+      expect(
+        githubClosingReference({
+          source: { ...github, scope },
+          projectGithubHost: "github.com",
+          resolvesTask: true,
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("projectGithubHost", () => {

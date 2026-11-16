@@ -2,14 +2,18 @@ import "server-only";
 
 import type { Interval, RunTiming } from "@/lib/runs/run-timing";
 
-import { and, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
+import {
+  promptReceiptAcceptance,
+  settledPromptReceiptReceivedAt,
+} from "@/lib/execution-host/prompt-receipt-acceptance";
 import { computeRunTiming } from "@/lib/runs/run-timing";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches services/tasks.ts).
-const { agentTurns, hitlRequests, nodeAttempts, runs } =
+const { executionCommands, hitlRequests, nodeAttempts, runs } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): narrow after the repository converges on one drizzle peer.
@@ -22,8 +26,8 @@ const log = pino({
 
 // Human/form nodes are waits for a person, never execution.
 const NON_EXECUTION_NODE_TYPES = ["human", "form"];
-// A superseded turn never ran; queued/claimed have not started.
-const EXECUTED_TURN_STATES = ["dispatched", "applied"];
+// These owners record standalone agent and scratch prompts in the same ledger.
+const TIMED_PROMPT_OWNERS = ["agent_turn", "scratch_message"];
 
 type RunRow = {
   id: string;
@@ -74,7 +78,7 @@ export async function loadRunTimings(
   ]);
   const all = [...parents, ...children];
   const allIds = all.map((r) => r.id);
-  const [attempts, turns, hitl] = await Promise.all([
+  const [attempts, prompts, hitl] = await Promise.all([
     db
       .select({
         runId: nodeAttempts.runId,
@@ -90,15 +94,21 @@ export async function loadRunTimings(
       ),
     db
       .select({
-        runId: agentTurns.runId,
-        createdAt: agentTurns.createdAt,
-        completedAt: agentTurns.completedAt,
+        runId: executionCommands.runId,
+        acceptedAt: executionCommands.acceptedAt,
+        completedAt: executionCommands.completedAt,
+        receiptReceivedAt: settledPromptReceiptReceivedAt,
       })
-      .from(agentTurns)
+      .from(executionCommands)
       .where(
         and(
-          inArray(agentTurns.runId, allIds),
-          inArray(agentTurns.state, EXECUTED_TURN_STATES),
+          inArray(executionCommands.runId, allIds),
+          eq(executionCommands.kind, "session.prompt"),
+          inArray(executionCommands.ownerKind, TIMED_PROMPT_OWNERS),
+          or(
+            isNotNull(executionCommands.acceptedAt),
+            isNotNull(settledPromptReceiptReceivedAt),
+          ),
         ),
       ),
     db
@@ -115,14 +125,26 @@ export async function loadRunTimings(
     attempts as Array<{ runId: string; startedAt: Date; endedAt: Date | null }>,
     (a) => a.runId,
   );
-  const turnsByRun = groupBy(
-    turns as Array<{
-      runId: string;
-      createdAt: Date;
-      completedAt: Date | null;
-    }>,
-    (t) => t.runId,
-  );
+  const promptRows = prompts as Array<{
+    runId: string;
+    acceptedAt: Date | null;
+    completedAt: Date | null;
+    receiptReceivedAt: string | null;
+  }>;
+  const acceptedPrompts = promptRows.flatMap((prompt) => {
+    const acceptedAt =
+      prompt.acceptedAt ?? promptReceiptAcceptance(prompt.receiptReceivedAt);
+
+    return acceptedAt
+      ? [
+          {
+            runId: prompt.runId,
+            interval: span(acceptedAt, prompt.completedAt),
+          },
+        ]
+      : [];
+  });
+  const promptsByRun = groupBy(acceptedPrompts, (prompt) => prompt.runId);
   const hitlByRun = groupBy(
     hitl as Array<{
       runId: string;
@@ -138,10 +160,13 @@ export async function loadRunTimings(
       ? (attemptsByRun.get(run.id) ?? []).map((a) =>
           span(a.startedAt, a.endedAt),
         )
-      : (turnsByRun.get(run.id) ?? []).map((t) =>
-          span(t.createdAt, t.completedAt),
-        );
+      : (promptsByRun.get(run.id) ?? []).map((prompt) => prompt.interval);
   const timings = new Map<string, RunTiming>();
+
+  log.debug(
+    { runCount: runIds.length, acceptedPromptCount: acceptedPrompts.length },
+    "[FIX:run-timing] loaded durable prompt acceptance evidence",
+  );
 
   for (const run of parents) {
     if (run.endedAt && run.endedAt < run.startedAt) {

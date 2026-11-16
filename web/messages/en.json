@@ -1020,6 +1020,7 @@
       "state": "State",
       "source": "Source",
       "started": "Started",
+      "taskCompleted": "Task completed",
       "runner": "Runner",
       "cost": "Tokens",
       "empty": "No runs match the current filters."

@@ -7,6 +7,10 @@ import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { executionHosts as defaultExecutionHosts } from "./client";
+import {
+  promptReceiptAcceptance,
+  settledPromptReceiptReceivedAt,
+} from "./prompt-receipt-acceptance";
 import { TERMINAL_COMMAND_STATES } from "./types";
 
 import {
@@ -74,6 +78,7 @@ type Candidate = {
   applicationState: string;
   requestSha256: string | null;
   terminalEvidenceSha256: string | null;
+  receiptReceivedAt: string | null;
   completedAt: Date;
   terminalEventId: string | null;
   terminalHostSequence: bigint | null;
@@ -118,6 +123,7 @@ async function loadCandidates(
       applicationState: executionCommands.applicationState,
       requestSha256: executionCommands.requestSha256,
       terminalEvidenceSha256: executionCommands.terminalEvidenceSha256,
+      receiptReceivedAt: settledPromptReceiptReceivedAt,
       completedAt: executionCommands.completedAt,
       terminalEventId: executionCommands.terminalEventId,
       terminalHostSequence: executionEvents.hostSequence,
@@ -199,13 +205,23 @@ function retirementPhase(state: string): "completed" | "rejected" {
 // The tombstone: identity, digests and outcome disposition survive; the
 // executable request does not. A stale replay can still be recognised and
 // fenced, but it can no longer be re-issued from this row.
-async function compact(db: Db, commandId: string, retiredAt: Date) {
+async function compact(db: Db, row: Candidate, retiredAt: Date) {
+  const receiptAcceptance = promptReceiptAcceptance(row.receiptReceivedAt);
+
+  // Timing must survive body compaction, including receipt-only settlements.
+  // COALESCE preserves the acceptance already written by the ACK path.
+
   await db
     .update(executionCommands)
     .set({
       retiredAt,
       requestCanonicalJson: null,
       createIntent: null,
+      ...(receiptAcceptance
+        ? {
+            acceptedAt: sql`coalesce(${executionCommands.acceptedAt}, ${receiptAcceptance.toISOString()}::timestamptz)`,
+          }
+        : {}),
       receiptEvidence: null,
       result: null,
       lastError: null,
@@ -214,7 +230,7 @@ async function compact(db: Db, commandId: string, retiredAt: Date) {
     })
     .where(
       and(
-        eq(executionCommands.id, commandId),
+        eq(executionCommands.id, row.id),
         isNull(executionCommands.retiredAt),
       ),
     );
@@ -330,7 +346,7 @@ export async function retireEligibleCommands(
     // single UPDATE: on failure the manager row keeps all of its evidence and
     // the next pass repeats both halves. It must not abort the rows behind it.
     try {
-      await compact(db, row.id, now);
+      await compact(db, row, now);
     } catch (error) {
       note("manager_compaction_failed");
       summary.failed += 1;

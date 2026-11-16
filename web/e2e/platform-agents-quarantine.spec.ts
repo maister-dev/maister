@@ -47,7 +47,11 @@ test("repo_read dirt quarantines the agent, comments the task, and refuses relau
 
   await page.goto(`/projects/${q.projectSlug}/tasks/${q.taskNumber}`);
   // D10: "Run agent" is a secondary action under "More".
-  await page.getByTestId("task-more-actions").locator("> summary").click();
+  await page
+    .getByRole("main")
+    .getByTestId("task-more-actions")
+    .locator("> summary")
+    .click();
   await page
     .getByRole("combobox", { name: "Agent to run" })
     .selectOption(fx.auditorAgentId);

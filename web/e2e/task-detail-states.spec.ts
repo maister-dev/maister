@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
 import { seedDefaultRunSession, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
-type Seeded = { number: number; runId: string };
+type Seeded = { number: number; runId: string; completedAt: string | null };
 
 async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
   const fx = loadFixtures().byKey.board;
@@ -17,7 +17,7 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
   const runId = `run-d10-${suffix}`;
   const number = (Number.parseInt(suffix, 16) % 900_000_000) + 100_000_000;
 
-  await withE2EDb(async (pool) => {
+  const completedAt = await withE2EDb(async (pool) => {
     await pool.query(
       `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage, attempt_number)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Backlog', 1)`,
@@ -33,12 +33,12 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
         status,
       ],
     );
-    if (status === "Backlog") return;
+    if (status === "Backlog") return null;
 
     await pool.query(
       `INSERT INTO runs (id, run_kind, task_id, project_id, flow_id, status, flow_version, flow_revision,
          started_at, ended_at, delivery_policy_snapshot)
-       VALUES ($1, 'flow', $2, $3, $4, 'Done', 'v1', 'rev-1', now() - interval '40 minutes', now(),
+       VALUES ($1, 'flow', $2, $3, $4, 'Done', 'v1', 'rev-1', now() - interval '40 minutes', now() - interval '4 minutes',
          '{"strategy":"pull_request","push":"on_success","trigger":"manual","targetBranch":"main"}'::jsonb)`,
       [runId, taskId, fx.projectId, fx.flowId],
     );
@@ -79,9 +79,10 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
         ],
       );
     }
-    await pool.query(
+    const completion = await pool.query<{ created_at: Date }>(
       `INSERT INTO task_activity (id, task_id, project_id, actor_type, event_kind, payload)
-       VALUES ($1, $2, $3, 'system', 'task_completed', $4::jsonb)`,
+       VALUES ($1, $2, $3, 'system', 'task_completed', $4::jsonb)
+       RETURNING created_at`,
       [
         `act-${runId}-done`,
         taskId,
@@ -89,15 +90,18 @@ async function seedTask(status: "Backlog" | "Done"): Promise<Seeded> {
         JSON.stringify({ runId, cause: "pr_merged", prNumber: 7 }),
       ],
     );
+
     await pool.query(
       `INSERT INTO task_external_sources (id, project_id, task_id, source_kind, source_instance, scope_key,
          external_id, external_key, origin, created_by_actor_type)
        VALUES ($1, $2, $3, 'github', 'github.com', 'acme/app', $4, '#7', 'import', 'system')`,
       [`src-${runId}`, fx.projectId, taskId, `I_${suffix}`],
     );
+
+    return completion.rows[0].created_at.toISOString();
   });
 
-  return { number, runId };
+  return { number, runId, completedAt };
 }
 
 test.describe("task detail around state and result (D10)", () => {
@@ -109,35 +113,37 @@ test.describe("task detail around state and result (D10)", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
-    const result = page.getByTestId("task-result-card");
+    const main = page.getByRole("main");
+
+    const result = main.getByTestId("task-result-card");
 
     await expect(result).toContainText("Resolving run");
     await expect(result.getByRole("link", { name: "#7" })).toHaveAttribute(
       "href",
       "https://github.com/acme/app/pull/7",
     );
-    await expect(page.getByTestId("task-primary-action")).toContainText(
+    await expect(main.getByTestId("task-primary-action")).toContainText(
       "View result",
     );
     // S2: a binding without a URL renders as text, never a link.
-    await expect(page.getByTestId("task-source-chip")).toHaveText("GitHub #7");
-    await expect(page.locator('a[data-testid="task-source-chip"]')).toHaveCount(
+    await expect(main.getByTestId("task-source-chip")).toHaveText("GitHub #7");
+    await expect(main.locator('a[data-testid="task-source-chip"]')).toHaveCount(
       0,
     );
     // One relaunch entry, behind More.
-    await page.getByTestId("task-more-actions").locator("> summary").click();
+    await main.getByTestId("task-more-actions").locator("> summary").click();
     await expect(
-      page.getByRole("button", { name: /Start a new attempt/i }),
+      main.getByRole("button", { name: /Start a new attempt/i }),
     ).toHaveCount(1);
     // A Done statement opens collapsed.
-    await expect(page.getByTestId("task-statement")).not.toHaveAttribute(
+    await expect(main.getByTestId("task-statement")).not.toHaveAttribute(
       "open",
       "",
     );
     // The diff mounts only once opened.
-    await expect(page.getByTestId("task-run-diff")).toHaveCount(0);
-    await page.getByTestId("task-run-diff-toggle").click();
-    await expect(page.getByTestId("task-run-diff")).toBeVisible();
+    await expect(main.getByTestId("task-run-diff")).toHaveCount(0);
+    await main.getByTestId("task-run-diff-toggle").click();
+    await expect(main.getByTestId("task-run-diff")).toBeVisible();
   });
 
   test("P-3: a launchable Backlog task offers Launch first and triage under More", async ({
@@ -148,14 +154,16 @@ test.describe("task detail around state and result (D10)", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
+    const main = page.getByRole("main");
+
     await expect(
-      page
+      main
         .getByTestId("task-primary-action")
         .getByRole("button", { name: /Launch/ }),
     ).toBeVisible();
-    await page.getByTestId("task-more-actions").locator("> summary").click();
+    await main.getByTestId("task-more-actions").locator("> summary").click();
     await expect(
-      page.getByRole("button", { name: "Send to triage" }),
+      main.getByRole("button", { name: "Send to triage" }),
     ).toBeVisible();
   });
 
@@ -167,7 +175,9 @@ test.describe("task detail around state and result (D10)", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
-    const group = page.locator('[data-timeline-group="run_launched"]');
+    const main = page.getByRole("main");
+
+    const group = main.locator('[data-timeline-group="run_launched"]');
 
     await expect(group).toHaveCount(1);
     await expect(group).toContainText("×3");
@@ -185,16 +195,24 @@ test.describe("task detail around state and result (D10)", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
-    const opener = page.getByTestId(
+    const main = page.getByRole("main");
+
+    const opener = main.getByTestId(
       `task-run-timing-${seeded.runId}-breakdown-open`,
     );
 
-    await opener.focus();
-    await page.keyboard.press("Enter");
     const breakdown = page.getByTestId(
       `task-run-timing-${seeded.runId}-breakdown`,
     );
 
+    // Exercise the hydrated control before sending a keyboard event.
+    await opener.click();
+    await expect(breakdown).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(breakdown).toBeHidden();
+    await expect(opener).toBeFocused();
+
+    await opener.press("Enter");
     await expect(breakdown).toContainText("Execution");
     await page.keyboard.press("Escape");
     await expect(breakdown).toHaveCount(0);
@@ -203,4 +221,129 @@ test.describe("task detail around state and result (D10)", () => {
     await opener.click();
     await expect(breakdown).toBeVisible();
   });
+});
+
+test.describe("T14 viewport, locale and theme (P-5)", () => {
+  const timezoneId = "America/Los_Angeles";
+
+  test.use({ hasTouch: true, timezoneId });
+
+  const sizes = [
+    { width: 1366, height: 768 },
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ];
+  const resultLabel = { en: "View result", ru: "Посмотреть результат" };
+
+  for (const viewport of sizes) {
+    for (const locale of ["en", "ru"] as const) {
+      for (const theme of ["light", "dark"] as const) {
+        test(`${viewport.width}×${viewport.height}, ${locale}, ${theme}`, async ({
+          page,
+          baseURL,
+        }) => {
+          if (!baseURL) throw new Error("T14 requires the Playwright base URL");
+          const fx = loadFixtures().byKey.board;
+          const seeded = await seedTask("Done");
+
+          await page.setViewportSize(viewport);
+          await page.context().addCookies([
+            { name: "NEXT_LOCALE", value: locale, url: baseURL },
+            { name: "theme", value: theme, url: baseURL },
+          ]);
+
+          const main = page.getByRole("main");
+          const root = page.locator("html");
+          const instant = main.locator(
+            `time[datetime="${seeded.completedAt}"]`,
+          );
+          const taskHref = `/projects/${fx.projectSlug}/tasks/${seeded.number}`;
+          const runsHref = `/runs?project=${fx.projectSlug}`;
+
+          await page.goto(taskHref);
+          await expect(root).toHaveAttribute("lang", locale);
+          await expect(root).toContainClass(theme);
+          await expect(main.getByTestId("task-primary-action")).toContainText(
+            resultLabel[locale],
+          );
+          await expect(instant).toHaveAttribute(
+            "title",
+            /\(America\/Los_Angeles\)$/,
+          );
+          const title = await instant.getAttribute("title");
+          const taskTiming = main.getByTestId(
+            `task-run-timing-${seeded.runId}`,
+          );
+          const duration = await taskTiming
+            .locator("xpath=../preceding-sibling::td[1]")
+            .innerText();
+          const execution = await taskTiming
+            .getByTestId(`task-run-timing-${seeded.runId}-execution`)
+            .innerText();
+          const tokenCell = taskTiming.locator(
+            "xpath=../following-sibling::td[1]",
+          );
+
+          await expect(tokenCell).toHaveText("—");
+          await expect(tokenCell).toHaveCSS("text-align", "right");
+          await expect(tokenCell).toHaveCSS(
+            "font-variant-numeric",
+            "tabular-nums",
+          );
+          const opener = taskTiming.getByRole("button");
+
+          if (viewport.width === 390) await opener.tap();
+          else await opener.press("Enter");
+          const breakdown = page.getByTestId(
+            `task-run-timing-${seeded.runId}-breakdown`,
+          );
+
+          await expect(breakdown).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(breakdown).toBeHidden();
+
+          for (const route of [taskHref, "/", "/activity", runsHref]) {
+            await page.goto(route);
+            const timestamp =
+              route === "/" || route === "/activity"
+                ? main
+                    .getByTestId("activity-row")
+                    .filter({ has: page.locator(`a[href="${taskHref}"]`) })
+                    .locator(`time[datetime="${seeded.completedAt}"]`)
+                : instant;
+
+            await expect(timestamp, route).toHaveAttribute("title", title!);
+            await expect
+              .poll(
+                () =>
+                  page.evaluate(
+                    () =>
+                      document.documentElement.scrollWidth -
+                      document.documentElement.clientWidth,
+                  ),
+                { message: route + " document overflow" },
+              )
+              .toBeLessThanOrEqual(1);
+          }
+
+          const runsTiming = main.getByTestId(`runs-timing-${seeded.runId}`);
+
+          await expect(
+            runsTiming.locator("xpath=../preceding-sibling::td[1]"),
+          ).toHaveText(duration);
+          await expect(
+            runsTiming.getByTestId(`runs-timing-${seeded.runId}-execution`),
+          ).toHaveText(execution);
+
+          if (viewport.width === 1366 && locale === "en" && theme === "light") {
+            await page
+              .getByRole("button", { name: "Switch language to RU" })
+              .click();
+            await expect(root).toHaveAttribute("lang", "ru");
+            await expect(instant).toHaveAttribute("title", /[а-я]/iu);
+          }
+        });
+      }
+    }
+  }
 });

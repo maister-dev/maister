@@ -18,6 +18,7 @@ import {
 
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
+let originalInboxConstraint: string;
 
 const projectId = randomUUID();
 const taskId = randomUUID();
@@ -30,6 +31,17 @@ async function refusal(query: ReturnType<typeof sql>): Promise<string> {
     return String(pgErrorOf(err)?.constraint ?? err);
   }
   throw new Error("expected the statement to be refused");
+}
+
+async function readInboxConstraint(): Promise<string> {
+  const { rows } = await db.execute<{ definition: string }>(sql`
+    SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+    WHERE conrelid = 'inbox_items'::regclass AND conname = 'inbox_items_event_kind_check'
+  `);
+
+  expect(rows).toHaveLength(1);
+
+  return rows[0].definition;
 }
 
 function insertSource(overrides: Record<string, string | null> = {}) {
@@ -80,11 +92,7 @@ beforeAll(async () => {
   `);
   await db.execute(sql`
     INSERT INTO inbox_items (id, recipient_type, recipient_id, project_id, task_id, event_kind, source_ref)
-    VALUES
-      (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'comment_added', '{"kind":"comment","id":"c"}'::jsonb),
-      (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'assignment_result_available', '{"kind":"activity","id":"a"}'::jsonb),
-      (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'stand_incident_opened', '{"kind":"stand","id":"s"}'::jsonb),
-      (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'stand_incident_resolved', '{"kind":"stand","id":"s"}'::jsonb)
+    VALUES (${randomUUID()}, 'user', 'u-1', ${projectId}, ${taskId}, 'comment_added', '{"kind":"comment","id":"c"}'::jsonb)
   `);
   await db.execute(sql`
     INSERT INTO domain_events (kind, company_id, payload, occurred_at)
@@ -93,6 +101,7 @@ beforeAll(async () => {
     CROSS JOIN (VALUES ('knowledge.record_changed'), ('specialist.assignment_changed')) AS kinds(kind)
   `);
 
+  originalInboxConstraint = await readInboxConstraint();
   await applyMainMigration(db, "0340_task_external_sources");
   await applyMainMigration(db, "0341_task_activity_source_completion_kinds");
   await applyMainMigration(db, "0342_domain_event_run_pr_merged");
@@ -115,9 +124,26 @@ describe("migrations 0340–0342 — task external sources and activity kinds", 
     expect(counts.rows[0]).toEqual({
       tasks: 2,
       activity: 1,
-      inbox: 4,
+      inbox: 1,
       sources: 0,
     });
+  });
+
+  it("extends the existing inbox allowlist while retaining company kinds", async () => {
+    for (const kind of [
+      "assignment_result_available",
+      "stand_incident_opened",
+      "stand_incident_resolved",
+    ]) {
+      expect(originalInboxConstraint).toContain(`'${kind}'::text`);
+    }
+
+    expect(await readInboxConstraint()).toBe(
+      originalInboxConstraint.replace(
+        "'stand_incident_resolved'::text]",
+        "'stand_incident_resolved'::text, 'delivery_completion_not_applied'::text]",
+      ),
+    );
   });
 
   it.each([

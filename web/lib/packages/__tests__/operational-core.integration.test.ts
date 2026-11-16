@@ -204,7 +204,7 @@ describe("operational core package through real install/attach boundaries", () =
     expect(skill).toContain("created=1");
     expect(skill).toContain("HTTP 401/403");
     expect(skill).toContain("reconcile before any retry");
-    // S6 (ADR-202): the installed instructions look up and bind structured
+    // S6 (ADR-206): the installed instructions look up and bind structured
     // source identity, reuse on source_already_bound, and keep the marker
     // fallback for platforms without the source API.
     for (const fragment of [

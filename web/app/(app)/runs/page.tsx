@@ -115,7 +115,7 @@ export default async function RunsPage({
 
       <form
         action="/runs"
-        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] md:grid-cols-[repeat(4,minmax(140px,1fr))] xl:grid-cols-[repeat(8,minmax(120px,1fr))_auto]"
+        className="grid gap-3 rounded-[14px] border border-line bg-paper px-4 py-4 shadow-[var(--shadow-sm)] sm:grid-cols-2 lg:grid-cols-4"
       >
         <FilterSelect
           label={t("filters.project")}
@@ -201,7 +201,7 @@ export default async function RunsPage({
           type="date"
           value={filters.dateTo ?? ""}
         />
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-4">
           <button
             className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-amber-line bg-amber-soft px-3 font-mono text-[11px] font-semibold text-amber transition-colors hover:border-amber hover:bg-paper"
             type="submit"
@@ -398,6 +398,11 @@ function RunRow({
                 timeStyle: "short",
               }).format(row.cutoverFailedAt)}
             </time>
+          </div>
+        ) : null}
+        {row.taskCompletedAt ? (
+          <div className="mt-2 font-mono text-[10px] text-mute">
+            {t("table.taskCompleted")} · <LocalTime iso={row.taskCompletedAt} />
           </div>
         ) : null}
       </td>

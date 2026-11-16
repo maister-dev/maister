@@ -8,7 +8,7 @@ export type RunTimingEvidence = {
   startedAt: number;
   endedAt: number | null;
   now: number;
-  // Own execution: non-human node attempts (flow) or agent turns (agent/scratch).
+  // Own execution: non-human node attempts (flow) or accepted prompts (agent/scratch).
   execution: Interval[];
   // Child Runs' execution; counts only inside this Run's window.
   childExecution: Interval[];

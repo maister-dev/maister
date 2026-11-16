@@ -2,6 +2,9 @@ import type { TaskSource } from "./model";
 
 import { parseHost } from "@/lib/repo-source";
 
+const GITHUB_REPOSITORY_SCOPE =
+  /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\/(?!(?:\.|\.\.)$)[A-Za-z0-9_.-]+$/u;
+
 // ADR-207: a generated PR body closes the bound GitHub issue only when GitHub
 // itself can resolve the reference — a `github` binding on the project's own
 // GitHub host with a numeric key — and only for a Run that resolves its task.
@@ -20,7 +23,9 @@ export function githubClosingReference(args: {
 
   const issueNumber = /^#([1-9][0-9]*)$/.exec(source.externalKey ?? "")?.[1];
 
-  return issueNumber ? `Closes ${source.scope}#${issueNumber}` : null;
+  return issueNumber && GITHUB_REPOSITORY_SCOPE.test(source.scope)
+    ? `Closes ${source.scope}#${issueNumber}`
+    : null;
 }
 
 export function projectGithubHost(project: {

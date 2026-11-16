@@ -69,7 +69,9 @@ flowchart TD
    project, status, source, started time, duration, runner, and token total.
    (Implemented — ADR-208) The single duration column becomes **Duration** and
    **Execution** ([run timing](../../system-analytics/runs.md#run-timing)),
-   right-aligned with `tabular-nums`; started time renders through `<LocalTime>`.
+   right-aligned with `tabular-nums`. Start time and the task completion time
+   appear in the viewer's timezone. The completion time appears below the run
+   status when an activity event names that run.
 4. **Pagination** - page-based previous/next controls, with page number in the
    URL.
 
@@ -78,7 +80,8 @@ flowchart TD
 - `requireActiveSession()` gates the page.
 - `listRunsPage()` reads `runs`, `projects`, optional `tasks`, `flows`,
   `workspaces`, `run_cost_rollups`, and the schedule whose `last_run_id`
-  matches the run.
+  matches the run. Task completion time comes from the latest matching
+  `task_completed` event for that task, project, and run.
 - **(Implemented, ADR-178)** The `bucket` filter reuses the Observatory's shared
   `runOutcomeBucketSql` fragment over the run's latest `workspaces` row, so a
   count shown there equals `totalRows` here for the same params. The lateral is
