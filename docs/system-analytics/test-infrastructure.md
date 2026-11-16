@@ -609,39 +609,40 @@ entire expensive web A/B inventory. The deployment image remains on Node 24;
 local results do not constitute hosted or image qualification.
 
 The runner passes exactly its selected file list to Vitest and
-`validateLaneReport`; that validator rejects absent, duplicate, unexpected,
-empty, skipped and failed suites/cases. `--shard 1/2` and `--shard 2/2` remain web-only. The isolation split uses
-`--part 1/2` and `--part 2/2`, each serial on its own VM; the local full
-`isolation` invocation still selects all seven suites. No case is removed.
+`validateLaneReport`. The validator rejects absent, duplicate, unexpected,
+empty, skipped and failed suites or cases. The `--shard` selector applies to
+the Web lane. macOS isolation runs `--part 1/3`, `--part 2/3` and `--part 3/3`
+serially on separate VMs. A full macOS `isolation` run selects all seven suites.
 
 The macOS split selects whole owning suites in their original order:
 
 | Part | Owning suites | Required cases |
 | --- | --- | --- |
-| 1 | process cleanup; partitions | 13 + 6 = 19 |
-| 2 | process death; isolation; durable-worker boot; durable-worker concurrency; scratch dispatch | 6 + 4 + 9 + 3 + 10 = 32 |
+| 1 | Process cleanup, partitions | 14 + 6 = 20 |
+| 2 | Process death, isolation, durable-worker boot, durable-worker concurrency | 6 + 4 + 9 + 3 = 22 |
+| 3 | Scratch dispatch | 10 |
 
-Both matrix jobs run even if the other fails. `run-isolation-ci-stage.mjs`
+All matrix jobs run independently. `run-isolation-ci-stage.mjs`
 executes the selected stage through `runStageAbLane`, validates its exact case
 names and writes an atomic receipt only after strict invocation cleanup returns
 success. The receipt binds the outer reporter hash, invocation, source SHA,
 repository/run/attempt, actual platform/architecture/Node, runner image,
 serial concurrency, duration and budget. Each report artifact contains fixed
 `preflight/` and `part/` paths; recursive nested cleanup-control reporters are
-retained only as diagnostics. Artifact names include `part-1-of-2` or
-`part-2-of-2` to prevent upload collisions. A separate `raw-reports` artifact
+retained only as diagnostics. Artifact names include their part number to
+prevent upload collisions. A separate `raw-reports` artifact
 uploads existing direct outer reporters before runtime teardown, including
 failed reports that cannot receive a success receipt. It never feeds the gate.
 
-`execution-isolation-complete` requires both entire macOS jobs to succeed,
-including runtime cleanup and all uploads. It downloads both validated report artifacts
-and rejects missing or duplicate stages, altered hashes, wrong source/run,
+`execution-isolation-complete` requires all three macOS jobs to succeed,
+including runtime cleanup and all uploads. It downloads the three validated
+report artifacts and rejects missing or duplicate stages, altered hashes, wrong source/run,
 non-Intel or wrong-Node evidence, failures/skips, cleanup failure, or incomplete
-case-name sets. Its `execution-isolation-combined` artifact records both separate
-preflights and the exact disjoint seven-suite/51-case union. Failed aggregation
+case-name sets. Its `execution-isolation-combined` artifact records three separate
+preflights and the exact disjoint seven-suite/52-case union. Failed aggregation
 retains a failed receipt; a green part cannot substitute for a missing part.
 The actual hosted duration and remaining headroom still require inspection of
-both jobs and their timing diagnostics after owner push.
+all three jobs and their timing diagnostics after owner push.
 
 The current inventory contains the 44 R9 web files plus two harness owners,
 partitioned into 23/23. The proxy cancellation/refusal owner and reaper lifetime
@@ -706,11 +707,11 @@ still fails the job. A syntax
 check or local ARM run is not hosted proof.
 
 S5.2 acceptance requires four complete web shard reports, both runtime and
-supervisor legs, and both green macOS isolation parts plus their combined gate on the same
+supervisor legs, and all three green macOS isolation parts plus their combined gate on the same
 pushed commit. Each part must supply its separate preflight and outer suite
-report; together they must contain exactly all seven suites and 51 required
+report; together they must contain exactly all seven suites and 52 required
 cases, including the original six suites/40 cases, ten dispatch controls and
-the R18 accepted-launch worker restart control.
+the R18 accepted-launch worker restart control and the Darwin helper-retirement control.
 Record the run URL, source SHA, runner image/architecture, artifact identities,
 measured total duration (below 60 minutes) and remaining headroom before
 marking S5.2 complete.
@@ -720,8 +721,8 @@ not qualify a one-worker hosted leg.
 R9 adds `lib/scratch-runs/__tests__/dispatch-window.integration.test.ts` to
 this serial manifest with ten required case names: seven S1 restart cuts, a
 legacy unknown-delivery refusal, a live-dispatcher race and the S3 held-exit
-transport control. The six original suites and 40 cases are retained; the main
-slice now requires 51 cases, including the later R18 worker restart control.
+transport control. The seven Darwin suites include the original 40 cases, ten
+dispatch controls, the R18 worker restart and the native helper-retirement control.
 Canonical ingestion fences the late old frame as
 `stale_epoch`. The already-read stale terminal is covered separately by the
 transactional consumer suite in the web lane.
@@ -799,18 +800,21 @@ requirement to its RED/GREEN/falsification and phase gate.
 P4 installs its scoped domain-write audit before holding the first operator
 `POST /sessions/{id}/checkpoint` response after host commit. A second ordinary
 node interrupt parks the observed attempt; answering with `restart_node` /
-`workspacePolicy=keep` mints N+1. Hold N+1's capability reservations at
-`POST /runtime-objects` before forwarding. The new assignment, Running attempt,
-enforcement snapshot and resolved prompt must already be committed, but its
-incarnation must not exist. Capability publication runs outside the protected
-database transactions: the barrier must neither hold a run-row lock nor permit
-later successor setup to contaminate the audit. Drain the old prompt's
-superseded application, clear preceding audit entries and snapshot current
-authority. Release the original checkpoint ACK while its unchanged 30-second
-request is alive. Require the original web handler's 409 CONFLICT, unchanged
-snapshot and zero current run/session/attempt writes. Old command receipt
-settlement is permitted. Release capability publication within its unchanged
-request budget, then witness and release N+1's `POST /sessions`, prove the exact
+`workspacePolicy=keep` mints N+1. Release the original checkpoint ACK within
+its unchanged 30-second wire deadline once N+1 is the active assignment.
+A row-scoped barrier on the original command receipt then holds its settlement
+without locking the Run or the successor attempt. Confirm the old prompt's
+application is superseded and N+1 has a Running attempt. Clear preceding audit
+entries, snapshot current authority and release the receipt settlement. Require
+the original web handler's 409 CONFLICT, unchanged snapshot and zero current
+run/session/attempt writes.
+
+Hold N+1's capability reservations at `POST /runtime-objects` before
+forwarding. This keeps later successor setup outside the stale-handler audit
+without holding the Run row. Check that the enforcement snapshot and resolved
+prompt are committed before forwarding, with no successor incarnation yet.
+Release capability publication within its request budget, then witness and
+release N+1's `POST /sessions`, prove the exact
 successor command-target incarnation becomes active, and release its held
 prompt for exactly-once completion. Session startup and projection are outside
 the stale HTTP response window; the stale-handler audit does not claim to run
@@ -962,7 +966,7 @@ sequenceDiagram
 | LNX-07 | Parent death during startup, readiness or an active probe closes the namespace, including detached/TERM-resistant descendants, before exit-sweep containment | Outer watchdog and kernel parent/PID-reaper chain; LI-parent/LI-kill |
 | LNX-08 | Restart cannot clear or widen its frozen isolation policy; probes use that policy, explicit invocation, registered child, bounded typed output and successful app exit | RealWeb restart and owned probe seam; I3; LI-refusal/LI-parent |
 | LNX-09 | Every exit/cancellation attempts all owned reclaimers; any survivor discovered before containment fails; finalization refuses live/reused/unreadable runners or replaced authority | releaseInvocation; O1; O2-runner and Linux finalizer crash-window controls |
-| LNX-10 | Discovery, mandatory files and exact titles agree: Darwin 7/51, Linux 8/56, independent preflight 1; no pending/skipped/duplicate/extra cases | Platform manifest and validateLaneReport; existing report-rejection controls |
+| LNX-10 | Discovery, mandatory files and exact titles agree on Darwin 7/52 and Linux 8/56, with a separate preflight. Pending, skipped, duplicate and extra cases fail the report. | Platform manifest and validateLaneReport; existing report-rejection controls |
 | LNX-11 | Removing enforcement produces a reached private read and a failed negative assertion; restored full source passes with zero leaks | I1 falsification; complete Linux/Darwin lane reports |
 | LNX-12 | Ubuntu 24.04 amd64 at both exact Nodes qualifies locally before any prospective hosting amendment; hosted evidence is exact owner-pushed SHA and independently validated artifacts within fixed budgets | Local qualification gate, owner-push checkpoint and hosted report/timing audit |
 
@@ -1031,13 +1035,13 @@ never contain secrets, environment dumps, sentinel/SQLite/object bytes.
 
 The historical qualified baseline has seven full suites/50 cases plus one
 separately invoked preflight. The current manifest additionally requires the
-R18 accepted-launch restart control, making 51 Darwin cases. Linux adds only the
-five distinct controls below; Darwin discovery excludes that new file. The
+R18 accepted-launch restart control on both platforms. Darwin requires the
+native helper-retirement case. Linux adds the five controls below. The
 runner uses Vitest project `integration`; no placeholder/todo cases are active.
 All five Linux controls are implemented and pass their native owning suite,
 including nested mounts, invalid restart, acquisition cancellation and process
-lifecycle cuts. The full selector requires Linux56 plus separate preflight1;
-Darwin requires51 plus separate preflight1 and its19/22/10 CI parts. Linux parts
+lifecycle cuts. The full selector requires 56 Linux cases and 52 Darwin cases,
+each with a separate preflight. Darwin CI runs parts of 20, 22 and 10 cases. Linux parts
 and unknown platforms refuse selection. The
 [final native qualification](../../.ai-factory/plans/s53a-linux-isolation.md#final-native-qualification)
 binds the corrective code to its whole-code SHA256 and exact reports. Native
@@ -1148,7 +1152,7 @@ pre-containment leak observations.
 | Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.22.3 and 26.13.1, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 56 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
 | ARM64 container development | Record image digest/host kernel/architecture/UID mapping/seccomp/capabilities/nested namespace policy; nonroot apps, no blanket privileged mode/host PID/host root bind | Development only; cannot close amd64 or hosted gates |
 | Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.22.3, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 56 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
-| Darwin regression | Existing sandbox-exec and separate preflight/current 51, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
+| Darwin regression | Existing sandbox-exec and separate preflight with 52 required cases, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
 
 Validation child processes use umask `0022`, matching the existing atomic-file
 `0644` acceptance assertion. Record the inherited parent mask and apply this
@@ -1351,7 +1355,7 @@ cannot establish a fault window. Every barrier must be resolved in teardown.
 | **P1: ACK dropped after host commit → web SIGKILL + restart → exactly one result, no duplicate session.prompt** | B1 reached; drop ACK and observe downstream close with no headers/completed response; SIGKILL web PGID after committed acceptance, restart same DB/roots through production boot; release target event hold to settle. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P1 | Original immutable command/request, exactly one host ACP effect and one domain result/application. RED target: second `session.prompt` or lost result. Preserve AT-07's parent-plan sentence: “Unknown remains recoverable through web restart; reconnect yields one correct result and no duplicate prompt”. |
 | **P2: receipts unavailable beyond the 5× budget, then evidence resumes** | Persistent ACK loss plus route-specific hold of `GET /commands/{id}` across dispatch retries; hold this command's accepted **and** terminal SSE evidence so neither can acknowledge/settle it early. Keep health, unrelated commands and unrelated SSE flowing. Await actual lookup exhaustion and persisted reconciliation state before release. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P2 | `transport_state=unknown` during uncertainty; exhausted command has `state=queued`, `transport_state=reconciliation_required`, never fabricated failure; release yields agreeing receipt/canonical evidence and one application. Five receipt attempts are **per dispatch**, separate from the current three-dispatch prompt budget. Record both counters and actual deadlines; an arrival is not exhaustion. Sibling health/receipt control remains available. RED target: fabricated failure or unknown stuck after evidence returns. |
 | **P3: cut SSE mid-replay and mid-live** (two named subcases) | Record high-water at stream open; cut both upstream and downstream after selected frame or selected partial frame. Replay frame ≤ frozen high-water; live frame > it. Reconnect from last fully committed exclusive cursor. Explicitly inject one previously forwarded complete frame for the duplicate subcontrol. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P3 replay and P3 live | No missing canonical sequence, partial frame never ingested, duplicate classified as `duplicate` by production ingest (log evidence — `execution_events.ingest_disposition` carries no `duplicate` value) and durably proved by the absence of a second row for that sequence, without another effect, monotone committed/consumer watermarks and advanced `last_seen_at`. A clean exclusive reconnect alone is not duplicate evidence. RED target: gap, replayed effect or unadvanced watermark. Budget each subcase ≥90 s, accounting for 30 s claims and 250 ms reconnect floor; waits prove rows/frames, not log timing. |
-| **P4: delayed old response arrives after successor epoch** | Hold epoch N response on a still-live downstream request; prove N+1 committed via ordinary operator/production path; capture successor authority/domain fields before release. Use B2 to distinguish canonical arrival from owner application where needed. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P4 | Prove the late body reaches its intended handler before the unchanged request deadline, not merely a write to an aborted socket. N settles fenced/historically only; no stale-authored change to N+1 assignment/session/incarnation/domain owner fields; successor produces its own result once. RED target: current-owner write from N evidence (EVT-05 / ADR-167 D4). |
+| **P4: delayed old response arrives after successor epoch** | Hold epoch N response on a still-live downstream request and deliver it after N+1 commits via the ordinary operator path. Snapshot successor authority and domain fields before releasing the scoped barrier on N's receipt settlement. | isolation; `web/test-support/__tests__/execution-ab-partitions.integration.test.ts`, P4 | Prove the late body reaches its intended handler before the request deadline. N settles historically and the old handler returns 409 without writing current owner fields. The successor produces its own result once. RED target is a current-owner write from N evidence (EVT-05 / ADR-167 D4). |
 
 | Death window / test | Barrier or evidence trigger | Lane / exact file | Sufficiency and mandatory distinguishing observation |
 | --- | --- | --- | --- |
@@ -1443,7 +1447,7 @@ AT-17. Browser half stays open under S5.3.
 - [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (19/22/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (20/22/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

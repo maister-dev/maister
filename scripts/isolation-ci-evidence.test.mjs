@@ -5,16 +5,16 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { aggregateIsolationEvidence, evidenceSha256, finishIsolationEvidence, isolationCiIdentity, isolationReceiptSchema, isolationStageFiles, validateIsolationReceipt } from "./isolation-ci-evidence.mjs";
-import { requiredIsolationCases } from "./run-stage-ab-tests.mjs";
+import { isolationCaseTitles } from "./run-stage-ab-tests.mjs";
 
 const identity = { sourceSha: "a".repeat(40), repository: "maister-dev/maister", runId: "123", runAttempt: "1" };
 
 function stageEvidence(stage, part) {
   const files = isolationStageFiles(stage, part);
-  const cases = files.reduce((total, file) => total + requiredIsolationCases[file].length, 0);
+  const cases = files.flatMap((file) => isolationCaseTitles(file, "darwin")).length;
   const report = {
     success: true, numTotalTests: cases, numPassedTests: cases, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0,
-    testResults: files.map((file) => ({ name: `/repo/web/${file}`, status: "passed", assertionResults: requiredIsolationCases[file].map((title) => ({ title, status: "passed" })) })),
+    testResults: files.map((file) => ({ name: `/repo/web/${file}`, status: "passed", assertionResults: isolationCaseTitles(file, "darwin").map((title) => ({ title, status: "passed" })) })),
   };
   const bytes = Buffer.from(JSON.stringify(report));
   const receipt = {
@@ -47,7 +47,7 @@ async function completeEvidence(context) {
   return directory;
 }
 
-test("combined isolation validates three independent preflights and exactly all 51 required cases", async (context) => {
+test("combined isolation validates three independent preflights and exactly all 52 required cases", async (context) => {
   const directory = await completeEvidence(context);
   const nested = join(directory, "part-1", "maister-ab-isolation-negative");
 
@@ -57,10 +57,10 @@ test("combined isolation validates three independent preflights and exactly all 
 
   assert.equal(combined.outcome, "passed");
   assert.equal(combined.files.length, 7);
-  assert.equal(combined.cases, 51);
+  assert.equal(combined.cases, 52);
   assert.equal(combined.preflights, 3);
   assert.equal(combined.stages.length, 6);
-  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [19, 22, 10]);
+  assert.deepEqual(combined.stages.filter((row) => row.stage === "part").map((row) => row.cases), [20, 22, 10]);
   assert.deepEqual(JSON.parse(await readFile(join(directory, "combined.json"), "utf8")), combined);
 });
 

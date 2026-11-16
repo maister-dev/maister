@@ -1314,17 +1314,32 @@ describe("S5.2 invocation process ownership", () => {
     }
   }, 45_000);
 
-  it.skipIf(process.platform !== "darwin")(
-    "O-signal: rereads a retiring native helper without signalling an unverified member",
-    async () => {
+  if (process.platform === "darwin")
+    it("O-signal: rereads a retiring native helper without signalling an unverified member", async () => {
       const directory = await mkdtemp(
         path.join(tmpdir(), "s52-retiring-helper-"),
       );
       const invocation = await createInvocation(directory);
-      const fixture = `const {spawn}=require('node:child_process');
-const helper=spawn('/usr/sbin/sysctl',['-n','kern.bootsessionuuid'],{stdio:'ignore'});
+      // Use an explicitly untagged child and witness its stop before reporting
+      // readiness. Its parent remains tagged and owns the retirement handle.
+      const fixture = `const {execFile,spawn}=require('node:child_process');
+const {promisify}=require('node:util');
+const {setTimeout}=require('node:timers/promises');
+const inspect=promisify(execFile);
+const helper=spawn('/bin/sh',['-c','kill -STOP "$$"'],{env:{},stdio:'ignore'});
 const exited=new Promise(resolve=>helper.once('exit',resolve));
-const ready=new Promise(resolve=>helper.once('spawn',()=>{helper.kill('SIGSTOP');process.stdout.write(JSON.stringify({helperPid:helper.pid})+'\\n');resolve()}));
+const ready=(async()=>{
+  const deadline=Date.now()+3000;
+  while(Date.now()<deadline){
+    const {stdout}=await inspect('/bin/ps',['-o','state=','-p',String(helper.pid)]);
+    if(stdout.trim().startsWith('T')){
+      process.stdout.write(JSON.stringify({helperPid:helper.pid})+'\\n');
+      return;
+    }
+    await setTimeout(10);
+  }
+  throw new Error('Native helper did not stop');
+})();
 const retire=async()=>{await ready;if(helper.exitCode===null&&helper.signalCode===null)helper.kill('SIGCONT');await exited};
 process.on('message',async message=>{if(message?.kind!=='retire-helper')throw new Error('Unknown helper control');await retire();process.send({kind:'helper-retired'})});
 process.once('disconnect',async()=>{await retire();process.exit(97)});
@@ -1470,9 +1485,7 @@ setInterval(()=>{},1000);`;
             "Retiring helper control cleanup failed",
           );
       }
-    },
-    30_000,
-  );
+    }, 30_000);
 
   it("O-identity: exact environment tags exclude argv decoys and sibling invocations, and PID reuse refuses ownership", async () => {
     const directory = await mkdtemp(
