@@ -831,15 +831,17 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
   let terminalReleased = false;
   let oldTerminal: FaultBarrier | undefined;
   let nextReleased = false;
-  const initialPrompt = fixture.proxy.arm(
-    {
-      caseId: "s3-initial-prompt",
-      method: "POST",
-      path: /^\/sessions\/[^/]+\/prompts$/,
-      assignmentEpoch: 1,
+  const initialDispatch = await fixture.holdWrite({
+    caseId: "s3-initial-prompt-dispatch",
+    table: "execution_commands",
+    matches: {
+      kind: "session.prompt",
+      owner_kind: "scratch_message",
+      assignment_epoch: "1",
+      state: "delivering",
     },
-    "hold-request",
-  );
+  });
+  let initialReached = false;
   let initialReleased = false;
   const launching = fixture
     .launchScratch(
@@ -849,25 +851,30 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
 
   try {
     const initialDeadline = Date.now() + 60_000;
-    const initial = await initialPrompt.awaitReached(60_000);
 
-    // Start the short permission lifetime only after session creation is
-    // durably projected. This scenario tests the stale exit, not create lag.
-    await poll(
+    await initialDispatch.awaitReached(60_000);
+    initialReached = true;
+
+    // Let session activation finish before sending the prompt, so neither
+    // its transport deadline nor the permission timer runs during activation.
+    const initial = await poll(
       async () => {
-        const result = await fixture!.database.pool.query<{ active: boolean }>(
-          `SELECT i.state = 'active' AS active
+        const result = await fixture!.database.pool.query<{ id: string }>(
+          `SELECT c.id
            FROM execution_commands c
            JOIN run_session_incarnations i ON i.id = c.owner_ref->>'incarnationId'
-           WHERE c.id = $1`,
-          [initial.commandId],
+           WHERE c.kind = 'session.prompt' AND c.owner_kind = 'scratch_message'
+             AND c.assignment_epoch = 1 AND i.state = 'active'`,
         );
 
-        return result.rows[0]?.active ? true : null;
+        expect(result.rows.length).toBeLessThanOrEqual(1);
+
+        return result.rows[0] ?? null;
       },
       initialDeadline - Date.now(),
       "canonical session creation before the permission lifetime starts",
     );
+
     // Install the terminal barrier before the host starts its permission
     // deadline. Persistence of the request can lag that deadline on CI.
     oldTerminal = fixture.proxy.arm(
@@ -877,11 +884,11 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
         path: /^\/runtime-events$/,
         eventType: "session.command",
         commandPhases: ["completed", "rejected"],
-        commandId: initial.commandId!,
+        commandId: initial.id,
       },
       "hold-events",
     );
-    initialPrompt.release();
+    await initialDispatch.release();
     initialReleased = true;
     const request = await poll(
       async () => {
@@ -890,7 +897,7 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
           id: string;
         }>(
           "SELECT h.run_id,h.id FROM hitl_requests h WHERE h.run_id=(SELECT run_id FROM execution_commands WHERE id=$1) AND h.kind='permission' AND h.responded_at IS NULL AND h.superseded_at IS NULL",
-          [initial.commandId],
+          [initial.id],
         );
 
         return result.rows[0] ?? null;
@@ -972,8 +979,7 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     );
   } finally {
     await fixture.web.kill("SIGKILL");
-    if (!initialReleased && initialPrompt.observations.length)
-      initialPrompt.ownedProcessKilled();
+    if (initialReached && !initialReleased) await initialDispatch.release();
     if (!oldReleased && oldExit.observations.length)
       oldExit.ownedProcessKilled();
     if (!terminalReleased && oldTerminal?.observations.length)

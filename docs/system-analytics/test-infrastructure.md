@@ -850,11 +850,11 @@ evidence fails the control; the original domain, exactly-once, lease and cleanup
 assertions remain in force. This terminal barrier is separate from the existing
 pre-output prompt barrier used by steering and dispatch controls.
 
-S3's late-exit control holds the initial epoch's prompt request before forwarding
-and starts its unchanged permission deadline only after that boundary releases.
-The permission query is scoped to the witnessed command's run. Worktree and
-session creation consume the setup deadline, not the permission observation
-deadline; the host permission cap and stale-exit assertions remain unchanged.
+S3's late-exit control holds the initial prompt's delivery claim in its command
+row until canonical projection activates the session. It arms the terminal
+event barrier for that exact command before releasing the claim. The transport
+and host permission deadlines start once dispatch proceeds. The permission
+query is scoped to the command's run.
 
 ### Linux production fixture isolation (Designed)
 
