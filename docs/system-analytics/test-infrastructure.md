@@ -850,11 +850,12 @@ evidence fails the control; the original domain, exactly-once, lease and cleanup
 assertions remain in force. This terminal barrier is separate from the existing
 pre-output prompt barrier used by steering and dispatch controls.
 
-S3's late-exit control holds the initial prompt's delivery claim in its command
-row until canonical projection activates the session. It arms the terminal
-event barrier for that exact command before releasing the claim. The transport
-and host permission deadlines start once dispatch proceeds. The permission
-query is scoped to the command's run.
+S3's late-exit control lets the host admit the original prompt. The controlled
+ACP adapter waits before requesting permission while canonical projection
+activates the session. The test arms the terminal event barrier for that
+command, then releases its verified adapter and observes permission on the
+command's run. The successor also receives its prompt and holds completion
+until the old exit is fenced and the successor is proved to be the current owner.
 
 ### Linux production fixture isolation (Designed)
 
