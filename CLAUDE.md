@@ -565,9 +565,10 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   only. → `social-board.md`
 - **Domain-event outbox / shared trigger bus** (M32, ADR-086):
   `domain_events` append-only fact log emitted in the SAME transaction as
-  the domain write (11-kind taxonomy: task.created/comment_added/
-  triage_requeued/clarification_answered, run.done/failed/crashed/abandoned/
-  review/escalated, gate.failed;
+  the domain write (closed taxonomy owned by
+  `web/lib/domain-events/taxonomy.ts`: `task.*`, `run.*` including
+  `run.pr_merged`, `gate.failed`, and the knowledge/specialist/agent change
+  kinds;
   polymorphic actor, xid8 commit horizon), per-consumer cursor dispatcher
   (`domain_event_dispatch` singleton on the M24 clock, CAS lease + fenced
   advance, at-least-once) with a permanent `noop` consumer. Webhooks
