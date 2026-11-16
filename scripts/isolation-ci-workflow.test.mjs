@@ -44,6 +44,7 @@ test("isolation CI uses three independent serial VM parts and a failure-closed c
   assert.match(workflow.concurrency.group, /github.event.pull_request.number/u);
   assert.equal(job["runs-on"], "macos-15-intel");
   assert.equal(job["timeout-minutes"], 60);
+  assert.equal(job.env.MAISTER_PROJECTION_CONCURRENCY, "1");
   assert.deepEqual(job.strategy, { "fail-fast": false, matrix: { part: [1, 2, 3] } });
   assert.match(job.name, /matrix\.part/u);
   assert(job.steps.some((step) => step.run?.includes("run-isolation-ci-stage.mjs preflight ${{ matrix.part }}")));

@@ -258,6 +258,8 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=4096 --dns-result-order=ipv4first
       MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
+      # Keep Web's projection and recovery slots serial on the shared Intel VM.
+      MAISTER_PROJECTION_CONCURRENCY: "1"
     steps:
       - name: Record runner and evidence location
         shell: bash

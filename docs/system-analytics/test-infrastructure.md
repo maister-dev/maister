@@ -613,6 +613,8 @@ The runner passes exactly its selected file list to Vitest and
 empty, skipped and failed suites or cases. The `--shard` selector applies to
 the Web lane. macOS isolation runs `--part 1/3`, `--part 2/3` and `--part 3/3`
 serially on separate VMs. A full macOS `isolation` run selects all seven suites.
+The hosted Intel profile sets `MAISTER_PROJECTION_CONCURRENCY=1` to reduce
+background use of the shared database pool during foreground calls.
 
 The macOS split selects whole owning suites in their original order:
 
