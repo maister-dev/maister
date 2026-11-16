@@ -253,7 +253,7 @@ project:
   public_branch_template: feature/{task_key}-{slug} # ADR-181; the default
   default_runner: inherit # or a platform ACP runner id
 promotion:
-  mode: pull_request # local_merge | pull_request
+  mode: pull_request # local_merge | rebase_merge | pull_request
   remote: origin # for pull_request mode
 capabilities:
   mcps:

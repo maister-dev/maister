@@ -25,12 +25,13 @@ depend on your global role and project permissions.
 | Librarian (top navigation) | Open your personal conversation to find, create, clarify, launch, and follow work. |
 | Projects | Open the portfolio, register repositories, and enter a project workspace. |
 | Inbox | Handle permissions, forms, reviews, escalations, assignments, and task clarifications addressed to you. Fully automated transitions stay outside the Inbox. |
+| Knowledge | Search [company and project knowledge](/guides/company-brain), inspect its evidence, and review proposals. Results include only the records you can currently read. |
 | Runs | Inspect Flow, scratch, and platform-agent executions across the projects you can access. |
 | Studio | Browse package sources, inspect installed packages, fork them, and edit local packages. |
 | Agents | Inspect the platform-agent catalog and synchronize package-defined agents. |
 | MCPs | Manage the installation-wide MCP server catalog and its trust state. |
 | Observatory | Analyze delivery, intervention, evidence, duration, and token-use signals across projects. |
-| Settings | Configure execution hosts, ACP runners, provider routes, webhooks, and Project Brain providers. |
+| Settings | Configure execution hosts, ACP runners, provider routes, webhooks, Project Brain providers, company access, and company specialists. |
 | Users and Scheduler | Administer accounts and the background clock. These areas are visible only to global administrators. |
 | Account | Change your profile and password, and issue personal API tokens. |
 
@@ -44,7 +45,10 @@ or follow the link to review. Promotion takes place on the Run page.
 **Work** (`/work`) lists tasks across your visible projects, including tasks
 that have never run. Filter and group by project, stage, or who is waiting on
 you. Rows link to the task, Run, or blocker that owns the next action. Filters
-are shareable URLs; named saved views stay in the current browser.
+are shareable URLs; named saved views stay in the current browser. The
+**Specialist assignments** link opens work
+[assigned to company specialists](/guides/stand-maintenance), with or without
+a project.
 
 **Activity** (`/activity`) shows what changed chronologically. Reading activity
 and marking it read do not resolve an Inbox decision. **Needs you** counts

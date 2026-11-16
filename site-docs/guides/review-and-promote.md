@@ -1,6 +1,6 @@
 ---
 title: "Review and promote a Run"
-description: "Inspect changes and evidence, request rework when needed, then promote through a pull request or local merge."
+description: "Inspect changes and evidence, request rework when needed, then deliver through a merge, a pull request, or a published branch."
 ---
 
 ## 1. Confirm the target
@@ -24,15 +24,30 @@ agent node is not enough when blocking evidence is missing or stale.
 
 ## 4. Promote
 
-The project chooses one promotion mode:
+The project's delivery policy sets the default strategy. A launch can choose
+another one, and the Run keeps the strategy it was launched with.
 
-| Mode | Result | Host requirement |
+| Strategy | Result | Host requirement |
 | --- | --- | --- |
-| `pull_request` | Pushes a branch and opens a provider pull request. | Provider authentication and git push credentials |
-| `local_merge` | Merges into the selected local target branch. | Clean repository and conflict-free merge |
+| **Merge** | Merges the Run branch into the selected local target branch. | Clean repository and conflict-free merge |
+| **Rebase + merge** | Rebases the Run branch onto the target, then merges. A conflict restores the previous state. | Clean repository |
+| **AI rebase + merge** | Rebases and merges; a conflict goes to an AI resolver and the Run returns to **Review** for another promotion. | Clean repository |
+| **Pull request** | Pushes a branch and opens a provider pull request. | Provider authentication and git push credentials |
+| **Publish branch** | Pushes the Run branch under its public name and leaves the target branch untouched. | Git push credentials and a configured remote |
+
+Select **Publish branch** when launching a task Run. After the required checks
+and review pass, MAIster pushes the branch and shows the remote and branch on
+the Run. A rejected push keeps the Run in **Review** with the Git error and
+**Retry delivery**; a retry uses the same destination and never force-pushes.
+Publishing a branch does not complete the task.
 
 MAIster does not deploy the merged result. Deployment remains in your existing
 CI/CD system.
+
+With **Pull request**, the task completes by itself after the provider reports
+the merge. Check **Partial work — keep the task open** before promoting when
+the pull request does not finish the task. See
+[when the task completes](/guides/run-git#when-the-task-completes).
 
 ## Publish before finalization
 

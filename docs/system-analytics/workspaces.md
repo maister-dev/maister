@@ -324,7 +324,12 @@ New Flow runs snapshot a `DeliveryPolicy`:
 
 ```ts
 type DeliveryPolicy = {
-  strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+  strategy:
+    | "merge"
+    | "rebase_merge"
+    | "pull_request"
+    | "ai_rebase_merge"
+    | "publish_branch";
   push: "never" | "on_success";
   trigger: "manual" | "auto_on_ready";
   targetBranch?: string;
@@ -340,6 +345,7 @@ only choose the side-effect path and the default UI selection:
 | `pull_request` | Push run branch and create/update provider PR/MR | Existing PR claim and idempotent PR lookup/update. |
 | `rebase_merge` | Rebase run branch onto target, then merge | Same claim and finalize token; on conflict abort/restore and surface command/path/status. |
 | `ai_rebase_merge` | Rebase run branch onto target, resolver-backed (ADR-141, Implemented) | Clean rebase → finalize to `Done` exactly like `rebase_merge`. Conflict → delegate to the branch-sync AI resolver under the **sync** lifecycle claim (NOT the promotion claim, so no promotion crash window); with `autoFinalize=false` (default) the run returns to `Review` for a manual clean re-promote (two-step), with `autoFinalize=true` a best-effort chained `promoteRun(rebase_merge)` finalizes to `Done` (failure degrades to the clean-`Review` two-step, benign W6). See [branch-sync.md](branch-sync.md). |
+| `publish_branch` | Push the run branch under its public name; the target branch is untouched (Implemented, migration `0228`) | Same claim and readiness re-gate, no target-drift token. Selectable only at task-run launch. The destination is pinned in `workspaces.branch_delivery` before the push; a rejected push leaves the run in `Review` and a retry reuses that destination without force. |
 
 `push=on_success` means push the successfully delivered target or run branch only
 after the local side-effect succeeds. Push rejection is a degradation/refusal

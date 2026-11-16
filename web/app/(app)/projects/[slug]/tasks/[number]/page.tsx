@@ -44,6 +44,7 @@ import { LazyDisclosure } from "@/components/tasks/lazy-disclosure";
 import { TaskResultCard } from "@/components/tasks/task-result-card";
 import { TaskRunArtifactView } from "@/components/tasks/task-run-artifact";
 import { TaskSourceChip } from "@/components/tasks/task-source-chip";
+import { TaskSourceDetach } from "@/components/tasks/task-source-detach";
 import { LocalTime } from "@/components/ui/local-time";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -748,6 +749,21 @@ export default async function TaskDetailPage({
                     : detail.task.source.kind
                 }
                 source={detail.task.source}
+              />
+            ) : null}
+            {detail.task.source && canAct ? (
+              <TaskSourceDetach
+                labels={{
+                  detach: t("sourceDetach"),
+                  title: t("sourceDetachTitle"),
+                  body: t("sourceDetachBody"),
+                  cancel: tRun("cancel"),
+                  confirm: t("sourceDetachConfirm"),
+                  detaching: t("sourceDetaching"),
+                  error: t("sourceDetachFailed"),
+                }}
+                slug={slug}
+                taskNumber={detail.task.number}
               />
             ) : null}
             {detail.task.triageStatus === "triaged" ? (

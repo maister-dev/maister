@@ -44,6 +44,7 @@ multiple private repositories and coding agents on its own infrastructure.
 | `web/`         | Next.js control plane, Postgres state, boards, review, and promotion    |
 | `supervisor/`  | Fastify daemon that owns ACP sessions and agent processes               |
 | `mcp/`         | MCP facade for governed agent access to MAIster operations              |
+| `stand-connector/` | Linux/systemd helper for governed stand diagnosis and restarts      |
 | `site/`        | EN/RU product website published at [imaister.dev](https://imaister.dev) |
 | `site-docs/`   | EN/RU public product documentation                                      |
 | `docs/`        | Engineering contracts, architecture, APIs, and operating details        |

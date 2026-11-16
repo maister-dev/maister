@@ -148,7 +148,9 @@ The harness has six layers:
 
 2. **Knowledge** *(Implemented — Project Brain, ADR-122/127/128: owned tier,
    indexed Consultant tier, recall/retain MCP tools, proposals bridge; see
-   `system-analytics/project-brain.md`)*
+   `system-analytics/project-brain.md`. Company Brain, ADR-202: company- and
+   project-owned records with evidence, proposal review and separate
+   confirmation; see `system-analytics/company-brain.md`)*
    Project context must be curated, short and fresh. Promote local references,
    dependency notes, project rules, Flow docs and accepted lessons as managed
    artifacts with review and staleness signals.
