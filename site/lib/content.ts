@@ -358,7 +358,7 @@ const CONTENT = {
     controlsSection: {
       eyebrow: "The product, not just the runner",
       title: "MAIster keeps the system around the agents visible.",
-      body: "The deterministic spine stays small: ownership, state, evidence, budgets, and promotion. Around it, MAIster adds shared and private memory, artifact authoring and improvement, comparison, and the operating surfaces required for sustained agent work.",
+      body: "The deterministic spine stays small: ownership, state, evidence, budgets, and promotion. Around it, MAIster adds evidence-linked company and project knowledge, private agent memory, artifact authoring and improvement, comparison, and the operating surfaces required for sustained agent work.",
       features: [
         {
           number: "01",
@@ -381,7 +381,7 @@ const CONTENT = {
         {
           number: "04",
           title: "Governed multi-agent work",
-          body: "Run trees, package agents, triggers, and consensus share budgets and audit instead of creating an invisible swarm.",
+          body: "Run trees, package agents, specialist assignments, triggers, and consensus share budgets and audit instead of creating an invisible swarm.",
           meta: "orchestration · budgets · audit",
         },
         {
@@ -395,6 +395,12 @@ const CONTENT = {
           title: "Compare Flows, agents, and models",
           body: "Run one task with different Flow revisions, coding agents, and models. Compare evidence and AI-judge scores with elapsed time, token usage, and the calculated cost of every Run.",
           meta: "Flow · agent · model · quality · cost",
+        },
+        {
+          number: "07",
+          title: "Knowledge backed by evidence",
+          body: "Project Brain indexes repository sources and retains lessons from delivery. Company Brain keeps company and project knowledge as versioned records linked to their evidence: people and agents propose, a reviewer publishes, and confirming a fact stays a separate decision.",
+          meta: "knowledge · evidence · review",
         },
       ],
     },
@@ -615,7 +621,7 @@ const CONTENT = {
         {
           question: "What does it cost?",
           answer:
-            "MAIster is MIT licensed; you pay only your model providers. Run Inspector shows input, output, cache-read, and cache-creation tokens beside active and wall-clock time, and budgets warn, escalate, and terminate. Currency pricing is on the roadmap.",
+            "MAIster is MIT licensed; you pay only your model providers. Run Inspector shows input, output, cache-read, and cache-creation tokens beside execution time and total duration, and budgets warn, escalate, and terminate. Currency pricing is on the roadmap.",
         },
       ],
     },
@@ -815,7 +821,7 @@ const CONTENT = {
     controlsSection: {
       eyebrow: "Весь контур работы агентов",
       title: "MAIster делает видимой всю систему вокруг агентов.",
-      body: "Небольшой детерминированный каркас хранит ответственных, состояние, доказательства, бюджеты и правила доставки. К нему MAIster добавляет общую и приватную память, создание и совершенствование артефактов, сравнение и рабочие интерфейсы для постоянной работы агентов.",
+      body: "Небольшой детерминированный каркас хранит ответственных, состояние, доказательства, бюджеты и правила доставки. К нему MAIster добавляет знания компании и проектов со ссылками на доказательства, приватную память агентов, создание и совершенствование артефактов, сравнение и рабочие интерфейсы для постоянной работы агентов.",
       features: [
         {
           number: "01",
@@ -838,7 +844,7 @@ const CONTENT = {
         {
           number: "04",
           title: "Управляемая работа нескольких агентов",
-          body: "Деревья запусков, агенты из пакетов, условия запуска и согласование работают с общими бюджетами и журналом действий.",
+          body: "Деревья запусков, агенты из пакетов, поручения специалистам, условия запуска и согласование работают с общими бюджетами и журналом действий.",
           meta: "оркестрация · бюджеты · аудит",
         },
         {
@@ -852,6 +858,12 @@ const CONTENT = {
           title: "Сравнение Flow, агентов и моделей",
           body: "Запускайте одну задачу на разных версиях Flow, кодирующих агентах и моделях. Сопоставляйте доказательства и оценки ИИ-судей со временем, расходом токенов и рассчитанной стоимостью каждого запуска.",
           meta: "Flow · агент · модель · качество · стоимость",
+        },
+        {
+          number: "07",
+          title: "Знания с доказательствами",
+          body: "Мозг проекта индексирует источники репозитория и сохраняет уроки из поставки. Мозг компании хранит знания компании и проектов как версионированные записи со ссылками на доказательства: люди и агенты предлагают, рецензент публикует, а подтверждение факта остаётся отдельным решением.",
+          meta: "знания · доказательства · рассмотрение",
         },
       ],
     },
@@ -1074,7 +1086,7 @@ const CONTENT = {
         {
           question: "Сколько это стоит?",
           answer:
-            "MAIster распространяется по лицензии MIT; вы платите только провайдерам моделей. Инспектор запуска показывает входные, выходные и кешированные токены рядом с активным и полным временем работы, а бюджеты предупреждают, зовут человека и останавливают запуск. Денежные тарифы в дорожной карте.",
+            "MAIster распространяется по лицензии MIT; вы платите только провайдерам моделей. Инспектор запуска показывает входные, выходные и кешированные токены рядом с временем исполнения и общей длительностью, а бюджеты предупреждают, зовут человека и останавливают запуск. Денежные тарифы в дорожной карте.",
         },
       ],
     },
