@@ -1,0 +1,136 @@
+{
+  "baseHead": "a73b1ff89a8f67b637e7b0af7530226f65be58f2",
+  "checkout": "/Users/kaa/.codex/worktrees/2599/mAIster",
+  "scope": "Test-support lock extraction and private fault-injection namespace; no application runtime, permission, timeout, package, or dependency changes.",
+  "originalFullFailure": {
+    "log": "/private/tmp/cb-a73-frozen-full-web-integration.log",
+    "case": "O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused",
+    "status": "Confirmed by final a73 reporter: EEXIST publishing the synthetic dead-owner symlink in the shared production .next.build-lock namespace at source line872."
+  },
+  "red": {
+    "log": "/private/tmp/cb-build-lock-namespace-a73-red.log",
+    "json": "/private/tmp/cb-build-lock-namespace-a73-red.json",
+    "exitCode": 1,
+    "failedTests": 1,
+    "mechanism": "After behavior-preserving extraction, acquire actual shared production lock through helper/current processIdentity. Old owning fixture direct symlink fails EEXIST at875; no fabricated PID and no timing threshold."
+  },
+  "green": {
+    "log": "/private/tmp/cb-build-lock-namespace-a73-green.log",
+    "json": "/private/tmp/cb-build-lock-namespace-a73-green.json",
+    "exitCode": 0,
+    "passedTests": 1,
+    "durationMs": 31360,
+    "assertions": [
+      "Missing witness refuses with ENOENT cause and preserves symlink",
+      "Actually terminated child identity reclaimed in private namespace",
+      "New lock belongs to current actual process",
+      "Held shared production lock target remains unchanged",
+      "Real production build completes and identical verified artifact is reused"
+    ]
+  },
+  "owning": {
+    "log": "/private/tmp/cb-build-lock-namespace-a73-owning.log",
+    "json": "/private/tmp/cb-build-lock-namespace-a73-owning.json",
+    "status": "passed",
+    "exitCode": 0,
+    "passedTests": 14,
+    "durationMs": 123660,
+    "unhandledErrors": 0
+  },
+  "checks": {
+    "types": {
+      "exitCode": 0,
+      "log": "/private/tmp/cb-build-lock-namespace-a73-types.log"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "/private/tmp/cb-build-lock-namespace-a73-lint.log"
+    },
+    "diffCheckExitCode": 0
+  },
+  "commands": {
+    "prefix": "env PATH=/Users/kaa/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm_config_verify_deps_before_run=false",
+    "redAndGreen": "pnpm --filter maister-web exec vitest run --project integration test-support/__tests__/execution-ab-process-cleanup.integration.test.ts -t O-build-lock: --maxWorkers 1 --reporter default --reporter json --outputFile.json=<matching-json>",
+    "owning": "pnpm --filter maister-web exec vitest run --project integration test-support/__tests__/execution-ab-process-cleanup.integration.test.ts --maxWorkers 1 --reporter default --reporter json --outputFile.json=/private/tmp/cb-build-lock-namespace-a73-owning.json",
+    "types": "pnpm --filter maister-web exec tsc --noEmit",
+    "lint": "pnpm --filter maister-web exec eslint test-support/real-web.ts test-support/production-build-lock.ts test-support/__tests__/execution-ab-process-cleanup.integration.test.ts"
+  },
+  "patch": {
+    "path": "/private/tmp/cb-build-lock-namespace-a73.patch",
+    "sha256": "5b00d41ada9d089c8a256a90235e11a432f1ba2eea6114e293a51928daf2ed6d"
+  },
+  "sources": {
+    "web/test-support/production-build-lock.ts": "2bac78f4449fc54b313d00f16824b63f633d1a7e363b47ec50fc5e36cc6a5240",
+    "web/test-support/real-web.ts": "825b8ca6cae6c066c7d2c3304b3273d28f39989d04981331a71d8344be9ab67f",
+    "web/test-support/fixtures/build-lock-refusal.mjs": "4d1bbd2d946b47baff83d1c588155a8564985cf36ab5367b01b7a47ad8325151",
+    "web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts": "d7c8e4d16e3a8b554df50c9e64bf95ba7a027b4122eb1ead8431be9dc61b7284"
+  },
+  "frozenCheckoutUntouched": "/private/tmp/maister-cb1-work-intake-1640",
+  "providerCalls": 0,
+  "review": {
+    "reviewer": "/root/dispatch_fix_audit",
+    "verdict": "No actionable findings",
+    "scope": "Read-only ownership/timeout/missing witness/exclusive fixture namespace/artifact reuse/cleanup audit"
+  },
+  "activeOwnedJobs": 0,
+  "cleanup": {
+    "receipt": "/private/tmp/cb-build-lock-namespace-a73-cleanup.log",
+    "scope": "/private/tmp/cb-build-lock-namespace-a73-cleanup-scope.json",
+    "invocationCount": 22,
+    "existingLedgersRetired": 2,
+    "alreadyRemovedNestedLedgers": 20,
+    "ownedSurvivingProcesses": 0,
+    "survivingContainers": 0,
+    "survivingRegisteredRoots": 0,
+    "errors": [],
+    "excluded": "Active frozen92d2a5a1-42bd-4f84-a5ed-652f3110a73b, native package owning job53612 and retained live qualification roots; none entered scope",
+    "inspectionNote": "Missing nested ledgers classified explicitly and ownership/container absence verified. First setup attempt stopped on missing ledger before cleanup; log retained as cleanup-setup-error.log. Native inspector briefly recreated only the already removed RED fixture path; executable retained outside and exact empty directories removed, leaving original fixture absent."
+  },
+  "artifacts": [
+    {
+      "path": "cb-build-lock-namespace-a73-red.log.gz",
+      "sha256": "676590fcc5fc293d48c56a2badd5c3256a6c275dcf1de808ec0f09046316884c",
+      "sourceSha256": "1c8d665e309148cde5531cf5c49b6c4e32c904589be5ac5cbcb2bbc2a21833c2"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-red.json.gz",
+      "sha256": "0dc6288b8cd95f36d9e66639c394b2a47ac825beb7400dc1f5c8410f2049e2d8",
+      "sourceSha256": "0a7f0b3b576fed46687ccb3a8d0e45854c15cf5e8a1f3e39b4ae6d0a92f28701"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-green.log.gz",
+      "sha256": "a5b4cf48f0fc81b3518a0bd99b4078afe04b47a9b8164493716f8bba3d9f0764",
+      "sourceSha256": "8896e496b3de620e19f993cded0aa4c2705338f81f49b90423f75f1b589e8177"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-green.json.gz",
+      "sha256": "38e0ea2a241abd960d3e9a9f975f1e5910666b214a04cf2e1ef761a6c52e6ede",
+      "sourceSha256": "b9099df5b66a8c8371b15c0c7df4748fd43a2f3d897ce0fba8286e7bfb0bd1d9"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-owning.log.gz",
+      "sha256": "e9fa189a08e9b7b4cb8ec68325b84fb9edb6a8b2c8db7c61188f7df28bde22b2",
+      "sourceSha256": "2572af788d6dbab0390555c6d1fc2656b687e77abdc1b4b6c1b067b03bee575e"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-owning.json.gz",
+      "sha256": "5f08ff90a9f468b1422df9db15c53ddcc26a607d6f2e7e6034d7ee33144de395",
+      "sourceSha256": "3b5d860443617fcfa89c92d7966295ba5f09d9d67665a3a26f72f6d5e3d8d9a8"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-lint.log.gz",
+      "sha256": "817a291069acab67653f935123f62ffd1f53559a1b158700d3d87a25167b102a",
+      "sourceSha256": "d3f47baeaa1c7e9b9c0692d796e805b4b1b03177e5341e2bdf99232a1bddbf07"
+    },
+    {
+      "path": "cb-build-lock-namespace-a73-cleanup.log.gz",
+      "sha256": "edc22b85e1d053c3208d73a84c903c93620c29067ecc73141a9e8e0a88d3afe7",
+      "sourceSha256": "96b516295c6a047b5bb17c95a9dde906d73fc2bac619084eb899bd66c2a7ab00"
+    }
+  ]
+}

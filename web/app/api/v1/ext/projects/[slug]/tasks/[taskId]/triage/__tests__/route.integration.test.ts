@@ -286,11 +286,7 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     expect(audit.rows[0]).toMatchObject({ result: "ok", status_code: 201 });
   });
 
-  // Its real owner is pruned after issuance, so
-  // this also pins the fail-closed provenance guard: stamping a dangling
-  // boundRunId would violate domain_events_run_id_runs_id_fk and 500.
-  it("emits task.created with an agent actor and no dangling run provenance", async () => {
-    await pool.query("DELETE FROM runs WHERE id = $1", [fx.runId]);
+  it("retains actual agent run provenance and refuses an unclassifiable missing execution before task effects", async () => {
     const res = await CREATE_TASK(
       request("POST", fx.agentToken, { title: "provenance", prompt: "p" }),
       { params: Promise.resolve({ slug: SLUG }) },
@@ -307,7 +303,21 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
 
     expect(evt.rows).toHaveLength(1);
     expect(evt.rows[0].actor_type).toBe("agent");
-    expect(evt.rows[0].run_id).toBeNull();
+    expect(evt.rows[0].run_id).toBe(fx.runId);
+    await expect(issueAgentRunToken({
+      agentId: AGENT_ID,
+      projectId: fx.projectId,
+      runId: randomUUID(),
+      db,
+    })).rejects.toMatchObject({code:"PRECONDITION",details:{reason:"token_run_binding_invalid"}});
+    expect(
+      (
+        await pool.query(
+          "SELECT id FROM tasks WHERE project_id=$1 AND title='missing-provenance'",
+          [fx.projectId],
+        )
+      ).rows,
+    ).toEqual([]);
   });
 
   // The OpenAPI `verdict` example passes `flowId: "bugfix"` — a flow_ref_id, not

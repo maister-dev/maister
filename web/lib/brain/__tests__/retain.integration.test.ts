@@ -99,7 +99,7 @@ beforeEach(async () => {
 });
 
 describe("retain — dedup-or-reinforce (T2.2)", () => {
-  it("reinforces a semantically-near active item instead of duplicating (E-3)", async () => {
+  it("IT-CBE-02 preserves distinct near assertions without manufacturing corroboration", async () => {
     const first = await retain(
       projectId,
       {
@@ -119,18 +119,18 @@ describe("retain — dedup-or-reinforce (T2.2)", () => {
       { db: ctx.db, client },
     );
 
-    expect(second.reinforced).toBe(true);
-    expect(second.itemId).toBe(first.itemId);
+    expect(second.reinforced).toBe(false);
+    expect(second.itemId).not.toBe(first.itemId);
     expect(
       await count(`project_id = '${projectId}' AND status = 'active'`),
-    ).toBe(1);
+    ).toBe(2);
 
     const row = await ctx.db.execute(
       sql`SELECT confidence::float8 AS confidence, reinforcement_count FROM brain_items WHERE id = ${first.itemId}`,
     );
 
-    expect(Number(row.rows[0]?.confidence)).toBeCloseTo(0.4, 5); // 0.3 + 0.1
-    expect(Number(row.rows[0]?.reinforcement_count)).toBe(1);
+    expect(Number(row.rows[0]?.confidence)).toBeCloseTo(0.3, 5);
+    expect(Number(row.rows[0]?.reinforcement_count)).toBe(0);
   });
 
   it("is idempotent on identical content (no duplicate, no reinforce)", async () => {
@@ -202,7 +202,7 @@ describe("retain — dedup-or-reinforce (T2.2)", () => {
     ).toBe(2);
   });
 
-  it("reinforce NEVER mutates the reinforced item's embedding row (E-2 immutability)", async () => {
+  it("near assertions keep original embeddings immutable (E-2)", async () => {
     const first = await retain(
       projectId,
       { kind: "lesson", content: "SIM: prefer server components by default" },
@@ -225,7 +225,7 @@ describe("retain — dedup-or-reinforce (T2.2)", () => {
       sql`SELECT id, embedded_at FROM brain_embeddings WHERE item_id = ${first.itemId} ORDER BY split_ordinal`,
     );
 
-    // same embedding rows, byte-identical embedded_at — reinforce touched only brain_items
+    // Distinct assertions retain the original embedding identity and capture time.
     expect(after.rows.map((r) => r.id)).toEqual(before.rows.map((r) => r.id));
     expect(after.rows.map((r) => String(r.embedded_at))).toEqual(
       before.rows.map((r) => String(r.embedded_at)),
@@ -333,7 +333,7 @@ describe("retain — review-fix hardening (kind scope, decay race, kill switch, 
     expect(Number(old.rows[0]?.reinforcement_count)).toBe(0);
   });
 
-  it("reinforce pushes expires_at out (the TTL half of the reinforce contract)", async () => {
+  it("near assertions cannot refresh the applicability of an older assertion", async () => {
     const first = await retain(
       projectId,
       { kind: "lesson", content: "SIM: pin the container image tag" },
@@ -357,7 +357,7 @@ describe("retain — review-fix hardening (kind scope, decay race, kill switch, 
       sql`SELECT (expires_at > now() + INTERVAL '29 days') AS pushed FROM brain_items WHERE id = ${first.itemId}`,
     );
 
-    expect(Boolean(row.rows[0]?.pushed)).toBe(true);
+    expect(Boolean(row.rows[0]?.pushed)).toBe(false);
   });
 
   it("refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)", async () => {
@@ -492,7 +492,7 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
     });
   });
 
-  it("supersedes one active state_fact and inserts the changed near-duplicate", async () => {
+  it("IT-CBE-03 changed near state facts remain distinct unresolved claims", async () => {
     const oldFact = await retain(
       projectId,
       { kind: "state_fact", content: "SIM: active runtime is node 22" },
@@ -518,7 +518,7 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
     const byId = new Map(rows.rows.map((row) => [String(row.id), row]));
 
     expect(byId.get(String(oldFact.itemId))).toMatchObject({
-      status: "superseded",
+      status: "active",
       reinforcement_count: 0,
     });
     expect(byId.get(String(newFact.itemId))).toMatchObject({
@@ -529,10 +529,10 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
       await count(
         `project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`,
       ),
-    ).toBe(1);
+    ).toBe(2);
   });
 
-  it("compares repeated state_fact changes against the latest active fact", async () => {
+  it("retains every repeated state change until explicit review", async () => {
     const first = await retain(
       projectId,
       { kind: "state_fact", content: "SIM: deployment host is blue" },
@@ -559,17 +559,17 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
     `);
     const byId = new Map(rows.rows.map((row) => [String(row.id), row.status]));
 
-    expect(byId.get(String(first.itemId))).toBe("superseded");
-    expect(byId.get(String(second.itemId))).toBe("superseded");
+    expect(byId.get(String(first.itemId))).toBe("active");
+    expect(byId.get(String(second.itemId))).toBe("active");
     expect(byId.get(String(third.itemId))).toBe("active");
     expect(
       await count(
         `project_id = '${projectId}' AND kind = 'state_fact' AND status = 'active'`,
       ),
-    ).toBe(1);
+    ).toBe(3);
   });
 
-  it("still reinforces lesson near-duplicates", async () => {
+  it("near lesson assertions remain separately reviewable", async () => {
     const first = await retain(
       projectId,
       { kind: "lesson", content: "SIM: keep PRs small" },
@@ -583,7 +583,8 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
       { db: ctx.db, client },
     );
 
-    expect(second).toEqual({ itemId: first.itemId, reinforced: true });
+    expect(second.itemId).not.toBe(first.itemId);
+    expect(second.reinforced).toBe(false);
 
     const row = await ctx.db.execute(sql`
       SELECT status, reinforcement_count
@@ -593,7 +594,7 @@ describe("retain — state_fact supersede-on-change (T6.2)", () => {
 
     expect(row.rows[0]).toMatchObject({
       status: "active",
-      reinforcement_count: 1,
+      reinforcement_count: 0,
     });
   });
 });

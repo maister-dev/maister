@@ -12,6 +12,7 @@ import {
 } from "./plan-launch-authority";
 
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { getDb } from "@/lib/db/client";
@@ -223,7 +224,10 @@ export function buildAutoLaunchRunPlanConsumer(
   return {
     id: "auto_launch_run_plan",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const _db = opts.db ?? getDb();
       const launch = opts.launch ?? launchAgentRun;
       const launchFlow = opts.launchFlow ?? launchRun;
@@ -482,6 +486,9 @@ export function buildAutoLaunchRunPlanConsumer(
                     carrierTaskId: candidate.taskId,
                     mode: "task",
                     runnerOverride: flowSpec.runnerOverride ?? null,
+                    ...(flowSpec.nativeInput
+                      ? { nativeInput: flowSpec.nativeInput }
+                      : {}),
                   }),
                 },
                 { actorUserId: null, authorize: async () => {} },
@@ -560,6 +567,7 @@ export function buildAutoLaunchRunPlanConsumer(
             }
             const result = await launch({
               agentId: spec.agentId,
+              ...(spec.nativeInput ? { nativeInput: spec.nativeInput } : {}),
               projectId: candidate.projectId,
               taskId: candidate.taskId,
               launchOverrideRunnerId: spec.runnerOverride ?? null,

@@ -4,11 +4,16 @@ import type { ExecutionAssignment } from "@/lib/db/schema";
 import type { CreateSessionInput } from "@/lib/execution-host";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { TaskLaunchRecoveryAuthority } from "@/lib/tasks/launch-continuation";
+import type { InteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 
-import { and, count, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { childObligationCounts } from "@/lib/orchestrator/child-obligations";
+import { authorizeCompanyRunUserActionInTransaction } from "@/lib/agents/company-run-read-access";
+import { assertAgentExecutionQuiescent } from "@/lib/agents/execution-quiescence";
+import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
+import { assertInteractiveTaskLaunchPrincipal } from "@/lib/tasks/admission-types";
 import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
@@ -54,10 +59,7 @@ export { classifyRecover };
 export type { NodeKind, RecoverPlan } from "@/lib/runs/recover-classify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects, runs, workspaces } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { runs, workspaces } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -98,6 +100,7 @@ export type RecoverResult =
   | { state: "workspace-busy" }
   | { state: "conflict" }
   | { state: "launch-conflict" }
+  | { state: "assignment-conflict" }
   | { state: "unresumable" }
   | { state: "transient" };
 
@@ -115,6 +118,7 @@ export type RunFlowResumeOpts = {
 
 export interface ResumeCrashedRunOptions {
   recoveryAuthority?: TaskLaunchRecoveryAuthority;
+  companyRecoveryPrincipal?: InteractiveTaskLaunchPrincipal;
   db?: Db;
   executionHosts?: ExecutionHosts;
   runFlow?: (id: string, runOpts?: RunFlowResumeOpts) => Promise<void> | void;
@@ -142,6 +146,26 @@ export async function resumeCrashedRun(
   const now = opts.now ?? (() => new Date());
   const cap = maxConcurrentRunsCap();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const [companyFlow] = opts.companyRecoveryPrincipal
+    ? await db
+        .select({
+          id: runs.id,
+          executionAssignmentId: runs.executionAssignmentId,
+          dispatched: sql<boolean>`EXISTS (
+            SELECT 1 FROM execution_commands command WHERE command.run_id=${runs.id}
+              AND command.execution_assignment_id=${runs.executionAssignmentId}
+              AND command.kind IN ('session.create','session.prompt')
+          )`,
+        })
+        .from(runs)
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Crashed"),
+            eq(runs.runKind, "flow"),
+          ),
+        )
+    : [];
 
   // ADR-166 D3: a recover is a new driver generation — its epoch is minted
   // inside the Crashed → Running|Pending claim below. Resolve the host first
@@ -150,6 +174,8 @@ export async function resumeCrashedRun(
 
   try {
     placementHost = await localHost({ db, transport: hosts.transport });
+    if (companyFlow?.dispatched)
+      await assertAgentExecutionQuiescent(db, companyFlow, undefined, hosts);
   } catch (err) {
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },
@@ -186,6 +212,9 @@ export async function resumeCrashedRun(
     const rows = await tx
       .select({
         id: runs.id,
+        companyId: runs.companyId,
+        runKind: runs.runKind,
+        executionAssignmentId: runs.executionAssignmentId,
         status: runs.status,
         currentStepId: runs.currentStepId,
         resumeTargetStepId: runs.resumeTargetStepId,
@@ -207,6 +236,65 @@ export async function resumeCrashedRun(
       );
 
       return { state: "conflict" };
+    }
+
+    const [appointment]: readonly { disposition: unknown }[] = (
+      await tx.execute(
+        sql`SELECT inspect_specialist_root_recovery(${runId}) AS disposition`,
+      )
+    ).rows;
+
+    if (appointment?.disposition === "busy") {
+      log.info(
+        { runId },
+        "Assignment admission holds the recovery appointment",
+      );
+
+      return { state: "transient" };
+    }
+    if (appointment?.disposition === "conflict") {
+      log.info({ runId }, "Retained Run cannot recover the current assignment");
+
+      return { state: "assignment-conflict" };
+    }
+    if (appointment?.disposition !== "allowed")
+      throw new MaisterError(
+        "CRASH",
+        "Invalid assignment recovery disposition",
+      );
+
+    if (run.companyId != null) {
+      const principal = opts.companyRecoveryPrincipal;
+
+      if (!principal || run.runKind !== "flow")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Current company Flow recovery authority is required",
+        );
+      assertInteractiveTaskLaunchPrincipal(principal);
+      await authorizeCompanyRunUserActionInTransaction(
+        tx,
+        principal.userId,
+        runId,
+        "assignments:recover",
+      );
+      if (run.executionAssignmentId !== companyFlow?.executionAssignmentId)
+        return { state: "transient" };
+      const [eligible] = (
+        await tx.execute(sql`
+          SELECT execution.company_cancellation_intent IS NULL
+            AND ${assignmentBudgetAllowsDispatchSql(sql`execution.id`)}
+            AND NOT EXISTS (
+              SELECT 1 FROM specialist_run_links link
+              JOIN stand_operations operation ON operation.assignment_id=link.assignment_id
+              WHERE link.run_id=execution.id AND operation.action='restart'
+                AND operation.effect_state<>'not_dispatched'
+            ) AS allowed
+          FROM runs execution WHERE execution.id=${runId}
+        `)
+      ).rows;
+
+      if (eligible?.allowed !== true) return { state: "assignment-conflict" };
     }
 
     const workspaceRows = await tx
@@ -444,16 +532,13 @@ export async function driveResume(
       runKind: runs.runKind,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
+      resumeStartedAt: runs.resumeStartedAt,
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       executionAssignmentId: runs.executionAssignmentId,
-      worktreePath: workspaces.worktreePath,
-      projectSlug: projects.slug,
     })
     .from(runs)
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId));
   const run = rows[0];
 
@@ -474,6 +559,22 @@ export async function driveResume(
     );
 
     return { state: "unresumable" };
+  }
+
+  // An answered idle claim already authorized the parked graph visit. A crash
+  // recovery carries its separate resumeStartedAt intent and classification below.
+  if (run.status === "NeedsInput" && run.resumeStartedAt === null) {
+    try {
+      await runFlowFn(runId, { db, executionHosts: hosts });
+      log.info(
+        { runId, assignmentId: run.executionAssignmentId },
+        "answered idle Flow continued through its existing graph owner",
+      );
+
+      return { state: "resumed" };
+    } catch (error) {
+      return handleRecoverDispatchError(db, runId, error);
+    }
   }
 
   // Phase-1 set current_step_id to the recover target; fall back to the retained

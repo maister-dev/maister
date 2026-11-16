@@ -1,0 +1,123 @@
+{
+  "task": "T20",
+  "slice": "Explicit company workspace ownership across native web transport, supervisor HTTP and durable SQLite",
+  "date": "2026-11-06",
+  "baseCommit": "a549354eeae588dab27a3c7d9be724757786e8fe",
+  "status": "Native adoption and host owner migration qualified; full company agent driver remains open",
+  "engineVersion": "3.11.1",
+  "migrations": {
+    "main": null,
+    "brain": null,
+    "hostSQLite": {
+      "from": 15,
+      "to": 16,
+      "column": "workspaces.company_id",
+      "compatibility": "Populated v15 and existing v0-v14 migration fixtures retain original rows without inferred company ownership."
+    }
+  },
+  "red": {
+    "log": "http-red.log.gz",
+    "failure": "Actual supervisor rejects company namespace and owner at adoption."
+  },
+  "intermediateFailures": [
+    "Company invalid command payloads retain the existing supervisor 409 mapping, rather than an assumed 400.",
+    "Actual wire fixture initially used macOS /var temporary alias; canonicalizing its owned root preserves the symlink-escape refusal.",
+    "Seven full-supervisor integration failures exposed historical fixture downgrades that retained the new SQLite column. Restoring their actual old schema fixes replay without conditional or skipped migrations.",
+    "Full web run correctly refused replacing a fake host that already owned live work. The real-wire probe now runs before fake-host work and settles its own Pending Run through native before-dispatch finalization."
+  ],
+  "gates": {
+    "webIntegration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 76,
+      "log": "web-integration-green.log.gz"
+    },
+    "supervisorIntegration": {
+      "exitCode": 0,
+      "files": 37,
+      "tests": 347,
+      "log": "supervisor-integration-green.log.gz"
+    },
+    "webUnit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "web-unit-green.log.gz"
+    },
+    "supervisorUnit": {
+      "exitCode": 0,
+      "files": 50,
+      "tests": 500,
+      "log": "supervisor-unit-green.log.gz"
+    },
+    "webTypes": {
+      "exitCode": 0,
+      "log": "web-types.log.gz"
+    },
+    "supervisorTypes": {
+      "exitCode": 0,
+      "log": "supervisor-types.log.gz"
+    },
+    "webLintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "web-lint.log.gz"
+    },
+    "supervisorLintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "supervisor-lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "executableChecks": 11,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Native company operational workspace resolver emits an explicit company owner and managed opaque directory through actual supervisor transport, with no registered project or repository.",
+    "Reserved _company is only a runtime namespace in the legacy projectSlug wire field; owner/directory/no-repository/no-mount requirements agree between acceptor and OpenAPI request/response schemas.",
+    "Actual HTTP rejects missing/foreign/extra-field owner shape and managed path mismatch; active owner retargeting refuses.",
+    "Actual host SQLite retains company ownership over restart and handle-based session creation inherits the correct cwd and runtime log namespace.",
+    "Populated version-15 migration preserves legacy workspace bytes, leaves owner absent and enforces exclusive company namespace/directory shape. Earlier source migration fixtures remain green.",
+    "Existing project/librarian request/response shapes and current-root/symlink/host-identity guards remain intact.",
+    "Company owner metadata is retained in the existing sanitized workspace-adopt ledger projection, without path bytes."
+  ],
+  "notYetQualified": [
+    "Company agent driveAgentSession owner branch and frozen assignment prompt",
+    "Current company dispatch authority/source guards through owned create and prompt recovery",
+    "Full company idle/HITL/recovery, activity views, Flow runtime and remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "docs/api/async/execution-host-events.asyncapi.yaml": "fee56de27b300b35691ded355034b11e1cd0c89bbe9e14db60b53b7ff7282ebe",
+    "docs/api/supervisor.openapi.yaml": "4ccf35911733d4397eecb8bf8603b745e58ca23c42b86745b1629fa5f63b9fee",
+    "docs/db/execution-hosts-domain.md": "7c9c62454df5eb2af1f50272596315949cca0a2e433fad06d63e87628a2d3117",
+    "docs/error-taxonomy.md": "928bf0f6cf2c74fc7996558df2fd906f00a5bc4dfae870972d4768bbc94186b7",
+    "docs/system-analytics/execution-hosts.md": "d0a807f3d9a5c2ba5bcbff17835a441bbc266c08a5d461e13360547c38dc7b02",
+    "docs/system-analytics/specialist-runtime.md": "625507d7fc245d0aaac6c108b72b3f223a6daf30dc4c27257ab4bee5f6f121be",
+    "scripts/validate-contracts.test.mjs": "85abfad78e46ac350136a5124e0ff0c6985ff2429bf5a5675461cc9b409e8276",
+    "supervisor/src/__tests__/_fixtures/runtime-file-inventory.ts": "57bab5c8f14351cbbe0aff807f67227b81221252940eaecfa1f525536131d0cd",
+    "supervisor/src/__tests__/command-receipts.integration.test.ts": "d4b5cd07efd0295be69d4652e063752cbc728c26538b625b53d2932a9b7e9d41",
+    "supervisor/src/__tests__/host-identity.integration.test.ts": "90079c329ae770a5ad1c53ddd6319b51c6b95cc2c79b37f307693075c397760e",
+    "supervisor/src/__tests__/runtime-event-outbox.integration.test.ts": "27f42e8a0faf2e2e4806b012aef2210ae04b508e6052425f38d8b950196f23a3",
+    "supervisor/src/__tests__/runtime-objects.integration.test.ts": "1f5ec30ee23a3e8b583864dfbd5b5ccc2aacb6279f6a95256757736d918a5e73",
+    "supervisor/src/__tests__/runtime-storage.integration.test.ts": "1ba7de9dc0357ca3d4e34fc2d34d3476b18f853123cbe0ba31f756cb28484542",
+    "supervisor/src/__tests__/workspace-adoption.integration.test.ts": "1bf41d4f59825a00c5cf8fc27bccc27cce50b4abdee74d35c9063a20a54b336c",
+    "supervisor/src/host-state.ts": "cce8464c5bb30081065bdf4b94fd906b8c20ac9a19ffd1d561c97ec7c844b5e2",
+    "supervisor/src/http-api.ts": "5056dbcbd96ac554cf9647a96d14bcd092257ac7590a021a660e17cfb9ede2e2",
+    "supervisor/src/types.ts": "cbf72b376baf2234e4cc9f44df1141060d348414ec216ab41ee8b73148daa47d",
+    "supervisor/src/workspace-registry.ts": "20c63d1b5f27b64d7b917d3f829774669e2b230f62e12d0a66444ebf596518c8",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "ed0a1b8e5d3ad2bc4512723f526b928240af34e2be1fa9cc001f369a8d2c1fa0",
+    "web/lib/execution-host/adoption.ts": "a09785790827323e941ff51c16e76e2276cfc8fcecb48ff2acf018d3f4cbf3ac",
+    "web/lib/execution-host/contracts.ts": "7c046b97c41f0bfffaaa1f2095f5b88b2993ec70334a84fab1f6edbaef95f9af",
+    "web/lib/execution-host/redact.ts": "49c9e2a5fedf74a8a20f850cf4d237806155d772bcd926361b1d73c134eb5cfc",
+    "web/lib/execution-host/types.ts": "6d775092d5b7f8737442e1e3b0151ae481e8a55112c118d03436d3d9058509e8",
+    "web/lib/supervisor-client.ts": "b2849783eb1e65af775b5e903d5b05d20112d3a10a0b7b3548c573d8c8481f1b",
+    "web/test-support/fake-execution-host.ts": "cba5cd00b477a8cd306af9c5fe35d146ca021c7345df3b166fb248f4ee907c25"
+  }
+}

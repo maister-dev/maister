@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "bbe923cb20187cbc74012ec88fa9c0d8f17d23a5",
+  "runtimeHead": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "verdict": "failed",
+  "processExitCode": 1,
+  "jsonReporterSuccess": true,
+  "jsonReporterLimitation": "Vitest JSON success does not account for this unhandled rejection; outer process exit and human summary are required. Nested JSON test-suite counts differ from file counts.",
+  "durationSeconds": 2052.16,
+  "files": {
+    "passed": 687,
+    "failed": 0,
+    "skipped": 2,
+    "total": 689
+  },
+  "tests": {
+    "passed": 6270,
+    "failed": 0,
+    "skipped": 2,
+    "total": 6272
+  },
+  "unhandledErrors": [
+    {
+      "type": "Unhandled Rejection",
+      "message": "Cannot use a pool after calling end on the pool",
+      "originFile": "web/lib/tasks/__tests__/launch-agent-admission.integration.test.ts",
+      "stack": [
+        "pg-pool.connect",
+        "events/projection-transaction.ts:140",
+        "events/projector.ts:564 recordProjectionFailure",
+        "events/projector.ts:510",
+        "test-support/fake-execution-host.ts:2805"
+      ],
+      "classification": "Confirmed fixture lifetime defect: owning launch suite omitted the existing canonical-event drain before ending PostgreSQL. No production/shared fake change required."
+    }
+  ],
+  "productionBuild": {
+    "passed": true,
+    "buildId": "Cn9mwRnT1K54OWxfRQdvZ",
+    "durationMs": 11414,
+    "revision": "bbe923cb20187cbc74012ec88fa9c0d8f17d23a5"
+  },
+  "optionalSkipped": [
+    "MAISTER_EVENT_PLANE_LOAD",
+    "MAISTER_HOST_SPAN_LOAD"
+  ],
+  "cleanup": {
+    "invocationId": "af05cae6-6e08-41a8-8520-699d4344f9bf",
+    "ownedLiveProcesses": 0,
+    "containers": 0,
+    "temporaryRoots": 0,
+    "errors": []
+  },
+  "retainedSha256": {
+    "cleanup.log.gz": "e8a88048ec78f1b1ec163d5d2f1c5dc517b2c4ee885d676cc46671327ebaae5f",
+    "full.log.gz": "d4e7b4733aa8dff935511e3d078da6c2c02e554829c0e6627de30e132c8d5d7c",
+    "results.json.gz": "60158d12a79f20b5d4cabc143121cf44deb3656a3d6d0ac5a271e2447c1399ac"
+  },
+  "resolutionEvidence": "../fixture-projection-drain/evidence.json"
+}

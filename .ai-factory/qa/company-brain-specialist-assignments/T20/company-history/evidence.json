@@ -1,0 +1,71 @@
+{
+  "task": "T20",
+  "slice": "Current company specialist retained history over the existing Run projection and signed cursor",
+  "date": "2026-11-06",
+  "baseCommit": "161bec585fde89c906b3d388e14e41431b0ff650",
+  "status": "Company history API/read-model slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "red.log.gz",
+    "failure": "The required company retained-history reader did not exist; its native persisted-Run qualification failed at the missing API seam."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 3,
+      "tests": 50,
+      "durationSeconds": 30.72,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Company history shares the existing projection/cursor and authoritative Run ledger without a project or parallel attempt history.",
+    "Exact retained assignment linkage, complete capture and current inherited source access filter rows before LIMIT; a newer hidden source row cannot consume visible slots.",
+    "Current explicit assignments:read is required even for administrators; unavailable professional identities yield empty authorized pages without catalog lookup.",
+    "Existing latest-first frozen asOf pagination excludes later launches and preserves project cursor bytes and indexed query plans.",
+    "Company cursor scope binds the receiving user, role, company, current read-grant identity/revision and filters. Cross-reader/filter reuse refuses; revocation denies and re-grant invalidates earlier cursors.",
+    "Actual HTTP metadata validates against the shared OpenAPI schema; responses are private/no-store and omit diagnostic prose and scheduled input.",
+    "Unknown/duplicate query keys, invalid filters and client principal/project/company injection refuse.",
+    "Disabling the professional catalog entry does not erase retained readable history."
+  ],
+  "notYetQualified": [
+    "Company activity UI, full Run navigation and complete lifecycle",
+    "Actual company ACP/package invocation and stand pilot",
+    "Company trigger-attempt execution owned by T22.1",
+    "Remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "3f711c77a49cc4fce575596cb67cbc9131fcd5bf47e3ac0c6472f5a5a428bdb6",
+    "docs/system-analytics/agent-activity-history.md": "e716d97fa77afb082784dbb85566f01986f98a63bdb09e83898477346451b6bd",
+    "docs/system-analytics/specialist-runtime.md": "da5fb66ca0f40137ad0f5459cecedf98230010d49ba06a33910995838dd976cd",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "b22a0869a1953ef4f5c8b79a6de5efb28c0c3f3a4ba029db43d44e43226f045f",
+    "web/lib/agents/activity-queries.ts": "3f85c55dd9c3653f0b7bd14efe8ae86c944bb967e4fbed1cafd4f3f02949ae67",
+    "web/lib/agents/company-run-read-access.ts": "65c5f8eb81582893e687d0274bcca5e39afadd579a7f60b80284336fc928c4e2",
+    "web/app/api/specialists/[specialistId]/runs/route.ts": "d74cd53c4998f796dded7b96c3fb864a21361dac3c14815a1edbedd0ae0f928e"
+  }
+}

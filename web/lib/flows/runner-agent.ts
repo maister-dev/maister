@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { ChildLaunchReceipt } from "@/lib/orchestrator/child-launch-context";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
@@ -9,7 +11,7 @@ import type { Db } from "@/lib/execution-host/db";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { SessionEnforcementProfile } from "./enforcement-profile";
 import type { HooksConfig } from "./hooks-config";
-import type { FlowContext, StepResult } from "./types";
+import type { ExecutionFlowContext, StepResult } from "./types";
 import type { CreateSessionPayload } from "@/lib/execution-host/contracts";
 
 import { randomUUID } from "node:crypto";
@@ -58,6 +60,15 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { appendAssignmentQuestionAnswerPrompt } from "@/lib/specialist-assignments/flow-question";
+import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
+import {
+  isResultProducerNode,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
+import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
+import { assertOperationalDispatchIntegrity } from "@/lib/agents/operational-context";
+import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
 import { queryErrorDiagnostics, redactQueryError } from "@/lib/db/pg-error";
 import {
   parseScheduledRequestSnapshot,
@@ -142,7 +153,14 @@ export type AgentStepLike = {
 type DbClientLike = any;
 export type { DbClientLike };
 
+export type AgentSessionCapabilities = Pick<
+  CreateSessionPayload,
+  "mcpServers" | "enforcementProfile"
+>;
+
 export type RunAgentStepCtx = {
+  resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   runtimeRoot: string;
   projectSlug: string;
   runId: string;
@@ -183,12 +201,15 @@ export type RunAgentStepCtx = {
   // runs alongside a node's session names ITSELF (see gates-exec /
   // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
   sessionName: string;
-  context: FlowContext;
+  context: ExecutionFlowContext;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   outputObjects?: RuntimeObjectOutputBinding[];
   adapterLaunch?: ScratchAdapterLaunch;
   mcpServers?: AgentMcpServer[];
+  // Prepare ephemeral credentials only when a new owned create is admitted.
+  // Reattachment uses the existing canonical descriptor and its credential.
+  prepareSessionCapabilities?: () => Promise<AgentSessionCapabilities>;
   profileDigest?: string;
   // M30 (ADR-081): rework `resume` — respawn the adapter and restore the
   // prior attempt's conversation via the ACP session/resume protocol call.
@@ -1141,12 +1162,21 @@ async function assertGatePermissionSettled(
 export async function reattachGatePrompt(
   ctx: Pick<
     RunAgentStepCtx,
-    "db" | "runId" | "stepId" | "bindExecution" | "signal"
+    | "db"
+    | "runId"
+    | "stepId"
+    | "bindExecution"
+    | "signal"
+    | "resultContract"
+    | "knowledgeAccess"
   >,
   owner: GatePromptOwner,
   execution?: AgentExecution,
 ): Promise<StepResult | null> {
   const db = ctx.db ?? getDb();
+
+  if (usesStructuredKnowledgeContext(ctx))
+    await assertNativeRunKnowledgeInputs(db, ctx.runId);
   const existing = await findOwnedPrompt(
     db,
     ctx.runId,
@@ -1309,11 +1339,69 @@ export async function runAgentStep(
   }
 }
 
+async function resolveFlowRolePrompt(
+  prompt: string,
+  ctx: RunAgentStepCtx,
+): Promise<string> {
+  let promptTemplate = prompt;
+
+  // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
+  // the agent's .md body becomes the system block and the node prompt is
+  // appended as the task block (mode=session), or the definition is
+  // materialized into .claude/agents/ for Claude self-delegation
+  // (mode=subagent; the inline prompt stays the driver).
+  if (ctx.agentBinding) {
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.agentBinding.id,
+      runId: ctx.runId,
+      nodeAttemptId: ctx.nodeAttemptId,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+    }
+  } else if (ctx.runPersonaAgentId) {
+    // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
+    // EVERY ai_coding node — its `.md` body is the persona/system block, the
+    // node keeps its own task prompt (order persona-then-task). The driving
+    // agent is launched by its own trigger and need not declare the "flow"
+    // trigger, so that check is skipped; launch validates mode=session.
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.runPersonaAgentId,
+      runId: ctx.runId,
+      nodeAttemptId: ctx.nodeAttemptId,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+      requireFlowTrigger: false,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+    }
+  }
+
+  return promptTemplate;
+}
+
 async function dispatchAgentStep(
   step: AgentStepLike,
   ctx: RunAgentStepCtx,
   execution?: AgentExecution,
 ): Promise<AgentStepResult> {
+  const preparedPrompt = usesStructuredKnowledgeContext(ctx)
+    ? await resolveFlowRolePrompt(step.prompt, ctx)
+    : undefined;
+
+  if (usesStructuredKnowledgeContext(ctx))
+    await assertNativeRunKnowledgeInputs(ctx.db ?? getDb(), ctx.runId);
+  if ("owner" in ctx.context.run && ctx.context.run.owner.kind === "company")
+    await assertOperationalDispatchIntegrity(ctx.db ?? getDb(), ctx.runId);
   // Existing immutable requests do not depend on today's template or context.
   // A consensus cell re-enters through its own logical operation key instead.
   if (ctx.promptOwner) {
@@ -1326,46 +1414,8 @@ async function dispatchAgentStep(
 
     if (completed) return completed;
   }
-  let promptTemplate = step.prompt;
-
-  // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
-  // the agent's .md body becomes the system block and the node prompt is
-  // appended as the task block (mode=session), or the definition is
-  // materialized into .claude/agents/ for Claude self-delegation
-  // (mode=subagent; the inline prompt stays the driver).
-  if (ctx.agentBinding) {
-    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
-    const bound = await resolveFlowBoundAgent({
-      agentId: ctx.agentBinding.id,
-      runId: ctx.runId,
-      executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
-      db: ctx.db,
-    });
-
-    if (bound.mode === "session") {
-      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
-    }
-  } else if (ctx.runPersonaAgentId) {
-    // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
-    // EVERY ai_coding node — its `.md` body is the persona/system block, the
-    // node keeps its own task prompt (order persona-then-task). The driving
-    // agent is launched by its own trigger and need not declare the "flow"
-    // trigger, so that check is skipped; launch validates mode=session.
-    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
-    const bound = await resolveFlowBoundAgent({
-      agentId: ctx.runPersonaAgentId,
-      runId: ctx.runId,
-      executorAgent: ctx.executor.agent,
-      worktreePath: ctx.worktreePath,
-      db: ctx.db,
-      requireFlowTrigger: false,
-    });
-
-    if (bound.mode === "session") {
-      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
-    }
-  }
+  const promptTemplate =
+    preparedPrompt ?? (await resolveFlowRolePrompt(step.prompt, ctx));
 
   const rendered = renderStrict(
     promptTemplate,
@@ -1390,7 +1440,12 @@ async function dispatchAgentStep(
   }
 
   const ordinaryPrompt = appendScheduledRequest(
-    normalized.text,
+    nativeFindingsCompletionPrompt(
+      isResultProducerNode(ctx.resultContract ?? null, ctx.stepId)
+        ? ctx.resultContract
+        : null,
+      normalized.text,
+    ),
     parseScheduledRequestSnapshot(ctx.scheduledRequestSnapshot),
   );
   const actionPrompt =
@@ -1400,9 +1455,28 @@ async function dispatchAgentStep(
       ctx.promptOwner.promptOrdinal > 0)
       ? PERMISSION_RESUME_PROMPT
       : ordinaryPrompt;
-  const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + actionPrompt
+  const contextualPrompt = usesStructuredKnowledgeContext(ctx)
+    ? await appendSpecialistAssignmentContextPrompt(
+        ctx.db ?? getDb(),
+        ctx.runId,
+        ctx.nodeAttemptId ?? null,
+        actionPrompt,
+      )
     : actionPrompt;
+  const clarifiedPrompt =
+    ctx.nodeAttemptId &&
+    ctx.promptOwner?.variant === "node" &&
+    ctx.promptOwner.promptOrdinal > 0
+      ? await appendAssignmentQuestionAnswerPrompt(
+          ctx.db ?? getDb(),
+          ctx.runId,
+          ctx.nodeAttemptId,
+          contextualPrompt,
+        )
+      : contextualPrompt;
+  const resolvedPrompt = ctx.resumeSessionId
+    ? RESUME_READONLY_LIFT + clarifiedPrompt
+    : clarifiedPrompt;
 
   log.info(
     {
@@ -1527,6 +1601,13 @@ async function runNewSession(
             })
           : undefined;
 
+      const sessionCapabilities = ctx.prepareSessionCapabilities
+        ? await ctx.prepareSessionCapabilities()
+        : {
+            mcpServers: ctx.mcpServers,
+            enforcementProfile: ctx.enforcementProfile,
+          };
+
       // ADR-166 D7: the handle form — the worktree, repo root, and context
       // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the
       // adopt payload); the session body carries no path.
@@ -1540,10 +1621,10 @@ async function runNewSession(
         capabilityInstructionsObjectId: capabilityBundle?.instructionsObjectId,
         outputObjects: ctx.outputObjects,
         adapterLaunch: ctx.adapterLaunch,
-        mcpServers: ctx.mcpServers,
+        mcpServers: sessionCapabilities.mcpServers,
         autoApprovePermissions: ctx.autoApprovePermissions,
         hooksConfig: ctx.hooksConfig,
-        enforcementProfile: ctx.enforcementProfile,
+        enforcementProfile: sessionCapabilities.enforcementProfile,
       };
     };
 

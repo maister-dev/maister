@@ -1,0 +1,5 @@
+$ tsc --noEmit
+lib/brain/knowledge-proposals.ts(536,5): error TS2322: Type 'string' is not assignable to type '`${string}-${string}-${string}-${string}-${string}`'.
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] maister-web@0.0.1 typecheck: `tsc --noEmit`
+Exit status 2

@@ -1,0 +1,358 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_functional_scenario_all_glm53_model_qualification_pending",
+  "sourceHead": "159e462b3ae776341bc0d7af3dd5d54043586b4a",
+  "startedAt": "2026-11-10T11:09:39.360Z",
+  "finishedAt": "2026-11-10T11:36:06.615Z",
+  "exitCode": 0,
+  "invocationId": "00bb2721-e5d5-443e-9651-6521795aaa41",
+  "package": {
+    "tag": "rah/v1.0.7",
+    "commit": "2f1474bc295ec9522a83fc7e80719be14a42f626",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "adapter": {
+    "manifestVersion": "0.95.0",
+    "binaryPath": "/private/tmp/maister-cb-live-b081-approved/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "binarySha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "adapterReportedVersion": "observed separately by runtime diagnostics"
+  },
+  "adapterReportedVersion": null,
+  "adapterBinaryUnchanged": true,
+  "sourceHeadUnchanged": true,
+  "playwrightStats": {
+    "startTime": "2026-11-10T11:09:45.308Z",
+    "duration": 1580835.367,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "authenticationSetupPassed": true,
+  "qualificationScenario": "QL-CBX-03",
+  "treeSizes": [
+    3,
+    7,
+    1
+  ],
+  "treeDepths": [
+    1,
+    2,
+    0
+  ],
+  "typedResults": 11,
+  "nativeProposals": 2,
+  "assertionsQualified": [
+    "Real pinned Git package loads and native ACP sessions complete; configured coordinator runner is GLM-5.3, while per-session SDK identifiers are retained separately.",
+    "Original evidence and exact collected finding lineage survive depth-two coordinator reduction.",
+    "Missing, stale, conflicting and unauthorized references remain explicit; unavailable references are not fabricated.",
+    "Shared-source use does not manufacture independent confirmation.",
+    "Attributable coordinator write-back uses native proposal review without implicit fact confirmation.",
+    "Existing run-result UI exposes native evidence links and translated labels in English and Russian."
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "scopeLimits": [
+    "Company-owned structured knowledge is read by real project-admitted RAH executions; company-only assignment delegation is a separate open T27 gate.",
+    "No real service state, restart or stand-maintenance pilot is qualified.",
+    "No remote package publication, push, deployment or production mutation.",
+    "Full web integration is independently source-pinned and remains a separate gate; this receipt does not turn failed full probes green.",
+    "Five SDK sessions identify glm-5.3; six standalone researcher sessions identify claude-opus-5-5. This functional pass does not qualify an all-GLM-5.3 run or establish an undocumented provider alias/backend mapping."
+  ],
+  "cleanup": {
+    "wrapperLeaks": 0,
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 13,
+    "matches": 0
+  },
+  "screenshotsInspected": 4,
+  "artifacts": [
+    {
+      "sourceName": "cb-live-159-v107-glm53-qualified.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "71a0397d528b2fd64831a2ed7727e29ea017fe5efba4110c14281249be8fa545",
+      "rawBytes": 33110,
+      "compressedSha256": "05e8d8d14bee49a3b9175206bb5844898274d71fadc38113603ebfd31a9a62d3",
+      "parts": [
+        {
+          "path": "cb-live-159-v107-glm53-qualified.log.gz",
+          "sha256": "05e8d8d14bee49a3b9175206bb5844898274d71fadc38113603ebfd31a9a62d3"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-live-159-v107-glm53-qualified-launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1328250543c76cd7aee07f8710aa86776ded2d4315d225d3600dde3f9c191f3f",
+      "rawBytes": 1398,
+      "compressedSha256": "95ce0b9063bb94356e1432a56c836dc83af6f9ec6ec0a44ea5e8e5beee872af0",
+      "parts": [
+        {
+          "path": "cb-live-159-v107-glm53-qualified-launch-metadata.json.gz",
+          "sha256": "95ce0b9063bb94356e1432a56c836dc83af6f9ec6ec0a44ea5e8e5beee872af0"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-live-159-v107-glm53-qualified-report.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "5cb47580dde6de70856f73bca374c46c0feccdc7f1ef9dca9d2809dd996c93bf",
+      "rawBytes": 6838,
+      "compressedSha256": "e0bd14841fe4dd89235d362c11492e4e59caa6509f57c42d0fc2bb04623a538a",
+      "parts": [
+        {
+          "path": "cb-live-159-v107-glm53-qualified-report.json.gz",
+          "sha256": "e0bd14841fe4dd89235d362c11492e4e59caa6509f57c42d0fc2bb04623a538a"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ed2a543835b5771c0cd98fd2d1cbc031b6b79b2472163c41ccac1170cd71c0f2",
+      "rawBytes": 332936,
+      "compressedSha256": "1d63bcf41980ed93f64177d2d05aee63ac429e793ecb444fd0b3973db95a13af",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "1d63bcf41980ed93f64177d2d05aee63ac429e793ecb444fd0b3973db95a13af"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-glm53-159-live-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ee719603aed53f57a6fabe21b62b35d3b58cf8686092ba9f7a7dfc0f0ee43715",
+      "rawBytes": 654,
+      "compressedSha256": "14a1d09f285e3639df20a29fa18449e6116a096e49c76cd550e751f42ce62ecd",
+      "parts": [
+        {
+          "path": "cb-glm53-159-live-cleanup.log.gz",
+          "sha256": "14a1d09f285e3639df20a29fa18449e6116a096e49c76cd550e751f42ce62ecd"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-glm53-159-depth2-root-progress.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "4cfb62e14aeb89e00c9a9b5e072ee22e84243fd9ca367a880ec308909b5078e4",
+      "rawBytes": 3420,
+      "compressedSha256": "e3806b1c91275bb837f3700c1a5a9989ff0e8eeb440c043ac485090a044eb229",
+      "parts": [
+        {
+          "path": "cb-glm53-159-depth2-root-progress.json.gz",
+          "sha256": "e3806b1c91275bb837f3700c1a5a9989ff0e8eeb440c043ac485090a044eb229"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-work-identity-docs-qualified.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "21391786c541fe99e9926c930028dd2315201b5e330319d864382ac1cb28b900",
+      "rawBytes": 683,
+      "compressedSha256": "09c1fce26b308b8cf04918554dd13e40289f0fde4061be5e04935e40617153dd",
+      "parts": [
+        {
+          "path": "cb-work-identity-docs-qualified.log.gz",
+          "sha256": "09c1fce26b308b8cf04918554dd13e40289f0fde4061be5e04935e40617153dd"
+        }
+      ]
+    },
+    {
+      "sourceName": "rah-root-d2-en.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "9179512602717e031983771355abdd44f153e7010c23270b5a95142ee62e2ded",
+      "rawBytes": 2874450,
+      "compressedSha256": "0fe567ae5d468d88ca4256ff5e61d3a9bbdbce11d9cdefbdd61eb31cb56f3298",
+      "parts": [
+        {
+          "path": "rah-root-d2-en.png.gz.part001",
+          "sha256": "938d7dce14201596ae83b7d8baaea6bfd6e71e5f5cb4734809f9bd3d5c41d148"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.part002",
+          "sha256": "2edd6f07fe14dca608936c6a17840286e2d8604fb9c2a7d8d66286b8e53dbf62"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.part003",
+          "sha256": "a74a1e0e36ef26c55d1d5f61872858b7a4e345fb068db947bc57f0a2ed1f61a9"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.part004",
+          "sha256": "4470bf188e46490fa066cbb86b95e324aea5d984f31582568c3d011b925b0ca7"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.part005",
+          "sha256": "3250cac731e0b500bfe1d532227ba5df3ebca51f1d36e44078ead1197075bdbb"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.part006",
+          "sha256": "e74c430986f40258a191c7383496eef354dfb849c6d5a7472afb03e1c4743044"
+        }
+      ],
+      "dimensions": {
+        "width": 1280,
+        "height": 20500
+      }
+    },
+    {
+      "sourceName": "rah-root-d2-ru.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "de7ce5372b5fd8fadabc3680eb445bdae2d72256a5249369f9cc079022bbd4da",
+      "rawBytes": 2989655,
+      "compressedSha256": "4098f0eef6beacb80f61e2e7776029a84f03be98543732bd031dcbd65e04ddfd",
+      "parts": [
+        {
+          "path": "rah-root-d2-ru.png.gz.part001",
+          "sha256": "471e2480853a0301257fae741658748c54c2a6bb423453049b2931c988efc49a"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part002",
+          "sha256": "bcde7e5c680d9ccfa854f61e93cbabec644f7500a3f3351a294f311ac083f5dd"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part003",
+          "sha256": "87b0e287b5e24642c8f554ec25cbeb271eaaf20297e6beabe5c4b44978461e56"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part004",
+          "sha256": "aff06fad6e11fb4f0508a4debb8fa6d63d9a770f5f530aa8bd6aaa56e6a1694b"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part005",
+          "sha256": "34903f73c4f6016d237815409deeb5b70528fc82009aa8426f3654adadee7c50"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part006",
+          "sha256": "7ba39977731ba1ecbe38130eb5100fb8aa68c444216f3f29132959169a2cd55d"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.part007",
+          "sha256": "72e56a4eee518c83e93d6c86f48c3218bbf12d65932e08cf2f7ea030985ec652"
+        }
+      ],
+      "dimensions": {
+        "width": 1280,
+        "height": 20604
+      }
+    },
+    {
+      "sourceName": "rah-root-d1-ru.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "84d2320c21e5ce1bfb5a521b76520c0d1c0d87d75319cb965eaf01cea29e5fe6",
+      "rawBytes": 1631208,
+      "compressedSha256": "e0a5f1017118beb611bde8588243e3bd7675adc33f20d8d98e64b8654047e148",
+      "parts": [
+        {
+          "path": "rah-root-d1-ru.png.gz.part001",
+          "sha256": "ed82c9a14199fc18b32da47dab4b76ffa3a8e044ee5a5887f1e17f0edf5a10f7"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.part002",
+          "sha256": "412febf09d7ed52cb81561d86f6cac56eb6b9e746f04672d6514ce0038fef242"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.part003",
+          "sha256": "8f9ab507a914d877119796af25f519bf85935cf96c42735e9a08f8ed97e07618"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.part004",
+          "sha256": "1ebc69b32653ceec8018c9c5d7b94bb8bfa01d63d6ff51516c0d6835dc924d67"
+        }
+      ],
+      "dimensions": {
+        "width": 1280,
+        "height": 11723
+      }
+    },
+    {
+      "sourceName": "rah-root-d1-en.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "2292458c3a7a58906385077b5ac6e4ab39e6882c02191fcd6f17dfa2a3dab36a",
+      "rawBytes": 1567563,
+      "compressedSha256": "a3f92d24e9f40f33e92200c8abb855051d14340aa714f2c1db23f79fba0b84ab",
+      "parts": [
+        {
+          "path": "rah-root-d1-en.png.gz.part001",
+          "sha256": "47cbceb4b135e338e82a65d8b848cb289ff2f43c4c79be2dcc7c081186e92991"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.part002",
+          "sha256": "aa0d50da5c2e01909c4756c197921f14bf4676e43832bfb26c29ce612c2f3e3b"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.part003",
+          "sha256": "a9329e4a8c6c0c66ab981a0d3685db79c91c26a4fdd9ceb2cf26e7f1472c8bdd"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.part004",
+          "sha256": "c93cdd342c1e8eb59ae9de11f82f32c9e24164d5d80272a082101b5fef32e991"
+        }
+      ],
+      "dimensions": {
+        "width": 1280,
+        "height": 11579
+      }
+    },
+    {
+      "sourceName": "cb-glm53-159-final-docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f0699fa95311a30d29c84dc9639509d465cc71799738b693f465b00a907634c2",
+      "rawBytes": 683,
+      "compressedSha256": "fc926d37264d22a21004b4c6a701c146b487984fa06f34ccef3988b525d04567",
+      "parts": [
+        {
+          "path": "cb-glm53-159-final-docs.log.gz",
+          "sha256": "fc926d37264d22a21004b4c6a701c146b487984fa06f34ccef3988b525d04567"
+        }
+      ]
+    },
+    {
+      "sourceName": "cb-glm53-159-model-selection-audit.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "9c4c63c1b38512a87532b6e7b36b92a33e43f619f7097a167ea592b8df3ac7a2",
+      "rawBytes": 80662,
+      "compressedSha256": "6b3b9b63703ffffdbb300f2e65d5b21c017625a5a0bf3edc8a3557cfa863694e",
+      "parts": [
+        {
+          "path": "cb-glm53-159-model-selection-audit.json.gz",
+          "sha256": "6b3b9b63703ffffdbb300f2e65d5b21c017625a5a0bf3edc8a3557cfa863694e"
+        }
+      ]
+    }
+  ],
+  "documentationGate": {
+    "exitCode": 0,
+    "mermaidBlocksPassed": 3,
+    "relativeLinksResolved": 17,
+    "erdTables": 177,
+    "requirementIds": 84,
+    "implementationTasks": 45,
+    "domainDocumentSha256AtGate": "5cb902fc02bab26b17075f8de90091d84de583578dab4fc5511b32dfd69c7d15"
+  },
+  "observedSdkModelSelection": {
+    "sessions": 11,
+    "requestedModelSessionCounts": {
+      "glm-5.3": 5,
+      "claude-opus-5-5": 6
+    },
+    "responseModelSessionCounts": {
+      "glm-5.3": 5,
+      "claude-opus-5-5": 6
+    }
+  },
+  "allSessionsGlm53Qualified": false,
+  "providerEndpointEvidence": "Configured runner endpoint; per-session persisted SDK metadata does not establish provider alias/backend resolution."
+}

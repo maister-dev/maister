@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "3.11.1",
+  "source": "actual immutable Git archive bytes; all 41 tag refs rechecked at v1.0.4 release",
+  "results": [
+    {
+      "tag": "aif/v2.0.0",
+      "resolvedCommit": "b015c375cef8312e628d6d16bb6b3d8e914a5e4c",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.1.0",
+      "resolvedCommit": "f1dc8dd5af53ee8d8d359b16374e1fa32e9dbbc4",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.2.0",
+      "resolvedCommit": "1f7d6a3032a1a2e57407bcf3a10dbabf2d719d1c",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.3.0",
+      "resolvedCommit": "7c6d48c3a2f6f244222b35b08d4c56dc3c03aa7b",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.4.0",
+      "resolvedCommit": "8ff5f4d5786ecce441f232355578fb5bf61d0c51",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.5.0",
+      "resolvedCommit": "51405dae980997dded16dc79228f6237adaeb683",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v2.6.0",
+      "resolvedCommit": "b11fac0ad9920c867cb1716b1fc1d697c876d781",
+      "state": "passed"
+    },
+    {
+      "tag": "aif/v3.0.0",
+      "resolvedCommit": "0255a9c0dfd13706c66c5bf2bc8d22e05be877bb",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-bmm/v1.0.0",
+      "resolvedCommit": "6cbbf41073c72894400d26a321485a34ddfaf4f0",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-bmm/v1.1.0",
+      "resolvedCommit": "ebe291e8f6391637b4a57c3f2ee76f9c179b1509",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-cis/v1.0.0",
+      "resolvedCommit": "d4971e4ac51437833f0212ab5cb6ca140b0296f0",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-cis/v1.1.0",
+      "resolvedCommit": "3c2e7e0a1ed91591e8db6383a005be1e79bde16a",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-tea/v1.0.0",
+      "resolvedCommit": "a4683f0c6b5a9970ce98ee1d08fa6e8002c3914c",
+      "state": "passed"
+    },
+    {
+      "tag": "bmad-tea/v1.1.0",
+      "resolvedCommit": "d601f3c9483dfc7800a17d979bca4bd7c3ba9f0d",
+      "state": "passed"
+    },
+    {
+      "tag": "core-java/v1.0.0",
+      "resolvedCommit": "166590beaa4199fb9e132fce4ea82e529a9dec65",
+      "state": "passed"
+    },
+    {
+      "tag": "core-pg/v1.0.0",
+      "resolvedCommit": "e1ec56fc74e9eb794a076c7a732ff071d37e4aae",
+      "state": "passed"
+    },
+    {
+      "tag": "core-react/v1.0.0",
+      "resolvedCommit": "e9b4114cfe3a5f3618da093f8f60e407b78b369f",
+      "state": "passed"
+    },
+    {
+      "tag": "core-skill-authoring/v1.0.0",
+      "resolvedCommit": "151068134119fddf3aa2878155fe9b7bb44b27b5",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.0.0",
+      "resolvedCommit": "6730af1071647835bfd5b97c15521347dd746424",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.0.1",
+      "resolvedCommit": "edac62b8de8dfa93107149269f82bae440ae287e",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.1.0",
+      "resolvedCommit": "7d52a59e8ce00bfbdab1fe1f19eca8b4b77f3c37",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.2.0",
+      "resolvedCommit": "4792dc4d122460614927a16074623750a3cccecf",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.3.0",
+      "resolvedCommit": "0bab5fa5bd41ff825e160ed5a998412c2537c29e",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.4.0",
+      "resolvedCommit": "9b8f09adccfcbc8801619166290db7f9f0e24717",
+      "state": "passed"
+    },
+    {
+      "tag": "core/v1.4.1",
+      "resolvedCommit": "c40ed5bfe811712cf9bbc209b2f4e49f7974e0ce",
+      "state": "passed"
+    },
+    {
+      "tag": "env-e2e/v1.0.0",
+      "resolvedCommit": "bbcbbb29f946b56a2c12d816a2d8d3c2c8ea8182",
+      "state": "passed"
+    },
+    {
+      "tag": "openspec/v1.0.0",
+      "resolvedCommit": "377d1546ef8db4bd8f2589ece95f6096b3a6935f",
+      "state": "passed"
+    },
+    {
+      "tag": "openspec/v1.1.0",
+      "resolvedCommit": "f8bf0297da071575508336e05a4908d2c58204d2",
+      "state": "passed"
+    },
+    {
+      "tag": "pstack/v1.0.0",
+      "resolvedCommit": "23952f99af220ad6f609d3d41bfaa10570609b2a",
+      "state": "passed"
+    },
+    {
+      "tag": "pstack/v1.1.0",
+      "resolvedCommit": "e9874a5c0188015a35b8e8aecfb2898103538f4c",
+      "state": "passed"
+    },
+    {
+      "tag": "rah/v1.0.0",
+      "resolvedCommit": "3a58f1851dbdfdae2e21b98784b34939642d6f49",
+      "state": "passed"
+    },
+    {
+      "tag": "rah/v1.0.1",
+      "resolvedCommit": "14275946ea5587a5d52f9c864ccab5f4ec25d4e7",
+      "state": "passed"
+    },
+    {
+      "tag": "rah/v1.0.2",
+      "resolvedCommit": "1b1682b28b6131a794af7e3751ed9c56cf7d7c32",
+      "state": "passed"
+    },
+    {
+      "tag": "rah/v1.0.3",
+      "resolvedCommit": "2074179904b09917a81e86585bdccd4fe2952d20",
+      "state": "passed"
+    },
+    {
+      "tag": "rah/v1.0.4",
+      "resolvedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+      "state": "passed"
+    },
+    {
+      "tag": "spec-kit/v1.0.0",
+      "resolvedCommit": "407e2f11e34888391e08c031467b24415cb88c26",
+      "state": "passed"
+    },
+    {
+      "tag": "spec-kit/v1.1.0",
+      "resolvedCommit": "30d07d6737dd3b646aac55e6353f4a763773c767",
+      "state": "passed"
+    },
+    {
+      "tag": "superpowers/v1.0.0",
+      "resolvedCommit": "af7cc355d74b46520709cba4a89ffd5b36aa303e",
+      "state": "passed"
+    },
+    {
+      "tag": "superpowers/v1.1.0",
+      "resolvedCommit": "2b21414969f0694f076ebc29ebbe832f7c4c06b3",
+      "state": "passed"
+    },
+    {
+      "tag": "superpowers/v1.1.1",
+      "resolvedCommit": "a5951ab61f4b93c5f2a3b64d0ea5c5a6c37a603e",
+      "state": "passed"
+    },
+    {
+      "tag": "superpowers/v1.2.0",
+      "resolvedCommit": "1c65f9dca60d5d440a90ff5e614dd53032042f71",
+      "state": "passed"
+    }
+  ]
+}

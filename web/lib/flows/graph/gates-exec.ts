@@ -2,10 +2,10 @@ import "server-only";
 
 import type { GateDef } from "@/lib/config.schema";
 import type { ArtifactKind, GateResult, GateVerdict } from "@/lib/db/schema";
-import type { FlowContext } from "../types";
+import type { ExecutionFlowContext as FlowContext } from "../types";
 import type { AgentExecution } from "../runner-agent";
 import type { CompiledNode } from "./compile";
-import type { Db, LoadedRun } from "./runner-core";
+import type { Db, LoadedProjectRun as LoadedRun } from "./runner-core";
 import type { RestrictionPathSet } from "./mutation-check";
 import type { FlowDriverClaim } from "./driver-claim";
 
@@ -419,6 +419,8 @@ async function runOneGate(
   }
 
   const common = {
+    resultContract: loaded.run.resultContract,
+    knowledgeAccess: loaded.run.knowledgeAccess,
     runtimeRoot: ctx.runtimeRoot,
     projectSlug: loaded.projectSlug,
     runId: loaded.run.id,
@@ -522,6 +524,8 @@ async function runOneGate(
                 db: ctx.db,
                 runId: loaded.run.id,
                 stepId: gate.id,
+                resultContract: loaded.run.resultContract,
+                knowledgeAccess: loaded.run.knowledgeAccess,
                 signal: ctx.signal,
               },
               {

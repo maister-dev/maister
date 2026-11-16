@@ -1,0 +1,54 @@
+[
+  {
+    "path": "actual-live-reduction-failure.log.gz",
+    "uncompressedSha256": "4b28806b6ca4c00eb8fabe22e66815ec89b2d4cb0ef88e05298adbd71c4ad704"
+  },
+  {
+    "path": "actual-reduction-inputs.json.gz",
+    "uncompressedSha256": "e472155f46945398c98fb99a1e4b12aa848ff6d96c3dd28c8a8b82c71f32011b"
+  },
+  {
+    "path": "actual-transcript-diagnostics.jsonl.gz",
+    "uncompressedSha256": "0f7e3b52a21c76dc5f02fc3f3233a95e2828fe246c8fa595dfaf35694fb934e2"
+  },
+  {
+    "path": "reduction-path-red.log.gz",
+    "uncompressedSha256": "5c9d38aa9d0b01ad75203f9194613c66b87d546db14417fb4e17c9581a04f8e1"
+  },
+  {
+    "path": "reduction-green.log.gz",
+    "uncompressedSha256": "e60f1f30e6a9372ab90ca13e089be322bfc8476e9af90eb8fdc9b8ce0a2ae251"
+  },
+  {
+    "path": "proposal-inspection-policy-red.log.gz",
+    "uncompressedSha256": "d3d473c28b2ac68ae302216b04d997e1ea41b38fe7b4ee65a03db415223fb24c"
+  },
+  {
+    "path": "actual-candidate-green.log.gz",
+    "uncompressedSha256": "f78e82353db66233cb1f5524611b42bc270e93121a938d1fd42d7b886a1360ba"
+  },
+  {
+    "path": "release-v102.log.gz",
+    "uncompressedSha256": "a32fa13c4fd215cdfe5608ab2038e075af2fd0d4cec64a22bc653222531e332d"
+  },
+  {
+    "path": "full-unit-green.log.gz",
+    "uncompressedSha256": "82b20431f99fcb918c69c93f5eeaa2b65151d0bc6c331afc20b31118dbc74554"
+  },
+  {
+    "path": "typecheck-green.log.gz",
+    "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+  },
+  {
+    "path": "lint-green.log.gz",
+    "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "contracts-green.log.gz",
+    "uncompressedSha256": "4e99048991a165359acf6eab45900dd2e1440fa2039513d463ec120561af3d66"
+  },
+  {
+    "path": "docs-green.log.gz",
+    "uncompressedSha256": "5058181f239a25d11e46a8db67b451f5cf6f8c807bd85697cf7b9509ccd4513e"
+  }
+]

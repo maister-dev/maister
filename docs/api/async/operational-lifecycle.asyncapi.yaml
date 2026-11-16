@@ -17,6 +17,9 @@ channels:
           - $ref: "#/components/messages/TaskQualificationChanged"
           - $ref: "#/components/messages/AttentionAcknowledged"
           - $ref: "#/components/messages/CleanupChanged"
+          - $ref: "#/components/messages/KnowledgeRecordChanged"
+          - $ref: "#/components/messages/SpecialistAssignmentChanged"
+          - $ref: "#/components/messages/StandOperationChanged"
 components:
   messages:
     AgentActivityChanged:
@@ -103,6 +106,7 @@ components:
     AttentionAcknowledged:
       name: run.operational_attention_acknowledged
       summary: One reader acknowledged an exact failure reason revision
+      description: The domain-outbox envelope retains the exclusive project or company owner and exact operational Run reference; the content-free payload and reader receipt identity are unchanged.
       payload:
         type: object
         additionalProperties: false
@@ -115,6 +119,7 @@ components:
     CleanupChanged:
       name: run.operational_cleanup_changed
       summary: Cleanup reason/state changed independently of terminal business outcome
+      description: The existing domain-outbox envelope retains the exclusive project or company owner. Company rearm uses current human recovery authority and the existing cleanup receipt/worker.
       payload:
         type: object
         additionalProperties: false
@@ -126,3 +131,216 @@ components:
             type: string
             enum:
               [retained, armed, preserving, removed, released, retry, exhausted]
+
+    KnowledgeRecordChanged:
+      name: knowledge.record_changed
+      summary: Content-free accepted knowledge or confirmation invalidation
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - recordId
+          - revision
+          - cause
+          - changeId
+        properties:
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          recordId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+          changeId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          cause:
+            type: string
+            enum:
+              - published
+              - confirmed
+              - revoked
+              - retired
+    SpecialistAssignmentChanged:
+      name: specialist.assignment_changed
+      summary: Implemented — durable assignment and context invalidation
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - assignmentId
+          - revision
+          - cause
+          - previousStatus
+          - status
+        properties:
+          originExecution:
+            type: object
+            additionalProperties: false
+            description: Server-recorded execution origin when known; omitted for historical or human-origin facts. Does not change lifecycle ownership.
+            required: [runId, nodeAttemptId]
+            properties:
+              runId:
+                type: string
+                minLength: 1
+                maxLength: 128
+              nodeAttemptId:
+                type: string
+                minLength: 1
+                maxLength: 128
+                nullable: true
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          assignmentId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+          previousStatus:
+            type: string
+            nullable: true
+            enum: [queued, active, waiting_input, waiting_children, waiting_resource, reconciling, awaiting_acceptance, completed, failed, cancelled, null]
+          status:
+            type: string
+            enum: [queued, active, waiting_input, waiting_children, waiting_resource, reconciling, awaiting_acceptance, completed, failed, cancelled]
+          cause:
+            type: string
+            enum:
+              - created
+              - input
+              - context
+              - work
+              - question
+              - continuation_ready
+              - acceptance
+              - cancelled
+              - ownership
+              - state
+              - recovered
+    StandOperationChanged:
+      name: stand.operation_changed
+      summary: Designed — operation/verification/recovery changed without implying success
+      payload:
+        type: object
+        additionalProperties: false
+        required:
+          - owner
+          - assignmentId
+          - operationId
+          - revision
+          - cause
+        properties:
+          owner:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - companyId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - company
+                  companyId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+              - type: object
+                additionalProperties: false
+                required:
+                  - kind
+                  - projectId
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                      - project
+                  projectId:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+          assignmentId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          operationId:
+            type: string
+            minLength: 1
+            maxLength: 128
+          revision:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+          cause:
+            type: string
+            enum:
+              - intent
+              - effect
+              - verification
+              - recovery

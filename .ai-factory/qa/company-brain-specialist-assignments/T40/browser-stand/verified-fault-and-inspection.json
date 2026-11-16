@@ -1,0 +1,143 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "407092a3d6816ec4af357220e23b87edf3613ad99cbf13953012cec61075204c",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:40:03.361759+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:46:34.729657+00:00",
+  "invocationId": "329aad6b-783e-475b-8194-03737b11783f",
+  "status": "browser_maintenance_faults_and_quiet_inspection_passed_model_qualification_failed",
+  "browserPassed": 2,
+  "browserUnexpected": 0,
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "providerSessionModels": [
+    {
+      "role": "diagnostic",
+      "sessionId": "d0bc6ef6-922b-47de-8592-3fdde5397406",
+      "reportedModels": [
+        "claude-sonnet-4-6"
+      ]
+    },
+    {
+      "role": "coordinator",
+      "sessionId": "17d88dbb-5fd5-45cd-8f46-29a7afe72c67",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "role": "scheduled-inspector",
+      "sessionId": "6305fbc1-abd7-4e6d-b8e2-670a586fea2d",
+      "reportedModels": [
+        "claude-sonnet-4-6"
+      ]
+    },
+    {
+      "role": "diagnostic",
+      "sessionId": "22dbdee7-5fdd-4495-894f-5ce59ef4d7d1",
+      "reportedModels": [
+        "claude-sonnet-4-6"
+      ]
+    }
+  ],
+  "physicalFault": {
+    "event": "qualification_restart_ack_dropped",
+    "operationId": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+    "sequence": 4,
+    "beforeInvocation": "968863bad272456e904e498bb74aaf2b",
+    "afterInvocation": "a5ece28e241e44bb8215591f239f3e64"
+  },
+  "observations": {
+    "stand-clarification-proof": {
+      "assignmentId": "faa64f9b-659b-4c5c-bbab-1e8a93ad9ef7",
+      "runId": "2af79bfc-17e5-4ee9-be40-f4e1044cf76d",
+      "questionId": "54772ef3-3124-4e43-832b-bdf9f1063755",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "faa64f9b-659b-4c5c-bbab-1e8a93ad9ef7",
+      "runId": "2af79bfc-17e5-4ee9-be40-f4e1044cf76d",
+      "operationId": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+      "oldWebPid": 54540,
+      "newWebPid": 65553,
+      "acceptedDiagnostic": {
+        "id": "33af9eb7-a10a-4a6b-adb1-fb04552c159d",
+        "childRunId": "cb94b8ff-c59c-4980-b4af-8b19276824ab",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "f4b1a261-c222-496c-b2bc-b307a33b5184",
+      "operationId": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "stand-reconciliation-proof": {
+      "operationId": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+      "runId": "2af79bfc-17e5-4ee9-be40-f4e1044cf76d",
+      "unknown": {
+        "id": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "fd38ed74-02a7-4f25-92f9-ba2c88b0c884"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    },
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "faa64f9b-659b-4c5c-bbab-1e8a93ad9ef7",
+      "runId": "2af79bfc-17e5-4ee9-be40-f4e1044cf76d",
+      "operationId": "3a1e0ca4-a150-4ce4-b7da-a10c9175ae5c",
+      "resultRevision": 1,
+      "verificationIds": [
+        "7ce2e959-3600-4e2b-8da8-55f5c2ee47e7"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "43bf98a0-2c71-4ab3-ae1a-e97c4ab60095",
+      "knowledgeRecordId": "a5387e47-7be9-472b-98f2-eca07a13802b",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "96812240-e3aa-4886-bc8c-da42e09537e2",
+      "attempt_id": "7acdf9da-2df5-4d14-a2bc-affc04793d4b",
+      "run_id": "ddc2e5a1-2bb7-47b4-9c9d-a2982cd2eed6",
+      "status": "Done",
+      "delivery_id": "1a3a2205-4d5a-4d63-b22c-08ef8ad29f98",
+      "suppressed": true,
+      "operation_id": "3a81f1a5-7798-453a-b927-c378c740ef58",
+      "verification_id": "8d174fe9-ee1f-473b-8e1f-d2c3dd84de56",
+      "commands": 0
+    }
+  },
+  "scope": "Functional browser and systemd proof. The configured runner was GLM-5.3. Actual ACP transcripts show three sessions used a different model ID. This includes SIGKILL of the real Web owner, not independent ACP coordinator/diagnostic kills."
+}

@@ -5,10 +5,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { reworkChildRun } from "@/lib/agents/launch";
+import { reserveCompanyDelegatedAgentRun } from "@/lib/agents/company-agent-launch";
+import { reserveCompanyDelegatedFlowRun } from "@/lib/agents/company-flow-launch";
+import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
+import { prepareDelegatedWorkRework } from "@/lib/specialist-assignments/delegated-intake";
+import { dispatchProjectAssignmentRework } from "@/lib/specialist-assignments/project-child-dispatch";
+import { assignmentWorkReworkSchema } from "@/lib/specialist-assignments/work-types";
+import { postgresTextSchema } from "@/lib/text-schema";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -23,10 +31,67 @@ const bodySchema = z
   .object({
     childRunId: z.string().guid({ error: "Invalid uuid" }),
     prompt: z.string().min(1).max(1_000_000),
+    assignmentWork: assignmentWorkReworkSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (body) =>
+      body.assignmentWork === undefined ||
+      (body.prompt.trim().length > 0 &&
+        postgresTextSchema.min(1).max(8000).safeParse(body.prompt).success),
+    {
+      message: "Native work rework requires a bounded prompt",
+      path: ["prompt"],
+    },
+  );
 
 type ReworkBody = z.infer<typeof bodySchema>;
+
+async function reworkNativeChild(
+  db: Db,
+  tokenId: string,
+  body: ReworkBody,
+): Promise<NextResponse> {
+  if (body.assignmentWork === undefined)
+    return NextResponse.json(
+      {
+        code: "CONFIG",
+        message: "Native rework requires an exact work and result selector",
+      },
+      { status: 422 },
+    );
+
+  try {
+    const request = await prepareDelegatedWorkRework(db, {
+      childRunId: body.childRunId,
+      prompt: body.prompt,
+      tokenId,
+      decision: body.assignmentWork,
+    });
+    const { kind } = request.prepared.target;
+    const reserve =
+      kind === "project_agent"
+        ? dispatchProjectAssignmentRework
+        : kind === "company_flow"
+          ? reserveCompanyDelegatedFlowRun
+          : reserveCompanyDelegatedAgentRun;
+    const result = await reserve(db, request);
+
+    return NextResponse.json(result, { status: 202 });
+  } catch (err) {
+    if (!isMaisterError(err)) throw err;
+    const reason = err.details?.reason;
+
+    return NextResponse.json(
+      {
+        code: err.code,
+        message: err.message,
+        ...(typeof reason === "string" ? { details: { reason } } : {}),
+      },
+      { status: httpStatusForExtCode(err.code) },
+    );
+  }
+}
 
 export async function POST(
   req: NextRequest,
@@ -42,6 +107,9 @@ export async function POST(
       scopeLabel: "runs:delegate",
       endpoint: ENDPOINT,
       method: "POST",
+      allowCompanyActorWithoutProject: true,
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -70,6 +138,12 @@ export async function POST(
           { status: httpStatusForExtCode("PRECONDITION") },
         );
       }
+
+      if (
+        body.assignmentWork !== undefined ||
+        ctx.scopeLabel === "assignments:update"
+      )
+        return reworkNativeChild(db, ctx.actor.tokenId, body);
 
       // Finding 1 (Codex adversarial review): fail closed if the bound
       // orchestrator has terminalized — a stale run-bound token must not rework
@@ -141,6 +215,11 @@ export async function POST(
       }
 
       try {
+        await captureNativeChildInput(
+          db,
+          { kind: "token", tokenId: ctx.actor.tokenId },
+          { sourceRunId: parentRunId, childRunId: child.id },
+        );
         const result = await reworkChildRun(body.childRunId, body.prompt, {
           db,
         });
@@ -151,8 +230,21 @@ export async function POST(
         );
       } catch (err) {
         if (isMaisterError(err)) {
+          const reason = err.details?.reason;
+
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            {
+              code: err.code,
+              message: err.message,
+              ...(typeof reason === "string" &&
+              [
+                "knowledge_reference_unavailable",
+                "knowledge_capture_profile_required",
+                "native_input_target_required",
+              ].includes(reason)
+                ? { details: { reason } }
+                : {}),
+            },
             { status: httpStatusForExtCode(err.code) },
           );
         }

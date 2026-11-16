@@ -201,6 +201,26 @@ describe("POST /api/agents/[agentId]/event — webhook trigger", () => {
     expect(res.status).toBe(403);
   });
 
+  it("refuses a project token on company specialist intake before accepting a caller identity", async () => {
+    const incoming = request({ token: fx.triggerToken, body: {} });
+
+    incoming.headers.set("x-maister-owner-kind", "company");
+    const response = await EVENT(incoming, routeParams(AGENT_ID));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "UNAUTHORIZED",
+      details: { reason: "personal_assignment_token_required" },
+    });
+  });
+
+  it("refuses an unknown owner negotiation instead of launching legacy project work", async () => {
+    const incoming = request({ token: fx.triggerToken, body: {} });
+
+    incoming.headers.set("x-maister-owner-kind", "unknown-owner");
+    expect((await EVENT(incoming, routeParams(AGENT_ID))).status).toBe(422);
+  });
+
   it("rejects an oversized payload (413)", async () => {
     const big = JSON.stringify({ blob: "x".repeat(33 * 1024) });
     const res = await EVENT(

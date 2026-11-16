@@ -18,6 +18,7 @@ export interface RunRecoverActionsProps {
   // current node) can only be discarded — hide Recover, but ALWAYS expose
   // Discard so the run can still enter the GC countdown from the UI.
   canRecover: boolean;
+  canDiscard?: boolean;
 }
 
 type DialogKind = "recover" | "discard" | null;
@@ -73,6 +74,7 @@ async function refusalReason(res: Response): Promise<string | null> {
 export function RunRecoverActions({
   runId,
   canRecover,
+  canDiscard = true,
 }: RunRecoverActionsProps): ReactElement {
   const t = useTranslations("run");
   const router = useRouter();
@@ -190,17 +192,19 @@ export function RunRecoverActions({
             {t("recover")}
           </button>
         ) : null}
-        <button
-          className="inline-flex w-max items-center rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
-          data-testid="discard-button"
-          type="button"
-          onClick={() => {
-            setError(null);
-            setDialog("discard");
-          }}
-        >
-          {t("discard")}
-        </button>
+        {canDiscard ? (
+          <button
+            className="inline-flex w-max items-center rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
+            data-testid="discard-button"
+            type="button"
+            onClick={() => {
+              setError(null);
+              setDialog("discard");
+            }}
+          >
+            {t("discard")}
+          </button>
+        ) : null}
       </div>
 
       {queued ? (

@@ -345,6 +345,48 @@ and kills remaining children after exit or the 30-second stop deadline. This
 allows the supervisor to mark intentional shutdown and drain agent output
 before child termination. See the [systemd kill contract](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml).
 
+### Stand helper preflight
+
+Install the helper unit and copy the example helper environment and target
+JSON into `/etc/maister` on the disposable Linux stand. Run the helper under
+one dedicated service account with one private `StateDirectory` for that
+service namespace. Place all aliases for a unit in the same helper
+configuration. Use Node 24, util-linux `flock`, `systemctl` and `journalctl`.
+Start from the supplied configuration examples in `deploy/`.
+
+1. Provision a reviewed target, component, runbook witness and separate
+   operator recovery and restart grants. Copy the exact target ID,
+   incarnation, configuration revision and component into the helper JSON.
+2. Configure the Web authority listener in `/etc/maister/maister.env`. Set
+   the target's helper credential there. Configure the supervisor target
+   mapping in its own env file. Install the distinct platform-to-helper
+   credential as a file on the supervisor and helper.
+3. Give the helper account read access to the configured unit and its
+   journal. For system scope, grant restart through a polkit rule matching
+   the service account, exact unit and restart verb. For user scope, run the
+   helper as the configured numeric UID and provision that user's manager
+   and D-Bus session. Grant service-manager permissions only for the
+   configured scope and units.
+4. Run the helper unit on the disposable target. Its `ExecStartPre` checks
+   config and readable credential files, opens the private journal, reads
+   each systemd unit's state and binds the configured TCP address and port.
+   Look for `stand_helper_preflight_passed` and
+   `stand_helper_listening`. Web logs `stand authority listener ready`
+   after its TLS listener binds successfully. Ensure firewalls permit the
+   supervisor to reach the helper and the helper to reach the Web authority
+   listener over the dedicated endpoints.
+5. Read the helper's `/identity` with the pinned supervisor client and
+   verify the reviewed target incarnation and revision. Exercise a live
+   observation through MAIster to check both mTLS directions and current
+   authority. Read bounded logs under the helper account. Perform a separately
+   approved restart only on the disposable unit, then verify post-action
+   health and inspect the two independent receipts.
+
+The MAIster application images and Postgres-only Compose setup do not
+provide a systemd environment for the helper. See
+[stand configuration](configuration.md#company-specialist-and-stand-configuration)
+and [recovery](system-analytics/stand-maintenance.md#recovery-and-current-responsibility).
+
 ## 8. Reverse proxy + TLS
 
 ```bash

@@ -17,6 +17,7 @@ import { RANKER_VERSION } from "@/lib/brain/recall-ranker";
 import { retain } from "@/lib/brain/retain";
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { getDb } from "@/lib/db/client";
+import { assertLegacyBrainTransport } from "@/lib/brain/knowledge-execution-access";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
@@ -116,6 +117,7 @@ export async function GET(
     },
     async (ctx: ExtCtx) => {
       try {
+        await assertLegacyBrainTransport(db, ctx.actor.boundRunId);
         await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 
@@ -285,6 +287,7 @@ export async function POST(
     },
     async (ctx: ExtCtx) => {
       try {
+        await assertLegacyBrainTransport(db, ctx.actor.boundRunId);
         await assertBrainSchemaApplied(db);
         await assertProjectBrainEnabled(db, ctx.projectId);
 

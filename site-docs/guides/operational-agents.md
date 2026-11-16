@@ -31,6 +31,11 @@ required GitHub connection. Configure repository and batch settings per project
 attachment. This choice does not grant automatic tool approval. Normal
 permissions, isolation, budgets and human-in-the-loop decisions still apply.
 
+Specialist packages can declare `operational_evidence_v2` with
+`compat.engine_min: "3.12.0"` to report structured findings. Operation and
+verification IDs require platform evidence. A report can describe missing
+evidence and uncertainty.
+
 ## Read the result
 
 The completing turn must publish one `json maister:output` object using the
@@ -115,6 +120,117 @@ After changing an enabled agent's runner, MAIster offers this batch immediately.
 Saving settings never starts retries: inspect the preview and confirm separately.
 Large histories are processed in successive batches. If a response is lost,
 recover that batch before starting another; accepted items are not duplicated.
+
+## Review project automation input
+
+For a professional's cron or event source, select **Review for specialist assignments**
+before saving. MAIster checks the current pinned role and your project settings
+authority, then records your review of the selector and recurring request.
+The project agent API exposes this read-only witness as `assignmentReview`.
+It identifies the reviewer and review time; it does not claim who originally wrote
+an old schedule or grant permanent execution authority. Historical schedules have
+no review until an operator explicitly requests it. Mention sources use the comment
+author's current authority instead. Unchecking approval clears the review and lets
+you repair settings without approving work, including when a pin is broken.
+Unrelated attachment settings preserve it. API source writes request approval with
+`reviewForAssignments:true`; false or omitted clears it. Review metadata cannot be
+submitted by the caller.
+
+For a project professional's cron source, provide a nonempty recurring request and
+save its settings as an authorized operator. Each fire retains an assignment, the
+original request and its review, then uses the existing project admission and
+scheduler. Independent fires queue separate work; a repeated delivery retains the
+same Run. The reviewing user's current launch authority is checked again. Empty
+requests and unreviewed history produce an actionable incident without starting
+the professional. Updating source settings applies to future invocations and
+preserves the original input of retained attempts.
+
+Execution results and original scheduled input are inspectable separately. A valid
+Run result remains subject to assignment acceptance. Installable stand-pilot
+qualification remains in progress.
+
+For an event source, select the matching event kinds and review it. Only events
+after its observed enrollment point are eligible. Saving an unchanged selector
+preserves that point; a changed selector establishes a new one. Earlier reviews
+require explicit event review before native assignments can start.
+
+Run-derived events additionally require **Share the producing run context**.
+This shares only the matching run's classified evidence and assignment inputs with
+the appointed specialist or coordinator roles. Each role still needs current
+access to underlying records and private memory. Unchecking sharing withdraws
+access for admitted work too; reapproval restores eligible access without changing
+original inputs. A direct user-authored project fact with no producing run needs
+no run-context sharing. Missing or unclassified provenance refuses explicitly.
+
+Each matching professional receives its own assignment. Repeated event delivery
+retains the same Run, self-authored facts are suppressed, and chained events share
+a bounded recursion budget even when a coordinator's completion is system-authored.
+Inspect the source incident when review, sharing or evidence is unavailable.
+
+## Address a professional in a task comment
+
+Enable the professional's **Mention summon** invocation in its project attachment, then
+address its qualified handle in a task comment, for example
+`@operations:diagnostician Inspect this component without mutation.` The pinned
+role must declare specialist responsibilities and its invocation trigger, with an
+operational result contract or a coordinator's mandatory result export.
+
+For these professional roles, each stored human comment and addressed attachment
+retains its own assignment and original input. An independent request is queued
+even while another assignment is active. Redelivery of the same comment reuses
+its existing work. The author must still have current project launch authority
+when dispatch and admission occur; a mention never grants permission.
+
+Keep the stored comment within 8,000 characters for native assignment input. A
+longer comment remains posted, but invocation is refused with
+`project_comment_input_too_large`; post a shorter request or use bounded input
+references. The server preserves the source text, author and evidence identity
+without truncation. Agent-authored professional requests require governed
+principal admission instead of impersonating the human author.
+
+Open agent history to inspect the retained Run and its required result. A new
+mention represents independent work. Assignment acceptance and confirmation of a
+Brain fact remain separate decisions. Ordinary agent summons retain their
+existing behavior.
+
+## Submit a structured project assignment
+
+For a declared specialist with an operational result contract or a coordinator
+with a mandatory result export, the existing project launch endpoint also accepts
+structured work. Use an authenticated Web session with permission to launch work
+in that project and `Content-Type: application/json`. Send
+`POST /api/projects/{slug}/agents/{agentId}/launch` with this closed envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "manual-request-001",
+  "assignment": {
+    "objective": "Diagnose the requested component",
+    "expectedOutcome": "A validated result with evidence and unresolved questions",
+    "input": "Inspect the authorized target without mutation.",
+    "targetIds": [],
+    "inputRefs": [],
+    "constraints": ["Read only"],
+    "verification": [
+      { "kind": "result", "referenceId": null, "required": true }
+    ]
+  }
+}
+```
+
+The route determines project ownership and the specialist attachment. Result
+contract, requester and authority come from the server. The envelope does not
+accept owner, attachment, runner or workspace overrides. A new assignment returns
+`201`; the same user, project, key and original content return `200` with the same
+assignment and Run. Preserve the key after a lost response. Different content
+under one key conflicts; intentional independent work requires a new key.
+
+This identity is shared with native manual assignment submission, including
+personal API clients. Replaying completed work still requires current project
+and source access, while execution readiness is checked for new work. Inspect the
+retained Run and its structured result; accepting the assignment remains a
+separate decision. Existing simple launch payloads keep their `202` contract.
 
 ## Qualify incoming requests
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type { ExecutionAssignment, ExecutionHost, Run } from "@/lib/db/schema";
 import type {
   PreparedPermissionHandoff,
   PreparedUndeliveredPermission,
@@ -25,11 +25,16 @@ import {
   authorizeGatePermissionContinuation,
 } from "@/lib/flows/graph/gate-permission-resume";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
+import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import {
   causeReason,
   type RunReviewCause,
@@ -41,6 +46,8 @@ import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeAssignmentQuestionNodeResume } from "@/lib/specialist-assignments/flow-question";
+import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
   authorizeNodeInterruptResume,
   authorizeOrchestratorActionResume,
@@ -82,7 +89,11 @@ export type StateTransitionResult =
   | {
       ok: false;
       reason:
-        "status-guard-mismatch" | "not-found" | "capacity" | "pending-evidence";
+        | "status-guard-mismatch"
+        | "not-found"
+        | "capacity"
+        | "pending-evidence"
+        | "assignment-budget";
     };
 
 // ADR-141: a run that terminalizes MUST NOT strand a live branch-sync claim.
@@ -361,6 +372,7 @@ export async function markResumed(
         else if (!(await authorizeGatePermissionResume(tx, assignment))) {
           await authorizeNodePermissionResume(tx, assignment);
           await authorizeNodeInterruptResume(tx, assignment);
+          await authorizeAssignmentQuestionNodeResume(tx, assignment);
         }
       }
       await opts.recordSuccessAudit?.(tx);
@@ -505,11 +517,69 @@ export async function markResumedFromWait(
     async (tx: Db): Promise<StateTransitionResult> => {
       await takeSchedulerLock(tx);
       if (opts.expectedCoordinator) {
+        const [owner]: Pick<Run, "companyId" | "parentRunId" | "rootRunId">[] =
+          await tx
+            .select({
+              companyId: runs.companyId,
+              parentRunId: runs.parentRunId,
+              rootRunId: runs.rootRunId,
+            })
+            .from(runs)
+            .where(eq(runs.id, runId));
+
+        if (owner?.companyId && owner.parentRunId) {
+          const ancestorIds = [
+            ...new Set<string>([
+              owner.parentRunId,
+              ...(owner.rootRunId ? [owner.rootRunId] : []),
+            ]),
+          ];
+          const ancestors: Array<
+            Parameters<typeof currentBudgetTermination>[1] & {
+              status: string;
+              stop: Run["companyCancellationIntent"];
+            }
+          > = await tx
+            .select({
+              id: runs.id,
+              status: runs.status,
+              stop: runs.companyCancellationIntent,
+              budgetState: runs.budgetState,
+              executionAssignmentId: runs.executionAssignmentId,
+              currentStepId: runs.currentStepId,
+              flowDriverToken: runs.flowDriverToken,
+            })
+            .from(runs)
+            .where(inArray(runs.id, ancestorIds))
+            .orderBy(
+              sql`CASE WHEN ${runs.id}=${owner.rootRunId} THEN 0 ELSE 1 END`,
+            )
+            // A terminal writer may hold an ancestor while settling a child.
+            // Yield the wake instead of waiting while holding the scheduler lock.
+            .for("share", { skipLocked: true });
+
+          if (
+            ancestors.length !== ancestorIds.length ||
+            ancestors.some(
+              ({ status, stop }) =>
+                isTerminalRunStatus(status) || stop !== null,
+            )
+          )
+            return { ok: false, reason: "status-guard-mismatch" };
+          for (const ancestor of ancestors)
+            if (await currentBudgetTermination(tx, ancestor))
+              return { ok: false, reason: "status-guard-mismatch" };
+        }
         const [current] = await tx
           .select({
+            id: runs.id,
             status: runs.status,
             currentStepId: runs.currentStepId,
             failedChildWakeAt: runs.failedChildWakeAt,
+            companyCancellationIntent: runs.companyCancellationIntent,
+            executionAssignmentId: runs.executionAssignmentId,
+            budgetState: runs.budgetState,
+            flowDriverToken: runs.flowDriverToken,
           })
           .from(runs)
           .where(eq(runs.id, runId))
@@ -533,6 +603,8 @@ export async function markResumedFromWait(
         if (
           current?.status !== "WaitingOnChildren" ||
           current.currentStepId !== opts.expectedCoordinator.nodeId ||
+          current.companyCancellationIntent ||
+          (await currentBudgetTermination(tx, current)) ||
           attempt?.id !== opts.expectedCoordinator.nodeAttemptId ||
           attempt.status !== "NeedsInput"
         )
@@ -548,6 +620,14 @@ export async function markResumedFromWait(
         )
           return { ok: false, reason: "pending-evidence" };
       }
+      const [budget]: { allowed: boolean }[] = (
+        await tx.execute(
+          sql`SELECT ${assignmentBudgetAllowsDispatchSql(sql`${runId}`)} AS allowed`,
+        )
+      ).rows;
+
+      if (budget?.allowed !== true)
+        return { ok: false, reason: "assignment-budget" };
       if (
         (await countLiveRuns(tx, "flow")) >=
         (await effectivePoolCap(tx, "flow")).cap
@@ -1373,6 +1453,13 @@ export async function crashResumedRun(
   const db = opts.db ?? getDb();
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     const rows = await tx
       .update(runs)
       .set({ status: "Crashed", endedAt: new Date() })
@@ -1494,6 +1581,13 @@ export async function crashRunningRun(
   );
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     // M19 crash-recover (ADR-034): retain the crashed node id in
     // resume_target_step_id BEFORE nulling current_step_id, so Recover can resolve
     // the node kind (agent → --resume; session-less + retry_safe → re-dispatch).
@@ -1513,6 +1607,7 @@ export async function crashRunningRun(
       .returning({
         id: runs.id,
         projectId: runs.projectId,
+        companyId: runs.companyId,
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
@@ -1540,18 +1635,21 @@ export async function crashRunningRun(
     await releaseSyncClaimOnTerminal(tx, runId, reason ?? "CRASH");
     await releaseAssignmentForRun(tx, runId, "crashed");
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.crashed",
-      projectId: rows[0].projectId,
-      runId,
-      data: { errorCode: reason ?? null },
-    });
+    const owner = runDomainEventScope(rows[0]);
+
+    if (owner.projectId !== undefined)
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.crashed",
+        projectId: owner.projectId,
+        runId,
+        data: { errorCode: reason ?? null },
+      });
 
     await emitDomainEvent({
       db: tx,
       kind: "run.crashed",
-      projectId: rows[0].projectId,
+      ...owner,
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
@@ -1607,6 +1705,13 @@ export async function crashWaitingOnChildren(
   const db = opts.db ?? getDb();
 
   const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) return false;
     const rows = await tx
       .update(runs)
       .set({

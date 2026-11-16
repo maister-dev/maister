@@ -1,5 +1,7 @@
 import * as acp from "@agentclientprotocol/sdk/unstable";
 
+import { createAcpToolCallContext } from "./acp-tool-call-context";
+
 // SDK 2 removed `ClientSideConnection` in favour of the app API. The supervisor
 // keeps this one named-method seam so its call sites and test fakes do not
 // track SDK churn. The `/unstable` entrypoint matches what SDK 1.x exposed by
@@ -36,17 +38,22 @@ export function connectAcpClient(
   handlers: AcpClientHandlers = {},
 ): AcpConnection {
   const app = acp.client();
+  const toolCalls = createAcpToolCallContext();
   const { requestPermission, sessionUpdate, extMethod, extNotification } =
     handlers;
 
   if (requestPermission) {
     app.onRequest(acp.methods.client.session.requestPermission, ({ params }) =>
-      requestPermission(params),
+      requestPermission(toolCalls.permission(params)),
     );
   }
-  if (sessionUpdate) {
-    app.onNotification(acp.methods.client.session.update, ({ params }) =>
-      sessionUpdate(params),
+  if (sessionUpdate || requestPermission) {
+    app.onNotification(
+      acp.methods.client.session.update,
+      async ({ params }) => {
+        toolCalls.observe(params);
+        await sessionUpdate?.(params);
+      },
     );
   }
   if (extMethod) {

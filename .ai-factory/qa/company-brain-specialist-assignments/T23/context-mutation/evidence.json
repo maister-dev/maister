@@ -1,0 +1,183 @@
+{
+  "task": "T23",
+  "date": "2026-11-07",
+  "slice": "Current execution context mutation, source inheritance and attributable internal facts",
+  "baseCommit": "922f868eb33c46f8415086935ca300fda5749e71",
+  "status": "Qualified mutation checkpoint; T23 remains open for collected result lineage and automatic runtime projection",
+  "red": [
+    {
+      "case": "Actual project assignment credential lacked context-read scope",
+      "log": "cb-context-project-read-red2.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Actual current professional credential could not append context",
+      "log": "cb-context-agent-write-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Built company facade omitted the context-update tool",
+      "log": "cb-context-mcp-write-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Native finding correction accepted an unavailable exact record revision",
+      "log": "cb-context-correction-red2.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Assignment context fact omitted its actual execution origin",
+      "log": "cb-context-write-origin-red2.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 202,
+      "files": 9,
+      "durationSeconds": 80.47,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 27.2,
+      "exitCode": 0
+    },
+    "nativeFacadeUnit": {
+      "tests": 410,
+      "files": 6,
+      "exitCode": 0
+    },
+    "builtFacadeWire": {
+      "tests": 11,
+      "files": 1,
+      "exitCode": 0
+    },
+    "webAndFacadeTypes": {
+      "exitCode": 0
+    },
+    "webAndFacadeLint": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    },
+    "migrationDrift": {
+      "newMigration": false,
+      "exitCode": 0
+    }
+  },
+  "migration": {
+    "main": "0246_specialist_context_mutation_credentials",
+    "brain": "0011_proposal_source_access",
+    "scopeAddition": "assignments:update",
+    "preservesExistingCredentials": true,
+    "retainsCompanyOwnerAndNodeChecks": true,
+    "newTables": 0
+  },
+  "qualified": [
+    "Project context uses the exact admitted input independently from Brain flags and refuses revoked initiating membership",
+    "Queued execution cannot mutate context",
+    "Global personal mutation requires both read/update scopes and retains actual user attribution",
+    "Company execution mutation requires current reviewed limit, explicit professional update grant and initiating user update authority",
+    "Actual Run/node author is server-recorded; model authorship and ownership epochs refuse",
+    "Token rotation replays the original context receipt; concurrent patches against one base have one winner",
+    "Uncited agent notes inherit previously consumed private Brain source restrictions",
+    "Current write-grant revocation refuses further edits without withholding independently authorized reads",
+    "Native correction targets require their exact accessible record revision",
+    "Content-free originExecution links actual Run/node in the existing assignment fact and validates against AsyncAPI; company lifecycle run_id remains NULL",
+    "Main-only context upgrade and existing history guards remain qualified"
+  ],
+  "corrections": [
+    "Project attachment fixture uses the existing patch object contract",
+    "Native correction fixture omits the unsupported owner field on a correction",
+    "Exhaustive token-picker label mappings and EN/RU copy include the new user scope",
+    "Existing company internal-fact CHECK prohibits lifecycle run_id; typed originExecution preserves this constraint without relaxing it",
+    "Context fixture activates the assignment through the existing store admission function, separate from historical linkage fixtures"
+  ],
+  "limitations": [
+    "No fabricated business ownership epoch; T29 must add current claim fencing at this same persistence boundary",
+    "Exact collected-result lineage and automatic runtime projection remain T23",
+    "Governed child assignment sharing and exact accepted-work receipts remain T27/T28",
+    "Controlled service/ACP fixtures and built-facade checks do not establish installable stand pilot readiness",
+    "No remote push, deployment or stand mutation"
+  ],
+  "logs": [
+    "cb-context-project-read-red.log.gz",
+    "cb-context-project-read-red2.log.gz",
+    "cb-context-project-read-green1.log.gz",
+    "cb-context-agent-write-red.log.gz",
+    "cb-context-agent-write-green1.log.gz",
+    "cb-context-mcp-write-red.log.gz",
+    "cb-context-correction-red.log.gz",
+    "cb-context-correction-red2.log.gz",
+    "cb-context-write-core-green1.log.gz",
+    "cb-context-write-origin-red.log.gz",
+    "cb-context-write-origin-red2.log.gz",
+    "cb-context-write-origin-green.log.gz",
+    "cb-context-write-origin-green2.log.gz",
+    "cb-context-write-integration-final.log.gz",
+    "cb-context-write-unit-final.log.gz",
+    "cb-context-write-types-final.log.gz",
+    "cb-context-write-integration-release.log.gz",
+    "cb-context-write-unit-release.log.gz",
+    "cb-context-write-types-final3.log.gz",
+    "cb-context-write-contracts-final3.log.gz",
+    "cb-context-write-mcp-green1.log.gz",
+    "cb-context-write-mcp-unit1.log.gz",
+    "cb-context-write-mcp-types-final.log.gz",
+    "cb-context-write-lint-release.log.gz",
+    "cb-context-write-mcp-lint-release.log.gz",
+    "cb-context-write-docs-release.log.gz",
+    "cb-context-write-public-build-final.log.gz",
+    "cb-context-write-public-links-final.log.gz",
+    "cb-context-write-drift-final.log.gz"
+  ],
+  "sourceSha256": {
+    "docs/api/async/operational-lifecycle.asyncapi.yaml": "a1f5b0203fe3e3ffcc8a031bbba4a2b4beafd4aad950cfbde4ac38154a8ffb31",
+    "docs/api/external/operations.openapi.yaml": "5b4e92d53c4561d53ac2f9de5d9109bc504029fcf3571e338634f111034d7cd2",
+    "docs/database-schema.md": "f907052badaa508506adb8539a7e76ed759838a34af9566187c6d5dfd5bf65bc",
+    "docs/db/specialist-assignments-domain.md": "c20e779184ff25600da1cbdc52dd672c5e3103165d938f6573d3d4f53f76ec32",
+    "docs/system-analytics/specialist-assignments.md": "cf6a559b8ebe1eff5ca26df1f39ff79ef3b9cb36687177d41aac49b2f798d01e",
+    "mcp/src/__tests__/stdio.integration.test.ts": "3467504b9e93b72c64e929f54a85ad357f55e5b6066bb9f78d1e467068120217",
+    "mcp/src/__tests__/tool-contract.test.ts": "a7a87709eae01dabd81cedb31a902143f3f7e97db1bffa0576041d568ee9643f",
+    "mcp/src/__tests__/tools.test.ts": "c4bb9ea2591d8b6e8e44a8420ce3d5347f7c9b16cdbaced42b325d851e14c80c",
+    "mcp/src/knowledge-tools.ts": "49179306893141ca327bd1d9acfca61678efa192394bd07a867d15d249322237",
+    "runtime/company-flow-tools.ts": "7617e74f0959da45c460f5b0acf554e4d653e6b69d61639374246b4b66bd0bbf",
+    "runtime/knowledge-tool-effects.ts": "21d75923be038513f63c620553e82b1fa5937a40a99481236cbf4f878b5df815",
+    "runtime/knowledge-tool-input.schema.json": "660884168fe642200056dcf4fefae0896492acbf88622e57364ba3cb7976822a",
+    "site-docs/guides/company-specialist-webhooks.md": "364074180342a2e61c1ca4461f7d1e5ee5764d76985758dfb89d129d422fd62c",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "039c4837e3b2a8df4a6c6bac2b9994519c467c0ccc8004d6ad762a2e2806c961",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/context/route.ts": "c1f0ce0596fd5af12d7d457b4817a0d1d8cce4b7be8f3affd147085ba89be03f",
+    "web/components/board/panels/__tests__/integrations-panel.test.ts": "6833b5e8a829fe598987015bead34bdabd5c615823f0dfa342196cffdc58cb53",
+    "web/components/board/panels/integrations-panel.tsx": "6d60549d37aa69d1f71875dbd2c3d9c308f06faa8483f9ee12a4e7c092d967bd",
+    "web/components/board/token-actions.tsx": "d5105dc681c6bca185c623ecc7c6dfdf25830888bfb4ba35c2b5cb4d7470077e",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "d34b950da4518a7ceed526325c7004d0cfac55651fd038dd412da39b67b6cc84",
+    "web/lib/brain/knowledge-tool-contract.ts": "7d8c20e64a6ff722b8470628a69c3c1c47c09c45ab958ae0d9d73169cce5f88d",
+    "web/lib/db/migrations/0246_specialist_context_mutation_credentials.sql": "65da5de68b621d69f69f0a22d952cf8ec3a1655e609792f886682f451949b0c1",
+    "web/lib/db/migrations/meta/0246_snapshot.json": "09b43489e87a648948cbf7ec02a03867fff20dcfe5e9c43c3c129e22402f533e",
+    "web/lib/db/migrations/meta/_journal.json": "77367b998c21c325909c9fb8217e35ac95ed70ff57aa5407474bbb5aae34e267",
+    "web/lib/db/schema.ts": "f4476ddb62cbce1c4cf96558da028343cc63f605ebfb4c51b2063ecb42db446d",
+    "web/lib/domain-events/outbox.ts": "07197f7ee3064eb3d98a0d6982524a9c39eb67033fcc747f1fdc5b5eb671ae0e",
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": "710826814861eb4052c11761837c66c22460e17fa100a8a5552bc1467b083df4",
+    "web/lib/specialist-assignments/context-access.ts": "09020943ea6082f885f29902b0b2bbf61b3d98fdf31aeb1ea87e02051ec7222f",
+    "web/lib/specialist-assignments/context.ts": "68e4203e6c92516123a6824b75c6c4b9838522a7d2717dad1e105e2309d63d78",
+    "web/lib/tokens/ext-handler.ts": "14e095cde85d7ffbf89715a29b11731040a82b6110e1c356491c787cf96c4a8b",
+    "web/messages/en.json": "6b05da6425320f7827426dce9d1ac63b104dad28172361cc561d6cb3ae998153",
+    "web/messages/ru.json": "edf9e550908e794fad6efcb1182cbc9abb2eeaa692ce79e71342c7359f82dc90",
+    "web/types/token-scopes.ts": "a7d2ba3bf546841e7af9060fdcbda56ad8e492284d7c46df25ab49cefb321753"
+  }
+}

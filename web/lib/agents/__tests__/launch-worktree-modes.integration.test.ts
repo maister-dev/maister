@@ -297,6 +297,56 @@ async function workspaceRows(
 }
 
 describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => {
+  it("IT-CBE-06 inherited native capture refuses a physical shared workspace before filesystem or run creation", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const root = await insertRoot();
+
+    await pool.query("UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1", [
+      root,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [{ kind: "project_context", projectId }],
+      }),
+    ]);
+    await expect(
+      launchAgentRun({
+        agentId: ids.worker,
+        projectId,
+        parentRunId: root,
+        rootRunId: root,
+        workspaceMode: "shared",
+        trigger: { source: "manual" },
+        db,
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "native_shared_workspace_unsupported" },
+    });
+    expect(
+      (await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [root]))
+        .rows,
+    ).toHaveLength(0);
+    expect(
+      await workspaceRows(sharedAgentWorktreePath(projectSlug, root)),
+    ).toHaveLength(0);
+    const trees = await exec("git", [
+      "-C",
+      repoPath,
+      "worktree",
+      "list",
+      "--porcelain",
+    ]);
+
+    expect(trees.stdout).not.toContain(
+      sharedAgentWorktreePath(projectSlug, root),
+    );
+  });
+
   it("two shared-mode children of one root resolve to the SAME tree (2nd reuses, no duplicate workspaces row)", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

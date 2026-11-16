@@ -29,6 +29,7 @@ import {
 import { admitFrozenScratchPrompt } from "./prompt-intent";
 import { lockScratchRunRows } from "./turn-completion";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { getDb } from "@/lib/db/client";
 import { waitForPromptIncarnation } from "@/lib/execution-host/prompt-incarnation";
@@ -849,7 +850,12 @@ async function canApplyScratchPermission(
 ): Promise<boolean> {
   const [state] = await tx
     .select({
+      id: schemaModule.runs.id,
       status: schemaModule.runs.status,
+      budgetState: schemaModule.runs.budgetState,
+      executionAssignmentId: schemaModule.runs.executionAssignmentId,
+      currentStepId: schemaModule.runs.currentStepId,
+      flowDriverToken: schemaModule.runs.flowDriverToken,
       dialogStatus: schemaModule.scratchRuns.dialogStatus,
     })
     .from(schemaModule.runs)
@@ -858,6 +864,8 @@ async function canApplyScratchPermission(
       eq(schemaModule.scratchRuns.runId, schemaModule.runs.id),
     )
     .where(eq(schemaModule.runs.id, args.runId));
+
+  if (state && (await currentBudgetTermination(tx, state))) return false;
   const incarnation = await scratchEventIncarnation(tx, {
     runId: args.runId,
     hostSessionId: args.sessionId,
@@ -923,6 +931,19 @@ export async function applyScratchSessionTerminal(input: {
           monotonicId: input.event.monotonicId,
         },
         "scratch-stale-incarnation-terminal-ignored",
+      );
+
+      return false;
+    }
+    const [run] = await tx
+      .select()
+      .from(schemaModule.runs)
+      .where(eq(schemaModule.runs.id, input.runId));
+
+    if (run && (await currentBudgetTermination(tx, run))) {
+      log.info(
+        { runId: input.runId, eventType: input.event.type },
+        "[FIX] scratch terminal retained for budget stop owner",
       );
 
       return false;

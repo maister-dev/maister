@@ -1,0 +1,27 @@
+✖ CT-CBX-05 qualification migration units resolve to their actual journal tags (0.977583ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 37.382375
+
+✖ failing tests:
+
+test at scripts/validate-requirement-coverage.test.mjs:17:1
+✖ CT-CBX-05 qualification migration units resolve to their actual journal tags (0.977583ms)
+  AssertionError [ERR_ASSERTION]: Main 0215_company_ownership must match the actual journal
+      at TestContext.<anonymous> (file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-requirement-coverage.test.mjs:27:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

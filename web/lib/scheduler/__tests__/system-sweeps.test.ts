@@ -51,6 +51,7 @@ const resumeHostPausedInterruptsMock = vi.hoisted(() => vi.fn());
 const promoteNextPendingMock = vi.hoisted(() => vi.fn());
 const runLibrarianTurnSweepMock = vi.hoisted(() => vi.fn());
 const runLibrarianRetentionMock = vi.hoisted(() => vi.fn());
+const reconcileAssignmentCancellationsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -119,6 +120,9 @@ vi.mock("@/lib/librarian/turn-recovery", () => ({
 }));
 vi.mock("@/lib/librarian/retention", () => ({
   runLibrarianRetention: runLibrarianRetentionMock,
+}));
+vi.mock("@/lib/specialist-assignments/controls", () => ({
+  reconcileAssignmentCancellations: reconcileAssignmentCancellationsMock,
 }));
 // ADR-166: the execution-host reconcile pass needs the DB + the local host;
 // mocked like every other arm so `errors: []` stays a real guard.
@@ -251,6 +255,9 @@ describe("scheduler system sweeps", () => {
       .mockReset()
       .mockResolvedValue({ deadlines: 0, restarts: 0, admissions: 0 });
     runLibrarianRetentionMock.mockReset().mockResolvedValue({ deleted: 0 });
+    reconcileAssignmentCancellationsMock
+      .mockReset()
+      .mockResolvedValue(undefined);
     runSyncRecoverySweepMock.mockReset().mockResolvedValue({
       candidates: 0,
       orphanOperationsAborted: 0,
@@ -717,6 +724,25 @@ describe("scheduler system sweeps", () => {
       summary.errors.some((e) => e.includes("sync recovery sweep failed")),
     ).toBe(true);
     expect(summary.syncRecovery).toBeNull();
+  });
+
+  it("reports a failed assignment cancellation sweep and continues with other recovery", async () => {
+    reconcileAssignmentCancellationsMock.mockRejectedValueOnce(
+      new Error("assignment cancellation query failed"),
+    );
+
+    const { runSystemSweep } = await import("../system-sweeps");
+    const summary = await runSystemSweep();
+
+    expect(summary.errors).toEqual([
+      "assignment cancellation reconciliation failed",
+    ]);
+    expect(summary.bundleErrors).toEqual(summary.errors);
+    expect(summary.librarian).toEqual({
+      deadlines: 0,
+      restarts: 0,
+      admissions: 0,
+    });
   });
 
   it("ADR-185 D19: reports the librarian backstop summary", async () => {

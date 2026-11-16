@@ -94,6 +94,18 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/stand-operations/authority-runtime.ts",
+      "manager-flow-state",
+      "Read operator-configured TLS files at manager boot for the stand authority listener; no request or supervisor path is accepted",
+      [["startConfiguredStandAuthority", "node:fs/promises.readFile", "read"]],
+    ),
+    ...classified(
+      "lib/specialist-assignments/store.ts",
+      "repository-worktree",
+      "Assignment creation reads only the trusted immutable package pin to verify frozen standing instructions; no supervisor runtime path is accepted",
+      [["validateStandingDefinition", "node:fs/promises.readFile", "read"]],
+    ),
+    ...classified(
       "../runtime/process-group.ts",
       "repository-worktree",
       "Read-only native group observation for the Web caller's reviewed repository Git owner; accepts no filesystem path and never reads supervisor runtime data",
@@ -352,15 +364,6 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
-      "scripts/generate-ask-human-json.ts",
-      "build-tooling",
-      "Build-time generated public schema; never reads execution-host runtime",
-      [
-        ["<module>", "node:fs/promises.readFile", "read"],
-        ["<module>", "node:fs/promises.writeFile", "write"],
-      ],
-    ),
-    ...classified(
       "lib/agents/preparation-ownership.ts",
       "repository-worktree",
       "Preparation resolves only server-owned repository identity under the physical fence",
@@ -395,6 +398,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "wrapper",
         ],
       ],
+    ),
+    ...classified(
+      "lib/agents/preparation-workspace.ts",
+      "manager-flow-state",
+      "Create the operator-configured manager runtime root before its first plain workspace preparation lock",
+      [["ensurePreparationRuntimeRoot", "node:fs/promises.mkdir", "write"]],
     ),
     ...classified(
       "lib/agents/preparation-workspace.ts",
@@ -438,6 +447,24 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
           "lib/agents/package-contract.ts#readPackageAgentSources",
           "wrapper",
         ],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-ask-human-json.ts",
+      "build-tooling",
+      "Explicit schema generation and validation access only repository-owned contract artifacts",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-knowledge-tool-json.ts",
+      "build-tooling",
+      "Explicit schema generation and validation access only repository-owned contract artifacts",
+      [
+        ["<module>", "node:fs/promises.readFile", "read"],
+        ["<module>", "node:fs/promises.writeFile", "write"],
       ],
     ),
     ...classified(
@@ -490,6 +517,21 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["visit", "node:fs/promises.open", "open"],
         ["captureTree", "node:fs/promises.readdir", "list"],
       ],
+    ),
+    ...classified(
+      "lib/agents/company-flow-workspace.ts",
+      "repository-worktree",
+      "Server-resolved company/run plain source and adapter directories use the existing shared materialization boundary; no supervisor-private paths or repository identity is supplied",
+      [
+        ["prepareCompanyFlowWorkspace", "node:fs/promises.mkdir", "write"],
+        ["prepareCompanyFlowWorkspace", "node:fs/promises.readdir", "list"],
+      ],
+      {
+        authority:
+          "Exact retained company Flow capture, current assignment authority and active execution generation",
+        lifetime:
+          "Existing source baseline and leased materialization until bounded terminal disposition",
+      },
     ),
     ...classified(
       "lib/agents/package-contract.ts",
@@ -844,13 +886,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "lib/agents/effective.ts",
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
-      [
-        [
-          "resolveEffectiveAgentDefinition",
-          "node:fs/promises.readFile",
-          "read",
-        ],
-      ],
+      [["readInstalledAgentDefinition", "node:fs/promises.readFile", "read"]],
     ),
     ...classified(
       "lib/agents/facade-launch.ts",
@@ -2411,6 +2447,25 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/db/canonical-sql.ts",
+      "build-tooling",
+      "Reads the committed canonical function/trigger SQL under lib/db/canonical for the drift test and generator; never runs inside the web process",
+      [
+        ["readCommittedCanonicalSql", "node:fs.readdirSync", "list"],
+        ["readCommittedCanonicalSql", "node:fs.readFileSync", "read"],
+      ],
+    ),
+    ...classified(
+      "scripts/generate-canonical-sql.ts",
+      "build-tooling",
+      "build/CI tooling over the checkout (.next artifacts, generated docs, image smoke); never runs inside the web process",
+      [
+        ["main", "node:fs.rmSync", "remove"],
+        ["main", "node:fs.mkdirSync", "write"],
+        ["main", "node:fs.writeFileSync", "write"],
+      ],
+    ),
+    ...classified(
       "scripts/generate-erd-dbml.ts",
       "build-tooling",
       "build/CI tooling over the checkout (.next artifacts, generated docs, image smoke); never runs inside the web process",
@@ -2590,6 +2645,13 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [
+    ["readCommittedCanonicalSql", false],
+  ]),
+  ...wrappers("lib/specialist-assignments/store.ts", "repository-worktree", [
+    ["createSpecialistAssignment", false],
+    ["createSpecialistAssignmentInTransaction", false],
+  ]),
   // Numeric native process observation has no caller-selected filesystem path.
   ...wrappers("../runtime/process-group.ts", "repository-worktree", [
     ["inspectProcessGroup", false],
@@ -2659,6 +2721,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["captureOperationalBaseline", false],
     ["captureOperationalGeneration", false],
     ["verifyOperationalIntegrity", false],
+  ]),
+  ...wrappers("lib/agents/company-flow-workspace.ts", "repository-worktree", [
+    ["prepareCompanyFlowWorkspace", false],
   ]),
   ...wrappers("lib/agents/package-contract.ts", "repository-worktree", [
     ["readPackageAgentSources", true],
@@ -2800,6 +2865,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/effective.ts", "repository-worktree", [
     ["resolveEffectiveAgentDefinition", false],
+    ["resolveInstalledAgentDefinition", false],
   ]),
   ...wrappers("lib/agents/facade-launch.ts", "repository-worktree", [
     ["resolveFacadeLaunch", false],
@@ -2838,6 +2904,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ]),
   ...wrappers("lib/agents/materialization-manifest.ts", "repository-worktree", [
     ["agentMaterializationPathsForRun", false],
+    ["agentMaterializationWitnessPathsForRun", false],
     ["assertSafeAgentMaterializationPath", false],
     ["listAgentMaterializationRunIds", false],
     ["materializeWithAgentLease", false],
@@ -3160,6 +3227,11 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/services/gate-chat.ts", "repository-worktree", [
     ["sendGateChatTurn", false],
   ]),
+  ...wrappers(
+    "lib/stand-operations/authority-runtime.ts",
+    "manager-flow-state",
+    [["startConfiguredStandAuthority", false]],
+  ),
   ...wrappers("lib/studio/flow-assistant/action-log.ts", "manager-flow-state", [
     ["appendFlowAssistantActionLog", false],
   ]),

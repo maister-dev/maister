@@ -8,6 +8,8 @@ import pino from "pino";
 import { z } from "zod";
 
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { captureNativeDelegationInput } from "@/lib/orchestrator/native-input";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { resultProfileNameSchema } from "@/lib/config.schema";
 import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
@@ -265,6 +267,11 @@ export async function POST(
         const existingTasks = await db.transaction(async (tx: Db) => {
           await assertExecutionParentAdmission(tx, ctx.projectId, parentRunId);
           await lockDelegationParent(tx, parentRunId);
+          await authorizeRunKnowledgeDisclosure(
+            tx,
+            { kind: "token", tokenId: ctx.actor.tokenId },
+            parentRunId,
+          );
 
           return findDelegationOperationTasks(
             tx,
@@ -318,6 +325,11 @@ export async function POST(
               await assertExecutionParentAdmission(
                 tx,
                 ctx.projectId,
+                parentRunId,
+              );
+              await authorizeRunKnowledgeDisclosure(
+                tx,
+                { kind: "token", tokenId: ctx.actor.tokenId },
                 parentRunId,
               );
               await recordRequiredTokenAudit(
@@ -598,10 +610,26 @@ export async function POST(
 
             for (const t of planTasks) {
               const resolvedFlow = resolvedFlows.get(t.key) ?? null;
-              const created = await createTask(
+              const nativeInput = await captureNativeDelegationInput(
+                tx,
+                { kind: "token", tokenId: ctx.actor.tokenId },
                 {
+                  sourceRunId: parent.id,
+                  target: resolvedFlow
+                    ? { kind: "flow", id: resolvedFlow.flowId }
+                    : { kind: "agent", id: t.target.agentId! },
                   title: t.title ?? titleFromPrompt(t.prompt),
                   prompt: t.prompt,
+                },
+              );
+              const created = await createTask(
+                {
+                  title: nativeInput
+                    ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                    : (t.title ?? titleFromPrompt(t.prompt)),
+                  prompt: nativeInput
+                    ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                    : t.prompt,
                   // A flow entry's task carries the SELECTED flow; an agent
                   // entry's task stays flowless (a simple-intent task awaiting
                   // triage), unchanged.
@@ -641,6 +669,7 @@ export async function POST(
                     ? {
                         kind: "flow" as const,
                         flowId: resolvedFlow.flowId,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(t.runnerOverride
                           ? { runnerOverride: t.runnerOverride }
                           : {}),
@@ -648,6 +677,7 @@ export async function POST(
                     : {
                         kind: "agent" as const,
                         agentId: t.target.agentId as string,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(t.workspace ? { workspace: t.workspace } : {}),
                         ...(t.resultProfile
                           ? { resultProfile: t.resultProfile }
@@ -848,8 +878,14 @@ export async function POST(
                 entry.childRunId = receipt.runId;
                 wakeAcceptedTaskLaunch(db, receipt);
               } else {
+                const [retainedTask] = await db
+                  .select({ delegationSpec: tasks.delegationSpec })
+                  .from(tasks)
+                  .where(eq(tasks.id, childTaskId));
+                const nativeInput = retainedTask?.delegationSpec?.nativeInput;
                 const launched = await launchAgentRun({
                   agentId: t.target.agentId as string,
+                  ...(nativeInput ? { nativeInput } : {}),
                   projectId: ctx.projectId,
                   taskId: childTaskId,
                   launchOverrideRunnerId: t.runnerOverride ?? null,

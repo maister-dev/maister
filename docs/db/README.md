@@ -15,6 +15,16 @@ Two kinds of view live here (ADR-159):
   If a domain diagram disagrees with the Drizzle schema, the schema wins —
   open a PR to fix the ERD.
 
+Database invariants enforced in SQL — guard functions and their triggers — are
+redefined across many migrations, so the effective body is whatever the last
+migration wrote. `web/lib/db/canonical/` holds that effective definition, one
+file per function plus `_triggers.sql`, **generated** from a freshly migrated
+main + Brain database. Review a guard there, not in migration history. After a
+migration that adds, replaces or drops a function or trigger, regenerate with
+`pnpm --filter maister-web db:canonical-sql`; the integration test
+`lib/db/__tests__/canonical-sql.integration.test.ts` (or `db:canonical-sql
+--check`) fails on drift.
+
 ## Files
 
 | File | Scope |
@@ -47,7 +57,7 @@ Two kinds of view live here (ADR-159):
 Mermaid `erDiagram` cardinality symbols used throughout:
 
 | Symbol | Meaning |
-| ------ | ------- |
+| --- | --- |
 | `||--||` | One-to-one (mandatory both sides). |
 | `||--o{` | One-to-many (mandatory parent, zero-or-more children). |
 | `||--|{` | One-to-many (mandatory parent, one-or-more children). |
@@ -58,5 +68,10 @@ the parent is mandatory (NOT NULL FK), the children are zero-or-more.
 
 ## Cascade chain
 
-Every FK is `ON DELETE CASCADE`. Deleting a project drops the entire
-descendant tree in one statement. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
+Deletion policies include CASCADE, SET NULL and RESTRICT. Company identity/grants use RESTRICT. Project-owned Brain records and their local history cascade on project deletion; Brain never blocks that deletion. Operational evidence has a separately governed lifetime. See [`../database-schema.md#cascade-chain`](../database-schema.md#cascade-chain).
+
+- [Company Brain persistence](company-brain-domain.md) — Native owner/revision/witness/confirmation persistence and additive lineage contract; specialist runtime slices pending.
+
+- [Specialist assignment persistence](specialist-assignments-domain.md) — Designed company execution, durable inputs/context, responsibility and result links.
+
+- [Stand operation persistence](stand-operations-domain.md) — Designed durable intents, target receipts, exclusion, permits and health verification.

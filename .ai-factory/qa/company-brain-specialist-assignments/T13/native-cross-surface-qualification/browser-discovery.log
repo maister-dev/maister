@@ -1,0 +1,4 @@
+Listing tests:
+  [setup] › auth.setup.ts:19:1 › authenticate seeded admin
+  [authed] › company-brain.spec.ts:10:1 › E2E-CBU-01 an administrator explicitly enables company knowledge and reviews a captured assertion without implicitly confirming it
+Total: 2 tests in 2 files

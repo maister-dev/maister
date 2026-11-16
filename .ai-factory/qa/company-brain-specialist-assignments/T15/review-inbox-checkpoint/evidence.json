@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "c8833efb1",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Real Git/server-extracted review anchor text cannot bypass current captured-source authority through retained comment history. Reads and edits recheck before delayed responses; deletion adds no source-read prerequisite.",
+    "Actual project, cross-project and bearer Inbox lists exclude source-denied prompts/schemas/responses from both content and count, preserve unrelated authorized legacy work, admit explicit grants and reapply revocation.",
+    "Direct external run HITL uses server-derived project admission and actual receiving-token source authority; typed denials map to documented HTTP results.",
+    "Batched native metadata locks and source authorization reuse the existing policy and capture; no query per legacy result body or parallel execution ledger is introduced. Source budget exhaustion fails explicitly."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 89,
+      "files": 7
+    },
+    "reviewServiceQualification": {
+      "passed": 44,
+      "files": 2,
+      "overlap": "4 real workbench cases also appear in owningIntegration; totals are not additive."
+    },
+    "reviewRouteUnit": {
+      "passed": 62,
+      "files": 2
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "pending": [
+    "Remaining portfolio/activity/export/notification channels and any source-derived control-plane projections.",
+    "Structured evidence links, exact retained revision inspection and remaining bounds/recovery qualification.",
+    "Full integration checkpoint and capability activation; real installable companion, live ACP and actual stand pilot."
+  ],
+  "logs": [
+    {
+      "path": "review-history-red.log.gz",
+      "uncompressedSha256": "fd93395362c073b97ac1fbc8d7876d9af11f78768a75a5de5d47af87e0cfcaec"
+    },
+    {
+      "path": "inbox-red.log.gz",
+      "uncompressedSha256": "8f6e8d0fa43c49054097c9a75d1c02206467440ae065e1c05ae9ee5c80cd8121"
+    },
+    {
+      "path": "direct-hitl-mapping-red.log.gz",
+      "uncompressedSha256": "f9dfbf9d88ca03b101837c26888083895d8292635d674829be455dd7c77a1bd3"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "d4a8831b3fd37d3c0242bbb511816fb11704fb8bf5fe92733e95b76a2ef7261b"
+    },
+    {
+      "path": "review-service-green.log.gz",
+      "uncompressedSha256": "3bf2e39b7bc9a8d70e2f451bc3d53231fbbd2090dc1688a73aac13a4abfd0bac"
+    },
+    {
+      "path": "review-route-unit-green.log.gz",
+      "uncompressedSha256": "1076eb83ae039c03c400780f2649a318d125bf903e88801fc09ac62d7223c62c"
+    },
+    {
+      "path": "activity-unit-green.log.gz",
+      "uncompressedSha256": "6c873965ab8881ffe796ef592b5363b4bc5843a942238ab9d8171d463bec6381"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "080531a7900c8dd41e0065f0bd93249ad2a99acf3f3ab28676c6b9ccd373d78c"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "f3b4a2d9a2523b5c04e6eca9a52be351bd148a2447fb157a4c5957d21b9fc8dd"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "800c52fa4713ac7dff95b661b29732220b90a198fae819b26c3e30abca21c82f"
+    }
+  ]
+}

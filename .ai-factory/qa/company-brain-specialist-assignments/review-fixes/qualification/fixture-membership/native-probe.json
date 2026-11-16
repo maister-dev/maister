@@ -1,0 +1,176 @@
+{
+  "evidence": "/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/webhook-native-identity-CNLl8Z",
+  "invocationId": "16a87afd-0806-4b34-bd3f-6aabe3efff5b",
+  "observations": [
+    {
+      "utility": "sysctl",
+      "attempt": 0,
+      "stopped": true,
+      "identity": {
+        "pid": 67461,
+        "ppid": 67437,
+        "pgid": 67461,
+        "uid": 501,
+        "started": "1794228376:625347",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 1,
+      "stopped": true,
+      "identity": {
+        "pid": 67515,
+        "ppid": 67437,
+        "pgid": 67515,
+        "uid": 501,
+        "started": "1794228377:232687",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 2,
+      "stopped": true,
+      "identity": {
+        "pid": 67517,
+        "ppid": 67437,
+        "pgid": 67517,
+        "uid": 501,
+        "started": "1794228377:242229",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 3,
+      "stopped": true,
+      "identity": {
+        "pid": 67519,
+        "ppid": 67437,
+        "pgid": 67519,
+        "uid": 501,
+        "started": "1794228377:252239",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 4,
+      "stopped": true,
+      "identity": {
+        "pid": 67521,
+        "ppid": 67437,
+        "pgid": 67521,
+        "uid": 501,
+        "started": "1794228377:261332",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 5,
+      "stopped": true,
+      "identity": {
+        "pid": 67523,
+        "ppid": 67437,
+        "pgid": 67523,
+        "uid": 501,
+        "started": "1794228377:270658",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 6,
+      "stopped": true,
+      "identity": {
+        "pid": 67525,
+        "ppid": 67437,
+        "pgid": 67525,
+        "uid": 501,
+        "started": "1794228377:280092",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "sysctl",
+      "attempt": 7,
+      "stopped": true,
+      "identity": {
+        "pid": 67527,
+        "ppid": 67437,
+        "pgid": 67527,
+        "uid": 501,
+        "started": "1794228377:288716",
+        "owned": false,
+        "inspected": true,
+        "zombie": false
+      }
+    },
+    {
+      "utility": "ps",
+      "attempt": 0,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 1,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 2,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 3,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 4,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 5,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 6,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    },
+    {
+      "utility": "ps",
+      "attempt": 7,
+      "stopped": true,
+      "inspectionError": "InvocationOwnershipError"
+    }
+  ],
+  "cleanupErrorCount": 0,
+  "remainingOwnedProcesses": 0
+}

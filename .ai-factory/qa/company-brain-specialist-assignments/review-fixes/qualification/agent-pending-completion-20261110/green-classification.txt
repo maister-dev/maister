@@ -1,0 +1,10 @@
+Source: /private/tmp/cb-agent-pending-completion-classification-GREEN.log
+SHA256: 58b518ba2cd1fa6489b64a9502f1dcd2d280d40730a4b30768fa2e2517ffd799
+Outer exit: 0
+
+$ vitest run --project unit --passWithNoTests lib/__tests__/reconcile-classify.test.ts lib/__tests__/reconcile-evidence.test.ts --maxWorkers=1
+
+ Test Files  2 passed (2)
+      Tests  142 passed (142)
+   Start at  13:08:27
+   Duration  939ms (import 59%, transform 37%, setup 2%, tests 1%)

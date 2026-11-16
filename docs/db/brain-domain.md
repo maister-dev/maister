@@ -324,3 +324,7 @@ harvested lesson survives the deletion of the run/event it was distilled from.
 - Source (Implemented): `web/lib/brain/schema.ts`,
   `web/lib/db/brain-migrations/0001_*.sql` through `0005_*.sql`,
   `web/lib/db/migrations/0088_*.sql`, `web/lib/brain/embedding-index.ts`.
+
+## Company ownership extension (Implemented)
+
+The Project Brain model above is extended by the implemented [Company Brain persistence](company-brain-domain.md), which owns exclusive company/project ownership, retained revisions and immutable witnesses. Existing IDs/proposals remain usable with explicit legacy metadata limitations; source reanchors remain navigation rather than historical verification.

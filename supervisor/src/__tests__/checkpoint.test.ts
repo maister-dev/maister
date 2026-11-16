@@ -52,6 +52,7 @@ async function registerExitedSession(
   sessionId: string,
 ): Promise<void> {
   const emitter = new EventEmitter();
+  const child = Object.assign(makeFakeChild(), { exitCode: 0 });
 
   registry.register(
     {
@@ -72,7 +73,7 @@ async function registerExitedSession(
       createdByCommandId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
       monotonicId: 42,
     },
-    makeFakeChild(),
+    child,
     emitter,
   );
 }

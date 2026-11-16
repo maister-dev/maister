@@ -25,6 +25,8 @@ import {
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
 import { getCommand, listCommandsForRun } from "@/lib/execution-host/commands";
+import { issueCommand } from "@/lib/execution-host/ledger";
+import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
@@ -54,6 +56,48 @@ let db: Db;
 let projectId: string;
 let hostId: string;
 let fake: FakeExecutionHost;
+
+it("IT-CBO-02 retains a stand dispatch under the active Run placement without a session or retry", async () => {
+  const { assignment, runId } = await bound();
+  const [host] = await db
+    .select()
+    .from(fullSchema.executionHosts)
+    .where(eq(fullSchema.executionHosts.id, assignment.executionHostId));
+  const kind = "stand.dispatch";
+  const payload = {
+    operationId: "stand-operation-fixture",
+    targetIncarnation: "stand-incarnation-fixture",
+    componentId: "api",
+    action: "restart",
+    requestDigest: "a".repeat(64),
+    resourceKey: "b".repeat(64),
+    ownerEpoch: 1,
+    businessOwnerEpoch: 2,
+    nodeAttemptId: null,
+    credential: "discard-this-field",
+  };
+  const issued = await issueCommand(db, {
+    assignment,
+    host,
+    kind,
+    payload,
+    maxAttempts: COMMAND_POLICY[kind].maxAttempts,
+  });
+  const { credential: _omitted, ...retained } = payload;
+
+  expect(await getCommand(db, issued.row.id)).toMatchObject({
+    kind,
+    runId,
+    executionAssignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+    targetSessionId: null,
+    state: "queued",
+    maxAttempts: 1,
+    driverless: false,
+    payload: retained,
+  });
+  expect(issued.row.payload).toEqual(retained);
+});
 
 const CREATE_PAYLOAD = {
   stepId: "s1",

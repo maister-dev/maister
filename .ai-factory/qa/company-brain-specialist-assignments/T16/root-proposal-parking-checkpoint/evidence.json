@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "3.11.1",
+  "baseCommit": "f29ee92e9",
+  "companionCommit": "14275946ea5587a5d52f9c864ccab5f4ec25d4e7",
+  "companionTag": "rah/v1.0.1",
+  "published": false,
+  "task": "T16",
+  "status": "root_proposal_parking_installation_checkpoint_qualified",
+  "qualified": [
+    "Actual installed-policy assertion failed without root knowledge_propose; only root d1/d2 now expose proposal submission. Intermediate research/control still forbid submission and all four forbid shell, repository write, source capture, review and confirmation.",
+    "Production root/intermediate prompts end a turn on pending direct children, preserve child IDs and forbid shell timers or replacement children.",
+    "Clean normal companion release wrapper passed static compatibility and actual PostgreSQL install/trust/explicit-enable qualification, then created the local annotated rah/v1.0.1 tag at the exact companion commit.",
+    "Engine 3.11.1 current-build metadata expectations pass; native grammar feature floor remains 3.11.0."
+  ],
+  "checks": {
+    "actualInstalledPolicy": {
+      "passed": 1
+    },
+    "versionOwningIntegration": {
+      "passed": 71,
+      "files": 6
+    },
+    "versionFullUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "releaseWrapper": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "T16/T17 remain open until the actual package workflow is qualified. The first isolated v1.0.1 run exposed missing nested native output guidance and failed; no CB0 or stand readiness is claimed.",
+    "The Git-loader qualification uses a scoped rewrite to the local companion repository, not a published remote. Historical archived-tag qualification at engine 3.11.0 remains historical evidence, not a rerun at this checkpoint."
+  ],
+  "logs": "log-index.json"
+}

@@ -1,6 +1,7 @@
 packages:
   - web
   - supervisor
+  - stand-connector
   - mcp
   - site
   - site-docs

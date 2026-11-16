@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "bc53cf53b",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Native project webhook per-type data is explicitly source_restricted at the existing outbox INSERT, fanout and signed send/replay boundary. Main run enrollment is authoritative even for inherited generic contracts or unknown/missing native capture.",
+    "Real PostgreSQL and signed local HTTP prove fresh and retained native bodies do not disclose free-form diagnostic text. Existing legacy, retry/replay, attention, subscription and push regressions pass.",
+    "Existing run/project deletion cascades remain authoritative: retained event/delivery rows disappear without a send or a Brain dependency. No scheduler, attempt ledger or DDL is added.",
+    "AsyncAPI and canonical source analytics document the restricted-data alternative; user-scoped numeric attention facts retain their existing shape."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 93,
+      "files": 13
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "The local HTTP consumer is a controlled real signed transport boundary; this is not installed companion/live ACP or stand pilot qualification.",
+    "The deletion case initially expected delivery after removing its run; actual schema inspection confirmed the existing cascade. The corrected test asserts removal/no send. That expectation error is retained separately and is not claimed as a disclosure RED.",
+    "Raw original event payloads are not exposed by subscription delivery DTOs; their event join selects identity/type only. Numeric owner-scoped attention/digest projections remain separate."
+  ],
+  "pending": [
+    "Remaining native run-creation/reentry classification audit, bounds/concurrency/recovery and full integration.",
+    "Native capability activation, installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "outbox-disclosure-red.log.gz",
+      "uncompressedSha256": "af3d024e04504cf4faf1ec663cfbb2c8bd2af764e4700943dc573eac607dae11"
+    },
+    {
+      "path": "transport-mutation-red.log.gz",
+      "uncompressedSha256": "1ebacc79e739d5aa04c30e519cb3aab085543de82e7f133d790a3b2900a5a2ad"
+    },
+    {
+      "path": "deletion-expectation-correction.log.gz",
+      "uncompressedSha256": "30d4b41c5f75341d9b894c8c95dde024fbc443fff34b80f3697368a84b92c105"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "8bc559fae000b10519a9c727dd57d425d4de48a1016b96a1c9289ece0b3b664a"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "5a148b598d7876f466a62b6ad86ec78e986b6dae122660bdadf34e2d9d23ca39"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "b2e24d38ace48886fb4284d2842672207e7795bf028380a42e6c9b76d5f96a41"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "7d482e52bcbf64b56ea1a1d2c5de02bfb9136b5093a46f1140e275b14e2c4f2c"
+    }
+  ]
+}

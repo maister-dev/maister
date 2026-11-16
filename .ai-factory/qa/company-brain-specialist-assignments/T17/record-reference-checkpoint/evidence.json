@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "checkpoint": "record-reference-checkpoint",
+  "platformBase": "2a727c0be0b742c54d1c551ddb3ec38dc461ede3",
+  "status": "owning-platform-qualified; installed runtime qualification remains open",
+  "red": [
+    "The actual live corpus setup refused knowledge record evidence with native_reference_kind_unavailable (prior live log).",
+    "Two focused real-Postgres cases reproduced the missing resolver.",
+    "Record/captured-witness aliases exposed duplicate link metadata and missing opposition during idempotent publication."
+  ],
+  "green": {
+    "owningIntegration": {
+      "tests": 40,
+      "files": 3,
+      "exitCode": 0
+    },
+    "focusedIntegration": {
+      "tests": 2,
+      "exitCode": 0
+    },
+    "typecheck": 0,
+    "lint": 0,
+    "contracts": 0,
+    "docsAnd164TableErd": 0
+  },
+  "qualified": [
+    "Exact record revision, optional version and SHA validation; invalid/missing/unavailable versions refuse explicitly.",
+    "One immutable assertion capture reused under concurrent delivery, another submitting principal and record/witness aliases; independence stays unknown.",
+    "Corrections preserve captured bytes and expose stale applicability; exact declared-conflict revisions remain inspectable.",
+    "Current record and inherited project access govern submission, review and derived reads.",
+    "Explicit project deletion succeeds, removes source-owned history and leaves company-owned dependents inaccessible without a restrictive cross-owner FK."
+  ],
+  "migration": "No DDL change: existing immutable JSONB capture locator supports record captures; TypeScript projection widened. No new ledger or scheduler.",
+  "limits": [
+    "This checkpoint does not claim actual model depth-2 completion or CB0 release readiness.",
+    "The preceding full platform suite is retained in T15; this checkpoint runs all owning database suites, not another full repository suite."
+  ],
+  "sourceSha256": {
+    "web/lib/brain/knowledge-record-capture.ts": "3b491fc94443a85c3b09ea5fea10d77e25a5fd609c38a14c1c3a9277290599df",
+    "web/lib/brain/knowledge-proposals.ts": "b4f44449bb2bf08466b32e619c6e8b9f3c56c9b889942e14b9e7de5e3eb9bbc0",
+    "web/lib/brain/schema.ts": "b71e1e8afc13c0e684c52b5303901dac223870b7482e9e974e840532ff614ee7",
+    "web/app/api/knowledge/__tests__/knowledge.integration.test.ts": "d8fef0dcd4676eabffb564c00a2cda1c5f08dcfee5acd054813b96fd4594f679",
+    "docs/system-analytics/company-brain-evidence.md": "bb6d144bab14f02c6da2ae881b1967d847d2bfd8c8404edb3bf1d3cfd9400117",
+    "docs/api/web.openapi.yaml": "0882c855a8226d05454e44a4584ab3c3c35b7f2a3be05c4b7c4a62f1cc5a3c78",
+    "docs/api/external/operations.openapi.yaml": "14f709d31cd86b80bff2cb676dad36002020190e8b08f0592df0e4a50855ebc7"
+  },
+  "logs": [
+    {
+      "path": "record-reference-red.log",
+      "bytes": 9552,
+      "sha256": "d1606c9cf7c8a95860d6c84ed35b57816aa2cdae80aac2bcc79e4cadc3e18f8b"
+    },
+    {
+      "path": "record-witness-alias-red.log",
+      "bytes": 9454,
+      "sha256": "29786d14f846850699d30a6c47a4f684362ebde3446b1b21a05049477ffe8bf8"
+    },
+    {
+      "path": "focused-green.log",
+      "bytes": 11559,
+      "sha256": "3b7e152898830a65b9c214f7c63041ade421ab00ad9908fd29e6692d1f9f5151"
+    },
+    {
+      "path": "owning-green.log",
+      "bytes": 68951,
+      "sha256": "338f8431836213c09fb1f609cacdd9426d058f7900a91c5d1b13e4d6b2773b8d"
+    },
+    {
+      "path": "typecheck.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts.log",
+      "bytes": 2485,
+      "sha256": "89b521eafd6c67601a0593d45bd04d1df20141ee099d6f2cd194f030f3abf7cd"
+    },
+    {
+      "path": "docs.log",
+      "bytes": 682,
+      "sha256": "5058181f239a25d11e46a8db67b451f5cf6f8c807bd85697cf7b9509ccd4513e"
+    }
+  ]
+}

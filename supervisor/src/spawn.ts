@@ -11,6 +11,8 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
+
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { producerPressure, type ProducerPauseBound } from "./producer-pressure";
@@ -23,6 +25,7 @@ import {
 } from "./types";
 import { getAdapterRuntime, resolveAdapterBinary } from "./adapter-registry";
 import { effectiveStartSessionRequest } from "./runner-provisioner";
+import { claudeModelOptions } from "./claude-tool-arbitration";
 import { UnstartedSessionProcessError } from "./session-create-outcome";
 import { UnsettledSessionCreateError } from "./session-create-outcome";
 import { attachHeartbeat } from "./heartbeat";
@@ -89,7 +92,7 @@ export type SpawnSessionResult = {
 // the subset rather than a full StartSessionRequest.
 export type ChildEnvRequest = Pick<
   StartSessionRequest,
-  "executor" | "adapterLaunch"
+  "executor" | "adapterLaunch" | "enforcementProfile"
 >;
 
 export function buildChildEnv(
@@ -104,6 +107,16 @@ export function buildChildEnv(
   // ADR-166: mounts come from the resolved workspace (the adopted handle) —
   // the request body never carries a path.
   const contextMounts = opts.contextMounts;
+  const toolPolicy = request.enforcementProfile;
+  const directClaudeTools =
+    request.executor.agent === "claude" &&
+    toolPolicy?.enforcedClasses.includes("tools") &&
+    toolPolicy.tools &&
+    !toolPolicy.tools.allow.includes("ToolSearch");
+  const modelOptions =
+    request.executor.agent === "claude"
+      ? claudeModelOptions(request.executor.model)
+      : {};
 
   return {
     ...process.env,
@@ -127,6 +140,10 @@ export function buildChildEnv(
       ? { MAISTER_CONTEXT_REPOS: JSON.stringify(contextMounts) }
       : {}),
     ...(opts.outputPaths ?? {}),
+    // Deferred MCP tools require ToolSearch, which the strict profile can deny.
+    ...(directClaudeTools ? { ENABLE_TOOL_SEARCH: "false" } : {}),
+    // The declared model wins over inherited, runner and adapter environment.
+    ...(modelOptions.model ? { ANTHROPIC_MODEL: modelOptions.model } : {}),
   };
 }
 
@@ -393,7 +410,13 @@ export async function spawnSession(
       opts.registry.register(record, child, emitter, {
         runtimeEventPublisher: opts.runtimeEventPublisher,
       });
-      attachHeartbeat({ sessionId, child, registry: opts.registry, logger });
+      attachHeartbeat({
+        sessionId,
+        child,
+        registry: opts.registry,
+        logger,
+        hostState: opts.hostState,
+      });
     }
 
     try {
@@ -507,6 +530,16 @@ export async function spawnSession(
           environment: childEnv,
         });
       } catch (cause) {
+        logger.error(
+          {
+            runId: record.runId,
+            sessionId,
+            commandId: record.createdByCommandId,
+            stage: "gate_start",
+            causeChain: safeErrorCauseChain(cause),
+          },
+          "session-bootstrap-gate-failed",
+        );
         const entry = opts.registry.get(sessionId);
 
         opts.registry.markIntentionalShutdown(sessionId, "intentional");

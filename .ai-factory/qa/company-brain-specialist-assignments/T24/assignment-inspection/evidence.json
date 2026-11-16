@@ -1,0 +1,100 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "46c08fce2",
+  "slice": "Current own-assignment business/input/context revision inspection through authenticated GET and built native facade",
+  "status": "Inspection qualified; T24 remains open",
+  "red": [
+    {
+      "case": "Actual company assignment credential receives 403 instead of authorized metadata",
+      "log": "cb-assignment-inspect-red.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Built company MCP tools/list lacks assignment_get",
+      "log": "cb-assignment-mcp-red.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "owningIntegration": {
+      "tests": 231,
+      "files": 10,
+      "durationSeconds": 81.26,
+      "exitCode": 0
+    },
+    "mcpWire": {
+      "tests": 12,
+      "files": 1,
+      "exitCode": 0
+    },
+    "mcpUnit": {
+      "tests": 414,
+      "files": 6,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 27.43,
+      "exitCode": 0
+    },
+    "webTypes": {
+      "exitCode": 0
+    },
+    "mcpTypes": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "publicEnRuBuildAndLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual current execution reads only its root assignment under its own principal and assignments:read scope",
+    "Complete current input/context source closure is authorized and captured before metadata bytes leave the transaction",
+    "Foreign assignment, revoked credential and revoked context source refuse without content",
+    "Business revision, inputRevision and contextRevision remain distinct existing DTO coordinates",
+    "Built stdio facade publishes and routes assignment_get with exact encoded identity and refuses forged/invalid selectors without HTTP calls",
+    "Personal user inspection and existing project/company intake, deletion, checkpoint recovery and compatibility remain green"
+  ],
+  "corrections": [
+    "The first full integration run exposed an incorrect test expectation: activation advances business revision separately, so the exact current business head is four; no production behavior or security assertion was relaxed"
+  ],
+  "limitations": [
+    "No native question HTTP/MCP endpoint enabled by this slice",
+    "Answer receipt, immutable input append, same-assignment continuation and project/graph qualification remain T24",
+    "No stand pilot, complete Phase 5 compatibility, remote publication or deployment claim"
+  ],
+  "sourceSha256": {
+    "docs/api/external/operations.openapi.yaml": "81efafc024e9fc266ed985a504c48578ba2f424f0cbf3b62f491fbaaa0e51e33",
+    "docs/system-analytics/specialist-assignments.md": "93df5a530e93e4f7effb751235e9a8a36a705ac119d48a8c0f6e61213c204bcc",
+    "mcp/src/__tests__/stdio.integration.test.ts": "a8dc0568f75006c060a710e3949c367a2286fd722bc08713fe7ddfe1e227d071",
+    "mcp/src/__tests__/tool-contract.test.ts": "c6cd0f11e53a380a1b08fbadd2ae6893123ff4301233ba6369e49de878e96cf8",
+    "mcp/src/__tests__/tools.test.ts": "8ddfea406d84ca3af1527a76c848c8c67fbc2ff6474de631424b36391ce97e8c",
+    "mcp/src/knowledge-tools.ts": "80af9be3aba2d6b7b45c30b05fbe39d217cda8b60bd88ec68cac48f51ca09b55",
+    "runtime/company-flow-tools.ts": "466abe12ba8155f777d0151323de345e65cd510bf9ef6de1a67fef24af334491",
+    "runtime/knowledge-tool-effects.ts": "2f799008ea328015cda7f7abfe0dedf9583bc49d17a9b4b4b28ad454674535e1",
+    "runtime/knowledge-tool-input.schema.json": "9dd9a3382994c8594c0a485ac94138fec7b994f86cd7bb3d7a0f1ebf53aff186",
+    "site-docs/guides/company-specialist-webhooks.md": "b8158e19d5fc4ae7b400c6a39cbf3538abeb36fcb6f5e505a5195928dfa6b52c",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "1dcb1e6367c0a5518dce39f535ec04254e06faba1ecae047a8f98c8b016cde58",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/route.ts": "bfea4868c7b2b5f9f24662c83743d7eb7f4419892406f51b78b28e3d1c6096b5",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "49244167f8c33178e2b4b412e3f621034b1159fb945b7915cf4a4edd83adfd65",
+    "web/lib/brain/knowledge-tool-contract.ts": "0b05fd586beb25d7cde01a1751d1ce0a01761acee0b055ade9149c5d50e494eb",
+    "web/lib/specialist-assignments/appointment.ts": "570a5bd1593de4ca5ccb2d87a541d37e8b586e4781f197df1730b1b8c97cda04",
+    "web/lib/specialist-assignments/context.ts": "ca545df41e4f5dd87a237b6b5af1c4cd0237136b64cb6fe1315b240715104f2d",
+    "web/lib/specialist-assignments/inspection.ts": "c6ca39770933701b883714550e6d114da29b11c36ab2b61c564fa2fa12c16d13",
+    "web/lib/specialist-assignments/store.ts": "cd4a547e12ff39abb2bfa0fb3da136ea406e5545da058b40eb20c69d75794eae"
+  }
+}

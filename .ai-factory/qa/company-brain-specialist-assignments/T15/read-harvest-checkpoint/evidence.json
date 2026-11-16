@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "d9d4c99f6",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Actual real-Git file lists, prepared diffs and change summaries refuse current source denial and accept an explicitly granted user.",
+    "External run/readiness/activity GETs check persisted project ownership and current receiving-token source authority before and after body assembly.",
+    "Existing resource-project and live owner admission now admit a global personal-user token only with current project and source authority. Project-bound tokens remain unable to read company sources through a separate owner grant.",
+    "Cross-project and missing run activity produce the same safe 404 body at earlier resource admission, with the existing refusal audit.",
+    "An actual native completion event cannot reach the legacy Brain distiller/provider or create an unclassified project lesson. Batch metadata classification retains existing legacy harvest semantics."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 43,
+      "files": 7,
+      "realPostgresFiles": 6,
+      "existingSerializationFixtureFiles": 1
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed",
+    "newWorkbenchRunnerMatched": true
+  },
+  "pending": [
+    "Remaining export, aggregate execution/activity/automation/history and notification channels.",
+    "Structured findings/evidence-link UI, exact retained revision inspection and remaining bounds/recovery/concurrency qualification.",
+    "Full integration phase checkpoint and capability activation.",
+    "Real installable companion package, live ACP and stand-maintenance pilot qualification."
+  ],
+  "logs": [
+    {
+      "path": "workbench-red.log.gz",
+      "uncompressedSha256": "e447732b1b2d56ae20550240b2443bd843c64def5a22f380a24ab02d1a3d5c63"
+    },
+    {
+      "path": "external-project-token-red.log.gz",
+      "uncompressedSha256": "ab6fd7d11ed62be2013dfc6a097c57cfe6c612d362e438cae691c04e1179a88e"
+    },
+    {
+      "path": "native-harvest-red.log.gz",
+      "uncompressedSha256": "9370f22ddfae6a7af5f12c7b77f420230500ebd2e7b5c919c79229de58d92524"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "ac1e05d239139a2f7d8f72769cb162c855c7b8d3ad4011b4fc46f25685e128ad"
+    },
+    {
+      "path": "legacy-workbench-unit-green.log.gz",
+      "uncompressedSha256": "514ed7ce050c996047a3142047a579e94d06b84566b38c3854395ddd6bdc9544"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "2913687e01c16e12e742298c006749424a3f0fc298df970a06c688a019cf4f3f"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "3955a189e458ab6a275a1318e4ebc6fd58cf329cb7ce34989f42e0f7f9be7b72"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "59ded4f599d646fe45290d3eeca670dd686aa6c31c992949d739282f8a649aad"
+    },
+    {
+      "path": "runner-list.log.gz",
+      "uncompressedSha256": "5b7418b93562b31275b45d1afcfedc596b1a595a59dd31953a77db55a958af25"
+    }
+  ]
+}

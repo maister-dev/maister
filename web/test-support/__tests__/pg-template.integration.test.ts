@@ -1,7 +1,11 @@
 import { Pool } from "pg";
 import { expect, it, onTestFinished } from "vitest";
 
-import { startMainAndBrainPostgresTestDbTemplate } from "../pg-container";
+import {
+  closeTestPool,
+  createTestPool,
+  startMainAndBrainPostgresTestDbTemplate,
+} from "../pg-container";
 
 it("clones the migrated schema without sharing case writes or rebuilding containers", async () => {
   const template = await startMainAndBrainPostgresTestDbTemplate({
@@ -85,7 +89,7 @@ it("freezes the template and drops a case even when its pool was closed incorrec
   const adminUrl = new URL(database.databaseUrl);
 
   adminUrl.pathname = "/postgres";
-  const admin = new Pool({ connectionString: adminUrl.href });
+  const admin = createTestPool({ connectionString: adminUrl.href });
 
   try {
     await expect(frozenPool.query("SELECT 1")).rejects.toMatchObject({
@@ -111,7 +115,7 @@ it("freezes the template and drops a case even when its pool was closed incorrec
     try {
       await frozenPool.end();
     } finally {
-      await admin.end();
+      await closeTestPool(admin);
     }
   }
 });

@@ -5,7 +5,7 @@ import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +14,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -24,6 +25,7 @@ import {
 
 import {
   claimCronAgentAttempt,
+  assertProjectAgentTriggerClaim,
   reconcileAgentTriggerAttempts,
 } from "@/lib/agents/trigger-attempts";
 import {
@@ -37,7 +39,8 @@ import { domainEvents } from "@/lib/db/schema";
 import { initRepo } from "@/test-support/git-fixture";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
-  startMainPostgresTestDb,
+  startMainPostgresTestDbTemplate,
+  type PostgresTestDbTemplate,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
@@ -64,6 +67,7 @@ vi.mock("pino", () => {
 });
 
 let testDatabase: StartedPostgresTestDb;
+let template: PostgresTestDbTemplate;
 let pool: Pool;
 let db: NodePgDatabase;
 let projectId: string;
@@ -79,31 +83,30 @@ beforeAll(async () => {
   // an installed package dir in prod; a plain tmp dir here).
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-trig-"));
 
-  testDatabase = await startMainPostgresTestDb({
+  template = await startMainPostgresTestDbTemplate({
     databaseName: "maister_test",
   });
-  pool = testDatabase.pool;
-  db = testDatabase.db;
-  // ADR-166: every launch places the run on the local execution host.
-  await fakeExecutionHosts(db);
 
   triggers = await import("@/lib/agents/triggers");
   launchModule = await import("@/lib/agents/launch");
 }, 180_000);
 
 afterAll(async () => {
+  await template?.stop();
+  if (agentsRoot) await rm(agentsRoot, { recursive: true, force: true });
+});
+
+afterEach(async () => {
   await testDatabase?.stop();
 });
 
 beforeEach(async () => {
   logLines.length = 0;
-  await pool.query(`DELETE FROM "runs"`);
-  await pool.query(`DELETE FROM "agent_schedules"`);
-  await pool.query(`DELETE FROM "agents"`);
-  await pool.query(`DELETE FROM "project_package_attachments"`);
-  await pool.query(`DELETE FROM "package_installs"`);
-  await pool.query(`DELETE FROM "projects"`);
-  await pool.query(`DELETE FROM "flow_revisions"`);
+  testDatabase = await template.createDatabase();
+  pool = testDatabase.pool;
+  db = testDatabase.db;
+  // Every real launch places the Run. Its durable command evidence belongs to this case.
+  await fakeExecutionHosts(db);
 
   projectId = randomUUID();
   await pool.query(
@@ -298,6 +301,8 @@ async function seedClaimReceipt(
   claim: AgentTriggerClaim,
   snapshot: ScheduledAgentRequestSnapshot | null,
 ): Promise<void> {
+  assertProjectAgentTriggerClaim(claim);
+
   const context = await loadAgentContext(testDatabase.db, {
     agentId: claim.sourceAgentId,
     projectId: claim.projectId,
@@ -321,6 +326,44 @@ async function seedClaimReceipt(
 }
 
 describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
+  it("defers a full malformed due page so the next bounded tick can admit healthy work", async () => {
+    const agentId = await seedAgent({ id: "poison-page", triggers: ["cron"] });
+    const now = new Date();
+    const launched: string[] = [];
+    const launch = async (input: {
+      agentId: string;
+    }): Promise<{ runId: string; status: "Running" }> => {
+      launched.push(input.agentId);
+
+      return { runId: randomUUID(), status: "Running" };
+    };
+
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at,request_at_launch) SELECT gen_random_uuid()::text,$1,$2,'cron','invalid expression','UTC',$3,'private-poison-request' FROM generate_series(1,25)",
+      [agentId, projectId, new Date(now.getTime() - 2000)],
+    );
+    await pool.query(
+      "INSERT INTO agent_schedules(id,agent_id,project_id,trigger_type,cron_expr,timezone,next_fire_at) VALUES($1,$2,$3,'cron','* * * * *','UTC',$4)",
+      [randomUUID(), agentId, projectId, new Date(now.getTime() - 1000)],
+    );
+    expect(
+      await triggers.dispatchDueAgentSchedules({ db, now, launch }),
+    ).toMatchObject({ due: 25, refused: 25, claimed: 0 });
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM agent_schedules WHERE project_id=$1 AND cron_expr='invalid expression' AND next_fire_at>$2 AND last_outcome='refused' AND last_error_code='CONFIG'",
+          [projectId, now],
+        )
+      ).rows,
+    ).toEqual([{ count: 25 }]);
+    expect(
+      await triggers.dispatchDueAgentSchedules({ db, now, launch }),
+    ).toMatchObject({ due: 1, launched: 1, claimed: 1 });
+    expect(launched).toEqual([agentId]);
+    expect(JSON.stringify(logLines)).not.toContain("private-poison-request");
+  });
+
   it.each(["edit", "delete"] as const)(
     "captures the committed input when %s wins before claim",
     async (mutation) => {

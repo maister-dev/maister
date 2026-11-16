@@ -108,7 +108,19 @@ describe("scheduled request additive migration", () => {
       )
     ).rows[0];
 
-    expect(schedule.value).toEqual(legacySchedule);
+    expect(schedule.value).toEqual({
+      ...(legacySchedule as Record<string, unknown>),
+      project_agent_id: legacyAgentId,
+      company_id: null,
+      company_specialist_binding_id: null,
+      company_flow_binding_id: null,
+      company_config_revision: null,
+      created_by: null,
+      creation_key: null,
+      creation_digest: null,
+      project_source_review: null,
+      stand_inspection: null,
+    });
     expect(schedule.request_at_launch).toBeNull();
     expect(
       (

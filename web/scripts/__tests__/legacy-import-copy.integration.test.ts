@@ -58,11 +58,11 @@ let slug: string;
 const supervisors: RealSupervisor[] = [];
 
 beforeAll(async () => {
+  runtimeRoot = await mkdtemp(join(tmpdir(), "legacy-copy-root-"));
   testDatabase = await startMainPostgresTestDbUpTo(
     { databaseName: "legacy_data_plane_copy_test" },
     "0133_rich_blob",
   );
-  runtimeRoot = await mkdtemp(join(tmpdir(), "legacy-copy-root-"));
   projectId = randomUUID();
   slug = `cp-${projectId.replace(/-/g, "").slice(0, 8)}`;
 

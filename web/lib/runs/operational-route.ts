@@ -9,6 +9,7 @@ import { z } from "zod";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
+import { authorizeCompanyRunUserAction } from "@/lib/agents/company-run-read-access";
 import { isMaisterError } from "@/lib/errors";
 import {
   acknowledgeOperationalAttention,
@@ -40,16 +41,23 @@ export async function acknowledgeOperationalRoute(
       );
     const db = getDb();
     const [run] = await db
-      .select({ projectId: runs.projectId })
+      .select({ projectId: runs.projectId, companyId: runs.companyId })
       .from(runs)
       .where(eq(runs.id, runId));
 
-    if (!run?.projectId)
+    if (!run || (!run.projectId && !run.companyId))
       return NextResponse.json(
         { code: "PRECONDITION", message: "run not found" },
         { status: 404 },
       );
-    await requireProjectAction(run.projectId, "answerHitl");
+    if (run.companyId)
+      await authorizeCompanyRunUserAction(
+        db,
+        user.id,
+        runId,
+        "assignments:answer",
+      );
+    else await requireProjectAction(run.projectId!, "answerHitl");
 
     return NextResponse.json(
       await acknowledgeOperationalAttention(db, {
@@ -78,16 +86,23 @@ export async function retryOperationalRoute(
       );
     const db = getDb();
     const [run] = await db
-      .select({ projectId: runs.projectId })
+      .select({ projectId: runs.projectId, companyId: runs.companyId })
       .from(runs)
       .where(eq(runs.id, runId));
 
-    if (!run?.projectId)
+    if (!run || (!run.projectId && !run.companyId))
       return NextResponse.json(
         { code: "PRECONDITION", message: "run not found" },
         { status: 404 },
       );
-    await requireProjectAction(run.projectId, "recoverRun");
+    if (run.companyId)
+      await authorizeCompanyRunUserAction(
+        db,
+        user.id,
+        runId,
+        "assignments:recover",
+      );
+    else await requireProjectAction(run.projectId!, "recoverRun");
     const cleanup = await retryOperationalCleanup(db, {
       runId,
       userId: user.id,
@@ -116,17 +131,20 @@ function operationalRouteError(error: unknown): NextResponse {
       { code: error.code, message: error.message },
       {
         status:
-          error.code === "UNAUTHENTICATED"
-            ? 401
-            : [
-                  "UNAUTHORIZED",
-                  "ACCOUNT_INACTIVE",
-                  "PASSWORD_CHANGE_REQUIRED",
-                ].includes(error.code)
-              ? 403
-              : error.code === "CONFLICT" || error.code === "PRECONDITION"
-                ? 409
-                : 500,
+          error.code === "PRECONDITION" &&
+          error.details?.reason === "run_unavailable"
+            ? 404
+            : error.code === "UNAUTHENTICATED"
+              ? 401
+              : [
+                    "UNAUTHORIZED",
+                    "ACCOUNT_INACTIVE",
+                    "PASSWORD_CHANGE_REQUIRED",
+                  ].includes(error.code)
+                ? 403
+                : error.code === "CONFLICT" || error.code === "PRECONDITION"
+                  ? 409
+                  : 500,
       },
     );
   throw error;

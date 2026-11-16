@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-09T15:22:52.987561+00:00",
+  "baseline": "24927b263fe2717d730ce1f23340cdbe26072378",
+  "status": "T27-storage-witness-guard-qualified-local-task-open",
+  "red": {
+    "sqlState": "23514 expected; invalid writes committed",
+    "acceptedInvalidCases": [
+      "forged-actor",
+      "missing-context",
+      "missing-target-owner"
+    ],
+    "receipt": "red.log.gz"
+  },
+  "fix": {
+    "migration": "0268_specialist_work_witness_guards",
+    "changes": [
+      "Source, context and target guards require positive true witnesses",
+      "Company source uses immutable source_agent_id; project source still requires agent_id; exact current Flow node rules unchanged"
+    ],
+    "historicalMigration0267": "unchanged",
+    "retainedRows": "not rewritten",
+    "schemaShape": "unchanged"
+  },
+  "fixtureCorrection": {
+    "cause": "The first complete owning run exposed an added Pending Run and singleton runner outside the rollback transaction",
+    "failed": 17,
+    "passed": 58,
+    "files": 2,
+    "receipt": "fixture-isolation-failed.log.gz",
+    "resolution": "Runner, singleton, assignment and real reservation now share rollback transaction; exact before/after state asserted",
+    "classifiedAs": "new test fixture isolation failure; not an additional runtime product defect"
+  },
+  "gates": {
+    "focusedRed": {
+      "exitCode": 1,
+      "failed": 1
+    },
+    "focusedGreen": {
+      "exitCode": 0,
+      "passed": 1,
+      "unselected": 49
+    },
+    "owningIntegration": {
+      "exitCode": 0,
+      "passed": 75,
+      "files": 2,
+      "seconds": 331.54,
+      "scope": "real PostgreSQL; actual supervisor with fixture ACP; company-only reservation and populated main-only migration"
+    },
+    "webUnit": {
+      "exitCode": 0,
+      "passed": 9312,
+      "files": 891,
+      "seconds": 32.67
+    },
+    "webTypes": "passed",
+    "supervisorTypes": "passed",
+    "mcpTypes": "passed",
+    "mcpBuild": "passed",
+    "lint": "passed; no warnings",
+    "drizzleDrift": "No schema changes, nothing to migrate",
+    "contracts": "passed",
+    "docs": "passed;177 tables",
+    "independentReview": "no remaining findings after fixture-isolation correction"
+  },
+  "verified": [
+    "Actual native reservation fills both agent identity columns before FK catalog removal",
+    "Exact retained company source is accepted; substituted actor refused",
+    "Missing zero-revision context witnesses and target owner refused at their owning named guards",
+    "Paired intake receives actual deferred-to-immediate constraint validation",
+    "Populated main-only 0266 -> 0267 -> 0268 retains original assignment/input/intake/opaque labels",
+    "Existing Brain-independent project deletion case passes",
+    "No new execution ledger, public wire or confirmation behavior"
+  ],
+  "qualificationBoundary": "This qualifies the local storage correction only. It does not qualify native T27 dispatch or CB1 cooperation, acceptance, recovery and stand pilot. Prior live CB0 and full-regression receipts retain their original immutable sources; they are not reattributed to this change.",
+  "cleanup": {
+    "invocations": [
+      "d156b1fc-89c5-4a01-a974-24a6097d2b90",
+      "82da8417-5b27-4b66-9b3e-24623e6e1241"
+    ],
+    "exitCode": 0,
+    "ownedLiveProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": 0,
+    "quiescent": true
+  },
+  "sources": [
+    {
+      "path": "web/lib/db/migrations/0268_specialist_work_witness_guards.sql",
+      "sha256": "4265e10bb850918cc382031dcde95d01533166cc996b280d617e656410feeb94"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/0268_snapshot.json",
+      "sha256": "cc8bd7384204748b9f66298c0488a03f6ac4b1356f97b9a6c22053ae376148ea"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/_journal.json",
+      "sha256": "4b6a359f483f020b3fc6565b631e6a246e985e79db3f41a58163743424689a70"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "4a30c5ec4c55b9292fc2afe14a137c303ec9f67352e9c285578ce9b77a015087"
+    },
+    {
+      "path": "web/lib/specialist-assignments/__tests__/store.integration.test.ts",
+      "sha256": "fba9e6000c2aba8516f7c86e01dfb258e4f1f8f0ffcfe5b51056eee3eb43ed96"
+    },
+    {
+      "path": "docs/db/specialist-assignments-domain.md",
+      "sha256": "fc28ae0705cb34be59e5279de8364b94a1a00fb5f6946403bad8282c714cf61e"
+    },
+    {
+      "path": "docs/database-schema.md",
+      "sha256": "6479060656dcd36a004f618dcf29c5bbb71d3c0d208a6e48040f91db6cdd3fb1"
+    },
+    {
+      "path": "docs/system-analytics/specialist-cooperation.md",
+      "sha256": "4c6dee573900cf0b5e39e4ec59111cc3b9defbd3e3bf3fda3c83f1e7786fa1ff"
+    },
+    {
+      "path": "docs/system-analytics/company-brain-specialists-qualification.md",
+      "sha256": "4f1af2cb393885cd775260d992ccb4ca9e2cb97428d22e848d10510edc5a28be"
+    },
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "6ebcb76e01b7a2f9f8dfea2a4430bc09f17692719e1e6842f795ff3ade5ca7ce"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "red.log.gz",
+      "sha256": "7a5ad8e0c344faf1b562c7f8500cc553c89d2adc934cf56b84b9016895db5ce6"
+    },
+    {
+      "path": "focused-green.log.gz",
+      "sha256": "a1f3324c84ec857531c2f46321945003c245164ebc5d375169dafe5d3a3e4225"
+    },
+    {
+      "path": "fixture-isolation-failed.log.gz",
+      "sha256": "877e43a06e6a67fdb817ac76c2d188047dabd94f35276e6f6f8c2109e2d38901"
+    },
+    {
+      "path": "owning-refined-green.log.gz",
+      "sha256": "1008fea486e1d3e9ce4f7ac635860450a4038977dc2ef2e9423d26e90a0acd41"
+    },
+    {
+      "path": "unit-green.log.gz",
+      "sha256": "c6bbd9321bdeb4eedca8725c0e9294507f9f6679f066e81b5a9295e75c3baff7"
+    },
+    {
+      "path": "web-types-green.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    {
+      "path": "supervisor-types-green.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "mcp-types-green.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    {
+      "path": "mcp-build-green.log.gz",
+      "sha256": "e68eca662d4dd60db38b51a52153a7384bcedfa5cc4772c8b3cd53997cbadba4"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "no-schema-drift.log.gz",
+      "sha256": "d75b52ea3269102cee3d83301953771018bf49f936ceb125529b2fb1346fe9dd"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "sha256": "766727fbd80b00a485f440ab0898bfa7bcf11ef41c421fa68a7a6ee015d2624c"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "sha256": "1e3e06e488036e1f84f665ec75b5cb0da33f10fafa89542dbbf001d0011234ab"
+    },
+    {
+      "path": "cleanup.log.gz",
+      "sha256": "d43e850c02afb1f5c286d622ee34aa8cc9e37e3c3980a2123eb0b7037f04bde4"
+    },
+    {
+      "path": "docs-final-green.log.gz",
+      "sha256": "cdaf01154ae643e5b1e653620eeaf115bcc93deeef0b6c85294e2175fb067744"
+    },
+    {
+      "path": "contracts-final-green.log.gz",
+      "sha256": "f3bd480ea0d73bd361588246edd1756dd7e1b8eaa0a81fba552a274c70eb2604"
+    }
+  ],
+  "effects": "Owned disposable local databases and controlled supervisor fixtures only. No push, publication, deployment or production stand effects."
+}

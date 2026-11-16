@@ -1,0 +1,99 @@
+{
+  "task": "T20",
+  "slice": "Company preflight, existing-run ownership and internal ephemeral credentials",
+  "date": "2026-11-06",
+  "baseCommit": "fc97bcf940b8f2e43abbdfcd106113d550833767",
+  "status": "Qualified storage/preflight/internal credential slice; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0225_company_agent_execution",
+    "0226_company_agent_credentials"
+  ],
+  "migrationSafety": "Generated Drizzle SQL/snapshots plus native trigger DDL; uncommitted 0225 was regenerated with an IS TRUE NULL-safe CHECK after its initial version ran only on owned disposable test databases. No durable deployment/database was modified.",
+  "testMethod": "Specification-derived real PostgreSQL, real installed synthetic Git package and native authority services. No actual company ACP/Flow/stand readiness is implied.",
+  "redCases": {
+    "preflight-red": "Missing company admission preflight module.",
+    "foreign-cas-red": "Foreign project assignment reveals a revision conflict where a missing reference is unavailable; ownership is now checked before CAS.",
+    "run-owner-red": "Existing run store has no native company execution owner columns.",
+    "company-token-red": "Existing ephemeral issuer has no company agent lifecycle.",
+    "credential-error-red": "Native database refusal exposes query material instead of the safe typed diagnostics; shared query-error redaction now protects it."
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 55,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz",
+      "finalLog": "docs-final.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "no-drift.log.gz"
+    }
+  },
+  "retainedFailedGate": {
+    "log": "setup-timeout.log.gz",
+    "observation": "Two suites timed out in fixture hooks during owned container creation. Five files/26 tests passed; 29 cases did not run.",
+    "recheck": "The same two unchanged suites passed serially: 29/2; then the full owning set passed. No timeout increase or test skip was introduced."
+  },
+  "qualified": [
+    "Exact current company assignment/input/binding preflight requires explicit current user grants; global administrator status supplies none.",
+    "Queued standalone operational role, workspace, declared trigger, provider trust/bytes, result and effective standing configuration are checked before admission effects.",
+    "Foreign/missing assignment failures match before revision comparison. Cancelled, stale, disabled, retired, repo and coordinator cases explicitly refuse.",
+    "Company runs carry an immutable server capture and atomically link an exact retained input through the existing run ledger. SQL NULL shape bypass and missing link are refused.",
+    "Company credentials extend the existing hash-only agent store; current account/grant/configuration/provider checks, rotation concurrency, scope immutability and existing run terminal revocation are qualified.",
+    "Failed issuance is redacted with SQL state/constraint and rolls back revocation, leaving the prior credential valid.",
+    "Populated project/user/agent token and project/private librarian run metadata remain unchanged except known NULL owner columns; normal project cleanup needs no Brain store."
+  ],
+  "notYetQualified": [
+    "Actual company launch, scheduler admission and session/prompt execution",
+    "Company knowledge execution identity and current initiator/source/action intersection",
+    "Company materialization, permission/HITL resume, terminal events, workspace cleanup and activity/cap integration",
+    "Company result-only Flow runtime T20.1 and complete lifecycle T21",
+    "Actual installable specialist package, stand restart and independent verification",
+    "Remaining plan T20-T43 acceptance"
+  ],
+  "logSanitization": "Disposable credential parameters and token-shaped strings are redacted in retained logs. No actual credentials, private assertions or production logs were collected.",
+  "sourceSha256": {
+    "web/lib/agents/company-agent-context.ts": "8bbd0410059cb4d646406b88ad4027b16417125e906f55054a828db52adfa6b0",
+    "web/lib/agents/company-agent-execution-types.ts": "43168ee1384da1067d2f324e0ec31ae74d8f431786e08afd09731c9c60355f93",
+    "web/lib/agents/company-agent-scope-schema.ts": "25e569f8d157bec513c61a1fdd3d5df4d94fdb54ffa70e0a1f6c3cf62ca72ac2",
+    "web/lib/agents/company-run-credential-owner.ts": "a6057e7be9b6991971bf886c485ec374b755cc35c53e747eab5640d0e4634b5f",
+    "web/lib/agents/tokens.ts": "2ca21785ec161b52347a1fc7f60d43a2b9d045f1da6312f75c146511e59a4b13",
+    "web/lib/tokens/verify.ts": "8e26279e45fe9a46a432c1ecea8857677b01aba68e25adf246e72a5f03f6b1f2",
+    "web/lib/specialist-assignments/store.ts": "7a52f9ee6d6c45fdf636d3d630c60953d696d10f234592cf4129d8d562e6def1",
+    "web/lib/db/schema.ts": "aef5916944330e24a2581baacb5d596f9f67711b75f38dd6dfc843f9a533786c",
+    "web/lib/db/migrations/0225_company_agent_execution.sql": "2f1b909bbb016b2e5068f8d4a1ad048826274bf86e3bf8928f28d91f9df1a728",
+    "web/lib/db/migrations/0226_company_agent_credentials.sql": "8be6045a29f407bb2968d7f6e19275321c3fe51d165435cc655ddcd5b84ccab0",
+    "web/lib/db/migrations/meta/0225_snapshot.json": "a3b8775ba104666a769daefe988269616f22662c88eb7d57535c5353cebc2e43",
+    "web/lib/db/migrations/meta/0226_snapshot.json": "3c79e74a70d89bd0c05793574a77c871c4d6aaac753a4adda1bca5fccbd71b91",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "e6e74dc03239fed729d3abea4294ee858283cbe1095051b00469b4cb5b51257f",
+    "web/lib/db/__tests__/migration-company-agent-execution.integration.test.ts": "05642929758e72b2955e849c134b23505b4786a99f98e37e2eeb6c0e7bd0fbbf",
+    "web/lib/db/__tests__/migration-company-agent-credentials.integration.test.ts": "14dfae3f17f806cd6a91f93f3cb59a02e42a0dfd2f282fa40e81b71c8c01c54d"
+  }
+}

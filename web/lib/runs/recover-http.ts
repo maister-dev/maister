@@ -36,6 +36,7 @@ function statusForState(state: RecoverState): number {
     case "discard-only":
     case "conflict":
     case "launch-conflict":
+    case "assignment-conflict":
     case "workspace-removed":
     case "workspace-busy":
       return 409;
@@ -68,8 +69,8 @@ function runStatusForState(
 // Non-success states are typed MaisterError codes (ADR-008 closed union) so API
 // clients can branch on `code` per docs/error-taxonomy.md — not just the HTTP
 // status. The codes match the OpenAPI 409/410/503 entries (MaisterErrorBody).
-// ADR-175: four outcomes answer 409 and three of them share `CONFLICT`, so an
-// unattended caller could not tell "retry later" from "this run is
+// Several outcomes share `CONFLICT`, so an unattended caller could not tell
+// "retry later" from "this run is
 // unrecoverable". `details.reason` is the sanctioned discriminator (the UI still
 // branches on `code`); the tokens are registered in docs/error-taxonomy.md.
 function errorBodyForState(state: RecoverRefusalState): {
@@ -78,6 +79,13 @@ function errorBodyForState(state: RecoverRefusalState): {
   details?: { reason: string };
 } {
   switch (state) {
+    case "assignment-conflict":
+      return {
+        code: "CONFLICT",
+        message:
+          "this Run cannot recover the current specialist assignment; inspect the assignment and its current work",
+        details: { reason: "assignment_root_recovery_conflict" },
+      };
     case "launch-conflict":
       return {
         code: "CONFLICT",

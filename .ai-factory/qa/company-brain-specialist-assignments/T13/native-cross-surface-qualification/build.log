@@ -1,0 +1,1479 @@
+$ pnpm clean && next build
+$ node scripts/clean-next-artifacts.mjs
+Removed Next.js build artifacts { target: '/Users/kaa/.codex/worktrees/2599/mAIster/web/.next' }
+▲ Next.js 16.4.3 (Turbopack)
+✓ Running next.config.mjs took 44ms
+- Experiments (use with caution):
+  ✓ authInterrupts
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 14.3s
+  Running TypeScript ...
+  Finished TypeScript in 28.6s ...
+  Collecting page data using 15 workers ...
+{"level":30,"time":1793678295965,"pid":6876,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678295959,"pid":6880,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678295987,"pid":6877,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678295992,"pid":6881,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296018,"pid":6875,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296082,"pid":6879,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296075,"pid":6868,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296109,"pid":6878,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296235,"pid":6867,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296246,"pid":6872,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296251,"pid":6873,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296268,"pid":6874,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296282,"pid":6869,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296326,"pid":6871,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678296366,"pid":6870,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297040,"pid":6867,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297065,"pid":6880,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297070,"pid":6869,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297070,"pid":6876,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297076,"pid":6879,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297079,"pid":6868,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297084,"pid":6872,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297088,"pid":6874,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297093,"pid":6877,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297102,"pid":6871,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297104,"pid":6875,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297105,"pid":6870,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297106,"pid":6878,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297107,"pid":6873,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793678297116,"pid":6881,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+  Generating static pages using 15 workers (0/109) ...
+  Generating static pages using 15 workers (27/109)
+  Generating static pages using 15 workers (54/109)
+  Generating static pages using 15 workers (81/109)
+✓ Generating static pages using 15 workers (109/109) in 188ms
+Turbopack build encountered 24 warnings:
+./web/lib/agents/facade-launch.ts:41:9
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m39 |[0m     path.resolve(process.cwd(), [32m".."[0m, [32m"node_modules"[0m, [32m".bin"[0m, [32m"tsx"[0m),
+  [90m40 |[0m   ]) {
+[33m[1m>[0m [90m41 |[0m     [36mif[0m (existsSync(tsxBin) && existsSync(srcEntry)) {
+  [90m   |[0m         [33m[1m^^^^^^^^^^^^^^^^^^[0m
+  [90m42 |[0m       [36mreturn[0m { command: tsxBin, args: [srcEntry, [32m"--stdio"[0m] };
+  [90m43 |[0m     }
+  [90m44 |[0m   }
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.existsSync(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/agents/facade-launch.ts
+    ./web/lib/packages/attach.ts
+    ./web/app/api/admin/package-installs/route.ts
+
+  #2 [App Route]:
+    ./web/lib/agents/facade-launch.ts
+    ./web/lib/agents/launch.ts
+    ./web/app/api/runs/[runId]/abandon/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/agents/facade-launch.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/flows/graph/runner-graph.ts
+    ./web/lib/flows/runner.ts
+    ./web/lib/services/hitl.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/agents/facade-launch.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/retry.ts
+    ./web/lib/scheduler/system-sweeps.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/agents/materialization-lock.ts:51:22
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m49 |[0m
+  [90m50 |[0m   [36mfor[0m ([36mconst[0m fileName [36mof[0m [33mSQLITE_AUXILIARY_FILES[0m) {
+[33m[1m>[0m [90m51 |[0m     [36mconst[0m filePath = path.join(rootPath, fileName);
+  [90m   |[0m                      [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m52 |[0m
+  [90m53 |[0m     [36mtry[0m {
+  [90m54 |[0m       [36mif[0m (([36mawait[0m lstat(filePath)).isSymbolicLink()) {
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/agents/materialization-lock.ts
+    ./web/lib/packages/attach.ts
+    ./web/app/api/admin/package-installs/route.ts
+
+  #2 [App Route]:
+    ./web/lib/agents/materialization-lock.ts
+    ./web/lib/agents/materialization-manifest.ts
+    ./web/lib/scratch-runs/local-package-materialization.ts
+    ./web/app/api/scratch-runs/[runId]/discard/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/agents/materialization-lock.ts
+    ./web/lib/agents/materialization-manifest.ts
+    ./web/lib/capabilities/cleanup.ts
+    ./web/lib/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+  #4 [Server Component]:
+    ./web/lib/agents/materialization-lock.ts
+    ./web/lib/agents/materialization-manifest.ts
+    ./web/lib/capabilities/materialize.ts
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/worktree.ts
+    ./web/lib/flows/graph/mutation-check.ts
+    ./web/lib/runs/node-interrupt.ts
+    ./web/lib/queries/hitl-stage.ts
+    ./web/lib/queries/portfolio.ts
+    ./web/lib/queries/project.ts
+    ./web/app/(app)/projects/[slug]/experiments/[experimentId]/page.tsx
+
+
+./web/lib/capabilities/adapter-home.ts:361:17
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m359 |[0m   [90m// 1. Symlink global auth + config so the relocated home keeps credentials.[0m
+  [90m360 |[0m   [36mfor[0m ([36mconst[0m file [36mof[0m [[32m"auth.json"[0m, [32m"config.toml"[0m]) {
+[33m[1m>[0m [90m361 |[0m     [36mconst[0m src = path.join(args.codexGlobalHome, file);
+  [90m    |[0m                 [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m362 |[0m
+  [90m363 |[0m     [36mif[0m ([36mawait[0m pathExists(src)) {
+  [90m364 |[0m       [36mconst[0m dest = path.join(args.homeRoot, file);
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/scratch-runs/service.ts
+    ./web/app/api/studio/local-packages/[id]/assistant/[runId]/interrupt/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/flows/graph/runner-graph.ts
+    ./web/lib/flows/runner.ts
+    ./web/lib/services/hitl.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/retry.ts
+    ./web/lib/scheduler/system-sweeps.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/capabilities/adapter-home.ts:364:20
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m362 |[0m
+  [90m363 |[0m     [36mif[0m ([36mawait[0m pathExists(src)) {
+[33m[1m>[0m [90m364 |[0m       [36mconst[0m dest = path.join(args.homeRoot, file);
+  [90m    |[0m                    [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m365 |[0m
+  [90m366 |[0m       [36mif[0m ([36mawait[0m pathExists(dest)) [36mawait[0m rm(dest, { force: [36mtrue[0m });
+  [90m367 |[0m       [36mawait[0m symlink(src, dest);
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/scratch-runs/service.ts
+    ./web/app/api/studio/local-packages/[id]/assistant/[runId]/interrupt/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/flows/graph/runner-graph.ts
+    ./web/lib/flows/runner.ts
+    ./web/lib/services/hitl.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/retry.ts
+    ./web/lib/scheduler/system-sweeps.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/capabilities/materialize-bundle.ts:66:31
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m64 |[0m     [36mawait[0m mkdir(dest, { recursive: [36mtrue[0m });
+  [90m65 |[0m
+[33m[1m>[0m [90m66 |[0m     [36mfor[0m ([36mconst[0m entry [36mof[0m [36mawait[0m readdir(src)) {
+  [90m   |[0m                               [33m[1m^^^^^^^^^^^^[0m
+  [90m67 |[0m       [36mconst[0m destEntry = path.join(dest, entry);
+  [90m68 |[0m
+  [90m69 |[0m       [90m// Repo-local entry (skill dir / agent file) wins whole — skip it.[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.readdir(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/api/runs/[runId]/hitl/[hitlRequestId]/dirty-resolution/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/continuation-worker.ts
+    ./web/lib/workers/runtime.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/capabilities/materialize-bundle.ts:58:17
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m56 |[0m
+  [90m57 |[0m   [36mfor[0m ([36mconst[0m sub [36mof[0m [[32m"skills"[0m, [32m"agents"[0m] [36mas[0m [36mconst[0m) {
+[33m[1m>[0m [90m58 |[0m     [36mconst[0m src = path.join(args.installedPath, sub);
+  [90m   |[0m                 [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m59 |[0m
+  [90m60 |[0m     [36mif[0m (!([36mawait[0m pathExists(src))) [36mcontinue[0m;
+  [90m61 |[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/api/runs/[runId]/hitl/[hitlRequestId]/dirty-resolution/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/continuation-worker.ts
+    ./web/lib/workers/runtime.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/capabilities/materialize-bundle.ts:72:16
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m70 |[0m       [36mif[0m ([36mawait[0m pathExists(destEntry)) [36mcontinue[0m;
+  [90m71 |[0m
+[33m[1m>[0m [90m72 |[0m       [36mawait[0m cp(path.join(src, entry), destEntry, {
+  [90m   |[0m                [33m[1m^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m73 |[0m         recursive: [36mtrue[0m,
+  [90m74 |[0m         force: [36mfalse[0m,
+  [90m75 |[0m         errorOnExist: [36mfalse[0m,
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/api/runs/[runId]/hitl/[hitlRequestId]/dirty-resolution/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/runs/dirty-resolution.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/capabilities/materialize-bundle.ts
+    ./web/lib/capabilities/adapter-home.ts
+    ./web/lib/agents/launch.ts
+    ./web/lib/agents/continuation-worker.ts
+    ./web/lib/workers/runtime.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/evaluations/evidence/store.ts:94:24
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m92 |[0m   );
+  [90m93 |[0m
+[33m[1m>[0m [90m94 |[0m   [36mconst[0m handle = [36mawait[0m open(full, [32m"r"[0m);
+  [90m   |[0m                        [33m[1m^^^^^^^^^^^^^^^[0m
+  [90m95 |[0m
+  [90m96 |[0m   [36mtry[0m {
+  [90m97 |[0m     [90m// Read cap + 1 so a full window signals possible truncation.[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.open(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/evaluations/evidence/store.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/evaluations/evidence/store.ts
+    ./web/lib/evaluations/evidence/snapshots.ts
+    ./web/lib/evaluations/judges/facade.ts
+    ./web/app/api/v1/ext/evaluations/objective-results/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/evaluations/evidence/store.ts
+    ./web/lib/evaluations/evidence/snapshots.ts
+    ./web/lib/evaluations/evidence/capture.ts
+    ./web/lib/evaluations/dispatcher/tick.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/flows.ts:671:22
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m669 |[0m
+  [90m670 |[0m   [36mtry[0m {
+[33m[1m>[0m [90m671 |[0m     [36mconst[0m st = [36mawait[0m stat(candidate);
+  [90m    |[0m                      [33m[1m^^^^^^^^^^^^^^^[0m
+  [90m672 |[0m
+  [90m673 |[0m     [36mif[0m (!st.isDirectory()) [36mreturn[0m { kind: [32m"git"[0m };
+  [90m674 |[0m     [36mif[0m (!([36mawait[0m pathExists(join(candidate, [32m"flow.yaml"[0m)))) {
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.stat(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/flows.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/flows.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/flows.ts
+    ./web/lib/packages/catalog.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+  #4 [Server Component]:
+    ./web/lib/flows.ts
+    ./web/lib/flows/lifecycle.ts
+    ./web/lib/services/runs.ts
+    ./web/lib/services/hitl.ts
+    ./web/app/(app)/runs/[runId]/layout.tsx
+
+
+./web/lib/flows/package-content.ts:299:23
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m297 |[0m   [36mif[0m (!confined.ok) [36mreturn[0m { state: confined.state };
+  [90m298 |[0m
+[33m[1m>[0m [90m299 |[0m   [36mconst[0m bytes = [36mawait[0m readFile(confined.real);
+  [90m    |[0m                       [33m[1m^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m300 |[0m
+  [90m301 |[0m   [36mif[0m (bytes.includes([35m0[0m)) [36mreturn[0m { state: [32m"binary"[0m };
+  [90m302 |[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.readFile(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [Server Component]:
+    ./web/lib/flows/package-content.ts
+    ./web/app/(app)/studio/packages/[ref]/agents/[stem]/page.tsx
+
+  #2 [App Route]:
+    ./web/lib/flows/package-content.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [App Route]:
+    ./web/lib/flows/package-content.ts
+    ./web/lib/queries/packages.ts
+    ./web/lib/studio/load.ts
+    ./web/app/api/studio/packages/[ref]/fork-element/route.ts
+
+
+./web/lib/flows/package-content.ts:324:23
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m322 |[0m   [36mif[0m (!confined.ok) [36mreturn[0m { state: confined.state };
+  [90m323 |[0m
+[33m[1m>[0m [90m324 |[0m   [36mconst[0m bytes = [36mawait[0m readFile(confined.real);
+  [90m    |[0m                       [33m[1m^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m325 |[0m
+  [90m326 |[0m   [36mreturn[0m {
+  [90m327 |[0m     state: [32m"image"[0m,
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.readFile(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [Server Component]:
+    ./web/lib/flows/package-content.ts
+    ./web/app/(app)/studio/packages/[ref]/agents/[stem]/page.tsx
+
+  #2 [App Route]:
+    ./web/lib/flows/package-content.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [App Route]:
+    ./web/lib/flows/package-content.ts
+    ./web/lib/queries/packages.ts
+    ./web/lib/studio/load.ts
+    ./web/app/api/studio/packages/[ref]/fork-element/route.ts
+
+
+./web/lib/gc/workspace-reconciler.ts:1218:25
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m1216 |[0m
+  [90m1217 |[0m   [36mtry[0m {
+[33m[1m>[0m [90m1218 |[0m     removalRoot = [36mawait[0m realpath(root);
+  [90m     |[0m                         [33m[1m^^^^^^^^^^^^^^[0m
+  [90m1219 |[0m   } [36mcatch[0m (error) {
+  [90m1220 |[0m     [36mif[0m (!isMissingPathError(error)) [36mthrow[0m error;
+  [90m1221 |[0m   }
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.realpath(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/gc/workspace-reconciler.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/gc/workspace-reconciler.ts
+    ./web/lib/scheduler/system-sweeps.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/app/api/cron/tick/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/gc/workspace-reconciler.ts
+    ./web/lib/scheduler/system-sweeps.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/local-packages/service.ts:210:17
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m208 |[0m ): [33mPromise[0m<[36mvoid[0m> {
+  [90m209 |[0m   [36mfor[0m ([36mconst[0m d [36mof[0m [33mKIND_DIRS[0m) {
+[33m[1m>[0m [90m210 |[0m     [36mawait[0m mkdir(path.join(workingDir, d), { recursive: [36mtrue[0m });
+  [90m    |[0m                 [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m211 |[0m   }
+  [90m212 |[0m   [36mawait[0m atomicWriteText(
+  [90m213 |[0m     path.join(workingDir, [32m"maister-package.yaml"[0m),
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/local-packages/service.ts
+    ./web/app/api/studio/local-packages/[id]/lock-refresh/route.ts
+
+  #2 [Server Component]:
+    ./web/lib/local-packages/service.ts
+    ./web/lib/queries/project-local-packages.ts
+    ./web/app/(app)/projects/[slug]/page.tsx
+
+  #3 [App Route]:
+    ./web/lib/local-packages/service.ts
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/agents/launch.ts
+    ./web/app/api/agents/[agentId]/event/route.ts
+
+  #4 [Instrumentation]:
+    ./web/lib/local-packages/service.ts
+    ./web/lib/local-packages/versions.ts
+    ./web/lib/services/runs.ts
+    ./web/lib/run-schedules/dispatch.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/packages/install.ts:79:33
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m77 |[0m
+  [90m78 |[0m   [36mif[0m (localRoot !== [36mnull[0m) {
+[33m[1m>[0m [90m79 |[0m     [36mconst[0m pkgRoot = opts.path ? join(localRoot, opts.path) : localRoot;
+  [90m   |[0m                                 [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m80 |[0m
+  [90m81 |[0m     [36mtry[0m {
+  [90m82 |[0m       [36mconst[0m st = [36mawait[0m stat(pkgRoot);
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/packages/install.ts
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/agents/launch.ts
+    ./web/app/api/agents/[agentId]/event/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/packages/install.ts
+    ./web/lib/packages/attach.ts
+    ./web/lib/local-packages/versions.ts
+    ./web/app/(app)/studio/edit/[id]/[[...path]]/page.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/packages/install.ts
+    ./web/lib/packages/attach.ts
+    ./web/lib/local-packages/versions.ts
+    ./web/lib/services/runs.ts
+    ./web/lib/run-schedules/dispatch.ts
+    ./web/lib/scheduler/tick-service.ts
+    ./web/lib/scheduler/timer.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/cleanup.ts:147:44
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m145 |[0m   [90m// Delete the marker last; partial cleanup only removes present, verified names.[0m
+  [90m146 |[0m   [36mfor[0m ([36mconst[0m name [36mof[0m [[32m"before"[0m, [32m"after"[0m, [32m"operation.json"[0m]) {
+[33m[1m>[0m [90m147 |[0m     [36mif[0m (names.includes(name)) [36mawait[0m unlink(join(directory, name));
+  [90m    |[0m                                            [33m[1m^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m148 |[0m   }
+  [90m149 |[0m   [36mawait[0m rmdir(directory);
+  [90m150 |[0m }
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/project-config-persistence/receipts.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/recover/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/push-gate.ts:76:26
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m74 |[0m
+  [90m75 |[0m   [36mfor[0m ([36mconst[0m path [36mof[0m [gatePath, hookPath, input.directory]) {
+[33m[1m>[0m [90m76 |[0m     [36mconst[0m handle = [36mawait[0m open(path, [32m"r"[0m);
+  [90m   |[0m                          [33m[1m^^^^^^^^^^^^^^^[0m
+  [90m77 |[0m
+  [90m78 |[0m     [36mtry[0m {
+  [90m79 |[0m       [36mawait[0m handle.sync();
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.open(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/push-gate.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/push-gate.ts
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/recover/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/push-gate.ts
+    ./web/lib/project-config-persistence/push.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/push.ts:293:26
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m291 |[0m   [36mawait[0m chmod(join(directory, [32m"push.json"[0m), [35m0o600[0m);
+  [90m292 |[0m   [36mfor[0m ([36mconst[0m path [36mof[0m [join(directory, [32m"push.json"[0m), directory]) {
+[33m[1m>[0m [90m293 |[0m     [36mconst[0m handle = [36mawait[0m open(path, [32m"r"[0m);
+  [90m    |[0m                          [33m[1m^^^^^^^^^^^^^^^[0m
+  [90m294 |[0m
+  [90m295 |[0m     [36mtry[0m {
+  [90m296 |[0m       [36mawait[0m handle.sync();
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.open(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/recover/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/push.ts:431:22
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m429 |[0m     [36mfor[0m ([36mconst[0m name [36mof[0m [[32m"gate.cjs"[0m, [32m"pre-push"[0m, [32m"push.json"[0m])
+  [90m430 |[0m       [36mif[0m (names.includes(name))
+[33m[1m>[0m [90m431 |[0m         [36mawait[0m unlink(join(intent.snapshot.contentDirectory, name));
+  [90m    |[0m                      [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m432 |[0m     [36mtry[0m {
+  [90m433 |[0m       [36mawait[0m rmdir(intent.snapshot.contentDirectory);
+  [90m434 |[0m     } [36mcatch[0m (error) {
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/recover/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/push.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/review-files.ts:134:33
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m132 |[0m   [36mawait[0m atomicWriteText(join(contentDirectory, [32m"after"[0m), input.proposed);
+  [90m133 |[0m   [36mawait[0m syncPrivateFile(join(contentDirectory, [32m"after"[0m), mode);
+[33m[1m>[0m [90m134 |[0m   [36mconst[0m directoryHandle = [36mawait[0m open(contentDirectory, [32m"r"[0m);
+  [90m    |[0m                                 [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m135 |[0m
+  [90m136 |[0m   [36mtry[0m {
+  [90m137 |[0m     [36mawait[0m directoryHandle.sync();
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.open(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/push/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/review-files.ts:48:12
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m46 |[0m     [36mif[0m (parent === path) [36mthrow[0m error;
+  [90m47 |[0m
+[33m[1m>[0m [90m48 |[0m     [36mreturn[0m join([36mawait[0m canonicalCandidate(parent), relative(parent, path));
+  [90m   |[0m            [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m49 |[0m   }
+  [90m50 |[0m }
+  [90m51 |[0m
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/push/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/project-config-persistence/review-files.ts:117:28
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m115 |[0m     [36mthrow[0m unsupportedStorage();
+  [90m116 |[0m   [36mconst[0m root = [36mawait[0m configReviewRoot(input.repoPath);
+[33m[1m>[0m [90m117 |[0m   [36mconst[0m contentDirectory = join(root, input.operationId);
+  [90m    |[0m                            [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m118 |[0m
+  [90m119 |[0m   [36mawait[0m mkdir(contentDirectory, { mode: [35m0o700[0m });
+  [90m120 |[0m   [36mawait[0m atomicWriteJson(join(contentDirectory, [32m"operation.json"[0m), {
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.join(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/push.ts
+    ./web/app/api/projects/[slug]/persist-config/[operationId]/push/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/project-config-persistence/review-files.ts
+    ./web/lib/project-config-persistence/cleanup.ts
+    ./web/lib/project-config-persistence/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/runtime-root.ts:8:20
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m 6 |[0m
+  [90m 7 |[0m [36mexport[0m [36mfunction[0m defaultRuntimeRoot(cwd: string = process.cwd()): string {
+[33m[1m>[0m [90m 8 |[0m   [36mconst[0m resolved = path.resolve(cwd);
+  [90m   |[0m                    [33m[1m^^^^^^^^^^^^^^^^^[0m
+  [90m 9 |[0m   [36mconst[0m basename = path.basename(resolved);
+  [90m10 |[0m
+  [90m11 |[0m   [36mreturn[0m [33mPACKAGE_CWD_NAMES[0m.has(basename) ? path.dirname(resolved) : resolved;
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: path.resolve(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/runtime-root.ts
+    ./web/app/api/runs/[runId]/artifacts/[artifactId]/payload/route.ts
+
+  #2 [App Route]:
+    ./web/lib/runtime-root.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #3 [Instrumentation]:
+    ./web/lib/runtime-root.ts
+    ./web/lib/instance-config.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+  #4 [Server Component]:
+    ./web/lib/runtime-root.ts
+    ./web/lib/instance-config.ts
+    ./web/lib/queries/portfolio.ts
+    ./web/app/(app)/layout.tsx
+
+
+./web/lib/worktree-provenance.ts:390:13
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m388 |[0m     [36mawait[0m writeManagedHookAndTemplate(paths, existing);
+  [90m389 |[0m     [36mtry[0m {
+[33m[1m>[0m [90m390 |[0m       [36mawait[0m readFile(paths.currentNode, [32m"utf8"[0m);
+  [90m    |[0m             [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m391 |[0m     } [36mcatch[0m (error) {
+  [90m392 |[0m       [36mif[0m ((error [36mas[0m [33mNodeJS[0m.[33mErrnoException[0m).code !== [32m"ENOENT"[0m) [36mthrow[0m error;
+  [90m393 |[0m       [36mawait[0m atomicWriteText(paths.currentNode, [32m""[0m);
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.readFile(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/workbench-git/service.ts
+    ./web/app/api/runs/[runId]/discard-changes/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/worktree.ts
+    ./web/lib/local-packages/service.ts
+    ./web/app/(app)/studio/edit/[id]/[[...path]]/page.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/worktree.ts
+    ./web/lib/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+./web/lib/worktree-provenance.ts:521:21
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m519 |[0m ): [33mPromise[0m<[33mMaisterProvenance[0m> {
+  [90m520 |[0m   [36mconst[0m paths = managedPaths(worktreePath);
+[33m[1m>[0m [90m521 |[0m   [36mconst[0m raw = [36mawait[0m readFile(paths.metadata, [32m"utf8"[0m);
+  [90m    |[0m                     [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [90m522 |[0m   [36mconst[0m values: [33mPartial[0m<[33mRecord[0m<[33mProvenanceMetadataField[0m, string>> = {};
+  [90m523 |[0m
+  [90m524 |[0m   [36mfor[0m ([36mconst[0m line [36mof[0m raw.split([32m"\n"[0m).filter([33mBoolean[0m)) {
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: fs.readFile(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import traces:
+  #1 [App Route]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/packages/install.ts
+    ./web/app/api/projects/route.ts
+
+  #2 [App Route]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/workbench-git/service.ts
+    ./web/app/api/runs/[runId]/discard-changes/route.ts
+
+  #3 [Server Component]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/worktree.ts
+    ./web/lib/local-packages/service.ts
+    ./web/app/(app)/studio/edit/[id]/[[...path]]/page.tsx
+
+  #4 [Instrumentation]:
+    ./web/lib/worktree-provenance.ts
+    ./web/lib/worktree.ts
+    ./web/lib/reconcile.ts
+    ./web/instrumentation-node.ts
+    ./web/instrumentation.ts
+
+
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /access-denied/execution-host
+├ ƒ /account
+├ ƒ /account/password
+├ ƒ /activity
+├ ƒ /admin/execution-host
+├ ƒ /admin/scheduler
+├ ƒ /admin/users
+├ ƒ /agents
+├ ƒ /api/account/tokens
+├ ƒ /api/account/tokens/[tokenId]
+├ ƒ /api/activity/cursor
+├ ƒ /api/admin/acp-runners
+├ ƒ /api/admin/acp-runners/[runnerId]
+├ ƒ /api/admin/acp-runners/model-suggestions
+├ ƒ /api/admin/agents
+├ ƒ /api/admin/agents/[agentId]
+├ ƒ /api/admin/agents/resync
+├ ƒ /api/admin/brain-settings
+├ ƒ /api/admin/evaluations/judge-panels
+├ ƒ /api/admin/evaluations/judge-panels/[panelId]
+├ ƒ /api/admin/evaluations/methodologies
+├ ƒ /api/admin/evaluations/methodologies/[methodRevisionId]/activation
+├ ƒ /api/admin/evaluations/profiles
+├ ƒ /api/admin/evaluations/profiles/[profileId]
+├ ƒ /api/admin/mcp-servers
+├ ƒ /api/admin/mcp-servers/[id]
+├ ƒ /api/admin/mcp-servers/[id]/trust
+├ ƒ /api/admin/package-installs
+├ ƒ /api/admin/package-installs/[installId]/trust
+├ ƒ /api/admin/package-sources
+├ ƒ /api/admin/package-sources/[id]
+├ ƒ /api/admin/package-sources/[id]/refresh
+├ ƒ /api/admin/platform/librarian
+├ ƒ /api/admin/scheduler-jobs
+├ ƒ /api/admin/scheduler-jobs/[jobId]
+├ ƒ /api/admin/users
+├ ƒ /api/admin/users/[userId]
+├ ƒ /api/admin/webhook-settings
+├ ƒ /api/admin/webhooks
+├ ƒ /api/admin/webhooks/[id]
+├ ƒ /api/admin/webhooks/[id]/deliveries
+├ ƒ /api/admin/webhooks/[id]/deliveries/[deliveryId]/replay
+├ ƒ /api/admin/webhooks/[id]/ping
+├ ƒ /api/admin/workspace-reconciliation-findings
+├ ƒ /api/agents/[agentId]/event
+├ ƒ /api/assignments/[assignmentId]/claim
+├ ƒ /api/assignments/[assignmentId]/release
+├ ƒ /api/assignments/[assignmentId]/take-over
+├ ƒ /api/attention/stream
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/auth/register
+├ ƒ /api/company/grants
+├ ƒ /api/company/grants/[grantId]
+├ ƒ /api/cron/gc
+├ ƒ /api/cron/tick
+├ ƒ /api/inbox/[itemId]/read
+├ ƒ /api/inbox/read-all
+├ ƒ /api/knowledge
+├ ƒ /api/knowledge/[recordId]
+├ ƒ /api/knowledge/[recordId]/confirmations
+├ ƒ /api/knowledge/[recordId]/conflicts
+├ ƒ /api/knowledge/[recordId]/evidence
+├ ƒ /api/knowledge/proposals
+├ ƒ /api/knowledge/proposals/[proposalId]
+├ ƒ /api/knowledge/proposals/[proposalId]/decision
+├ ƒ /api/knowledge/sources
+├ ƒ /api/knowledge/witnesses/[witnessId]
+├ ƒ /api/librarian/cards/[cardId]/decide
+├ ƒ /api/librarian/conversation
+├ ƒ /api/librarian/history/clear
+├ ƒ /api/librarian/history/clear-preview
+├ ƒ /api/librarian/memory
+├ ƒ /api/librarian/memory/[itemId]
+├ ƒ /api/librarian/messages
+├ ƒ /api/librarian/messages/[messageId]
+├ ƒ /api/librarian/read-cursor
+├ ƒ /api/librarian/reset
+├ ƒ /api/librarian/stream
+├ ƒ /api/librarian/turns/current/stop
+├ ƒ /api/librarian/updates/[updateId]/explain
+├ ƒ /api/projects
+├ ƒ /api/projects/[slug]/agents
+├ ƒ /api/projects/[slug]/agents/[agentId]
+├ ƒ /api/projects/[slug]/agents/[agentId]/attempts
+├ ƒ /api/projects/[slug]/agents/[agentId]/definition
+├ ƒ /api/projects/[slug]/agents/[agentId]/incidents
+├ ƒ /api/projects/[slug]/agents/[agentId]/incidents/acknowledge
+├ ƒ /api/projects/[slug]/agents/[agentId]/launch
+├ ƒ /api/projects/[slug]/agents/[agentId]/memory
+├ ƒ /api/projects/[slug]/agents/[agentId]/retry
+├ ƒ /api/projects/[slug]/agents/[agentId]/retry-options
+├ ƒ /api/projects/[slug]/agents/[agentId]/runs
+├ ƒ /api/projects/[slug]/assignments
+├ ƒ /api/projects/[slug]/automations
+├ ƒ /api/projects/[slug]/automations/[kind]/[automationId]
+├ ƒ /api/projects/[slug]/brain/proposals/[proposalId]/conclusion
+├ ƒ /api/projects/[slug]/brain/sources
+├ ƒ /api/projects/[slug]/brain/sources/[sourceId]
+├ ƒ /api/projects/[slug]/brain/sources/[sourceId]/reindex
+├ ƒ /api/projects/[slug]/brain/sources/reindex
+├ ƒ /api/projects/[slug]/capabilities/[capabilityRefId]/trust
+├ ƒ /api/projects/[slug]/capability-catalog
+├ ƒ /api/projects/[slug]/catalog/caps
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/archive
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/diff
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/draft
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/graph
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/lock-refresh
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/lock-release
+├ ƒ /api/projects/[slug]/catalog/caps/[capId]/publish-local
+├ ƒ /api/projects/[slug]/evaluation-profiles/[profileId]/override
+├ ƒ /api/projects/[slug]/evaluations/pin-options
+├ ƒ /api/projects/[slug]/evaluations/reviews/[reviewId]
+├ ƒ /api/projects/[slug]/evaluations/standardization
+├ ƒ /api/projects/[slug]/evaluations/standardization/rollback
+├ ƒ /api/projects/[slug]/evaluations/studies
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/evaluations
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/launch-batches
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/launch-batches/[batchId]
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/launch-batches/[batchId]/retry
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/launch-preflight
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/participants
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/participants/[participantId]
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/standardization-eligibility
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/standardize
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/stream
+├ ƒ /api/projects/[slug]/evaluations/studies/[studyId]/verdicts
+├ ƒ /api/projects/[slug]/files
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/disable
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/enable
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/revisions/[revisionId]/fork
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/revisions/[revisionId]/remove
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/rollback
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/trust
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/upgrade
+├ ƒ /api/projects/[slug]/flow-packages/[flowRefId]/upgrade-preview
+├ ƒ /api/projects/[slug]/flow-packages/install
+├ ƒ /api/projects/[slug]/flow-runner-remaps
+├ ƒ /api/projects/[slug]/flows/[flowId]/trust-executable
+├ ƒ /api/projects/[slug]/flows/[flowId]/version-binding
+├ ƒ /api/projects/[slug]/mcp
+├ ƒ /api/projects/[slug]/mcp/[mcpId]
+├ ƒ /api/projects/[slug]/mcp/bindings
+├ ƒ /api/projects/[slug]/mcp/bindings/[refId]
+├ ƒ /api/projects/[slug]/mcp/connect
+├ ƒ /api/projects/[slug]/mcp/disconnect
+├ ƒ /api/projects/[slug]/mcp/probe
+├ ƒ /api/projects/[slug]/mcp/resolve
+├ ƒ /api/projects/[slug]/members
+├ ƒ /api/projects/[slug]/members/[memberId]
+├ ƒ /api/projects/[slug]/members/candidates
+├ ƒ /api/projects/[slug]/packages
+├ ƒ /api/projects/[slug]/packages/[attachmentId]
+├ ƒ /api/projects/[slug]/packages/[attachmentId]/trust
+├ ƒ /api/projects/[slug]/packages/[attachmentId]/upgrade
+├ ƒ /api/projects/[slug]/persist-config
+├ ƒ /api/projects/[slug]/persist-config/[operationId]
+├ ƒ /api/projects/[slug]/persist-config/[operationId]/push
+├ ƒ /api/projects/[slug]/persist-config/[operationId]/push/preview
+├ ƒ /api/projects/[slug]/persist-config/[operationId]/recover
+├ ƒ /api/projects/[slug]/persist-config/preview
+├ ƒ /api/projects/[slug]/remotes
+├ ƒ /api/projects/[slug]/scheduled-launches
+├ ƒ /api/projects/[slug]/scheduled-launches/[launchId]
+├ ƒ /api/projects/[slug]/scheduled-launches/[launchId]/cancel
+├ ƒ /api/projects/[slug]/scheduled-launches/[launchId]/run-now
+├ ƒ /api/projects/[slug]/schedules
+├ ƒ /api/projects/[slug]/schedules/[scheduleId]
+├ ƒ /api/projects/[slug]/schedules/[scheduleId]/trigger
+├ ƒ /api/projects/[slug]/settings
+├ ƒ /api/projects/[slug]/settings/runner
+├ ƒ /api/projects/[slug]/tasks
+├ ƒ /api/projects/[slug]/tasks/[number]
+├ ƒ /api/projects/[slug]/tasks/[number]/clarifications/[id]
+├ ƒ /api/projects/[slug]/tasks/[number]/clarifications/[id]/answer
+├ ƒ /api/projects/[slug]/tasks/[number]/clarifications/[id]/supersede
+├ ƒ /api/projects/[slug]/tasks/[number]/comments
+├ ƒ /api/projects/[slug]/tasks/[number]/complete
+├ ƒ /api/projects/[slug]/tasks/[number]/qualification
+├ ƒ /api/projects/[slug]/tasks/[number]/qualifications
+├ ƒ /api/projects/[slug]/tasks/[number]/relations
+├ ƒ /api/projects/[slug]/tasks/[number]/send-to-triage
+├ ƒ /api/projects/[slug]/tasks/[number]/subscription
+├ ƒ /api/projects/[slug]/tokens
+├ ƒ /api/projects/[slug]/tokens/[tokenId]
+├ ƒ /api/projects/[slug]/webhooks
+├ ƒ /api/projects/[slug]/webhooks/[id]
+├ ƒ /api/projects/[slug]/webhooks/[id]/deliveries
+├ ƒ /api/projects/[slug]/webhooks/[id]/deliveries/[deliveryId]/replay
+├ ƒ /api/projects/[slug]/webhooks/[id]/ping
+├ ƒ /api/push/subscribe
+├ ƒ /api/runs
+├ ƒ /api/runs/[runId]/abandon
+├ ƒ /api/runs/[runId]/activity
+├ ƒ /api/runs/[runId]/archive
+├ ƒ /api/runs/[runId]/artifacts
+├ ƒ /api/runs/[runId]/artifacts/[artifactId]/payload
+├ ƒ /api/runs/[runId]/auto-promotion
+├ ƒ /api/runs/[runId]/change-summary
+├ ƒ /api/runs/[runId]/children
+├ ƒ /api/runs/[runId]/cost-summary
+├ ƒ /api/runs/[runId]/delivery-policy
+├ ƒ /api/runs/[runId]/diff
+├ ƒ /api/runs/[runId]/discard
+├ ƒ /api/runs/[runId]/discard-changes
+├ ƒ /api/runs/[runId]/drop
+├ ƒ /api/runs/[runId]/export-branch
+├ ƒ /api/runs/[runId]/files
+├ ƒ /api/runs/[runId]/git-state
+├ ƒ /api/runs/[runId]/graph
+├ ƒ /api/runs/[runId]/graph-status
+├ ƒ /api/runs/[runId]/handoff-branch
+├ ƒ /api/runs/[runId]/handoff-metadata
+├ ƒ /api/runs/[runId]/hitl/[hitlRequestId]/chat
+├ ƒ /api/runs/[runId]/hitl/[hitlRequestId]/dirty-resolution
+├ ƒ /api/runs/[runId]/hitl/[hitlRequestId]/respond
+├ ƒ /api/runs/[runId]/hitl/[hitlRequestId]/review-feedback-preview
+├ ƒ /api/runs/[runId]/inbox-context
+├ ƒ /api/runs/[runId]/node-interrupt
+├ ƒ /api/runs/[runId]/operational/acknowledge
+├ ƒ /api/runs/[runId]/operational/cleanup/retry
+├ ƒ /api/runs/[runId]/peek
+├ ƒ /api/runs/[runId]/peek/stream
+├ ƒ /api/runs/[runId]/pr
+├ ƒ /api/runs/[runId]/pr/finalize
+├ ƒ /api/runs/[runId]/promote
+├ ƒ /api/runs/[runId]/promotion-hold
+├ ƒ /api/runs/[runId]/reattach
+├ ƒ /api/runs/[runId]/recover
+├ ƒ /api/runs/[runId]/reopen
+├ ƒ /api/runs/[runId]/retry
+├ ƒ /api/runs/[runId]/retry-options
+├ ƒ /api/runs/[runId]/retry/[intentId]
+├ ƒ /api/runs/[runId]/retry/[intentId]/cleanup
+├ ƒ /api/runs/[runId]/review-comments
+├ ƒ /api/runs/[runId]/review-comments/[commentId]
+├ ƒ /api/runs/[runId]/rework-claim/claim
+├ ƒ /api/runs/[runId]/rework-claim/release
+├ ƒ /api/runs/[runId]/rework-claim/return
+├ ƒ /api/runs/[runId]/runtime-objects/[objectId]
+├ ƒ /api/runs/[runId]/runtime-objects/[objectId]/content
+├ ƒ /api/runs/[runId]/snapshot-commit
+├ ƒ /api/runs/[runId]/stop
+├ ƒ /api/runs/[runId]/stop-archive
+├ ƒ /api/runs/[runId]/stop-drop
+├ ƒ /api/runs/[runId]/stream
+├ ƒ /api/runs/[runId]/sync
+├ ƒ /api/runs/[runId]/takeover/claim
+├ ƒ /api/runs/[runId]/takeover/return
+├ ƒ /api/runs/[runId]/transcript
+├ ƒ /api/runs/[runId]/transcript/messages/[messageId]
+├ ƒ /api/runs/launch-options
+├ ƒ /api/scratch-runs
+├ ƒ /api/scratch-runs/[runId]
+├ ƒ /api/scratch-runs/[runId]/commands
+├ ƒ /api/scratch-runs/[runId]/discard
+├ ƒ /api/scratch-runs/[runId]/interrupt
+├ ƒ /api/scratch-runs/[runId]/messages
+├ ƒ /api/scratch-runs/[runId]/recover
+├ ƒ /api/scratch-runs/[runId]/stop
+├ ƒ /api/scratch-runs/launch-options
+├ ƒ /api/studio/local-packages
+├ ƒ /api/studio/local-packages/[id]
+├ ƒ /api/studio/local-packages/[id]/assistant
+├ ƒ /api/studio/local-packages/[id]/assistant/[runId]/interrupt
+├ ƒ /api/studio/local-packages/[id]/assistant/[runId]/messages
+├ ƒ /api/studio/local-packages/[id]/assistant/runners
+├ ƒ /api/studio/local-packages/[id]/commit
+├ ƒ /api/studio/local-packages/[id]/creation-recovery
+├ ƒ /api/studio/local-packages/[id]/cut-version
+├ ƒ /api/studio/local-packages/[id]/diff
+├ ƒ /api/studio/local-packages/[id]/discard
+├ ƒ /api/studio/local-packages/[id]/divergence
+├ ƒ /api/studio/local-packages/[id]/files/[...path]
+├ ƒ /api/studio/local-packages/[id]/flows
+├ ƒ /api/studio/local-packages/[id]/import
+├ ƒ /api/studio/local-packages/[id]/lock-refresh
+├ ƒ /api/studio/local-packages/[id]/lock-release
+├ ƒ /api/studio/local-packages/[id]/publish
+├ ƒ /api/studio/local-packages/[id]/sync
+├ ƒ /api/studio/local-packages/[id]/sync/abort
+├ ƒ /api/studio/local-packages/[id]/sync/resolve
+├ ƒ /api/studio/packages/[ref]/fork
+├ ƒ /api/studio/packages/[ref]/fork-element
+├ ƒ /api/v1/ext/activity
+├ ƒ /api/v1/ext/activity/feed
+├ ƒ /api/v1/ext/agent/memory
+├ ƒ /api/v1/ext/decisions
+├ ƒ /api/v1/ext/evaluations/context
+├ ƒ /api/v1/ext/evaluations/evidence
+├ ƒ /api/v1/ext/evaluations/evidence/[itemId]
+├ ƒ /api/v1/ext/evaluations/objective-results
+├ ƒ /api/v1/ext/evaluations/result
+├ ƒ /api/v1/ext/hitl
+├ ƒ /api/v1/ext/knowledge
+├ ƒ /api/v1/ext/knowledge/[recordId]
+├ ƒ /api/v1/ext/knowledge/[recordId]/confirmations
+├ ƒ /api/v1/ext/knowledge/[recordId]/conflicts
+├ ƒ /api/v1/ext/knowledge/[recordId]/evidence
+├ ƒ /api/v1/ext/knowledge/proposals
+├ ƒ /api/v1/ext/knowledge/proposals/[proposalId]
+├ ƒ /api/v1/ext/knowledge/proposals/[proposalId]/decision
+├ ƒ /api/v1/ext/knowledge/sources
+├ ƒ /api/v1/ext/knowledge/witnesses/[witnessId]
+├ ƒ /api/v1/ext/librarian/cards
+├ ƒ /api/v1/ext/librarian/history/search
+├ ƒ /api/v1/ext/librarian/memory
+├ ƒ /api/v1/ext/notification-subscriptions
+├ ƒ /api/v1/ext/notification-subscriptions/[subscriptionId]
+├ ƒ /api/v1/ext/projects
+├ ƒ /api/v1/ext/projects/[slug]/directory
+├ ƒ /api/v1/ext/projects/[slug]/flows
+├ ƒ /api/v1/ext/projects/[slug]/members
+├ ƒ /api/v1/ext/projects/[slug]/memory
+├ ƒ /api/v1/ext/projects/[slug]/memory/clusters
+├ ƒ /api/v1/ext/projects/[slug]/memory/proposals
+├ ƒ /api/v1/ext/projects/[slug]/runners
+├ ƒ /api/v1/ext/projects/[slug]/tasks
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/clarifications
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/clarifications/[id]
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/clarifications/[id]/answer
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/comments
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/complete
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/human-asks
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/publish-excerpt
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/relations
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/send-to-triage
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/statement
+├ ƒ /api/v1/ext/projects/[slug]/tasks/[taskId]/triage
+├ ƒ /api/v1/ext/runs
+├ ƒ /api/v1/ext/runs/[runId]
+├ ƒ /api/v1/ext/runs/[runId]/activity
+├ ƒ /api/v1/ext/runs/[runId]/discard
+├ ƒ /api/v1/ext/runs/[runId]/gates/[gateId]/report
+├ ƒ /api/v1/ext/runs/[runId]/hitl
+├ ƒ /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond
+├ ƒ /api/v1/ext/runs/[runId]/operator-message
+├ ƒ /api/v1/ext/runs/[runId]/readiness
+├ ƒ /api/v1/ext/runs/[runId]/recover
+├ ƒ /api/v1/ext/runs/[runId]/stop
+├ ƒ /api/v1/ext/runs/cancel
+├ ƒ /api/v1/ext/runs/collect
+├ ƒ /api/v1/ext/runs/delegate
+├ ƒ /api/v1/ext/runs/message
+├ ƒ /api/v1/ext/runs/plan
+├ ƒ /api/v1/ext/runs/promote
+├ ƒ /api/v1/ext/runs/reopen
+├ ƒ /api/v1/ext/runs/rework
+├ ƒ /api/v1/ext/runs/sync
+├ ƒ /api/v1/ext/tasks/search
+├ ƒ /api/v1/ext/work
+├ ○ /apple-icon.png
+├ ƒ /change-password
+├ ƒ /dev/run-stream/[runId]
+├ ƒ /flows/[projectSlug]/[capId]
+├ ƒ /flows/new
+├ ○ /icon.svg
+├ ƒ /inbox
+├ ƒ /knowledge
+├ ƒ /knowledge/[recordId]
+├ ƒ /knowledge/[recordId]/correct
+├ ƒ /knowledge/proposals
+├ ƒ /knowledge/proposals/[proposalId]
+├ ƒ /knowledge/proposals/new
+├ ƒ /knowledge/witnesses/[witnessId]
+├ ƒ /login
+├ ƒ /mcps
+├ ƒ /observatory
+├ ƒ /projects
+├ ƒ /projects/[slug]
+├ ƒ /projects/[slug]/agents/[agentId]
+├ ƒ /projects/[slug]/evaluations
+├ ƒ /projects/[slug]/evaluations/[studyId]
+├ ƒ /projects/[slug]/experiments
+├ ƒ /projects/[slug]/experiments/[experimentId]
+├ ƒ /projects/[slug]/observatory
+├ ƒ /projects/[slug]/packages/[flowRefId]
+├ ƒ /projects/[slug]/tasks/[number]
+├ ƒ /projects/new
+├ ƒ /runs
+├ ƒ /runs/[runId]
+├ ƒ /scratch-runs/[runId]
+├ ƒ /scratch-runs/new
+├ ƒ /settings
+├ ƒ /settings/company-grants
+├ ƒ /settings/company-grants/new
+├ ƒ /settings/evaluations
+├ ƒ /studio
+├ ƒ /studio/edit/[id]/[[...path]]
+├ ƒ /studio/local
+├ ƒ /studio/packages
+├ ƒ /studio/packages/[ref]
+├ ƒ /studio/packages/[ref]/agents/[stem]
+├ ƒ /studio/packages/[ref]/flows/[flowId]
+├ ƒ /studio/packages/[ref]/skills/[...path]
+├ ƒ /studio/packages/[ref]/subagents/[stem]
+├ ƒ /studio/sources
+├ ƒ /sw.js
+└ ƒ /work
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

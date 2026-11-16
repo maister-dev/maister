@@ -1,10 +1,20 @@
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { createHash } from "node:crypto";
 
+import {
+  FLOW_NATIVE_CONTRACT_ENGINE_MIN,
+  flowNativeContractSchema,
+} from "./flow-native-contract";
+import { OPERATIONAL_EVIDENCE_FORM_SCHEMA } from "./operational-schema";
+
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
+import { semverGte } from "@/lib/flows/semver";
 import { readFormSchemaDocWithBytes } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { buildFlowExportContract } from "@/lib/run-results/contract";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 // ADR-165 (T4.1): ONE resolver for a flow's `result.export`, shared by the
 // canonical launcher (where it is DECISIVE — it writes `runs.result_contract`)
@@ -27,14 +37,23 @@ export type ExportRevisionRef = {
  * `result` is typed `unknown` on the way in regardless. Narrowing at the one
  * place that reads the key beats a cast at every call site.
  */
-export function declaredResultExport(
-  manifest: unknown,
-): { schema: string; from: string[]; required: boolean } | null {
+export function declaredResultExport(manifest: unknown): {
+  schema: string;
+  from: string[];
+  required: boolean;
+  nativeContract?: FlowNativeContract;
+} | null {
   const block = (manifest as { result?: unknown } | null)?.result;
   const declared =
     block && typeof block === "object"
       ? ((block as { export?: unknown }).export as
-          { schema?: unknown; from?: unknown; required?: unknown } | undefined)
+          | {
+              schema?: unknown;
+              from?: unknown;
+              required?: unknown;
+              native_contract?: unknown;
+            }
+          | undefined)
       : undefined;
 
   if (
@@ -45,8 +64,38 @@ export function declaredResultExport(
     return null;
   }
 
+  const native = flowNativeContractSchema
+    .optional()
+    .safeParse(declared.native_contract);
+
+  if (!native.success)
+    throw new MaisterError(
+      "CONFIG",
+      "Pinned result export selects an unsupported native contract",
+    );
+  if (native.data !== undefined) {
+    const minimum = FLOW_NATIVE_CONTRACT_ENGINE_MIN[native.data];
+    const engineMin = (manifest as { compat?: { engine_min?: unknown } }).compat
+      ?.engine_min;
+
+    if (typeof engineMin !== "string" || !semverGte(engineMin, minimum))
+      throw new MaisterError(
+        "CONFIG",
+        `Native result exports require compat.engine_min >= ${minimum}`,
+      );
+    if (
+      native.data === OPERATIONAL_EVIDENCE_CONTRACT &&
+      declared.required === false
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Operational evidence export must be required",
+      );
+  }
+
   return {
     schema: declared.schema,
+    ...(native.data === undefined ? {} : { nativeContract: native.data }),
     from: declared.from as string[],
     // The Zod default already fills this, but a manifest read straight from a
     // stored jsonb column bypasses the parse — default here too rather than
@@ -89,11 +138,21 @@ export async function resolveFlowExportContract(args: {
     );
   }
 
+  if (
+    declared.nativeContract === OPERATIONAL_EVIDENCE_CONTRACT &&
+    contentDigest(schema) !== contentDigest(OPERATIONAL_EVIDENCE_FORM_SCHEMA)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Operational evidence export must use the canonical result fields",
+    );
+
   return buildFlowExportContract({
     flowRefId: args.flowRefId,
     resolvedRevision: args.revision.resolvedRevision,
     flowRevisionId: args.revision.id,
     schemaPath: declared.schema,
+    nativeContract: declared.nativeContract,
     schema,
     sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
     required: declared.required,

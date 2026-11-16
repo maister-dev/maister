@@ -3,6 +3,8 @@ import { z } from "zod";
 import { delegationTargetSchema } from "./delegation-target";
 
 import { resultProfileNameSchema } from "@/lib/config.schema";
+import { assignmentWorkSelectorSchema } from "@/lib/specialist-assignments/work-types";
+import { postgresTextSchema } from "@/lib/text-schema";
 
 export const delegateBodySchema = z
   .object({
@@ -32,6 +34,13 @@ export const delegateBodySchema = z
     // — it is a body-controlled identifier, and the shape is what keeps it from
     // ever reading as a path.
     resultProfile: resultProfileNameSchema.optional(),
+    assignmentWork: z
+      .object({
+        selector: assignmentWorkSelectorSchema,
+        expectedOutcome: postgresTextSchema.min(1).max(4000),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine((b) => !b.persistent || b.addressableKey !== undefined, {

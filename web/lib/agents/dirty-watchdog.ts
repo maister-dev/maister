@@ -8,6 +8,7 @@ import pino from "pino";
 
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import { atomicWriteText } from "@/lib/atomic";
+import { claudeSettingsModel } from "@/lib/capabilities/agent-map";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
   PACKAGE_SKILLS_MANIFEST_RELATIVE,
@@ -59,16 +60,21 @@ const AGENT_MATERIALIZATION_INDEX_RELATIVE = `${AGENT_MATERIALIZATION_ROOT_RELAT
 // relations — the agent's sanctioned write channel) must never reach a
 // permission round-trip, which L1 would fail-closed deny on a headless
 // session.
-const READ_ONLY_SETTINGS = `${JSON.stringify(
-  {
-    permissions: {
-      allow: ["mcp__maister"],
-      deny: ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
+function agentReadOnlySettings(pinnedModel: string | undefined): string {
+  const model = claudeSettingsModel(pinnedModel);
+
+  return `${JSON.stringify(
+    {
+      permissions: {
+        allow: ["mcp__maister"],
+        deny: ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
+      },
+      ...(model ? { model, availableModels: [model] } : {}),
     },
-  },
-  null,
-  2,
-)}\n`;
+    null,
+    2,
+  )}\n`;
+}
 
 export function agentMaterializationManifest(cwd: string): string[] {
   return [
@@ -97,6 +103,7 @@ export async function materializeAgentReadOnlySettings(
   cwd: string,
   adapterId: string,
   runId: string,
+  pinnedModel?: string,
 ): Promise<{ materialized: boolean }> {
   const materializer = getAdapterSupportById(adapterId)?.readOnlyMaterializer;
 
@@ -185,7 +192,7 @@ export async function materializeAgentReadOnlySettings(
         await atomicWriteText(markerPath, agentL2SettingsMarker(runId));
       }
       if (!settingsExists) {
-        await atomicWriteText(settingsPath, READ_ONLY_SETTINGS);
+        await atomicWriteText(settingsPath, agentReadOnlySettings(pinnedModel));
       }
 
       return [settingsPath, markerPath];
@@ -427,10 +434,15 @@ export async function quarantineAgentInTx(args: {
   tx: Db;
   agentId: string;
   runId: string;
-  projectId: string;
+  projectId: string | null;
   taskId: string | null;
   reason: string;
 }): Promise<void> {
+  if (args.taskId && args.projectId === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Task quarantine requires its project owner",
+    );
   await args.tx
     .update(agents)
     .set({
@@ -440,7 +452,7 @@ export async function quarantineAgentInTx(args: {
     })
     .where(eq(agents.id, args.agentId));
 
-  if (args.taskId) {
+  if (args.taskId && args.projectId !== null) {
     await addTaskComment(
       {
         taskId: args.taskId,

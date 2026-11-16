@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
@@ -100,9 +101,9 @@ export async function GET(
   const { runId, hitlRequestId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
-    const db = getDb() as unknown as { select: any };
+    const db = getDb();
     const { run, hitl } = await loadRunAndHitl(db, runId, hitlRequestId);
 
     if (!run || !hitl || hitl.runId !== runId) {
@@ -112,6 +113,11 @@ export async function GET(
     // ADR-078: chat transcripts are HITL content — member+ (answerHitl), the
     // same bar as POST; a viewer's panel degrades to its empty initial state.
     await requireProjectAction(run.projectId, "answerHitl");
+    await assertRunKnowledgeDisclosure(
+      db,
+      { kind: "user", userId: user.id },
+      runId,
+    );
 
     const activeSession = await loadActiveRunSession(db, runId);
     const availability = gateChatAvailability({
@@ -122,6 +128,13 @@ export async function GET(
       acpSessionId: activeSession?.acpSessionId ?? null,
     });
     const messages = await listGateChatMessages({ runId, hitlRequestId });
+
+    await requireProjectAction(run.projectId, "answerHitl");
+    await assertRunKnowledgeDisclosure(
+      db,
+      { kind: "user", userId: user.id },
+      runId,
+    );
 
     return NextResponse.json({
       runId,
@@ -146,7 +159,7 @@ export async function POST(
   try {
     const user = await requireActiveSession();
 
-    const db = getDb() as unknown as { select: any };
+    const db = getDb();
     const { run, hitl } = await loadRunAndHitl(db, runId, hitlRequestId);
 
     if (!run || !hitl || hitl.runId !== runId) {
@@ -154,6 +167,11 @@ export async function POST(
     }
 
     await requireProjectAction(run.projectId, "answerHitl");
+    await assertRunKnowledgeDisclosure(
+      db,
+      { kind: "user", userId: user.id },
+      runId,
+    );
 
     const parsed = bodySchema.safeParse(await req.json().catch(() => null));
 
@@ -171,6 +189,13 @@ export async function POST(
       actorUserId: user.id,
       actorLabel: user.name ?? user.email ?? "user",
     });
+
+    await requireProjectAction(run.projectId, "answerHitl");
+    await assertRunKnowledgeDisclosure(
+      db,
+      { kind: "user", userId: user.id },
+      runId,
+    );
 
     return NextResponse.json({
       runId,

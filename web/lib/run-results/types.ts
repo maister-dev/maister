@@ -1,6 +1,9 @@
+import type { FindingsContract } from "./findings-contract";
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
+import type { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 
 // ADR-165 Appendix A — the normative shapes of the public result plane. This
 // module is TYPES ONLY and imports nothing that touches a database, a launcher
@@ -24,7 +27,8 @@ export type RunResultInvalidReason =
   | "depth_limit"
   | "key_limit"
   | "array_limit"
-  | "schema_mismatch";
+  | "schema_mismatch"
+  | "reference_invalid";
 
 /** One entry of the engine artifact manifest captured AT PUBLISH (audit). */
 export type RunResultArtifactRef = {
@@ -42,6 +46,7 @@ export type RunResultArtifactRef = {
 export type RunResultContract =
   | {
       kind: "flow_export";
+      nativeContract?: FlowNativeContract;
       schemaRef: string;
       schemaVersion: number;
       sha256: string;
@@ -52,6 +57,7 @@ export type RunResultContract =
     }
   | {
       kind: "agent_profile";
+      nativeContract?: FindingsContract;
       profileName: string;
       schemaRef: string;
       schemaVersion: number;
@@ -62,29 +68,40 @@ export type RunResultContract =
       schema: FormSchema;
       sourceFlowRevisionId: string;
     }
+  | OperationalRunResultContract;
+
+type OperationalRunResultContract = {
+  kind: "agent_operational";
+  sha256: string;
+  required: true;
+  schema: FormSchema;
+  definition: ParsedAgentDefinition;
+  provenance: {
+    packageName: string;
+    packageInstallId: string;
+    versionLabel: string;
+    resolvedRevision: string;
+    definitionSha256: string;
+    installedPath: string;
+    sourcePath: string;
+    manifest: PackageInstallManifest | null;
+    execTrust: "trusted";
+  };
+  promptAppendix: string;
+} & (
   | {
-      kind: "agent_operational";
       contractName: "operational_v1";
       schemaRef: `maister:operational_v1@${string}`;
       schemaVersion: 1;
       semanticVersion: 1;
-      sha256: string;
-      required: true;
-      schema: FormSchema;
-      definition: ParsedAgentDefinition;
-      provenance: {
-        packageName: string;
-        packageInstallId: string;
-        versionLabel: string;
-        resolvedRevision: string;
-        definitionSha256: string;
-        installedPath: string;
-        sourcePath: string;
-        manifest: PackageInstallManifest | null;
-        execTrust: "trusted";
-      };
-      promptAppendix: string;
-    };
+    }
+  | {
+      contractName: typeof OPERATIONAL_EVIDENCE_CONTRACT;
+      schemaRef: `maister:${typeof OPERATIONAL_EVIDENCE_CONTRACT}@${string}`;
+      schemaVersion: 2;
+      semanticVersion: 2;
+    }
+);
 
 /** The EFFECTIVE budget, in the casing both consumers read. */
 export type DelegationBudget = {
@@ -145,6 +162,7 @@ export type ResultProfileMap = Record<
   string,
   {
     schemaPath: string;
+    nativeContract?: FindingsContract;
     schemaStem: string;
     schemaVersion: number;
     sha256: string;

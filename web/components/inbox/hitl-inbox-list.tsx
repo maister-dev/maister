@@ -61,11 +61,13 @@ export async function HitlInboxList({
   const byId = new Map<string, (typeof groups)[number]>();
 
   for (const item of items) {
-    let group = byId.get(item.projectId);
+    const id = item.projectId ?? `company:${item.companyId}`;
+    const name = item.projectId === null ? t("company") : item.projectName;
+    let group = byId.get(id);
 
     if (!group) {
-      group = { id: item.projectId, name: item.projectName, items: [] };
-      byId.set(item.projectId, group);
+      group = { id, name, items: [] };
+      byId.set(id, group);
       groups.push(group);
     }
 

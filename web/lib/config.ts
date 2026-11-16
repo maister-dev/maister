@@ -1,3 +1,4 @@
+import type { FlowNativeContract } from "@/lib/run-results/flow-native-contract";
 import "server-only";
 
 import { createHash } from "node:crypto";
@@ -24,6 +25,8 @@ import {
   type NodeMcpsConfig,
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
+import { FLOW_NATIVE_CONTRACT_ENGINE_MIN } from "@/lib/run-results/flow-native-contract";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { parseGraphOnlyFlowManifest } from "@/lib/flows/manifest-parser";
 import {
   collectContentArtifactIds,
@@ -1101,7 +1104,12 @@ function normalizeSchemaRef(ref: string): string {
 
 // ADR-165: the flow-level public-result export block, or null. Flow-level like
 // `reentry`, so it reads the manifest rather than the node list.
-type ResultExportDecl = { schema: string; from: string[]; required: boolean };
+type ResultExportDecl = {
+  schema: string;
+  from: string[];
+  required: boolean;
+  native_contract?: FlowNativeContract;
+};
 
 function resultExportOf(manifest: FlowYamlV1): ResultExportDecl | null {
   const declared = (manifest as { result?: { export?: ResultExportDecl } })
@@ -1425,6 +1433,24 @@ export function validateGraphManifest(
   const resultExport = resultExportOf(manifest);
 
   if (resultExport) {
+    const minimum =
+      resultExport.native_contract === undefined
+        ? undefined
+        : FLOW_NATIVE_CONTRACT_ENGINE_MIN[resultExport.native_contract];
+
+    if (minimum !== undefined && !semverGte(engineMin, minimum))
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} declares ${resultExport.native_contract} but engine_min "${engineMin}" < ${minimum} — bump compat.engine_min to ${minimum}`,
+      );
+    if (
+      resultExport.native_contract === OPERATIONAL_EVIDENCE_CONTRACT &&
+      !resultExport.required
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "Operational evidence export must be required",
+      );
     const ok = semverGte(engineMin, RAH_ENGINE_MIN);
 
     log.debug(

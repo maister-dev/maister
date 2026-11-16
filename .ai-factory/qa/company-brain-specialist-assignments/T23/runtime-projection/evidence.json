@@ -1,0 +1,117 @@
+{
+  "task": "T23",
+  "date": "2026-11-07",
+  "slice": "Authorized new-prompt working context projection and native proposal owner access",
+  "baseCommit": "886935437f0f729b643a15e0e46eb6eee3f9ae94",
+  "status": "Context foundation qualified; T23 complete; CBA-04 cooperation acceptance remains T27/T28",
+  "red": [
+    {
+      "case": "Authorized company context absent from actual retained prompt",
+      "log": "cb-context-projection-red3.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Unavailable private source allowed actual execution to finish instead of refusing before ACP",
+      "log": "cb-context-projection-red3.log.gz",
+      "exitCode": 1
+    },
+    {
+      "case": "Working proposal draft accepted an inaccessible target owner",
+      "log": "cb-context-proposal-owner-red.log.gz",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "focusedContextIntegration": {
+      "tests": 11,
+      "files": 2,
+      "exitCode": 0
+    },
+    "owningIntegration": {
+      "tests": 205,
+      "files": 9,
+      "durationSeconds": 70.64,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 27.12,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual company standalone prompt carries exact versioned working context",
+    "Role without reviewed context-read limit receives no additional context bytes",
+    "Unavailable source refuses before ACP create/prompt",
+    "Actual project standalone and current Flow-node prompts preserve exact context DTO",
+    "Projection commits inherited source disclosure before returning prompt text",
+    "Retained owner reattachment keeps original immutable prompt assembly",
+    "Working add proposals require current target owner read access and retain source dependence without Brain publication",
+    "Existing context CAS, token, source, migration, company/project intake and trigger regressions pass"
+  ],
+  "corrections": [
+    "Initial shared role-limit change conflicted with an older event-source negative case; dedicated projection roles preserve that contract",
+    "Scheduler fixture now asserts its actual started result object",
+    "Flow prompt assertion now executes after its variables and real coordinator outcome exist",
+    "SqlTransaction execute result is validated rather than given an unsupported generic argument"
+  ],
+  "limitations": [
+    "Child context sharing and exact collected/sourceFinding/accepted-work references remain explicitly refused until real T27/T28 records",
+    "Business ownership fencing remains T29; no historical epoch is fabricated",
+    "Controlled ACP execution does not qualify the actual stand specialist package or connector",
+    "No complete Phase 5/full-global integration or new production-build claim",
+    "No new migration, execution ledger, scheduler, remote push, deployment or external stand mutation"
+  ],
+  "logs": [
+    "cb-context-projection-red.log.gz",
+    "cb-context-projection-red2.log.gz",
+    "cb-context-projection-red3.log.gz",
+    "cb-context-proposal-owner-red.log.gz",
+    "cb-context-projection-green.log.gz",
+    "cb-context-projection-types.log.gz",
+    "cb-context-projection-types2.log.gz",
+    "cb-context-projection-integration.log.gz",
+    "cb-context-projection-integration-final.log.gz",
+    "cb-context-projection-unit.log.gz",
+    "cb-context-projection-types-final.log.gz",
+    "cb-context-projection-lint-final.log.gz",
+    "cb-context-projection-contracts.log.gz",
+    "cb-context-projection-docs.log.gz",
+    "cb-context-projection-public.log.gz",
+    "cb-context-projection-public-links.log.gz"
+  ],
+  "sourceSha256": {
+    "docs/system-analytics/company-brain-specialists-traceability.md": "bd7a63842009c7469c956cabededb32296b2145a2a4e919b2d6a73bd4f2d5db4",
+    "docs/system-analytics/specialist-assignments.md": "8eae22eaaca5d34e3b3deaa9f1d1854f27622da14776890eebc0bd9e954a5060",
+    "site-docs/guides/company-specialist-webhooks.md": "2d7caf9745d77b0364fed7b47fae37c561fe38b36d50c02b9344bb651a4d62d0",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "96ade12ac4b67d268b879d5b9feff7f2218dc08fed33b408215d3785a8ba1547",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "d7e291f09a611575ccba4aecf0660caf6198045ad5bce2f8cabf5d0063412b3d",
+    "web/lib/agents/launch.ts": "995fc9a239eb19e8527663a806b41f8a67f0813a985a01b81eb41664471524d6",
+    "web/lib/flows/runner-agent.ts": "0d5f871dfabfe938d9a83a22a193087729de9d108f43a381457173ec3d196ebe",
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": "c6bfeeb9a99c0a0c2659210982cfb39e4eda4b3a76702e601fcaefb0527a699f",
+    "web/lib/specialist-assignments/context.ts": "cc6f0a094232104ce4d743fb68af78dd185199e5a24048c82700df9118c41ad6",
+    "web/lib/specialist-assignments/projection.ts": "a8859fd8acbf7cad9930acb1b5b5c10431fd6f63b1b1606de3208585cc25ccf5"
+  }
+}

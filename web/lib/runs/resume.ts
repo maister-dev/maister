@@ -13,6 +13,8 @@ import { continueResumeSessionCreate } from "./resume-session-create";
 import { getDb } from "@/lib/db/client";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
+import { loadCompanyFlowSessionContext } from "@/lib/agents/company-flow-session-context";
 import {
   hasFlowPermissionResume,
   prepareFlowPermissionResult,
@@ -112,6 +114,11 @@ export async function resumeRun(
       projectId: runs.projectId,
       status: runs.status,
       currentStepId: runs.currentStepId,
+      runKind: runs.runKind,
+      companyId: runs.companyId,
+      agentWorkspace: runs.agentWorkspace,
+      resultContract: runs.resultContract,
+      companyExecutionSnapshot: runs.companyExecutionSnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -179,41 +186,45 @@ export async function resumeRun(
     };
   }
 
-  const wsRows = await db
-    .select({ id: workspaces.id })
-    .from(workspaces)
-    .where(eq(workspaces.runId, runId));
+  if (isCompanyFlowResource(baseRow)) {
+    await db.transaction((tx: Db) => loadCompanyFlowSessionContext(tx, runId));
+  } else {
+    const wsRows = await db
+      .select({ id: workspaces.id })
+      .from(workspaces)
+      .where(eq(workspaces.runId, runId));
 
-  if (!wsRows[0]) {
-    log.error({ runId }, "resumeRun: workspace row missing");
-    await failResumedRun(runId, "workspace-missing", { db });
+    if (!wsRows[0]) {
+      log.error({ runId }, "resumeRun: workspace row missing");
+      await failResumedRun(runId, "workspace-missing", { db });
 
-    return {
-      ok: false,
-      code: "CHECKPOINT",
-      retryable: false,
-      message: "workspace row missing",
-    };
-  }
+      return {
+        ok: false,
+        code: "CHECKPOINT",
+        retryable: false,
+        message: "workspace row missing",
+      };
+    }
 
-  const projRows = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, baseRow.projectId));
+    const projRows = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, baseRow.projectId));
 
-  if (!projRows[0]) {
-    log.error(
-      { runId, projectId: baseRow.projectId },
-      "resumeRun: project row missing",
-    );
-    await failResumedRun(runId, "project-missing", { db });
+    if (!projRows[0]) {
+      log.error(
+        { runId, projectId: baseRow.projectId },
+        "resumeRun: project row missing",
+      );
+      await failResumedRun(runId, "project-missing", { db });
 
-    return {
-      ok: false,
-      code: "CHECKPOINT",
-      retryable: false,
-      message: "project row missing",
-    };
+      return {
+        ok: false,
+        code: "CHECKPOINT",
+        retryable: false,
+        message: "project row missing",
+      };
+    }
   }
 
   // ADR-166: the resume is a new driver generation on the local host — resolve

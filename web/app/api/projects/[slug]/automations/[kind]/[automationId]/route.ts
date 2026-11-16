@@ -39,7 +39,7 @@ export async function GET(
   const { slug, kind, automationId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
     const project = await resolveProject(slug);
 
     await requireProjectAction(project.id, "readBoard");
@@ -49,6 +49,7 @@ export async function GET(
       throw new MaisterError("CONFIG", "automation kind is invalid");
     }
     const automation = await getProjectAutomationDetail({
+      recipient: { kind: "user", userId: user.id },
       projectId: project.id,
       projectSlug: slug,
       kind: parsedKind.data as AutomationKind,

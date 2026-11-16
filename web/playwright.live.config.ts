@@ -8,7 +8,7 @@ import { resolvePostgresDbUrl } from "./lib/db/postgres-url";
 import { resolveTestWorktreesRoot } from "./test-support/worktree-test-root";
 
 // The opt-in LIVE lane (ADR-166 T6.2): a REAL supervisor with the operator's
-// configured adapter behind a dev web server. Specs gate themselves on
+// configured adapter behind a production Web build. Specs gate themselves on
 // E2E_LIVE_SUPERVISOR=1; nothing here is stubbed.
 const WEB_PORT = Number(process.env.E2E_LIVE_WEB_PORT ?? 3101);
 const SUPERVISOR_PORT = Number(process.env.MAISTER_SUPERVISOR_PORT ?? 7777);
@@ -19,6 +19,7 @@ const AUTH_SECRET =
   process.env.AUTH_SECRET ?? "e2e-insecure-test-secret-change-me";
 const databaseUrl = resolvePostgresDbUrl();
 const worktreesRoot = resolveTestWorktreesRoot("e2e-live", process.env);
+const webRuntimeRoot = path.join(worktreesRoot, "runtime", "web");
 
 process.env.MAISTER_WORKTREES_ROOT = worktreesRoot;
 
@@ -30,7 +31,7 @@ export default defineConfig({
   retries: 0,
   workers: testMaxWorkers(process.env),
   reporter: "list",
-  globalSetup: "./e2e/global-setup.ts",
+  globalSetup: "./e2e/live-global-setup.ts",
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",
@@ -49,38 +50,53 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `pnpm --dir .. --filter @maister/supervisor dev`,
+      command:
+        "exec node --import tsx --env-file-if-exists=../supervisor/.env ../supervisor/src/main.ts",
       url: `${SUPERVISOR_URL}/health`,
       timeout: 180_000,
       reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
       env: {
         MAISTER_SUPERVISOR_PORT: String(SUPERVISOR_PORT),
-        MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-supervisor"),
+        NODE_ENV: "production",
+        MAISTER_RUNTIME_ROOT: path.join(worktreesRoot, "runtime", "supervisor"),
         // ADR-166: the lane owns its execution-host state dir and pins the
         // host identity (never a developer's supervisor state), and its
         // adoption roots mirror the lane's worktrees root — a scratch launch
         // adopts the worktree it just created.
-        MAISTER_EXECUTION_HOST_STATE_DIR: path.resolve(
-          "e2e/.runtime-live-supervisor/.maister/execution-host",
+        MAISTER_EXECUTION_HOST_STATE_DIR: path.join(
+          worktreesRoot,
+          "runtime",
+          "supervisor",
+          ".maister",
+          "execution-host",
         ),
         MAISTER_EXECUTION_HOST_KEY: "eh_e2e_live_supervisor",
-        MAISTER_WORKSPACE_ROOTS: worktreesRoot,
+        MAISTER_WORKSPACE_ROOTS: [worktreesRoot, webRuntimeRoot].join(
+          path.delimiter,
+        ),
       },
     },
     {
-      command: `pnpm exec next dev -p ${WEB_PORT}`,
+      command: "exec node --import tsx e2e/web-server.ts",
       url: BASE_URL,
       timeout: 180_000,
       reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 35_000 },
       env: {
+        PORT: String(WEB_PORT),
         DB_URL: databaseUrl,
         AUTH_SECRET,
-        MAISTER_RUNTIME_ROOT: path.resolve("e2e/.runtime-live-web"),
+        MAISTER_RUNTIME_ROOT: webRuntimeRoot,
         MAISTER_WORKTREES_ROOT: worktreesRoot,
         MAISTER_SUPERVISOR_URL: SUPERVISOR_URL,
+        MAISTER_API_BASE_URL: BASE_URL,
+        MAISTER_SCHEDULER_TIMER_ENABLED: "true",
+        MAISTER_SCHEDULER_TICK_INTERVAL_SECONDS: "5",
         // The seeded e2e fixtures hold more than the default cap of live runs;
         // the live scratch launch must be admitted.
-        MAISTER_MAX_CONCURRENT_RUNS: "64",
+        MAISTER_MAX_CONCURRENT_RUNS:
+          process.env.E2E_LIVE_MAX_CONCURRENT_RUNS ?? "64",
       },
     },
   ],

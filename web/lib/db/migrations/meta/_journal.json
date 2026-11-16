@@ -1583,6 +1583,776 @@
       "when": 1794606477932,
       "tag": "0229_librarian_history",
       "breakpoints": true
+    },
+    {
+      "idx": 230,
+      "version": "7",
+      "when": 1794606477933,
+      "tag": "0230_company_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 231,
+      "version": "7",
+      "when": 1794606477934,
+      "tag": "0231_company_knowledge_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 232,
+      "version": "7",
+      "when": 1794606477935,
+      "tag": "0232_company_grant_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 233,
+      "version": "7",
+      "when": 1794606477936,
+      "tag": "0233_native_knowledge_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 234,
+      "version": "7",
+      "when": 1794606477937,
+      "tag": "0234_specialist_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 235,
+      "version": "7",
+      "when": 1794606477938,
+      "tag": "0235_specialist_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 236,
+      "version": "7",
+      "when": 1794606477939,
+      "tag": "0236_company_specialist_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 237,
+      "version": "7",
+      "when": 1794606477940,
+      "tag": "0237_company_flow_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "7",
+      "when": 1794606477941,
+      "tag": "0238_company_trigger_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 239,
+      "version": "7",
+      "when": 1794606477942,
+      "tag": "0239_company_retry_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 240,
+      "version": "7",
+      "when": 1794606477943,
+      "tag": "0240_company_agent_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "7",
+      "when": 1794606477944,
+      "tag": "0241_company_agent_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 242,
+      "version": "7",
+      "when": 1794606477945,
+      "tag": "0242_company_run_terminal_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 243,
+      "version": "7",
+      "when": 1794606477946,
+      "tag": "0243_native_source_array_planning",
+      "breakpoints": true
+    },
+    {
+      "idx": 244,
+      "version": "7",
+      "when": 1794606477947,
+      "tag": "0244_company_human_work_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 245,
+      "version": "7",
+      "when": 1794606477948,
+      "tag": "0245_human_work_owner_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 246,
+      "version": "7",
+      "when": 1794606477949,
+      "tag": "0246_company_hitl_wait_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 247,
+      "version": "7",
+      "when": 1794606477950,
+      "tag": "0247_company_operational_attention",
+      "breakpoints": true
+    },
+    {
+      "idx": 248,
+      "version": "7",
+      "when": 1794606477951,
+      "tag": "0248_company_flow_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 249,
+      "version": "7",
+      "when": 1794606477952,
+      "tag": "0249_company_flow_node_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "7",
+      "when": 1794606477953,
+      "tag": "0250_company_flow_workspace_witness",
+      "breakpoints": true
+    },
+    {
+      "idx": 251,
+      "version": "7",
+      "when": 1794606477954,
+      "tag": "0251_company_flow_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 252,
+      "version": "7",
+      "when": 1794606477955,
+      "tag": "0252_company_run_cancellation",
+      "breakpoints": true
+    },
+    {
+      "idx": 253,
+      "version": "7",
+      "when": 1794606477956,
+      "tag": "0253_specialist_intake_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 254,
+      "version": "7",
+      "when": 1794606477957,
+      "tag": "0254_specialist_project_flow_input",
+      "breakpoints": true
+    },
+    {
+      "idx": 255,
+      "version": "7",
+      "when": 1794606477958,
+      "tag": "0255_company_event_admission",
+      "breakpoints": true
+    },
+    {
+      "idx": 256,
+      "version": "7",
+      "when": 1794606477959,
+      "tag": "0256_project_source_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 257,
+      "version": "7",
+      "when": 1794606477960,
+      "tag": "0257_project_trigger_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 258,
+      "version": "7",
+      "when": 1794606477961,
+      "tag": "0258_project_event_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 259,
+      "version": "7",
+      "when": 1794606477962,
+      "tag": "0259_specialist_context_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 260,
+      "version": "7",
+      "when": 1794606477963,
+      "tag": "0260_specialist_context_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 261,
+      "version": "7",
+      "when": 1794606477964,
+      "tag": "0261_specialist_context_mutation_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 262,
+      "version": "7",
+      "when": 1794606477965,
+      "tag": "0262_specialist_question_subject",
+      "breakpoints": true
+    },
+    {
+      "idx": 263,
+      "version": "7",
+      "when": 1794606477966,
+      "tag": "0263_specialist_question_answer",
+      "breakpoints": true
+    },
+    {
+      "idx": 264,
+      "version": "7",
+      "when": 1794606477967,
+      "tag": "0264_specialist_flow_question",
+      "breakpoints": true
+    },
+    {
+      "idx": 265,
+      "version": "7",
+      "when": 1794606477968,
+      "tag": "0265_specialist_result_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 266,
+      "version": "7",
+      "when": 1794606477969,
+      "tag": "0266_specialist_delivery_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 267,
+      "version": "7",
+      "when": 1794606477970,
+      "tag": "0267_specialist_source_handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 268,
+      "version": "7",
+      "when": 1794606477971,
+      "tag": "0268_project_source_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 269,
+      "version": "7",
+      "when": 1794606477972,
+      "tag": "0269_specialist_logical_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 270,
+      "version": "7",
+      "when": 1794606477973,
+      "tag": "0270_specialist_work_witness_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 271,
+      "version": "7",
+      "when": 1794606477974,
+      "tag": "0271_specialist_company_child_reservation",
+      "breakpoints": true
+    },
+    {
+      "idx": 272,
+      "version": "7",
+      "when": 1794606477975,
+      "tag": "0272_specialist_company_child_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 273,
+      "version": "7",
+      "when": 1794606477976,
+      "tag": "0273_specialist_company_flow_children",
+      "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1794606477977,
+      "tag": "0274_specialist_work_rework",
+      "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1794606477978,
+      "tag": "0275_specialist_work_acceptance",
+      "breakpoints": true
+    },
+    {
+      "idx": 276,
+      "version": "7",
+      "when": 1794606477979,
+      "tag": "0276_specialist_execution_work_acceptance",
+      "breakpoints": true
+    },
+    {
+      "idx": 277,
+      "version": "7",
+      "when": 1794606477980,
+      "tag": "0277_specialist_assignment_acceptance",
+      "breakpoints": true
+    },
+    {
+      "idx": 278,
+      "version": "7",
+      "when": 1794606477981,
+      "tag": "0278_specialist_work_rejection",
+      "breakpoints": true
+    },
+    {
+      "idx": 279,
+      "version": "7",
+      "when": 1794606477982,
+      "tag": "0279_operational_evidence_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 280,
+      "version": "7",
+      "when": 1794606477983,
+      "tag": "0280_specialist_context_owner_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 281,
+      "version": "7",
+      "when": 1794606477984,
+      "tag": "0281_specialist_root_admission_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 282,
+      "version": "7",
+      "when": 1794606477985,
+      "tag": "0282_specialist_root_recovery_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 283,
+      "version": "7",
+      "when": 1794606477986,
+      "tag": "0283_specialist_root_appointment_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 284,
+      "version": "7",
+      "when": 1794606477987,
+      "tag": "0284_specialist_root_branch_settlement",
+      "breakpoints": true
+    },
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1794606477988,
+      "tag": "0285_specialist_executor_lease",
+      "breakpoints": true
+    },
+    {
+      "idx": 286,
+      "version": "7",
+      "when": 1794606477989,
+      "tag": "0286_company_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1794606477990,
+      "tag": "0287_specialist_credential_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 288,
+      "version": "7",
+      "when": 1794606477991,
+      "tag": "0288_project_specialist_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 289,
+      "version": "7",
+      "when": 1794606477992,
+      "tag": "0289_company_flow_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 290,
+      "version": "7",
+      "when": 1794606477993,
+      "tag": "0290_company_cron_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 291,
+      "version": "7",
+      "when": 1794606477994,
+      "tag": "0291_company_event_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 292,
+      "version": "7",
+      "when": 1794606477995,
+      "tag": "0292_company_webhook_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 293,
+      "version": "7",
+      "when": 1794606477996,
+      "tag": "0293_project_cron_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 294,
+      "version": "7",
+      "when": 1794606477997,
+      "tag": "0294_project_event_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 295,
+      "version": "7",
+      "when": 1794606477998,
+      "tag": "0295_project_comment_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 296,
+      "version": "7",
+      "when": 1794606477999,
+      "tag": "0296_project_worktree_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 297,
+      "version": "7",
+      "when": 1794606478000,
+      "tag": "0297_project_webhook_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 298,
+      "version": "7",
+      "when": 1794606478001,
+      "tag": "0298_project_readonly_replacement_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 299,
+      "version": "7",
+      "when": 1794606478002,
+      "tag": "0299_stand_target_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 300,
+      "version": "7",
+      "when": 1794606478003,
+      "tag": "0300_stand_target_registry_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 301,
+      "version": "7",
+      "when": 1794606478004,
+      "tag": "0301_stand_operation_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 302,
+      "version": "7",
+      "when": 1794606478005,
+      "tag": "0302_stand_operation_intent_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 303,
+      "version": "7",
+      "when": 1794606478006,
+      "tag": "0303_stand_restart_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 304,
+      "version": "7",
+      "when": 1794606478007,
+      "tag": "0304_stand_restart_approval_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 305,
+      "version": "7",
+      "when": 1794606478008,
+      "tag": "0305_stand_effect_transition_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 306,
+      "version": "7",
+      "when": 1794606478009,
+      "tag": "0306_stand_authorization_permits",
+      "breakpoints": true
+    },
+    {
+      "idx": 307,
+      "version": "7",
+      "when": 1794606478010,
+      "tag": "0307_stand_authorization_permit_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 308,
+      "version": "7",
+      "when": 1794606478011,
+      "tag": "0308_stand_dispatch_command",
+      "breakpoints": true
+    },
+    {
+      "idx": 309,
+      "version": "7",
+      "when": 1794606478012,
+      "tag": "0309_stand_dispatch_permit_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 310,
+      "version": "7",
+      "when": 1794606478013,
+      "tag": "0310_stand_before_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 311,
+      "version": "7",
+      "when": 1794606478014,
+      "tag": "0311_stand_before_observation_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 312,
+      "version": "7",
+      "when": 1794606478015,
+      "tag": "0312_stand_recovery_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 313,
+      "version": "7",
+      "when": 1794606478016,
+      "tag": "0313_stand_recovery_decision_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 314,
+      "version": "7",
+      "when": 1794606478017,
+      "tag": "0314_stand_read_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 315,
+      "version": "7",
+      "when": 1794606478018,
+      "tag": "0315_stand_read_permit_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 316,
+      "version": "7",
+      "when": 1794606478019,
+      "tag": "0316_stand_operation_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 317,
+      "version": "7",
+      "when": 1794606478020,
+      "tag": "0317_stand_receipt_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 318,
+      "version": "7",
+      "when": 1794606478021,
+      "tag": "0318_stand_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 319,
+      "version": "7",
+      "when": 1794606478022,
+      "tag": "0319_stand_verification_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 320,
+      "version": "7",
+      "when": 1794606478023,
+      "tag": "0320_specialist_acceptance_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 321,
+      "version": "7",
+      "when": 1794606478024,
+      "tag": "0321_specialist_acceptance_stand_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 322,
+      "version": "7",
+      "when": 1794606478025,
+      "tag": "0322_stand_operation_initiating_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 323,
+      "version": "7",
+      "when": 1794606478026,
+      "tag": "0323_stand_execution_token_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 324,
+      "version": "7",
+      "when": 1794606478027,
+      "tag": "0324_stand_operation_attribution_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 325,
+      "version": "7",
+      "when": 1794606478028,
+      "tag": "0325_stand_read_execution_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 326,
+      "version": "7",
+      "when": 1794606478029,
+      "tag": "0326_stand_recovery_inspections",
+      "breakpoints": true
+    },
+    {
+      "idx": 327,
+      "version": "7",
+      "when": 1794606478030,
+      "tag": "0327_stand_recovery_inspection_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 328,
+      "version": "7",
+      "when": 1794606478031,
+      "tag": "0328_stand_successor_recovery_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 329,
+      "version": "7",
+      "when": 1794606478032,
+      "tag": "0329_stand_incident_episodes",
+      "breakpoints": true
+    },
+    {
+      "idx": 330,
+      "version": "7",
+      "when": 1794616905616,
+      "tag": "0330_stand_project_execution_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 331,
+      "version": "7",
+      "when": 1794617685759,
+      "tag": "0331_stand_incident_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 332,
+      "version": "7",
+      "when": 1794620026866,
+      "tag": "0332_company_cancellation_command_lock",
+      "breakpoints": true
+    },
+    {
+      "idx": 333,
+      "version": "7",
+      "when": 1794620294726,
+      "tag": "0333_scheduled_stand_inspection",
+      "breakpoints": true
+    },
+    {
+      "idx": 334,
+      "version": "7",
+      "when": 1794620502290,
+      "tag": "0334_stand_inspection_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 335,
+      "version": "7",
+      "when": 1794623208080,
+      "tag": "0335_company_pending_pool_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 336,
+      "version": "7",
+      "when": 1794667910922,
+      "tag": "0336_specialist_interrupted_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 337,
+      "version": "7",
+      "when": 1794685260711,
+      "tag": "0337_stand_recovery_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 338,
+      "version": "7",
+      "when": 1794693731614,
+      "tag": "0338_specialist_assignment_control_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 339,
+      "version": "7",
+      "when": 1794776732397,
+      "tag": "0339_specialist_assignment_cancellation_intent",
+      "breakpoints": true
     }
   ]
 }

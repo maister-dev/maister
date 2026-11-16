@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T18:50:40.880953+00:00",
+  "baseline": "d522c2e6f",
+  "status": "qualified-local-checkpoint-T22-remains-open",
+  "red": "The same assignment/input survived both real transaction failures; the existing job left its unused unknown source unbound.",
+  "gates": {
+    "composite": {
+      "passed": 1,
+      "skipped": 48,
+      "seconds": 45.33
+    },
+    "migrations": {
+      "passed": 7,
+      "files": 2,
+      "seconds": 32.24
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables",
+    "schemaDrift": "none"
+  },
+  "verified": [
+    "same original input/receipt through both transaction faults",
+    "actual existing job creates the missing carrier under a second injected fault",
+    "unknown source recovery requires no Run/Run receipt/intent/assignment Run link",
+    "exact original source and current requester/review authority",
+    "post-commit exact admission incident closure",
+    "real qualification and original reserved Run create/prompt once",
+    "populated unknown history unchanged",
+    "forged assignment and used reservation refuse",
+    "master writer-v3 guard remains enforced"
+  ],
+  "remaining": [
+    "actionable qualification inspection",
+    "exhaustive qualification/replay order and cancellation tests",
+    "T25 origin delivery inspection and Inbox qualification",
+    "T26-T43 work and actual stand-pilot qualification"
+  ],
+  "effects": "Owned local database, supervisor and fixture peers only; no push or production effects.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "b475f7b15dbd433a455f84134a28e01317233864ebe3caf4e5f68ff8b8a8ddd3"
+    },
+    {
+      "path": "docs/db/erd.dbml",
+      "sha256": "10dd0f8850efc6cbd3d74cf65e96ca9e8c900f5024bdb5e42656d81aa1fbe261"
+    },
+    {
+      "path": "docs/db/specialist-assignments-domain.md",
+      "sha256": "40f0d21a92cb7895331d7b0c867c4409946282fa5d0f0e7d074624d3ba62c248"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "c789d1acec895fd4dc402c4aa9d56e294e39baef02d3f0d27280e2c4acac6257"
+    },
+    {
+      "path": "site-docs/guides/company-specialist-webhooks.md",
+      "sha256": "4abc2f03fecd84ed778b342f876810ae044f203b67bae36bf43735a4467e609c"
+    },
+    {
+      "path": "site-docs/ru/guides/company-specialist-webhooks.md",
+      "sha256": "b09214b6bea1b895eb201107e0803b428e735d0760820f067cc90dad2d72b6d7"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "98bfd349a04b18c7d931142a878459e803183176ffee9bbc6cf3b94b191aad28"
+    },
+    {
+      "path": "web/lib/db/__tests__/migration-specialist-source-handoff.integration.test.ts",
+      "sha256": "cab92b711ed53483755580e7883bf8d00caccaac278363e33265548cba9fb8e7"
+    },
+    {
+      "path": "web/lib/db/migrations/0266_project_source_recovery.sql",
+      "sha256": "ea7f071952a024987cc0d438b4559e4e193c95a5a42d21c5e81e9cd312790768"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/0266_snapshot.json",
+      "sha256": "91e2ae052ce0050406b0eeaef9f59846a4471e1fc65d0aca0adde06776ba4fee"
+    },
+    {
+      "path": "web/lib/db/migrations/meta/_journal.json",
+      "sha256": "8e250dbb3a435806f3c6712ea81941e99ed040ad7c1670c2cc36aaddb57589ee"
+    },
+    {
+      "path": "web/lib/db/schema.ts",
+      "sha256": "57d3416552a9f6f8f44668d15bbe5a7b92066b5e78ce432a36fc67ac16db81d9"
+    },
+    {
+      "path": "web/lib/scheduler/handlers/auto-launch-triaged.ts",
+      "sha256": "7881a7873c4cb619258bfba5fb1f17341d99f8e84fa730f9ab5cfcb4702d4dc7"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-flow-launch.ts",
+      "sha256": "58362ae09c75307bf9e8b43284f8eeaf838bbf0e3667c6921b149aad4bc76132"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-flow-task.ts",
+      "sha256": "23dfb7153c47650be214f029de65dc481fbda31b79da199cf94247b48e408fb0"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-handoff.ts",
+      "sha256": "bc4225eb4060756027b370cabe9f365eedf3f8c24bce867bd067397c569f8b9a"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-recovery.ts",
+      "sha256": "f092ae6111ed7ab5aa3bd2aa20f2672c99aabbe63bd1a18c0bc66161caced2c9"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-source-resume.ts",
+      "sha256": "1af9d4e49cf247116888d795b4a6127ddbe15d850df8f1c796e8940b628753f0"
+    }
+  ],
+  "logs": [
+    "red.log.gz",
+    "composite-green.log.gz",
+    "migration-writer-refusal.log.gz",
+    "migrations-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz",
+    "drift-green.log.gz"
+  ]
+}

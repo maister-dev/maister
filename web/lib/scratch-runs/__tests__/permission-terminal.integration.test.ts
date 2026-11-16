@@ -14,6 +14,7 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { claimBudgetTermination } from "@/lib/runs/budget-termination";
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import { applyScratchPromptCompletion } from "@/lib/scratch-runs/turn-completion";
 import { appendScratchMessage } from "@/lib/scratch-runs/messages";
@@ -286,6 +287,55 @@ async function permissionConsumer(runId: string) {
 }
 
 describe("S2 terminal scratch permission ownership", () => {
+  it("does not publish a late permission over a current budget stop", async () => {
+    const { runId } = await seedTurn();
+
+    await db
+      .delete(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId));
+    await db
+      .update(schema.runs)
+      .set({ status: "Running" })
+      .where(eq(schema.runs.id, runId));
+    await db
+      .update(schema.scratchRuns)
+      .set({ dialogStatus: "Running" })
+      .where(eq(schema.scratchRuns.runId, runId));
+    const consumer = await permissionConsumer(runId);
+    const intent = await claimBudgetTermination(db as Db, {
+      runId,
+      nodeId: null,
+      scope: "run",
+      meter: "tokens",
+      current: 200,
+      limit: 100,
+      assignmentId: consumer.assignment.id,
+      sessionId: consumer.sessionId,
+    });
+
+    expect(intent).not.toBeNull();
+    await consumer.consume();
+
+    expect(
+      (await db.select().from(schema.runs).where(eq(schema.runs.id, runId)))[0]
+        .status,
+    ).toBe("Running");
+    expect(
+      await db
+        .select()
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.runId, runId)),
+    ).toHaveLength(0);
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.executionAssignments)
+          .where(eq(schema.executionAssignments.id, consumer.assignment.id))
+      )[0].state,
+    ).toBe("active");
+  });
+
   it.each([
     {
       writer: "a live permission",

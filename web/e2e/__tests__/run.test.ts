@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     MAISTER_TEST_PROCESS_PARENT: '{"pid":1}',
   })),
   prepareE2eDatabase: vi.fn(),
+  prepareNativeCompanyBrainDatabase: vi.fn(),
   registerProcess: vi.fn(async () => undefined),
   registerSpawnedProcess: vi.fn(async () => undefined),
   removeInvocationContainers: vi.fn(async () => []),
@@ -85,6 +86,7 @@ vi.mock("@/test-support/worktree-test-root", () => ({
 
 vi.mock("../_seed/prepare-db", () => ({
   prepareE2eDatabase: mocks.prepareE2eDatabase,
+  prepareNativeCompanyBrainDatabase: mocks.prepareNativeCompanyBrainDatabase,
 }));
 
 import {
@@ -408,6 +410,38 @@ describe("E2E wrapper environment", () => {
 
     await expect(invocation).resolves.toBe(0);
     expect(mocks.createTestWorktreesRoot).toHaveBeenCalledWith("e2e-live");
+  });
+
+  it.each([
+    "live-company-brain-specialists.spec.ts",
+    "live-stand-specialists.spec.ts",
+  ])("seeds an empty native execution ledger on disk for %s", async (spec) => {
+    configureTestDatabase();
+    const child = createChildProcess();
+
+    mocks.spawn.mockReturnValue(child);
+    const invocation = runE2eInvocation([
+      "--config",
+      "playwright.live.config.ts",
+      spec,
+    ]);
+
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledOnce());
+    emitChildExit(child, 0, null);
+    await expect(invocation).resolves.toBe(0);
+    expect(mocks.startBarePostgresTestDb).toHaveBeenCalledWith({
+      databaseName: "maister_e2e",
+      lane: "e2e",
+      storage: "volume",
+    });
+    expect(mocks.prepareNativeCompanyBrainDatabase).toHaveBeenCalledWith(
+      "postgres://test",
+      expect.objectContaining({
+        DB_URL: "postgres://test",
+        MAISTER_WORKTREES_ROOT: "/tmp/maister-test-worktrees/e2e/invocation",
+      }),
+    );
+    expect(mocks.prepareE2eDatabase).not.toHaveBeenCalled();
   });
 
   it("aborts the CLI controller when an E2E shutdown signal arrives", () => {

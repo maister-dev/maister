@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_owning_integration_and_unit_checks",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "98f7859651053b023ed817c3ddfd0a89f3fd53d85bdc6f95c51a32c67dbdf87c",
+  "previousCandidateSha256": "e78f13b0636e52d0dcc0f7c96277241cde20da48ec7e5726e9b8d0f6f1e7fd57",
+  "productionSourceDelta": "Shared native findings prompt clarifies the existing bidirectional selection mapping for retained and combined findings.",
+  "tests": {
+    "nativeReductionAndPackageIntegration": 20,
+    "launchUnit": 10,
+    "webUnit": 9312
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 8,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "prompt.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "96ce86bbde11fb72f970f121ba907113137c664b45d497dca54ff2dc35d298bb",
+      "rawBytes": 4403,
+      "compressedSha256": "927b9e1d1e8837090b0c16541bcbcb594ce60fa372e9067e648960f10ec514ab",
+      "parts": [
+        {
+          "path": "prompt.patch.gz",
+          "sha256": "927b9e1d1e8837090b0c16541bcbcb594ce60fa372e9067e648960f10ec514ab"
+        }
+      ]
+    },
+    {
+      "sourceName": "reduction-and-package-integration.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "d1e91a594128ad7d55a35463deb25c02aa0258723d70debc8d2c53dfeeacc00b",
+      "rawBytes": 131174,
+      "compressedSha256": "478226f236665d27fb0715ca6ef9e50e089e87a1f1e004793c52216d2f25ffe6",
+      "parts": [
+        {
+          "path": "reduction-and-package-integration.log.gz",
+          "sha256": "478226f236665d27fb0715ca6ef9e50e089e87a1f1e004793c52216d2f25ffe6"
+        }
+      ]
+    },
+    {
+      "sourceName": "launch-unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "6c233d9b5dc912c9782ca28b9cb1a04647f84cfd0f8001b42af0e429fd2a6e04",
+      "rawBytes": 1414,
+      "compressedSha256": "56063233d1d965bb9720706e87f70955b93aeeff02c5c276829ec613dcfa9a09",
+      "parts": [
+        {
+          "path": "launch-unit.log.gz",
+          "sha256": "56063233d1d965bb9720706e87f70955b93aeeff02c5c276829ec613dcfa9a09"
+        }
+      ]
+    },
+    {
+      "sourceName": "web-typecheck.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "rawBytes": 15,
+      "compressedSha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+      "parts": [
+        {
+          "path": "web-typecheck.log.gz",
+          "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+        }
+      ]
+    },
+    {
+      "sourceName": "docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "d9a3d78d018401c19c4edcc3f3fdbac07594fff5bdd6c6fcf14cb06a5e365b3e",
+      "rawBytes": 687,
+      "compressedSha256": "5b78eb229555dc8e7a2ad2ab2c37999cd7e077aa3e4301881fce96e29662c24d",
+      "parts": [
+        {
+          "path": "docs.log.gz",
+          "sha256": "5b78eb229555dc8e7a2ad2ab2c37999cd7e077aa3e4301881fce96e29662c24d"
+        }
+      ]
+    },
+    {
+      "sourceName": "final-web-unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "d3f98013a00a55f1c2a022953ae316be0f1fb054341629c2dc61b6d06859de3c",
+      "rawBytes": 498249,
+      "compressedSha256": "b09fc2b4d289f0fd22522cd000d7bdebfd5f053609f1eaf85adfa9a18782a71d",
+      "parts": [
+        {
+          "path": "final-web-unit.log.gz",
+          "sha256": "b09fc2b4d289f0fd22522cd000d7bdebfd5f053609f1eaf85adfa9a18782a71d"
+        }
+      ]
+    },
+    {
+      "sourceName": "final-docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ccecc8513db60dbf59706ae77efadd8e5ea5cdc7003810c4f386998380bc4503",
+      "rawBytes": 687,
+      "compressedSha256": "de4e6d8dee381e16f4cd96173ab03d389aaf9c9b09f96dea19dc439cb29e0acc",
+      "parts": [
+        {
+          "path": "final-docs.log.gz",
+          "sha256": "de4e6d8dee381e16f4cd96173ab03d389aaf9c9b09f96dea19dc439cb29e0acc"
+        }
+      ]
+    },
+    {
+      "sourceName": "final-contracts.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "71ce934fc33754c74f15a8999fdedee4bf6d5832b1f7a7b3d360eed47c4ea6e3",
+      "rawBytes": 3073,
+      "compressedSha256": "f2698512edb3e405ffbebb549c6a68528c33bd4d7c363f086806a62da7ce2d50",
+      "parts": [
+        {
+          "path": "final-contracts.log.gz",
+          "sha256": "f2698512edb3e405ffbebb549c6a68528c33bd4d7c363f086806a62da7ce2d50"
+        }
+      ]
+    }
+  ]
+}

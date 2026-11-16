@@ -12,6 +12,8 @@ import {
   markCollected,
   type CollectedChild,
 } from "@/lib/run-results/collect";
+import { authorizeNativeChildCollection } from "@/lib/specialist-assignments/child-authority";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -43,6 +45,9 @@ export async function POST(
       scopeLabel: "runs:collect",
       endpoint: ENDPOINT,
       method: "POST",
+      allowCompanyActorWithoutProject: true,
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:collect"),
       db,
     },
     async (ctx) => {
@@ -75,17 +80,36 @@ export async function POST(
       // Finding 1 (Codex adversarial review): fail closed if the bound
       // orchestrator has terminalized — a stale run-bound token must not read its
       // children's results under a terminal tree.
-      const boundRes = await resolveActiveBoundRun(
-        db,
-        parentRunId,
-        ctx.projectId,
-      );
+      const owner =
+        ctx.actor.companyId === undefined
+          ? { projectId: ctx.projectId }
+          : { companyId: ctx.actor.companyId };
+      const exactProjectWork =
+        owner.projectId !== undefined && ctx.scopeLabel === "assignments:read";
 
-      if (!boundRes.ok) {
+      if (exactProjectWork && !body.childRunId)
         return NextResponse.json(
-          { code: boundRes.code, message: boundRes.message },
-          { status: httpStatusForExtCode(boundRes.code) },
+          {
+            code: "CONFIG",
+            message:
+              "Assignment-scoped collection requires an exact childRunId",
+          },
+          { status: 422 },
         );
+
+      if (owner.projectId !== undefined) {
+        const boundRes = await resolveActiveBoundRun(
+          db,
+          parentRunId,
+          owner.projectId,
+        );
+
+        if (!boundRes.ok) {
+          return NextResponse.json(
+            { code: boundRes.code, message: boundRes.message },
+            { status: httpStatusForExtCode(boundRes.code) },
+          );
+        }
       }
 
       // DIRECT children only. A named grandchild — or a run in another tree —
@@ -95,21 +119,39 @@ export async function POST(
         ? [body.childRunId]
         : await directChildRunIds(db, {
             parentRunId,
-            projectId: ctx.projectId,
+            ...owner,
           });
 
       const collected: CollectedChild[] = [];
 
       try {
         for (const id of childRunIds) {
+          const recipient = {
+            kind: "token",
+            tokenId: ctx.actor.tokenId,
+          } as const;
+
+          if (exactProjectWork)
+            await db.transaction((tx: Db) =>
+              authorizeNativeChildCollection(tx, {
+                parentRunId,
+                childRunId: id,
+                recipient,
+              }),
+            );
           collected.push(
             await collectChild(db, {
               parentRunId,
-              projectId: ctx.projectId,
+              ...owner,
               childRunId: id,
+              recipient,
             }),
           );
         }
+        await markCollected(db, collected, {
+          kind: "token",
+          tokenId: ctx.actor.tokenId,
+        });
       } catch (err) {
         if (!isMaisterError(err)) throw err;
 
@@ -118,11 +160,6 @@ export async function POST(
           { status: httpStatusForExtCode(err.code) },
         );
       }
-
-      // ADR-165 (T7.2 / W6): the marker commits BEFORE the response. A caller
-      // that never sees the body simply retries — the read is idempotent and
-      // the marker is write-once, so the body is byte-identical either way.
-      await markCollected(db, collected);
 
       // Only the wire DTO leaves the boundary — `servedResultId` is an internal
       // ledger handle the marker needs and a caller must never see.

@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://cb-native-qualification.invalid/maister-plugins",
+  "tag": "rah/v1.0.4",
+  "expectedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "runIds": [
+    "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73"
+  ],
+  "proofs": [],
+  "enforcementProofs": [
+    {
+      "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    }
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "nativeProposalIds": [],
+  "ledgerDiagnostics": [
+    {
+      "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+      "parentRunId": null,
+      "status": "Failed",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ],
+  "executionDiagnostics": {
+    "schemaVersion": 1,
+    "classification": "owned_synthetic_qualification_only",
+    "rowLimit": 100,
+    "treeDepthLimit": 3,
+    "failedOutputMaxBytes": 4096,
+    "totals": {
+      "attempts": 1,
+      "events": 1,
+      "commands": 8
+    },
+    "attempts": [
+      {
+        "id": "927b9ea2-08dc-4db3-88ad-e19b51e664b0",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "nodeId": "research",
+        "nodeType": "orchestrator",
+        "attempt": 1,
+        "status": "Failed",
+        "errorCode": "EXECUTOR_UNAVAILABLE",
+        "exitCode": null,
+        "actionCompletion": {
+          "commandId": "5b059ecb-83d6-4561-abb8-7fb01791252f",
+          "promptOrdinal": 0,
+          "ok": true,
+          "errorCode": null,
+          "exitCode": null,
+          "reason": null
+        },
+        "failedOutput": {
+          "text": "I'll start by loading the required maister tool schemas and reading the run context.Tools loaded. Now I'll retrieve the three knowledge records (current heads) in parallel.All three records retrieved. Now I'll fetch their evidence and conflict views in parallel.Three view calls hit transient `CRASH: Database operation failed` (conflicts for 53dbfc6e, evidence for 8dd81fc7, conflicts for 8dd81fc7). Retrying those once.Records and views gathered. Status of the two denied views matters for the findings: conflicts view for `53dbfc6e` (rev 1) and evidence+conflict views for `8dd81fc7` (rev 1) returned `UNAUTHENTICATED: revoked` — withheld content stays withheld; I'll record it as inaccessible rather than paraphrase. The record-level views from `knowledge_get` did succeed for all three, and the evidence view for the current and opposing records succeeded.\n\nNow delegating the two mandated read-only research children (mode `run`, workspace `none`, resultProfile `findings`), passing the exact owner and references.Both delegations were denied with `UNAUTHENTICATED: revoked` — an uncertain response (I can't yet tell whether any child was created, and \"at most two children\" forbids blind re-delegation). `run_collect` is idempotent and side-effect-free, so I'll probe it to learn both whether the token works at all and whether children exist despite the error.The session token has been revoked mid-run — every governed call now returns `revoked` (both delegations and the idempotent `run_collect` probe). The two `run_delegate` responses were delivery-uncertain, so I cannot rule out that child runs exist and are nonterminal; blind re-delegation could exceed the \"at most two children\" mandate, and the `knowledge_propose` submission must not be attempted while unauthenticated (it would risk a split-brain delivery under my stable idempotency key).\n\n**Pending — no final output this turn.** State so far:\n\n- Retrieval done: `bc969145` rev 2 (current, unconfirmed, witness `fdd6ef11` available), `53dbfc6e` rev 1 (opposing, unresolved conflict, witnesses `145b28ad` + shared `fdd6ef11`), `8dd81fc7` rev 1 (stale — derives from `bc969145` rev 1 while head is rev 2, witness `1478f260` availability `stale`).\n- Withheld views recorded as inaccessible, not paraphrased: conflicts view of `53dbfc6e`, evidence+conflicts views of `8dd81fc7`.\n- Child delegation: both mandated researchers (`rah:evidence-researcher`, `rah:contradiction-researcher`) attempted with mode `run`, workspace `none`, resultProfile `findings` — denied `UNAUTHENTICATED: revoked`; no confirmation any child was created.\n- Not yet done: `run_collect` of existing children (blocked: revoked), `knowledge_propose` submission.\n\nOn resume I will `run_collect all:true` first, delegate only if no children exist, then collect, submit the single proposal under the stable key, and emit the `evidence_findings_v1` block.",
+          "originalBytes": 2903,
+          "sanitizedBytes": 2903,
+          "capturedBytes": 2903,
+          "truncated": false,
+          "controlsRemoved": 0,
+          "redactions": 0,
+          "kinds": []
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "11",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "run.failed",
+        "cause": {
+          "code": "EXECUTOR_UNAVAILABLE",
+          "source": "graph",
+          "reason": "session_delete_exit_unconfirmed"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "737e8195-6276-401c-b4f3-5bb8209b0ed8",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "session.delete",
+        "state": "failed",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": "EXECUTOR_UNAVAILABLE",
+        "reason": "session_delete_exit_unconfirmed",
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "5b059ecb-83d6-4561-abb8-7fb01791252f",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "session.prompt",
+        "state": "succeeded",
+        "transportState": "acknowledged",
+        "applicationState": "applied",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "8abc6d1b-ef9a-4e50-93b1-0beece776354",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "session.create",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "8f74bc31-41f2-4666-adee-fe202b0679b4",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "workspace.adopt",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "d56dc59f-1850-44a9-adea-c259681dd345",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "461cc112-8e0c-4fdf-9dd4-86cd7dbb4f2e",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "runtime_object.upload",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "801d3f66-527e-4bca-a9a8-72d73c592395",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      },
+      {
+        "id": "74af988f-f1c3-4606-839d-310420c8bf63",
+        "runId": "83c7a232-b0c4-4c88-8e6f-629fc3ac7a73",
+        "kind": "runtime_object.reserve",
+        "state": "succeeded",
+        "transportState": "not_sent",
+        "applicationState": "pending",
+        "applicationAttempts": 0,
+        "code": null,
+        "reason": null,
+        "applicationReason": null,
+        "applicationCauseCode": null,
+        "applicationCauseReason": null,
+        "applicationPhase": null,
+        "applicationClassification": null
+      }
+    ]
+  }
+}

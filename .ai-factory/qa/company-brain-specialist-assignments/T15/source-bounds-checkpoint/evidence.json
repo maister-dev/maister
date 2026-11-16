@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "070bb4ea4",
+  "status": "partial_checkpoint_qualified",
+  "engineDuringOwningChecks": "3.10.0",
+  "qualified": [
+    "Actual finalized/collected direct-child results below the 4 MiB aggregate input budget reduce successfully. Oversized retained source input refuses after one metadata query, before source-body hydration.",
+    "All 256 consumed source findings are explicitly accounted for; an additional collected finding cannot silently disappear at actual coordinator result publication.",
+    "Two actual authorized concurrent knowledge reads serialize on the receiving execution and retain both record restrictions, one company restriction and generation 3. Re-reading one source leaves capture unchanged and does not confirm either assertion.",
+    "Temporary lock removal loses one source/generation; temporary byte-bound weakening admits oversized reduction. Both regression mutations fail and production files were restored."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 34,
+      "files": 2
+    },
+    "typecheck": "passed",
+    "lint": "passed"
+  },
+  "qualificationLimits": [
+    "The first concurrency assertion incorrectly expected evidence-reference fields in the source-restriction DTO; corrected to the actual recordId restriction contract before genuine regression-mutation RED.",
+    "The full phase integration run and engine activation remain unqualified. T16 installable package work is separate from these platform fixture checks.",
+    "No migration or project-deletion read prerequisite is introduced."
+  ],
+  "logs": [
+    {
+      "path": "concurrency-red.log.gz",
+      "uncompressedSha256": "2bdab4edced6fd01f4c0388a8edac4d50008fc42d1ee1b437f59778e000e6497"
+    },
+    {
+      "path": "bytes-red.log.gz",
+      "uncompressedSha256": "3f34e5487e7f64420be7a377e99a45d51c62e41d43d665632a2d78137fe16bd0"
+    },
+    {
+      "path": "green.log.gz",
+      "uncompressedSha256": "d228b4d3a7d5d03ee2c3dfb06010970c159c193e7ed6f9ec320a34982bd8f437"
+    },
+    {
+      "path": "typecheck.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "initial.log.gz",
+      "uncompressedSha256": "3cb56ed5d2ed4f882337205e6ef0a0d8e0211337ba0747e672d4bd0a783d478d"
+    }
+  ]
+}

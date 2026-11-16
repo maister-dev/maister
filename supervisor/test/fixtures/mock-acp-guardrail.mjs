@@ -49,11 +49,18 @@ class GuardrailAgent {
   async initialize() {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { promptCapabilities: {} },
+      agentCapabilities: {
+        promptCapabilities: {},
+        sessionCapabilities: { resume: {} },
+      },
     };
   }
 
-  async newSession() {
+  async newSession(params) {
+    this.forcePermissionChecks =
+      params._meta?.claudeCode?.options?.settings?.permissions?.ask?.includes(
+        "*",
+      ) === true;
     return { sessionId: `mock-${randomUUID()}` };
   }
 
@@ -61,7 +68,11 @@ class GuardrailAgent {
     return {};
   }
 
-  async resumeSession() {
+  async resumeSession(params) {
+    this.forcePermissionChecks =
+      params._meta?.claudeCode?.options?.settings?.permissions?.ask?.includes(
+        "*",
+      ) === true;
     return {};
   }
 
@@ -154,6 +165,7 @@ class GuardrailAgent {
     });
 
     this.outcomes.push(res.outcome.outcome);
+    return res.outcome;
   }
 
   // ADR-130 D5: the real claude ordering for an ARBITRATED write — the pending
@@ -338,9 +350,119 @@ class GuardrailAgent {
       for (let i = 0; i < count - 1; i += 1) {
         await this.idleTurn(sessionId, `tc-npr-b-${i}`);
       }
+    } else if (scenario === "native_permission_shortcut") {
+      if (this.forcePermissionChecks) {
+        await this.requestTool(
+          sessionId,
+          "Bash",
+          "tc-native-shortcut",
+          "execute",
+        );
+      } else {
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tc-native-shortcut",
+            kind: "execute",
+            title: "Bash",
+            status: "pending",
+          },
+        });
+        await this.connection.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tc-native-shortcut",
+            status: "completed",
+          },
+        });
+      }
+    } else if (scenario === "read_only_native_knowledge") {
+      const decisions = [];
+
+      for (const [index, name] of [
+        "ToolSearch",
+        "mcp__maister__knowledge_get",
+        "mcp__maister__knowledge_propose",
+        "mcp__foreign__knowledge_get",
+      ].entries()) {
+        const outcome = await this.requestTool(
+          sessionId,
+          name,
+          `tc-native-read-${index}`,
+          "other",
+        );
+
+        decisions.push(
+          outcome.outcome === "selected" ? outcome.optionId : "cancelled",
+        );
+      }
+      await this.connection.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tc-native-read-outcomes",
+          status: "completed",
+          rawOutput: { nativeDecisions: decisions },
+        },
+      });
     } else if (scenario === "capability_allow") {
       // One in-profile tool call (name in the tools allow-list) → auto-allowed.
       await this.requestTool(sessionId, "Read", "tc-cap-allow");
+    } else if (scenario === "capability_permission_delta") {
+      const pending = (id, owner) => ({
+        sessionId: owner,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: id,
+          title: "Read",
+          kind: "read",
+          status: "pending",
+          _meta: { claudeCode: { toolName: "Read" } },
+        },
+      });
+      const completed = (id) => ({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: id,
+          status: "completed",
+        },
+      });
+
+      for (const [id, notifications] of [
+        ["tc-delta-own", [pending("tc-delta-own", sessionId)]],
+        ["tc-delta-foreign", [pending("tc-delta-foreign", "foreign-session")]],
+        [
+          "tc-delta-terminal",
+          [
+            pending("tc-delta-terminal", sessionId),
+            completed("tc-delta-terminal"),
+          ],
+        ],
+        [
+          "tc-delta-evicted",
+          [
+            pending("tc-delta-evicted", sessionId),
+            ...Array.from({ length: 32 }, (_, index) =>
+              pending(`tc-delta-bound-${index}`, sessionId),
+            ),
+          ],
+        ],
+        ["tc-delta-bound-31", []],
+      ]) {
+        for (const notification of notifications)
+          await this.connection.sessionUpdate(notification);
+        const response = await this.connection.requestPermission({
+          sessionId,
+          toolCall: { toolCallId: id, title: "Read a controlled file" },
+          options: OPTIONS,
+        });
+
+        this.outcomes.push(response.outcome.outcome);
+        await this.connection.sessionUpdate(completed(id));
+      }
     } else if (scenario === "capability_deny") {
       // One out-of-profile tool call (name NOT in the allow-list) → denied.
       await this.requestTool(sessionId, "WebFetch", "tc-cap-deny");
@@ -357,6 +479,66 @@ class GuardrailAgent {
       for (let i = 0; i < count; i += 1) {
         await this.requestTool(sessionId, "WebFetch", `tc-cap-rep-${i}`);
       }
+    } else if (scenario === "company_native_mcp_only") {
+      await this.requestTool(sessionId, "Read", "tc-company-read", "read");
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_search",
+        "tc-company-search",
+        "other",
+      );
+      await this.requestTool(sessionId, "Bash", "tc-company-shell", "execute");
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_get",
+        "tc-company-get",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_confirm",
+        "tc-company-confirm",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_witness_get",
+        "tc-company-witness",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__librarian_memory_remember",
+        "tc-company-private",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_propose",
+        "tc-company-propose",
+        "other",
+      );
+    } else if (scenario === "company_native_delegation") {
+      await this.requestTool(sessionId, "mcp__maister__run_delegate", "tc-company-delegate", "other");
+      await this.requestTool(sessionId, "mcp__maister__run_collect", "tc-company-collect", "other");
+      await this.requestTool(sessionId, "mcp__maister__run_message", "tc-company-message", "other");
+    } else if (scenario === "company_native_rework") {
+      await this.requestTool(sessionId, "mcp__maister__run_rework", "tc-company-rework", "other");
+    } else if (scenario === "company_native_acceptance") {
+      await this.requestTool(sessionId, "mcp__maister__specialist_assignment_work_decide", "tc-company-accept", "other");
+    } else if (scenario === "company_native_read_scope") {
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_propose",
+        "tc-company-denied-proposal",
+        "other",
+      );
+      await this.requestTool(
+        sessionId,
+        "mcp__maister__knowledge_search",
+        "tc-company-read-search",
+        "other",
+      );
     } else if (scenario === "librarian_mcp_only") {
       // ADR-185 D5: a librarian turn's MCP-only profile. A built-in file read
       // and a web fetch are denied; the maister facade tool is allowed inline.

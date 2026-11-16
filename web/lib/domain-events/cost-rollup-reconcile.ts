@@ -5,6 +5,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
@@ -39,7 +40,10 @@ export function buildCostRollupReconcileConsumer(
   return {
     id: "cost-rollup-reconcile",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const reconcile = opts.reconcile ?? reconcileRunCostRollups;
       const client = opts.db ?? getDb();
       const runIds = new Set<string>();

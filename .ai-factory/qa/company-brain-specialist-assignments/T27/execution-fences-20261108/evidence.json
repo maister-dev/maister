@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T22:17:09.112384+00:00",
+  "baseline": "091ffebd4",
+  "status": "T27-decisive-execution-fences-qualified-local-task-open",
+  "red": [
+    {
+      "cause": "All four terminal statuses permit direct or descendant admission"
+    },
+    {
+      "cause": "Admission ignores an uncommitted terminal ancestor writer"
+    },
+    {
+      "cause": "Task-parent nested-row-before-root order deadlocks",
+      "sqlState": "40P01"
+    },
+    {
+      "cause": "Task-parent/native-input/knowledge-consumer row upgrades deadlock against an actual execution-event FK",
+      "sqlState": "40P01"
+    },
+    {
+      "cause": "A pre-existing nested execution writer creates a root/nested row inversion",
+      "sqlState": "40P01"
+    }
+  ],
+  "gates": {
+    "combinedIntegration": {
+      "passed": 330,
+      "files": 16
+    },
+    "owningAndCompatibilityIntegration": {
+      "passed": 284,
+      "files": 15,
+      "seconds": 122.02
+    },
+    "companyFlow": {
+      "passed": 46,
+      "files": 1,
+      "seconds": 46.13
+    },
+    "webUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 28.87
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "build": "passed with offline DB_URL",
+    "contracts": "passed;84 requirements/45 tasks",
+    "docs": "passed;177 tables"
+  },
+  "verified": [
+    "An exact root-to-parent non-key row fence retains current ancestry, bounds and statuses through admission commit",
+    "Terminal ancestors refuse before child allocation",
+    "A busy current execution writer yields typed CONFLICT without a deadlock; fresh admission rechecks committed terminal state",
+    "Task-parent qualification uses rooted order before Run locks",
+    "Non-key source locks serialize capture updates and remain compatible with event FK locks",
+    "Actual current delegation/plan/task intent/source/assignment and company Flow behavior remains green"
+  ],
+  "fixtureCorrections": [
+    "Disclosure test used scratch Run for Flow-bound orchestrator credential; now seeds actual Flow kind",
+    "New tests use the concrete typed Drizzle transaction instead of a minimal execute-only seam",
+    "One package-prefixed selector discovered no tests and is not qualification evidence"
+  ],
+  "refactor": "Related Run source locks use the same non-key locking mode; owning and compatibility suites rerun after formatter and concrete test-type correction.",
+  "remaining": [
+    "T27 native canonical work creation/replay and company/project child dispatch",
+    "Current receiving-role/source authority and assignment ownership fences",
+    "T29 complete cancellation/recovery and conserved replacement budget accounting",
+    "T28-T43 acceptance, connector, UI and installed-package/global qualification"
+  ],
+  "effects": "Owned local PostgreSQL and controlled execution fixtures only; no production or remote action.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "7179857a35baff34cbb564a09a55f3409f875ce0a75291f61abebf82dab6bd99"
+    },
+    {
+      "path": "docs/system-analytics/orchestrator.md",
+      "sha256": "2a154cd107b293f31fcd82b0f7ecccdb5ec667d8b50a915bd7d177d17da0102a"
+    },
+    {
+      "path": "docs/system-analytics/specialist-cooperation.md",
+      "sha256": "2a2c1cb6896e0b26e54d0744c06e1306f48b33ff8d071f5e7bb30e85d5b6144b"
+    },
+    {
+      "path": "web/lib/orchestrator/admission.ts",
+      "sha256": "412f28ea3a809a044bba8ca03fa9b24c9a49966836f81b663870392744548bd8"
+    },
+    {
+      "path": "web/lib/tasks/qualification-admission.ts",
+      "sha256": "5a41a39e946c17a09c14b55bd069fee054c250a2b5da15535ba33ca9264a3e94"
+    },
+    {
+      "path": "web/lib/orchestrator/native-input.ts",
+      "sha256": "a7fab6d52526431da074f9ce8ee95b43614caa0bf8fbed68d8e17529507c4f60"
+    },
+    {
+      "path": "web/lib/orchestrator/native-child-input.ts",
+      "sha256": "a1461656c38a1500e7a5bebfc319cd37ae261d6e37c9e6b3073fa835bd77d491"
+    },
+    {
+      "path": "web/lib/brain/knowledge-disclosure.ts",
+      "sha256": "19e0f7784361b3c6bee5a7490d535c9e39e97177b7b9ff47a5f577dba15e9aef"
+    },
+    {
+      "path": "web/lib/brain/knowledge-execution-access.ts",
+      "sha256": "51c931818b8712063b7815a6638c6fed33940d51cc1870ddaa1dbae9ec64cd51"
+    },
+    {
+      "path": "web/lib/orchestrator/__tests__/admission.integration.test.ts",
+      "sha256": "55f9fe84580ababc6546241b80038a5e07659345212477db95363d3b93d40123"
+    },
+    {
+      "path": "web/lib/orchestrator/__tests__/bounds.integration.test.ts",
+      "sha256": "b59451e6d6d8886103f791e7b7352a71c614aec11675658f7e5957c8ef30064b"
+    },
+    {
+      "path": "web/lib/brain/__tests__/company-records.integration.test.ts",
+      "sha256": "74df8d5b8abd842e810936f2ac2f9438855214967a7f4009b4b1ca71719892e2"
+    }
+  ],
+  "logs": [
+    "terminal-admission-red.log.gz",
+    "task-parent-row-order-red.log.gz",
+    "source-fk-upgrades-red.log.gz",
+    "nested-writer-row-red.log.gz",
+    "owning-green.log.gz",
+    "integration-fixture-failure.log.gz",
+    "integration-green.log.gz",
+    "company-flow-green.log.gz",
+    "unit-green.log.gz",
+    "types-fixture-failure.log.gz",
+    "types-green.log.gz",
+    "lint-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "build-green.log.gz"
+  ]
+}

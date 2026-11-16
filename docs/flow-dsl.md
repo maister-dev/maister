@@ -23,6 +23,59 @@ ingest boundary. An id is a 1–128-character safe path segment: it starts with
 an ASCII letter or digit and may then use letters, digits, `.`, `_`, or `-`.
 The reserved ids `__proto__`, `constructor`, and `prototype` are invalid.
 
+## Plain-workspace result-only declaration (Designed runtime, T20.1)
+
+A coordinator package declares this closed manifest contract:
+
+```yaml
+compat: { engine_min: 3.12.0 }
+execution: { workspace: none, completion: result }
+result:
+  export:
+    schema: ./schemas/diagnosis.json
+    from: [diagnose]
+    required: true
+```
+
+The declaration is optional. Absence preserves the existing repository lifecycle
+and does not add defaults or rewrite retained manifests. A present declaration
+requires both literal values, no additional keys and a declared engine minimum
+of at least 3.12.0. It never supplies an owner, user, grant or repository: ownership
+comes from the server's project or company binding. A required result export is
+mandatory; process exit or agent prose does not replace it.
+
+The initial contract admits `ai_coding`, `orchestrator`, `human` and `form` nodes.
+It refuses other node types, repository context mounts, writable workspace access,
+launch setup/probes, repository `diff`/`commit_set` outputs, repository plan
+review and pre-finish gates before admission. Human review uses
+explicit `human`/`form` nodes, and output validation uses the existing required
+result contract. The initial native path refuses package/node `mcps`, node
+`skills`, `restrictions`, `tools`, `settingsProfile`, `artifactAccess`,
+`enforcement`, `hooks`, implicit AI/coordinator finish review and
+permission-mode overrides. Current reviewed professional policy supplies the
+exact native knowledge MCP-only surface. Role and runner policies still require
+action-time preflight; metadata cannot grant tools or cooperation rights.
+
+Engine 3.12.0 executes this explicit native subset through the existing graph
+driver, node/command/result ledgers and current reviewed company binding. Older
+engines refuse the declaration before execution. See
+[the specialist runtime contract](system-analytics/specialist-runtime.md).
+
+The company prompt context uses `assignment.id`, `assignment.inputRevision`,
+`assignment.inputSha256` and the exact frozen objective fields: `objective`,
+`expectedOutcome`, `input`, `targetIds`, `inputRefs`, `constraints`,
+`expectedResult`, and `verification`. It supplies the real `run.id` and company
+`run.owner`, with no `task`, task attempt number or `run.projectSlug`. Strict
+references to repository-only paths fail. Shared executor/steps/artifacts and
+filtered environment keep their existing semantics. Native dispatch, explicit
+form/human waits, required results, cancellation and checkpoint/restart recovery
+are qualified with controlled ACP; real companion/stand qualification is separate.
+
+Explicit retry and rework workspace policies must be `keep`. Omitted retry
+workspace policy still defaults to repository checkpoint rewind and is refused
+for this declaration. Human `allowTakeover` and `allowFurtherTracks` are refused
+because their repository delivery paths are outside this subset.
+
 ## Flow graph node lifecycle (Implemented)
 
 > **Status.** Flow graph v1 — the `nodes[]` manifest, node-lifecycle
@@ -47,8 +100,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.9.0` (Implemented — operational agents require a package
-`compat.engine_min >= 3.9.0`; consensus prompt rendering retains its 3.8.0 floor). Graph packages remain
+host engine is `3.12.0` (operational agents retain their 3.9.0 package floor;
+native evidence findings require 3.11.0). Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 
@@ -758,6 +811,13 @@ orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 > path-scope ships `instructed`-only **(Phase 2)**.
 
 ## Node `consensus` (Implemented)
+
+Native evidence-enrolled parents cannot use runner-only participants: a runner
+does not identify an authorized receiving professional role. This path refuses
+with `native_professional_role_required` before creating a child run/session;
+native research cooperation uses declared agent/Flow delegation with inherited
+source policy. Legacy consensus participants retain the contract below. See
+[native evidence boundaries](system-analytics/evidence-findings.md#native-recipient-and-reentry-boundaries).
 
 **(Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
 `type: consensus` is an engine-owned supervisory node for high-stakes planning

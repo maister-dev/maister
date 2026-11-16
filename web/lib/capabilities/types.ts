@@ -68,6 +68,18 @@ export type ResolvedCapabilityProfile = {
   profileDigest: string;
 };
 
+/** Native company profiles have no project catalog or implicit project defaults. */
+export type CompanyCapabilityProfile = Omit<
+  ResolvedCapabilityProfile,
+  "projectId"
+> & {
+  projectId: null;
+  owner: { kind: "company"; companyId: string };
+};
+
+export type MaterializableCapabilityProfile =
+  ResolvedCapabilityProfile | CompanyCapabilityProfile;
+
 export type ProjectCapabilityConfig =
   | McpCapabilityConfig
   | SkillCapabilityConfig

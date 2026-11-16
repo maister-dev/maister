@@ -1,0 +1,55 @@
+{
+  "task": "T21",
+  "date": "2026-11-07",
+  "testedCommit": "a48a002b2",
+  "status": "Complete: company lifecycle, retained reads and full compatibility gate qualified",
+  "webIntegration": {
+    "command": "pnpm --filter maister-web test:integration --maxWorkers=2",
+    "exitCode": 0,
+    "filesPassed": 653,
+    "filesSkipped": 2,
+    "testsPassed": 5876,
+    "testsSkipped": 2,
+    "durationSeconds": 3429.96,
+    "logSha256": "e3238baee91a57d40190523031159a57bfd8d28c28edca0c46da142e0f5bc493"
+  },
+  "existingOptInSkips": [
+    "web/lib/execution-host/__tests__/host-span-load.integration.test.ts",
+    "web/lib/execution-host/__tests__/event-plane-load.integration.test.ts"
+  ],
+  "earlierCompletedPhaseGates": {
+    "provenance": "Existing T20.1/T21 checkpoint executions; intervening a48/291b corrections changed test fixtures only",
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "exitCode": 0
+    },
+    "supervisorUnit": {
+      "tests": 500,
+      "files": 50,
+      "exitCode": 0
+    },
+    "supervisorIntegration": {
+      "tests": 350,
+      "files": 38,
+      "exitCode": 0
+    },
+    "productionBuild": {
+      "exitCode": 0
+    },
+    "typesLintContractsDocs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Company standalone and result-only coordinator lifecycle uses no project/Task, survives actual supervisor restart, preserves exact retained input/result and physically quiescent cleanup.",
+    "Exact result/input readers and EN/RU inspection use current company/source authority without authorizing private assistants or repository bypass.",
+    "Full compatibility now passes after explicit nullable migration-field assertions and a due-boundary correction to the retry authority fixture; no domain assertion was weakened and no production code was changed by those two fixture corrections.",
+    "Existing main-only and independent Brain migration compatibility and project deletion behavior retain their owning evidence."
+  ],
+  "limits": [
+    "This full gate covers frozen a48a002b2, not the separate T22/T22.1 intake checkpoints.",
+    "T22-T43 and T28.1 remain open; company cooperation, real stand connector/package and full CB1 pilot readiness are not claimed.",
+    "Existing opt-in load checks are skipped as configured; this is not a new quarantine."
+  ]
+}

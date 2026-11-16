@@ -5,13 +5,14 @@ import pino from "pino";
 
 import { brainSchemaMissingWarnOnce, isBrainSchemaApplied } from "./guard";
 import { BRAIN_POLICY } from "./policy";
+import { knowledgeWriteLockSql } from "./knowledge-write-lock";
 
 import { getDb } from "@/lib/db/client";
 
 // Project Brain (ADR-122) decay sweep. Folded into runSystemSweep on the M24
 // tick (60s), it self-throttles to hourly via a module-level last-run stamp so
 // it does not hammer the DB every tick. Aging is EXPIRY-only and idempotent —
-// items past `expires_at` (unless reinforced, which pushes expires_at out) flip
+// items past `expires_at` flip
 // to `status='expired'` and drop out of recall. There is NO per-tick confidence
 // decrement, so running the sweep twice close together never double-penalizes
 // (E-4). Also prunes brain_snapshots older than BRAIN_POLICY.snapshotTtlDays —
@@ -84,9 +85,10 @@ export async function runBrainDecaySweep(
 
   try {
     const r = await db.execute(sql`
-      WITH u AS (
+      WITH knowledge_write AS MATERIALIZED (SELECT ${knowledgeWriteLockSql()}), u AS (
         UPDATE brain_items
         SET status = 'expired', updated_at = now()
+        FROM knowledge_write
         WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < now()
         RETURNING 1
       )

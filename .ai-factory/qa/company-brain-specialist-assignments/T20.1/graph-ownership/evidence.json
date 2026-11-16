@@ -1,0 +1,98 @@
+{
+  "task": "T20.1",
+  "slice": "Existing Run v2 graph owner/reference/link persistence",
+  "date": "2026-11-06",
+  "baseCommit": "3723fa885e6796d288894ae56d177a7b0797dc9f",
+  "status": "Graph ownership storage qualified; actual graph execution remains pending",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0233_company_flow_execution"
+  ],
+  "red": {
+    "reservation": {
+      "tests": 12,
+      "failed": 1,
+      "log": "reservation-red.log.gz",
+      "failure": "Existing v1-only reference guard rejected the exact company graph capture and coordinator/input link."
+    },
+    "resultRouting": {
+      "tests": 29,
+      "failed": 2,
+      "log": "routing-red.log.gz",
+      "failure": "An otherwise exact graph reservation committed with a fabricated producer list or native-validation marker."
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 88,
+      "durationSeconds": 51.89,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 27.32,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    },
+    "drift": {
+      "exitCode": 0,
+      "log": "drift.log.gz"
+    }
+  },
+  "qualified": [
+    "The existing Run owner CHECK has separate unchanged v1 and explicit v2 graph branches; nullable project fields never imply company ownership.",
+    "The insert guard checks exact current company assignment/input, role/coordinator/provider/manifest/export witnesses and initiating grant. Grant revocation after preparation prevents raw insertion.",
+    "Required export producerNodeIds and optional nativeContract exactly match the installed manifest; matching schema reference/version/digest cannot authorize different routing.",
+    "Existing assignment run links are atomic, exact-input and coordinator-role-bound; missing or wrong-role links abort at commit.",
+    "Captured ownership, Flow revision ID, version label and resolved revision cannot be retargeted.",
+    "Real populated 0232 -> 0233 preserves v1 company, project and private Run JSON byte values; deleting the project with Brain tables absent leaves company/private history intact.",
+    "Existing standalone native lifecycle, company bindings and assignment-store behavior remain green; schema generation proposes no further changes."
+  ],
+  "qualificationBoundary": "Supported-engine metadata uses the controlled pure compatibility predicate in the owned real-package/Postgres fixture. The graph storage case allocates no host/session/workspace and does not dispatch a graph or establish actual package/stand pilot readiness. Engine remains 3.11.1.",
+  "intermediateFailures": [
+    "Initial custom SQL used a guessed version_tag column. Real integration rejected it, including the shared v1 branch. Source-confirmed flow_revisions.version_label is now used by preflight and guard. No durable migration had been applied; only disposable fixtures consumed the uncommitted migration.",
+    "The populated fixture initially passed the broader assignment Owner union to company binding creation; typecheck rejected it. It now supplies the actual server company owner from the prepared request without a cast.",
+    "One early broad integration filter named a missing specialist suite; the final six-file gate uses the actual company-bindings integration path and all six files execute.",
+    "The initial Brain-absence assertion named a nonexistent table. It was corrected to source-confirmed brain_items and brain_record_revisions before final qualification."
+  ],
+  "notYetQualified": [
+    "Native company graph reservation/host placement and immutable session runner set",
+    "Current per-node professional/source/credential attribution and permission delivery",
+    "Graph loading, plain workspace materialization/dispatch, human/form continuation",
+    "Required-result finalization, cleanup/recovery and activation of engine 3.12.0",
+    "T21 phase-wide regression, actual stand-operations companion package and pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "594416b88ec00194e5ad098a26abaab7333f4279d74dfac086e65c966a613fe4",
+    "docs/database-schema.md": "c9121c47da4eb00b6a2783880976ad4746847cb34de99cc8d908fd05be94b6fa",
+    "docs/db/specialist-assignments-domain.md": "23136e1c25adcdab2b6853e0dd8c723bf08a58fc5b7ce868db8fd029ba447085",
+    "docs/system-analytics/specialist-runtime.md": "2158e07380bc2aec88427321146c081cdcfa2b142fa48da245cecf681760770a",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "8773aa645bba7692ea2b67f8123f3cf5ea075d7a25bc906ed06f425ec2e6f454",
+    "web/lib/agents/company-agent-scope-schema.ts": "03d2786d9cb429db84ee54342cf3dea50df2f38c201c771409b9ed574b1b67ee",
+    "web/lib/agents/company-flow-context.ts": "41b0ebca6bc27360b70b3e88023b5e53ce7d44f0da78dc6ee6e409790212034d",
+    "web/lib/db/schema.ts": "1d19de6464084201558b4f2de35c0a22ac436934ed748636ccb29997216442ed",
+    "web/lib/db/migrations/0233_company_flow_execution.sql": "b56f2dc2ee0f24a1c48d22ada8854ed083cff44eb3008cb56645784c23d60567",
+    "web/lib/db/migrations/meta/0233_snapshot.json": "8d84c77255f9cd614b54bc45bc8a8e2730451eb1eca1819f86550ffc70fac2e5",
+    "web/lib/db/migrations/meta/_journal.json": "5ff73e9a4aa5a56fdead0cb399f0a941509739de60bddcfe85de44545cb3acb6",
+    "web/lib/specialist-assignments/store.ts": "d7b3d3a02f676763268ec5561b8c53a2ab75da29997a99e0b9ed0a6239e3afff"
+  }
+}

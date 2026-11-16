@@ -1,0 +1,18 @@
+✔ validates every registered contract through official parsers (1709.301458ms)
+✔ rejects an OpenAPI document that fails official meta-schema validation (24.18575ms)
+✔ rejects an AsyncAPI document that fails official meta-schema validation (69.800291ms)
+✔ librarian stream contract rejects a frame that carries a message body (90.400083ms)
+✔ librarian stream contract rejects a heartbeat that carries a frame id (56.328041ms)
+✔ HITL respond reason enums agree with the TypeScript contract (305.965375ms)
+✔ HITL refusal examples satisfy real JSON Schema validation (376.342041ms)
+✔ external HITL inbox example includes every required read-state field (58.617459ms)
+✔ external HITL success and pending bodies accept the shipped runStatus variants (89.127ms)
+✔ CT-CBX-05 contract command enforces nested examples and public schema parity (5679.541416ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9050.680083

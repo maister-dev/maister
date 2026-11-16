@@ -1,0 +1,93 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "caaa81196",
+  "slice": "Native Flow-node clarification through existing checkpoint, Inbox, C3 scheduler and prompt ownership",
+  "status": "Native Flow checkpoint qualified; T24 remains open",
+  "gates": {
+    "owningIntegration": {
+      "tests": 234,
+      "files": 10,
+      "durationSeconds": 85.16,
+      "exitCode": 0
+    },
+    "resumeCompatibility": {
+      "tests": 183,
+      "files": 17,
+      "durationSeconds": 202.46,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 28.79,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "generatedMigrations": 0,
+      "exitCode": 0
+    }
+  },
+  "redToGreen": [
+    "Graph subjects initially refused the standalone-only question source",
+    "Premature next-ordinal persistence made the original lifecycle stale before checkpoint quiescence",
+    "The shared queued-resume dispatcher dropped company-only Runs at unrelated inner joins",
+    "Duplicate parked Flow asks incorrectly required a new live accepted prompt"
+  ],
+  "qualified": [
+    "Exact server-owned Flow prompt/node/fence/incarnation source and same node attempt across answer continuation",
+    "Checkpoint ACK and canonical quiescence precede next ordinal; activation rollback retains the original handoff",
+    "Native Inbox answer retains human/input provenance and the original immutable Run/root link",
+    "Production C3 admission and default driveResume dispatch deliver the exact answered input through the retained prompt owner",
+    "Pending activation recovery adopts the successful checkpoint without another physical checkpoint",
+    "Direct forged resume question references refuse at the database guard",
+    "Legacy task question data survives populated main-only upgrades through 0249; project deletion remains unblocked",
+    "Existing permission, interrupt and crash resume compatibility remains green"
+  ],
+  "fixtureCorrections": [
+    "Reuse the retained reservation host instead of changing a live host identity",
+    "Exercise the actual C3 default dispatcher instead of globally reconciling another scenario\u2019s intentionally unfinished Run",
+    "Place the scenario after qualification of stale reservation fixtures consumed by ordinary freed-slot scheduling",
+    "Wait for the owned driver to unwind before ending the database pool"
+  ],
+  "limitations": [
+    "Question HTTP and MCP adapters and current Flow-node credential caller qualification remain open",
+    "The controlled ACP fixture establishes platform behavior, not actual companion-package or stand readiness",
+    "Full Phase 5 global compatibility and production build remain pending"
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "107fd8df77c81ce005b3ff38b468767b65c510bbc81a4a9b8c861cb7172d77ba",
+    "docs/db/specialist-assignments-domain.md": "7b6e649bd6bd93f9dd5023afb6fe2db4733c6f2aadf0739b92d005c6f4bbc039",
+    "docs/system-analytics/specialist-assignments.md": "05fc791738ecb38a09f2c14a0a404b06906a1646eef0566a7ec763cee1c183bb",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "90b1217ac91bd727f9ed9d840d96b056cfb3a72acba78963d7b61a60022b91c5",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "f5997c5aa4ee05e461e223e260639bafc90b5ffe8c123642a58a8448d4753167",
+    "web/lib/db/migrations/0249_specialist_flow_question.sql": "4d816f87307ace1991f80dec2ad0d3601fc5aca08149e1477ff739cd0bafd0ce",
+    "web/lib/db/migrations/meta/0249_snapshot.json": "3d5c248bc389487fc8febd64425c6d013765d84f8d4dea05d01d77fee13a0cf0",
+    "web/lib/db/migrations/meta/_journal.json": "3aa3cc8150f818a37826f7830ced797a34f0e2b649f82d66d311633a3ba1ee9d",
+    "web/lib/db/schema.ts": "41c8dfa6131279bdce8fe25f4d1d718b488f691566511c4f4ac35400733149d7",
+    "web/lib/execution-host/flow-question-source.ts": "856ef800671f9ac63e21abc415bd7f9efc8ceef055c3689ed79e405f896ace72",
+    "web/lib/flows/graph/action-resume.ts": "936ba1b650f4e98acbf59b4606e6776934f52bcfdb47a6a0c11c0d2feca3920f",
+    "web/lib/flows/runner-agent.ts": "db79484ffd2ec15f187cbe9e2db0d7b708f6e4a671a0e76d106234260095caee",
+    "web/lib/runs/recover.ts": "a7845086ed67e1eddd5cc872f383064e2b51b6c5d0463e8e21f3cbfd24a272b4",
+    "web/lib/runs/state-transitions.ts": "f8c32c87a9a0098d2aeefbd6de1f75eada2dfeb92e6973e4c7d217c97cf20630",
+    "web/lib/services/agent-question.ts": "a2af2c5ce133649f64e59aff0790350a65d560ce261550b6da3341d8f1ed82b1",
+    "web/lib/services/assignment-question-response.ts": "ae9dc7e6faf68f526f7a623c0427cd126e03ee8b8487431f4999c100b15c700f",
+    "web/lib/services/assignment-question.ts": "c676dc258c64a7cd31ddbdde13f93c342d87bc920d75dc3e693b473ad82069e6",
+    "web/lib/specialist-assignments/flow-question.ts": "b86dbc346349d7100949101157c4e3cf923a1df7953503efd298b6f64f8371a0",
+    "web/lib/specialist-assignments/question-authority.ts": "6ee428123ec27f39a8600b357ae25404850f3e6c55cd928b940494730a8ee458"
+  }
+}

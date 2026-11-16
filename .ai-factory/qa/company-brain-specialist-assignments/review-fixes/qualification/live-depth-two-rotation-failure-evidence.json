@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "adf22d076",
+  "sourceFixedDuringRun": true,
+  "package": {
+    "tag": "rah/v1.0.4",
+    "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6"
+  },
+  "verdict": "depth_one_passed_depth_two_failed",
+  "depthOneRunId": "d88b8d77-2085-4de7-81b0-84f0dbb8ed0f",
+  "depthTwoRunId": "5e0aae59-e46d-4a0f-bdaa-6fa14223b626",
+  "confirmedMechanism": "same-attempt reentry rotated the active session credential before subsequent401 responses",
+  "renewalFailureClassification": "unknown; previous logger omitted exception classification",
+  "independentDatabaseHazard": "Run/token lock inversion reproduced separately with SQLSTATE40P01; this run does not prove it caused renewal failure",
+  "redactions": {
+    "providerSecrets": 0,
+    "managedCredentials": 0
+  },
+  "files": {
+    "live-depth-two-rotation-failure.json": "922cff36a89ac43d1ef3311ed5056f94f2e4e0ff63cdd9b86908f279e9d30042",
+    "live-depth-two-rotation-failure.log.gz": "8a86da38ac7d342c7bcc95707502e27d81f7ad3b70e8500734662818df6a56af"
+  }
+}

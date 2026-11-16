@@ -47,6 +47,7 @@ export async function GET(
         ? await loadAgentHistoryEvidence(access.db, page, {
             projectId: access.projectId,
             agentId: access.agentId,
+            recipient: { kind: "user", userId: access.actor.id },
           })
         : page,
     );

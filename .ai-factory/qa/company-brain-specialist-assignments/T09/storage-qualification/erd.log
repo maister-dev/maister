@@ -1,0 +1,2 @@
+$ tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts
+generate-erd-dbml: wrote /Users/kaa/.codex/worktrees/2599/mAIster/docs/db/erd.dbml (163 tables)

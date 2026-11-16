@@ -5,7 +5,9 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { getInboxCardContext } from "@/lib/queries/inbox-context";
@@ -30,6 +32,9 @@ function httpStatusForCode(code: string): number {
     case "PASSWORD_CHANGE_REQUIRED":
     case "ACCOUNT_INACTIVE":
       return 403;
+    case "PRECONDITION":
+    case "CONFLICT":
+      return 409;
     default:
       return 500;
   }
@@ -39,7 +44,13 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   if (isMaisterError(err)) {
     return NextResponse.json(
       { code: err.code, message: err.message },
-      { status: httpStatusForCode(err.code) },
+      {
+        status:
+          err.details?.reason === "run_unavailable"
+            ? 404
+            : httpStatusForCode(err.code),
+        headers: { "Cache-Control": "private, no-store" },
+      },
     );
   }
   const message = err instanceof Error ? err.message : String(err);
@@ -59,7 +70,7 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const runRows = await db.select().from(runs).where(eq(runs.id, runId));
@@ -69,7 +80,12 @@ export async function GET(
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
 
-    await requireProjectAction(run.projectId, "readBoard");
+    if (run.projectId === null)
+      await assertCompanyRunReadAccess(getDb(), user.id, runId);
+    else await requireProjectAction(run.projectId, "readBoard");
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const context = await getInboxCardContext({
       id: run.id,
@@ -79,7 +95,13 @@ export async function GET(
       flowId: run.flowId ?? null,
     });
 
-    return NextResponse.json(context);
+    if (run.projectId === null)
+      await assertCompanyRunReadAccess(getDb(), user.id, runId);
+    else await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
+
+    return NextResponse.json(context, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
   } catch (err) {
     return errorResponse(err, runId);
   }

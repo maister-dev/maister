@@ -15,7 +15,9 @@ import {
   gt,
   inArray,
   isNull,
+  isNotNull,
   notInArray,
+  or,
   sql,
 } from "drizzle-orm";
 import pino from "pino";
@@ -26,6 +28,7 @@ import {
   inspectOperationalContextMount,
   operationalContextMountSnapshots,
   operationalWorkspace,
+  isCompanyFlowResource,
 } from "@/lib/agents/operational-context";
 import { restoreAgentMaterialization } from "@/lib/agents/dirty-watchdog";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
@@ -43,7 +46,10 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { applyAgentCleanupIncident } from "@/lib/runs/agent-incidents";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
@@ -107,8 +113,9 @@ export async function disposeOperationalRun(
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
 
   if (
-    run?.agentKind !== "operational" ||
-    !run.operationalTerminal ||
+    !run ||
+    (!(run.agentKind === "operational" && run.operationalTerminal) &&
+      !isCompanyFlowResource(run)) ||
     !run.operationalCleanup ||
     !TERMINAL.includes(run.status as (typeof TERMINAL)[number])
   )
@@ -156,7 +163,7 @@ export async function disposeOperationalRun(
         await emitDomainEvent({
           db: tx,
           kind: "run.operational_cleanup_changed",
-          projectId: run.projectId!,
+          ...runDomainEventScope(run),
           taskId: run.taskId,
           runId,
           payload: {
@@ -223,7 +230,7 @@ export async function disposeOperationalRun(
         await emitDomainEvent({
           db: tx,
           kind: "run.operational_cleanup_changed",
-          projectId: run.projectId!,
+          ...runDomainEventScope(run),
           taskId: run.taskId,
           runId,
           payload: { runId, revision: next.revision, state: next.state },
@@ -351,7 +358,9 @@ export async function disposeOperationalRun(
     )
       throw cleanupError("operational_execution_not_quiescent");
     const context = await operationalWorkspace(db, run);
-    const preparationFence = await acquirePreparationWorkspace(context);
+    if (workspace && context.ownerKind !== "project")
+      throw cleanupError("company_workspace_unexpected_repository");
+    const preparationFence = await acquirePreparationWorkspace({...context,repoPath:context.ownerKind === "company" ? null : context.repoPath});
 
     try {
       await preparationFence.run(async () => {
@@ -421,6 +430,8 @@ export async function disposeOperationalRun(
           await renew();
           await restoreAgentMaterialization(context.cwd, runId);
           if (workspace) {
+          if (context.ownerKind !== "project")
+            throw cleanupError("company_workspace_unexpected_repository");
             const preserved = await (options.preserve ?? preserveWorktree)({
               runId,
               worktreePath: context.cwd,
@@ -489,7 +500,7 @@ export async function disposeOperationalRun(
     await renew();
     await removeOwnedPlainAgentDirectory({
       root: worktreesRoot(),
-      directoryPath: operationalAgentRuntimePath(context.projectSlug, runId),
+      directoryPath: context.runtimePath,
     });
     if (client && assignment?.executionWorkspaceId)
       await client.releaseWorkspace(assignment.executionWorkspaceId);
@@ -599,7 +610,10 @@ export async function sweepOperationalDispositions(
     .from(runs)
     .where(
       and(
-        eq(runs.agentKind, "operational"),
+        or(
+          eq(runs.agentKind, "operational"),
+          and(eq(runs.runKind, "flow"), isNotNull(runs.companyId)),
+        ),
         inArray(runs.status, [...TERMINAL]),
         sql`${runs.operationalCleanup}->>'state' IN ('armed','retained','retry','removed','preserving')`,
         sql`(${runs.operationalCleanup}->>'dueAt')::timestamptz <= ${now}`,

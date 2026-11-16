@@ -18,14 +18,21 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
+import {
+  assertSpecialistExecutor,
+  beginSpecialistExecutor,
+  renewSpecialistExecutor,
+} from "@/lib/specialist-assignments/executor-lease";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { manifestDigest } from "@/lib/flows/digest";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 type PlacedFlowDriverScope = Readonly<{
   scope: "assignment";
   runId: string;
   assignmentId: string;
   assignmentEpoch: number;
+  specialistOwnerEpoch?: number;
 }>;
 type UnplacedSessionlessFlowDriverScope = Readonly<{
   scope: "unplaced_sessionless";
@@ -61,10 +68,15 @@ async function lockFlowDriverRun(
       executionAssignmentId: runs.executionAssignmentId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
+      budgetState: runs.budgetState,
+      currentStepId: runs.currentStepId,
+      flowDriverToken: runs.flowDriverToken,
     })
     .from(runs)
     .where(eq(runs.id, runId))
     .for("no key update");
+
+  if (run && (await currentBudgetTermination(tx, run))) return null;
 
   return run?.runKind === "flow" &&
     ["Running", "NeedsInput"].includes(run.status)
@@ -203,12 +215,20 @@ export async function assertFlowDriverCommit(
           ? eq(runs.executionAssignmentId, claim.assignmentId)
           : isNull(runs.executionAssignmentId),
         eq(runs.runKind, "flow"),
+        isNull(runs.companyCancellationIntent),
         eq(runs.flowDriverToken, claim.token),
         sql`${runs.flowDriverLeaseExpiresAt} > clock_timestamp()`,
       ),
     );
 
   if (!current) throw new FlowDriverClaimLost(claim);
+  if (claim.scope === "assignment" && claim.specialistOwnerEpoch !== undefined)
+    await assertSpecialistExecutor(
+      tx,
+      claim.runId,
+      claim.assignmentId,
+      claim.specialistOwnerEpoch,
+    );
   if (claim.scope === "unplaced_sessionless") {
     const [run] = await tx.select().from(runs).where(eq(runs.id, claim.runId));
 
@@ -237,6 +257,7 @@ async function acquireFlowDriverLease(
       and(
         eq(runs.id, runId),
         eq(runs.runKind, "flow"),
+        isNull(runs.companyCancellationIntent),
         or(eq(runs.status, "Running"), eq(runs.status, "NeedsInput")),
         or(
           isNull(runs.flowDriverToken),
@@ -266,14 +287,20 @@ export async function claimFlowDriver(
     if (!assignment) return null;
     const token = await acquireFlowDriverLease(tx, input.runId);
 
-    return token
-      ? {
-          ...input,
-          scope: "assignment",
-          assignmentEpoch: assignment.epoch,
-          token,
-        }
-      : null;
+    if (!token) return null;
+    const specialistOwnerEpoch = await beginSpecialistExecutor(
+      tx,
+      input.runId,
+      input.assignmentId,
+    );
+
+    return {
+      ...input,
+      scope: "assignment",
+      assignmentEpoch: assignment.epoch,
+      ...(specialistOwnerEpoch === null ? {} : { specialistOwnerEpoch }),
+      token,
+    };
   });
 }
 
@@ -320,6 +347,16 @@ export async function renewFlowDriverClaim(
 ): Promise<void> {
   await projectionTransaction(db, async (tx) => {
     await assertFlowDriverClaim(tx, claim);
+    if (
+      claim.scope === "assignment" &&
+      claim.specialistOwnerEpoch !== undefined
+    )
+      await renewSpecialistExecutor(
+        tx,
+        claim.runId,
+        claim.assignmentId,
+        claim.specialistOwnerEpoch,
+      );
     await tx
       .update(runs)
       .set({

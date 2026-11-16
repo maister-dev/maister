@@ -58,6 +58,7 @@ export type ExecutionHostDataPlaneCapabilities = {
 };
 
 export type AdoptWorkspaceWire = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   runId: string;
   projectSlug: string;
   kind: WorkspaceKind;
@@ -73,6 +74,7 @@ export type AdoptWorkspaceResult = {
 };
 
 export type WorkspaceRecord = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   executionWorkspaceId: ExecutionWorkspaceId;
   runId: string;
   projectSlug: string;
@@ -325,6 +327,49 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<AdoptWorkspaceWire>,
     opts?: CommandCallOptions,
   ): Promise<AdoptWorkspaceResult>;
+  dispatchStandRestart(
+    envelope: CommandEnvelope<unknown>,
+    opts?: CommandCallOptions,
+  ): Promise<unknown>;
+  readStandReceipt(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+    }>,
+  ): Promise<unknown>;
+  observeStandOperation(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+      resourceKey: string;
+    }>,
+  ): Promise<unknown>;
+  verifyStandOperation(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+      verificationNonce: string;
+      kind?: "inspection";
+      issuedAt: string;
+    }>,
+  ): Promise<unknown>;
+  readStandLogs(
+    selector: Readonly<{
+      operationId: string;
+      targetIncarnation: string;
+      requestDigest: string;
+      ownerEpoch: number;
+      componentId: string;
+    }>,
+  ): Promise<unknown>;
   releaseWorkspace(
     executionWorkspaceId: string,
     envelope: CommandEnvelope<EmptyPayload>,

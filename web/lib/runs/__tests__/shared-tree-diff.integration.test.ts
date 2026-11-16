@@ -57,7 +57,12 @@ let db: NodePgDatabase<typeof schema>;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/authz", () => ({
-  requireActiveSession: vi.fn(async () => undefined),
+  requireActiveSession: vi.fn(async () => ({
+    id: "shared-tree-reader",
+    role: "member",
+    accountStatus: "active",
+    mustChangePassword: false,
+  })),
   requireProjectAction: vi.fn(async () => undefined),
 }));
 

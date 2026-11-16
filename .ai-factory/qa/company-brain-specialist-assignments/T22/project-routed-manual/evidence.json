@@ -1,0 +1,103 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Versioned existing project manual launch entry and shared late atomic admission adoption",
+  "baseCommit": "1808ff291",
+  "status": "Routed project manual entry qualified; T22 remaining source/comment routing stays open",
+  "red": [
+    {
+      "case": "Corrected real-permission fixture against baseline route rejected the structured envelope",
+      "baselineCommit": "1808ff291",
+      "expectedStatuses": [
+        200,
+        200,
+        201
+      ],
+      "actualStatuses": [
+        200,
+        201,
+        422
+      ],
+      "exitCode": 1
+    },
+    {
+      "case": "Actual three-entry concurrency missed initial lookup but found an admitted assignment in later atomic intake and re-entered queued-only admission",
+      "actualStatuses": [
+        200,
+        201,
+        409
+      ],
+      "reason": "project_assignment_launch_mismatch",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 169,
+      "files": 8,
+      "durationSeconds": 66.55,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 28.14,
+      "exitCode": 0
+    },
+    "legacyRouteUnit": {
+      "tests": 1,
+      "files": 1,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "publicEnRuBuild": {
+      "exitCode": 0
+    },
+    "publicLinks": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Existing project launch accepts a closed version-one objective envelope and derives owner/attachment only from its authenticated path. Native 201/200 receipts are private/no-store; legacy task/runner/workspace and 202 behavior remain unchanged.",
+    "Browser native, personal bearer and routed deliveries share the original exact canonical user/idempotency identity and request digest. Three concurrent standalone deliveries and native/routed coordinator deliveries retain one assignment/input/Run and existing carrier.",
+    "The routed identity lookup uses current real project permission checks and bounded existing transaction policy without mutable provider preflight. Current permission loss refuses replay; an encoded role and disabled current attachment still permit authorized completed replay.",
+    "Shared project manual intake now inspects the result of atomic intake for retained Run links before entering admission again. It adopts late-visible completed admission without treating other payload/configuration/provider conflicts as duplicates.",
+    "Actual existing scheduler, repository admission, real supervisor and controlled ACP processes reach required valid standalone/coordinator outcomes and preserve literal private input.",
+    "The precise envelope is generated from its real Zod grammar into OpenAPI, validated against actual routed requests and rejects caller ownership. English/Russian operational guides describe the authenticated request and replay contract.",
+    "Existing native company cron/event/webhook and project trigger/Flow/history/main-only populated upgrade and Brain-independent project deletion regression remain green."
+  ],
+  "corrections": [
+    "The first probe reached an unbound Next.js session boundary in the fixture and returned 500, so it was not counted as product RED. The fixture now supplies its owned session while calling the real explicit-user project permission checker.",
+    "With that fixture corrected, the exact committed baseline route was temporarily restored, produced the genuine unsupported-envelope 422 RED, and the implementation was restored before subsequent work.",
+    "The first actual implementation exposed the independent late atomic admission race; the production fix applies to all project manual callers, not only the new route."
+  ],
+  "limits": [
+    "T22 remains open for task-comment and remaining project source routing. Existing simple launch payloads retain legacy semantics; assignment UX is a later task.",
+    "Clarification/context/delivery, governed agent-principal delegation and recovery remain their explicit later tasks.",
+    "No new migration, scheduler, attempt ledger, installable stand package, real-model or stand-pilot readiness, production effect, push or deployment is claimed."
+  ],
+  "sourceSha256": {
+    "web/app/api/projects/[slug]/agents/[agentId]/launch/route.ts": "d11c6b34483f91fa743d724ee6f371c588e799e8dc97cb4443897340e6a92aee",
+    "web/lib/specialist-assignments/intake-types.ts": "62c0f92cdbb539a079bc923b49443dc897aec264533549c7d9ab1e92a8354e2a",
+    "web/lib/specialist-assignments/project-routed-manual-intake.ts": "81a761f7f4e64d7902149e429efedc5b9bcebbd08fda9a01515dd2e6ee4f02a2",
+    "web/lib/specialist-assignments/project-manual-intake.ts": "030e0e3cb3c79b9f63f3c3b11541817b5182350dbc0a40cf1882520bc056b2bb",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "1f61379d0b4eb93d8e95cab767e15c79fa628e142b602f5be28fc901d7da2a6b",
+    "docs/api/web.openapi.yaml": "c084f6e7ae331a6bf3ac8b7361f7bd8be2ade690ec6d6933bed99a39b9b87d12"
+  }
+}

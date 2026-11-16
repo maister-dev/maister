@@ -4,14 +4,16 @@ import { z } from "zod";
 export const AGENT_KINDS = ["code_delivery", "operational"] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
+export const OPERATIONAL_EVIDENCE_CONTRACT = "operational_evidence_v2";
 export const operationalCompletionSchema = z
   .object({
-    contract: z.literal("operational_v1"),
+    contract: z.enum(["operational_v1", OPERATIONAL_EVIDENCE_CONTRACT]),
   })
   .strict();
 export type OperationalCompletion = z.infer<typeof operationalCompletionSchema>;
 
 export const OPERATIONAL_ENGINE_MIN = "3.9.0";
+export const OPERATIONAL_EVIDENCE_ENGINE_MIN = "3.12.0";
 
 export const taskQualificationDeclarationSchema = z
   .object({ contract: z.literal("v1"), role: z.enum(["intake", "qualifier"]) })

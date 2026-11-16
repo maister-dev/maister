@@ -100,6 +100,23 @@ export interface TokenLabels {
   scopeRunsPromote: string;
   scopeRunsSync: string;
   scopeRunsRecover: string;
+  scopeKnowledgeRead: string;
+  scopeKnowledgePropose: string;
+  scopeKnowledgeReview: string;
+  scopeKnowledgeConfirm: string;
+  scopeKnowledgeManage: string;
+  scopeAssignmentsRead: string;
+  scopeAssignmentsSubmit: string;
+  scopeAssignmentsUpdate: string;
+  scopeAssignmentsAccept: string;
+  scopeAssignmentsAnswer: string;
+  scopeAssignmentsRecover: string;
+  scopeTargetsRead: string;
+  scopeTargetsLogs: string;
+  scopeTargetsRestart: string;
+  scopeTargetsRecover: string;
+  scopeAssignmentsCancel: string;
+  scopeSpecialistsRead: string;
   scopeMemoryRead: string;
   scopeMemoryWrite: string;
   scopeAgentMemoryWrite: string;
@@ -197,6 +214,40 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeRunsSync;
     case "runs:recover":
       return labels.scopeRunsRecover;
+    case "assignments:read":
+      return labels.scopeAssignmentsRead;
+    case "assignments:submit":
+      return labels.scopeAssignmentsSubmit;
+    case "assignments:update":
+      return labels.scopeAssignmentsUpdate;
+    case "assignments:accept":
+      return labels.scopeAssignmentsAccept;
+    case "assignments:answer":
+      return labels.scopeAssignmentsAnswer;
+    case "assignments:recover":
+      return labels.scopeAssignmentsRecover;
+    case "assignments:cancel":
+      return labels.scopeAssignmentsCancel;
+    case "specialists:read":
+      return labels.scopeSpecialistsRead;
+    case "targets:read":
+      return labels.scopeTargetsRead;
+    case "targets:logs":
+      return labels.scopeTargetsLogs;
+    case "targets:restart":
+      return labels.scopeTargetsRestart;
+    case "targets:recover":
+      return labels.scopeTargetsRecover;
+    case "knowledge:read":
+      return labels.scopeKnowledgeRead;
+    case "knowledge:propose":
+      return labels.scopeKnowledgePropose;
+    case "knowledge:review":
+      return labels.scopeKnowledgeReview;
+    case "knowledge:confirm":
+      return labels.scopeKnowledgeConfirm;
+    case "knowledge:manage":
+      return labels.scopeKnowledgeManage;
     case "memory:read":
       return labels.scopeMemoryRead;
     case "memory:write":
@@ -446,6 +497,23 @@ export async function IntegrationsPanel({
     scopeRunsPromote: t("scopeRunsPromote"),
     scopeRunsSync: t("scopeRunsSync"),
     scopeRunsRecover: t("scopeRunsRecover"),
+    scopeKnowledgeRead: t("scopeKnowledgeRead"),
+    scopeKnowledgePropose: t("scopeKnowledgePropose"),
+    scopeKnowledgeReview: t("scopeKnowledgeReview"),
+    scopeKnowledgeConfirm: t("scopeKnowledgeConfirm"),
+    scopeKnowledgeManage: t("scopeKnowledgeManage"),
+    scopeAssignmentsRead: t("scopeAssignmentsRead"),
+    scopeAssignmentsSubmit: t("scopeAssignmentsSubmit"),
+    scopeAssignmentsUpdate: t("scopeAssignmentsUpdate"),
+    scopeAssignmentsAccept: t("scopeAssignmentsAccept"),
+    scopeAssignmentsAnswer: t("scopeAssignmentsAnswer"),
+    scopeAssignmentsRecover: t("scopeAssignmentsRecover"),
+    scopeTargetsRead: t("scopeTargetsRead"),
+    scopeTargetsLogs: t("scopeTargetsLogs"),
+    scopeTargetsRestart: t("scopeTargetsRestart"),
+    scopeTargetsRecover: t("scopeTargetsRecover"),
+    scopeAssignmentsCancel: t("scopeAssignmentsCancel"),
+    scopeSpecialistsRead: t("scopeSpecialistsRead"),
     scopeMemoryRead: t("scopeMemoryRead"),
     scopeMemoryWrite: t("scopeMemoryWrite"),
     scopeAgentMemoryWrite: t("scopeAgentMemoryWrite"),

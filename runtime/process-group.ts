@@ -8,7 +8,9 @@ export type ProcessGroupObservation =
   | Readonly<{ state: "active"; states: readonly string[] }>
   | Readonly<{ state: "unavailable" }>;
 
-function groupAbsent(group: number): boolean | null {
+/** Only ESRCH establishes absence; unavailable observations never release ownership. */
+export function processGroupAbsent(group: number): boolean | null {
+  if (!Number.isSafeInteger(group) || group <= 0) return null;
   try {
     process.kill(-group, 0);
 
@@ -25,7 +27,7 @@ export async function inspectProcessGroup(
 ): Promise<ProcessGroupObservation> {
   if (!Number.isSafeInteger(group) || group <= 0)
     return { state: "unavailable" };
-  const absent = groupAbsent(group);
+  const absent = processGroupAbsent(group);
 
   if (absent === true) return { state: "retired" };
   if (absent === null) return { state: "unavailable" };
@@ -52,7 +54,7 @@ export async function inspectProcessGroup(
     return Number(failure.code) === 1 &&
       !failure.stdout?.trim() &&
       !failure.stderr?.trim() &&
-      groupAbsent(group) === true
+      processGroupAbsent(group) === true
       ? { state: "retired" }
       : { state: "unavailable" };
   }
@@ -65,7 +67,7 @@ export async function inspectProcessGroup(
     if (Number(match[1]) === group) members.push(match[2]!);
   }
   if (members.length === 0)
-    return groupAbsent(group) === true
+    return processGroupAbsent(group) === true
       ? { state: "retired" }
       : { state: "unavailable" };
   const active = members.filter((state) => !state.startsWith("Z"));

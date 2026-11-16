@@ -2,8 +2,9 @@ import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
+import type { CompanyAction, ConfirmationClass } from "@/lib/company/types";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -256,6 +257,71 @@ export async function getProjectRole(
 export interface ProjectAccess {
   user: SessionUser;
   role: ProjectRole;
+}
+
+export type CompanyAccess = Readonly<{
+  companyId: string;
+  user: SessionUser;
+  grantId: string;
+  policyRevision: number;
+  confirmationClasses: readonly ConfirmationClass[];
+}>;
+
+/** Company administration never implies access to company content. */
+export async function requireCompanyActionForUser(
+  userId: string,
+  companyId: string,
+  action: CompanyAction,
+): Promise<CompanyAccess> {
+  const user = await requireActiveUserById(userId);
+  const { companyGrants } = schema;
+  const [grant] = await db()
+    .select({
+      id: companyGrants.id,
+      revision: companyGrants.revision,
+      confirmationClasses: companyGrants.confirmationClasses,
+    })
+    .from(companyGrants)
+    .innerJoin(users, eq(users.id, companyGrants.principalId))
+    .where(
+      and(
+        eq(companyGrants.companyId, companyId),
+        eq(companyGrants.principalType, "user"),
+        eq(companyGrants.principalId, userId),
+        eq(companyGrants.action, action),
+        isNull(companyGrants.revokedAt),
+        eq(users.accountStatus, "active"),
+        eq(users.mustChangePassword, false),
+      ),
+    );
+
+  log.debug(
+    {
+      userId,
+      companyId,
+      action,
+      granted: grant !== undefined,
+      policyRevision: grant?.revision,
+    },
+    "company authorization",
+  );
+  if (!grant) {
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "An explicit current company grant is required",
+      {
+        details: { reason: "company_grant_required" },
+      },
+    );
+  }
+
+  return {
+    companyId,
+    user,
+    grantId: grant.id,
+    policyRevision: grant.revision,
+    confirmationClasses: grant.confirmationClasses,
+  };
 }
 
 export async function requireActiveUserById(

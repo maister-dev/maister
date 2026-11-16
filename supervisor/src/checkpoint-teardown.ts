@@ -2,7 +2,7 @@ import type { PendingPermissionRegistry } from "./pending-permissions";
 import type { RegistryEntry, SessionRegistry } from "./registry";
 import type { Logger } from "pino";
 
-import { signalOwnedSessionProcess, waitForChildExit } from "./execution-fence";
+import { terminateSessionProcess } from "./execution-fence";
 import { SupervisorError } from "./types";
 
 // ADR-180 permission cap; ADR-183 a producer paused by outbox pressure past
@@ -51,24 +51,19 @@ export async function checkpointSession(
   const sessionId = entry.record.sessionId;
   const log = input.logger.child({ name: "supervisor-checkpoint" });
   const startedAt = Date.now();
-
-  if (entry.record.status === "exited" || entry.record.status === "crashed") {
-    log.info(
-      { sessionId, status: entry.record.status, alreadyCheckpointed: true },
-      "checkpoint idempotent ack",
-    );
-
-    return {
-      alreadyCheckpointed: true,
-      monotonicId: entry.record.monotonicId,
-      pendingPermissionCount: 0,
-    };
-  }
-
-  const requestIds = permissions.requestIds(sessionId);
+  const alreadyCheckpointed =
+    entry.record.status === "exited" || entry.record.status === "crashed";
+  const requestIds = alreadyCheckpointed
+    ? []
+    : permissions.requestIds(sessionId);
 
   log.info(
-    { sessionId, pendingPermissionCount: requestIds.length, cause },
+    {
+      sessionId,
+      pendingPermissionCount: requestIds.length,
+      alreadyCheckpointed,
+      cause,
+    },
     "checkpoint requested",
   );
 
@@ -76,38 +71,38 @@ export async function checkpointSession(
     permissions.cancel(sessionId, requestId, "checkpoint");
   }
 
-  registry.markIntentionalShutdown(sessionId, "checkpoint", cause);
-  entry.record.stopOutputForTeardown?.();
-  signalOwnedSessionProcess(entry, "SIGTERM");
+  if (!alreadyCheckpointed)
+    registry.markIntentionalShutdown(sessionId, "checkpoint", cause);
 
-  const exited = await waitForChildExit(entry, killGraceMs);
+  const termination = await terminateSessionProcess(entry, killGraceMs, log);
 
-  if (!exited) {
-    log.warn(
-      { sessionId, killGraceMs },
-      "checkpoint sigterm-grace-expired-sigkill",
-    );
-    signalOwnedSessionProcess(entry, "SIGKILL");
-
+  if (termination !== "confirmed")
     throw new SupervisorError(
       "EXECUTOR_UNAVAILABLE",
-      `checkpoint timed out — SIGKILL escalation after ${killGraceMs}ms`,
+      "Checkpoint could not confirm retirement of the owned session process group",
+      {
+        details: {
+          reason: "session_process_owner_unconfirmed",
+          runId: entry.record.runId,
+          sessionId,
+          stage: termination,
+        },
+      },
     );
-  }
 
   log.info(
     {
       sessionId,
       latencyMs: Date.now() - startedAt,
       pendingPermissionCount: requestIds.length,
-      alreadyCheckpointed: false,
+      alreadyCheckpointed,
       cause,
     },
     "checkpoint complete",
   );
 
   return {
-    alreadyCheckpointed: false,
+    alreadyCheckpointed,
     monotonicId: entry.record.monotonicId,
     pendingPermissionCount: requestIds.length,
   };

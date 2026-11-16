@@ -49,6 +49,13 @@ channels:
         role on the project derived from the run row. Projectless local-package
         assistant runs are restricted to their server-derived creator.
 
+        Enrolled native evidence runs additionally require current access to
+        their complete server-recorded source union. Unavailable sources or an
+        incomplete capture return HTTP 409 before streaming. Each asynchronous
+        event-batch read is followed by a current source check before enqueue;
+        revocation closes the stream. Consumer cancellation releases wake
+        waiters. No database locks span a network wait.
+
         Replay is exclusive of `Last-Event-ID` or the `lastEventId` query
         fallback. Invalid, negative, leading-zero, or overlong cursors return
         HTTP 400 before streaming. A default connection replays from sequence

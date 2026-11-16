@@ -25,7 +25,7 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { upgradeMaintenanceEngaged } from "@/lib/maintenance/upgrade-fence";
-import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
 import {
   applyAgentCleanupIncident,
   applyAgentTerminalIncidents,
@@ -201,7 +201,7 @@ async function factsPage(
     .orderBy(asc(runs.id))
     .limit(limit)
     .for("update");
-  const outcomes = await loadOperationalOutcomes(
+  const outcomes = await inspectOperationalOutcomes(
     tx,
     rows.map((run) => run.id),
   );
@@ -306,6 +306,7 @@ async function schedulesPage(
     .from(agentSchedules)
     .where(
       and(
+        isNotNull(agentSchedules.projectId),
         isNotNull(agentSchedules.lastAttemptAt),
         state.afterScheduleId
           ? gt(agentSchedules.id, state.afterScheduleId)

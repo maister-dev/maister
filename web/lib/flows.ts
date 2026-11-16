@@ -50,6 +50,7 @@ import {
   resolveResultProfiles,
 } from "@/lib/flows/result-profiles";
 import { semverGte } from "@/lib/flows/engine-version";
+import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { readAuthoredFlowPackageDirectory } from "@/lib/flows/package-authoring";
 import { resolveTrust } from "@/lib/flows/trust";
 import {
@@ -1278,7 +1279,12 @@ async function installFlowPluginImpl(
   // installs (execTrust=untrusted) skip setup and auto-enable without it.
   let enablementState: "Enabled" | "Installed" = "Installed";
 
-  if (execTrust === "trusted") {
+  if (requiresExplicitNativeFindingsEnablement(rev.manifest)) {
+    log.info(
+      { flowId, revisionId: rev.revisionId, execTrust },
+      "native findings installation awaits explicit enablement",
+    );
+  } else if (execTrust === "trusted") {
     const setupStatus =
       rev.setupStatus === "pending"
         ? await runRevisionSetup({

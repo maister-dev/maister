@@ -22,6 +22,7 @@ import pino from "pino";
 
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
+import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { countTaskLaunchPreparationSlots } from "@/lib/tasks/launch-capacity";
 import { getDb } from "@/lib/db/client";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/execution-host/host-pressure";
 import { CRASH_RECOVER_BUDGET_RESET } from "@/lib/runs/crash-recover";
 import { SLOT_HOLDING_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
   automaticProjectFootprintSql,
   clearC2Claim,
@@ -342,7 +344,7 @@ function queuedRunHasAvailableSlots(): SQL<boolean> {
           AND child.id <> ${runs.id}
           AND child.status IN (${holdingStatuses})
       ) >= (parent.delegation_bounds->>'maxActiveChildren')::integer
-  )`;
+  ) AND (${assignmentBudgetAllowsDispatchSql(sql`runs.id`)})`;
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -498,6 +500,7 @@ export async function tryStartRun(
       workspaceMode: string | null;
       rootRunId: string | null;
       parentRunId: string | null;
+      assignmentBudgetAvailable: boolean;
     }> = await tx
       .select({
         runKind: runs.runKind,
@@ -505,6 +508,9 @@ export async function tryStartRun(
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
         parentRunId: runs.parentRunId,
+        assignmentBudgetAvailable: assignmentBudgetAllowsDispatchSql(
+          sql`runs.id`,
+        ),
       })
       .from(runs)
       .where(eq(runs.id, runId));
@@ -560,6 +566,8 @@ export async function tryStartRun(
         )
       : null;
     const activeChildrenBlocked = activeChildren?.atCap === true;
+    const assignmentBudgetBlocked =
+      targetRows[0]?.assignmentBudgetAvailable === false;
 
     if (activeChildrenBlocked) {
       log.info(
@@ -604,16 +612,23 @@ export async function tryStartRun(
       automaticAllowed &&
       !sharedBlocked &&
       !activeChildrenBlocked &&
+      !assignmentBudgetBlocked &&
       liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
     ) {
       await acceptedDispatch?.apply(tx);
-      const startedRows: Array<{ projectId: string }> = await tx
+      const startedRows: Array<{ projectId: string | null }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Pending"),
+            assignmentBudgetAllowsDispatchSql(sql`runs.id`),
+          ),
+        )
         .returning({ projectId: runs.projectId });
 
-      if (startedRows.length > 0) {
+      if (startedRows[0]?.projectId != null) {
         await emitWebhookEvent({
           db: tx,
           type: "run.started",
@@ -655,7 +670,15 @@ export async function tryStartRun(
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
 
     log.info(
-      { runId, pool, liveCount, cap, queuePosition, fence: effective.fence },
+      {
+        runId,
+        pool,
+        liveCount,
+        cap,
+        queuePosition,
+        fence: effective.fence,
+        assignmentBudgetBlocked,
+      },
       "tryStartRun → queued",
     );
 
@@ -1143,10 +1166,12 @@ export async function promoteNextPending(
           if (claim) return { kind: "task_intent" as const, claim };
         } catch (error) {
           if (!isMaisterError(error)) throw error;
-          const { holdQueuedTaskLaunchIntent } =
+          const { holdQueuedTaskLaunchIntent, deferQueuedTaskLaunchIntent } =
             await import("@/lib/tasks/launch-dispatch");
 
-          await holdQueuedTaskLaunchIntent(tx, ref.intentId, error);
+          if (isTaskLaunchContention(error))
+            await deferQueuedTaskLaunchIntent(tx, ref.intentId, error);
+          else await holdQueuedTaskLaunchIntent(tx, ref.intentId, error);
         }
         continue;
       }
@@ -1164,6 +1189,7 @@ export async function promoteNextPending(
             and(
               eq(runs.id, runId),
               eq(runs.status, cand.cls === "C1" ? "Pending" : "NeedsInputIdle"),
+              assignmentBudgetAllowsDispatchSql(sql`runs.id`),
             ),
           )
           .for("update", { skipLocked: true });
@@ -1232,7 +1258,7 @@ export async function promoteNextPending(
             (targetAcpSessionId != null ||
               (runKind === "flow" && ref.resumeStartedAt != null));
 
-          const flipped: Array<{ projectId: string }> = await tx
+          const flipped: Array<{ projectId: string | null }> = await tx
             .update(runs)
             .set(
               isResume
@@ -1252,13 +1278,14 @@ export async function promoteNextPending(
 
           if (flipped.length === 0) continue;
 
-          await emitWebhookEvent({
-            db: tx,
-            type: "run.started",
-            projectId: flipped[0].projectId,
-            runId,
-            data: { trigger: "queue_promote" },
-          });
+          if (flipped[0].projectId !== null)
+            await emitWebhookEvent({
+              db: tx,
+              type: "run.started",
+              projectId: flipped[0].projectId,
+              runId,
+              data: { trigger: "queue_promote" },
+            });
 
           return {
             kind: "run" as const,
@@ -1349,7 +1376,7 @@ export async function promoteNextPending(
           });
 
           if (!resumed.ok) continue;
-          const [claimed]: Array<{ projectId: string }> = await tx
+          const [claimed]: Array<{ projectId: string | null }> = await tx
             .select({ projectId: runs.projectId })
             .from(runs)
             .where(eq(runs.id, runId));
@@ -1359,7 +1386,7 @@ export async function promoteNextPending(
           const resumed = await markResumed(runId, { db: tx });
 
           if (!resumed.ok) continue;
-          const flipped: Array<{ projectId: string }> = await tx
+          const flipped: Array<{ projectId: string | null }> = await tx
             .update(runs)
             .set({ resumeRequestedAt: null })
             .where(eq(runs.id, runId))
@@ -1368,13 +1395,14 @@ export async function promoteNextPending(
           claimedProjectId = flipped[0]?.projectId ?? null;
         }
 
-        await emitWebhookEvent({
-          db: tx,
-          type: "run.started",
-          projectId: claimedProjectId as string,
-          runId,
-          data: { trigger: "queue_resume" },
-        });
+        if (claimedProjectId !== null)
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.started",
+            projectId: claimedProjectId,
+            runId,
+            data: { trigger: "queue_resume" },
+          });
 
         return {
           kind: "run" as const,

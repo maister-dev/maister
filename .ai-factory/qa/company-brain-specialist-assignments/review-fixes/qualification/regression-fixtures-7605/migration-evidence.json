@@ -1,0 +1,56 @@
+{
+  "checkout": "/private/tmp/maister-migration-triage-7605ebf59",
+  "base": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "command": "web/node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+  "log": "/private/tmp/cb-migration-launch-7605-isolated.log",
+  "result": {
+    "passed": 4,
+    "failed": 1,
+    "durationSeconds": 13.91
+  },
+  "failure": {
+    "test": "DB02 upgrades immutable v1 intent history without inventing missing execution input and fences its old writer",
+    "file": "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+    "line": 709,
+    "kind": "AssertionError",
+    "sqlState": null,
+    "expectedMissingField": "specialist_assignment",
+    "actualValue": null
+  },
+  "cause": {
+    "migration": "0265_specialist_source_handoff.sql",
+    "columnIntroducedBy": "d522c2e6f4216dd6d468a399d8c14972e5a7a01e",
+    "testExpectationLastChangedBy": "223ca9d3dfb1706feab568a7ca74e2f33226fbac",
+    "sourceDiffFromPreJitA365": "Owning test,0265 migration,pg-container,migration-upgrade identical"
+  },
+  "recommendation": "Extend strict expected historical receipt to include specialist_assignment:null; no migration/runtime modification",
+  "primaryModified": false,
+  "isolatedSourceModified": true,
+  "fix": {
+    "file": "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+    "sha256": "26e6059cdd45e2297a658c55d6ac5315d8db3b9bb6d34b9f2a937d60debf1533",
+    "patch": "/private/tmp/cb-migration-launch-7605.patch",
+    "patchSha256": "dba79a96855e7f697488220b7c06a6069d73ee72b2c057b00979ae3648e2370b",
+    "change": "Expected historical trigger includes specialist_assignment:null; old fields strict equality and writer fences preserved"
+  },
+  "green": {
+    "files": 2,
+    "passed": 6,
+    "durationSeconds": 12.88,
+    "command": "web/node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/db/__tests__/migration-task-launch-admission.integration.test.ts lib/db/__tests__/migration-specialist-source-handoff.integration.test.ts",
+    "log": "/private/tmp/cb-migration-launch-7605-green.log"
+  },
+  "lint": {
+    "command": "web/node_modules/.bin/eslint lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+    "log": "/private/tmp/cb-migration-launch-7605-lint.log",
+    "exitCode": 0
+  },
+  "diffCheck": {
+    "exitCode": 0
+  },
+  "types": {
+    "command": "web/node_modules/.bin/tsc --noEmit --incremental false",
+    "log": "/private/tmp/cb-migration-launch-7605-types.log",
+    "exitCode": 0
+  }
+}

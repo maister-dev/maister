@@ -1,0 +1,429 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-09T14:50:15.913044+00:00",
+  "scope": "Local review remediation and CB0 requalification; CB1 implementation remains in progress. No push, remote publication, deployment or production stand mutation.",
+  "status": {
+    "reviewFindings": "fixed and locally verified",
+    "cb0": "locally qualified",
+    "cb1": "not qualified; T27 partial, T28-T43 open",
+    "finalDocumentationGates": "passed"
+  },
+  "source": {
+    "runtimeAndInstalledPackageHead": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+    "frozenFullRegressionHead": "8f1f0321810f5c9967354177864a8b9fc4c3e263",
+    "productRuntimeAndDependenciesChangedSinceLive": false,
+    "nonProductCodeChangesSinceLive": [
+      "web/lib/brain/__tests__/private-memory-isolation.integration.test.ts",
+      "web/lib/brain/__tests__/recall.integration.test.ts",
+      "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts",
+      "web/lib/domain-events/__tests__/dispatch.integration.test.ts",
+      "web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts",
+      "web/lib/tasks/__tests__/launch-agent-admission.integration.test.ts",
+      "web/test-support/__tests__/execution-ab-process-cleanup.integration.test.ts",
+      "web/test-support/fixtures/process-helper-retirement.c",
+      "web/test-support/process-invocation.ts"
+    ],
+    "mainLastMigration": "0267_specialist_logical_work",
+    "mainMigrationEntries": 264,
+    "brainLastMigration": "0011_proposal_source_access",
+    "brainMigrationEntries": 11,
+    "appliedMigrationsChangedByReviewFixes": false
+  },
+  "fullWebIntegration": {
+    "evidence": "full-regression-8f1f03218/evidence.json",
+    "processExitCode": 0,
+    "unhandledErrors": 0,
+    "durationSeconds": 2065.72,
+    "files": {
+      "passed": 687,
+      "failed": 0,
+      "skipped": 2,
+      "total": 689
+    },
+    "tests": {
+      "passed": 6271,
+      "failed": 0,
+      "skipped": 2,
+      "total": 6273
+    },
+    "productionBuild": {
+      "passed": true,
+      "buildId": "ZXYWRhahDywRNtqR4QUID",
+      "durationMs": 12942,
+      "revision": "8f1f0321810f5c9967354177864a8b9fc4c3e263"
+    },
+    "cleanup": {
+      "invocationId": "5e60b311-1f52-4204-8d0d-41874a1c9801",
+      "ownedLiveProcesses": 0,
+      "containers": 0,
+      "temporaryRoots": 0,
+      "errors": []
+    }
+  },
+  "webUnit": {
+    "testsPassed": 9312,
+    "filesPassed": 891,
+    "durationSeconds": 26.02,
+    "log": "web-unit-final-fixtures.log.gz",
+    "sourceNote": "Executed after fixture membership fix before its commit; code matches bbe923cb2. The only later code delta in8f is an excluded integration-test file; unit/product/shared-fake sources remain identical."
+  },
+  "supervisor": {
+    "unit": {
+      "passed": 523,
+      "files": 51,
+      "log": "supervisor-unit.log.gz"
+    },
+    "integration": {
+      "passed": 388,
+      "files": 40,
+      "log": "supervisor-integration.log.gz"
+    },
+    "sourceNote": "Qualified retirement candidate is integrated in5afcb9ce9; supervisor code unchanged thereafter."
+  },
+  "mcp": {
+    "unit": {
+      "passed": 442,
+      "files": 6,
+      "log": "mcp-unit.log.gz"
+    },
+    "integration": {
+      "passed": 17,
+      "files": 1,
+      "log": "mcp-integration.log.gz"
+    },
+    "sourceNote": "Built facade and source unchanged from the qualified runtime."
+  },
+  "installedPackage": {
+    "evidence": "installed-package-7605ebf59/evidence.json",
+    "package": {
+      "tag": "rah/v1.0.4",
+      "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+      "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+      "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+    },
+    "runner": {
+      "id": "cb-live-claude",
+      "adapter": "claude",
+      "model": "glm-5.1",
+      "permissionPolicy": "default"
+    },
+    "durationMinutes": 21.8,
+    "treeSizes": [
+      3,
+      7,
+      1
+    ],
+    "typedResults": 11,
+    "scope": "local real Git-loader/ACP/browser qualification; no remote publication, stand mutation or CB1 pilot",
+    "contemporaneousAdapterVersion": null,
+    "versionLimitation": "Raw live receipt observed binary path but no version/hash. Later installed0.95.0/package fingerprints are separate post-live evidence in adapter-post-live-inspection.json."
+  },
+  "additionalBrainBrowserQualification": {
+    "evidence": "../knowledge/browser-green.log",
+    "scenariosPassed": 5,
+    "authenticationSetupPassed": true,
+    "scope": "Knowledge review, retained missing evidence and EN/RU diagnostic rendering; no new UI code after that qualification."
+  },
+  "findings": [
+    {
+      "finding": "F1",
+      "origin": "review",
+      "commit": "abb6c786f2273f5029292dbce67f88aaf7c22f32",
+      "summary": "Defer execution-writer contention without losing accepted work",
+      "evidence": [
+        "../dispatch/red.log",
+        "../dispatch/final-green.log"
+      ]
+    },
+    {
+      "finding": "F2",
+      "origin": "review",
+      "commit": "d474dd82522a2373e6655fe738cad4238b8e5f23",
+      "summary": "Rotate bounded recovery lanes without starving later assignments",
+      "evidence": [
+        "../recovery/evidence.json"
+      ]
+    },
+    {
+      "finding": "F3",
+      "origin": "review",
+      "commit": "3d24d1598128b3f72faddffe33995482991e38e3",
+      "summary": "Retain explicit missing evidence through correction review",
+      "evidence": [
+        "../knowledge/correction-red.log",
+        "../knowledge/browser-green.log"
+      ]
+    },
+    {
+      "finding": "F4",
+      "origin": "review",
+      "commit": "2e321a8f9007086e729fe34aeb40038bfd81ab20",
+      "summary": "Reconcile current migration and implementation references",
+      "evidence": [
+        "../docs/red.log",
+        "../docs/green.log"
+      ]
+    },
+    {
+      "finding": "F5",
+      "origin": "review",
+      "commit": "3d24d1598128b3f72faddffe33995482991e38e3",
+      "summary": "Localize typed system diagnostics while preserving authored bytes",
+      "evidence": [
+        "../knowledge/localization-red.log",
+        "../knowledge/records-green.log",
+        "../knowledge/http-mcp-green.log"
+      ]
+    },
+    {
+      "finding": "F6",
+      "origin": "qualification",
+      "commit": "adf22d076fb94bcacd6ad2342ab3568a5998fbb3",
+      "summary": "Bound migration metadata and SQL on one awaited writer connection",
+      "evidence": [
+        "../migrations/evidence.json"
+      ]
+    },
+    {
+      "finding": "F7",
+      "origin": "qualification",
+      "commit": "3cc4e70acc1215a8a1fcccfcd3e9df7b9bc833f7",
+      "summary": "Order native execution and credential locks consistently",
+      "evidence": [
+        "../native-token-order/evidence.json"
+      ]
+    },
+    {
+      "finding": "F8",
+      "origin": "qualification",
+      "commit": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+      "summary": "Preserve admitted credentials across owned session replay",
+      "evidence": [
+        "../native-session-continuation/evidence.json"
+      ]
+    },
+    {
+      "finding": "F9",
+      "origin": "qualification",
+      "commit": "5afcb9ce904ee5307e00e92effeb506f2c2ca07e",
+      "summary": "Observe descendant retirement within the existing shutdown grace",
+      "evidence": [
+        "../session-retirement/evidence.json"
+      ]
+    },
+    {
+      "finding": "F10",
+      "origin": "qualification",
+      "commit": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+      "summary": "Avoid JIT compilation in bounded native authorization transactions",
+      "evidence": [
+        "../native-query-policy/evidence.json"
+      ]
+    },
+    {
+      "finding": "F11",
+      "origin": "qualification",
+      "commit": "425e8a0e9ca207feee6ed54169ba38b91b02634c",
+      "summary": "Align regression fixtures and isolate package dependency ownership",
+      "evidence": [
+        "regression-fixtures-7605/evidence.json"
+      ]
+    },
+    {
+      "finding": "F12",
+      "origin": "qualification",
+      "commit": "bbe923cb20187cbc74012ec88fa9c0d8f17d23a5",
+      "summary": "Recheck transient fixture membership without weakening signal authority",
+      "evidence": [
+        "fixture-membership/evidence.json"
+      ]
+    },
+    {
+      "finding": "F13",
+      "origin": "qualification",
+      "commit": "5f0b434e4c48cf1edd3d401322e83310911873d8",
+      "summary": "Qualify ranked metadata and private-memory isolation",
+      "evidence": [
+        "native-metadata-isolation/evidence.json"
+      ]
+    },
+    {
+      "finding": "F14",
+      "origin": "qualification",
+      "commit": "8f1f0321810f5c9967354177864a8b9fc4c3e263",
+      "summary": "Drain canonical fixture projections before dependency teardown",
+      "evidence": [
+        "fixture-projection-drain/evidence.json"
+      ]
+    }
+  ],
+  "historicalAttempts": {
+    "crossedSource": "web-integration-invalidated-by-head-change.log.gz; invalidated, not release evidence",
+    "7605": "regression-fixtures-7605/evidence.json; failed fixture/collection receipt",
+    "425": "full-regression-425e8a0e9/evidence.json; failed fixture shutdown receipt",
+    "bbe": "full-regression-bbe923cb2/evidence.json; all6270assertions passed but outer exit1/unhandled error, not release evidence",
+    "earlierCb0": "../../T17/ contains historical source6729 qualification; not relabeled as current"
+  },
+  "remainingCb1": [
+    "T27 native canonical work admission/replay and governed child dispatch",
+    "T28/T28.1 exact-result decisions and operational evidence contract",
+    "T29/T30 recoverable responsibility, conserved budgets and cooperation qualification",
+    "T31-T41 configured stand connector/package, durable effect reconciliation, independent verification and real pilot",
+    "T42/T43 combined readiness/docs/roadmap gate"
+  ],
+  "nextAction": "Continue the authorized all-plan implementation after committing this qualified checkpoint; do not mark CB1 complete.",
+  "finalGates": {
+    "docs": {
+      "exitCode": 0,
+      "log": "final-docs.log.gz",
+      "erdTables": 177
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "final-contracts.log.gz",
+      "companyBrainRequirements": 84,
+      "companyBrainSurfaceExamples": 106
+    },
+    "diffCheck": {
+      "exitCode": 0
+    },
+    "initialEnvironmentFailure": {
+      "scope": "Sandbox blocked local tsx IPC socket; read-only validators reran with approved local IPC access and passed. No automatic approval rejection.",
+      "logs": [
+        "final-docs-sandbox-ipc.log.gz",
+        "final-contracts-sandbox-ipc.log.gz"
+      ]
+    }
+  },
+  "retainedProviderSecretCheck": {
+    "evidence": "retained-provider-secret-check.json",
+    "matchedFiles": 0,
+    "filesChecked": 180,
+    "scope": "Exact current configured ZAI_API_KEY comparison against retained review-fix log/JSON bytes; not a general secret detector or contemporaneous historical credential fingerprint."
+  },
+  "retainedArtifactSha256": {
+    "adapter-post-live-inspection.json": "87fc9ab1471219fc0fc842e09db355bcbc31cadbda5887bf709ef2df7b13ea8b",
+    "adapter-smoke-fixed-source-cache.json": "49eacd357d3a6ae6bccdf55fa28c4fa98e3886bcbab06627d201e5069698a86c",
+    "adapter-smoke-fixed-source.log.gz": "82b16f96b14e94e8f4c2e5fad5a66b4f1868267671b4f3dcbfe5a7a08fa3ac40",
+    "contracts-7605ebf59.log.gz": "093314b4ad8992e7f43656f81c709ff940885639952dc2c3fe88c2ce39b786ec",
+    "contracts-before-live.log.gz": "a9ca1803e655cbf302ac188c04a34e87a7fca74c36d132fbb219a507d2312a9f",
+    "diagnostic-eslint.log": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "diagnostic-smoke.log": "83fbb0c6cf467ee22c7a6b3cbc070b0c36189801b9c16bc539cc2cec4db6f297",
+    "docs-7605ebf59.log.gz": "0d8ffea7ba8579ba84bc08f84aca20fbac83d393d53500583310aede81e6c984",
+    "docs-before-live.log.gz": "ab07a2906a7118f7c5ff40b9b3460f49ed8a4a876c3cfa942a8de5e01a3539e5",
+    "final-contracts-sandbox-ipc.log.gz": "5b2dda5be06b2d332a2b3a1d57fc68dc289bf0e263bd01a4d0d4cd6ec2c687b9",
+    "final-contracts.log.gz": "5315581bbcd1c98c79fefe6e2f3b9cd081dad2a113ed84577b9d9a15826db1a1",
+    "final-docs-sandbox-ipc.log.gz": "36262689767454364c28b1158701d67d9845d4f98710817da59ab648444a5519",
+    "final-docs.log.gz": "0ff3c0e3c79554eb6f825439cc6f5b7fb7ce9012bc8d4003b8a7d66defe33443",
+    "fixture-membership/evidence.json": "da5023ff094b737b2546bbe9b65ed87d0dafaa447f8561721f01820ef0abe94f",
+    "fixture-membership/maister-company-webhook-baseline-prefix.log.gz": "eec9d2efc997dde0475951aeae4f69ab013733a2e881fb532efa0fc4288589f6",
+    "fixture-membership/maister-company-webhook-baseline-target.log.gz": "2375657a7c443a9342ef47ea1e5b7504f7da6c4702bd9ee3054bd195bc3e3c09",
+    "fixture-membership/maister-company-webhook-current-prefix-green.log.gz": "3474292cc6ba2e1fb2f42a6e500161e6f1b27044f286127bfe96ea3fd0ddc9a6",
+    "fixture-membership/maister-company-webhook-helper-final-positive.log.gz": "b244c890f5625222f0a2589e72de2b2c92b8852c95f0132b0ac3298dff9c83a7",
+    "fixture-membership/maister-company-webhook-helper-final-two.log.gz": "acffb17b4a92df1ff2351b142e402ea64fa69ea3af4c2ab652cd094438259f78",
+    "fixture-membership/maister-company-webhook-helper-full-cleanup.log.gz": "954664d2d38e0ca6508774587880f18dcb2d4b4751ea4a695342a047d03d311b",
+    "fixture-membership/maister-company-webhook-helper-green-reviewed.log.gz": "16506172694d58537fd04d241eb6f1836ccb01d80a100e51bc09156669c289f1",
+    "fixture-membership/maister-company-webhook-helper-lint-final.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-membership/maister-company-webhook-helper-real-supervisor.log.gz": "e9e8a839378c3d302859b564735afcff97d5b3c832c0e9ddf6972fa5c863d86f",
+    "fixture-membership/maister-company-webhook-helper-red.log.gz": "c9d6393cb094709ff74ee121b778c93d8968082a0d6f7d35fa1fc6b06d0174e5",
+    "fixture-membership/maister-company-webhook-helper-session-ownership.log.gz": "8172608aa045abb4b879d3bb11425e27ef6969d95dcbb313638daa3b2de32ed8",
+    "fixture-membership/maister-company-webhook-helper-setup-failure.log.gz": "d2ebaa47a159239064e446cafaae6ca51d37bd7bd7ccec24072e3311fbb6595a",
+    "fixture-membership/maister-company-webhook-helper-types-final-guard.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "fixture-membership/maister-company-webhook-helper-types-reviewed.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "fixture-membership/maister-company-webhook-helper-unit.log.gz": "268be4b74ef46dd558640b0442ee29bd4454088259ca977fafa9c0d816b9b90b",
+    "fixture-membership/native-probe.json": "d95d206c64332d2019878ddb0cb1331e265d3d041de44cd80519030a476d1eb6",
+    "fixture-membership/primary-company-green.log.gz": "01e2c3c3f20bd229b054ddf35d643ea82d5167b3951524ec6b0d0f89f9b5aee9",
+    "fixture-membership/primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-membership/primary-native-green.log.gz": "3563c81ca648a83f30533549dd86edbfcd6ea67df4f232753f8d85cf3fd5c2d5",
+    "fixture-membership/primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-projection-drain/audit-final.log.gz": "d888465c91aab60730949a1b04ee71ef222a6712b2e9fd072a795d439e805759",
+    "fixture-projection-drain/barrier-setup-failure.log.gz": "675988a2b0db2a48e2f052bd534e5424cdfbc088c96b6dfd4624b737f0a4eda4",
+    "fixture-projection-drain/eslint-audit-final.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-projection-drain/evidence.json": "c2f898515609b67e3d558bfa428e0a6c2b2af51e0e7bb36e30c1776c691de61c",
+    "fixture-projection-drain/green.log.gz": "432af320f6511a097dd952e3002bad4c73d1d1dfffa5f0fa98b9edac8decfb2f",
+    "fixture-projection-drain/ownership-final.log.gz": "3da0d7b11720f23e4ae6261a129307b3b1a24e03405fde9878d1292c6dfcf78b",
+    "fixture-projection-drain/owning-siblings-green.log.gz": "a50cfcc12f76bd2358bebc6ef58965ed6ad0bcd8f069902d99dc8344bca83af7",
+    "fixture-projection-drain/primary-green.log.gz": "9b8729f71ce55c08a32782f83fd74be3f83446ab150ec467fbc6726042e22dec",
+    "fixture-projection-drain/primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-projection-drain/primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "fixture-projection-drain/red.log.gz": "5346dbe9359ecd74260804812c1e1f9736d2e40114906aa137cfc45062330f15",
+    "fixture-projection-drain/types-audit-final.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "fixture-projection-drain/types.log.gz": "33ef2d579e5b99b6f8229d98d1d9bc2627c521041a637479e5bcea7ffb96bca0",
+    "fresh-adapter-smoke-cache.json": "61371e673ad1f89fcbe1cfda40d989acbce43172c7d647c7b900ec261d517774",
+    "fresh-adapter-smoke.log.gz": "ab05b9a5d70d1098d92cecbe9664ad146c1cfdc5acda8cc7a2746fb2ba632df2",
+    "full-regression-425e8a0e9/cleanup.log.gz": "a65189c9e2ccc7b23b85e4b994d5a8adb27605562e011468415016037e6f1ddf",
+    "full-regression-425e8a0e9/evidence.json": "7a17e1bfade30c6766e978722faf184ba6b0838e54f96d0510687e70de4ae2e1",
+    "full-regression-425e8a0e9/full.log.gz": "f8c7d6118177af952c7fdf1be721fe50b7e730bcc40da5124546def17c0c9d96",
+    "full-regression-8f1f03218/cleanup.log.gz": "87915981560f2d1beb4a7a7ef154b6c404b13477f51affacaeaadb8af7bceba0",
+    "full-regression-8f1f03218/evidence.json": "4e0ed34a7843facdfc1e2dc36bc4d524d96cc71c6c5a59b9b8b7e0a6e8af6609",
+    "full-regression-8f1f03218/full.log.gz": "243b52c60213c48a37501a6b7b6911a7a11fb8269b3f3d75fb5895ec351c880d",
+    "full-regression-8f1f03218/results.json.gz": "ab2fc3107521033eb88f03d06bb8299529c9649b6dd85195576bfd255691e8fd",
+    "full-regression-bbe923cb2/cleanup.log.gz": "e8a88048ec78f1b1ec163d5d2f1c5dc517b2c4ee885d676cc46671327ebaae5f",
+    "full-regression-bbe923cb2/evidence.json": "8f0403e940cf3e8cd5d0a70aa974f8727debc02ccb478fee96f71e63340b33b3",
+    "full-regression-bbe923cb2/full.log.gz": "d4e7b4733aa8dff935511e3d078da6c2c02e554829c0e6627de30e132c8d5d7c",
+    "full-regression-bbe923cb2/results.json.gz": "60158d12a79f20b5d4cabc143121cf44deb3656a3d6d0ac5a271e2447c1399ac",
+    "installed-package-7605ebf59/evidence.json": "3df9dd10d4fc6ceb4c82d4c5462935494e50888285f90cce7a75ca98f691ff4c",
+    "installed-package-7605ebf59/live.log.gz": "5b248f99b720a3dc77f1b168c7fdaf30e77e618909e6a8d4892a3cd23f8ff400",
+    "installed-package-7605ebf59/native-package-qualification.json": "36372e392b51a5e55a0a681332f145cada45dcd45b0a376cbb2d87b346eba7f0",
+    "installed-package-7605ebf59/rah-root-d1-en.png": "b1b192519accf907bc74cbd86f3b8ca0845b3cd6d3ea5f5261e8552f886d4b45",
+    "installed-package-7605ebf59/rah-root-d1-ru.png": "ae43dac8ae72466196e297be2e69ecd7750d327b6f255c0a64e0da0fe422167e",
+    "installed-package-7605ebf59/rah-root-d2-en.png": "2ce7e1ece8c9d85c49635bc004ffaca09a3a8c70ac64e38b69cdade595708e02",
+    "installed-package-7605ebf59/rah-root-d2-ru.png": "d25ba54561e17ca90f93322399251c12fcf3256038cb6a2e81600e74f537011c",
+    "live-admission-harness-failure.log.gz": "8708b9bd341bbd4c73d1e7ca9203df95e023752d5f23f02972d2f3fe4deeec47",
+    "live-bounded-lock-observations.json": "dcdd6089af99135321b8cfd2b634a8e002ff257ff09fc301bc08b8456f60e646",
+    "live-depth-two-rotation-failure-evidence.json": "e2ee7de926ded1130aa89a4375920daede40acd5895db48c9beb4518f0bdbaf8",
+    "live-depth-two-rotation-failure.json": "922cff36a89ac43d1ef3311ed5056f94f2e4e0ff63cdd9b86908f279e9d30042",
+    "live-depth-two-rotation-failure.log.gz": "8a86da38ac7d342c7bcc95707502e27d81f7ad3b70e8500734662818df6a56af",
+    "live-root-failure.json": "fbfb10c8089bd4dc4b9a7df321e02535854ef5a22b0ddf3c73ea0d6bdba7fd26",
+    "live-root-failure.log.gz": "d1c0e1cc0f8ac6dbf8f83dba957b32e8d5aee0bf7d8d834fa5c9a474938f04d9",
+    "live-session-retirement-failure-evidence.json": "1686395f9c828b20cdb3c77e95661dfc8ab56486e5ad00fb99c861cc09ac9aee",
+    "live-session-retirement-failure.json": "bd6cebd85c38abccddfb6bb5fcfab8f8f5849b235ab834941a03b14dd1780454",
+    "live-session-retirement-failure.log.gz": "a24801e880b681e5c468ec993204e207133efed350d3116429834cd36ae38dd2",
+    "live-token-retirement-failure.json": "ae419deb0f09700573e442d7223404ddee5177db05a0982ebe91427a7cded847",
+    "live-token-retirement-failure.log.gz": "99d05d3ab16f6bdd70a0c45f1d53732969f7953f4b85ed4c412a212bc6045afa",
+    "mcp-integration.log.gz": "1194746a45c8479d29f22dd40ef03710cfb0534d0bf568d250b1cfc33480fe07",
+    "mcp-types-7605ebf59.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "mcp-unit.log.gz": "00b5035931b20540973b9a7bd1e9763c919e988ad34800c9bea243aed1a612c9",
+    "native-metadata-isolation/evidence.json": "7071f4003a6a79c811dbbc186f9c886a8cfdf783a287b25089a2396098894431",
+    "native-metadata-isolation/initial-fixture-failure.log.gz": "ef50686c7244708c62c2698c674408fc474a64214ea89976031deb951f8cd87a",
+    "native-metadata-isolation/lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "native-metadata-isolation/owning-final.log.gz": "93b5bc9c2d6022ed8f51e56f43e27d531da368ab65408423ad222c724616b2ac",
+    "native-metadata-isolation/primary-green.log.gz": "c2fb3eda9fc3ef32d752081cb7f3cc475c5b4ce1243095eed1b13cbbc3b31e9c",
+    "native-metadata-isolation/types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "process-death-isolated-green.log.gz": "183936295db56ff3cfc4139e77ae3f75f945bc3dabba9932d34286d010031b71",
+    "regression-fixtures-7605/complete-run-red.log.gz": "39f59f4abd80b7d5c3e59fb91c01377bc5936dd76d5eaf730ac076f3e50128fe",
+    "regression-fixtures-7605/completed-run-cleanup.log.gz": "36c54d576bc98b640e08f552a8503b4f05141dc9fd064dbed7d5635943aa473f",
+    "regression-fixtures-7605/delegated-evidence.json": "34fa9757c44d6890a0f7e50f5b4a6d3ddd8ca2aea6efd8f9e91df2ff96e02235",
+    "regression-fixtures-7605/delegated-unchanged-green.log.gz": "2bf9f97a598f5344e019dbd4982cc33ebb8f6e1db4c301b85c74dd186e869fae",
+    "regression-fixtures-7605/dependency-restore.log.gz": "1e268764d9d7bb750df86b2961b7a736dd504a5002c3c7118d696f534c513257",
+    "regression-fixtures-7605/dispatch-green.log.gz": "aaa428c7753f1cd36086bcecbe2827f388ae7f899e9389d58bf80810e70206b4",
+    "regression-fixtures-7605/dispatch-red.log.gz": "9bdde974dc55940746203a10bbd6402e0cb822ef1b2456f24945c9dad123a64a",
+    "regression-fixtures-7605/evidence.json": "62166655d53298f747f75e74da784ad1d0ab877fdc7c1d42e0bebe1c80fefd00",
+    "regression-fixtures-7605/late-barrier-primary-final.log.gz": "5bb8529fbca476da0d6204e71a0a84696b86e1831543b4a17af9bff2ce4d6686",
+    "regression-fixtures-7605/late-delegation-evidence.json": "4534f3e92113b5d3886e5123664c531c71d5762e8627864069c57c2eb6c1542a",
+    "regression-fixtures-7605/late-delegation-green.log.gz": "5640d43dc8ae2b2d406a4e5a7a10a69f0bc17706ece734fbe2db95dba64e2dd7",
+    "regression-fixtures-7605/late-delegation-red-evidence.json": "0294a3993571ffe471be5751ff0941c826566ecc7317f536a029a7f26e16f051",
+    "regression-fixtures-7605/late-delegation-repeat.log.gz": "b82d2bb3321dadd641c9f7e3a252491bafcabd471412508e81c5ea0af00bbefb",
+    "regression-fixtures-7605/migration-evidence.json": "5b74b42e559e61677e9e16715caac757ab5ad0e3486e213474473697f2e9a6f6",
+    "regression-fixtures-7605/migration-green.log.gz": "509b563b5068c06168d7fd97b9277d993815664d7270bb49128364676d1c1d1e",
+    "regression-fixtures-7605/migration-red.log.gz": "8afc4ee13388b1c53d131ec54ec57ea100c46a9889b2574d80672518d7fda73a",
+    "regression-fixtures-7605/primary-green.log.gz": "e9494d5eb45bdcc69469e03b8bf9363aa8128666bcdb4a6082acac7074e94851",
+    "regression-fixtures-7605/primary-lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "regression-fixtures-7605/primary-types.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "retained-provider-secret-check.json": "b1867e589418b5010a391692702789f47cb2525608bc63f1793f4f185cb6c7af",
+    "supervisor-integration.log.gz": "65ab7464b7a46e6be62ff8a74d23799cbde760e19efa94751aa8afa495c101f4",
+    "supervisor-types-7605ebf59.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "supervisor-unit.log.gz": "8f72403fbc873ae19a320d31c8816dcba156b5440be89337ec909524851dc99b",
+    "token-diagnostic-eslint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "token-diagnostic-smoke.log": "419afd419e0be21111e3bb924d8f1b91fa8d3f2665b873ec504146bb90d2f573",
+    "types-before-live.log.gz": "1d8d6860f28efa0303ec5663d0c2cc3bf03fe639ff9c4a0ff09533f742d70520",
+    "web-build-before-live.log.gz": "4d4d0d719f7d71903029368511f6ec1d7750e936daa72e44a2edeaad2a4d0888",
+    "web-integration-invalidated-by-head-change.log.gz": "787f5ee129f3b73881bb68a533d4d9a53bc26846afd1a600b7a4872e9a4fd2c9",
+    "web-integration-invalidated-cleanup.log": "1004ce70c6276efc4189dfc5d630164c53e3227b6b7ecdf1c8d812ced58a3763",
+    "web-types-7605ebf59.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "web-unit-7605ebf59.log.gz": "3de8f23e36da119136130e044f99f8d7aa01636056923b336ad0d833577762be",
+    "web-unit-final-fixtures.log.gz": "b5978c8447f2bb6d8a06cdad95dec6fb3b435b86874fdbcdd9530ce2c191ae9a",
+    "web-unit-final.log.gz": "10ffb03924d43ef7bc66b12e13ed34e97b709cb73299ac7b57bb8f7a584c501f",
+    "web-unit-fixed-source.log.gz": "96d1eac23fc7553ab235a8bc3dc72bdf7a7567183406cffefd1663a842a93f47"
+  }
+}

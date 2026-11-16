@@ -1,0 +1,22 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "f84fd4ccfd62d32efaec62a2cb9641064261c79fd4d68834ffd3bfd51bf3c68d",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "b188576cb06e5970c93660a198db4655cdda4043",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:01:34.087555+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:04:05.063517+00:00",
+  "verdict": "canonical_resource_conflict_observed",
+  "refusal": {
+    "code": "CONFLICT",
+    "message": "Reconcile the retained operation before requesting another restart of this resource",
+    "details": {
+      "reason": "resource_conflict"
+    }
+  },
+  "contenderAssignmentId": "a40e1eed-9f4f-4ab1-9509-f471cad6ddfd",
+  "scope": "The same canonical unit was requested through a different selector. The test asserted zero persisted contender operations before the optional cleanup stop raced preparation."
+}

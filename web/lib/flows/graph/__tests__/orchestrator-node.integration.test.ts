@@ -55,6 +55,9 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
       ctx: {
         runId: string;
         db?: unknown;
+        prepareSessionCapabilities?: () => Promise<
+          import("@/lib/flows/runner-agent").AgentSessionCapabilities
+        >;
         bindExecution?: () => Promise<{
           client: { assignment: { id: string } };
         }>;
@@ -62,6 +65,8 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
       prebound?: { client: { assignment: { id: string } } },
     ) => {
       agentCalls.push({ stepId: step.id, prompt: step.prompt });
+      // This scripted dispatch represents admission of a fresh owned session.
+      await ctx.prepareSessionCapabilities?.();
       // The graph binds lazily at the first real dispatch; the scripted step
       // resolves the same provider so the stamp carries the run's generation.
       const execution = prebound ?? (await ctx.bindExecution!());

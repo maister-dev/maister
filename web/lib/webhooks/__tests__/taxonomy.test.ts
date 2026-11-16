@@ -47,6 +47,7 @@ const EXPECTED_TYPES = [
   "attention.decision_closed",
   "attention.decisions_changed",
   "attention.digest",
+  "assignment.result_available",
 ] as const;
 
 const PROJECT: WebhookProjectRef = {
@@ -70,8 +71,8 @@ describe("WEBHOOK_API_VERSION", () => {
 });
 
 describe("WEBHOOK_EVENT_TYPES", () => {
-  it("has exactly the 22 listed types in order", () => {
-    expect(WEBHOOK_EVENT_TYPES).toHaveLength(22);
+  it("has exactly the 23 listed types in order", () => {
+    expect(WEBHOOK_EVENT_TYPES).toHaveLength(23);
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([...EXPECTED_TYPES]);
   });
 
@@ -291,9 +292,13 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
       type: "attention.digest",
       data: { ownerUserId: "u1", sentence: "2 promoted · 1 crashed" },
     },
+    {
+      type: "assignment.result_available",
+      data: { ownerUserId: "u1", assignmentDeliveryId: "delivery-1" },
+    },
   ];
 
-  it("covers all 22 types in the table", () => {
+  it("covers all 23 types in the table", () => {
     expect(cases.map((c) => c.type)).toEqual([...EXPECTED_TYPES]);
   });
 

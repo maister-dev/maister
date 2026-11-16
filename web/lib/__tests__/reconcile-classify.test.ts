@@ -928,11 +928,14 @@ describe("classifyRunReconcile — ADR-177 evidence arms", () => {
     ).toEqual({ action: "skip", reason: "grace-window" });
   });
 
-  it.each(["scratch", "agent"] as const)(
-    "a %s run ignores prompt evidence entirely — the scope guard",
-    (runKind) => {
-      // Trap 7: those arms have their own owners (`markScratchCrashed`,
-      // `finalizeAgentRun`) and are deliberately not widened.
+  it.each([
+    ["scratch", "agent-session-gone"],
+    ["agent", "turn-lost"],
+  ] as const)(
+    "a %s run preserves its owner-specific missing-session diagnosis",
+    (runKind, reason) => {
+      // Scratch retains its separate owner; standalone agents now consume
+      // exact current-turn evidence before a generic missing-session crash.
       expect(
         classifyRunReconcile(
           input({
@@ -942,7 +945,7 @@ describe("classifyRunReconcile — ADR-177 evidence arms", () => {
             promptEvidence: "turn_lost",
           }),
         ),
-      ).toEqual({ action: "crash", reason: "agent-session-gone" });
+      ).toEqual({ action: "crash", reason });
     },
   );
 

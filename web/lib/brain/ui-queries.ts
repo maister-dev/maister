@@ -195,7 +195,7 @@ async function listMemoryRows(
              ${ownedRank}::float8 AS search_rank
       FROM brain_items i
       WHERE i.project_id = ${projectId}
-        AND i.status = 'active'
+        AND i.status = 'active' AND i.visibility = 'owner_grants' AND (i.source_restrictions IS NULL OR i.source_restrictions='[]'::jsonb)
         AND (i.expires_at IS NULL OR i.expires_at > now())
         ${ownedWhere}
       ORDER BY search_rank DESC, i.updated_at DESC
@@ -212,7 +212,7 @@ async function listMemoryRows(
              c.updated_at AS touched_at,
              ${indexedRank}::float8 AS search_rank
       FROM brain_chunks c
-      JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
+      JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
       WHERE c.project_id = ${projectId}
         ${indexedWhere}
       ORDER BY search_rank DESC, c.updated_at DESC
@@ -256,7 +256,7 @@ async function evidenceById(
   const rows = await db.execute(sql`
     SELECT id, title, source_ref
     FROM brain_items
-    WHERE project_id = ${projectId}
+    WHERE visibility = 'owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb) AND project_id = ${projectId}
       AND id IN (${sql.join(
         ids.map((id) => sql`${id}`),
         sql`, `,
@@ -284,6 +284,7 @@ async function listProposalRows(
            evidence_item_ids, draft, created_at
     FROM brain_proposals
     WHERE project_id = ${projectId}
+      AND kind NOT IN ('knowledge_add','knowledge_correct')
     ORDER BY
       CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
       created_at DESC
@@ -334,14 +335,14 @@ async function loadIndexStatus(
           count(*) FILTER (WHERE last_error IS NOT NULL)::int AS failed_source_count,
           max(last_indexed_at) AS latest_source_indexed_at
         FROM brain_sources
-        WHERE project_id = ${projectId}
+        WHERE project_id = ${projectId} AND chunker_id <> 'native_submission' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
       ),
       chunk_summary AS (
         SELECT
           count(DISTINCT c.path)::int AS indexed_file_count,
           count(c.id)::int AS indexed_chunk_count
         FROM brain_chunks c
-        JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true
+        JOIN brain_sources s ON s.id = c.source_id AND s.enabled = true AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
         WHERE c.project_id = ${projectId}
       )
       SELECT

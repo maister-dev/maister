@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_required_intermediate_coordinator",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "98f7859651053b023ed817c3ddfd0a89f3fd53d85bdc6f95c51a32c67dbdf87c",
+  "package": {
+    "tag": "rah/v1.0.7",
+    "commit": "2f1474bc295ec9522a83fc7e80719be14a42f626"
+  },
+  "hostGlm53Sessions": 10,
+  "validTypedResults": 9,
+  "depthTwoRootResult": "Valid on attempt one.",
+  "failure": "The required intermediate coordinator's ACP prompt was cancelled. A session deletion reported unconfirmed process-group retirement. The complete tree gate refused this result.",
+  "cleanup": {
+    "id": "0d5ffe44-ec2f-4cd8-8748-d6cd47c05030",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 7,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3ae172d4d284373d4809420c0fb9a66c5d7873a88cdac88864d9bf1b51a92527",
+      "rawBytes": 544,
+      "compressedSha256": "ad78ab5e17d0e3d9175ac84ceaf24fffb292f7c16d0c0985ed6ef97c9b4a78e5",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "ad78ab5e17d0e3d9175ac84ceaf24fffb292f7c16d0c0985ed6ef97c9b4a78e5"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "925419defb57e05f3ad4c70f2a5c4c484c9f85295f7dfe576eec87ffed47d469",
+      "rawBytes": 11894,
+      "compressedSha256": "265e87b3ae194eb7aa404f01fee08cae39ef40beba86cef746dd36c76470419c",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "265e87b3ae194eb7aa404f01fee08cae39ef40beba86cef746dd36c76470419c"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "27a1133f204b474b7de22706a4729d580009799bffb81757040301b6b53b4c42",
+      "rawBytes": 181308,
+      "compressedSha256": "95363039240d4d98f8aa41612f12d40545c9d61d33f21b473d4df47763856f06",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "95363039240d4d98f8aa41612f12d40545c9d61d33f21b473d4df47763856f06"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "353c11f54b55592ae360266d42abe77177783b2a2a8d468648baf8bbce10a0c3",
+      "rawBytes": 32435,
+      "compressedSha256": "0c84931ef98755b1d10347a8b5ac3c92cba12dee81e1320fecaa93f9d9aa61aa",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "0c84931ef98755b1d10347a8b5ac3c92cba12dee81e1320fecaa93f9d9aa61aa"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-witness.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1ad66dbbad970ddd690f24859f2ae086e597a297be5f539df5ceb134d20952ca",
+      "rawBytes": 788,
+      "compressedSha256": "83871668c8644784f6fafe77f7fa328f90bce192a09325324e7d2cf8b9aaa65a",
+      "parts": [
+        {
+          "path": "database-volume-witness.json.gz",
+          "sha256": "83871668c8644784f6fafe77f7fa328f90bce192a09325324e7d2cf8b9aaa65a"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "database-volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "0a02782e91a7ccfcb727db609ff25c5111607546329bd375a8548815f7153951",
+      "rawBytes": 393,
+      "compressedSha256": "fff54af544b98e4085245427d51f78f61e612abb08eb213a9d79d36bb616e8e8",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "fff54af544b98e4085245427d51f78f61e612abb08eb213a9d79d36bb616e8e8"
+        }
+      ]
+    }
+  ]
+}

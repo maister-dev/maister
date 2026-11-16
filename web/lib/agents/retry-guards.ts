@@ -17,6 +17,7 @@ import {
   hasRejectedAgentCreateEvidence,
   hasUnprovenAgentCreateFailure,
 } from "@/lib/agents/execution-quiescence";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 
 export function retryDigest(value: unknown): string {
   return createHash("sha256").update(canonicalCommandJson(value)).digest("hex");
@@ -70,18 +71,34 @@ export async function assertQualificationRetryAuthority(
     );
 }
 
+/** A native appointment can commit before the Run captures its knowledge or result contract. */
+async function hasSpecialistRetrySource(
+  db: Db,
+  runId: string,
+): Promise<boolean> {
+  const { rows } = await db.execute(sql`
+    SELECT 1 FROM specialist_run_links WHERE run_id=${runId}
+      AND (work_witness IS NOT NULL OR (work_id IS NULL AND role IN ('specialist','coordinator','continuation')))
+  `);
+
+  return rows.length > 0;
+}
+
 /** Fresh assessment does not replay the failed operation or assert its absence of business effects. */
 export async function freshQualificationSafetyReason(
   db: Db,
   source: Run,
 ): Promise<string | null> {
   if (
+    usesStructuredKnowledgeContext(source) ||
     source.runKind !== "agent" ||
     source.persistent ||
     source.parentRunId ||
     source.workspaceMode === "shared" ||
     !source.taskId
   )
+    return "retry_source_unsupported";
+  if (await hasSpecialistRetrySource(db, source.id))
     return "retry_source_unsupported";
   if (source.status !== "Failed" && source.status !== "Crashed")
     return "retry_source_not_failed";
@@ -159,12 +176,24 @@ export async function retrySafetyReason(
   source: Run,
 ): Promise<string | null> {
   if (
+    usesStructuredKnowledgeContext(source) ||
     source.runKind !== "agent" ||
     source.persistent ||
     source.parentRunId ||
     source.workspaceMode === "shared"
   )
     return "retry_source_unsupported";
+  if (await hasSpecialistRetrySource(db, source.id))
+    return "retry_source_unsupported";
+
+  return preDispatchRetrySafetyReason(db, source);
+}
+
+/** A rejected create or durable before-dispatch failure can prove the absence of an agent turn. */
+export async function retryQuiescenceReason(
+  db: Db,
+  source: Run,
+): Promise<string | null> {
   if (source.status !== "Failed" && source.status !== "Crashed")
     return "retry_source_not_failed";
   const unsafe = await db.execute(sql`SELECT 1 WHERE
@@ -177,6 +206,17 @@ export async function retrySafetyReason(
           AND command.receipt_evidence->>'inflight'='false')))`);
 
   if (unsafe.rows.length) return "reconciliation_required";
+
+  return null;
+}
+
+export async function preDispatchRetrySafetyReason(
+  db: Db,
+  source: Run,
+): Promise<string | null> {
+  const unsafe = await retryQuiescenceReason(db, source);
+
+  if (unsafe) return unsafe;
   const creates = await db.execute(
     sql`SELECT 1 FROM execution_commands WHERE run_id=${source.id} AND kind='session.create' LIMIT 1`,
   );

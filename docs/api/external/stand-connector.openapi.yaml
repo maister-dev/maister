@@ -1,0 +1,753 @@
+openapi: 3.0.3
+info:
+  title: MAIster configured stand helper
+  version: 1.0.0
+  description: ADR-205. Narrow configured systemd helper. mTLS and target-bound service credentials
+    are required. Accepted/pending HTTP status is not restart or health proof.
+servers:
+  - url: https://127.0.0.1:7443
+security:
+  - platformCredential: []
+paths:
+  /identity:
+    get:
+      operationId: standHelperIdentity
+      summary: Inspect exact configured helper identity
+      description: Returns the configured company, target incarnation, revision and component IDs
+        to the platform certificate and credential bound to this helper.
+      x-implementation-status: Implemented
+      x-required-scope: authenticated platform service principal
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTarget"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+  /operations:
+    post:
+      operationId: standHelperExecute
+      summary: Admit an exact restart of a configured component
+      description: The target compares the retained before-effect witness to the live unit and retains
+        the intent before checking the online dispatch permit. Exact replay returns the original operation
+        receipt. Changed digest, before-effect witness or owner epoch conflicts. Other actions use their
+        separate endpoints or remain gated.
+      x-implementation-status: Implemented
+      x-required-scope: authenticated platform service principal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetRestart"
+      responses:
+        "202":
+          description: Accepted durable intent or explicit pending/unknown outcome, never proof of success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+  /operations/{operationId}:
+    get:
+      operationId: standHelperReceipt
+      summary: Inspect the original operation receipt
+      description: The target returns the exact retained receipt after a current operation-bound
+        reconciliation permit. The selector includes the original intent digest and current recovery
+        owner epoch. This read never invokes systemd restart.
+      x-implementation-status: Implemented
+      x-required-scope: authenticated platform service principal
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetReceipt"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: X-Maister-Owner-Epoch
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+        - name: X-Maister-Request-Digest
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-f0-9]{64}$
+  /operations/{operationId}/observations:
+    post:
+      operationId: standHelperObserve
+      summary: Inspect the configured unit before restart
+      description: A reconciliation permit binds the live read to an existing platform operation and current
+        owner. The target journal advances its observation sequence without admitting a mutation.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound reconciliation authority
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetObservationRequest"
+      responses:
+        "200":
+          description: Live service state and exact operation identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBTargetObservation"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+  /operations/{operationId}/logs:
+    get:
+      operationId: standHelperLogs
+      summary: Read bounded sanitized logs
+      description: Requires an operation-bound logs permit and a configured component matching the
+        retained operation resource. Only sanitized journal text crosses the boundary.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound targets:logs
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBLogResponse"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: X-Maister-Owner-Epoch
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
+        - name: X-Maister-Request-Digest
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-f0-9]{64}$
+        - name: X-Maister-Component-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+  /operations/{operationId}/verification:
+    post:
+      operationId: standHelperVerify
+      summary: Perform a separate configured health observation
+      description: Requires an operation-bound verification permit and a retained applied restart on the
+        configured resource. The target journals a fresh verification nonce and a sequence after the restart
+        receipt before probing. A used nonce conflicts; another observation requires a fresh nonce.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound verification authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetVerification"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBVerification"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+  /operations/{operationId}/health:
+    post:
+      operationId: standHelperInspectHealth
+      summary: Observe health for a read-only component appointment
+      description: Checks a fresh operation-bound verification permit and the component's configured
+        inspection action before running its configured health probe. Issues a target sequence and echoes
+        the platform nonce. The read creates no restart journal entry and does not execute a mutation.
+      x-implementation-status: Implemented
+      x-required-scope: operation-bound verification authority
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CBTargetVerification"
+      responses:
+        "200":
+          description: Authorized explicit DTO or idempotent safe existing receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CBVerification"
+        "400":
+          $ref: "#/components/responses/CBFailure"
+        "401":
+          $ref: "#/components/responses/CBFailure"
+        "403":
+          $ref: "#/components/responses/CBFailure"
+        "404":
+          $ref: "#/components/responses/CBFailure"
+        "409":
+          $ref: "#/components/responses/CBFailure"
+        "413":
+          $ref: "#/components/responses/CBFailure"
+        "429":
+          $ref: "#/components/responses/CBFailure"
+        "503":
+          $ref: "#/components/responses/CBFailure"
+      security:
+        - platformCredential: []
+      x-mtls-required: true
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+components:
+  securitySchemes:
+    platformCredential:
+      type: apiKey
+      in: header
+      name: X-Maister-Platform-Token
+      description: Target-configured platform service credential over mandatory mTLS.
+  responses:
+    CBFailure:
+      description: Safe typed failure; no raw query, source contents, credential or target stderr.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CBError"
+  schemas:
+    CBTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner
+        - incarnationId
+        - configRevision
+        - enabled
+        - componentIds
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          $ref: "#/components/schemas/CBCompanyOwner"
+        incarnationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        configRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        enabled:
+          type: boolean
+        componentIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 32
+    CBCompanyOwner:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - companyId
+      properties:
+        kind:
+          type: string
+          enum:
+            - company
+        companyId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CBTargetRestart:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - componentId
+        - action
+        - requestDigest
+        - ownerEpoch
+        - before
+      properties:
+        operationId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        targetIncarnation:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        componentId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        action:
+          type: string
+          enum: [restart]
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        predecessorId:
+          type: string
+          format: uuid
+          description: Exact unresolved predecessor named by the online successor permit.
+        before:
+          type: object
+          description: Exact before-effect witness. An active unit requires a non-null invocation ID.
+          additionalProperties: false
+          required: [invocationId, state]
+          properties:
+            invocationId:
+              type: string
+              pattern: ^[a-f0-9]{32}$
+              nullable: true
+            state:
+              type: string
+              enum: [active, inactive, failed]
+    CBTargetObservationRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, targetIncarnation, componentId, action, requestDigest, ownerEpoch]
+      properties:
+        operationId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        targetIncarnation:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        componentId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        action:
+          type: string
+          enum: [inspect]
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    CBTargetObservation:
+      type: object
+      additionalProperties: false
+      required: [operationId, targetIncarnation, requestDigest, resourceKey, sequence, invocationId, state, capturedAt]
+      properties:
+        operationId:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        targetIncarnation:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        resourceKey:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        invocationId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+          nullable: true
+        state:
+          type: string
+          enum: [active, inactive, failed, unknown]
+        capturedAt:
+          type: string
+          format: date-time
+    CBTargetVerification:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - componentId
+        - action
+        - requestDigest
+        - ownerEpoch
+        - verificationNonce
+        - issuedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        componentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        action:
+          type: string
+          enum: [verify]
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        ownerEpoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        verificationNonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        issuedAt:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'
+    CBTargetReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - requestDigest
+        - receiptRevision
+        - sequence
+        - effectState
+        - permitId
+        - beforeInvocation
+        - afterInvocation
+        - observedState
+        - capturedAt
+        - reason
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        requestDigest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        receiptRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        effectState:
+          type: string
+          enum:
+            - not_dispatched
+            - dispatching
+            - confirmed_applied
+            - confirmed_not_applied
+            - unknown
+        permitId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        beforeInvocation:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        afterInvocation:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        observedState:
+          type: string
+          enum:
+            - active
+            - inactive
+            - failed
+            - unknown
+        capturedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+    CBLogResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - targetIncarnation
+        - text
+        - truncated
+        - sanitized
+        - capturedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        text:
+          type: string
+          minLength: 0
+          maxLength: 262144
+        truncated:
+          type: boolean
+        sanitized:
+          type: boolean
+          enum:
+            - true
+        capturedAt:
+          type: string
+          format: date-time
+    CBVerification:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - operationId
+        - targetIncarnation
+        - nonce
+        - state
+        - issuedAt
+        - observedAt
+        - targetSequence
+        - evidenceIds
+        - reason
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        targetIncarnation:
+          type: string
+          minLength: 1
+          maxLength: 128
+        nonce:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]+$
+        state:
+          type: string
+          enum:
+            - healthy
+            - unhealthy
+            - inconclusive
+        issuedAt:
+          type: string
+          format: date-time
+        observedAt:
+          type: string
+          format: date-time
+        targetSequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        evidenceIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          maxItems: 16
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+    CBError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        details:
+          type: object
+          additionalProperties: false
+          required:
+            - reason
+          properties:
+            reason:
+              type: string
+              minLength: 1
+              maxLength: 128
+            currentRevision:
+              type: integer
+              minimum: 1
+              maximum: 9007199254740991

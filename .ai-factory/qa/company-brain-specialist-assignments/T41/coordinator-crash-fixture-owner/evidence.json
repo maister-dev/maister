@@ -1,0 +1,17 @@
+{
+  "sourceHead": "5a11a7619b2f9131cd4a8152027e393460ce1d0c",
+  "testPatchSha256": "409b52d1b2a0496fa869f4f55cd8f49e2e57699deee2b727151d701e0b64c7bc",
+  "test": "web/lib/agents/__tests__/company-flow-context.integration.test.ts",
+  "invocation": "pnpm --dir web exec vitest run --project integration --maxWorkers=1 lib/agents/__tests__/company-flow-context.integration.test.ts",
+  "red": {
+    "passed": 47,
+    "failed": 1,
+    "reason": "The crash case used a fresh supervisor state directory while two shared-suite placements still belonged to the retained host. The actual host identity check refused reservation before the crash assertion."
+  },
+  "green": {
+    "passed": 48,
+    "failed": 0,
+    "reason": "The crash case restarts the retained suite host; crash ownership, no project webhook, absent-session refusal and current authority revocation are unchanged assertions."
+  },
+  "refactor": "The correction reuses the shared fixture state directory and changes no production code or acceptance behavior."
+}

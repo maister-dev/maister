@@ -1,6 +1,9 @@
 import type { TaskDelegationSpec } from "@/lib/db/schema";
 import type { DelegationTargetKind } from "@/lib/orchestrator/delegation-target";
 
+/** Maximum retained Run ancestors inspected by delegation and source authorization. */
+export const MAX_DELEGATION_ANCESTORS = 64;
+
 // ADR-163: `tasks.delegation_spec` is a discriminated union whose agent arm has
 // an OPTIONAL discriminant, because every row written before flow targets
 // existed carries no `kind`. Reading the kind is therefore a one-line rule that

@@ -206,6 +206,7 @@ export const WORKSPACE_RULES = [
   "repo_path_mismatch",
   "inside_state_dir",
   "outside_workspace",
+  "owner_mismatch",
 ] as const;
 export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
 

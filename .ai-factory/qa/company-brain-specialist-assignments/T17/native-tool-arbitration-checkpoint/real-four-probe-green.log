@@ -1,0 +1,2 @@
+$ tsx scripts/smoke-acp-adapter.ts claude --capability-enforcement --runner /private/tmp/cb-t17-arbitration-runner.json --cache /private/tmp/cb-live-claude-smoke.json
+{"adapter":"claude","status":"ok","binary":"/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp","protocolVersion":1,"acpSessionId":"78237747-22bb-45ec-88ec-0b8e8c308cae","steering":{"supported":true},"capabilityEnforcement":{"status":"ok","protocolVersion":1}}

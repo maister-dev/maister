@@ -3,6 +3,7 @@
 import type { AgentActivitySummary } from "@/lib/agents/activity-queries";
 import type { ReactElement } from "react";
 import type { AgentConfigParam } from "@/lib/agents/definition";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
 import { useState, useTransition } from "react";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
@@ -25,6 +26,7 @@ export type AttachScheduleView = {
   eventKinds?: string[];
   enabled: boolean;
   requestAtLaunch?: string | null;
+  assignmentReview?: ProjectSourceReview | null;
 };
 
 export type AutoApplyMode = "off" | "permissions" | "full";

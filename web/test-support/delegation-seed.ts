@@ -21,6 +21,8 @@ import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
 import { historicalChildFixtureAdmission } from "@/test-support/queued-delegation";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as fullSchema from "@/lib/db/schema";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 
 // FIXME(any): the delegation suites write seed rows through an untyped schema
 // view because the typed insert builders reject the loose fixture literals.
@@ -39,6 +41,33 @@ export type DelegationSeedCtx = {
 };
 
 const execFileAsync = promisify(execFile);
+
+/** Enroll a newly seeded live parent using its actual current professional definition. */
+export async function enrollNativeDelegationParent(
+  ctx: DelegationSeedCtx,
+  runId: string,
+  agentId: string,
+): Promise<void> {
+  const effective = await resolveEffectiveAgentDefinition(
+    { agentId: agentId, projectId: ctx.projectId },
+    ctx.db,
+  );
+
+  await ctx.pool.query(
+    "UPDATE runs SET source_agent_id=$2,agent_activity_snapshot=$3::jsonb,knowledge_access=$4::jsonb,launched_at=now(),activity_sort_at=now(),activity_timestamp_provenance='launch' WHERE id=$1",
+    [
+      runId,
+      agentId,
+      JSON.stringify(buildAgentActivitySnapshot(agentId, effective)),
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [{ kind: "project_context", projectId: ctx.projectId }],
+      }),
+    ],
+  );
+}
 
 /**
  * A real git repo with a `main` branch and one commit.

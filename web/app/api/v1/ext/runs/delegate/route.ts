@@ -1,9 +1,17 @@
 import "server-only";
 
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  captureNativeDelegationInput,
+  inspectNativeDelegationInput,
+} from "@/lib/orchestrator/native-input";
+import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { nativeSharedWorkspaceRefusal } from "@/lib/brain/knowledge-workspace-policy";
 import { launchAgentRun } from "@/lib/agents/launch";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { getDb } from "@/lib/db/client";
@@ -30,6 +38,9 @@ import {
 import { resolveResultContractForDelegation } from "@/lib/run-results/resolve-profile";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
+import { dispatchProjectAssignmentChild } from "@/lib/specialist-assignments/project-child-dispatch";
+import { dispatchCompanyAssignmentChild } from "@/lib/specialist-assignments/company-child-dispatch";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { createDelegatedTaskLaunchSource } from "@/lib/orchestrator/delegated-launch-authority";
 import {
   delegationLaunchOperation,
@@ -129,6 +140,39 @@ async function compensateChildTask(args: {
   }
 }
 
+async function checkParentAfterLaunch(
+  db: Db,
+  projectId: string,
+  parent: { id: string; taskId: string | null },
+  childRunId: string,
+): Promise<NextResponse | null> {
+  const current = await resolveActiveBoundRun(db, parent.id, projectId);
+
+  if (current.ok) return null;
+
+  // The parent's stop may have completed before the new child was committed.
+  await cascadeAbandonRunTreeAndStopSessions(
+    parent.id,
+    parent.taskId,
+    "user_stopped",
+    { db, logLabel: "[delegation.compensate]" },
+  ).catch((error: unknown) =>
+    log.error(
+      {
+        parentRunId: parent.id,
+        childRunId,
+        err: error instanceof Error ? error.message : String(error),
+      },
+      "[delegation.compensate] cascade of an orphaned child failed",
+    ),
+  );
+
+  return NextResponse.json(
+    { code: current.code, message: current.message },
+    { status: httpStatusForExtCode(current.code) },
+  );
+}
+
 export async function POST(
   req: NextRequest,
   _routeCtx: object,
@@ -142,6 +186,9 @@ export async function POST(
       endpoint: ENDPOINT,
       method: "POST",
       successAuditInWork: true,
+      allowCompanyActorWithoutProject: true,
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -190,6 +237,30 @@ export async function POST(
           );
         }
 
+        if (ctx.actor.companyId !== undefined) {
+          const child = await dispatchCompanyAssignmentChild(db, {
+            body,
+            companyId: ctx.actor.companyId,
+            parentRunId,
+            tokenId: ctx.actor.tokenId,
+          });
+
+          await recordRequiredTokenAudit(
+            {
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: null,
+              scopeUsed: "assignments:update",
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode: 202,
+            },
+            db,
+          );
+
+          return NextResponse.json(child, { status: 202 });
+        }
+
         // Finding 1 (Codex adversarial review): resolve the bound orchestrator
         // scoped to the token's project AND fail closed if it is missing or has
         // terminalized — a stale run-bound token must not delegate under a
@@ -208,6 +279,45 @@ export async function POST(
         }
 
         const parent = boundRes.run;
+        const scope = ctx.scopeLabel;
+
+        if (scope === "assignments:update" && !body.assignmentWork)
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Assignment-scoped delegation requires an exact native work selector",
+          );
+
+        if (body.assignmentWork) {
+          const child = await dispatchProjectAssignmentChild(db, {
+            body,
+            projectId: ctx.projectId,
+            parentRunId,
+            tokenId: ctx.actor.tokenId,
+          });
+          const parentRefusal = await checkParentAfterLaunch(
+            db,
+            ctx.projectId,
+            parent,
+            child.childRunId,
+          );
+
+          if (parentRefusal) return parentRefusal;
+
+          await recordRequiredTokenAudit(
+            {
+              ...tokenAuditIdentity(ctx.actor),
+              projectId: ctx.projectId,
+              scopeUsed: scope,
+              endpoint: ENDPOINT,
+              method: "POST",
+              result: "ok",
+              statusCode: 202,
+            },
+            db,
+          );
+
+          return NextResponse.json(child, { status: 202 });
+        }
         const needsChildTask = targetKind === "flow" || body.mode === "task";
         const operation = needsChildTask
           ? delegationLaunchOperation(
@@ -288,6 +398,21 @@ export async function POST(
                 ctx.projectId,
                 parent.id,
               );
+              const [retainedTask] = await tx
+                .select({ delegationSpec: tasks.delegationSpec })
+                .from(tasks)
+                .where(eq(tasks.id, existing[0].id));
+              const retainedInput = retainedTask?.delegationSpec?.nativeInput;
+
+              if (retainedInput) {
+                const native = inspectNativeDelegationInput(retainedInput);
+
+                await authorizeRunKnowledgeDisclosure(
+                  tx,
+                  { kind: "token", tokenId: ctx.actor.tokenId },
+                  native.sourceRunId,
+                );
+              }
               await recordRequiredTokenAudit(
                 {
                   ...tokenAuditIdentity(ctx.actor),
@@ -368,6 +493,7 @@ export async function POST(
         // target — presence and linkage are unconditional; it is only recorded
         // in the delegation snapshot.
         let childTaskId: string | undefined = existing[0]?.id;
+        let nativeInput: NativeDelegationInput | null = null;
 
         try {
           // ADR-163 D8: admission and the child task share ONE transaction, so
@@ -382,6 +508,20 @@ export async function POST(
                 parent.id,
               );
             await lockDelegationParent(tx, parent.id);
+            nativeInput = await captureNativeDelegationInput(
+              tx,
+              { kind: "token", tokenId: ctx.actor.tokenId },
+              {
+                sourceRunId: parent.id,
+                target: resolvedFlow
+                  ? { kind: "flow", id: resolvedFlow.flowId }
+                  : { kind: "agent", id: body.target.agentId! },
+                title: body.title ?? titleFromPrompt(body.prompt),
+                prompt: body.prompt,
+              },
+            );
+            if (nativeInput && body.workspaceMode === "shared")
+              throw nativeSharedWorkspaceRefusal();
             if (operation) {
               const replayed = await findDelegationOperationTasks(
                 tx,
@@ -392,6 +532,25 @@ export async function POST(
 
               if (replayed[0]) {
                 childTaskId = replayed[0].id;
+                const [retainedTask] = await tx
+                  .select({ delegationSpec: tasks.delegationSpec })
+                  .from(tasks)
+                  .where(eq(tasks.id, childTaskId));
+                const retainedInput = retainedTask?.delegationSpec?.nativeInput;
+
+                if (Boolean(nativeInput) !== Boolean(retainedInput))
+                  throw new MaisterError(
+                    "PRECONDITION",
+                    "The retained delegation input no longer matches its source classification",
+                    {
+                      details: {
+                        reason: "native_delegation_input_binding_required",
+                      },
+                    },
+                  );
+                nativeInput = retainedInput
+                  ? inspectNativeDelegationInput(retainedInput)
+                  : null;
 
                 return;
               }
@@ -417,8 +576,12 @@ export async function POST(
 
             const created = await createTask(
               {
-                title: body.title ?? titleFromPrompt(body.prompt),
-                prompt: body.prompt,
+                title: nativeInput
+                  ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                  : (body.title ?? titleFromPrompt(body.prompt)),
+                prompt: nativeInput
+                  ? (resolvedFlow?.flowRefId ?? nativeInput.target.id)
+                  : body.prompt,
                 flowId: childFlowId,
               },
               { projectId: ctx.projectId, actorUserId: null },
@@ -466,6 +629,7 @@ export async function POST(
                     ? {
                         kind: "flow",
                         flowId: resolvedFlow.flowId,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(body.runnerOverride
                           ? { runnerOverride: body.runnerOverride }
                           : {}),
@@ -473,6 +637,7 @@ export async function POST(
                     : {
                         kind: "agent",
                         agentId: body.target.agentId!,
+                        ...(nativeInput ? { nativeInput } : {}),
                         ...(body.workspace
                           ? { workspace: body.workspace }
                           : {}),
@@ -579,6 +744,7 @@ export async function POST(
               );
               const result = await launchAgentRun({
                 agentId: body.target.agentId as string,
+                ...(nativeInput ? { nativeInput } : {}),
                 resultContract,
                 projectId: ctx.projectId,
                 taskId: childTaskId ?? null,
@@ -650,48 +816,14 @@ export async function POST(
             throw launchErr;
           }
 
-          // W6: the orchestrator may have terminalized WHILE this child was
-          // launching — the pre-flight check cannot see that, and the parent's own
-          // cascade already ran before this child existed. Re-read the parent now
-          // that the child row is committed and, if the tree is terminal, run the
-          // SAME cascade a parent stop runs. Cascading from the PARENT (not the
-          // child) is deliberate: the cascade abandons a run's DESCENDANTS and
-          // leaves the root to its caller, and the just-born child is exactly one
-          // of the parent's descendants. The already-terminal parent is untouched.
-          const parentNow = await resolveActiveBoundRun(
+          const parentRefusal = await checkParentAfterLaunch(
             db,
-            parentRunId,
             ctx.projectId,
+            parent,
+            childRunId,
           );
 
-          if (!parentNow.ok) {
-            // The cascade flips rows only; the just-born child may already hold
-            // a live supervisor session that would otherwise keep spending
-            // under the terminal tree.
-            await cascadeAbandonRunTreeAndStopSessions(
-              parentRunId,
-              parent.taskId ?? null,
-              "user_stopped",
-              { db, logLabel: "[delegation.compensate]" },
-            ).catch((cascadeErr: unknown) =>
-              log.error(
-                {
-                  parentRunId,
-                  childRunId,
-                  err:
-                    cascadeErr instanceof Error
-                      ? cascadeErr.message
-                      : String(cascadeErr),
-                },
-                "[delegation.compensate] cascade of an orphaned child failed",
-              ),
-            );
-
-            return NextResponse.json(
-              { code: parentNow.code, message: parentNow.message },
-              { status: httpStatusForExtCode(parentNow.code) },
-            );
-          }
+          if (parentRefusal) return parentRefusal;
 
           const result = { runId: childRunId };
 
@@ -719,7 +851,11 @@ export async function POST(
         } catch (err) {
           if (isMaisterError(err)) {
             return NextResponse.json(
-              { code: err.code, message: err.message },
+              {
+                code: err.code,
+                message: err.message,
+                ...(err.details ? { details: err.details } : {}),
+              },
               { status: httpStatusForExtCode(err.code) },
             );
           }

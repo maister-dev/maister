@@ -1,0 +1,95 @@
+{
+  "task": "T20.1",
+  "slice": "Current company node policy through shared capability materialization",
+  "date": "2026-11-06",
+  "baseCommit": "55d5f9c6caf85c0ad40d07b212b175b4785437df",
+  "status": "Native materialization qualified locally; common graph dispatch remains pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": [
+    {
+      "source": "tool execution result",
+      "suite": "company-flow-context.integration.test.ts",
+      "failed": 1,
+      "tests": 37,
+      "reason": "Native company materializer was unavailable before implementation."
+    },
+    {
+      "source": "tool execution result",
+      "suite": "company-execution-declaration.test.ts",
+      "failed": 8,
+      "tests": 33,
+      "reason": "Native declarations accepted project capability selections and permission overrides that the native path could not apply."
+    }
+  ],
+  "gates": {
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9312,
+      "durationSeconds": 38.4
+    },
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 6,
+      "tests": 101,
+      "durationSeconds": 62.95
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    }
+  },
+  "qualified": [
+    "Real package and PostgreSQL current authority plus exact frozen node session and managed owner/run path guard the shared file materializer.",
+    "Explicit company profile owner with null project identity; no project catalog, MCP default or overlay lookup.",
+    "Missing capability guard evidence refuses before materialization; existing project evidence policy and unsafe-permission refusal are shared.",
+    "Actual Claude settings preserve default permission mode and existing file ownership; native effective policy and digest round-trip through the existing write-once node materialization ledger.",
+    "Shared loader and Studio schema refuse unsupported native capability selections before effects; existing legacy project declaration behavior remains green.",
+    "Populated upgrade and actual project deletion remain usable with Brain tables absent."
+  ],
+  "qualificationBoundary": "Positive company profile creation uses controlled prospective-engine metadata and capability diagnostics. Real package, PostgreSQL, adapter files and node materialization persistence are exercised. Actual graph ACP dispatch, source-generation capture, waits and terminal cleanup are not qualified by this slice.",
+  "intermediateFailures": [
+    "One post-implementation expectation compared macOS /var with the canonical /private/var materializer path; the test now resolves the actual path.",
+    "One standalone green allocation hit Docker port binding timeout; the existing owned allocator reclaimed and retried before SQL, then all 37 cases passed."
+  ],
+  "notYetQualified": [
+    "Common graph company loader/traversal and actual ACP node dispatch",
+    "Runtime source-generation capture and company graph terminal cleanup",
+    "Human/form waits and restart recovery",
+    "Engine 3.12.0 activation, full T21 regression and actual companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "cc4a8abb12312373c5421faee3e96a2f0f88e9e9db9ccef5e44ae5d2d900c893",
+    "AGENTS.md": "c9bb1e38af44ac510f705ec33de619aaa63f76d16e1c09e87007e8a8bc117bf2",
+    "docs/flow-dsl.md": "0b7c55fb0bd3883000625e6ab9c363f1842bf59908fc81bfcf65c4eb0950ce3e",
+    "docs/system-analytics/specialist-runtime.md": "08838458e4714cd42c5a1474f9d9e4dbfde46dd7c5a625258e2934d7951a029a",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "de9e47ff9599df1eeb59e91e6965b4227527b7f2a8927bc8d3e8d0120a453d86",
+    "web/lib/capabilities/agent-map.ts": "15a97cbe755f9d153931c8a52d45866c1d27d175a922bb152f18eef036e32a76",
+    "web/lib/capabilities/materialize.ts": "33a30b02bb3525bfbbc3af43ff1d747c808743877db5fa40bff4c0a670ca49f6",
+    "web/lib/capabilities/types.ts": "5946037e2949d6d2dacc516c3e5df7731d847bb7e6a1fdb45f24d963c72b2c13",
+    "web/lib/config.schema.ts": "95b9d0aab4fcdc99cf13b899b10e0f367ef521099c1421d89ed10120fb97ef5c",
+    "web/lib/flows/__tests__/company-execution-declaration.test.ts": "a33f4456632e0a6f1f4fc1ae0b855d1d0290b89862f8025694ac7f2cfaff31f1",
+    "web/lib/flows/enforcement-evidence.ts": "28f5927f4ffea2c64877a0052540c690285d5ce476260f7e01effaa834b2f992",
+    "web/lib/flows/flow-dsl-grammar.ts": "cd4b18828d8a9322d92cb8f265f1848724227831feb66ffb84948d951d1d5087",
+    "web/lib/agents/company-flow-materialization.ts": "2c6812b794708ea6420358e6eea2660c6a624e9f701af451dea7e088e454c9dc"
+  }
+}

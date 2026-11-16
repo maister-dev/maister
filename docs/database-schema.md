@@ -21,6 +21,25 @@ supported.
 
 ## Tables
 
+### Installation company and authority (Implemented storage)
+
+Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Native knowledge reads enforce record-specific restrictions; session-only administrator grant list/create/revoke and native review HTTP are implemented locally in [Company Brain](system-analytics/company-brain.md). Main `0232_company_grant_requests` adds nullable `creationKey`/`creationDigest`, `revocationKey`/`revocationDigest`, `revokedBy` and `revocationReason` to the existing grants, preserving legacy NULL metadata. A partial creation-receipt unique index and immutable policy/revocation trigger guard exact deliveries. Brain `0011_proposal_source_access` adds bounded nullable `sourceRestrictions` and a server-derived `sourceAclKey` to proposals, partitions canonical input deduplication by source access and freezes submitted/settled authority snapshots. Logical dependency references never obstruct project deletion; company-owned history survives deletion of an originating project.
+
+Main `0262_specialist_question_subject` extends existing HITL rows with nullable
+`specialist_assignment_id`, `specialist_input_revision` and
+`specialist_answer_input_revision`, composite retained-input FKs, native delivery
+uniqueness/history indexes and exact source/prompt immutability guards. Legacy
+question bytes survive with NULL native metadata. Answered input and terminal
+unanswered closure remain distinct; no Brain FK or new execution ledger is added.
+Main `0263_specialist_question_answer` adds the nullable immutable native answer
+receipt on that HITL row, exact human/new-input guards, receipt-gated resume state
+and bounded original-to-answered input lineage. Existing task questions keep
+NULL receipt metadata, and the main-only upgrade needs no Brain schema.
+See [native clarification storage](db/specialist-assignments-domain.md#native-clarification-subjects-on-existing-hitl).
+
+
+Specialist metadata, configuration and scoped scheduler/retry storage use main `0235`–`0239`; see the [specialist persistence contract](db/specialist-assignments-domain.md). Existing retry intents now have exclusive company/project owners and explicit company v3 binding/assignment input witnesses; project v1/v2 recipe bytes are preserved. Main `0286_company_replacement_retry` reserves one existing-ledger continuation for a manually invoked company specialist after a proven pre-dispatch failure. Main `0287_specialist_credential_epoch` adds the nullable executor epoch start to existing owner claims and timestamps native mutation credentials at issue time. Native company run-owner storage and exact assignment/input links use `0240`; `0248` extends the same Run CHECK/reference/link guards with a distinct v2 company graph capture and pinned required Flow export, preserving v1 and non-company rows; graph dispatch is implemented under the current runtime gates. The existing resource baseline CHECK additionally admits explicit v2 company result-only graph witnesses through `0250_company_flow_workspace_witness`; the operational-agent terminal contract remains unchanged. `0251_company_flow_runtime` admits the explicit v2 graph into the existing bounded resource cleanup CHECK/index and company-owned lifecycle-fact guard; no operational-agent result is synthesized. `0252_company_run_cancellation` adds nullable immutable company stop metadata to the existing Run, fencing new execution commands and competing completion before external teardown; old rows remain NULL and project/Brain deletion remains independent. Internal run-bound agent credentials and current verification use `0241`; `0249_company_flow_node_credentials` adds exact current node/professional/coordinator validation for v2 graph credentials on the same token and rotation ledger, preserving null-node v1 and existing non-company bytes. Existing project, personal and librarian rows retain NULL company metadata. Native standalone company dispatch is implemented. Native company result-only graph execution is locally qualified at engine 3.12.0 with controlled ACP, required results, physical quiescence and shared disposition. Governed child dispatch, exact-result acceptance and retained owner recovery have local platform evidence. The installed stand package passed independent coordinator and diagnostic interruption qualification.
+
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
 graph-runner, scratch-run, evaluation-lab, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
@@ -105,7 +124,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `flow_graph_layouts`                   | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | —                                                                                                                                                 |
 | `scheduler_jobs`                       | **(Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions. **(ADR-134 — Implemented, migration `0098`)** adds the system-managed per-project `repo_delivery_scan` kind. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | optional `projects.id`                                                                                                                            |
 | `scheduler_job_runs`                   | **(Implemented, migrations `0027`, `0173`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims. Index `(job_id, claimed_at, id)` supports the latest-attempt lookup by backward scan.                                                                                                                                                                                                                                                                                                                                                                                                                              | `scheduler_jobs.id`                                                                                                                               |
-| `agent_schedules`                      | **(Scheduler-clock table reworked for platform agents — Implemented, migration `0049`; ADR-139 telemetry, `0104`)** Per-agent cron/event trigger bindings. The dead original `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows), `event_match` jsonb (event rows), and fenced safe latest-attempt telemetry. Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer.                                                                                                                                                                                                                                         | `projects.id`, `agents.id`, optional `runs.id`                                                                                                    |
+| `agent_schedules` | **Implemented: existing cron/event/mention source and fenced telemetry; owner scope in `0238_company_trigger_scope`.** Project sources preserve their current behavior. Company sources retain an exact specialist/coordinator binding, independent configuration revision and server creation receipt on this existing table. Requests remain separate from role configuration and invocation authority. Company dispatch is not activated by storage. | Optional exclusive `projects.id` or `companies.id`; generated project-only `project_agent_id → agents.id`; company binding heads (RESTRICT) |
 | `run_schedules`                        | **(Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id`                                                              |
 | `scheduled_task_launches`              | **(ADR-139 — Implemented, migration `0104`)** Recoverable one-time task-launch intent with immutable task display snapshot, local-time/UTC contract, revision fence, safe outcome, and retry/claim state. It is driven by the existing `run_schedule.dispatcher`, never by the supervisor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `projects.id`, optional `tasks.id`, optional `users.id`                                                                                           |
 | `scheduled_task_launch_attempts`       | **(ADR-139 — Implemented, migration `0104`)** Durable pre-Git reservation: fixed Run identity, task attempt number, managed branch/path, request hash, and claim fence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `scheduled_task_launches.id`                                                                                                                      |
@@ -513,12 +532,13 @@ re-adding the same ref reactivates it instead of creating a second logical role.
 
 ## `actor_identities`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0244_company_human_work_ownership`, `0245_human_work_owner_guards`.)
 
 ```ts
 {
   id,
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   kind: 'user' | 'api_token' | 'internal_agent' | 'system',
   label,
   userId?,                        // FK -> users.id (SET NULL)
@@ -845,9 +865,7 @@ claiming new work. Migration `0173` adds the ascending physical index
 `ORDER BY claimed_at DESC, id DESC LIMIT 1` lookup. A running `system_sweep`
 renews and fences both durable
 lease rows; it persists a successful result only while it still owns the
-attempt. `agent_schedules` is indexed on `(project_id, agent_id)` and
-`(trigger_type, enabled, next_fire_at)` for project lookups and the cron
-dispatcher scan.
+attempt. `agent_schedules` retains `(project_id, agent_id)` and the existing due index. Owner scope adds company/agent lookup and partial project/company due indexes, so staged company rows cannot consume the project dispatch window. Company creation keys are unique per company/creator with null-safe owner requirements; independent delivery keys remain independent sources. Existing trigger-attempt schedule/delivery, schedule/fence and reserved-run uniqueness stays global and unchanged.
 
 ## Run schedule tables (Implemented)
 
@@ -1046,12 +1064,7 @@ install's pinned revision (RD4). Indexed on `agents(package_name)`
 (`agents_package_name_idx`; was `agents_flow_ref_idx`),
 `agent_project_links(project_id)`, plus the UNIQUE pair above.
 
-**Migration 0068 data policy (Implemented — ADR-106).** Pre-release: `DELETE FROM
-agents` then re-project via `resyncAgents`. The FK fan-out — `agent_project_links`
-and `agent_schedules` CASCADE-delete; `runs.agent_id` is `ON DELETE SET NULL`
-(run history survives) — makes the wipe safe; a post-migration resync
-(startup reconcile + admin `POST /api/admin/agents/resync`) repopulates the
-catalog from installed packages.
+**Catalog retirement (Implemented — ADR-106; owner scope `0238_company_trigger_scope`).** `agent_project_links` and project `agent_schedules` cascade when their catalog agent is removed. The schedule relationship uses a generated project-only agent foreign key; company sources keep their logical professional identity, creation receipt and frozen invocation references. `runs.agent_id` remains `ON DELETE SET NULL`, preserving execution history. Catalog refresh cannot silently erase company work configuration; admission must still check the current provider and authority. Startup reconcile and admin resync refresh the catalog from installed packages.
 
 ## Authored catalog tables (Implemented)
 
@@ -4421,22 +4434,23 @@ injected value byte-identical to the raw review summary.
 
 ## `assignments`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0244_company_human_work_ownership`, `0245_human_work_owner_guards`.)
 
 ```ts
 {
   id,
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   runId,                          // FK -> runs.id (cascade)
   taskId?,                        // FK -> tasks.id (SET NULL)
   nodeId?,
   stepId?,
   hitlRequestId?,                 // FK -> hitl_requests.id (cascade)
   nodeAttemptId?,                 // FK -> node_attempts.id (cascade)
-  actionKind: 'permission' | 'form' | 'human_review'
+  actionKind: 'permission' | 'form' | 'agent_question' | 'human_review'
             | 'manual_takeover' | 'merge_conflict'
             | 'infra_recovery' | 'budget_breach'
-            | 'hook_trip',        // 'hook_trip' Designed — ADR-108 (migration 0066)
+            | 'hook_trip' | 'node_interrupt' | 'decision_request',
   status: 'open' | 'claimed' | 'completed' | 'cancelled',
   roleRefs,                       // jsonb string[] snapshot
   title,
@@ -4463,13 +4477,14 @@ assignment per HITL wait when the row is linked to `hitl_requests`.
 
 ## `assignment_events`
 
-(Implemented, migration `0018`.)
+(Implemented, migrations `0018`, `0244_company_human_work_ownership`, `0245_human_work_owner_guards`.)
 
 ```ts
 {
   id,
   assignmentId,                   // FK -> assignments.id (cascade)
-  projectId,                      // FK -> projects.id (cascade)
+  projectId?,                     // Exclusive project/company owner; FK -> projects.id (cascade)
+  companyId?,                     // FK -> companies.id (restrict)
   runId,                          // FK -> runs.id (cascade)
   eventKind: 'created' | 'claimed' | 'released' | 'taken_over'
            | 'responded' | 'returned' | 'completed'
@@ -4690,6 +4705,15 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 }
 ```
 
+Company ownership is an exclusive alternative to project ownership. Main
+`0246_company_hitl_wait_events` permits `run.needs_input` for an exact
+company operational agent or exact v2 result-only Flow with no task. The `0242_company_run_terminal_events`/`0251_company_flow_runtime` reference and
+immutable routing guards apply; the HITL row and wait fact commit together.
+Private local assistants retain their separate notification path.
+Main `0247_company_operational_attention` additionally permits the existing
+`run.operational_attention_acknowledged` kind under those same exact company
+Run guards. Per-user acknowledgement receipts remain in their existing table.
+
 Dispatch reads are PK-range scans (`id > cursor ORDER BY id`), gated by the
 xid8 horizon (`tx_id < pg_snapshot_xmin(pg_current_snapshot())`) so a
 late-committing lower `id` is never skipped. **(Implemented, migration
@@ -4724,6 +4748,10 @@ idempotent.
   createdAt, updatedAt
 }
 ```
+
+## Native knowledge source restrictions (Implemented storage)
+
+Brain migration `0010_source_access` adds nullable retained source restrictions to current/exact revisions and captures, plus `brain_source_submissions` delivery receipts. Access-aware content dedup uses a server-computed restriction digest. Submitted source bytes, witnesses and delivery receipts are immutable except for the owning project deletion cascade; cross-owner dependencies remain logical references and never block project deletion. See the [Company Brain domain schema](db/company-brain-domain.md#native-source-access-extension) for the native ownership and recovery contract.
 
 ## Project Brain tables (A/B/C implemented — ADR-122/127/128)
 
@@ -5599,7 +5627,40 @@ The [owning input contract](system-analytics/scheduled-agent-requests.md) define
 | agent_trigger_attempts.scheduled_request_snapshot | Nullable jsonb; null default; strict version-1 envelope; IDs match the claim; immutable under the existing identity guard. Protected separately from safe binding metadata. |
 | runs.scheduled_request_snapshot | Nullable jsonb; null default; exact immutable copy, including authorized successors with a different current trigger source. |
 
-No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution preserves legacy cron launch after source deletion. Native reviewed admission additionally validates its current source appointment. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+
+Main `0256_project_source_review` adds nullable `agent_schedules.project_source_review`.
+Its closed version-one object records an actual settings review of native project
+cron/event input; historical rows remain SQL NULL and `created_by` remains NULL.
+The object is project-only, excludes mention sources and has bounded reviewer,
+UTC timestamp, positive collection revision and SHA-256 fields. It has no user
+or Brain FK: retained reviewer identity must not invent authorship, rewrite on
+user deletion or block project deletion. The current source head can be
+replaced/cleared under the existing collection revision CAS. This does not
+rewrite existing v1/v2 invocation snapshots or enable native dispatch by itself.
+See [project automation review](system-analytics/specialist-assignments.md#project-automation-review)
+for review authority, digest and invocation boundaries.
+
+Main `0257_project_trigger_review` extends the existing trigger binding snapshot
+CHECK with project version 3: exact project owner, selector and version-one review.
+Legacy project v1 and company v2 remain unchanged, as does the separate scheduled
+request v1. The insert guard binds a v3 claim to the actual current source review,
+selector, fence and original cron request or owned source event. Existing identity
+guards retain immutable attempt history. No new table, FK or execution ledger is
+added; deleting a project retains its existing cascade and needs no Brain access.
+
+Main `0258_project_event_context` adds the closed version-two event review to
+existing source heads and project v3 claim snapshots. It retains recorded review
+metadata and adds the observed canonical decimal `eventCursor` (0 through signed
+Postgres bigint maximum) and explicit `sourceSharing:none|producing_run`. Version
+two source reviews are event-only. Historical review v1 and existing claim bytes
+remain untouched and receive no inferred enrollment or sharing permission. The
+replacement INSERT guard requires a current v2 review for fresh reviewed event
+claims, an exact source/review/fence, actual project event and event ID above the
+recorded cursor. Cron v1 review, company v2 claims and all immutable history retain
+their existing contracts. `domain_events_project_sequence_idx(project_id,id)` is
+partial to actual project facts and bounds observed-cursor lookup. No table or
+Brain FK is added; populated main-only upgrade and project deletion remain valid.
 
 The additive input fields have no independent lifecycle or cascade.
 
@@ -5617,3 +5678,69 @@ erDiagram
   agent_schedules ||--o{ agent_trigger_attempts : "claim retains non-FK identity"
   agent_trigger_attempts ||--o| runs : "reserved launch receipt"
 ```
+
+## Company Brain additive model (Implemented)
+
+Main `0230_company_ownership` and Brain `0007_company_records` through `0011_proposal_source_access` implement exclusive ownership, immutable record revisions, original witnesses/independence groups, proposals, separate confirmation decisions and source-aware access. [Company Brain persistence](db/company-brain-domain.md) owns the keys, preserving migration and logical-reference deletion boundary. Both journals are applied before native knowledge traffic is admitted. The generated DBML describes the implemented schema.
+
+## Specialist assignment storage, role metadata and company execution (Implemented)
+
+Logical-work persistence uses main `0269_specialist_logical_work` and the
+forward guard correction `0270_specialist_work_witness_guards`. The latter
+requires positive source/context/target matches, preserves company source
+identity after optional catalog FK removal, and does not rewrite history or
+change table shape. See the [guard and lifetime contract](db/specialist-assignments-domain.md#backfill-guards-and-lifetime).
+
+Main `0274_specialist_work_rework` adds `specialist_work_decisions` for
+result-only continuations. A decision identifies the exact collected
+result and author. The next work revision shares the existing logical identity
+and is retained in the same transaction. Historical work, results, and links
+keep their original revisions.
+Main `0275_specialist_work_acceptance` enables authorized human acceptance of
+an exact collected child result and requires an attributed working-context
+entry with the original finding identities. Assignment completion remains
+separately guarded.
+Main `0276_specialist_execution_work_acceptance` adds the reviewed company
+acceptance scope to the existing token contract and binds agent decisions to
+the exact current professional and Run or Flow node.
+Main `0277_specialist_assignment_acceptance` adds the immutable final
+result-only acceptance ledger. A current valid root result can make the
+assignment ready for acceptance. The final receipt, completed state and
+state event commit together under the current authority.
+
+[Specialist persistence](db/specialist-assignments-domain.md) defines implemented `0234_specialist_assignments`: exclusive company/project assignment heads, immutable `specialist_input_revisions` and `specialist_run_links` to existing executions. Business revision, input head and context head are separate. A deferred constraint checks the retained input head at commit; history and run links reject UPDATE/DELETE. State changes use the existing content-free domain outbox. Current authority, source restrictions, exact input CAS, cancellation and reopening are enforced by the assignment store. No legacy runs acquire invented assignments. Generated main `0253_specialist_intake_receipts` binds canonical source deliveries and original request digests to exact existing assignment inputs. Immutable receipt/source/actor guards and the source-key uniqueness prevent duplicate assignment creation; invocation adapters retain their own current authorization and existing Run reservation. Generated main `0254_specialist_project_flow_input` adds nullable initial project-task linkage with same-project/immutable reference guards and permits versioned project coordinator Flow witnesses in new standing snapshots. Legacy input bytes and assignment values remain unchanged; company assignments require no task.
+
+Generated `0235_specialist_metadata` adds nullable `agents.specialist` with bounded responsibility/target-class declarations and a closed JSON shape. The registry handles SET/CLEAR/re-SET; absent metadata preserves old serialized definitions and their hashes. The declaration is descriptive and grants no authority. [Specialist runtime](system-analytics/specialist-runtime.md) owns its contract.
+
+Pinned company bindings, native standalone and graph execution, and attributed human and agent context history are implemented. Exact result-only acceptance uses the existing `runs`, `node_attempts` and `run_results` ledgers. Company result-only Flow pins installed `flow_revisions` with null project, task and project Flow fields. Coordinator ownership recovery and independent effect verification remain open.
+
+Generated main `0265_specialist_result_delivery` adds immutable native result
+witnesses on the existing domain outbox and `specialist_delivery_receipts`.
+The terminal transaction freezes exact root/input/result/schema/source identity;
+historical events remain explicitly unknown. The dispatcher creates one private
+origin intent without completing the assignment. Main `0266_specialist_delivery_targets`
+extends the existing delivery ledger with a third exclusive native target and
+the existing Inbox with a company/project native branch. Legacy project/task
+rows remain unchanged. Routing/evidence guards permit existing recipient read
+mutations, while current source/recipient authority gates new notices and reads.
+No transport attempt ledger or Brain FK is added. Channel/recovery qualification
+is in progress; accepted-outcome delivery remains the acceptance-owning slice.
+
+## Stand operation model (Designed)
+
+[Stand operation persistence](db/stand-operations-domain.md) specifies the subsequent `stand_operations` and separately hardened `company_brain_constraints` units (numbers allocated at generation): versioned targets/components, effect intents/receipts, canonical resource claims, current permits, independent probes and inspected recovery decisions. Unknown external effects outlive run cleanup. No operation success is inferred from process/HTTP status or current health.
+
+
+Native Company Brain publication uses the existing `domain_events` outbox with exclusive project/company ownership. Company knowledge events carry only owner/record/revision/change identifiers and a cause. Project-only consumers skip these events while advancing their ordinary cursors; they cannot create a project or launch work for company knowledge. Existing project event payloads retain their contract. `runs.knowledge_access` is nullable versioned source-access metadata reserved for structured knowledge consumption; legacy NULL means unknown, never evidence of an empty source set.
+
+Generated `0236_company_specialist_bindings` adds company-owned binding heads and immutable configuration revisions. A live role has one binding per company; current installed pins are protected until explicit detach. Deferred head/history coherence, exact revision advancement, immutable identity/receipts and terminal retirement are database-enforced. Retained revisions contain their own role/configuration/authority witnesses and logical package identity, so history remains inspectable after provider removal. These tables contain configuration and replay receipts; `runs` and `node_attempts` remain the execution ledgers. No project reference or fabricated repository is required.
+
+Generated `0237_company_flow_bindings` adds stable company coordinator heads and immutable configuration receipts. Current Flow/package/specialist references are protected by foreign keys and the shared removal/GC reference check; retirement releases current keys while accepted snapshots retain the exact manifest, role configuration and routing authority witnesses. Existing specialist rows and history are preserved unchanged. Native company execution is available at engine 3.12.0; owner-aware schedule dispatch remains a separate runtime slice.
+
+Generated `0238_company_trigger_scope` extends existing schedules and trigger attempts with exclusive company/project ownership. It preserves project IDs, v1 binding/request JSON and unknown creator metadata without inventing authorship. New company binding snapshots use v2 exact accepted configuration references and content witnesses; the protected scheduled request stays v1. Source configuration revision is separate from the existing invocation fence. Company source identities/creation receipts are retained on disablement and catalog retirement; project cascades remain unchanged. Current project dispatch, recovery and legacy backfill exclude company rows before bounded selection until their owning company runtime slice is active.
+
+Generated main `0259_specialist_context_revisions` adds immutable, attributed context history with exact input references, content-guarded replay identities and deferred head/history coherence. Existing revision-zero assignments retain their original input and attribution without synthetic context rows. Source restrictions cannot shrink through supersession; current grants gate reads and replay. Human owner epochs remain NULL. Main-only upgrade and context persistence work without Brain tables; no Brain FK or execution ledger is introduced. [Specialist persistence](db/specialist-assignments-domain.md) owns the detailed contract.
+
+Generated main `0260_specialist_context_credentials` admits `assignments:read` in the existing company token CHECK, retaining all standalone/Flow-node owner constraints and immutable credential guards. The issuer intersects its native scope set with the reviewed role limits; context reads still require the current exact Run/node appointment and inherited-source access. Existing token/input bytes are unchanged.
+
+Generated main `0261_specialist_context_mutation_credentials` adds `assignments:update` to the existing company credential CHECK while retaining the read scope and every previous standalone/Flow-node owner predicate. Existing credentials are not widened or rewritten. Current professional/initiator authority, exact input/context CAS and full execution source inheritance are enforced by context persistence. Business ownership epoch remains explicitly unknown until its recovery-owning slice.

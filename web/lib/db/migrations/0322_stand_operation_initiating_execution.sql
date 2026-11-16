@@ -1,0 +1,1 @@
+ALTER TABLE "stand_operations" ADD COLUMN "initiating_execution" jsonb;

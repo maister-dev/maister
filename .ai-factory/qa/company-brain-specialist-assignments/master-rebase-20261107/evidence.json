@@ -1,0 +1,745 @@
+{
+  "schemaVersion": 1,
+  "status": "partial_rebase_integration_checkpoint",
+  "capturedAt": "2026-11-07T17:37:14.184696+00:00",
+  "master": "f38053b3192a24738c8b0920852cfd229c56721f",
+  "preRebaseHead": "2308a37f5",
+  "backupRef": "backup/company-brain-pre-master-20261107-2308a37f5",
+  "replayedHead": "2fafe67b6a3cd105a2cd37d1eaec513b6eebe3ba",
+  "runtime": "darwin/arm64 Node 24.15.0",
+  "passed": {
+    "mainMigrationIntegration": {
+      "files": 10,
+      "tests": 24
+    },
+    "masterCronEventReservedRunHandoff": {
+      "files": 1,
+      "tests": 2
+    },
+    "delegationAndPlans": {
+      "files": 2,
+      "tests": 44
+    },
+    "companyFlow": {
+      "files": 1,
+      "tests": 46
+    },
+    "webUnit": {
+      "files": 891,
+      "tests": 9312
+    },
+    "webTypecheck": true,
+    "supervisorTypecheck": true,
+    "mcpTypecheck": true,
+    "contractsAnd84RequirementCoverage": true,
+    "docsAnd176TableErd": true,
+    "drizzleDrift": "No schema changes",
+    "masterHistoricalSqlAndSnapshots": 415,
+    "mainJournal": "261 entries; exact master prefix; strictly increasing timestamps; final 0264_specialist_delivery_targets",
+    "brainHistory": "unchanged",
+    "changedFileLintAndFormat": true
+  },
+  "partialEvidence": {
+    "companyCompatibility": "47 company-agent cases pass in a run with an Origin fixture failure and a company-Flow beforeAll writer failure. Those fixture fixes are followed by the project clarification/other selected checks and the complete 46-case company Flow green run. This is not a green full company-agent file.",
+    "projectCoordinator": "Final source-state rerun passes actual same-origin manual intake, one canonical intent, exact private input source-version digest and real worker/supervisor completion. The unchanged owning composite remains red at its automatic comment qualification assertion; T22 is reopened and not marked complete."
+  },
+  "remaining": [
+    "T22 automatic project coordinator roots require current positive qualification plus durable queued-source handoff and recovery; preserve the original request, input and source reservation.",
+    "T25 native result-delivery inspection/recovery, large-Inbox source budgets and remaining retry/rollback/upgrade qualification.",
+    "Full post-rebase Phase 5 integration/build and actual installed specialist/stand pilot qualification.",
+    "Automatic conversion of databases initialized by the pre-rebase feature lineage is not qualified; never rewrite their applied hashes. Existing ahead-of-binary guard refuses incompatible hashes; any conversion requires T43 qualification."
+  ],
+  "remoteEffects": "No push, merge, deployment or production target action",
+  "artifacts": {
+    "migrations-red": {
+      "path": "migrations-red.log.gz",
+      "sha256": "95ae88fc7e31836684c57c225d908f4e7489d7d632e94a9637c250225deb7c82"
+    },
+    "migrations-green1": {
+      "path": "migrations-green1.log.gz",
+      "sha256": "2cbc630ea8ca73893030bd387fbc9c9fac2c7ea8c49b21ffaaff4fd00dcedafe"
+    },
+    "trigger-binding-red": {
+      "path": "trigger-binding-red.log.gz",
+      "sha256": "ef083534a7aeb409200b4a4f4c545072f8ad96b094423ecfd910d8ebb1f98795"
+    },
+    "trigger-binding-green": {
+      "path": "trigger-binding-green.log.gz",
+      "sha256": "d911ea489e8e543977461715a4454ead2c2c6742a4c723d6c768784fd5e68271"
+    },
+    "private-red2": {
+      "path": "private-red2.log.gz",
+      "sha256": "a6ac2ef259da1dd64764cfe15f838796d9fb78ed3db793d044ea88f256103e52"
+    },
+    "private-green3": {
+      "path": "private-green3.log.gz",
+      "sha256": "1ab9239f1f4b75c648eae639b4e4c8d846743c7b2d89c332f17ace4f1b72202d"
+    },
+    "unit-red": {
+      "path": "unit-red.log.gz",
+      "sha256": "cc2841885b4d7f8883e82ddbfc599aab54e16b88ec0e3120fa3cc237df7a0b61"
+    },
+    "unit-green2": {
+      "path": "unit-green2.log.gz",
+      "sha256": "fb744fc51b88e99d820a133cd2aa38b5e40269561ed3049e14fa3c992eaf5193"
+    },
+    "types9": {
+      "path": "types9.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    "docs-green2": {
+      "path": "docs-green2.log.gz",
+      "sha256": "fd34313e4e78540c845160f3d6c23f56814fb1d0eef844c8df1031386ff1b296"
+    },
+    "contracts-green4": {
+      "path": "contracts-green4.log.gz",
+      "sha256": "391b5099de978626bda6ce3df1e2b73bf13ac127f4c3d5b894a905a519f24153"
+    },
+    "coverage-green": {
+      "path": "coverage-green.log.gz",
+      "sha256": "bd952c8635d831551737dcc366843d22e5bccc2ad5e237f824a0aa129b48d0db"
+    },
+    "company-compatibility-red": {
+      "path": "company-compatibility-red.log.gz",
+      "sha256": "8e99ce9d948a2a4af902a83a12de768d29ecaebca00aa3e0cd626544d263cfcf"
+    },
+    "flow-clarification-green1": {
+      "path": "flow-clarification-green1.log.gz",
+      "sha256": "11a8db7b542800f02aadf4e93881c143473f74f2f44aaf19f34eadef24708bff"
+    },
+    "company-flow-green2": {
+      "path": "company-flow-green2.log.gz",
+      "sha256": "3ae5836b4a3b8fff2d540fd2654a9de932fe1ff9ad7933a3d009b0af70d53561"
+    },
+    "project-coordinator-green3": {
+      "path": "project-coordinator-green3.log.gz",
+      "sha256": "134a306c34c4c4b94907bbc0a4ff9b96170383244b13d3f8fa8830a82ef52c6a"
+    },
+    "schema-drift2": {
+      "path": "schema-drift2.log.gz",
+      "sha256": "79e1dad925d9e9977f8abde4090ebc9ce505dbe47f50af60e9e15bfd516f94e1"
+    },
+    "host-red": {
+      "path": "host-red.log.gz",
+      "sha256": "98fe3d212788ba5fbc276acbc4d0f74862783c7f1f047833a7af08186010ae27"
+    },
+    "supervisor-types2": {
+      "path": "supervisor-types2.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    "mcp-types": {
+      "path": "mcp-types.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    "lint-green1": {
+      "path": "lint-green1.log.gz",
+      "sha256": "6cd316ae8e81df0ff79776205007450fac3d62e1ba8e884e169e326d7955ebe5"
+    },
+    "project-coordinator-checkpoint": {
+      "path": "project-coordinator-checkpoint.log.gz",
+      "sha256": "cae1dc5ae23907aaa7bb823c5d82eafa370dc174ec8650c64f438ce76c06857a"
+    }
+  },
+  "worktreeFiles": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": {
+      "sha256": "1b8a0ca56fa65a061ce249c82e6e0dc52dd25e319dc4ffea6e00000adfa71600"
+    },
+    "docs/api/external/operations.openapi.yaml": {
+      "sha256": "8c985f140eab9da186e355f02898b336a5c758ad14e4c4c7d10f66e55bd69ef2"
+    },
+    "docs/api/external/stand-connector.openapi.yaml": {
+      "sha256": "20eee4b16d1d1ad8b7103dafddd7c912cd84a222c85e821fa3d6f7b7ff15e4c1"
+    },
+    "docs/api/web.openapi.yaml": {
+      "sha256": "dd3456d2ab2f82a99464b806314f76954451d9d5956d47cc7180e982c514a633"
+    },
+    "docs/database-schema.md": {
+      "sha256": "c49a26fe019a33fa6e698e4b3a52e8994bbc1558b4ada3668808f812bc714327"
+    },
+    "docs/db/company-brain-domain.md": {
+      "sha256": "bfca6a7377e4579e7cf563ca618678ee45e8907d3b8ca837b585e4cbb51bcde5"
+    },
+    "docs/db/domain-events.md": {
+      "sha256": "2cdb83241d9d9a84f29a8f8ca917becbb201ea33b829ef23d4ce33150685768f"
+    },
+    "docs/db/erd.dbml": {
+      "sha256": "d3fac0eacf7677976d12bb65bfb76d0c4513ec2f10d5887aa8afbebecc15f9d8"
+    },
+    "docs/db/operational-agents-domain.md": {
+      "sha256": "dc2c4fcfa7757408abe0dae023083c6430d02d31df50f1f97257ff9372854dcb"
+    },
+    "docs/db/runs-domain.md": {
+      "sha256": "c683e1c8b44515d6570d5783e583d5c1c44654e5750d8f024a8d1543d2603f33"
+    },
+    "docs/db/specialist-assignments-domain.md": {
+      "sha256": "c0066c1071517ab12e0e499143a67bc70dc1ac58121d65fe88053fcdffdb7c6c"
+    },
+    "docs/db/stand-operations-domain.md": {
+      "sha256": "21ef949bf66f163ed45aeb38f74d331c2cad2efe64ac7f8e33228faebbd05d02"
+    },
+    "docs/decisions.md": {
+      "sha256": "06b654ea8441b4a6da763f763499b932119b0594ee314acb5c203705ad99a190"
+    },
+    "docs/decisions/adr-200.md": {
+      "sha256": "fae93e724a49254dec759beca8e4b212f2a707469ba171ca452c82d0a31bca0f"
+    },
+    "docs/decisions/adr-201.md": {
+      "sha256": "dc794f26f5c5d887618315e6246856a9c77d39144a259e68b55914b04aebbb0a"
+    },
+    "docs/decisions/adr-202.md": {
+      "sha256": "b06e10f8d32c7d2e0c0e14ad9050a5799a0a75d5dd1ea0c2c030b05473ddabb1"
+    },
+    "docs/decisions/adr-203.md": {
+      "sha256": "df56546a6d1df863501aa477a49acfb467870f1bbe809b8bc15ced66f60db8fb"
+    },
+    "docs/decisions/adr-204.md": {
+      "sha256": "7f48b222e1484b78d5ea06b21eef2debba9aadc7cb265a8c33ba05bb13b0fdc8"
+    },
+    "docs/decisions/adr-205.md": {
+      "sha256": "cb051cb18f405ab98258ae3ab9ef8f95f1258b9b752666073b975b0fddcfdbc8"
+    },
+    "docs/screens/company-brain.md": {
+      "sha256": "aa625bb7ed41ff72bd444479c40232b8a549355b055dbae6eec5a3cce65a0b2a"
+    },
+    "docs/system-analytics/company-brain-evidence.md": {
+      "sha256": "1b378b73c8af6604bf47ace508f441d7971b9465cebe7414857799cd99ac777d"
+    },
+    "docs/system-analytics/company-brain-specialists-qualification.md": {
+      "sha256": "b24bf56918c569ea61e009210a39abf8223e8f4a8ccf27cf2ac2769650de639f"
+    },
+    "docs/system-analytics/company-brain.md": {
+      "sha256": "81ddfbff57d5c239d6c6104e37c445d89bda93a01726a6bc092be75bfb92c3bd"
+    },
+    "docs/system-analytics/evidence-findings.md": {
+      "sha256": "4283a6a73127f7ce1ee29741bfcca46b255af89257a0e0a82387efb5fd3cb160"
+    },
+    "docs/system-analytics/scheduled-agent-requests.md": {
+      "sha256": "4015e89498fd7f8b1337adae078d0a810f569d7ba13966493b4f23720f2196a9"
+    },
+    "docs/system-analytics/specialist-assignments.md": {
+      "sha256": "541e34033304b82289a756b425a89a9af024f5f94158b3f9050b3730c089bfa7"
+    },
+    "docs/system-analytics/specialist-cooperation.md": {
+      "sha256": "76c482c4372130cf2d3f66a8a9e06eeb42cfa68163cc24768d75ed2b8824a4b4"
+    },
+    "docs/system-analytics/specialist-runtime.md": {
+      "sha256": "49fc091b0179eabafc1a50e5eb34c2ae976df6de1104cf3ab6905af7ba081130"
+    },
+    "docs/system-analytics/stand-maintenance.md": {
+      "sha256": "298debe8c4ef963917b16c9151f9b7c27b1cf27a1a3398cb874eee360a8bb30a"
+    },
+    "supervisor/src/__tests__/guardrail-interceptor.integration.test.ts": {
+      "sha256": "9dac57d05b4967dc604a0d9d57b2c8a5b0b0893d07cda0499a3b44ec89b2bc86"
+    },
+    "supervisor/src/__tests__/host-identity.integration.test.ts": {
+      "sha256": "f475681683a137ef3de38a98e82af631c51408ca30d5c42e5eac97ec8c71fa60"
+    },
+    "web/app/api/projects/[slug]/agents/[agentId]/launch/route.ts": {
+      "sha256": "48fc3cf895718284f0c055d333133c3f5f3257c8280aacae851c484203728b13"
+    },
+    "web/app/api/specialist-assignments/route.ts": {
+      "sha256": "ff083cab5ba3e75ac6828a9caa5f6292fe92ab78fe8c7795228d7671955d4bf3"
+    },
+    "web/app/api/v1/ext/runs/__tests__/delegate-flow-arm.integration.test.ts": {
+      "sha256": "e5c9880b299fd14b972b840f2347a8ed85da9038f4bb5ae7cc14e58f683f1bb5"
+    },
+    "web/app/api/v1/ext/runs/__tests__/plan-flow-targets.integration.test.ts": {
+      "sha256": "af77091dd0f408456e3435189677d78c3d55e7cbd5df519c9a3c6f647905ee41"
+    },
+    "web/app/api/v1/ext/runs/delegate/route.ts": {
+      "sha256": "4a15b22fcf19a72ea88a609b4c8c3101171886f3042e9375ac3ee6be8304ae7e"
+    },
+    "web/app/api/v1/ext/runs/plan/route.ts": {
+      "sha256": "8fee9de933915737b4fc0b96e951bd9a215a08ad756b3f3c75774787385df6eb"
+    },
+    "web/components/chrome/__tests__/left-rail-sections.test.ts": {
+      "sha256": "716a0a4dbf81ed48c4dcc7fccc8c328be2084d34bec4277c29838cf358aa616b"
+    },
+    "web/components/chrome/left-rail-sections.ts": {
+      "sha256": "587df1f31bc6071ca307ce7034dcf7fc625f5c9b4c6a6fc2f3ccc82900b10b2d"
+    },
+    "web/components/runs/__tests__/flow-run-center.test.ts": {
+      "sha256": "84f00937bb8092fdba34bf60ecddc7b0c6612243e91c5384e608defea4b7e6bc"
+    },
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": {
+      "sha256": "15479d6741d726cf1df1e7771c27a228ad79abe39dff1d68ad7d5d3037526c59"
+    },
+    "web/lib/agents/__tests__/company-flow-bindings.integration.test.ts": {
+      "sha256": "12bd1bcb9497095109d2c8772ed0a8266c5f32ca557c23d3fdce511f6605f2cc"
+    },
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": {
+      "sha256": "9d3c2c2b665afe11c755584aea47d1c08a5673147a01fb274f9edfb62a2d6fdb"
+    },
+    "web/lib/agents/carrier-launch-authority.ts": {
+      "sha256": "5b614db6956e7b8413de74d3a4f6a89ddd73bba9472a197e62e14fc5cac8d6dd"
+    },
+    "web/lib/agents/execution-quiescence.ts": {
+      "sha256": "b4895500fbbb2f2cb959b86c6594ede59f57560ced6a8a1d6e14746d6b368788"
+    },
+    "web/lib/agents/flow-launch-authority.ts": {
+      "sha256": "4354ccb92f3729c4856b45195f5b6e2280668485b74ca2efad61cec75f4f7586"
+    },
+    "web/lib/agents/launch.ts": {
+      "sha256": "e94bf91de9e1be7de2a50352b82a2b2ba880c7d20d9fc1934e5e30df55afe247"
+    },
+    "web/lib/agents/tokens.ts": {
+      "sha256": "bec4973a4c4312fac8332d6f3c44566cca0baeb386210e1acab951973414951f"
+    },
+    "web/lib/db/__tests__/migration-agent-preparation.integration.test.ts": {
+      "sha256": "6006299ff59ae16f41fe1c840ed08cd338862396928715e8b12166a38f8a4e01"
+    },
+    "web/lib/db/__tests__/migration-company-agent-credentials.integration.test.ts": {
+      "sha256": "bcb343eeb2b32600ddda830f16b825340358249f85f9e17b262f391a8f2746a9"
+    },
+    "web/lib/db/__tests__/migration-company-agent-execution.integration.test.ts": {
+      "sha256": "f2797119d71c081fab322b032af5566212c1741f8e47c6cda07014d6ba252291"
+    },
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": {
+      "sha256": "5d485351aa77b7b5913dc19bfe0bdb54381b1f92fd1ef9bbf046657083ba2796"
+    },
+    "web/lib/db/__tests__/migration-company-hitl-events.integration.test.ts": {
+      "sha256": "73145c0770a04dd2243f393ed0b369a20ce9be8bc2c2c89437a8710f86b67310"
+    },
+    "web/lib/db/__tests__/migration-company-human-work.integration.test.ts": {
+      "sha256": "3e7316ebfc69cab4eb95c52b7b0e3d6100cefefab817f1a552a44ba99b9e2c8b"
+    },
+    "web/lib/db/__tests__/migration-company-retry-scope.integration.test.ts": {
+      "sha256": "805c0fcce459553f0985344dcdbfd09f37fbee61e179a4d02ed1fbef0b46b820"
+    },
+    "web/lib/db/__tests__/migration-company-run-terminal-events.integration.test.ts": {
+      "sha256": "da15f21b405e1d3b1e6fc323770388c56e9cb20cb2309741ef0afa7317fb4bf6"
+    },
+    "web/lib/db/__tests__/migration-company-trigger-scope.integration.test.ts": {
+      "sha256": "c7cd6d66f044b428902d6166f769e0b6dc86bd0f2ddd446512cf7bf593e617ad"
+    },
+    "web/lib/db/__tests__/migration-task-launch-admission.integration.test.ts": {
+      "sha256": "bed8ef9687c10be0a7af891b706c7108b88b67cfb262f83fd7c2771885afe50f"
+    },
+    "web/lib/db/migrations/0215_company_ownership.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0216_company_knowledge_events.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0217_company_grant_requests.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0218_native_knowledge_execution.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0219_specialist_assignments.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0220_specialist_metadata.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0221_company_specialist_bindings.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0222_company_flow_bindings.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0223_company_trigger_scope.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0224_company_retry_scope.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0225_company_agent_execution.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0226_company_agent_credentials.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0227_company_run_terminal_events.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0228_company_ownership.sql": {
+      "sha256": "48ba07ab8b521b65a49f874cab9526dc095a2d5ccd5d555e30aba44b773f5124"
+    },
+    "web/lib/db/migrations/0228_native_source_array_planning.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0229_company_human_work_ownership.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0229_company_knowledge_events.sql": {
+      "sha256": "a07f175e19d03b8334b3bea1885d17fc3cb520fcfc6482806bd2af90db9da4b7"
+    },
+    "web/lib/db/migrations/0230_company_grant_requests.sql": {
+      "sha256": "3df5e159b2d4f4e53eb6c4216f60b5c3092ab7898be9b4cbf06840a37d292aca"
+    },
+    "web/lib/db/migrations/0230_human_work_owner_guards.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0231_company_hitl_wait_events.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0231_native_knowledge_execution.sql": {
+      "sha256": "8b00f5edfc71032293b747ebb97a3d22d4c610ac0e64530b021e036193db176b"
+    },
+    "web/lib/db/migrations/0232_company_operational_attention.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0232_specialist_assignments.sql": {
+      "sha256": "b489ddc4a203576b31ee1bf3188fc4f1791ef1c7788ceb66eb5f104fadbb1211"
+    },
+    "web/lib/db/migrations/0233_company_flow_execution.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0233_specialist_metadata.sql": {
+      "sha256": "82ebf3c6d74fa437f323309554b12165940c0cfe61a602c785dfa8a80d83a228"
+    },
+    "web/lib/db/migrations/0234_company_flow_node_credentials.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0234_company_specialist_bindings.sql": {
+      "sha256": "56660d5a03d7f31a4e025a61019e580fc6de7d9ca28e963d31a3a86d71a0f442"
+    },
+    "web/lib/db/migrations/0235_company_flow_bindings.sql": {
+      "sha256": "db8d20a6f31d8b73ed2e111ec93fcfddc0e968502b6e5ede1735012c90d6444b"
+    },
+    "web/lib/db/migrations/0235_company_flow_workspace_witness.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0236_company_flow_runtime.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0236_company_trigger_scope.sql": {
+      "sha256": "772dc136892564658ab82fd573ead061b5a012caf7ea3782709270730a812943"
+    },
+    "web/lib/db/migrations/0237_company_retry_scope.sql": {
+      "sha256": "9d2f5d6feb56ce5b2daa5f2f9676d94daf4f884e2e0cad00109ec716c30a1b91"
+    },
+    "web/lib/db/migrations/0237_company_run_cancellation.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0238_company_agent_execution.sql": {
+      "sha256": "2f1b909bbb016b2e5068f8d4a1ad048826274bf86e3bf8928f28d91f9df1a728"
+    },
+    "web/lib/db/migrations/0238_specialist_intake_receipts.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0239_company_agent_credentials.sql": {
+      "sha256": "8be6045a29f407bb2968d7f6e19275321c3fe51d165435cc655ddcd5b84ccab0"
+    },
+    "web/lib/db/migrations/0239_specialist_project_flow_input.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0240_company_event_admission.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0240_company_run_terminal_events.sql": {
+      "sha256": "0da433719e2a3ae6f445a0eeac7efc0d6b5023071d066ee91cfe1fa2a8c7b8c3"
+    },
+    "web/lib/db/migrations/0241_native_source_array_planning.sql": {
+      "sha256": "c0b6d379705cc65f31ef42f62a1f10af1a55c0f4253a8771f7e48e8fea815677"
+    },
+    "web/lib/db/migrations/0241_project_source_review.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0242_company_human_work_ownership.sql": {
+      "sha256": "979a6f39cea5377ac127e49781c863be30b426f38f86f02e98a0337a96da2c0a"
+    },
+    "web/lib/db/migrations/0242_project_trigger_review.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0243_human_work_owner_guards.sql": {
+      "sha256": "cd539ec425516e3642177bb83d788a9bcde5c5a024da195b2fa3201de166f49b"
+    },
+    "web/lib/db/migrations/0243_project_event_context.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0244_company_hitl_wait_events.sql": {
+      "sha256": "5c14ce3dd1256cba121b91e3624683f392f373ca483448125e7b61b8f5a6e4f5"
+    },
+    "web/lib/db/migrations/0244_specialist_context_revisions.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0245_company_operational_attention.sql": {
+      "sha256": "74b9e8b3868175b17ead71a3786c7673e5a2bcedee34ffa4480be9d77a2249c2"
+    },
+    "web/lib/db/migrations/0245_specialist_context_credentials.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0246_company_flow_execution.sql": {
+      "sha256": "b56f2dc2ee0f24a1c48d22ada8854ed083cff44eb3008cb56645784c23d60567"
+    },
+    "web/lib/db/migrations/0246_specialist_context_mutation_credentials.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0247_company_flow_node_credentials.sql": {
+      "sha256": "c5abf603276beb242096263a3e876b6fa62538da7f9b1f20188e27d953f9361f"
+    },
+    "web/lib/db/migrations/0247_specialist_question_subject.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0248_company_flow_workspace_witness.sql": {
+      "sha256": "4558fcd62c2590cbaf385ff517480caea17a90a69092ea037a40bbf022ff3922"
+    },
+    "web/lib/db/migrations/0248_specialist_question_answer.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0249_company_flow_runtime.sql": {
+      "sha256": "2763f53c6affcb49fc31e97416d0d724d06fb157d5d4d6e39a233f8832e7e2f0"
+    },
+    "web/lib/db/migrations/0249_specialist_flow_question.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0250_company_run_cancellation.sql": {
+      "sha256": "d1cae43d22357f81fd6fd2287137a6c286eb8c361f4096b5057a7eaca636bbd5"
+    },
+    "web/lib/db/migrations/0250_specialist_result_delivery.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0251_specialist_delivery_targets.sql": {
+      "deleted": true
+    },
+    "web/lib/db/migrations/0251_specialist_intake_receipts.sql": {
+      "sha256": "2c73460f0ffba0047fd0bae546731b2ad4a86c40f4718bd911d5b4f88d5bdb62"
+    },
+    "web/lib/db/migrations/0252_specialist_project_flow_input.sql": {
+      "sha256": "e02d77ebd24d5fc6cacf9116fa482aee04877ee820f5dbdeac590def87eca812"
+    },
+    "web/lib/db/migrations/0253_company_event_admission.sql": {
+      "sha256": "6e917cddd49d0821a9400ab0589836dca851da53c12c304bcaf715d5b9256d71"
+    },
+    "web/lib/db/migrations/0254_project_source_review.sql": {
+      "sha256": "4d6450422a6666b4711a9f4ff3e26fc80302b70feb93ebd02e2cb0415b1548fa"
+    },
+    "web/lib/db/migrations/0255_project_trigger_review.sql": {
+      "sha256": "c2cb56a682cf243dd2236d4ad3c2a802e95f71d7726a2f6a044849298e9f4ca0"
+    },
+    "web/lib/db/migrations/0256_project_event_context.sql": {
+      "sha256": "2fd0642924135d03dc0960d845d77a22a3f680480abe98cbb9a14818ef291e9d"
+    },
+    "web/lib/db/migrations/0257_specialist_context_revisions.sql": {
+      "sha256": "cf8c74efbb2eb0e2612649e263817858dd84810a0026a40785075aff7b1a6dfd"
+    },
+    "web/lib/db/migrations/0258_specialist_context_credentials.sql": {
+      "sha256": "8bca0c34392798e0a24b4b620e527153a4559a948835bde3a1b098a3aec15500"
+    },
+    "web/lib/db/migrations/0259_specialist_context_mutation_credentials.sql": {
+      "sha256": "65da5de68b621d69f69f0a22d952cf8ec3a1655e609792f886682f451949b0c1"
+    },
+    "web/lib/db/migrations/0260_specialist_question_subject.sql": {
+      "sha256": "24ecad87677ed8a91f49a9b08fd96a65decc239225be1a02ef7cc50b393ecb54"
+    },
+    "web/lib/db/migrations/0261_specialist_question_answer.sql": {
+      "sha256": "37b857119fb5acb08bcd966590369cb2799ae9e215cfab6d8e3114f05c85f96e"
+    },
+    "web/lib/db/migrations/0262_specialist_flow_question.sql": {
+      "sha256": "4d816f87307ace1991f80dec2ad0d3601fc5aca08149e1477ff739cd0bafd0ce"
+    },
+    "web/lib/db/migrations/0263_specialist_result_delivery.sql": {
+      "sha256": "34f96e303bd95e88bcb86aca94f183b2150f7a4e148e17b44053d305f1c2f42a"
+    },
+    "web/lib/db/migrations/0264_specialist_delivery_targets.sql": {
+      "sha256": "284ee53a25952b75d901ef3c83dd030e7fabe642cd054f1e660015a71fde2aa2"
+    },
+    "web/lib/db/migrations/meta/0215_snapshot.json": {
+      "sha256": "c50e9fcb056a82f8456caa5c3775761701a75179001023a9ce46abb3d4772085"
+    },
+    "web/lib/db/migrations/meta/0216_snapshot.json": {
+      "sha256": "12a53587a793664930991a08c44141a686b8d10626255cd41f3f9d96b4120952"
+    },
+    "web/lib/db/migrations/meta/0217_snapshot.json": {
+      "sha256": "9f6750553170026abec0c3090a177d24129ce8e6725b44f362f4bd9814d35897"
+    },
+    "web/lib/db/migrations/meta/0218_snapshot.json": {
+      "sha256": "fd56dddf2a977b2af9b05419588c2870d0c5d60d6ee826a00c67714d2502a957"
+    },
+    "web/lib/db/migrations/meta/0219_snapshot.json": {
+      "sha256": "a0422d3659eccf2ab18ddaa234d4eb22865dc411a92a072e5a25c31228e88518"
+    },
+    "web/lib/db/migrations/meta/0220_snapshot.json": {
+      "sha256": "6cfb6d72a96b84a2d46a0269f6eb71e1f85b70d2ef5801be16daa32c69e7650a"
+    },
+    "web/lib/db/migrations/meta/0221_snapshot.json": {
+      "sha256": "001289e1020304279ba1bea567a376a12154ef339ea69aa145b1d03122b48263"
+    },
+    "web/lib/db/migrations/meta/0222_snapshot.json": {
+      "sha256": "cf7d9add29294aaebf67c939dd64c218746fa9235059fb9e49f4d4ab81d9fdf4"
+    },
+    "web/lib/db/migrations/meta/0223_snapshot.json": {
+      "sha256": "ef91514ca0d57b46c7476a47a91448865669c6c645313b778337c9a00759f374"
+    },
+    "web/lib/db/migrations/meta/0224_snapshot.json": {
+      "sha256": "b758325ddf0c239f477283ad1795447b8ce00309452695e38a8a04b694ca1428"
+    },
+    "web/lib/db/migrations/meta/0225_snapshot.json": {
+      "sha256": "02e6157c91783176730679b81b489bcb5e870e500c136e6180a4198c106214cb"
+    },
+    "web/lib/db/migrations/meta/0226_snapshot.json": {
+      "sha256": "71b49ac4eb785cd5a37170ab20d1aa0c4757a5b5cb2b3d064e7632542947462d"
+    },
+    "web/lib/db/migrations/meta/0227_snapshot.json": {
+      "sha256": "15072508c648a2af32afae4186b42cc2bc144493d860782da914f101a31d3eba"
+    },
+    "web/lib/db/migrations/meta/0228_snapshot.json": {
+      "sha256": "eb1ce6400943dc268b27204c9d5bab76d1ccd44cce7ef6168a62786ae72ef31f"
+    },
+    "web/lib/db/migrations/meta/0229_snapshot.json": {
+      "sha256": "3407c0d22fa352d598fc38cc3e9da97ed34001eb3f791aa0508aef31f9cfe615"
+    },
+    "web/lib/db/migrations/meta/0230_snapshot.json": {
+      "sha256": "aa07f9918a2e35a7c03aa1d780fc73673d9ea529d2aab5c02c15a28987300159"
+    },
+    "web/lib/db/migrations/meta/0231_snapshot.json": {
+      "sha256": "37285d8621babf341aa3121757a61655df09e5fae652ed8f3a0c7b67f9300e2d"
+    },
+    "web/lib/db/migrations/meta/0232_snapshot.json": {
+      "sha256": "eb9560a4f0a448a4d971e4003573d2e5b86e6c5e80a99e8ba9fc92352517b027"
+    },
+    "web/lib/db/migrations/meta/0233_snapshot.json": {
+      "sha256": "a53b3bd0804430204fd396e9e6b7951a2ef2b510dec1069d1173441a895e72ce"
+    },
+    "web/lib/db/migrations/meta/0234_snapshot.json": {
+      "sha256": "7daa9297b429d2768509fdf3fbfccc5e19fbf405accbb4dad61c6fc9787fd0e7"
+    },
+    "web/lib/db/migrations/meta/0235_snapshot.json": {
+      "sha256": "a55f885b9f295bdef96f6671208e8d6aebf93355563fc937b868f63405517c3e"
+    },
+    "web/lib/db/migrations/meta/0236_snapshot.json": {
+      "sha256": "19758b4ee1736665e17a56b7812b6dc56cc1c964920c902f60b55e3e49447128"
+    },
+    "web/lib/db/migrations/meta/0237_snapshot.json": {
+      "sha256": "bd3066b52f60e2fc171936bb2242bf572a444a1e1ea83e0a69c40106d0e7e8cd"
+    },
+    "web/lib/db/migrations/meta/0238_snapshot.json": {
+      "sha256": "9e38d94180c9590b330a1435542770442fa5f4b7990231c4f394ed95c7eb613c"
+    },
+    "web/lib/db/migrations/meta/0239_snapshot.json": {
+      "sha256": "10c704405b8d68033ebcebf46ca16b1fee72faef0fc0a60bbccf57b765f0c3b7"
+    },
+    "web/lib/db/migrations/meta/0240_snapshot.json": {
+      "sha256": "ad290496afc50d919cefeddcb0cadbe36db62a56ffa937a3bd85b9577996e469"
+    },
+    "web/lib/db/migrations/meta/0241_snapshot.json": {
+      "sha256": "0f1b2ba9adba0c717fc1de9db22cb3e2ba36c56600eb35c116e618ab3816c8b5"
+    },
+    "web/lib/db/migrations/meta/0242_snapshot.json": {
+      "sha256": "a292664a6f90738d934db99dca445a4817dde9a3da80b45b10c55f1ec4338365"
+    },
+    "web/lib/db/migrations/meta/0243_snapshot.json": {
+      "sha256": "cfd0711b32f532b6b5a3a4406e822216b813ef8005cfa7076a00f6a660a4325c"
+    },
+    "web/lib/db/migrations/meta/0244_snapshot.json": {
+      "sha256": "ae9c6223c25501a0f4f680f3b38f8c48a12d98f3cd9bcbd4edbb737468394dbb"
+    },
+    "web/lib/db/migrations/meta/0245_snapshot.json": {
+      "sha256": "982f9806dbc2ba707b1a971accbc173dfdad65287c1e1853189b313371a88924"
+    },
+    "web/lib/db/migrations/meta/0246_snapshot.json": {
+      "sha256": "55273234acf4f9d58015406a9faa3b016372954c6423ef1dde36ff900c31060a"
+    },
+    "web/lib/db/migrations/meta/0247_snapshot.json": {
+      "sha256": "021c69f3adb51f1d41f6db153a9eef78e73bc1d75401f1d459297271fc132ba7"
+    },
+    "web/lib/db/migrations/meta/0248_snapshot.json": {
+      "sha256": "73c029c27eddbc786ae372c41d49ea1d7a56034b2b58791d4853b28c152e2492"
+    },
+    "web/lib/db/migrations/meta/0249_snapshot.json": {
+      "sha256": "eba40f2a60ae16bec6e4d5620b09d71d15164a76d76afff9e1642cc7bdaacfae"
+    },
+    "web/lib/db/migrations/meta/0250_snapshot.json": {
+      "sha256": "62381d30e5bce0c9196690130ff501a0bda19bb045c55ec696c7bba009573a6e"
+    },
+    "web/lib/db/migrations/meta/0251_snapshot.json": {
+      "sha256": "378860cb769c41818e12486f1dd69499dc6b9509a6a8038e4958c1a107eb9967"
+    },
+    "web/lib/db/migrations/meta/0252_snapshot.json": {
+      "sha256": "8f379c1c5283e1de5d1e7b667752be66fff8113236c03d4e6dcc5774d748bec3"
+    },
+    "web/lib/db/migrations/meta/0253_snapshot.json": {
+      "sha256": "b33f315dc61b8d83e180be2798da78402c5cdd9bb4555c39581cbca533f77190"
+    },
+    "web/lib/db/migrations/meta/0254_snapshot.json": {
+      "sha256": "13d21b3d6503706cc7dda8139a099a116818d6cbb0e7a3644a8b02608d39aa5e"
+    },
+    "web/lib/db/migrations/meta/0255_snapshot.json": {
+      "sha256": "c3f8a9450892f62d366636708f9db32b3626381d11bfe8cddff20ea4ce9e98c2"
+    },
+    "web/lib/db/migrations/meta/0256_snapshot.json": {
+      "sha256": "486e41dc129d40e084b12f822025ac20ebf098ed872ef17eee7f5e0b5707e4fd"
+    },
+    "web/lib/db/migrations/meta/0257_snapshot.json": {
+      "sha256": "63729d81143fa7c6348054b71d7edbb13ff1c6cf807d0bfdf2cd6117b0d0e09c"
+    },
+    "web/lib/db/migrations/meta/0258_snapshot.json": {
+      "sha256": "06969c2f47846b3d506e1024f391b709655c7973635ec12be36f5687948bc4e8"
+    },
+    "web/lib/db/migrations/meta/0259_snapshot.json": {
+      "sha256": "11bac2056ec238076ee0c2ce3bd174c17a78c596c65e8114ace38e48a2ae68aa"
+    },
+    "web/lib/db/migrations/meta/0260_snapshot.json": {
+      "sha256": "f2c73abdd2f47d4e0b5d426063b22267a6f1fb9ac91298eac3d9f72f82dc5113"
+    },
+    "web/lib/db/migrations/meta/0261_snapshot.json": {
+      "sha256": "0968d11b91c5a36aca9d52226febe21d2dd1c45fcfbadc1d1df7bab1e9b46075"
+    },
+    "web/lib/db/migrations/meta/0262_snapshot.json": {
+      "sha256": "0d715209a3059985bba2b56caae673171b530daeb639fe284b5de6b4aebf5193"
+    },
+    "web/lib/db/migrations/meta/0263_snapshot.json": {
+      "sha256": "5bef19f0023b3f879972a93b01b896a4e8a830fa4af01fdbee46adb51cc8dd5b"
+    },
+    "web/lib/db/migrations/meta/0264_snapshot.json": {
+      "sha256": "6595531649ed5dcbb45b8ca098e39aeb4abca88bf966584efa7ea603ae99b70f"
+    },
+    "web/lib/db/migrations/meta/_journal.json": {
+      "sha256": "ef53578e9ae5d22b1b77cb02b095882c82839201f878d7eff2801f4b852aa8b0"
+    },
+    "web/lib/db/schema.ts": {
+      "sha256": "73c5468fa66e4df8b7b5f8f9b58a0a3c77684bb011803bf6e3d480fa81b9ccc2"
+    },
+    "web/lib/domain-events/plan-launch-authority.ts": {
+      "sha256": "f27ae977415b043c63bf0316a74c7642a008190bc7743727bbc942c08d228e38"
+    },
+    "web/lib/execution-host/__tests__/fixtures/runtime-data-boundary-inventory.ts": {
+      "sha256": "eea4d238c4c171465d2e5bc2462d1c3dd54ba54ecae3e8227c8fad25a0e0cf79"
+    },
+    "web/lib/orchestrator/delegated-launch-authority.ts": {
+      "sha256": "bf70cb669017767a1d2f5c8b7e3637c308afe27aed938ee784873ddb372820cb"
+    },
+    "web/lib/services/gate-chat.ts": {
+      "sha256": "cf86dfcc39e3c43a18618fc94639bcfdcd17978aeedd3aa6601a360447b43304"
+    },
+    "web/lib/services/runs.ts": {
+      "sha256": "0605cbc6be64ae84cfa7a9bdac9e83dfbbcbe1e1be7ec2fcd6ad29235869480a"
+    },
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": {
+      "sha256": "657de23142b2b76aa5f3b96447462b115de2ea62589a9560bc6268a11e5b9519"
+    },
+    "web/lib/specialist-assignments/manual-intake.ts": {
+      "sha256": "d6e2f9193d174edf5e6d3a8eb5efa47e7c00898e95eba99d05e0d67a57eb5edd"
+    },
+    "web/lib/specialist-assignments/project-admission.ts": {
+      "sha256": "7bc5b084351feddf7c367ebfb2c4122bd2c558230032320dab4d96c459b430e2"
+    },
+    "web/lib/specialist-assignments/project-flow-launch.ts": {
+      "sha256": "7c2ab6041cebc11e2c547a1f2046ac231fc4c953440e786314fabd141ab68eed"
+    },
+    "web/lib/specialist-assignments/project-manual-intake.ts": {
+      "sha256": "67b29d7bbc8c26f8c3cb1612aa76d1f6098c3bf271404e65347bd7c4f6333a04"
+    },
+    "web/lib/specialist-assignments/project-request-intake.ts": {
+      "sha256": "ef5f7101859f21d0e9c1d52f52fa5e8e6043befb8a113fe017fc964102c2aa92"
+    },
+    "web/lib/specialist-assignments/project-routed-manual-intake.ts": {
+      "sha256": "6eb1b55c2c2e73190fc98b5d1bb5a0f65a10c9c24638c57dd3e761ec0ee72824"
+    },
+    "web/lib/specialist-assignments/project-task.ts": {
+      "sha256": "4e13ca410e5eb3a794595c2190dad279781b91d28e17901ab6a839e33b17f4c3"
+    },
+    "web/lib/tasks/launch-server-source.ts": {
+      "sha256": "746b8520eedbb7e2813ee37ac7b8aca6083a932f271b00157d75cbfee2fda47c"
+    },
+    "web/lib/tasks/qualification.ts": {
+      "sha256": "b8683fac49ca4a055a4e9d4303e9a5888dfb561d65d403c1e4512970ebca43b3"
+    },
+    "web/test-support/delegation-seed.ts": {
+      "sha256": "d5a8d1fe93203a31713a6f82a8e466bbb5413a938f3f329428dfecc6d993f510"
+    }
+  }
+}

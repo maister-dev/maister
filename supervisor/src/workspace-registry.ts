@@ -7,7 +7,7 @@ import type {
   WorkspaceRule,
 } from "./types";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -131,6 +131,18 @@ export class WorkspaceRegistry {
     payload: AdoptWorkspacePayload,
   ): Promise<{ handle: WorkspaceRow; replayed: boolean }> {
     const realPath = await this.validate(payload);
+
+    if (payload.owner) {
+      const expected = createHash("sha256")
+        .update(JSON.stringify([payload.owner.companyId, payload.runId]))
+        .digest("hex");
+
+      if (
+        path.basename(realPath) !== expected ||
+        path.basename(path.dirname(realPath)) !== ".company"
+      )
+        throw this.reject("owner_mismatch", payload.path);
+    }
     const contextMounts = payload.contextMounts
       ? await this.validateMounts(payload.contextMounts)
       : null;
@@ -140,6 +152,8 @@ export class WorkspaceRegistry {
     );
 
     if (existing) {
+      if ((existing.companyId ?? null) !== (payload.owner?.companyId ?? null))
+        throw this.reject("owner_mismatch", payload.path);
       this.log.info(
         {
           executionWorkspaceId: existing.id,
@@ -154,6 +168,7 @@ export class WorkspaceRegistry {
     }
 
     const handle: WorkspaceRow = {
+      ...(payload.owner ? { companyId: payload.owner.companyId } : {}),
       id: `ws_${randomUUID().replace(/-/g, "")}`,
       runId: payload.runId,
       projectSlug: payload.projectSlug,

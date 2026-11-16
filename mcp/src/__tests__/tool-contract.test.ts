@@ -176,6 +176,88 @@ function deref<T extends { $ref?: string }>(node: T): T {
 // the same routing `resolveRouting` encodes; restating it here as the contract
 // anchor means a divergence in either place is caught.
 const TOOL_OP: Record<string, { method: string; path: string }> = {
+  assignment_question_ask: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/questions",
+  },
+  assignment_question_respond: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/questions/{questionId}/respond",
+  },
+  assignment_get: {
+    method: "get",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}",
+  },
+  assignment_context_update: {
+    method: "patch",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/context",
+  },
+  assignment_context_get: {
+    method: "get",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/context",
+  },
+  stand_operation_get: {
+    method: "get",
+    path: "/api/v1/ext/stand-operations/{operationId}",
+  },
+  stand_operation_observe: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/observe",
+  },
+  stand_operation_dispatch: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/dispatch",
+  },
+  stand_operation_verify: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/verification",
+  },
+  stand_operation_logs: {
+    method: "post",
+    path: "/api/v1/ext/stand-operations/{operationId}/logs",
+  },
+  stand_operation_create: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/operations",
+  },
+  knowledge_witness_get: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/witnesses/{witnessId}",
+  },
+  knowledge_propose: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/proposals",
+  },
+  knowledge_proposal_get: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/proposals/{proposalId}",
+  },
+  knowledge_proposals_list: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/proposals",
+  },
+  knowledge_decide: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/proposals/{proposalId}/decision",
+  },
+  knowledge_confirm: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/{recordId}/confirmations",
+  },
+  knowledge_search: { method: "get", path: "/api/v1/ext/knowledge" },
+  knowledge_get: { method: "get", path: "/api/v1/ext/knowledge/{recordId}" },
+  knowledge_evidence: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/{recordId}/evidence",
+  },
+  knowledge_conflicts: {
+    method: "get",
+    path: "/api/v1/ext/knowledge/{recordId}/conflicts",
+  },
+  knowledge_capture_source: {
+    method: "post",
+    path: "/api/v1/ext/knowledge/sources",
+  },
   task_create: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks" },
   task_list: { method: "get", path: "/api/v1/ext/projects/{slug}/tasks" },
   task_get: {
@@ -243,6 +325,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
   run_message: { method: "post", path: "/api/v1/ext/runs/message" },
   run_promote: { method: "post", path: "/api/v1/ext/runs/promote" },
   run_rework: { method: "post", path: "/api/v1/ext/runs/rework" },
+  specialist_assignment_work_decide: {
+    method: "post",
+    path: "/api/v1/ext/specialist-assignments/{assignmentId}/work/{workId}/decisions",
+  },
   run_sync: { method: "post", path: "/api/v1/ext/runs/sync" },
   run_reopen: { method: "post", path: "/api/v1/ext/runs/reopen" },
   run_recover: { method: "post", path: "/api/v1/ext/runs/{runId}/recover" },
@@ -471,7 +557,9 @@ function baseTypeSet(schema: JsonSchema): Set<string> {
 // Full enum set INCLUDING null — an OpenAPI `nullable` enum lists `null`
 // explicitly (triage.priority), so the facade enum must carry it too.
 function enumSet(schema: JsonSchema): Set<unknown> | null {
-  return schema.enum ? new Set(schema.enum) : null;
+  if (schema.enum) return new Set(schema.enum);
+
+  return Object.hasOwn(schema, "const") ? new Set([schema.const]) : null;
 }
 
 function toolSpec(name: string): JsonSchema {
@@ -542,6 +630,11 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       const op = openapi.paths[path]?.[method];
 
       expect(op, `${tool} → ${method.toUpperCase()} ${path}`).toBeDefined();
+      if (tool.startsWith("knowledge_"))
+        expect(
+          TOOL_SPECS[tool].annotations?.readOnlyHint,
+          `${tool} effect`,
+        ).toBe(method === "get");
     }
   });
 
@@ -559,6 +652,16 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
 
     const params = pathParams(path);
     const queryFields = queryParamSchemas(op);
+
+    // Native MCP owner objects map to the two URL selector fields; nested ownership stays closed.
+    if (
+      toolName === "knowledge_search" ||
+      toolName === "knowledge_proposals_list"
+    ) {
+      delete queryFields.ownerKind;
+      delete queryFields.ownerId;
+      queryFields.owner = deref({ $ref: "#/components/schemas/CBOwner" });
+    }
     const body = bodySchema(op);
     const bodyProps = implementedEntries(body?.properties ?? {});
     const bodyRequired = (body?.required ?? []).filter((name) =>
@@ -618,7 +721,7 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
 
         if (specEnum) {
           expect(
-            new Set(toolField.enum ?? []),
+            enumSet(toolField) ?? new Set(),
             `${toolName}.${field} enum`,
           ).toEqual(specEnum);
         }

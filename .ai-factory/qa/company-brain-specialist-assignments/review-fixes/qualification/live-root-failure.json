@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://cb-native-qualification.invalid/maister-plugins",
+  "tag": "rah/v1.0.4",
+  "expectedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "runIds": [
+    "83e0c675-776c-4ee9-86b3-eeca5a68bc3b"
+  ],
+  "proofs": [],
+  "enforcementProofs": [
+    {
+      "runId": "83e0c675-776c-4ee9-86b3-eeca5a68bc3b",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__knowledge_proposal_get",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    }
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "nativeProposalIds": [],
+  "ledgerDiagnostics": [
+    {
+      "runId": "83e0c675-776c-4ee9-86b3-eeca5a68bc3b",
+      "parentRunId": null,
+      "status": "Failed",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ]
+}

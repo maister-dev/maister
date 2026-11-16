@@ -303,7 +303,30 @@ export type BudgetAxis = {
 export type BudgetState = {
   ceilingOverride?: BudgetAxis;
   notified?: Partial<Record<BudgetScope, BudgetRung>>;
+  termination?: BudgetTermination;
 };
+
+/** Server-owned stop cause, retained before teardown without declaring a terminal outcome. */
+export type BudgetTermination = Readonly<{
+  version: 1;
+  id: string;
+  scope: BudgetScope;
+  meter: "tokens" | "failures" | "wallclock";
+  /** Absent on historical and run/task/tree budget stops. */
+  trigger?: "node_duration";
+  /** Business assignment whose retained meter owns a tree teardown. */
+  specialistAssignmentId?: string;
+  current: number;
+  limit: number;
+  requestedAt: string;
+  assignmentId: string | null;
+  driverToken: string | null;
+  nodeId: string | null;
+  nodeAttemptId: string | null;
+  sessionId: string | null;
+  runSessionId: string | null;
+  incarnationId: string | null;
+}>;
 
 // Sink-invariant validation: token/failure/minute fields are positive ints (a
 // non-positive token ceiling makes no sense and `0` already means unlimited);

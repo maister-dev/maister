@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_real_cli_discovery_after_reproduced_omission",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "peer": "installed Claude CLI from Claude Agent SDK 0.3.309",
+  "probe": "Built MAIster MCP stdio facade and synthetic loopback provider. HTTP 400 deliberately stopped the probe after tool discovery.",
+  "initialLiveOutcome": "Stopped after reproducing the omitted delegation tool. Its independent cleanup found zero owned survivors.",
+  "beforeTools": [
+    "mcp__maister__run_collect",
+    "mcp__maister__run_plan"
+  ],
+  "afterTools": [
+    "mcp__maister__run_collect",
+    "mcp__maister__run_delegate",
+    "mcp__maister__run_plan"
+  ],
+  "guard": "MCP and HTTP still require a stable operationKey for task-backed delegation. Existing stdio tests validate refusal before downstream dispatch.",
+  "providerSecretValueScan": {
+    "artifactsScanned": 5,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "provider-request-before.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "0216ad69ac2796fa0c282c6586272ed720eafe507452a080ec260d8279e4b8f5",
+      "rawBytes": 626,
+      "compressedSha256": "3cd28f615e4a94e08ceae8ef3bf9ccc3b544c61359ab9daf854195962dec5985",
+      "parts": [
+        {
+          "path": "provider-request-before.json.gz",
+          "sha256": "3cd28f615e4a94e08ceae8ef3bf9ccc3b544c61359ab9daf854195962dec5985"
+        }
+      ]
+    },
+    {
+      "sourceName": "provider-request-after.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f4cb6c37cd216bcd2f79dae4a80024d07b6c9f20f89d3eea99c906c6ee083260",
+      "rawBytes": 822,
+      "compressedSha256": "88b354bb7176cb185ad5a6da3eba6680ddcc328d0a63338413cfe118f9ae34c8",
+      "parts": [
+        {
+          "path": "provider-request-after.json.gz",
+          "sha256": "88b354bb7176cb185ad5a6da3eba6680ddcc328d0a63338413cfe118f9ae34c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "initial-live-launch.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a43b3594751ca7b731f891cca87dd33590996f406ba141f6887e03508be8a369",
+      "rawBytes": 455,
+      "compressedSha256": "42f49794746a129389f9caf0299240731a058c9c6b41e6c9339b2a5f1507bcbd",
+      "parts": [
+        {
+          "path": "initial-live-launch.json.gz",
+          "sha256": "42f49794746a129389f9caf0299240731a058c9c6b41e6c9339b2a5f1507bcbd"
+        }
+      ]
+    },
+    {
+      "sourceName": "initial-live-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "0026d84de397e9549598735825c6349868d9cd501181d14fe7d721930b83a50e",
+      "rawBytes": 392,
+      "compressedSha256": "c352e701d8bd16ae26858ab94d54068012426babd023e972222ef84e87a7ad65",
+      "parts": [
+        {
+          "path": "initial-live-cleanup.log.gz",
+          "sha256": "c352e701d8bd16ae26858ab94d54068012426babd023e972222ef84e87a7ad65"
+        }
+      ]
+    },
+    {
+      "sourceName": "mcp-tests.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b9f1c66df4a36559121bc8b1861243681755f491b83a1b00e9203f9e33de375e",
+      "rawBytes": 2133,
+      "compressedSha256": "0c2bc654b06f5f6c2cf505296466a68af75e209a815d44f9640f9ce0c52cce4e",
+      "parts": [
+        {
+          "path": "mcp-tests.log.gz",
+          "sha256": "0c2bc654b06f5f6c2cf505296466a68af75e209a815d44f9640f9ce0c52cce4e"
+        }
+      ]
+    }
+  ]
+}

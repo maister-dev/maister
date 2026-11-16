@@ -1,0 +1,680 @@
+status: Designed
+description: >-
+  Synthetic grammar examples, not execution, source, permission or pilot evidence.
+  Schema examples do not prove referenced identities, current grants, causal
+  effects, semantic support or confirmation; owning integration tests do so.
+cases:
+  - id: company-proposal-with-explicit-missing-evidence
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: request_example_001
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Restart verification procedure
+        kind: procedure
+        assertion: A restart requires a separate configured health observation.
+        basis: inferred
+        evidence: []
+        missingEvidence:
+          - state: absent
+            reason: No authorized stand observation has been collected yet.
+        limitations: [This example is proposed knowledge and is not confirmed.]
+  - id: correction-binds-exact-record-revision
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: correction_example_001
+      content:
+        change: correct
+        recordId: record_example
+        expectedRevision: 3
+        title: Health observation requirement
+        kind: procedure
+        assertion: Preserve uncertain effect history when authorizing successor work.
+        basis: inferred
+        evidence: []
+        missingEvidence: []
+        limitations: [Review is required before publication.]
+  - id: finding-without-fabricated-citation
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: true
+    value:
+      schemaVersion: 1
+      findings:
+        - id: finding_health_unknown
+          assertion: Target health is unknown because no authorized probe result is available.
+          basis: inferred
+          supporting: []
+          contradicting: []
+          missingEvidence:
+            - state: unknown
+              reason: Collect the configured independent health observation.
+          limitations: [No restart or health success is established.]
+          openQuestions: [Which configured component is the requested target?]
+          sourceFindings: []
+      knowledgeProposals: []
+      selection: []
+  - id: empty-bounded-research-result
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: true
+    value: { schemaVersion: 1, findings: [], knowledgeProposals: [], selection: [] }
+  - id: submitting-source-captures-bytes-not-truth
+    surfaces: [web, external]
+    schema: CBSourceCapture
+    valid: true
+    value:
+      owner: { kind: company, companyId: company_example }
+      title: Proposed stand runbook
+      content: Inspect the configured service and verify independent health after an allowed restart.
+      reportedSourceVersion: submitted-example-version
+      idempotencyKey: source_example_001
+  - id: exact-restart-intent-does-not-self-authorize
+    surfaces: [web, external]
+    schema: CBOperationInput
+    valid: true
+    value:
+      expectedRevision: 4
+      inputRevision: 2
+      componentId: component_example
+      action: restart
+      idempotencyKey: operation_example_001
+  - id: context-patch-is-a-revisioned-request-not-an-authority-claim
+    surfaces: [web, external]
+    schema: CBContextInput
+    valid: true
+    value:
+      expectedRevision: 3
+      expectedInputRevision: 2
+      updates:
+        - id: question_example
+          kind: question
+          text: Which configured stand component should be inspected?
+          state: open
+          references: []
+      idempotencyKey: context_example_001
+  - id: human-recovery-retains-unknown-predecessor
+    surfaces: [web, external]
+    schema: CBRecoveryDecision
+    valid: true
+    value:
+      expectedRevision: 5
+      decision: authorize_successor
+      inspectionIds: [b468dafe-f8ce-4d76-99f8-57f56108404f]
+      successor:
+        assignmentId: 28587739-c37c-42a2-a112-d9b1c7f1e6b4
+        expectedRevision: 7
+        inputRevision: 2
+      reason: Request a separate permitted operation after inspecting current target state.
+      idempotencyKey: recovery_example_001
+  - id: ownership-cannot-name-company-and-project
+    surfaces: [web, external]
+    schema: CBOwner
+    valid: false
+    value: { kind: company, companyId: company_example, projectId: project_example }
+  - id: producer-cannot-claim-confirmation-or-authorship
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: false
+    value:
+      schemaVersion: 1
+      findings: []
+      knowledgeProposals: []
+      selection: []
+      confirmed: true
+      author: administrator
+  - id: observation-basis-is-not-proposal-review-state
+    surfaces: [web, external]
+    schema: CBFinding
+    valid: false
+    value:
+      id: finding_example
+      assertion: This claim has not been reviewed.
+      basis: confirmed
+      supporting: []
+      contradicting: []
+      missingEvidence: []
+      limitations: []
+      openQuestions: []
+      sourceFindings: []
+  - id: wrong-native-version-refuses
+    surfaces: [web, external]
+    schema: CBFindings
+    valid: false
+    value: { schemaVersion: 2, findings: [], knowledgeProposals: [], selection: [] }
+  - id: unsafe-candidate-reference-cannot-carry-a-path-or-grant
+    surfaces: [web, external]
+    schema: CBRef
+    valid: false
+    value:
+      kind: witness
+      id: witness_example
+      path: /private/credential-file
+      permissions: [confirm]
+  - id: assignment-revision-must-be-positive
+    surfaces: [web, external]
+    schema: CBInputUpdate
+    valid: false
+    value:
+      expectedRevision: 0
+      input: Updated request
+      references: []
+      idempotencyKey: update_example_001
+  - id: helper-does-not-accept-arbitrary-shell-action
+    surfaces: [web, external]
+    schema: CBOperationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      inputRevision: 1
+      componentId: component_example
+      action: shell
+      idempotencyKey: operation_example_002
+  - id: correction-requires-exact-target-revision
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: false
+    value:
+      idempotencyKey: correction_example_002
+      content:
+        change: correct
+        recordId: record_example
+        title: Missing base
+        kind: assertion
+        assertion: A correction cannot silently replace the latest claim.
+        basis: inferred
+        evidence: []
+        missingEvidence: []
+        limitations: []
+  - id: authority-check-cannot-nominate-user
+    surfaces: [web]
+    schema: CBPermitCheck
+    valid: false
+    value:
+      targetIncarnation: stand_example
+      resourceKey: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      requestDigest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      ownerEpoch: 2
+      nonce: authority_example_001
+      purpose: dispatch
+      userId: administrator
+  - id: authority-check-is-operation-bound
+    surfaces: [web]
+    schema: CBPermitCheck
+    valid: true
+    value:
+      targetIncarnation: stand_example
+      resourceKey: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      requestDigest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      ownerEpoch: 2
+      nonce: authority_example_001
+      purpose: dispatch
+  - id: clarify-may-precede-child-result
+    surfaces: [web, external]
+    schema: CBWorkDecision
+    valid: true
+    value:
+      expectedRevision: 1
+      workRevision: 1
+      inputRevision: 1
+      decision: clarify
+      reason: Resolve the target before executing diagnostic work.
+      idempotencyKey: clarification_example_001
+  - id: acceptance-cannot-omit-child-result
+    surfaces: [web, external]
+    schema: CBWorkDecision
+    valid: false
+    value:
+      expectedRevision: 1
+      workRevision: 1
+      inputRevision: 1
+      decision: accept
+      reason: No ready result has been identified.
+      idempotencyKey: acceptance_example_001
+  - id: assignment-question-preserves-nested-native-form
+    surfaces: [web, external]
+    schema: CBQuestionInput
+    valid: true
+    value:
+      expectedRevision: 2
+      inputRevision: 1
+      question: Which configured component requires diagnosis?
+      schema:
+        schemaVersion: 1
+        fields:
+          - name: target
+            type: object
+            required: true
+            fields:
+              - name: componentId
+                type: string
+                options: [configured-component]
+      reTriggerMode: agent
+      idempotencyKey: question_example_001
+  - id: company-question-cannot-create-project-triage
+    surfaces: [web, external]
+    schema: CBQuestionInput
+    valid: false
+    value:
+      expectedRevision: 2
+      inputRevision: 1
+      question: Which component?
+      schema: {schemaVersion: 1, fields: []}
+      reTriggerMode: triage
+      idempotencyKey: question_example_002
+  - id: proposal-preserves-contradicting-evidence-role
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: true
+    value:
+      idempotencyKey: contradiction_example_001
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Unresolved component observation
+        kind: observation
+        assertion: The component state requires further investigation.
+        basis: inferred
+        evidence:
+          - relation: contradicts
+            reference: { kind: witness, id: witness_example }
+        missingEvidence: []
+        limitations: [The supporting and contradicting sources must remain distinguishable.]
+  - id: proposal-cannot-discard-evidence-role
+    surfaces: [web, external]
+    schema: CBProposalInput
+    valid: false
+    value:
+      idempotencyKey: contradiction_example_002
+      content:
+        change: add
+        owner: { kind: company, companyId: company_example }
+        title: Ambiguous evidence role
+        kind: observation
+        assertion: Evidence cannot silently become supporting by default.
+        basis: inferred
+        evidence: [{ kind: witness, id: witness_example }]
+        missingEvidence: []
+        limitations: []
+  - id: witness-inspection-includes-bounded-captured-bytes
+    surfaces: [web, external]
+    schema: CBEvidenceWitness
+    valid: true
+    value:
+      id: witness_example
+      sourceId: source_example
+      sourceVersion: version_example
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      selector: submitted:text
+      availability: available
+      capturedAt: '2026-11-03T00:00:00.000Z'
+      observedAt: null
+      sourceAt: null
+      independenceGroupId: null
+      attribution: {kind: user, id: user_example, runId: null, attemptId: null}
+      excerpt: Inspect configured component and verify health separately.
+      excerptTruncated: false
+  - id: unavailable-proof-does-not-fabricate-identity-or-capture-time
+    surfaces: [web, external]
+    schema: CBRecordEvidence
+    valid: true
+    value:
+      relation: supports
+      unavailable:
+        state: missing
+        reasonCode: record_evidence_missing
+        reason: Retained proof is currently unavailable; no source metadata is reconstructed.
+  - id: conflict-reference-retains-original-revision
+    surfaces: [web, external]
+    schema: CBKnowledgeConflictPage
+    valid: true
+    value:
+      items:
+        - edgeId: edge_example
+          classification: declared_conflict
+          reference: {kind: knowledge, id: conflicting_record, revision: 1}
+      nextCursor: null
+  - id: conflict-reference-cannot-omit-original-revision
+    surfaces: [web, external]
+    schema: CBKnowledgeConflict
+    valid: false
+    value:
+      edgeId: edge_example
+      classification: declared_conflict
+      reference: {kind: knowledge, id: conflicting_record}
+
+  - id: explicit-company-user-grant-does-not-require-a-project
+    surfaces: [web]
+    schema: CBCompanyGrantInput
+    valid: true
+    value:
+      principalKind: user
+      principalId: existing_user_example
+      actions: [knowledge:read, knowledge:propose]
+      idempotencyKey: explicit_company_grant_001
+  - id: grant-creation-rejects-fabricated-administrator
+    surfaces: [web]
+    schema: CBCompanyGrantInput
+    valid: false
+    value:
+      principalKind: user
+      principalId: existing_user_example
+      actions: [knowledge:read]
+      createdBy: forged_administrator
+      idempotencyKey: forged_company_grant_001
+  - id: confirmation-rejects-blank-reason
+    surfaces: [web, external]
+    schema: CBConfirmationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      decision: confirm
+      witnessIds: []
+      reason: "   "
+      idempotencyKey: blank_confirmation_001
+  - id: confirmation-rejects-malformed-database-text
+    surfaces: [web, external]
+    schema: CBConfirmationInput
+    valid: false
+    value:
+      expectedRevision: 1
+      decision: confirm
+      witnessIds: []
+      reason: "invalid\0reason"
+      idempotencyKey: invalid_confirmation_001
+
+  - id: revision-conflict-may-carry-current-revision-without-a-reason-code
+    surfaces: [web, external]
+    schema: CBError
+    valid: true
+    value:
+      code: CONFLICT
+      message: The policy revision is stale.
+      details: { currentRevision: 2 }
+  - id: an-optional-error-diagnostic-object-must-not-be-empty
+    surfaces: [web, external]
+    schema: CBError
+    valid: false
+    value:
+      code: CONFLICT
+      message: The policy revision is stale.
+      details: {}
+
+  - id: exact-retained-superseded-inspection-does-not-consume-work
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: true
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "superseded"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: {"summary": "An exact retained observation."}
+      valueBytes: 44
+      invalidReason: null
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: 2
+
+  - id: invalid-retained-publication-keeps-no-value
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: true
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "invalid"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: null
+      valueBytes: 44
+      invalidReason: "schema_mismatch"
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: null
+
+  - id: invalid-publication-cannot-carry-a-usable-value
+    surfaces: [web]
+    schema: CBRetainedRunResult
+    valid: false
+    value:
+      runId: "retained_run_example"
+      revision: 1
+      validity: "invalid"
+      schemaRef: "pinned-package@aaaaaaaaaaaa:summary.v1"
+      schemaSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      schemaVersion: 1
+      producerKind: "flow_node"
+      producerRef: "coordinator"
+      nodeAttemptId: "node_attempt_example"
+      value: {"summary": "An exact retained observation."}
+      valueBytes: 44
+      invalidReason: "schema_mismatch"
+      publishedAt: "2026-11-03T09:00:00.000Z"
+      collectedAt: null
+      supersededByRevision: null
+
+  - id: assignment-read-exposes-independent-business-revision
+    surfaces: [web, external]
+    schema: CBAssignment
+    valid: true
+    value:
+      id: assignment_example
+      revision: 7
+      owner: { kind: company, companyId: company_example }
+      objective: Diagnose the configured component.
+      expectedOutcome: Return an evidence-linked diagnosis.
+      requester: { kind: user, id: user_example, runId: null, attemptId: null }
+      responsible: { kind: agent, id: specialist_example, runId: null, attemptId: null }
+      specialistBindingId: specialist_binding_example
+      expectedResult:
+        schemaRef: rah@0123456789ab:evidence-findings.v1
+        schemaVersion: 1
+        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        required: true
+      inputRefs: [{ kind: knowledge, id: record_example, revision: 2 }]
+      constraints: [Read-only diagnosis until an exact restart is authorized.]
+      origin: { kind: manual, interactionId: interaction_example }
+      destination: { kind: inbox, userId: user_example }
+      inputRevision: 2
+      contextRevision: 4
+      status: waiting_input
+      cancellationPending: false
+      targetIds: [target_example]
+      verification: []
+      runIds: [run_example]
+      blockers: [The component identity needs clarification.]
+      acceptedResult: null
+      createdAt: "2026-11-04T00:00:00Z"
+      updatedAt: "2026-11-04T00:01:00Z"
+  - id: accepted-assignment-result-pins-exact-revision
+    surfaces: [web, external]
+    schema: CBAcceptedAssignmentResult
+    valid: true
+    value: { id: result_example, revision: 3 }
+  - id: accepted-assignment-result-refuses-floating-identity
+    surfaces: [web, external]
+    schema: CBAcceptedAssignmentResult
+    valid: false
+    value: { id: result_example }
+  - id: assignment-destination-is-configured-not-arbitrary-url
+    surfaces: [web, external]
+    schema: CBAssignmentDestination
+    valid: false
+    value: { kind: outbound_subscription, subscriptionId: subscription_example, correlationId: delivery_example, url: "https://example.invalid/untrusted" }
+  - id: assignment-origin-requires-source-specific-delivery
+    surfaces: [web, external]
+    schema: CBAssignmentOrigin
+    valid: false
+    value: { kind: webhook, endpointId: endpoint_example }
+  - id: assignment-expected-result-requires-exact-digest
+    surfaces: [web, external]
+    schema: CBExpectedAssignmentResult
+    valid: false
+    value: { schemaRef: "rah@0123456789ab:evidence-findings.v1", schemaVersion: 1, required: true }
+
+  - id: binding-create-pins-package-and-explicit-action-limits
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001"}
+
+  - id: binding-replacement-requires-current-revision-and-explicit-clear-values
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"expectedRevision":3}
+
+  - id: binding-replacement-without-cas-is-refused
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null}
+
+  - id: binding-replacement-cannot-implicitly-clear-a-runner
+    surfaces: ["web"]
+    schema: CBBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_update_example_001","enabled":false,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"expectedRevision":3}
+
+  - id: binding-creation-without-delivery-key-is-refused
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"]}
+
+  - id: binding-action-limits-do-not-repeat
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read","targets:read"],"idempotencyKey":"binding_create_example_001"}
+
+  - id: binding-model-cannot-declare-server-attribution
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","createdBy":"model_supplied_author"}
+
+  - id: binding-ambiguous-revision-alias-is-refused
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","revisionId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+  - id: binding-policy-reuses-supported-runtime-grammar
+    surfaces: ["web"]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{"stand_id":"demo-stand"},"grantActions":["targets:read"],"idempotencyKey":"binding_create_example_001","executionPolicy":{"preset":"supervised","overrides":{"crashRetry":"blind_retry"}}}
+
+  - id: specialist-binding-inspection-includes-actual-pin-and-policy
+    surfaces: ["web", "external"]
+    schema: CBSpecialist
+    valid: true
+    value: {"id":"ops:stand-maintainer","bindingId":"binding_example","owner":{"kind":"company","companyId":"company_example"},"name":"Stand operations","description":"Diagnoses configured components under current authority","responsibilities":["Inspect authorized stand health"],"targetClasses":["stand"],"kind":"operational","workspace":"none","capabilityProfile":null,"platformMcp":true,"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","enabled":false,"detachedAt":null,"configRevision":1,"configuration":{},"effectiveConfiguration":{},"grantActions":["targets:read"],"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"createdAt":"2026-11-04T00:00:00.000Z","updatedAt":"2026-11-04T00:00:00.000Z"}
+
+  - id: specialist-binding-inspection-requires-a-declared-role
+    surfaces: ["web", "external"]
+    schema: CBSpecialist
+    valid: false
+    value: {"id":"ops:stand-maintainer","bindingId":"binding_example","owner":{"kind":"company","companyId":"company_example"},"name":"Stand operations","description":"Diagnoses configured components under current authority","responsibilities":[],"targetClasses":["stand"],"kind":"operational","workspace":"none","capabilityProfile":null,"platformMcp":true,"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","enabled":false,"detachedAt":null,"configRevision":1,"configuration":{},"effectiveConfiguration":{},"grantActions":["targets:read"],"runnerId":null,"executionPolicy":{"preset":"supervised"},"coordinatorFlowRevisionId":null,"createdAt":"2026-11-04T00:00:00.000Z","updatedAt":"2026-11-04T00:00:00.000Z"}
+
+  - id: binding-budget-uses-existing-positive-integer-policy
+    surfaces: [web]
+    schema: CBBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{},"grantActions":[],"idempotencyKey":"binding_budget_example_001","executionPolicy":{"preset":"supervised","overrides":{"budget":{"run":{"maxTokens":1}}}}}
+
+  - id: binding-budget-zero-is-not-a-valid-positive-ceiling
+    surfaces: [web]
+    schema: CBBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"packageInstallId":"install_example","packageRevision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","definitionSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","configuration":{},"grantActions":[],"idempotencyKey":"binding_budget_example_001","executionPolicy":{"preset":"supervised","overrides":{"budget":{"run":{"maxTokens":0}}}}}
+
+  - id: company-flow-staged-review-contract
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-replacement-explicit-cas
+    surfaces: [web]
+    schema: CBCompanyFlowBindingUpdate
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","enabled":false,"expectedRevision":1}
+
+  - id: company-flow-replacement-requires-cas
+    surfaces: [web]
+    schema: CBCompanyFlowBindingUpdate
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","enabled":false}
+
+  - id: company-flow-recipients-are-distinct
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example","reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-routing-authority-is-server-recorded
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001","routingAuthority":[]}
+
+  - id: company-flow-execution-intent-is-result-only
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"worktree","completion":"result"},"roleMappings":{"maintainer":["reviewer_example"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-flow-human-identity-matches-company-principal-limit
+    surfaces: [web]
+    schema: CBCompanyFlowBindingInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","specialistRevision":1,"flowRevisionId":"flow_revision_example","manifestSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","execution":{"workspace":"none","completion":"result"},"roleMappings":{"maintainer":["rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"]},"idempotencyKey":"company_flow_review_001"}
+
+  - id: company-cron-reviewed-source-contract
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: true
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001"}
+
+  - id: company-cron-author-is-server-recorded
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001","createdBy":"forged_author"}
+
+  - id: company-cron-is-a-single-purpose-input
+    surfaces: [web]
+    schema: CBCompanyCronScheduleInput
+    valid: false
+    value: {"owner":{"kind":"company","companyId":"company_example"},"specialistBindingId":"specialist_binding_example","coordinatorFlowBindingId":"coordinator_binding_example","cronExpr":"*/5 * * * *","timezone":"UTC","requestAtLaunch":"  Inspect authorized stand\r\nKeep instructions separate.  ","idempotencyKey":"company_source_review_001","eventKinds":["run.done"]}
+  - id: context-note-cannot-declare-work-acceptance
+    surfaces: [web, external]
+    schema: CBContextInput
+    valid: false
+    value:
+      expectedRevision: 3
+      expectedInputRevision: 2
+      updates:
+        - id: forged_acceptance
+          kind: decision
+          text: The model declares all work accepted.
+          state: accepted
+          references: []
+      idempotencyKey: context_accepted_001

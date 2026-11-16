@@ -28,6 +28,10 @@ import {
   type InstallResult,
 } from "@/lib/flows";
 import { loadFlowManifest } from "@/lib/config";
+import { isOperationalEvidenceContract } from "@/lib/run-results/contract";
+import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
+import { requiresExplicitNativeFindingsEnablement } from "@/lib/flows/enablement-states";
 import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpReadinessContext } from "@/lib/mcp/readiness-host";
 import { resolvePackageSource } from "@/lib/packages/install";
@@ -179,10 +183,34 @@ export async function installPackageRevision(opts: {
     const name = resolved.manifest.name;
 
     for (const flow of resolved.manifest.flows) {
-      await loadFlowManifest(join(resolved.pkgRoot, flow.path, "flow.yaml"), {
-        errorCode: "CONFIG",
-        surface: "admin-package-install-member",
-      });
+      const manifest = await loadFlowManifest(
+        join(resolved.pkgRoot, flow.path, "flow.yaml"),
+        {
+          errorCode: "CONFIG",
+          surface: "admin-package-install-member",
+        },
+      );
+
+      if (
+        manifest.result?.export?.native_contract ===
+        OPERATIONAL_EVIDENCE_CONTRACT
+      ) {
+        const contract = await resolveFlowExportContract({
+          flowRefId: flow.id,
+          manifest,
+          revision: {
+            id: flow.id,
+            resolvedRevision: resolved.resolvedRevision,
+            installedPath: resolved.pkgRoot,
+          },
+        });
+
+        if (!isOperationalEvidenceContract(contract))
+          throw new MaisterError(
+            "CONFIG",
+            "Operational evidence export is unavailable",
+          );
+      }
     }
 
     const [existing] = await db
@@ -1338,6 +1366,7 @@ export async function trustPackageRevision(opts: {
           : rev.setupStatus;
 
       if (
+        !requiresExplicitNativeFindingsEnablement(rev.manifest) &&
         isReadyFlowRevision({
           packageStatus: rev.packageStatus,
           setupStatus,

@@ -4,6 +4,11 @@ import type { TokenKind } from "@/lib/tokens/issue";
 
 import { eq } from "drizzle-orm";
 
+import {
+  requireCompanyRunCredentialOwner,
+  requireCompanyFlowNodeKnowledgeOwner,
+} from "@/lib/agents/company-run-credential-owner";
+import { isMaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { hashToken, safeEqualHex, tokenPrefix } from "@/lib/tokens/secret";
@@ -39,6 +44,7 @@ export class TokenAuthError extends Error {
 export type TokenActor = {
   tokenId: string;
   projectId: string | null;
+  companyId?: string;
   tokenKind: TokenKind;
   ownerUserId: string | null;
   agentId: string | null;
@@ -181,9 +187,68 @@ export async function verifyToken(
     }
   }
 
+  const companyId: string | null = row.company_id ?? null;
+
+  if (companyId !== null) {
+    if (
+      tokenKind !== "agent" ||
+      typeof row.company_run_id !== "string" ||
+      row.name !== `agent-run:${row.company_run_id}` ||
+      row.project_id !== null
+    )
+      throw new TokenAuthError(
+        "owner-unavailable",
+        "company credential binding is unavailable",
+        { tokenId: row.id, projectId: null },
+      );
+    try {
+      const rootOwner = await requireCompanyRunCredentialOwner(
+        d,
+        row.company_run_id,
+      );
+      const owner =
+        typeof row.knowledge_node_attempt_id === "string"
+          ? await requireCompanyFlowNodeKnowledgeOwner(
+              d,
+              rootOwner,
+              row.knowledge_node_attempt_id,
+            )
+          : rootOwner;
+
+      if (
+        (rootOwner.snapshot.schemaVersion === 2) !==
+        (typeof row.knowledge_node_attempt_id === "string")
+      )
+        throw new TokenAuthError(
+          "owner-unavailable",
+          "The company credential has no exact execution/node binding",
+          { tokenId: row.id, projectId: null },
+        );
+
+      if (
+        owner.companyId !== companyId ||
+        owner.userId !== ownerUserId ||
+        owner.agentId !== agentId
+      )
+        throw new TokenAuthError(
+          "owner-unavailable",
+          "company credential owner is unavailable",
+          { tokenId: row.id, projectId: null },
+        );
+    } catch (error) {
+      if (!isMaisterError(error) || error.code !== "UNAUTHORIZED") throw error;
+      throw new TokenAuthError(
+        "owner-unavailable",
+        "company credential owner is unavailable",
+        { tokenId: row.id, projectId: null },
+      );
+    }
+  }
+
   return {
     tokenId: row.id,
     projectId: row.project_id ?? null,
+    ...(companyId === null ? {} : { companyId }),
     tokenKind,
     ownerUserId,
     agentId,

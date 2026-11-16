@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T20:29:40.326623+00:00",
+  "baseline": "004c2ba62d7ff04213a1042e4a704f004d125daf",
+  "status": "T22-project-intake-and-ordering-complete-local",
+  "red": "Actual canonical stale-repository refusal leaves native carrier assessment freshness current because its adapter omits the existing guarded requalification write.",
+  "fixtureNotes": [
+    "Cancellation branches initially pass, then the old aggregate carrier count fails because two intentional carrier fixtures were added. The unchanged no-orphan aggregate now explicitly counts all four ordering fixtures.",
+    "A misplaced count edit briefly references its cohort before declaration; corrected separately from the functional RED."
+  ],
+  "gates": {
+    "projectSourceComposite": {
+      "passed": 1,
+      "skipped": 48,
+      "seconds": 71.4
+    },
+    "sharedCanonicalAdmission": {
+      "passed": 28,
+      "files": 2,
+      "seconds": 30.72
+    },
+    "unit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 29.3
+    },
+    "types": "passed",
+    "lintAndFormat": "passed",
+    "contracts": "passed;84 requirements;45 tasks",
+    "docs": "passed;176 tables",
+    "publicBuild": "passed",
+    "publicLinks": "passed"
+  },
+  "verified": [
+    "Cancellation before or after ready qualification creates no Run, intent or commands",
+    "Cancelled source refuses duplicate admission and preserves producer acknowledgement",
+    "Accepted task assessment and cancelled assignment remain separate facts",
+    "Qualification before interrupted source handoff cannot manufacture source authority",
+    "Exact unused expired/unknown source recovery retains original assignment, input SHA and reserved Run identity",
+    "Real Git repository advance before admission refuses stale evidence",
+    "Shared canonical reservation/row locking requests exact-current requalification once",
+    "Concurrent repeated refusal does not repeatedly advance task input revision",
+    "Delayed old refusal cannot invalidate a newer accepted human assessment at the same input revision",
+    "Current human reassessment resumes the original reserved Run once",
+    "Repeated source/qualification events retain one intent/create/prompt",
+    "No replacement carrier or assignment is invented"
+  ],
+  "remaining": [
+    "T26 complete Phase 5 input/context/continuation qualification",
+    "T27-T43 cooperation, operational connector, UI and actual installed-package pilot"
+  ],
+  "effects": "Owned local databases, Git fixture and real supervisor with controlled ACP only; no production action, publication or push.",
+  "sources": [
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "2b6593cfd2d7da3b98b9fe5fff5530dc1a34528dc278cc173ee05009504078e8"
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "sha256": "c308b3fa17e1e387776b04879e295ace6aaff09edf0597f098e0e95b8d9ef60c"
+    },
+    {
+      "path": "site-docs/guides/company-specialist-webhooks.md",
+      "sha256": "c2512dfba04ef33bb1b0e1a830a3d2154a291173ff2f4fd5796ee16fe73f3924"
+    },
+    {
+      "path": "site-docs/ru/guides/company-specialist-webhooks.md",
+      "sha256": "b532da3055f34d527dcd1afa6b656d7460a7c2d6d1dd5f34ea9e724b42c3cca4"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "1fbe8c6db8c19730506aff615c9b98d874d00e8e3483fccc37cfbb5fb36cd471"
+    },
+    {
+      "path": "web/lib/specialist-assignments/project-flow-launch.ts",
+      "sha256": "e8c9ebe6bda53491cc29e3c39f24785f2f80f703380d8d5cd9af6ba50d9f4f47"
+    },
+    {
+      "path": "web/lib/tasks/launch-automatic-enqueue.ts",
+      "sha256": "39d84b60753d35f6c3984f5afe6c7f226f3aa3c4f5108111229b3cb3304a98d5"
+    },
+    {
+      "path": "web/lib/tasks/qualification-requalification.ts",
+      "sha256": "1cf7b4c73d29dc843eae742b4347d8c86a1c5ba5d9d5f38c32b88c577e2cc064"
+    }
+  ],
+  "logs": [
+    "cancellation-cohort-fixture.log.gz",
+    "misplaced-cohort-fixture.log.gz",
+    "stale-evidence-red.log.gz",
+    "source-order-green.log.gz",
+    "shared-admission-green.log.gz",
+    "unit-green.log.gz",
+    "types-green.log.gz",
+    "contracts-green.log.gz",
+    "docs-green.log.gz",
+    "lint-green.log.gz",
+    "public-build-green.log.gz",
+    "public-links-green.log.gz"
+  ]
+}

@@ -2,7 +2,13 @@ import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-reque
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
 import type { AgentTriggerSource } from "@/lib/agents/launch";
+import type { CompanyConfigurationReference } from "@/lib/agents/trigger-attempt-types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type {
+  ProjectCommentAppointment,
+  ProjectCronAppointment,
+  ProjectEventAppointment,
+} from "@/lib/specialist-assignments/project-source-types";
 
 export type AgentRetryStrategy = "pre_work_retry" | "fresh_qualification";
 
@@ -29,20 +35,70 @@ type AgentRetryRecipeFields = {
   };
 };
 
-export type AgentRetryRecipe = AgentRetryRecipeFields &
+type SpecialistReplacementWitness = {
+  sourceRunId: string;
+  assignmentRevision: number;
+  contextRevision: number;
+  ownerEpoch: number;
+  resultSha256: string;
+  sourceSha256: string;
+};
+
+export type ProjectSpecialistReplacement = SpecialistReplacementWitness & {
+  assignmentId: string;
+  inputRevision: number;
+  inputSha256: string;
+  cron?: ProjectCronAppointment;
+  event?: ProjectEventAppointment;
+  comment?: ProjectCommentAppointment;
+  webhook?: string;
+  worktree?: Readonly<{
+    workspaceId: string;
+    baseCommit: string;
+    baseBranch: string;
+    repositorySha256: string;
+  }>;
+  readOnly?: Readonly<{
+    commit: string;
+    repositorySha256: string;
+  }>;
+};
+
+export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
   (
     | { version: 1 }
     | {
         version: 2;
         strategy: AgentRetryStrategy;
         qualificationSha: string | null;
+        replacement?: ProjectSpecialistReplacement;
       }
   );
+
+export type CompanyAgentRetryRecipe = Omit<
+  AgentRetryRecipeFields,
+  "projectId" | "taskId" | "taskRevision" | "project"
+> & {
+  version: 3;
+  strategy: "pre_work_retry";
+  owner: { kind: "company"; companyId: string };
+  projectId: null;
+  taskId: null;
+  taskRevision: null;
+  project: null;
+  specialistBinding: CompanyConfigurationReference;
+  coordinatorFlowBinding: CompanyConfigurationReference | null;
+  assignment: { id: string; inputRevision: number; inputSha256: string };
+  replacement?: SpecialistReplacementWitness & { sessionsSha256?: string };
+};
+
+export type AgentRetryRecipe =
+  ProjectAgentRetryRecipe | CompanyAgentRetryRecipe;
 
 export function retryRecipeStrategy(
   recipe: AgentRetryRecipe,
 ): AgentRetryStrategy {
-  return recipe.version === 2 ? recipe.strategy : "pre_work_retry";
+  return recipe.version !== 1 ? recipe.strategy : "pre_work_retry";
 }
 
 export type AgentRetryAllocation = {

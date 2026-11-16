@@ -7,6 +7,9 @@ import {
   hidesAgentExistenceForLaunch,
   publicAgentLaunchMessage,
 } from "@/lib/agents/launch";
+import { evidenceFindingsV1Schema } from "@/lib/run-results/findings-types";
+import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
+import { operationalEvidenceV2Schema } from "@/lib/run-results/operational-schema";
 
 type PromptTaskRow = {
   number: number;
@@ -163,6 +166,157 @@ describe("buildAgentPrompt", () => {
       recentCommentRows: [],
     });
   }
+
+  it("supplies closed native grammar and an executable leaf example with result-level selection", async () => {
+    const prompt = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "native-prompt",
+      projectId: null,
+      taskId: null,
+      triggerType: "manual",
+      triggerPayload: {},
+      resultContract: {
+        kind: "agent_profile",
+        nativeContract: "evidence_findings_v1",
+      },
+    });
+    const marker = "Native result JSON Schema:\n";
+    const exampleMarker = "Native leaf result example (shape only):\n";
+
+    expect(prompt).toContain(exampleMarker);
+    const example = extractSentinelBlock(
+      prompt.slice(
+        prompt.indexOf(exampleMarker) + exampleMarker.length,
+        prompt.indexOf(marker),
+      ),
+      1024 * 1024,
+    );
+
+    expect(example.kind).toBe("value");
+    if (example.kind !== "value")
+      throw new Error(
+        "The delivered native example must use the actual output transport",
+      );
+    const leaf = evidenceFindingsV1Schema.parse(example.value);
+
+    expect(leaf.findings.length).toBeGreaterThan(0);
+    expect(leaf.selection).toEqual([]);
+    expect(leaf.knowledgeProposals).toEqual([]);
+    for (const finding of leaf.findings) {
+      expect(finding.sourceFindings).toEqual([]);
+      expect(finding.supporting).toEqual([]);
+      expect(finding.contradicting).toEqual([]);
+      expect(finding.missingEvidence).not.toHaveLength(0);
+    }
+    expect(prompt).toContain(marker);
+    const grammar = JSON.parse(
+      prompt.slice(prompt.indexOf(marker) + marker.length),
+    ) as {
+      properties: {
+        findings: {
+          items: {
+            additionalProperties: boolean;
+            properties: {
+              supporting: {
+                items: {
+                  additionalProperties: boolean;
+                  properties: Record<string, object>;
+                };
+              };
+              sourceFindings: { items: { required: string[] } };
+            };
+          };
+        };
+        knowledgeProposals: {
+          items: { oneOf: Array<{ additionalProperties: boolean }> };
+        };
+      };
+    };
+    const finding = grammar.properties.findings.items;
+
+    expect(finding.additionalProperties).toBe(false);
+    expect(finding.properties.supporting.items.additionalProperties).toBe(
+      false,
+    );
+    expect(
+      Object.keys(finding.properties.supporting.items.properties).sort(),
+    ).toEqual(["id", "kind", "revision", "sha256", "version"]);
+    expect(finding.properties.sourceFindings.items.required).toEqual([
+      "childRunId",
+      "resultRevision",
+      "findingId",
+    ]);
+    expect(
+      grammar.properties.knowledgeProposals.items.oneOf.every(
+        (proposal: { additionalProperties: boolean }) =>
+          proposal.additionalProperties === false,
+      ),
+    ).toBe(true);
+  });
+
+  it("supplies the actual nested operational grammar on a native result producer", async () => {
+    const prompt = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "operational-evidence-prompt",
+      projectId: null,
+      taskId: null,
+      triggerType: "manual",
+      triggerPayload: {},
+      resultContract: {
+        kind: "agent_operational",
+        contractName: "operational_evidence_v2",
+      },
+    });
+    const exampleMarker = "Native operational result example (shape only):\n";
+    const grammarMarker = "Native operational result JSON Schema:\n";
+
+    expect(prompt).toContain(exampleMarker);
+    expect(prompt).toContain(grammarMarker);
+    const example = extractSentinelBlock(
+      prompt.slice(
+        prompt.indexOf(exampleMarker) + exampleMarker.length,
+        prompt.indexOf(grammarMarker),
+      ),
+      1024 * 1024,
+    );
+
+    expect(example.kind).toBe("value");
+    if (example.kind !== "value")
+      throw new Error("Operational result example is not a sentinel block");
+    const parsedResult = operationalEvidenceV2Schema.parse(example.value);
+
+    expect(parsedResult.findings.findings[0]?.missingEvidence).not.toHaveLength(
+      0,
+    );
+    expect(parsedResult.references).toEqual([]);
+    expect(
+      JSON.parse(
+        prompt.slice(prompt.indexOf(grammarMarker) + grammarMarker.length),
+      ),
+    ).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        coverage: {
+          properties: {
+            state: { enum: ["complete", "incomplete", "not_started"] },
+          },
+        },
+        findings: {
+          additionalProperties: false,
+          properties: {
+            findings: {
+              items: {
+                additionalProperties: false,
+                required: expect.arrayContaining([
+                  "sourceFindings",
+                  "missingEvidence",
+                  "basis",
+                ]),
+              },
+            },
+          },
+        },
+      },
+    });
+  });
 
   it("injects the Effective configuration block from the run snapshot (ADR-111)", async () => {
     const configParsed = {

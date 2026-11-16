@@ -1,8 +1,9 @@
 import "server-only";
-
+import type { ExecutionHosts } from "@/lib/execution-host";
 import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
+import type { DomainEventActor } from "@/lib/domain-events/outbox";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run, Workspace, Project } from "@/lib/db/schema";
 import type { RunResultContract, ResultStatus } from "@/lib/run-results/types";
@@ -50,12 +51,14 @@ import {
 
 import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
+import { validateOperationalEvidenceReferences } from "@/lib/run-results/operational-evidence";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
   agentPreparationOperations,
+  actorIdentities,
   hitlRequests,
   projects,
   runs,
@@ -67,13 +70,18 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   decideAgentResult,
   decideAgentResultFromOutput,
 } from "@/lib/run-results/agent-result";
 import { engineArtifactManifest } from "@/lib/run-results/artifact-manifest";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
 import {
   publishRunResult,
   recordInvalidRunResult,
@@ -83,11 +91,13 @@ import { withAcceptedAgentCleanup } from "@/lib/agents/accepted-cleanup";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { removeWorktree } from "@/lib/worktree";
 import { promoteNextPending } from "@/lib/scheduler";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { operationalTerminalDecision } from "@/lib/agents/operational-completion";
+import { initialResourceCleanup } from "@/lib/agents/resource-cleanup";
 import {
   inspectOperationalRun,
+  operationalWorkspace,
   operationalResourceKind,
 } from "@/lib/agents/operational-context";
 import {
@@ -95,6 +105,7 @@ import {
   preparationFenced,
 } from "@/lib/agents/preparation-ownership";
 import { prepareQualificationPublication } from "@/lib/tasks/qualification";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 
 const log = pino({
   name: "agent-finalization",
@@ -133,6 +144,9 @@ type AgentAssignmentClose =
 
 export type AgentFinalizeOptions = {
   db?: Db;
+  executionHosts?: ExecutionHosts;
+  /** Exact server-owned budget stop; ordinary prompt completion cannot settle it. */
+  budgetTerminationId?: string;
   infrastructureFailure?: OperationalFailureDiagnostic;
   /** A dispatch driver's diagnosis cannot settle another assignment generation. */
   expectedAssignmentId?: string | null;
@@ -263,6 +277,9 @@ type FinalizationContext = Readonly<{
   run: Pick<
     Run,
     | "id"
+    | "companyId"
+    | "companyExecutionSnapshot"
+    | "projectId"
     | "status"
     | "runKind"
     | "executionAssignmentId"
@@ -270,6 +287,7 @@ type FinalizationContext = Readonly<{
     | "agentWorkspace"
     | "rootRunId"
     | "resultContract"
+    | "knowledgeAccess"
     | "agentId"
     | "sourceAgentId"
     | "agentActivitySnapshot"
@@ -283,7 +301,7 @@ type FinalizationContext = Readonly<{
     | "taskQualificationSnapshot"
     | "taskLaunchIntentId"
     | "deliveryPolicySnapshot"
-  > & { projectId: string };
+  >;
   workspaceRows: readonly Pick<Workspace, "id" | "worktreePath">[];
   workspaceContext: Awaited<ReturnType<typeof loadAgentWorkspaceContext>>;
   project: Pick<Project, "slug" | "repoPath"> | null;
@@ -320,11 +338,14 @@ async function loadFinalizationContext(
       agentWorkspace: runs.agentWorkspace,
       rootRunId: runs.rootRunId,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
       agentId: runs.agentId,
       sourceAgentId: runs.sourceAgentId,
       agentActivitySnapshot: runs.agentActivitySnapshot,
       launchedAt: runs.launchedAt,
       projectId: runs.projectId,
+      companyId: runs.companyId,
+      companyExecutionSnapshot: runs.companyExecutionSnapshot,
       taskId: runs.taskId,
       parentRunId: runs.parentRunId,
       contextMounts: runs.contextMounts,
@@ -339,6 +360,11 @@ async function loadFinalizationContext(
     .where(eq(runs.id, runId));
 
   if (!run) return null;
+  if (run.companyId !== null) {
+    await operationalWorkspace(db, run);
+
+    return { run, workspaceRows: [], workspaceContext: null, project: null };
+  }
   if (!run.projectId)
     throw new MaisterError(
       "PRECONDITION",
@@ -560,14 +586,51 @@ async function prepareAgentFinalization(
     preparedRun.executionAssignmentId &&
     !failureEvidence
   ) {
-    if (outcome === "Abandoned")
-      await assertAgentCancellationExecutionQuiescent(_db, preparedRun);
-    else
-      await assertAgentExecutionQuiescent(
-        _db,
-        preparedRun,
-        opts.applicationCommandId,
+    try {
+      if (outcome === "Abandoned" || opts.budgetTerminationId)
+        await assertAgentCancellationExecutionQuiescent(
+          _db,
+          preparedRun,
+          opts.executionHosts,
+        );
+      else
+        await assertAgentExecutionQuiescent(
+          _db,
+          preparedRun,
+          opts.applicationCommandId,
+          opts.executionHosts,
+        );
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        error.code !== "EXECUTOR_UNAVAILABLE" ||
+        error.details?.reason !== "agent_execution_quiescence_unproven"
+      )
+        throw error;
+      const [current] = await _db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      // A competing cancellation may already have released this generation.
+      // Only that exact retained outcome makes this cancellation a no-op;
+      // an interrupted or otherwise unconfirmed generation still refuses.
+      if (outcome !== "Abandoned" || current?.status !== "Abandoned")
+        throw error;
+      log.info(
+        {
+          runId,
+          preparedStatus: preparedRun.status,
+          currentStatus: current?.status ?? null,
+        },
+        "agent finalization preparation superseded by a terminal transition",
       );
+
+      return {
+        apply: async () => ({ finalized: false }),
+        afterCommit: async () => {},
+      };
+    }
   }
   const operationalIntegrity =
     preparedRun.agentKind === "operational"
@@ -693,11 +756,32 @@ async function prepareAgentFinalization(
         id: runs.id,
         status: runs.status,
         assignmentId: runs.executionAssignmentId,
+        companyCancellationIntent: runs.companyCancellationIntent,
+        budgetState: runs.budgetState,
+        executionAssignmentId: runs.executionAssignmentId,
+        currentStepId: runs.currentStepId,
+        flowDriverToken: runs.flowDriverToken,
       })
       .from(runs)
       .where(eq(runs.id, runId))
       .for("update");
 
+    const budgetTermination = locked
+      ? await currentBudgetTermination(tx, locked)
+      : null;
+
+    if (budgetTermination && budgetTermination.id !== opts.budgetTerminationId)
+      return { finalized: false };
+    if (
+      opts.budgetTerminationId &&
+      budgetTermination?.id !== opts.budgetTerminationId
+    )
+      return { finalized: false };
+    if (
+      locked?.companyCancellationIntent &&
+      (outcome !== "Abandoned" || opts.closeAssignments?.kind !== "user")
+    )
+      return { finalized: false };
     if (!locked || !sourceStatuses.includes(locked.status))
       return { finalized: false };
     if (opts.expectedAssignmentId !== undefined) {
@@ -761,7 +845,7 @@ async function prepareAgentFinalization(
         { details: { reason: "agent_terminal_status_inconsistent", runId } },
       );
     if (preparedRun.agentKind === "operational" && !failureEvidence) {
-      if (outcome === "Abandoned")
+      if (outcome === "Abandoned" || opts.budgetTerminationId)
         await assertAgentCancellationBindingsQuiescent(tx, preparedRun);
       else
         await assertAgentSessionBindingsQuiescent(
@@ -807,29 +891,60 @@ async function prepareAgentFinalization(
       return { finalized: false };
     }
 
+    const evidenceDecision = await validateOperationalEvidenceReferences(
+      tx,
+      runId,
+      resultContract,
+      resultDecision,
+    );
+    const referenceDecision = usesStructuredKnowledgeContext({
+      resultContract,
+      knowledgeAccess: current?.run.knowledgeAccess,
+    })
+      ? await validateFindingsReferences(
+          tx,
+          runId,
+          resultContract,
+          evidenceDecision,
+        )
+      : evidenceDecision;
+    const operationalContract =
+      resultContract?.kind === "agent_operational"
+        ? resultContract.contractName
+        : undefined;
+    const publicationDecision = operationalIntegrity
+      ? operationalTerminalDecision({
+          requested: outcome,
+          result: referenceDecision,
+          integrity: operationalIntegrity,
+          contract: operationalContract,
+        })
+      : null;
     const publication = await qualificationPublication(
       tx,
-      operationalDecision?.successful ?? false,
-      resultDecision.kind === "valid" &&
-        resultContract?.kind === "agent_operational"
-        ? (parseOperationalResult(resultDecision.value)?.references ?? [])
+      publicationDecision?.successful ?? false,
+      referenceDecision.kind === "valid" && operationalContract
+        ? (parseOperationalResult(referenceDecision.value, operationalContract)
+            ?.references ?? [])
         : [],
     );
     const terminalDecision =
-      publication.reason && operationalDecision?.successful
+      publication.reason && publicationDecision?.successful
         ? {
-            ...operationalDecision,
+            ...publicationDecision,
             status: "Failed" as const,
             successful: false,
             effectiveOutcome: "blocked" as const,
             cause: publication.reason,
             reasonCodes: [
-              ...operationalDecision.reasonCodes,
+              ...publicationDecision.reasonCodes,
               publication.reason,
             ],
           }
-        : operationalDecision;
-    const terminalStatus = terminalDecision?.status ?? effectiveStatus;
+        : publicationDecision;
+    const terminalStatus =
+      terminalDecision?.status ??
+      (referenceDecision.kind === "invalid" ? "Failed" : effectiveStatus);
     const endedAt = new Date();
     const terminalTransitionId = randomUUID();
 
@@ -839,11 +954,11 @@ async function prepareAgentFinalization(
     let resultStatus: ResultStatus | null = null;
     let resultRevision: number | null = null;
 
-    if (resultDecision.kind === "valid") {
+    if (referenceDecision.kind === "valid") {
       const published = await publishRunResult(tx, {
         runId,
-        value: resultDecision.value,
-        valueBytes: resultDecision.valueBytes,
+        value: referenceDecision.value,
+        valueBytes: referenceDecision.valueBytes,
         contract: resultContract as RunResultContract,
         producerKind: "agent_session",
         producerRef: "session:default",
@@ -855,11 +970,11 @@ async function prepareAgentFinalization(
         terminalDecision && !terminalDecision.successful
           ? "unavailable"
           : "valid";
-    } else if (resultDecision.kind === "invalid") {
+    } else if (referenceDecision.kind === "invalid") {
       const invalid = await recordInvalidRunResult(tx, {
         runId,
         contract: resultContract as RunResultContract,
-        reason: resultDecision.reason,
+        reason: referenceDecision.reason,
         producerKind: "agent_session",
         producerRef: "session:default",
       });
@@ -871,11 +986,11 @@ async function prepareAgentFinalization(
           runId,
           outcome,
           resultStatus,
-          reasonClass: resultDecision.reason,
+          reasonClass: referenceDecision.reason,
         },
         "[run-result.agent] public result rejected — finalizing Failed",
       );
-    } else if (resultDecision.kind === "absent") {
+    } else if (referenceDecision.kind === "absent") {
       resultStatus = "absent";
     }
 
@@ -902,24 +1017,15 @@ async function prepareAgentFinalization(
         (terminalStatus === "Crashed" ? gcAgeDays() * 86_400_000 : 0),
     );
     const operationalCleanup: OperationalCleanup | null = terminalDecision
-      ? {
-          version: 1,
+      ? initialResourceCleanup({
           resourceKind: operationalResourceKind(preparedRun),
           workspace: preparedRun.agentWorkspace as NonNullable<
             Run["agentWorkspace"]
           >,
           state: terminalStatus === "Crashed" ? "retained" : "armed",
-          revision: 1,
           armedAt: endedAt.toISOString(),
-          attempts: 0,
           dueAt: cleanupDue.toISOString(),
-          errorCode: null,
-          evidenceIds: [],
-          removedAt: null,
-          releasedAt: null,
-          lease: null,
-          rearmReceipt: null,
-        }
+        })
       : null;
 
     // M42 (ADR-114): the agent run's session resume handle lives on its
@@ -1044,26 +1150,26 @@ async function prepareAgentFinalization(
       reason: opts.causeReason ?? opts.reason,
       terminal: operationalTerminal,
       reported:
-        resultDecision.kind === "valid" &&
-        resultContract?.kind === "agent_operational"
-          ? parseOperationalResult(resultDecision.value)
+        referenceDecision.kind === "valid" && operationalContract
+          ? parseOperationalResult(referenceDecision.value, operationalContract)
           : null,
     });
 
-    await emitWebhookEvent({
-      db: tx,
-      type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
-      projectId: row.projectId,
-      runId,
-      data: {
-        kind: "agent",
-        agentId: row.agentId,
-        ...(terminalStatus === "Review" ? { source: "agent" } : {}),
-        ...(opts.reason && terminalStatus !== "Review"
-          ? { reason: opts.reason }
-          : {}),
-      },
-    });
+    if (row.projectId !== null)
+      await emitWebhookEvent({
+        db: tx,
+        type: WEBHOOK_TYPE_BY_STATUS[terminalStatus],
+        projectId: row.projectId,
+        runId,
+        data: {
+          kind: "agent",
+          agentId: row.agentId,
+          ...(terminalStatus === "Review" ? { source: "agent" } : {}),
+          ...(opts.reason && terminalStatus !== "Review"
+            ? { reason: opts.reason }
+            : {}),
+        },
+      });
 
     // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
     // the parked coordinator wakes to promote/rework the diff (and as-plan
@@ -1074,7 +1180,7 @@ async function prepareAgentFinalization(
         await emitDomainEvent({
           db: tx,
           kind: "run.review",
-          projectId: row.projectId,
+          ...runDomainEventScope(row),
           taskId: row.taskId,
           runId,
           actor: { type: "agent", id: row.agentId },
@@ -1100,15 +1206,42 @@ async function prepareAgentFinalization(
       // succeeded.
       const kind = terminalDecision
         ? DOMAIN_KIND_BY_OUTCOME[terminalDecision.status]
-        : resultDecision.kind === "invalid"
+        : referenceDecision.kind === "invalid"
           ? "run.failed"
           : DOMAIN_KIND_BY_OUTCOME[outcome];
+      let actor: DomainEventActor = { type: "agent", id: row.agentId };
+
+      if (row.companyId && opts.closeAssignments?.kind === "user") {
+        const [human] = await tx
+          .select()
+          .from(actorIdentities)
+          .where(eq(actorIdentities.id, opts.closeAssignments.actorId))
+          .for("share");
+
+        if (
+          human?.kind !== "user" ||
+          human.companyId !== row.companyId ||
+          human.projectId !== null ||
+          human.userId === null ||
+          human.disabledAt !== null ||
+          (locked.companyCancellationIntent != null &&
+            locked.companyCancellationIntent.userId !== human.userId)
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Company cancellation requires its retained current human actor",
+            {
+              details: { reason: "company_cancellation_actor_unavailable" },
+            },
+          );
+        actor = { type: "user", id: human.userId };
+      }
       const event = {
         db: tx,
-        projectId: row.projectId,
+        ...runDomainEventScope(row),
         taskId: row.taskId,
         runId,
-        actor: { type: "agent" as const, id: row.agentId },
+        actor,
         parentRunId: row.parentRunId,
         payload: {
           runKind: "agent",
@@ -1126,10 +1259,10 @@ async function prepareAgentFinalization(
             : {}),
           ...(opts.reason ? { reason: opts.reason } : {}),
           ...failureEvidence,
-          ...(resultDecision.kind === "invalid"
+          ...(referenceDecision.kind === "invalid"
             ? {
                 reason:
-                  resultDecision.reason === "result_missing"
+                  referenceDecision.reason === "result_missing"
                     ? "result_missing"
                     : "result_invalid",
               }
@@ -1146,8 +1279,8 @@ async function prepareAgentFinalization(
           cause: agentTerminalCause(
             terminalDecision?.status ?? outcome,
             terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
-            resultDecision.kind === "invalid"
-              ? resultDecision.reason === "result_missing"
+            referenceDecision.kind === "invalid"
+              ? referenceDecision.reason === "result_missing"
                 ? "result_missing"
                 : "result_invalid"
               : null,
@@ -1217,7 +1350,10 @@ async function prepareAgentFinalization(
       const { disposeOperationalRun } =
         await import("@/lib/gc/operational-disposition");
 
-      await disposeOperationalRun(runId, { db: _db }).catch((error: unknown) =>
+      await disposeOperationalRun(runId, {
+        db: _db,
+        hosts: opts.executionHosts,
+      }).catch((error: unknown) =>
         log.error(
           { runId, errorType: error instanceof Error ? error.name : "unknown" },
           "operational-cleanup-dispatch-deferred",
@@ -1392,7 +1528,9 @@ export async function finalizeAgentRun(
     try {
       const { createExecutionHosts } =
         await import("@/lib/execution-host/client");
-      const client = await createExecutionHosts({ db }).forAssignment({
+      const client = await (
+        opts.executionHosts ?? createExecutionHosts({ db })
+      ).forAssignment({
         id: run.executionAssignmentId,
       });
 

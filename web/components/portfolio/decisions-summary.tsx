@@ -18,6 +18,7 @@ export interface DecisionsSummaryProps {
   labels: {
     title: string;
     seeAll: string;
+    company: string;
   };
 }
 
@@ -69,7 +70,9 @@ export function DecisionsSummary({
                 />
                 <span className="flex min-w-0 items-baseline gap-2">
                   <span className="shrink-0 font-mono text-[11px] font-semibold text-ink-2">
-                    {item.projectName}
+                    {item.projectId === null
+                      ? labels.company
+                      : item.projectName}
                   </span>
                   <span className="truncate text-[12.5px] text-body">
                     {item.prompt}

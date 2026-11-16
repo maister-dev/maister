@@ -4,7 +4,8 @@ import type { TaskLaunchRequest } from "@/lib/tasks/launch-schema";
 import type { Db } from "@/lib/execution-host/db";
 import type { Run } from "@/lib/db/schema";
 import type {
-  AgentRetryRecipe,
+  ProjectAgentRetryRecipe,
+  ProjectSpecialistReplacement,
   AgentRetryStrategy,
 } from "@/lib/agents/retry-types";
 import type { LoadedAgentContext } from "@/lib/agents/launch";
@@ -13,6 +14,9 @@ import type { AgentTriggerSource } from "@/lib/agents/launch";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
+
+import { prepareProjectSpecialistReplacement } from "./project-specialist-retry";
+import { buildOperationalContract } from "./launch-contract";
 
 import { runs, runSessions, platformAcpRunners, tasks } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -44,7 +48,7 @@ import { resolveAgentConfig } from "@/lib/agents/config";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 import { loadTaskQualificationInput } from "@/lib/tasks/qualification";
-import { resolveBaseCommit } from "@/lib/worktree";
+import { resolveBaseCommit, statusPorcelain } from "@/lib/worktree";
 
 export const RETRY_PREVIEW_WINDOW_MS = 5 * 60_000;
 const log = pino({
@@ -90,6 +94,7 @@ export type RetryPreparation = {
   contextDigest: string;
   legacyContextDigest: string;
   qualificationSha: string | null;
+  replacement?: ProjectSpecialistReplacement;
 };
 
 export async function prepareAgentRetry(
@@ -138,6 +143,39 @@ export async function prepareAgentRetry(
       ? "fresh_qualification"
       : "pre_work_retry";
   let reason = await retryStrategySafetyReason(db, source, strategy);
+  const replacement =
+    reason === "retry_source_unsupported" &&
+    strategy === "pre_work_retry" &&
+    source.knowledgeAccess?.restrictions.some(
+      (entry) => entry.kind === "assignment_input",
+    )
+      ? await db
+          .transaction(async (tx) => {
+            const [current] = await tx
+              .select()
+              .from(runs)
+              .where(eq(runs.id, source.id))
+              .for("share");
+
+            if (!current) throw retryRefusal("retry_source_unavailable");
+
+            return prepareProjectSpecialistReplacement(tx, current, userId);
+          })
+          .catch((error: unknown) => {
+            if (
+              !(error instanceof MaisterError) ||
+              error.code !== "CONFLICT" ||
+              typeof error.details?.reason !== "string" ||
+              error.details.reason === "retry_assignment_busy"
+            )
+              throw error;
+            reason = error.details.reason;
+
+            return undefined;
+          })
+      : undefined;
+
+  if (replacement) reason = null;
 
   if (context.effective.parsed.flow) reason = "retry_source_unsupported";
   const [task] = source.taskId
@@ -216,6 +254,14 @@ export async function prepareAgentRetry(
         runners: catalog.map(runnerCatalogEntry),
       });
 
+      if (
+        replacement &&
+        (runner.id !== replacement.runnerId ||
+          retryDigest(resolution.runnerSnapshot) !==
+            retryDigest(replacement.runner))
+      )
+        throw retryRefusal("retry_runner_unavailable");
+
       resolutions.set(runner.id, resolution);
 
       return {
@@ -237,17 +283,21 @@ export async function prepareAgentRetry(
   });
 
   if (!resolutions.size && reason === null) reason = "retry_runner_unavailable";
-  let selectedRunnerId: string | null = null;
+  let selectedRunnerId = replacement
+    ? (resolutions.get(replacement.runnerId)?.runnerId ?? null)
+    : null;
 
   try {
-    const currentRunner = await resolveRunnerForAgent(
-      db,
-      context,
-      undefined,
-      previewWorkspace,
-    );
+    if (!replacement) {
+      const currentRunner = await resolveRunnerForAgent(
+        db,
+        context,
+        undefined,
+        previewWorkspace,
+      );
 
-    selectedRunnerId = currentRunner.runnerId;
+      selectedRunnerId = currentRunner.runnerId;
+    }
   } catch (error) {
     if (!(error instanceof MaisterError)) throw error;
     log.warn(
@@ -271,6 +321,37 @@ export async function prepareAgentRetry(
     context.effective.parsed.config,
     context.link.config ?? null,
   );
+
+  if (
+    replacement &&
+    !reason &&
+    (source.agentActivitySnapshot?.definitionSha256 !==
+      definition.definitionSha256 ||
+      source.agentActivitySnapshot.packageInstallId !==
+        definition.packageInstallId ||
+      context.effective.parsed.kind !== "operational" ||
+      retryDigest(source.resultContract) !==
+        retryDigest(buildOperationalContract(context.effective)) ||
+      retryDigest(source.agentConfig ?? {}) !== retryDigest(configuration) ||
+      retryDigest(source.executionPolicy) !==
+        retryDigest(resolveAgentContextExecutionPolicy(context)))
+  )
+    reason = "retry_context_changed";
+  if (replacement?.witness.readOnly && !reason) {
+    const { repoPath } = context.project;
+    const { commit, repositorySha256 } = replacement.witness.readOnly;
+
+    if (
+      retryDigest(repoPath) !== repositorySha256 ||
+      (context.effective.parsed.workspaceRef === null &&
+        ((await resolveBaseCommit({
+          projectRepoPath: repoPath,
+          baseRef: "HEAD",
+        })) !== commit ||
+          (await statusPorcelain({ worktreePath: repoPath })).trim()))
+    )
+      reason = "retry_context_changed";
+  }
   const taskRevision = task?.qualificationInputRevision ?? null;
   const contextValues = {
     definition,
@@ -299,6 +380,7 @@ export async function prepareAgentRetry(
     ...contextValues,
     strategy,
     qualificationSha,
+    ...(replacement ? { replacement: replacement.witness } : {}),
   });
   const bucket = Math.floor(now.getTime() / RETRY_PREVIEW_WINDOW_MS);
   const differences: AgentRetryOptions["differences"] = [];
@@ -355,6 +437,7 @@ export async function prepareAgentRetry(
     contextDigest,
     legacyContextDigest,
     qualificationSha,
+    ...(replacement ? { replacement: replacement.witness } : {}),
     options: {
       eligible: reason === null,
       reason,
@@ -377,7 +460,7 @@ export async function retryRecipeFor(
   db: Db,
   preparation: RetryPreparation,
   runnerId: string,
-): Promise<AgentRetryRecipe> {
+): Promise<ProjectAgentRetryRecipe> {
   const { source, context } = preparation;
   const resolution = await resolveRunnerForAgent(
     db,
@@ -393,6 +476,9 @@ export async function retryRecipeFor(
     version: 2,
     strategy: preparation.options.strategy,
     qualificationSha: preparation.qualificationSha,
+    ...(preparation.replacement
+      ? { replacement: preparation.replacement }
+      : {}),
     ...(source.scheduledRequestSnapshot
       ? {
           scheduledRequestSnapshot: parseScheduledRequestSnapshot(

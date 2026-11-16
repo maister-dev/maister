@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { HumanWorkOwner } from "./company-ownership";
 import type { MaisterYamlV2 } from "@/lib/config.schema";
 import type {
   ActorIdentity,
@@ -11,6 +12,14 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  humanWorkOwner,
+  ensureCompanyLifecycleActor,
+  authorizeCompanyHumanAnswer,
+  authorizeCompanyHumanCancellation,
+} from "./company-ownership";
+export { ensureCompanyUserActor } from "./company-ownership";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -48,9 +57,8 @@ export type EnsureUserActorArgs = {
   label?: string | null;
 };
 
-export type CreateAssignmentArgs = {
+export type CreateAssignmentArgs = HumanWorkOwner & {
   db?: Db;
-  projectId: string;
   runId: string;
   taskId?: string | null;
   nodeId?: string | null;
@@ -87,7 +95,7 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
 
 export type CreateHitlAssignmentForRunArgs = Omit<
   CreateHitlAssignmentArgs,
-  "projectId" | "taskId"
+  "projectId" | "companyId" | "taskId"
 >;
 
 export type FindActiveAssignmentForRunArgs = {
@@ -141,7 +149,7 @@ export type SystemCloseActiveAssignmentsForRunArgs = {
 export type SystemCloseActiveAssignmentsForHitlRequestArgs = {
   db?: Db;
   hitlRequestId: string;
-  projectId: string;
+  projectId?: string | null;
   reason: string;
 };
 
@@ -381,7 +389,8 @@ export async function ensureApiTokenActor(
 async function insertAssignmentEvent(args: {
   db: Db;
   assignmentId: string;
-  projectId: string;
+  projectId: string | null;
+  companyId?: string | null;
   runId: string;
   eventKind: AssignmentEventKind;
   actorId?: string | null;
@@ -393,6 +402,7 @@ async function insertAssignmentEvent(args: {
     id: randomUUID(),
     assignmentId: args.assignmentId,
     projectId: args.projectId,
+    companyId: args.companyId ?? null,
     runId: args.runId,
     eventKind: args.eventKind,
     actorId: args.actorId ?? null,
@@ -423,6 +433,7 @@ async function createAssignmentInDb(
     .values({
       id: randomUUID(),
       projectId: args.projectId,
+      companyId: args.companyId ?? null,
       runId: args.runId,
       taskId: args.taskId ?? null,
       nodeId: args.nodeId ?? null,
@@ -457,6 +468,7 @@ async function createAssignmentInDb(
       db,
       assignmentId: assignment.id,
       projectId: assignment.projectId,
+      companyId: assignment.companyId,
       runId: assignment.runId,
       eventKind: "created",
       actorId: args.createdByActorId ?? null,
@@ -488,7 +500,11 @@ export async function createHitlAssignmentForRun(
 ): Promise<Assignment> {
   const db = args.db ?? getDb();
   const [run] = await db
-    .select({ projectId: runs.projectId, taskId: runs.taskId })
+    .select({
+      projectId: runs.projectId,
+      companyId: runs.companyId,
+      taskId: runs.taskId,
+    })
     .from(runs)
     .where(eq(runs.id, args.runId));
 
@@ -502,7 +518,7 @@ export async function createHitlAssignmentForRun(
   return createHitlAssignment({
     ...args,
     db,
-    projectId: run.projectId,
+    ...humanWorkOwner(run),
     taskId: run.taskId,
   });
 }
@@ -552,6 +568,8 @@ export async function claimAssignment(
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
     const existing = await findAssignmentById(tx, args.assignmentId);
+
+    await authorizeCompanyHumanAnswer(tx, existing, args.actorId);
 
     if (
       existing.status === "claimed" &&
@@ -605,6 +623,7 @@ export async function claimAssignment(
       db: tx,
       assignmentId: claimed.id,
       projectId: claimed.projectId,
+      companyId: claimed.companyId,
       runId: claimed.runId,
       eventKind: "claimed",
       actorId: args.actorId,
@@ -623,6 +642,8 @@ export async function releaseAssignment(
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
     const existing = await findAssignmentById(tx, args.assignmentId);
+
+    await authorizeCompanyHumanAnswer(tx, existing, args.actorId);
 
     if (existing.status === "open" && existing.assigneeActorId === null) {
       return existing;
@@ -667,6 +688,7 @@ export async function releaseAssignment(
       db: tx,
       assignmentId: released.id,
       projectId: released.projectId,
+      companyId: released.companyId,
       runId: released.runId,
       eventKind: "released",
       actorId: args.actorId,
@@ -686,6 +708,8 @@ export async function takeOverAssignment(
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
     const existing = await findAssignmentById(tx, args.assignmentId);
+
+    await authorizeCompanyHumanAnswer(tx, existing, args.actorId);
 
     if (
       existing.status === "claimed" &&
@@ -731,6 +755,7 @@ export async function takeOverAssignment(
       db: tx,
       assignmentId: transferred.id,
       projectId: transferred.projectId,
+      companyId: transferred.companyId,
       runId: transferred.runId,
       eventKind: "taken_over",
       actorId: args.actorId,
@@ -754,6 +779,8 @@ export async function completeAssignment(
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
     const existing = await findAssignmentById(tx, args.assignmentId);
+
+    await authorizeCompanyHumanAnswer(tx, existing, args.actorId);
 
     if (
       existing.status === "completed" &&
@@ -802,6 +829,7 @@ export async function completeAssignment(
       db: tx,
       assignmentId: completed.id,
       projectId: completed.projectId,
+      companyId: completed.companyId,
       runId: completed.runId,
       eventKind,
       actorId: args.actorId,
@@ -837,6 +865,14 @@ export async function completeHitlAssignmentFromCurrentActor(
     }
 
     const actorId = assignment.assigneeActorId ?? assignment.createdByActorId;
+
+    if (assignment.projectId === null && actorId === null)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Company human work has no retained responding actor",
+        { details: { reason: "company_human_actor_missing" } },
+      );
+
     const now = new Date();
     const [completed] = await tx
       .update(assignments)
@@ -867,6 +903,7 @@ export async function completeHitlAssignmentFromCurrentActor(
       db: tx,
       assignmentId: completed.id,
       projectId: completed.projectId,
+      companyId: completed.companyId,
       runId: completed.runId,
       eventKind,
       actorId,
@@ -887,6 +924,8 @@ export async function cancelAssignment(
 
   return await runAssignmentTransaction(db, async (tx: Db) => {
     const existing = await findAssignmentById(tx, args.assignmentId);
+
+    await authorizeCompanyHumanCancellation(tx, existing, args.actorId);
 
     if (existing.status === "cancelled") {
       return existing;
@@ -913,6 +952,7 @@ export async function cancelAssignment(
       db: tx,
       assignmentId: cancelled.id,
       projectId: cancelled.projectId,
+      companyId: cancelled.companyId,
       runId: cancelled.runId,
       eventKind,
       actorId: args.actorId,
@@ -992,7 +1032,7 @@ export async function systemCloseActiveAssignmentsForRun(
     if (active.length === 0) return [];
 
     const [run] = await tx
-      .select({ projectId: runs.projectId })
+      .select({ projectId: runs.projectId, companyId: runs.companyId })
       .from(runs)
       .where(eq(runs.id, args.runId));
 
@@ -1003,12 +1043,16 @@ export async function systemCloseActiveAssignmentsForRun(
       );
     }
 
-    const actor = await ensureSystemActor({
-      db: tx,
-      projectId: run.projectId,
-      systemKey: "assignment-lifecycle",
-      label: "MAIster lifecycle",
-    });
+    const owner = humanWorkOwner(run);
+    const actor =
+      owner.projectId === null
+        ? await ensureCompanyLifecycleActor(tx, owner.companyId)
+        : await ensureSystemActor({
+            db: tx,
+            projectId: owner.projectId,
+            systemKey: "assignment-lifecycle",
+            label: "MAIster lifecycle",
+          });
     const closed: Assignment[] = [];
 
     for (const assignment of active) {
@@ -1055,12 +1099,16 @@ export async function systemCloseActiveAssignmentsForHitlRequest(
 
     if (active.length === 0) return [];
 
-    const actor = await ensureSystemActor({
-      db: tx,
-      projectId: args.projectId,
-      systemKey: "assignment-lifecycle",
-      label: "MAIster lifecycle",
-    });
+    const owner = humanWorkOwner(active[0]);
+    const actor =
+      owner.projectId === null
+        ? await ensureCompanyLifecycleActor(tx, owner.companyId)
+        : await ensureSystemActor({
+            db: tx,
+            projectId: owner.projectId,
+            systemKey: "assignment-lifecycle",
+            label: "MAIster lifecycle",
+          });
     const closed: Assignment[] = [];
 
     for (const assignment of active) {

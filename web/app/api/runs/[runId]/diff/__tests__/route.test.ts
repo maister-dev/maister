@@ -87,6 +87,11 @@ const fakeDb = {
   select: selectChain,
 };
 
+// Legacy route fixture; native worktree/source grants are qualified against real Git and Postgres.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));

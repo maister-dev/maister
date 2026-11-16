@@ -1,0 +1,53 @@
+{
+  "head": "01fdd1405",
+  "invocation": {
+    "id": "3529e624-e20c-4fd9-a07f-13972001b370"
+  },
+  "startedAt": "2026-11-13T12:44:54.403Z",
+  "finishedAt": "2026-11-13T14:12:01.609Z",
+  "mcpSha256": "ead6343bca9a85ffdc69c5a1f21274322698e152dc3a03f75a229bcc21941c8a",
+  "maxWorkers": 2,
+  "outcome": {
+    "code": 1,
+    "signal": null
+  },
+  "build": {
+    "revision": "01fdd1405d0af26d2188d0f4daf41ad9cb5a5082",
+    "buildId": "v5QwUfk4t-8XqlkP4SZbZ",
+    "invocationId": "3529e624-e20c-4fd9-a07f-13972001b370"
+  },
+  "sourceHeadUnchanged": true,
+  "candidateUnchanged": true,
+  "cleanupErrors": [
+    {
+      "name": "Error",
+      "message": "frozen full integration completion leaked 1 container(s); terminal cleanup removed them (ledger /private/tmp/cb-cooperation-full-process-ledger/processes/3529e624-e20c-4fd9-a07f-13972001b370)"
+    }
+  ],
+  "numTotalTests": 6336,
+  "numPassedTests": 6304,
+  "numFailedTests": 4,
+  "numPendingTests": 28,
+  "numTotalTestSuites": 1955,
+  "numPassedTestSuites": 1949,
+  "numFailedTestSuites": 6,
+  "numPendingTestSuites": 0,
+  "failureSummary": [
+    {
+      "suite": "lib/gc/__tests__/operational-disposition.integration.test.ts",
+      "cause": "setup timeout before fixture root initialization; teardown then attempted to remove an undefined path"
+    },
+    {
+      "suite": "scripts/__tests__/legacy-import-cutover.integration.test.ts",
+      "cause": "supervisor readiness timeout; dependent restore had no snapshot"
+    },
+    {
+      "suite": "lib/project-config-persistence/__tests__/owner-recovery.integration.test.ts",
+      "cause": "prepared receipt case timeout"
+    },
+    {
+      "suite": "app/api/v1/ext/runs/__tests__/delegate-flow-arm.integration.test.ts",
+      "cause": "Flow child promote case timeout"
+    }
+  ]
+}

@@ -414,8 +414,11 @@ The web tier escalates the halt via the existing `hook_trip` HITL path.
 
 **Permission-mode ownership + always-ask sentinel (D5).** An enforced session is
 spawned with `permissionPolicy = "default"` (no `--dangerously-skip-permissions`),
-so the adapter itself issues `session/request_permission` for tool calls and the
-supervisor becomes the permission authority (auto-allow in-profile). A runner whose
+and Claude receives host-owned inline `permissions.ask=["*"]` with permission bypass
+disabled on new/resumed sessions. Default mode alone may execute benign native tools
+without arbitration. These inline settings also cover read-only sessions lacking a
+project settings file. The adapter issues `session/request_permission` for governed
+tool calls and the supervisor becomes the permission authority (auto-allow in-profile). A runner whose
 `permissionPolicy = "dangerously_skip_permissions"` + a strict-armed profile
 **refuses launch** (`EXECUTOR_UNAVAILABLE`) — under skip-permissions the seam is
 structurally inert. A fail-closed **sentinel** in the `session/update` handler
@@ -427,6 +430,16 @@ is still un-arbitrated — the adapter ran a write without ever asking (stopped
 honoring always-ask mid-session). Keying off the execution event, not the pending
 `tool_call` notification, is what stops a legitimately arbitrated write from
 false-halting on its own streamed announcement.
+
+Read-only sessions classify the native facade's closed knowledge GET tool set through
+the shared platform effect contract. The injected descriptor carries private manager
+`platformOrigin=maister_facade`; catalog mapping cannot supply it, and it is removed
+from the ACP descriptor. A server name, environment signature or model annotation
+alone cannot grant that classification. Native ToolSearch is read-only discovery.
+Known reads can resolve inline without an auto-approval policy, but only after strict
+tool/MCP guards; source grants remain checked by the native endpoint on every call.
+Knowledge proposal/capture/review/confirmation calls remain mutations. Unknown or
+unmarked MCP calls retain conservative read-only refusal.
 
 **Evidence-gated per-adapter flip.**
 
@@ -468,7 +481,7 @@ clobbers the sibling — see `writeAdapterSmokeCache` merge):
 | Dimension | Ritual command | Gates | Pass criterion (per adapter) |
 | --- | --- | --- | --- |
 | `readOnlySession` (ADR-090) | `smoke:acp --cache <path> --read-only-session gemini opencode mimo` | `none`/`repo_read` agent launches | read-kind allowed + write-kind denied + unknown-kind denied |
-| `capabilityEnforcement` (ADR-130) | `smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo` | strict `tools`/`mcps` flow/agent launches | `requestPermission` fires per write-class probe **and** `params.toolCall` carries a stable tool name (+ a resolvable MCP server namespace) |
+| `capabilityEnforcement` (ADR-130) | `smoke:acp --cache <path> --capability-enforcement claude codex gemini opencode mimo` | strict `tools`/`mcps` flow/agent launches | Contract v2: each write, benign shell, ordinary MCP and read-only MCP target independently reaches `requestPermission` with stable tool/server identity; historical success without the current probe version becomes pending |
 
 - **CI** runs each probe against the mock-ACP adapter (`mock-acp-compatibility.mjs`),
   proving the wire contract green (`smoke-acp-adapter-script.test.ts`). **Live**

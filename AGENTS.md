@@ -19,7 +19,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 
 ## Tech Stack
 
-- **Framework:** Next.js 16.4 (App Router)
+- **Framework:** Next.js 16.2 (App Router)
 - **Language:** TypeScript 5.6 (strict)
 - **UI library:** HeroUI v3 (`@heroui/react` 3.2.6)
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
@@ -30,7 +30,7 @@ Full description: `.ai-factory/DESCRIPTION.md`.
   and `mimo acp` adapter binaries
 - **Tests:** vitest (unit + integration), Playwright (E2E)
 - **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)
-- **Node:** 24 deployment; 26 LTS compatibility
+- **Node:** 24
 
 ## Project Structure
 
@@ -96,7 +96,7 @@ mAIster/
 │   │   ├── cost.ts             # cache/input/output usage normalization
 │   │   ├── registry.ts         # In-memory SessionRecord map + per-session event ring buffer
 │   │   ├── types.ts            # Zod schemas + SessionEvent union + SupervisorError
-│   │   └── __tests__/          # Unit + integration suites
+│   │   └── __tests__/          # unit and integration suites
 │   ├── test/fixtures/
 │   │   └── fake-acp.mjs        # Stand-in for the real ACP binary in tests
 │   ├── package.json            # @maister/supervisor; tsx runtime
@@ -116,7 +116,7 @@ mAIster/
 │   ├── package.json            # Dependencies, scripts (dev/build/start/lint)
 │   ├── tsconfig.json           # strict, @/* path alias
 │   ├── next.config.mjs
-│   ├── eslint.config.mjs       # ESLint 10 flat config
+│   ├── eslint.config.mjs       # ESLint 9 flat config
 │   └── postcss.config.mjs      # @tailwindcss/postcss
 ├── CLAUDE.md                   # Root project instructions for AI agents
 ├── AGENTS.md                   # This file
@@ -148,10 +148,51 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/supervisor-client.ts` | The ONLY place `web/` talks to `supervisor/` (HTTP+SSE) |
 | `web/lib/errors.ts` | `MaisterError` discriminated union (11 codes) |
 | `web/lib/db/schema.ts` | Drizzle schema; `node_attempts` is the sole Flow execution ledger |
+| `web/lib/company/grants.ts` | Current administrator company grants, content-guarded delivery and exact-revision revocation |
+| `web/lib/brain/knowledge-proposal-read.ts` | Source-authorized native proposal review queue and publication inspection |
+| `web/app/(app)/knowledge/` | Native EN/RU knowledge, exact revisions, evidence and proposal review |
+| `web/app/(app)/settings/company-grants/` | Explicit company authority administration without a project |
+| `web/lib/brain/knowledge-records.ts` | Structured company/project records, exact revisions and current source access |
+| `web/lib/tokens/owned-ext-handler.ts` | Shared bearer verification and audit for operations without a project requirement |
 | `web/lib/agents/activity-queries.ts` | Scoped active executions and retained run/attempt history |
+| `web/lib/agents/company-run-read-access.ts` | Current company reader/source and human lifecycle action authority, independent of execution eligibility |
+| `web/lib/runs/stop.ts` | Native Run stop owner dispatch and current company cancellation through shared operational finalization |
 | `web/lib/tasks/qualification.ts` | Versioned request assessments and authoritative admission |
 | `web/components/agents/` | Project agent history, grouped incidents, retries and qualification controls |
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
+| `web/lib/agents/trigger-binding-snapshot.ts` | Owner-aware trigger configuration witnesses; existing request snapshots stay v1 and company dispatch is separately gated |
+| `web/lib/agents/retry-snapshot.ts` | Retained v1/v2 project and v3 company retry reading without rewriting historical bytes |
+| `web/lib/agents/company-agent-context.ts` | Current company agent preflight and immutable server-owned execution capture |
+| `web/lib/agents/company-run-credential-owner.ts` | Current company run/input/configuration/account authority for ephemeral credentials |
+| `web/lib/agents/company-flow-bindings.ts` | Reviewed company coordinator pins and immutable configuration/routing receipts; execution remains separately gated |
+| `web/lib/agents/company-bindings.ts` | Explicit company role pins and immutable configuration receipts, independent of projects |
+| `web/lib/agents/company-session-context.ts` | Frozen company input and role, current dispatch authority, source checks and separate prompt planes |
+| `web/lib/agents/company-run-read-access.ts` | Current explicit company reader authority and exact retained input/source disclosure for historical execution content |
+| `web/lib/agents/company-agent-launch.ts` | Atomic company Run reservation with exact input, frozen session and native host placement |
+| `web/lib/assignments/company-ownership.ts` | Existing human-work company ownership, stable user/system attribution and current claim/answer authority |
+| `web/lib/agents/company-flow-context.ts` | Exact company coordinator preflight, current authority and pinned result identity |
+| `web/lib/agents/company-flow-launch.ts` | Atomic native company graph reservation on existing Run/session/placement ledgers |
+| `web/lib/agents/company-flow-session-context.ts` | Restore exact company graph input, current authority, pinned export and frozen runners without repository records |
+| `web/lib/agents/company-flow-persona.ts` | Resolve current reviewed company node professionals through the shared Flow persona/attestation path |
+| `web/lib/agents/company-flow-enforcement.ts` | Current attested role/limits enforce shared native MCP-only tool policy on company graph dispatch |
+| `web/lib/agents/company-flow-materialization.ts` | Current company/frozen-session policy through shared capability evidence, file ownership and materialization contracts |
+| `web/lib/agents/company-flow-workspace.ts` | Empty native source baseline, current integrity and existing lease-owned platform generations |
+| `web/lib/run-results/company-flow-terminal.ts` | Required result, current driver/result witnesses and physical quiescence before native company graph settlement/disposition |
+| `web/app/api/specialist-assignments/` | Company/project specialist and coordinator manual submission, personal-token API, current authority and exact input inspection |
+| `web/app/(app)/specialist-assignments/` | EN/RU assignment intake, progress, evidence, recovery and verified acceptance |
+| `web/lib/specialist-assignments/store.ts` | Durable company/project assignment heads, frozen input history, current authority, CAS and existing-run links |
+| `web/lib/specialist-assignments/delegated-intake.ts` | Original logical work identity, exact work revisions and bounded continuation backed by retained results or a proved read-only child interruption |
+| `web/lib/stand-operations/` | Reviewed stand targets, exact restart intent, current authority, effect reconciliation, authorized recovery and independent verification |
+| `stand-connector/src/main.ts` | Linux/systemd target helper with mTLS, bounded service operations and a durable SQLite journal |
+| `web/lib/stand-operations/target-registry.ts` | Reviewed company stand configurations, exact runbook witnesses and canonical systemd component identities |
+| `web/lib/specialist-assignments/project-routed-manual-intake.ts` | Versioned existing project launch entry; server-resolved owner/attachment and shared manual delivery identity |
+| `web/lib/specialist-assignments/project-comment-intake.ts` | Native human task mentions; independent canonical work, current author/source authority and exact source appointments in existing Run admission |
+| `web/lib/agents/project-source-review.ts` | Native project cron/event review authority and exact content digest; server-only metadata under existing source collection CAS |
+| `web/lib/specialist-assignments/project-cron-intake.ts` | Reviewed native project cron assignments; exact v3 source appointment, original scheduled input, current reviewer authority and the existing reserved Run |
+| `web/lib/agents/company-cron-dispatch.ts` | Bounded company lane in the existing registered agent tick; exact native source/Run receipts, current-authority cron enablement and owner-aware recovery |
+| `web/lib/agents/company-event-dispatch.ts` | Native company event adapter in the registered consumer; reviewed source creation, exact receipts, source-sharing grants and inherited event-chain bounds |
+| `web/lib/agents/company-webhook-http.ts` | Authenticated company branch of the existing inbound agent event route; versioned bounded envelope and canonical delivery receipt |
+| `web/lib/specialist-assignments/company-trigger-intake.ts` | Shared transactional cron/event intake and native reservation; source adapters validate original identity and inherited restrictions |
 | `web/lib/run-results/operational-projection.ts` | Shared operational diagnostic projection for run details, collect and automation history |
 | `web/lib/gc/operational-disposition.ts` | Durable operational cleanup through existing workspace lifecycle claims |
 | `web/lib/execution-host/events/projection-runtime.ts` | Autonomous canonical projection registry and worker activation |
@@ -179,7 +220,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Getting Started | `docs/getting-started.md` | Install, dev workflow, first run |
 | Russian Guide | `docs/ru/README.md` | Purpose, workflow, operator guide |
 | Supervisor | `docs/supervisor.md` | ACP daemon: HTTP+SSE API, lifecycle, durable events, runtime objects, env vars |
-| Database Schema | `docs/database-schema.md` | 155 tables, FK cascade chain, indexes, Drizzle workflow |
+| Database Schema | `docs/database-schema.md` | 179 tables, FK cascade chain, indexes, Drizzle workflow |
 | Error Taxonomy | `docs/error-taxonomy.md` | `MaisterError` codes — when each fires, what the UI does |
 | Configuration | `docs/configuration.md` | `maister.yaml` v2 + `flow.yaml` v1 + `form_schema` versioning + env vars |
 | Project configuration persistence | `docs/system-analytics/project-config-persistence.md` | Reviewed export, commits, recovery and push; Implemented |
@@ -187,6 +228,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | Product View | `docs/PRODUCT_VIEW.md` | Lean Canvas, JTBD, gaps, MVP / Phase 2 / Later |
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
+| Company Brain design | `docs/system-analytics/company-brain.md` | Native structured ownership, review, evidence and EN/RU UI; CB0 and installed CB1 pilot locally qualified |
 | Agent activity design | `docs/system-analytics/agent-activity-history.md` | Active executions and retained history |
 | Task qualification design | `docs/system-analytics/task-qualification.md` | Incoming requests and admission contracts |
 | Task launch admission | `docs/system-analytics/task-launch-admission.md` | Explicit manual authority and qualified automation |

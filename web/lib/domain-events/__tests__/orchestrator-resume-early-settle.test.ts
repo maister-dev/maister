@@ -21,13 +21,21 @@ vi.mock("@/lib/flows/graph/coordinator-wake", () => ({
 
 import { buildOrchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 
-function childEvent(kind: string): DomainEventRow {
+function childEvent(kind: DomainEventRow["kind"]): DomainEventRow {
   return {
     id: 7,
     kind,
+    projectId: "project-1",
+    companyId: null,
+    taskId: null,
+    actorType: "system",
+    actorId: null,
+    occurredAt: new Date("2026-11-03T00:00:00Z"),
+    createdAt: new Date("2026-11-03T00:00:00Z"),
+    txId: "1",
     runId: "child-1",
     payload: { parentRunId: "parent-1" },
-  } as unknown as DomainEventRow;
+  };
 }
 
 describe("orchestrator resume consumer — early settled child", () => {

@@ -1,8 +1,10 @@
+import { COMPANY_FLOW_TOOL_CONTRACT } from "../../runtime/company-flow-tools";
+
 // Named tool subsets a facade process may expose (`MAISTER_MCP_TOOLSET`).
 // Listing is a convenience for the model; every refusal is still enforced by
 // the ext routes (ADR-186: a librarian token is refused on any route that does
-// not admit it). Mirrored by `web/lib/librarian/toolset.ts`, whose drift test
-// imports this file.
+// not admit it). The company subset shares the native runtime contract; the
+// librarian list is mirrored by web/lib/librarian/toolset.ts and drift-checked.
 
 // ADR-186 / ADR-187: the tools a librarian turn may call. Human-only decisions
 // (`hitl_respond`, `run_promote`, `run_discard`), coordinator tools
@@ -57,6 +59,7 @@ export const LIBRARIAN_TOOLSET = [
 ] as const;
 
 export const TOOLSETS = {
+  company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
 } as const satisfies Record<string, readonly string[]>;
 

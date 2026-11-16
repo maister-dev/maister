@@ -34,6 +34,7 @@ const githubRecord = record({
   enforceability: "enforced",
   material: {
     command: "github-mcp",
+    platformOrigin: "maister_facade",
     args: [],
     env: { GITHUB_TOKEN: "env:GITHUB_TOKEN" },
     config: {},
@@ -215,6 +216,8 @@ describe("mapProfileToAgentArtifacts", () => {
     });
 
     const github = result.mcpServers.find((s) => s.name === "github");
+
+    expect(github).not.toHaveProperty("platformOrigin");
 
     expect(github).toEqual({
       name: "github",

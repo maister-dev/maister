@@ -37,8 +37,13 @@ const PREFIXES: Array<[string, RailSectionId | null]> = [
   ["/scratch-runs", "projects"],
   ["/scratch-runs/new", "projects"],
   ["/work", "work"],
+  ["/specialist-assignments", "work"],
+  ["/specialist-assignments/assignment-1", "work"],
   ["/activity", "activity"],
   ["/inbox", "inbox"],
+  ["/knowledge", "knowledge"],
+  ["/knowledge/proposals", "knowledge"],
+  ["/knowledge/record-1", "knowledge"],
   ["/studio", "studio"],
   ["/studio/packages", "studio"],
   // Flow Studio serves two prefixes; both highlight the one rail section.

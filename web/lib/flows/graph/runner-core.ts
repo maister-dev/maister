@@ -12,17 +12,26 @@ import type {
 import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
 import type { AgentExecution } from "../runner-agent";
 import type { ExecutionHosts } from "@/lib/execution-host";
+import type { CompanyFlowSessionContext } from "@/lib/agents/company-flow-session-context";
 
 import { eq } from "drizzle-orm";
 
 import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
-import { MaisterError } from "@/lib/errors";
+import { MaisterError, isMaisterError } from "@/lib/errors";
+import {
+  loadProjectAssignmentExecutionInput,
+  projectAssignmentInputPrompt,
+} from "@/lib/specialist-assignments/project-admission";
+import { nativeDelegationExecutionInput } from "@/lib/orchestrator/native-input";
+import { assertNativeWorkspaceMode } from "@/lib/brain/knowledge-workspace-policy";
+import { isNativeFindingsContract } from "@/lib/run-results/contract";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
-import { systemCachePath } from "@/lib/flow-paths";
+import { COMPANY_RUNTIME_NAMESPACE, systemCachePath } from "@/lib/flow-paths";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
+import { loadCompanyFlowSessionContext } from "@/lib/agents/company-flow-session-context";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -84,10 +93,8 @@ export type LoadedRunSession = {
   runnerResolutionTier: string | null;
 };
 
-export type LoadedRun = {
-  // ADR-100: the graph runner only loads flow runs (loadRun requires a
-  // task + project), so project_id is non-null here even though the base Run
-  // type made it nullable for the project-less local-package variant.
+export type LoadedProjectRun = {
+  // Repository execution retains its admitted Task, project Flow and workspace.
   run: RunRow & { projectId: string };
   task: TaskRow;
   flow: FlowRow | null;
@@ -102,7 +109,56 @@ export type LoadedRun = {
   flowInstallPath: string;
   // M27/T-C8b: exec-trust of the pinned flow revision; gates stdio-MCP spawn.
   execTrust: FlowRevisionExecTrust;
+  companyContext?: undefined;
 };
+
+export type LoadedCompanyRun = Omit<
+  LoadedProjectRun,
+  "run" | "task" | "flow" | "workspace" | "companyContext"
+> & {
+  run: CompanyFlowSessionContext["run"];
+  task: null;
+  flow: null;
+  workspace: null;
+  companyContext: CompanyFlowSessionContext;
+};
+
+export type LoadedRun = LoadedProjectRun | LoadedCompanyRun;
+
+/** The owner was read from the Run, but current company execution admission refused. */
+export class CompanyFlowLoadFailure extends MaisterError {
+  readonly runId: string;
+
+  constructor(runId: string, cause: MaisterError) {
+    super(cause.code, cause.message, { cause, details: cause.details });
+    this.runId = runId;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isCompanyFlowRun(
+  loaded: LoadedRun,
+): loaded is LoadedCompanyRun {
+  return loaded.companyContext !== undefined;
+}
+
+/** Repository-only operations require an actual admitted project execution. */
+export function requireProjectFlowRun(loaded: LoadedRun): LoadedProjectRun {
+  if (isCompanyFlowRun(loaded))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company result-only execution cannot use repository lifecycle operations",
+    );
+
+  return loaded;
+}
+
+export async function loadProjectRun(
+  db: Db,
+  runId: string,
+): Promise<LoadedProjectRun> {
+  return requireProjectFlowRun(await loadRun(db, runId));
+}
 
 export function resolveFlowRuntimeRoot(override?: string): string {
   return override ?? configuredRuntimeRoot();
@@ -191,6 +247,62 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+  if (run.companyId != null) {
+    let context: CompanyFlowSessionContext;
+
+    try {
+      context = await db.transaction(
+        (tx: Parameters<typeof loadCompanyFlowSessionContext>[0]) =>
+          loadCompanyFlowSessionContext(tx, runId),
+      );
+    } catch (error) {
+      if (run.runKind === "flow" && isMaisterError(error))
+        throw new CompanyFlowLoadFailure(runId, error);
+      throw error;
+    }
+    const primary = context.sessions.find(
+      (session) => session.sessionName === context.primarySessionName,
+    );
+
+    if (!primary)
+      throw new MaisterError(
+        "CONFIG",
+        "The company graph has no declared primary session",
+      );
+    const runner = primary.runnerSnapshot;
+
+    return {
+      run: context.run,
+      task: null,
+      flow: null,
+      workspace: null,
+      companyContext: context,
+      manifest: context.manifest,
+      executor: executorFromRunnerSnapshot(runner),
+      runner,
+      sessions: new Map(
+        context.sessions.map((session) => [
+          session.sessionName,
+          {
+            sessionName: session.sessionName,
+            runner: session.runnerSnapshot,
+            acpSessionId: session.acpSessionId,
+            hostSessionId: session.hostSessionId,
+            capabilityAgent: session.capabilityAgent,
+            runnerResolutionTier: session.runnerResolutionTier,
+          },
+        ]),
+      ),
+      projectSlug: COMPANY_RUNTIME_NAMESPACE,
+      flowInstallPath: context.flowInstallPath,
+      execTrust: "trusted",
+    };
+  }
+  if (
+    run.knowledgeAccess != null ||
+    isNativeFindingsContract(run.resultContract)
+  )
+    assertNativeWorkspaceMode(run.workspaceMode);
 
   const taskRows: TaskRow[] = await db
     .select()
@@ -356,10 +468,19 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath = systemCachePath(flow.flowRefId, run.flowRevision);
   }
 
+  const assignmentInput = await loadProjectAssignmentExecutionInput(db, run);
+  const privateTask = assignmentInput
+    ? {
+        ...task,
+        title: assignmentInput.snapshot.objectiveInput.objective,
+        prompt: projectAssignmentInputPrompt(assignmentInput),
+      }
+    : executionTaskInput(run, task);
+
   return {
     // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
-    task,
+    task: privateTask,
     flow,
     manifest,
     executor,
@@ -370,6 +491,29 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     flowInstallPath,
     execTrust,
   };
+}
+
+/** The private witnessed request is execution input; the shared carrier remains safe metadata. */
+function executionTaskInput(run: RunRow, task: TaskRow): TaskRow {
+  const snapshot = run.delegationSnapshot;
+
+  if (snapshot?.kind !== "flow" || snapshot.nativeInput === undefined)
+    return task;
+  const input = nativeDelegationExecutionInput(snapshot.nativeInput, {
+    parentRunId: run.parentRunId,
+    target: run.sourceAgentId
+      ? { kind: "agent", id: run.sourceAgentId }
+      : { kind: "flow", id: run.flowId! },
+    knowledgeAccess: run.knowledgeAccess,
+  });
+
+  if (snapshot.carrierTaskId !== task.id)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The native Flow input does not match its frozen source and carrier binding",
+    );
+
+  return { ...task, title: input.title, prompt: input.prompt };
 }
 
 // Minimal authorization lookup for read paths that must not parse a stored

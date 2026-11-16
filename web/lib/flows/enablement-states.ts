@@ -1,11 +1,13 @@
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 /**
  * The explicit allow-list of project-flow enablement states that may launch a
  * run (ADR-021).
  *
- * `Installed` is deliberately NOT launchable: a package installed from an
- * untrusted source stays `Installed` after `/trust` and must be explicitly
- * `/enable`d, so trust alone can never collapse the trust+enable lifecycle into
- * one launchable step. `Disabled` / `Failed` / `Deprecated` are likewise out.
+ * `Installed` is deliberately NOT launchable. Native evidence workflows stay
+ * `Installed` after install or trust and need an explicit enable action. Legacy
+ * package auto-enable behavior remains at its existing lifecycle boundary.
+ * `Disabled` / `Failed` / `Deprecated` are likewise out.
  *
  * Declared once because every launch-gating site imports it — the shared
  * launchability gate (canonical launcher, board projection, delegation trust
@@ -14,3 +16,9 @@
  */
 export const LAUNCHABLE_FLOW_ENABLEMENT_STATES: ReadonlySet<string> =
   new Set<string>(["Enabled", "UpdateAvailable"]);
+/** Native source-bearing workflows require a separate explicit enable action. */
+export function requiresExplicitNativeFindingsEnablement(
+  manifest: Pick<FlowYamlV1, "result">,
+): boolean {
+  return manifest.result?.export?.native_contract !== undefined;
+}

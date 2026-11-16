@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "5a32a8326",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Actual consensus admission previously created a Running unclassified runner-only child of a native coordinator. New and replayed runner-only drafts now refuse before child creation/reuse; a runtime adapter is not a professional receiving role.",
+    "Both legacy standalone pre-work and fresh-qualification retry paths refuse native source downgrading, including admission through a previously valid preview. No retry intent is created; ordinary legacy retry/batch paths remain green.",
+    "Existing depth-2 reduction and the full real-supervisor consensus prompt ownership/recovery suite remain green. Same-run continuation retains frozen metadata; qualified native replacement recipes are an explicit T29 obligation.",
+    "The runner fixture builder now returns the actual Drizzle insert type using existing typed model/provider mappings; no runtime fixture values or public wire contract are changed."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 59,
+      "files": 4
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "The existing real-supervisor integration uses a fixture ACP peer. It does not establish live installed RAH/package or pilot readiness.",
+    "The new retry test request was corrected to use the existing UUID requestKey contract; the initial genuine RED concerned eligibility before admission. Typed runner fixture construction was corrected after completed typecheck exposed its broad snapshot return fields.",
+    "Native unbound runner consensus and legacy replacement recipes are explicitly unsupported rather than silently dropping source policy. T29 must qualify source-bound native replacement attempts for CB1."
+  ],
+  "pending": [
+    "Remaining cross-recipient message/rework and budget export audit, source-budget/concurrency/recovery qualification and full integration.",
+    "Native capability activation, installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "unbound-runner-red.log.gz",
+      "uncompressedSha256": "9f0791bb3fed3258f5398d780eb48465b6c162095bf6011451eae3c6913f78f8"
+    },
+    {
+      "path": "retry-downgrade-red.log.gz",
+      "uncompressedSha256": "647ba261f5d52f638003a164545dcabe711b0fefd747f4afcbede5e5e570e3d7"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "44ca416a5db72b794197fcc2de7f926d4b7b3f5991742e4281358b8cdd16f67f"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "ba0cac9208376bcfcddc690553eeef8eda6ee71b0feaa56dd1776071ee18c9bd"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "3188438cc9e0d64fdec02b9d8c9fe53762227c5a3cea9386cde31c2fb959b739"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "ec47c9def9334ae8f74e02d8cf852e542da79b3969721eeb8b905cb4b4b6b714"
+    }
+  ]
+}

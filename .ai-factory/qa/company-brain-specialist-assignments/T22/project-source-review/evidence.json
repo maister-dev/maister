@@ -1,0 +1,122 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Server-recorded project cron/event review foundation",
+  "baseCommit": "100416c31",
+  "status": "Source review storage/API qualified; native project cron/event dispatch and T22 remain open",
+  "red": [
+    {
+      "case": "Actual effective project specialist source save returned no review witness",
+      "exitCode": 1
+    },
+    {
+      "case": "Actual server component disclosed a request digest to a reader without repository-input access",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 190,
+      "files": 9,
+      "durationSeconds": 78.91,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 32.41,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "changes": 0
+    },
+    "publicEnRuBuild": {
+      "exitCode": 0
+    },
+    "publicLinks": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "The server reviews native sources using the actual installed project pin and active settings operator; caller review metadata is rejected by the actual HTTP route.",
+    "The existing source collection CAS binds actual reviewer, source content and revision; competing distinct operators cannot combine each others request and approval.",
+    "Current member authority refuses review, unrelated settings preserve it, anonymous internal source replacement clears it, ordinary agents and mentions retain null metadata.",
+    "The actual server component preserves privileged source inspection and withholds both request text and review digest from readers without repository-input visibility.",
+    "Generated main 0241 has closed bounded project-only metadata and no new FK, table, scheduler or execution ledger. Populated upgrade preserves all old source/attempt bytes; deleting the project works with no Brain schema.",
+    "The read-only nullable OpenAPI component is generated from the runtime Zod schema, and EN/RU public operator guidance explains approval versus authorship and current permissions."
+  ],
+  "corrections": [
+    "The owned fixture project_members primary key was supplied before establishing the actual missing-review RED.",
+    "An old exact mention DTO expectation now asserts the legitimate additive null review field.",
+    "The staged company Flow runtime fixture stopped at 0239; its original historical comparison is retained before applying the rest of the current journal. The missing-column failure is preserved separately.",
+    "Mintlify local validation required the existing preview-cache permission; the same local build and links commands pass with scoped execution. Nothing was published."
+  ],
+  "limits": [
+    "No new native project invocation snapshot or project cron/event assignment dispatch is claimed by this checkpoint.",
+    "Existing v1/v2 invocation snapshots and scheduled-request bytes remain unchanged.",
+    "Current action authority remains mandatory at invocation and action boundaries.",
+    "No real-model, stand connector, installable stand package or pilot readiness is claimed.",
+    "T22 and T23-T43 remain their own implementation and qualification work."
+  ],
+  "sourceSha256": {
+    ".ai-factory/ARCHITECTURE.md": "fc919971d1791a15bfd7186f856dbe831ad27dc77eb64e6b6975d6773497d69b",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "532a79cd29f381c4dd29c4a0661ea23e1be3fc0598b0f682de77ed47c4f276f2",
+    "AGENTS.md": "83098a84637341647f582b8f11c3c4f367a1c938b298aa51f35252a3b08ac19f",
+    "docs/api/web.openapi.yaml": "3db4e1c0de3711be945c76bdddc3159d7d681323b2fb505a7d8cac7038d05869",
+    "docs/database-schema.md": "1c0443b8a136395c1ebf2b7437d94729b30604265c32ea157a307b30519369ec",
+    "docs/db/agents-domain.md": "4d12c7297b075dec34628f31c0ee42bcc743824e411099c38c5c33448c506d8a",
+    "docs/db/erd.dbml": "c9b8585ee7ae0c8ac21e3f57860457403a462a58e08190cf42360bd6ca4f8980",
+    "docs/system-analytics/specialist-assignments.md": "95314001971a407d473c37e6f3cc77b2f474d3d7e1e7f40cc258ca13bddd464c",
+    "site-docs/guides/operational-agents.md": "0d6406319ce9d43e48c18b6c9001ddf8562d392d7a38dbdeb788732033cd0a12",
+    "site-docs/ru/guides/operational-agents.md": "21c5b4ce8b45001fdc0fe378d0a1e4fff36f85ed90cccf394b1983ad6c19f4a6",
+    "web/components/agents/project-agents-panel.tsx": "4d192ff0958712ce06332e2bf8dec13c64b19ac0e771f614d926a5b1e1eabddb",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "38e84021dd3a9fcaf6800a25f1e4be23facebfac96cd583f018a34e51ef73b9a",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "a710461133cef7a9113a10fbb72ae776213d61100c8b622c2fb24ac63261e85e",
+    "web/lib/agents/__tests__/project-links.integration.test.ts": "1c9c8f54cae9037d27b899745d5fc4ba0ef5bfe7c5888cbe253b8983412107af",
+    "web/lib/agents/project-links.ts": "28d7fa4ea154c7272312c84e1303555bb980c7dc25357ab5aeb661835ab50703",
+    "web/lib/agents/project-source-review-schema.ts": "602bce6ecebb5c9f07c2d95f86d0b9645c509c27fd267a69fade541e183453de",
+    "web/lib/agents/project-source-review-types.ts": "2c79255a711c4eed80a765457926e9719b01e2c15266826a5dff0f3e8a2c9207",
+    "web/lib/agents/project-source-review.ts": "62d1b7035071001e28f54e495b40e758261640e15df08ebc8690f70c3f20ee95",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "c70bd1323471b72cd1ee3c3d18c9a5126d6ad3da287ff0598c1c2761462229a1",
+    "web/lib/db/migrations/0241_project_source_review.sql": "4d6450422a6666b4711a9f4ff3e26fc80302b70feb93ebd02e2cb0415b1548fa",
+    "web/lib/db/migrations/meta/0241_snapshot.json": "d69eaf72233792f7cf02d6e54c36cb44d8ca21d32db5cae9822e525d0ce387b5",
+    "web/lib/db/migrations/meta/_journal.json": "6611f7166ead6e4ca94d027410e2c8e50908969d2f133c93dc65e275a65e1a04",
+    "web/lib/db/schema.ts": "a1c34594922c50c86351fa726442440a55d576fd88729ddaa4fe4ea59c1e639c"
+  },
+  "logs": [
+    "cb-project-review-red.log.gz",
+    "cb-project-review-projection-red.log.gz",
+    "cb-project-review-green.log.gz",
+    "cb-project-review-staged-fixture-failure.log.gz",
+    "cb-project-review-release-integration.log.gz",
+    "cb-project-review-release-unit.log.gz",
+    "cb-project-review-release-types.log.gz",
+    "cb-project-review-release-lint.log.gz",
+    "cb-project-review-flow-lint.log.gz",
+    "cb-project-review-release-format.log.gz",
+    "cb-project-review-release-contracts.log.gz",
+    "cb-project-review-release-docs.log.gz",
+    "cb-project-review-release-public.log.gz",
+    "cb-project-review-release-public-links.log.gz",
+    "cb-project-review-generate.log.gz",
+    "cb-project-review-drift.log.gz"
+  ]
+}

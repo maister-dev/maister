@@ -7,7 +7,10 @@ import type {
   ContextRepoDecl,
 } from "@/lib/context-mounts/types";
 import type { RunResultContract } from "@/lib/run-results/types";
-import type { OperationalIntegrityBaseline } from "@/lib/run-results/operational-types";
+import type {
+  OperationalIntegrityBaseline,
+  OperationalResourceKind,
+} from "@/lib/run-results/operational-types";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import type { AgentTurn, Run, ExecutionAssignment } from "@/lib/db/schema";
 import type { AgentRetryClaim } from "@/lib/agents/retry-types";
@@ -18,6 +21,10 @@ import type { ConsensusDraftAdmission } from "@/lib/flows/graph/consensus/admiss
 import type { TasklessAgentFlowCarrierAdmission } from "./carrier-launch-authority";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { TaskLaunchAuditContext } from "@/lib/tasks/launch-intent";
+import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
+import type { DelegatedWorkRequest } from "@/lib/specialist-assignments/delegated-intake";
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+import type { ChildInputOrigin } from "@/lib/orchestrator/native-child-input";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, stat } from "node:fs/promises";
@@ -37,6 +44,10 @@ import {
   supersedeAgentMessage,
   type AdmittedAgentRef,
 } from "./prompt-owner";
+import {
+  loadCompanyAgentSessionContext,
+  buildCompanyAgentPrompt,
+} from "./company-session-context";
 import { applyPersistentAgentPark, afterPersistentAgentPark } from "./park";
 import { acceptAgentMessage } from "./turns";
 import { createTasklessAgentFlowCarrier } from "./carrier-launch-authority";
@@ -78,10 +89,27 @@ import {
   operationalAgentRuntimePath,
 } from "./workspace-paths";
 
+import { requireDelegatedChildInput } from "@/lib/orchestrator/native-child-input";
 import {
   taskLaunchInputForRun,
   taskLaunchClarificationsForRun,
 } from "@/lib/tasks/launch-execution-input";
+import {
+  activateInitialSpecialistAssignmentRunInTransaction,
+  linkSpecialistAssignmentRunInTransaction,
+} from "@/lib/specialist-assignments/store";
+import {
+  bindDelegatedWorkRunInTransaction,
+  retainDelegatedWorkInTransaction,
+} from "@/lib/specialist-assignments/delegated-intake";
+import { contentDigest } from "@/lib/evaluations/digest";
+import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
+import { withSpecialistExecutor } from "@/lib/specialist-assignments/executor-lease";
+import {
+  prepareProjectAssignmentAdmission,
+  loadProjectAssignmentExecutionInput,
+  projectAssignmentInputPrompt,
+} from "@/lib/specialist-assignments/project-admission";
 import { resolveScheduledRequestFlowRevision } from "@/lib/agents/scheduled-request-flow";
 import { loadAgentBudgetRestartRequest } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
@@ -96,7 +124,7 @@ import {
 import {
   assertAgentRetryClaim,
   recordAgentRetrySuccessor,
-  frozenRetryDefinition,
+  frozenRetryRecipe,
 } from "@/lib/agents/retry-ownership";
 import { allocateAgentRetryWorktree } from "@/lib/agents/retry-allocation";
 import { retryRecipeStrategy } from "@/lib/agents/retry-types";
@@ -119,6 +147,7 @@ import {
 import { isHostPressuredError } from "@/lib/execution-host/host-pressure";
 import {
   assertOperationalDispatchIntegrity,
+  operationalWorkspace,
   operationalResourceKind,
   captureOperationalContextMounts,
   inspectOperationalRun,
@@ -145,6 +174,7 @@ import {
   releaseTaskAgentCaptureAfterFailure,
 } from "@/lib/tasks/launch-agent-definition";
 import { commitTaskAgentLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
+import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
 import {
   assertPreparedConsensusDraftAdmission,
   assertConsensusDraftAdmission,
@@ -156,7 +186,6 @@ import {
   executeRepositoryGit,
   withoutGitOwnership,
 } from "@/lib/project-config-persistence/git-process";
-import { operationalWorkspace } from "@/lib/agents/operational-context";
 import {
   buildOperationalContract,
   frozenOperationalDefinition,
@@ -204,7 +233,7 @@ import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
 import {
   withAgentMaterializationLock,
-  agentMaterializationPathsForRun,
+  agentMaterializationWitnessPathsForRun,
 } from "@/lib/agents/materialization-manifest";
 import {
   prepareContextMounts,
@@ -216,14 +245,40 @@ import { runtimeRoot } from "@/lib/runtime-root";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import { resolveAgentLaunchExecutionPolicy } from "@/lib/agents/execution-policy";
 import { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
+import { assertReadOnlySessionEvidence } from "@/lib/agents/runner-readonly-evidence";
 export { runnerCatalogEntry } from "@/lib/agents/runner-catalog";
-import { issueAgentRunToken } from "@/lib/agents/tokens";
+import {
+  issueAgentRunToken,
+  retainCompanyAgentSessionCredential,
+} from "@/lib/agents/tokens";
+import { nativeFindingsCompletionPrompt } from "@/lib/run-results/findings-prompt";
+import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
+import {
+  assertLegacySharedWorkspace,
+  assertNativeWorkspaceMode,
+} from "@/lib/brain/knowledge-workspace-policy";
+import {
+  assertNativeAgentInputBinding,
+  nativeDelegationExecutionInput,
+} from "@/lib/orchestrator/native-input";
+import {
+  flowDelegationSnapshot,
+  resolveDelegatableFlow,
+} from "@/lib/flows/delegatable-flow";
+import {
+  assertNativeRunKnowledgeInputs,
+  assertNativeRunKnowledgeInputsInTransaction,
+  recordNativeRunSources,
+} from "@/lib/brain/knowledge-execution-access";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import {
   materializeAdapterCapabilityHome,
   materializeOperationalAdapterCapabilityHome,
 } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import * as schemaModule from "@/lib/db/schema";
 import {
   type AgentExecutionPolicyRecommendation,
@@ -249,7 +304,10 @@ import {
   type SteerSettlement,
 } from "@/lib/execution-host/steer-settlement";
 import { cancelOpenAgentQuestionsForTaskInTransaction } from "@/lib/services/agent-question";
-import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
 import { maxAgentChainDepth } from "@/lib/instance-config";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
@@ -351,6 +409,9 @@ export type AgentTriggerSource =
 
 export type LaunchAgentRunInput = {
   agentId: string;
+  nativeInput?: NativeDelegationInput;
+  delegatedWork?: DelegatedWorkRequest;
+  specialistAssignment?: ProjectAssignmentAdmission;
   projectId: string;
   taskId?: string | null;
   launchOverrideRunnerId?: string | null;
@@ -671,98 +732,13 @@ export async function resolveRunnerForAgent(
   });
 
   await assertReadOnlySessionEvidence({
+    hosts: executionHosts,
     adapterId: resolution.runnerSnapshot.adapter,
     runnerId: resolution.runnerId,
     workspace,
   });
 
   return resolution;
-}
-
-async function assertReadOnlySessionEvidence(args: {
-  readonly adapterId: string;
-  readonly runnerId: string;
-  readonly workspace: "none" | "repo_read" | "worktree";
-}): Promise<void> {
-  if (args.workspace === "worktree") return;
-
-  const support = getAdapterSupportById(args.adapterId);
-
-  if (support?.readOnlySessionSmoke !== "required") return;
-
-  log.debug(
-    {
-      runnerId: args.runnerId,
-      adapterId: args.adapterId,
-      workspace: args.workspace,
-    },
-    "evaluating agent runner read-only-session evidence",
-  );
-
-  const diagnostics = await executionHosts.local().diagnostics();
-
-  if (diagnostics.kind !== "ready") {
-    log.warn(
-      {
-        runnerId: args.runnerId,
-        adapterId: args.adapterId,
-        workspace: args.workspace,
-        evidenceStatus: "unavailable",
-        evidenceReason: diagnostics.reason,
-      },
-      "agent runner read-only-session evidence refused",
-    );
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — read-only-session diagnostics are unavailable: ${diagnostics.message}`,
-    );
-  }
-
-  const adapter = diagnostics.diagnostics.adapters.find(
-    (item) => item.id === args.adapterId,
-  );
-  const genericSmoke = adapter?.smoke;
-  const readOnlySession = adapter?.smoke.readOnlySession;
-
-  if (
-    !genericSmoke ||
-    genericSmoke.status !== "ok" ||
-    !readOnlySession ||
-    readOnlySession.status !== "ok"
-  ) {
-    log.warn(
-      {
-        runnerId: args.runnerId,
-        adapterId: args.adapterId,
-        workspace: args.workspace,
-        genericEvidenceStatus: genericSmoke?.status ?? "missing",
-        genericEvidenceReason:
-          genericSmoke?.reason ?? "missing_adapter_diagnostics",
-        evidenceStatus: readOnlySession?.status ?? "missing",
-        evidenceReason:
-          readOnlySession?.reason ?? "missing_adapter_diagnostics",
-        evidenceCheckedAt: readOnlySession?.checkedAt ?? null,
-        evidenceProbeVersion: readOnlySession?.probeVersion ?? null,
-      },
-      "agent runner read-only-session evidence refused",
-    );
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `agent runner ${args.runnerId} (adapter ${args.adapterId}) cannot host a ${args.workspace} agent — generic smoke is ${genericSmoke?.status ?? "missing"}; read-only-session smoke is ${readOnlySession?.status ?? "missing"}: ${readOnlySession?.reason ?? genericSmoke?.reason ?? "missing adapter diagnostics"}`,
-    );
-  }
-
-  log.info(
-    {
-      runnerId: args.runnerId,
-      adapterId: args.adapterId,
-      workspace: args.workspace,
-      evidenceStatus: readOnlySession.status,
-      evidenceCheckedAt: readOnlySession.checkedAt,
-      evidenceProbeVersion: readOnlySession.probeVersion,
-    },
-    "agent runner read-only-session evidence accepted",
-  );
 }
 
 async function packageSkillMaterializationRoots(
@@ -960,7 +936,12 @@ async function convergeToTriggerWinner(
       .select({ id: runs.id, status: runs.status })
       .from(runs)
       .where(
-        and(eq(runs.agentId, agentId), eq(runs.triggerEventId, triggerEventId)),
+        and(
+          eq(runs.agentId, agentId),
+          eq(runs.triggerEventId, triggerEventId),
+          isNull(runs.companyId),
+          isNull(runs.retryOfRunId),
+        ),
       );
 
     if (winner[0]) {
@@ -1014,8 +995,21 @@ async function launchAgentDrivenFlowRun(
     ?.requestAtLaunch
     ? await resolveScheduledRequestFlowRevision(_db, flow)
     : undefined;
+  const nativeFlow = input.nativeInput
+    ? await resolveDelegatableFlow(
+        { projectId: input.projectId, flowId: flow.id },
+        _db,
+      )
+    : null;
   let taskId = input.taskId ?? null;
   let carrierAdmission: TasklessAgentFlowCarrierAdmission | null = null;
+
+  if (input.specialistAssignment)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Project coordinator assignments require their canonical accepted task launch intent",
+      { details: { reason: "launch_source_authority_required" } },
+    );
 
   if (!taskId) {
     const created = await createTasklessAgentFlowCarrier(
@@ -1075,6 +1069,19 @@ async function launchAgentDrivenFlowRun(
     taskId,
     flowId: flow.id as string,
     agentId: input.agentId,
+    ...(nativeFlow && input.nativeInput
+      ? {
+          parentRunId: input.parentRunId ?? undefined,
+          rootRunId: input.rootRunId ?? undefined,
+          launchMode: input.launchMode,
+          delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
+            carrierTaskId: taskId,
+            mode: "task",
+            runnerOverride: input.launchOverrideRunnerId ?? null,
+            nativeInput: input.nativeInput,
+          }),
+        }
+      : {}),
     agentActivity: buildAgentActivitySnapshot(input.agentId, ctx.effective),
     // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
     // onto the flow run so an at-least-once redelivery converges to one run.
@@ -1136,6 +1143,29 @@ async function adoptExistingTreeOwner(
   return existing?.runId ?? fallbackRunId;
 }
 
+/** Validate retained private intent before accepting a new task launch decision. */
+async function nativeAgentLaunchInput(
+  db: Db,
+  input: LaunchAgentRunInput,
+): Promise<NativeDelegationInput | null> {
+  const [task] = input.taskId
+    ? await db
+        .select({ delegationSpec: tasks.delegationSpec })
+        .from(tasks)
+        .where(
+          and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+        )
+    : [];
+
+  return assertNativeAgentInputBinding({
+    taskId: input.taskId ?? null,
+    taskInput: task?.delegationSpec?.nativeInput,
+    launchInput: input.nativeInput,
+    parentRunId: input.parentRunId ?? null,
+    agentId: input.agentId,
+  });
+}
+
 export function launchAgentRun(
   input: LaunchAgentRunInput & Readonly<{ taskId?: null | undefined }>,
 ): Promise<AllocatedAgentRunResult>;
@@ -1148,6 +1178,7 @@ export async function launchAgentRun(
   const db = input.db ?? getDb();
 
   if (input.taskId) {
+    await nativeAgentLaunchInput(db, input);
     const context = await loadAgentContext(db, input);
 
     if (context.effective.parsed.kind === "code_delivery") {
@@ -1284,6 +1315,10 @@ export async function launchAcceptedTaskAgentRun(
     persistent: provenance?.persistent,
     addressableKey: provenance?.addressableKey,
     workspaceMode: provenance?.workspaceMode,
+    ...(provenance?.nativeInput ? { nativeInput: provenance.nativeInput } : {}),
+    ...(provenance?.specialistAssignment
+      ? { specialistAssignment: provenance.specialistAssignment }
+      : {}),
     trigger: {
       source: source as AgentTriggerSource,
       eventId: provenance?.triggerEventId ?? null,
@@ -1431,11 +1466,65 @@ async function launchAgentRunWithAdmission(
   const launchInput = { ...input, scheduledRequestSnapshot };
   const currentContext =
     acceptedExecution?.runtime ?? (await loadAgentContext(_db, input));
+  const nativeInput = await nativeAgentLaunchInput(_db, input);
+
+  if (
+    input.delegatedWork &&
+    (!input.runId ||
+      !input.parentRunId ||
+      !input.rootRunId ||
+      !nativeInput ||
+      input.workspace !== "none" ||
+      input.workspaceMode === "shared" ||
+      input.taskId ||
+      input.persistent ||
+      input.addressableKey ||
+      input.retryClaim ||
+      input.agentTriggerReservation ||
+      input.specialistAssignment ||
+      acceptedExecution ||
+      input.trigger.source !== "manual" ||
+      input.trigger.eventId != null)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Project delegated work requires an exact repository-free child reservation",
+    );
+
+  if (input.specialistAssignment && (input.parentRunId || nativeInput))
+    throw new MaisterError(
+      "CONFIG",
+      "Project assignment admission requires its explicit standalone entry; delegation and coordinator Flows use their own bounded admission",
+    );
+
+  if (input.workspaceMode === "shared")
+    await assertLegacySharedWorkspace(_db, {
+      projectId: input.projectId,
+      parentRunId: input.parentRunId ?? input.rootRunId ?? null,
+      resultContract: input.resultContract ?? null,
+      nativeInput,
+    });
   const retryIntent = input.retryClaim
     ? await _db.transaction((tx: ExecutionDb) =>
         assertAgentRetryClaim(tx, input.retryClaim!),
       )
     : null;
+  const replacement =
+    retryIntent?.recipe.version === 2
+      ? retryIntent.recipe.replacement
+      : undefined;
+  const replacementEvent = replacement?.event ?? replacement?.comment;
+  const replacementSource = replacement?.cron ?? replacementEvent;
+  const specialistAssignment =
+    replacement && retryIntent?.actorUserId
+      ? {
+          assignmentId: replacement.assignmentId,
+          inputRevision: replacement.inputRevision,
+          expectedRevision: replacement.assignmentRevision,
+          userId: retryIntent.actorUserId,
+          ...(replacementSource ? { source: replacementSource } : {}),
+        }
+      : input.specialistAssignment;
   const ctx: LoadedAgentContext = retryIntent
     ? {
         ...currentContext,
@@ -1452,6 +1541,11 @@ async function launchAgentRunWithAdmission(
       }
     : currentContext;
 
+  if (
+    ctx.effective.parsed.completion?.contract === OPERATIONAL_EVIDENCE_CONTRACT
+  )
+    assertNativeWorkspaceMode(input.workspaceMode);
+
   if (retryIntent)
     assertScheduledRequestMatches(
       scheduledRequestSnapshot,
@@ -1465,7 +1559,7 @@ async function launchAgentRunWithAdmission(
   // partial unique index on runs(agent_id, trigger_event_id) is the authoritative
   // race backstop; this pre-check converges an at-least-once redelivery to one
   // run without leaving an orphan task/worktree on the common sequential path.
-  if (input.trigger.eventId != null) {
+  if (input.trigger.eventId != null && !replacementEvent) {
     const existing = await _db
       .select({ id: runs.id })
       .from(runs)
@@ -1473,6 +1567,8 @@ async function launchAgentRunWithAdmission(
         and(
           eq(runs.agentId, input.agentId),
           eq(runs.triggerEventId, input.trigger.eventId),
+          isNull(runs.companyId),
+          isNull(runs.retryOfRunId),
         ),
       );
 
@@ -1688,13 +1784,19 @@ async function launchAgentRunWithAdmission(
   // is skipped and the ref must resolve NOW (launch-surface PRECONDITION).
   if (workspace === "repo_read") {
     if (ctx.effective.parsed.workspaceRef) {
-      await resolveWorkspaceRefCommittish(_db, {
-        agentId: input.agentId,
-        workspaceRef: ctx.effective.parsed.workspaceRef,
-        taskQualificationSnapshot,
-        repoPath: ctx.project.repoPath,
-        trigger: input.trigger,
-      });
+      if (replacement?.readOnly)
+        await resolveBaseCommit({
+          projectRepoPath: ctx.project.repoPath,
+          baseRef: replacement.readOnly.commit,
+        });
+      else
+        await resolveWorkspaceRefCommittish(_db, {
+          agentId: input.agentId,
+          workspaceRef: ctx.effective.parsed.workspaceRef,
+          taskQualificationSnapshot,
+          repoPath: ctx.project.repoPath,
+          trigger: input.trigger,
+        });
     } else {
       const porcelain = await statusPorcelain({
         worktreePath: ctx.project.repoPath,
@@ -1719,10 +1821,14 @@ async function launchAgentRunWithAdmission(
   // below. Refusing after `addWorktree` left a directory and a branch ref behind
   // with no `runs`/`workspaces` row for GC to key on, so every repeated refusal
   // leaked disk and pre-claimed the next launch's path.
-  const chain = await resolveAgentChainDepth({
-    trigger: input.trigger,
-    db: _db,
-  });
+  const chain =
+    specialistAssignment?.source?.kind === "event"
+      ? await resolveProjectEventChainDepth(
+          _db,
+          input.projectId,
+          specialistAssignment.source.eventId,
+        )
+      : await resolveAgentChainDepth({ trigger: input.trigger, db: _db });
 
   if (chain.atCap) {
     log.warn(
@@ -1782,8 +1888,10 @@ async function launchAgentRunWithAdmission(
         null;
 
       resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
+      if (replacement?.worktree)
+        resolvedBranchBase = replacement.worktree.baseBranch;
 
-      if (declaredBranchBase && !acceptedExecution) {
+      if (declaredBranchBase && !acceptedExecution && !replacement?.worktree) {
         const knownBranches = new Set(await listBranches(ctx.project.repoPath));
 
         if (!knownBranches.has(declaredBranchBase)) {
@@ -1964,10 +2072,14 @@ async function launchAgentRunWithAdmission(
           runId,
         });
         worktreePath = agentWorkdirPath(ctx.project.slug, runId);
-        baseCommit = await resolveBaseCommit({
-          projectRepoPath: ctx.project.repoPath,
-          baseRef: resolvedBranchBase,
-        });
+        const pinnedBaseCommit: string =
+          replacement?.worktree?.baseCommit ??
+          (await resolveBaseCommit({
+            projectRepoPath: ctx.project.repoPath,
+            baseRef: resolvedBranchBase,
+          }));
+
+        baseCommit = pinnedBaseCommit;
         if (input.retryClaim) {
           await allocateAgentRetryWorktree(_db, input.retryClaim, {
             runId,
@@ -1975,7 +2087,7 @@ async function launchAgentRunWithAdmission(
             repositoryPath: ctx.project.repoPath,
             path: worktreePath,
             branch,
-            baseCommit,
+            baseCommit: pinnedBaseCommit,
           });
         } else
           await addWorktree({
@@ -2057,6 +2169,7 @@ async function launchAgentRunWithAdmission(
         },
         {
           configuration: agentConfig,
+          operationalContract: ctx.effective.parsed.completion?.contract,
           trigger: input.trigger,
           taskId: input.taskId ?? null,
           runner: resolution.runnerSnapshot,
@@ -2096,6 +2209,9 @@ async function launchAgentRunWithAdmission(
         : {}),
       taskQualificationSnapshot,
       projectId: input.projectId,
+      ...(specialistAssignment
+        ? { createdByUserId: specialistAssignment.userId }
+        : {}),
       flowId: null,
       // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
       status: "Pending" as const,
@@ -2113,6 +2229,7 @@ async function launchAgentRunWithAdmission(
         ? {
             agentDefinitionId: input.agentId,
             revisionId: ctx.effective.packageInstallId,
+            ...(nativeInput ? { nativeInput } : {}),
           }
         : null,
       // ADR-165: the launch-time public-result contract, written in the SAME
@@ -2146,7 +2263,67 @@ async function launchAgentRunWithAdmission(
     try {
       const inserted = await _db.transaction(async (tx: Db) => {
         if (acceptedExecution) await acceptedExecution.beginBinding(tx);
+        const work = input.delegatedWork
+          ? (await retainDelegatedWorkInTransaction(tx, input.delegatedWork))
+              .work
+          : null;
+
+        if (work) {
+          const target = work.definition.target;
+          const expected = work.definition.objectiveInput.expectedResult;
+          const contract = runRow.resultContract;
+          const pinned = runRow.agentActivitySnapshot;
+
+          if (
+            work.reservedRunId !== runId ||
+            work.definition.parent.runId !== input.parentRunId ||
+            work.definition.parent.rootRunId !== input.rootRunId ||
+            target.kind !== "project_agent" ||
+            target.projectId !== input.projectId ||
+            target.attachmentId !== ctx.link.id ||
+            target.role.agentId !== input.agentId ||
+            target.role.packageInstallId !== pinned.packageInstallId ||
+            target.role.packageRevision !== pinned.packageRevision ||
+            target.role.definitionSha256 !== pinned.definitionSha256 ||
+            target.configurationSha256 !== contentDigest(agentConfig) ||
+            nativeInput?.prompt !== work.definition.objectiveInput.input ||
+            contract?.schemaRef !== expected.schemaRef ||
+            contract?.schemaVersion !== expected.schemaVersion ||
+            contract?.sha256 !== expected.sha256 ||
+            contract?.required !== true
+          )
+            throw new MaisterError(
+              "CONFLICT",
+              "Child launch does not match the retained delegated work",
+              {
+                details: { reason: "delegated_work_binding_changed" },
+              },
+            );
+          if (work.childRunId !== null) return false;
+        }
         if (input.retryClaim) await assertAgentRetryClaim(tx, input.retryClaim);
+        const assignmentCapture = specialistAssignment
+          ? await prepareProjectAssignmentAdmission(
+              tx,
+              specialistAssignment,
+              {
+                projectId: input.projectId,
+                runId,
+                triggerSource: input.trigger.source,
+                triggerEventId: input.trigger.eventId ?? null,
+                agentScheduleId: input.agentScheduleId ?? null,
+                bindingId: ctx.link.id,
+                effective: ctx.effective,
+                configuration: agentConfig,
+                executionPolicy,
+                resultContract: runRow.resultContract,
+                scheduledRequestSnapshot: runRow.scheduledRequestSnapshot,
+                agentChainDepth: chain.depth,
+              },
+              replacement,
+            )
+          : null;
+
         if (taskQualificationSnapshot?.role === "qualifier" && input.taskId) {
           await tx
             .select({ id: tasks.id })
@@ -2178,6 +2355,10 @@ async function launchAgentRunWithAdmission(
         if (input.parentRunId) {
           await admitDelegatedChild(tx, {
             parentRunId: input.parentRunId,
+            ...(work && {
+              assignmentBounds: work.bounds,
+              reservedRunId: work.reservedRunId,
+            }),
             ...(acceptedExecution
               ? { launchIntentId: acceptedExecution.intent.id }
               : {}),
@@ -2203,11 +2384,23 @@ async function launchAgentRunWithAdmission(
           });
         const rows = await tx
           .insert(runs)
-          .values({ ...runRow, agentScheduleId })
+          .values({
+            ...runRow,
+            agentScheduleId,
+            knowledgeAccess:
+              assignmentCapture ??
+              (await nativeKnowledgeCaptureAtLaunch(tx, runRow.resultContract, {
+                parentRunId: input.parentRunId ?? null,
+                sourceRestrictions: [
+                  { kind: "project_context", projectId: input.projectId },
+                ],
+              })),
+          })
           .onConflictDoNothing()
           .returning({ id: runs.id });
 
         if (rows.length === 0) return false;
+        if (work) await bindDelegatedWorkRunInTransaction(tx, work);
 
         // M42 (ADR-114): a standalone agent run is a single-`default`-session run.
         await tx.insert(runSessions).values({
@@ -2256,6 +2449,29 @@ async function launchAgentRunWithAdmission(
             .onConflictDoNothing({ target: workspaces.worktreePath });
         }
 
+        if (specialistAssignment) {
+          const appointment = {
+            runId,
+            inputRevision: specialistAssignment.inputRevision,
+            expectedRevision: specialistAssignment.expectedRevision,
+          };
+
+          if (replacement)
+            await linkSpecialistAssignmentRunInTransaction(
+              tx,
+              specialistAssignment.userId,
+              specialistAssignment.assignmentId,
+              { ...appointment, role: "continuation", work: null },
+            );
+          else
+            await activateInitialSpecialistAssignmentRunInTransaction(
+              tx,
+              specialistAssignment.userId,
+              specialistAssignment.assignmentId,
+              { ...appointment, role: "specialist" },
+            );
+          await assertNativeRunKnowledgeInputsInTransaction(tx, runId);
+        }
         if (input.retryClaim)
           await recordAgentRetrySuccessor(tx, input.retryClaim, runId);
         if (input.taskId) {
@@ -2585,6 +2801,27 @@ async function taskContextBlock(
   _db: Db,
   run: Record<string, any>,
 ): Promise<string> {
+  const snapshot = run.delegationSnapshot;
+
+  if (
+    snapshot &&
+    (snapshot.kind === undefined || snapshot.kind === "agent") &&
+    snapshot.nativeInput !== undefined
+  ) {
+    const input = nativeDelegationExecutionInput(snapshot.nativeInput, {
+      parentRunId: run.parentRunId,
+      target: { kind: "agent", id: run.agentId },
+      knowledgeAccess: run.knowledgeAccess,
+    });
+
+    return [
+      "## Delegated objective",
+      input.title,
+      "",
+      input.prompt,
+      ...(run.taskId ? [`Carrier taskId: ${run.taskId}`] : []),
+    ].join("\n");
+  }
   if (!run.taskId) return "";
 
   const rows = await _db
@@ -2854,7 +3091,13 @@ export async function applyAgentMemoryForLaunch(
 
   const runId = (run.id ?? run.runId) as string;
 
-  // Provenance is a BEST-EFFORT follow-up, never a launch precondition: this
+  if (usesStructuredKnowledgeContext(run)) {
+    await recordNativeRunSources(_db, runId, [
+      { kind: "agent_memory", projectId: run.projectId, agentId: run.agentId },
+    ]);
+  }
+
+  // Legacy provenance is best-effort. Native capture requires this exact witness. This
   // whole block sits inside the caller's spawn try/catch, whose catch finalizes
   // the run as `Failed`. REQ-C5 says memory must never block a launch, so a full
   // disk or an unwritable run dir degrades to a WARN — the agent still gets its
@@ -2874,6 +3117,15 @@ export async function applyAgentMemoryForLaunch(
       .set({ agentMemoryHash: memory.hash })
       .where(eq(runs.id, runId));
   } catch (err) {
+    if (usesStructuredKnowledgeContext(run))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Native private-memory disclosure could not retain its exact prompt provenance; inspect the failed run before recovery",
+        {
+          cause: err,
+          details: { reason: "native_memory_provenance_unavailable", runId },
+        },
+      );
     log.warn(
       {
         runId,
@@ -2898,6 +3150,10 @@ export async function buildAgentPrompt(
   const scopeBlock = await projectScopeBlock(_db, run);
   const configBlock = configContextBlock(parsed, run);
   const taskBlock = await taskContextBlock(_db, run);
+  const assignmentInput = await loadProjectAssignmentExecutionInput(_db, run);
+
+  if (assignmentInput)
+    sections.push(projectAssignmentInputPrompt(assignmentInput));
   const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
   // The project-scope block (the slug the MAIster MCP tools require) lands right
@@ -2929,7 +3185,10 @@ export async function buildAgentPrompt(
 
   if (requestBlock) sections.push(requestBlock);
 
-  return sections.join("\n\n");
+  return nativeFindingsCompletionPrompt(
+    run.resultContract,
+    sections.join("\n\n"),
+  );
 }
 
 type ConsensusDraftPayload = {
@@ -3242,6 +3501,47 @@ export async function sendAgentMessage(
   return agentMessageAnswer(_db, childRunId, turn.id);
 }
 
+/** Retain one live-only clarification under the actual professional's authority. */
+export async function sendDelegatedAgentSteer(
+  db: Db,
+  childRunId: string,
+  prompt: string,
+  origin: ChildInputOrigin,
+  requestKey: string,
+): Promise<SendAgentMessageResult> {
+  const accepted = await acceptAgentSteer(
+    db,
+    await steerClientFor(db, createExecutionHosts({ db }), childRunId),
+    childRunId,
+    prompt,
+    { origin, requestKey },
+  );
+
+  if (accepted.kind === "issued")
+    await deliverAgentSteer(db, accepted, () =>
+      db.transaction((tx: ExecutionDb) =>
+        requireDelegatedChildInput(tx, origin, childRunId),
+      ),
+    );
+  const turn = accepted.kind === "issued" ? accepted.steerTurn : accepted.turn;
+  const result = await agentMessageAnswer(db, childRunId, turn.id);
+
+  if (result.messageState === "applied" && result.delivery === "steered")
+    return result;
+  if (result.messageState === "dispatched")
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Clarification delivery is unconfirmed. Retry with the same request key.",
+      { details: { reason: "native_steer_reconciliation_required" } },
+    );
+
+  throw new MaisterError(
+    "PRECONDITION",
+    "The delegated child did not receive the clarification",
+    { details: { reason: "delegated_steer_refused" } },
+  );
+}
+
 // The bound client of the run's current generation, or null when the run has
 // none to steer through (the acceptance then queues).
 async function steerClientFor(
@@ -3276,6 +3576,7 @@ async function steerClientFor(
 async function deliverAgentSteer(
   db: Db,
   accepted: Extract<AgentSteerAcceptance, { kind: "issued" }>,
+  authorize?: () => Promise<void>,
 ): Promise<AgentTurn | null> {
   const command = {
     id: accepted.prepared.commandId,
@@ -3285,6 +3586,7 @@ async function deliverAgentSteer(
 
   try {
     await accepted.prepared.deliver({
+      authorize,
       onAck: async (tx) => {
         settled.value = await settleSteerCommand(tx, command, {
           kind: "injected",
@@ -3568,6 +3870,20 @@ async function recordAgentPermissionRequest(args: {
   event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
 }): Promise<void> {
   await args.db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("no key update");
+
+    if (current && (await currentBudgetTermination(tx, current))) {
+      log.info(
+        { runId: args.runId, requestId: args.event.requestId },
+        "[FIX] legacy permission retained as evidence during budget stop",
+      );
+
+      return;
+    }
     const [existing] = await tx
       .select({ id: hitlRequests.id })
       .from(hitlRequests)
@@ -3722,6 +4038,7 @@ export function agentFacadeMcpServer(
 
   return {
     name: "maister",
+    platformOrigin: "maister_facade",
     transport: "stdio",
     command: launch.command,
     args: launch.args,
@@ -3739,11 +4056,19 @@ async function dispatchStoredAgentTurn(
   turn: AgentTurn,
   sessionId: string,
   signal?: AbortSignal,
+  specialistPlacementId?: string,
 ): Promise<void> {
   signal?.throwIfAborted();
   const draft = turn.variant === "consensus_draft";
 
-  observeOwnedAgentSession(db, execution, turn, sessionId, signal);
+  observeOwnedAgentSession(
+    db,
+    execution,
+    turn,
+    sessionId,
+    signal,
+    specialistPlacementId,
+  );
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
   await assertOperationalDispatchIntegrity(db, turn.runId);
   const handle = await execution.client.prompt(
@@ -3771,6 +4096,7 @@ function observeOwnedAgentSession(
   turn: AgentTurn,
   sessionId: string,
   signal?: AbortSignal,
+  specialistPlacementId?: string,
 ): void {
   const started = observeAgentSession({
     db,
@@ -3779,6 +4105,7 @@ function observeOwnedAgentSession(
     sessionId,
     turnId: turn.id,
     ...(signal ? { signal } : {}),
+    ...(specialistPlacementId ? { specialistPlacementId } : {}),
   });
 
   log.info(
@@ -3810,7 +4137,13 @@ export async function startAgentSession(
   const db = opts.db ?? getDb();
   const executionHosts = opts.executionHosts ?? createExecutionHosts({ db });
   const [source] = await db
-    .select({ assignmentId: runs.executionAssignmentId })
+    .select({
+      assignmentId: runs.executionAssignmentId,
+      resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+      companyId: runs.companyId,
+      status: runs.status,
+    })
     .from(runs)
     .where(eq(runs.id, runId));
   const expectedAssignmentId =
@@ -3819,12 +4152,29 @@ export async function startAgentSession(
       : opts.assignmentId;
 
   try {
-    await driveAgentSession(runId, {
-      ...opts,
-      assignmentId: expectedAssignmentId,
-      db,
-      executionHosts,
-    });
+    const drive = (signal?: AbortSignal) =>
+      driveAgentSession(runId, {
+        ...opts,
+        signal,
+        assignmentId: expectedAssignmentId,
+        db,
+        executionHosts,
+      });
+
+    if (
+      source &&
+      (source.status === "Running" || source.status === "NeedsInput") &&
+      expectedAssignmentId &&
+      (source.companyId !== null || usesStructuredKnowledgeContext(source))
+    )
+      await withSpecialistExecutor(
+        db,
+        runId,
+        expectedAssignmentId,
+        drive,
+        opts.signal,
+      );
+    else await drive(opts.signal);
   } catch (err) {
     if (isPreparationIdentityRefusal(err)) {
       log.error(
@@ -3838,9 +4188,12 @@ export async function startAgentSession(
 
       return;
     }
-    if (isMaisterError(err) && err.details?.reason === "operation_busy") {
+    if (isTaskLaunchContention(err)) {
       log.info(
-        { runId, reason: "operation_busy" },
+        {
+          runId,
+          reason: err.details?.reason,
+        },
         "agent-preparation-deferred",
       );
 
@@ -3944,11 +4297,18 @@ async function driveAgentSession(
   if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError("PRECONDITION", `run ${runId} is not an agent run`);
   }
+  if (usesStructuredKnowledgeContext(baseRun))
+    assertNativeWorkspaceMode(baseRun.workspaceMode);
 
   const assignmentId =
     opts.assignmentId === undefined
       ? (baseRun.executionAssignmentId ?? null)
       : opts.assignmentId;
+  const specialistPlacementId =
+    assignmentId &&
+    (baseRun.companyId !== null || usesStructuredKnowledgeContext(baseRun))
+      ? assignmentId
+      : undefined;
 
   if (assignmentId !== baseRun.executionAssignmentId)
     throw new MaisterError(
@@ -4081,6 +4441,7 @@ async function driveAgentSession(
           agentTurn,
           command.targetSessionId,
           opts.signal,
+          specialistPlacementId,
         );
       // A re-driven consensus draft must apply through the draft registry;
       // the ordinary agent owner refuses the variant and poisons the turn.
@@ -4129,6 +4490,7 @@ async function driveAgentSession(
           agentTurn,
           session.sessionId,
           opts.signal,
+          specialistPlacementId,
         );
       } catch (error) {
         if (error instanceof AgentPromptQuarantined) throw error;
@@ -4173,6 +4535,7 @@ async function driveAgentSession(
         agentTurn,
         live.hostSessionId,
         opts.signal,
+        specialistPlacementId,
       );
 
       return;
@@ -4201,14 +4564,19 @@ async function driveAgentSession(
     }
   }
 
+  const companyContext =
+    run.companyId != null
+      ? await _db.transaction((tx: ExecutionDb) =>
+          loadCompanyAgentSessionContext(tx, runId),
+        )
+      : null;
   const draftPayload = consensusDraftPayload(run);
-  const projectRows = await _db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, run.projectId));
+  const projectRows = companyContext
+    ? []
+    : await _db.select().from(projects).where(eq(projects.id, run.projectId));
   const project = projectRows[0];
 
-  if (!project) {
+  if (!project && !companyContext) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
       expectedAssignmentId: assignmentId,
@@ -4282,10 +4650,14 @@ async function driveAgentSession(
   // RD4: the effective definition resolves AGAIN at spawn — the project's
   // pin is the source of truth for the prompt body and the workspace axis.
   let effective: EffectiveAgentDefinition;
+  let retryRecipe: Awaited<ReturnType<typeof frozenRetryRecipe>> = null;
 
   try {
+    if (!companyContext && run.retryOfRunId)
+      retryRecipe = await frozenRetryRecipe(_db, run.id);
     effective =
-      (run.retryOfRunId ? await frozenRetryDefinition(_db, run.id) : null) ??
+      companyContext?.effective ??
+      retryRecipe?.definition ??
       (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
       (await resolveEffectiveAgentDefinition(
@@ -4306,6 +4678,9 @@ async function driveAgentSession(
     return;
   }
 
+  const replacementReadOnly =
+    retryRecipe?.version === 2 ? retryRecipe.replacement?.readOnly : undefined;
+
   // M37 (ADR-100): use the workspace axis the run ACTUALLY launched with
   // (persisted at insert — a delegation override OR the agent-def default), not a
   // re-derivation from the agent def, which would diverge from an overriding
@@ -4323,15 +4698,20 @@ async function driveAgentSession(
       "Operational preparation requires a current assignment",
       { details: { reason: "assignment_fenced", runId } },
     );
+  const companyWorkspace = companyContext
+    ? await operationalWorkspace(_db, run)
+    : null;
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
   let preparationCommit: string | null = null;
   const packageCapture: {
     current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
   } = { current: null };
-  let preparationWorkspace: Awaited<
-    ReturnType<typeof taskAgentPreparationWorkspace>
-  > | null = null;
+  let preparationWorkspace: Readonly<{
+    cwd: string;
+    repoPath: string | null;
+    resourceKind: OperationalResourceKind;
+  }> | null = null;
   let operationalSpawnStage = "workspace_acquisition";
   let preparationContext: OperationalProbeContext = {
     runId,
@@ -4352,9 +4732,18 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
-      preparationWorkspace = run.taskLaunchIntentId
+      const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
+
+      preparationWorkspace = {
+        ...ownedWorkspace,
+        repoPath:
+          "ownerKind" in ownedWorkspace &&
+          ownedWorkspace.ownerKind === "company"
+            ? null
+            : ownedWorkspace.repoPath,
+      };
       preparation = await openAgentPreparation(_db, {
         runId,
         assignmentId,
@@ -4386,7 +4775,7 @@ async function driveAgentSession(
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
       isPreparationIdentityRefusal(error) ||
-      (isMaisterError(error) && error.details?.reason === "operation_busy")
+      isTaskLaunchContention(error)
     ) {
       await releaseAgentPreparationAfterFailure(preparation, error, {
         ...preparationContext,
@@ -4440,12 +4829,31 @@ async function driveAgentSession(
     }
     let cwd: string;
 
-    if (workspace === "repo_read" && effective.parsed.workspaceRef) {
+    if (
+      replacementReadOnly &&
+      [project.repoPath, preparationWorkspace?.repoPath].some(
+        (repoPath) =>
+          contentDigest(repoPath) !== replacementReadOnly.repositorySha256,
+      )
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "The read-only replacement repository changed after admission",
+        {
+          details: { reason: "launch_workspace_changed" },
+        },
+      );
+
+    if (companyWorkspace) {
+      cwd = companyWorkspace.cwd;
+      await mkdir(cwd, { recursive: true });
+    } else if (workspace === "repo_read" && effective.parsed.workspaceRef) {
       // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
       // — the user's checkout is never switched; removed at the terminal choke.
       cwd =
         preparationWorkspace?.cwd ??
         agentReadOnlyWorkdirPath(project.slug, runId);
+      if (replacementReadOnly) preparationCommit = replacementReadOnly.commit;
 
       try {
         if (!(
@@ -4453,6 +4861,7 @@ async function driveAgentSession(
           run.operationalIntegrityBaseline
         )) {
           const committish =
+            replacementReadOnly?.commit ??
             preparation?.operation.resolvedCommit ??
             (await resolveWorkspaceRefCommittish(_db, {
               agentId: run.agentId as string,
@@ -4563,6 +4972,21 @@ async function driveAgentSession(
       }
     } else if (workspace === "repo_read") {
       cwd = preparationWorkspace?.cwd ?? project.repoPath;
+      if (replacementReadOnly) {
+        preparationCommit = replacementReadOnly.commit;
+        assertPreparationCommit(
+          preparationCommit,
+          await resolveBaseCommit({ projectRepoPath: cwd, baseRef: "HEAD" }),
+        );
+        if ((await statusPorcelain({ worktreePath: cwd })).trim())
+          throw new MaisterError(
+            "PRECONDITION",
+            "The read-only replacement checkout must remain clean",
+            {
+              details: { reason: "launch_workspace_changed" },
+            },
+          );
+      }
     } else if (workspace === "worktree") {
       // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
       // root_run_id (a reusing sibling has NO workspaces row of its own — the
@@ -4588,7 +5012,15 @@ async function driveAgentSession(
       await mkdir(cwd, { recursive: true });
     }
 
-    if (run.taskLaunchIntentId && workspace === "worktree") {
+    const replacementWorktree =
+      retryRecipe?.version === 2
+        ? retryRecipe.replacement?.worktree
+        : undefined;
+
+    if (
+      (run.taskLaunchIntentId || replacementWorktree) &&
+      workspace === "worktree"
+    ) {
       const sharedOwner =
         run.workspaceMode === "shared" && run.rootRunId
           ? await findSharedTreeWorkspace(_db, run.rootRunId)
@@ -4613,6 +5045,27 @@ async function driveAgentSession(
           "Accepted agent workspace identity is incomplete",
           { details: { reason: "launch_workspace_changed" } },
         );
+      if (replacementWorktree) {
+        const [sameRepository] = (
+          await _db.execute(sql`
+          SELECT task_launch_admission_digest(to_jsonb(${project.repoPath}::text))=${replacementWorktree.repositorySha256} AS matches
+        `)
+        ).rows;
+
+        if (
+          sameRepository?.matches !== true ||
+          ownedWorkspace.parentRepoPath !== project.repoPath ||
+          ownedWorkspace.baseCommit !== replacementWorktree.baseCommit ||
+          ownedWorkspace.baseBranch !== replacementWorktree.baseBranch
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "The replacement worktree no longer matches its admitted source",
+            {
+              details: { reason: "launch_workspace_changed" },
+            },
+          );
+      }
       const existing = (
         await listWorktrees(ownedWorkspace.parentRepoPath)
       ).find((tree) => tree.path === cwd);
@@ -4694,6 +5147,7 @@ async function driveAgentSession(
       const prepareAttachedContextMounts = async (): Promise<
         ContextMountSnapshot[]
       > => {
+        if (companyContext) return [];
         // ADR-157 (T30): read-only sibling-repo mounts for a platform-agent run. The
         // declaration is the PROJECT ATTACHMENT's `context_repos` — the definition's
         // `recommended` bindings are prefill for the attach dialog only and can never
@@ -4778,11 +5232,21 @@ async function driveAgentSession(
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
           integrityBaseline = {
             ...integrityBaseline,
-            owner: {
-              cwd,
-              repoPath: preparationWorkspace?.repoPath ?? project.repoPath,
-              projectSlug: project.slug,
-            },
+            owner:
+              companyWorkspace?.ownerKind === "company"
+                ? {
+                    kind: "company",
+                    companyId: companyWorkspace.companyId,
+                    runId,
+                    cwd,
+                    runtimePath: companyWorkspace.runtimePath,
+                  }
+                : {
+                    cwd,
+                    repoPath:
+                      preparationWorkspace?.repoPath ?? project.repoPath,
+                    projectSlug: project.slug,
+                  },
             contextMounts: await captureOperationalContextMounts(contextMounts),
           };
           await preparation?.publishBaseline(integrityBaseline);
@@ -4800,6 +5264,7 @@ async function driveAgentSession(
           cwd,
           snapshot.adapter,
           runId,
+          companyWorkspace ? snapshot.model : undefined,
         ).catch((err: unknown) => {
           if (run.agentKind === "operational") throw err;
           log.warn(
@@ -4813,44 +5278,51 @@ async function driveAgentSession(
       // override branch below (which discards `basePrompt` and would otherwise
       // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
-      const memoryText = await applyAgentMemoryForLaunch(
-        _db,
-        run,
-        project.slug as string,
-        overridePrompt != null,
+      if (usesStructuredKnowledgeContext(run))
+        await assertNativeRunKnowledgeInputs(_db, runId);
+      const memoryText = companyContext
+        ? null
+        : await applyAgentMemoryForLaunch(
+            _db,
+            run,
+            project.slug as string,
+            overridePrompt != null,
+          );
+      const basePrompt = companyContext
+        ? buildCompanyAgentPrompt(companyContext)
+        : await buildAgentPrompt(_db, effective.parsed, run, memoryText);
+      const completionPrompt = nativeFindingsCompletionPrompt(
+        run.resultContract,
+        operationalCompletionPrompt(
+          run,
+          overridePrompt ??
+            (draftPayload
+              ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+              : basePrompt),
+        ),
       );
-      const basePrompt = await buildAgentPrompt(
-        _db,
-        effective.parsed,
-        run,
-        memoryText,
-      );
-      const prompt = operationalCompletionPrompt(
-        run,
-        overridePrompt ??
-          (draftPayload
-            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-            : basePrompt),
-      );
-
-      const issuedToken = await issueAgentRunToken({
-        agentId: agent.id,
-        projectId: project.id,
-        runId,
-        db: _db,
-      });
 
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
       // createSession alongside the facade.
-      const profileMcpServers = await resolveAgentProfileMcpServers({
-        db: _db,
-        projectId: project.id as string,
-        capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
-        capabilityAgent: snapshot.capabilityAgent as string,
-        execTrust: effective.execTrust,
-        runId,
-      });
+      const prompt = usesStructuredKnowledgeContext(run)
+        ? await appendSpecialistAssignmentContextPrompt(
+            _db,
+            runId,
+            null,
+            completionPrompt,
+          )
+        : completionPrompt;
+      const profileMcpServers = companyContext
+        ? []
+        : await resolveAgentProfileMcpServers({
+            db: _db,
+            projectId: project.id as string,
+            capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
+            capabilityAgent: snapshot.capabilityAgent as string,
+            execTrust: effective.execTrust,
+            runId,
+          });
 
       // ADR-108 (M40): explicit agent guardrail hooks. Agent runs carry no
       // execution-policy preset, so there is no `unattended` auto-arm — only what
@@ -4880,7 +5352,8 @@ async function driveAgentSession(
         {
           runId,
           agentId: agent.id,
-          projectId: project.id,
+          projectId: project?.id ?? null,
+          companyId: run.companyId ?? null,
           packageInstallId: effective.packageInstallId,
           installedPath: effective.installedPath,
           skillRoots: packageSkillRoots,
@@ -4895,7 +5368,8 @@ async function driveAgentSession(
         getAdapterSupportById(snapshot.adapter as AdapterId)?.materialization
           ?.mode === "home-redirect";
       const capabilityRoot = redirectsHome
-        ? operationalAgentRuntimePath(project.slug, runId)
+        ? (companyWorkspace?.runtimePath ??
+          operationalAgentRuntimePath(project.slug, runId))
         : cwd;
 
       if (packageSkillRoots.length > 0 && redirectsHome)
@@ -4924,37 +5398,45 @@ async function driveAgentSession(
       // `platform_mcp` (default true). If it is required but not runnable in this
       // deployment, fail loud rather than silently launch a tool-less agent that
       // burns tokens and a concurrency slot only to give up (the stand bug).
-      const facadeServer = effective.parsed.platformMcp
-        ? agentFacadeMcpServer(issuedToken.secret)
-        : null;
+      const appendFacade = (secret: string): AgentMcpServer[] => {
+        if (!effective.parsed.platformMcp) return [];
+        const facadeServer = agentFacadeMcpServer(secret);
 
-      if (effective.parsed.platformMcp && !facadeServer) {
-        throw new MaisterError(
-          "PRECONDITION",
-          `agent run ${runId} requires the MAIster MCP facade, but it is not runnable in this deployment. Build it (\`pnpm --filter @maister/mcp build\`) or set MAISTER_MCP_FACADE_COMMAND. Agents that use no MAIster tools can opt out with \`platform_mcp: false\`.`,
-        );
-      }
+        if (!facadeServer)
+          throw new MaisterError(
+            "PRECONDITION",
+            `Agent Run ${runId} requires the MAIster MCP facade. Build it with pnpm --filter @maister/mcp build or set MAISTER_MCP_FACADE_COMMAND.`,
+          );
+
+        return [facadeServer];
+      };
+      const projectFacade =
+        companyContext || !effective.parsed.platformMcp
+          ? []
+          : appendFacade(
+              (
+                await issueAgentRunToken({
+                  agentId: agent.id,
+                  projectId: project.id,
+                  runId,
+                  db: _db,
+                })
+              ).secret,
+            );
 
       if (run.agentKind !== "operational") await prepareAttachedContextMounts();
+      if (usesStructuredKnowledgeContext(run))
+        await assertNativeRunKnowledgeInputs(_db, runId);
 
       operationalSpawnStage = "materialization_witness";
       if (
         (run.agentKind === "operational" || run.taskLaunchIntentId) &&
         integrityBaseline
       ) {
-        const ownedPaths = await agentMaterializationPathsForRun(cwd, runId);
         const next = await captureOperationalGeneration(
           cwd,
           integrityBaseline,
-          [
-            ...ownedPaths,
-            ".maister/agent-materialization/index.json",
-            `.maister/agent-materialization/runs/${runId}.json`,
-            ".maister/agent-materialization/mutex.sqlite",
-            ".maister/agent-materialization/mutex.sqlite-journal",
-            ".maister/agent-materialization/mutex.sqlite-shm",
-            ".maister/agent-materialization/mutex.sqlite-wal",
-          ],
+          await agentMaterializationWitnessPathsForRun(cwd, runId),
         );
 
         await preparation?.publishGeneration(
@@ -4979,12 +5461,14 @@ async function driveAgentSession(
 
       // ADR-166: the create is handle-form — the workspace (and its context
       // mounts, snapshotted on the run above) is adopted by the bound client.
+      operationalSpawnStage = "execution_binding";
       const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
       // S2.12: a resume that reaches here resolved NO turn above, so its
       // generation is named by the placement its claim minted. A turn resolved
       // earlier keeps its identity — minting a second one here would strand the
       // original queued and consume another pool slot.
+      operationalSpawnStage = "turn_admission";
       if (!agentTurn) {
         const ownedVariant =
           overridePrompt === undefined && !run.acpSessionId
@@ -5031,6 +5515,7 @@ async function driveAgentSession(
       }
 
       return await withoutGitOwnership(async () => {
+        operationalSpawnStage = "dispatch_admission";
         if (run.taskAdmissionSnapshot?.version === 3)
           await assertTaskAdmissionForDispatch(_db, runId);
         const createPayload = {
@@ -5043,10 +5528,7 @@ async function driveAgentSession(
           ),
           // ADR-089 D9: the facade (gated by platform_mcp above) carries the
           // ephemeral token to the agent.
-          mcpServers: [
-            ...profileMcpServers,
-            ...(facadeServer ? [facadeServer] : []),
-          ],
+          mcpServers: [...profileMcpServers, ...projectFacade],
           // ADR-090 L1: none/repo_read agents run the whole session read-only.
           readOnlySession: workspace !== "worktree",
           agentKind: baseRun.agentKind ?? "code_delivery",
@@ -5065,6 +5547,9 @@ async function driveAgentSession(
             "auto_approve",
           ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
         };
+
+        operationalSpawnStage = "session_create";
+
         const session = await execution.client.createOwnedSession(
           {
             variant: "agent",
@@ -5072,14 +5557,25 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
+          companyContext && effective.parsed.platformMcp
+            ? {
+                bindCredentials: async (tx) =>
+                  appendFacade(
+                    (await retainCompanyAgentSessionCredential(tx, runId))
+                      .secret,
+                  ),
+              }
+            : undefined,
         );
 
+        operationalSpawnStage = "prompt_dispatch";
         await dispatchStoredAgentTurn(
           _db,
           execution,
           ownedTurn,
           session.sessionId,
           opts.signal,
+          specialistPlacementId,
         );
       });
     } catch (originalError) {
@@ -5092,6 +5588,20 @@ async function driveAgentSession(
         : originalError;
 
       packageCapture.current = null;
+      if (isTaskLaunchContention(err)) {
+        await releaseAgentPreparationAfterFailure(preparation, err, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
+        log.info(
+          {
+            runId,
+            reason: err.details?.reason,
+          },
+          "[FIX:delegation-contention] agent preparation yielded before model dispatch",
+        );
+        throw err;
+      }
       if (!isFencedError(err))
         await recordAgentPreparationFailure(preparation, err, {
           ...preparationContext,
@@ -5257,6 +5767,7 @@ type AgentSessionObservation = {
   signal?: AbortSignal;
   turnId?: string;
   sleep?: (ms: number) => Promise<void>;
+  specialistPlacementId?: string;
 };
 
 // ADR-167: the canonical session stream is a DURABLE, replayable log, and every
@@ -5368,8 +5879,16 @@ export function observeAgentSession(args: AgentSessionObservation): boolean {
     return false;
   }
   queueMicrotask(() => {
-    void superviseAgentSession(args)
+    void superviseRetainedAgentSession(args)
       .catch((error: unknown) => {
+        if (args.signal?.aborted || isFencedError(error)) {
+          log.debug(
+            { runId: args.runId, sessionId: args.sessionId },
+            "agent session observer yielded",
+          );
+
+          return;
+        }
         log.error(
           {
             runId: args.runId,
@@ -5385,6 +5904,20 @@ export function observeAgentSession(args: AgentSessionObservation): boolean {
   return true;
 }
 
+async function superviseRetainedAgentSession(
+  args: AgentSessionObservation,
+): Promise<void> {
+  if (!args.specialistPlacementId) return superviseAgentSession(args);
+
+  await withSpecialistExecutor(
+    args.db,
+    args.runId,
+    args.specialistPlacementId,
+    (signal) => superviseAgentSession({ ...args, signal }),
+    args.signal,
+  );
+}
+
 /**
  * Puts an observer back on a live agent session that has none in this process —
  * the reconcile recovery for a web restart or an exhausted observer supervisor.
@@ -5397,16 +5930,50 @@ export async function reobserveAgentSession(args: {
   runId: string;
   sessionId: string;
   executionHosts?: ExecutionHosts;
+  signal?: AbortSignal;
 }): Promise<boolean> {
   const [run] = await args.db
     .select({
       runKind: runs.runKind,
       assignmentId: runs.executionAssignmentId,
+      companyId: runs.companyId,
+      knowledgeAccess: runs.knowledgeAccess,
+      resultContract: runs.resultContract,
+      status: runs.status,
     })
     .from(runs)
     .where(eq(runs.id, args.runId));
 
   if (run?.runKind !== "agent" || !run.assignmentId) return false;
+  const native = run.companyId !== null || usesStructuredKnowledgeContext(run);
+
+  if (native) {
+    if (run.status !== "Running" && run.status !== "NeedsInput") return false;
+    const [current] = await args.db
+      .select({ id: runSessionIncarnations.id })
+      .from(runSessionIncarnations)
+      .innerJoin(
+        runSessions,
+        eq(runSessions.id, runSessionIncarnations.runSessionId),
+      )
+      .where(
+        and(
+          eq(runSessionIncarnations.runId, args.runId),
+          eq(runSessionIncarnations.executionAssignmentId, run.assignmentId),
+          eq(runSessionIncarnations.hostSessionId, args.sessionId),
+          inArray(runSessionIncarnations.state, [
+            ...ADMISSIBLE_PROMPT_INCARNATION_STATES,
+          ]),
+          eq(runSessions.runId, args.runId),
+          eq(runSessions.sessionName, "default"),
+          eq(runSessions.executionAssignmentId, run.assignmentId),
+          eq(runSessions.hostSessionId, args.sessionId),
+        ),
+      )
+      .limit(1);
+
+    if (!current) return false;
+  }
   const hosts = args.executionHosts ?? createExecutionHosts({ db: args.db });
   const execution = await bindAgentExecution(
     hosts,
@@ -5419,6 +5986,8 @@ export async function reobserveAgentSession(args: {
     execution,
     runId: args.runId,
     sessionId: args.sessionId,
+    signal: args.signal,
+    ...(native ? { specialistPlacementId: run.assignmentId } : {}),
   });
 }
 

@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import {
   getRunChangeSummary,
@@ -61,7 +63,7 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const scope = parseRunChangeSummaryScope(
       new URL(req.url).searchParams.get("scope"),
@@ -79,12 +81,17 @@ export async function GET(
       access.projectId,
       access.runKind === "scratch" ? "readScratchRun" : "readBoard",
     );
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const summary = await getRunChangeSummary({ runId, scope });
 
     if (!summary) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     return NextResponse.json(summary);
   } catch (err) {

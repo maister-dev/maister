@@ -55,6 +55,103 @@ function createClient(): { client: BoundedAcpClient; messages: AnyMessage[] } {
 }
 
 describe("bounded ACP framed-source contract", () => {
+  it.each([
+    {
+      label: "oversized identity",
+      name: "x".repeat(5000),
+      permissionKind: "read",
+      permissionName: undefined,
+      outputFailure: "producer_retained_limit",
+    },
+    {
+      label: "contradictory tool kind",
+      name: "Read",
+      permissionKind: "execute",
+      permissionName: undefined,
+      outputFailure: "producer_permission_invalid",
+    },
+    {
+      label: "contradictory tool identity",
+      name: "Read",
+      permissionKind: "read",
+      permissionName: "Bash",
+      outputFailure: "producer_permission_invalid",
+    },
+  ] as const)(
+    "refuses $label before dispatching a permission callback",
+    async ({ name, permissionKind, permissionName, outputFailure }) => {
+      const source = new PassThrough({ objectMode: true });
+      const stdin = new PassThrough();
+      const failures: SupervisorError[] = [];
+      let permissionCalls = 0;
+      const stream = boundedAcpStream({
+        source,
+        stdin,
+        client: {
+          async sessionUpdate() {},
+          async requestPermission(_params, prepared) {
+            permissionCalls += 1;
+            prepared?.();
+
+            return { outcome: { outcome: "cancelled" } };
+          },
+        },
+        onFailure: (error) => failures.push(error),
+      });
+      const reader = stream.readable.getReader();
+      const frames = [
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "bounded-identity",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "one",
+              title: "Read",
+              kind: "read",
+              status: "pending",
+              _meta: { claudeCode: { toolName: name } },
+            },
+          },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "session/request_permission",
+          params: {
+            sessionId: "bounded-identity",
+            toolCall: {
+              toolCallId: "one",
+              title: "Controlled file",
+              kind: permissionKind,
+              ...(permissionName
+                ? { _meta: { claudeCode: { toolName: permissionName } } }
+                : {}),
+            },
+            options: [{ optionId: "deny", kind: "reject_once", name: "Deny" }],
+          },
+        },
+      ];
+
+      try {
+        for (const frame of frames)
+          source.write(Buffer.from(`${JSON.stringify(frame)}\n`));
+        source.end();
+        await expect(reader.read()).rejects.toMatchObject({
+          code: "ACP_PROTOCOL",
+          details: { reason: "required_output_incomplete", outputFailure },
+        });
+        expect(permissionCalls).toBe(0);
+        expect(failures).toHaveLength(1);
+      } finally {
+        reader.releaseLock();
+        source.destroy();
+        stdin.destroy();
+      }
+    },
+  );
+
   it("refuses a byte-mode source at construction with a typed protocol error", async () => {
     const source = new PassThrough();
     const stdin = new PassThrough();

@@ -56,6 +56,8 @@ import {
   runs,
 } from "@/lib/db/schema";
 import { PromptOwnerInvariantError } from "@/lib/execution-host/prompt-owners";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
+import { authorizeCompanyPermissionConsent } from "@/lib/assignments/company-ownership";
 import { reconcilePromptCommand } from "@/lib/execution-host/prompt-reconciliation";
 import { readPromptOutput } from "@/lib/execution-host/prompt-output";
 
@@ -525,7 +527,7 @@ export async function prepareFlowPermissionResult(
 }
 
 type LockedPermissionSource = Readonly<{
-  run: Run & { projectId: string };
+  run: Run;
   hitl: HitlRequest;
   response: Record<string, unknown> & { optionId: string };
   source: z.infer<typeof sourceSchema>;
@@ -592,7 +594,7 @@ async function lockNodePermissionSource(
   const ref = command?.ownerRef;
 
   if (
-    !run.projectId ||
+    (!run.projectId && !isCompanyFlowResource(run)) ||
     run.status !== "NeedsInput" ||
     run.executionAssignmentId !== assignment.id ||
     assignment.state !== "active" ||
@@ -632,8 +634,10 @@ async function lockNodePermissionSource(
   )
     throw new PromptOwnerInvariantError("permission_resume_generation");
 
+  await authorizeCompanyPermissionConsent(tx, run, hitl);
+
   return {
-    run: { ...run, projectId: run.projectId },
+    run,
     hitl,
     response: { ...response, optionId: response.optionId },
     source,

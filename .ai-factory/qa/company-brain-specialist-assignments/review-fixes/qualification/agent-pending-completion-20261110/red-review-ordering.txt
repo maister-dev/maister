@@ -1,0 +1,32 @@
+Source: /private/tmp/cb-agent-pending-completion-review-race-RED.log
+SHA256: 5ce276f9de0099aef00dad669fe65223a25dbd77fd0e8f57a79293b8960623c3
+Original lines: 59-86
+
+     × owner-agent-reconcile cannot overwrite a real Review completion after its candidate snapshot 3315ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/agents/__tests__/prompt-owners.integration.test.ts > Agent owned prompts through the production launcher > owner-agent-reconcile cannot overwrite a real Review completion after its candidate snapshot
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ lib/agents/__tests__/prompt-owners.integration.test.ts:781:27
+    779|
+    780|     expect(ownerCompleted).toBe(true);
+    781|     expect(swept.crashed).toBe(0);
+       |                           ^
+    782|     expect(
+    783|       await db
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 65 skipped (66)
+   Start at  12:51:57
+   Duration  8.10s (tests 86%, import 9%, transform 5%)

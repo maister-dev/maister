@@ -710,7 +710,7 @@ export async function prepareQualificationPublication(
     | "taskQualificationSnapshot"
     | "resultContract"
     | "taskId"
-  > & { projectId: string },
+  >,
 ): Promise<
   (
     tx: Db,
@@ -724,6 +724,17 @@ export async function prepareQualificationPublication(
     run.resultContract?.kind === "agent_operational"
       ? (run.resultContract.definition.taskQualification?.role ?? null)
       : null;
+
+  const projectId = run.projectId;
+
+  if (projectId === null)
+    return async () => ({
+      reason:
+        declaredRole !== null || frozen !== null
+          ? "qualification_snapshot_invalid"
+          : null,
+      publish: async () => {},
+    });
 
   if (
     declaredRole !== (frozen?.role ?? null) ||
@@ -740,7 +751,7 @@ export async function prepareQualificationPublication(
     const [project] = await db
       .select({ repoPath: projects.repoPath })
       .from(projects)
-      .where(eq(projects.id, run.projectId));
+      .where(eq(projects.id, projectId));
 
     if (project) {
       try {
@@ -767,10 +778,7 @@ export async function prepareQualificationPublication(
       .select()
       .from(tasks)
       .where(
-        and(
-          eq(tasks.id, frozen.taskId ?? ""),
-          eq(tasks.projectId, run.projectId),
-        ),
+        and(eq(tasks.id, frozen.taskId ?? ""), eq(tasks.projectId, projectId)),
       )
       .for("update");
     const candidates = await tx
@@ -793,7 +801,7 @@ export async function prepareQualificationPublication(
         { details: { reason: "qualification_candidate_limit", runId: run.id } },
       );
     const current = task
-      ? await loadTaskQualificationInput(tx, run.projectId, task.id)
+      ? await loadTaskQualificationInput(tx, projectId, task.id)
       : null;
     const candidate = candidates.at(-1);
     let reason: string | null = !successful
@@ -846,7 +854,7 @@ export async function prepareQualificationPublication(
         try {
           await assertQualificationCredential(
             tx,
-            run.projectId,
+            projectId,
             {
               kind: "agent_run",
               runId: run.id,
@@ -854,7 +862,7 @@ export async function prepareQualificationPublication(
             },
             run.sourceAgentId ?? run.agentId,
           );
-          await validateVerdictRefs(run.projectId, candidate.routing, tx);
+          await validateVerdictRefs(projectId, candidate.routing, tx);
         } catch (error) {
           if (!(error instanceof MaisterError)) throw error;
           if (
@@ -903,11 +911,11 @@ export async function prepareQualificationPublication(
       await emitDomainEvent({
         db: tx,
         kind: "task.qualification_changed",
-        projectId: run.projectId,
+        projectId: projectId,
         taskId: frozen.taskId,
         runId: run.id,
         payload: {
-          projectId: run.projectId,
+          projectId: projectId,
           taskId: frozen.taskId,
           inputRevision: current?.inputRevision ?? 0,
           qualificationRevision: current?.currentQualificationRevision ?? null,
@@ -934,7 +942,7 @@ export async function prepareQualificationPublication(
         const routingApplication = await acceptTaskQualification(tx, candidate);
 
         await recordTaskActivity(tx, {
-          projectId: run.projectId,
+          projectId,
           taskId: candidate.taskId,
           actor:
             run.sourceAgentId || run.agentId
@@ -953,11 +961,11 @@ export async function prepareQualificationPublication(
         await emitDomainEvent({
           db: tx,
           kind: "task.qualification_changed",
-          projectId: run.projectId,
+          projectId: projectId,
           taskId: candidate.taskId,
           runId: run.id,
           payload: {
-            projectId: run.projectId,
+            projectId: projectId,
             taskId: candidate.taskId,
             inputRevision: candidate.inputRevision,
             qualificationRevision: candidate.revision,

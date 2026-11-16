@@ -25,17 +25,23 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "./session-binding";
 import { isAdmissible } from "./assignments";
 import { lockConsensusDraftCommandAdmission } from "./consensus-command-admission";
-import { insertCommand, markFenced } from "./commands";
+import {
+  insertCommand,
+  markFenced,
+  rethrowCommandAdmissionError,
+} from "./commands";
 import { asAssignmentId, asCommandId } from "./types";
 import { PromptOwnerSchema } from "./prompt-owner-contract";
 import { readPromptRequest, storePromptRequest } from "./command-request";
 import { redactPayload } from "./redact";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import {
   coordinatorChildLaunchContextSchema,
   childLaunchPromptContext,
 } from "@/lib/orchestrator/child-launch-context";
 import { MaisterError } from "@/lib/errors";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
   nodeAttempts,
@@ -194,7 +200,7 @@ export async function issueCommand<TPayload>(
       "command-issued-on-stale-assignment-snapshot",
     );
 
-  // A terminal operational cleanup can seal bounded diagnosis under its
+  // A terminal resource cleanup can seal bounded diagnosis under its
   // original released generation. This exception grants no execution tools.
   const payload = input.payload as {
     kind?: unknown;
@@ -217,26 +223,28 @@ export async function issueCommand<TPayload>(
     payload.sizeBytes <= 25 * 1024 * 1024
   ) {
     const [owner] = await db
-      .select({ id: runs.id })
+      .select()
       .from(runs)
       .where(
         and(
           eq(runs.id, input.assignment.runId),
-          eq(runs.agentKind, "operational"),
           eq(runs.executionAssignmentId, input.assignment.id),
           inArray(runs.status, ["Done", "Failed", "Crashed", "Abandoned"]),
           sql`${runs.operationalCleanup}->>'state' = 'preserving'`,
         ),
       );
+    const eligibleOwner =
+      owner &&
+      (owner.agentKind === "operational" || isCompanyFlowResource(owner));
 
-    if (owner && input.kind === "runtime_object.reserve")
+    if (eligibleOwner && input.kind === "runtime_object.reserve")
       operationalEvidence =
         payload.kind === "diagnostic" &&
         payload.retentionClass === "run" &&
         typeof payload.logicalName === "string" &&
         payload.logicalName.startsWith("operational-diagnosis-");
     if (
-      owner &&
+      eligibleOwner &&
       input.kind === "runtime_object.upload" &&
       typeof payload.objectId === "string"
     ) {
@@ -391,7 +399,15 @@ export async function issueOwnedPrompt(
       throw ownedPromptConflict("owner_binding");
 
     const [binding] = await tx
-      .select({ incarnationId: runSessionIncarnations.id })
+      .select({
+        incarnationId: runSessionIncarnations.id,
+        companyCancellationIntent: runs.companyCancellationIntent,
+        id: runs.id,
+        budgetState: runs.budgetState,
+        executionAssignmentId: runs.executionAssignmentId,
+        currentStepId: runs.currentStepId,
+        flowDriverToken: runs.flowDriverToken,
+      })
       .from(runs)
       .innerJoin(
         executionAssignments,
@@ -428,7 +444,11 @@ export async function issueOwnedPrompt(
       .for("no key update")
       .limit(1);
 
+    if (binding?.companyCancellationIntent)
+      throw ownedPromptConflict("company_cancellation_pending");
     if (!binding) throw ownedPromptConflict("inactive_incarnation");
+    if (await currentBudgetTermination(tx, binding))
+      throw ownedPromptConflict("budget_termination_pending");
     const [existing] = await tx
       .select()
       .from(executionCommands)
@@ -546,7 +566,8 @@ export async function issueOwnedPrompt(
         createdAt: issuedAt,
         updatedAt: issuedAt,
       })
-      .returning();
+      .returning()
+      .catch(rethrowCommandAdmissionError);
     const frozen = readPromptRequest(row, input.host.hostKey);
 
     (input.logger ?? defaultLog).debug(

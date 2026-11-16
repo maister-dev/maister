@@ -6,16 +6,18 @@ import type { ExecutionWorkspaceId } from "./types";
 
 import { stat } from "node:fs/promises";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { asExecutionWorkspaceId } from "./types";
 
+import { COMPANY_RUNTIME_NAMESPACE } from "@/lib/flow-paths";
 import {
   librarianConversations,
   localPackages,
   projects,
   runs,
+  specialistWork,
   workspaces,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -35,7 +37,6 @@ export type WorkspaceSpecInput = {
     rootRunId: string | null;
     workspaceMode: "own" | "shared" | null;
   };
-  project: { slug: string; repoPath: string };
   workspace: { worktreePath: string; parentRepoPath: string } | null;
   localPackage: { workingDir: string } | null;
   agentPaths: {
@@ -46,7 +47,18 @@ export type WorkspaceSpecInput = {
   ephemeralReadOnlyCheckoutExists: boolean;
   /** ADR-185: the conversation's directory; set only for a librarian run. */
   librarianWorkdir?: string | null;
-};
+} & (
+  | { project: { slug: string; repoPath: string }; company?: never }
+  | {
+      project: null;
+      company: {
+        companyId: string;
+        cwd: string;
+        executionKind: "agent" | "flow";
+        delegatedWorkId?: string;
+      };
+    }
+);
 
 function missingWorkspace(runId: string, what: string): MaisterError {
   return new MaisterError(
@@ -63,6 +75,31 @@ export function workspaceSpecFor(
   input: WorkspaceSpecInput,
 ): AdoptWorkspaceWire {
   const { run, project } = input;
+
+  if (input.company) {
+    if (
+      project !== null ||
+      run.runKind !== input.company.executionKind ||
+      run.agentWorkspace !== "none" ||
+      run.localPackageId !== null ||
+      input.localPackage !== null ||
+      input.workspace !== null ||
+      (run.contextMounts?.length ?? 0) > 0 ||
+      run.workspaceMode !== null ||
+      (run.rootRunId !== null && !input.company.delegatedWorkId)
+    )
+      throw missingWorkspace(run.id, "isolated company owner");
+
+    return {
+      runId: run.id,
+      projectSlug: COMPANY_RUNTIME_NAMESPACE,
+      owner: { kind: "company", companyId: input.company.companyId },
+      kind: "directory",
+      path: input.company.cwd,
+    };
+  }
+  if (project === null) throw missingWorkspace(run.id, "project");
+
   const mounts =
     run.contextMounts && run.contextMounts.length > 0
       ? { contextMounts: run.contextMounts }
@@ -140,7 +177,7 @@ async function pathIsDirectory(p: string): Promise<boolean> {
 }
 
 export async function loadWorkspaceSpecInput(
-  db: Db,
+  db: Pick<Db, "select">,
   runId: string,
 ): Promise<WorkspaceSpecInput> {
   const [run] = await db
@@ -151,8 +188,13 @@ export async function loadWorkspaceSpecInput(
       localPackageId: runs.localPackageId,
       contextMounts: runs.contextMounts,
       rootRunId: runs.rootRunId,
+      parentRunId: runs.parentRunId,
       workspaceMode: runs.workspaceMode,
       projectId: runs.projectId,
+      companyId: runs.companyId,
+      companyExecutionSnapshot: runs.companyExecutionSnapshot,
+      resultContract: runs.resultContract,
+      operationalIntegrityBaseline: runs.operationalIntegrityBaseline,
     })
     .from(runs)
     .where(eq(runs.id, runId))
@@ -162,6 +204,57 @@ export async function loadWorkspaceSpecInput(
     throw new MaisterError("PRECONDITION", `run ${runId} not found`, {
       details: { reason: "run_missing", runId },
     });
+  }
+  if (run.companyId != null) {
+    const { operationalWorkspace } =
+      await import("@/lib/agents/operational-context");
+    const owner = await operationalWorkspace(db, run);
+
+    if (
+      owner.ownerKind !== "company" ||
+      (run.runKind !== "agent" && run.runKind !== "flow")
+    )
+      throw missingWorkspace(runId, "company owner");
+
+    const [delegated] =
+      run.parentRunId && run.rootRunId
+        ? await db
+            .select({ id: specialistWork.id })
+            .from(specialistWork)
+            .where(
+              and(
+                eq(specialistWork.childRunId, run.id),
+                eq(specialistWork.reservedRunId, run.id),
+                eq(specialistWork.parentRunId, run.parentRunId),
+                eq(specialistWork.decisionState, "open"),
+                sql`${specialistWork.definition}->'parent'->>'rootRunId'=${run.rootRunId}`,
+                sql`specialist_run_has_input(${run.id},${specialistWork.assignmentId},${specialistWork.inputRevision},${specialistWork.inputSha256})`,
+              ),
+            )
+            .limit(1)
+        : [];
+
+    if ((run.parentRunId || run.rootRunId) && !delegated)
+      throw missingWorkspace(runId, "exact company work appointment");
+
+    return {
+      run,
+      project: null,
+      company: {
+        companyId: owner.companyId,
+        cwd: owner.cwd,
+        executionKind: run.runKind,
+        ...(delegated && { delegatedWorkId: delegated.id }),
+      },
+      workspace: null,
+      localPackage: null,
+      agentPaths: {
+        workdir: owner.cwd,
+        readOnlyWorkdir: owner.cwd,
+        sharedWorktree: null,
+      },
+      ephemeralReadOnlyCheckoutExists: false,
+    };
   }
   let localPackage: { slug: string; workingDir: string } | null = null;
 

@@ -34,8 +34,6 @@ acp_runners:
   - id: claude-code
     adapter: claude
     model: claude-sonnet-4-6
-    env:
-      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic
     permission_policy: default
@@ -86,10 +84,11 @@ Rules:
   launch snapshots. Operators do not enter it manually.
 - Secret values are references such as `env:NAME`, never literal tokens.
 - `acp_runners[].env` is an editable child-process env override map. Keys are
-  env vars passed to the spawned ACP adapter (`ANTHROPIC_MODEL`, custom
-  gateway knobs, etc.). Raw values are passed to the child as-is; values with
-  the `env:NAME` form are resolved from the supervisor process environment at
-  launch.
+  env vars passed to the spawned ACP adapter. Values in the `env:NAME` form
+  resolve from the supervisor process environment at launch.
+- An explicit Claude runner model takes precedence over `ANTHROPIC_MODEL`
+  in the runner environment. With `model: default`, Claude uses its
+  environment and provider routing.
 - Unsupported provider/policy combinations are saved only as
   `NotReady` with reason codes, or are rejected when they would create an
   invalid default.
@@ -210,7 +209,7 @@ response, logged, or streamed — the same `env:NAME` policy as
 `platform_mcp_servers` / `platform_acp_runners`. A runtime embedding model **or
 dimension** switch is a reindex generation, not a migration. Behavior policy
 constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
-`ambientMinConfidence` 0.4 (ambient-inject floor) and `snapshotTtlDays` 30 (the
+`ambientMinConfidence` 0.3 (ambient-inject floor, equal to the initial confidence) and `snapshotTtlDays` 30 (the
 `brain_snapshots` GC horizon). See
 [`system-analytics/project-brain.md`](system-analytics/project-brain.md).
 
@@ -1477,8 +1476,6 @@ acp_runners:
   - id: claude-glm
     adapter: claude
     model: glm-5.1
-    env:
-      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic_compatible
       base_url: https://api.z.ai/api/anthropic
@@ -1696,3 +1693,31 @@ an existing task's required hold. UI/settings/export show the effective value an
 its provenance. Required-policy activation is an explicit editSettings action;
 upgraded intake/qualifier attachment enablement refuses an incompatible project
 before scheduling. Unrelated core capabilities remain installable in legacy projects.
+
+## Company specialist and stand configuration
+
+Company bindings resolve installed, trusted package revisions without a repository. Engine 3.12.0 supports `execution: {workspace: none, completion: result}` for the native company coordinator Flow and `operational_evidence_v2` for the stand result. Review the allowed actions, runner, and exact human role mappings with the binding. The `assisted` execution preset allows tools in the reviewed scope and retains human Flow gates. Exact restart approval is enforced independently of the preset. See the [specialist runtime](system-analytics/specialist-runtime.md).
+
+A stand target is managed through `/api/stands` with explicit incarnation, HTTPS/TLS identity, environment credential references, systemd manager/scope/user/unit, allowed actions, exact runbook revision and health probe. Read/propose grants are separate from review/confirmation and target mutation. Global administrators manage explicit company grants through `/api/company/grants`; this management authority does not implicitly disclose knowledge. Submitted source capture through `/api/knowledge/sources` records actual received bytes/version witness, not proof of assertion truth.
+
+| Environment setting | Consuming service and value |
+| --- | --- |
+| `MAISTER_STAND_AUTHORITY_HOST`, `MAISTER_STAND_AUTHORITY_PORT` | Web's dedicated mTLS listener. Bind an explicit IP. The host example uses 7444. |
+| `MAISTER_STAND_AUTHORITY_CA_FILE`, `MAISTER_STAND_AUTHORITY_CERT_FILE`, `MAISTER_STAND_AUTHORITY_KEY_FILE` | Web's helper-client CA and authority server certificate/key. |
+| Target `helperCredentialEnv` | Name of the target-specific Web environment variable with its helper→Web token. |
+| `MAISTER_STAND_TRANSPORT_TARGETS_FILE` | Supervisor-only mapping keyed by target incarnation. Each row pins the HTTPS origin, server name, certificate SHA-256, CA, platform client cert/key and platform→helper token file. |
+| `MAISTER_STAND_TARGET_CONFIG_FILE` | Helper's exact target/component JSON. |
+| `MAISTER_STAND_STATE_DIRECTORY`, `MAISTER_STAND_JOURNAL_PAGES` | Helper's private journal directory (0700) and SQLite page limit. Unit default is `/var/lib/maister-stand`; 65,536 × 4 KiB gives 256 MiB. |
+| `MAISTER_STAND_HOST`, `MAISTER_STAND_PORT` | Helper's HTTPS listener. Defaults to `127.0.0.1:7443`. Use a dedicated reachable address for a remote stand. |
+| `MAISTER_STAND_SYSTEMCTL`, `MAISTER_STAND_JOURNALCTL` | Absolute helper-side systemd executables. |
+| `MAISTER_STAND_TLS_CERT_FILE`, `MAISTER_STAND_TLS_KEY_FILE`, `MAISTER_STAND_PLATFORM_CA_FILE`, `MAISTER_STAND_PLATFORM_CERT_SHA256` | Helper's TLS identity and the CA and fingerprint of the supervisor client. The helper certificate also authenticates to Web, so issue it for both TLS server and TLS client use. |
+| `MAISTER_STAND_PLATFORM_CREDENTIAL_FILE`, `MAISTER_STAND_HELPER_CREDENTIAL_FILE` | Separate target-side token files for inbound supervisor and outbound authority authentication. |
+| `MAISTER_STAND_AUTHORITY_ORIGIN`, `MAISTER_STAND_AUTHORITY_SERVER_NAME`, `MAISTER_STAND_AUTHORITY_CA_FILE` | Helper's outbound mTLS connection to the dedicated Web authority listener. |
+
+The Web process terminates helper mTLS directly and compares the authenticated
+client leaf fingerprint with the reviewed target revision. The supervisor
+takes its target origin and credential paths from the operator-owned
+transport file. Keep the Web authority token out of the supervisor environment.
+Restrict host credential paths to the relevant service identities and keep
+them outside workspaces. See the [host preflight](deployment.md#stand-helper-preflight).
+Compose remains Postgres-only. The stand helper is a host systemd service.

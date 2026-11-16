@@ -35,6 +35,7 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { RUN_SYNC_TERMINAL_PHASES, agentTurns } from "@/lib/db/schema";
+import { specialistRunLinks } from "@/lib/db/schema";
 import { closedAnswerResponse } from "@/lib/hitl-closed-answer";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -66,12 +67,22 @@ import {
   budgetFromSnapshot,
   onBudgetBreachFromSnapshot,
   DEFAULT_BUDGET_WARN_PCT,
+  type BudgetTermination,
+  type BudgetState,
   type BudgetAxis,
   type BudgetLimits,
   type BudgetRung,
   type BudgetScope,
   type OnBudgetBreach,
 } from "@/lib/runs/execution-policy";
+import {
+  claimBudgetTermination,
+  currentBudgetTermination,
+} from "@/lib/runs/budget-termination";
+import {
+  assignmentRuntimeBudgetSourceSql,
+  readAssignmentRuntimeBudget,
+} from "@/lib/specialist-assignments/delegated-budget";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
@@ -579,6 +590,9 @@ type TimeLimitCandidate = {
   flowId: string | null;
   flowRevisionId: string | null;
   currentStepId: string | null;
+  budgetState: BudgetState | null;
+  executionAssignmentId: string | null;
+  flowDriverToken: string | null;
 };
 
 async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
@@ -588,6 +602,9 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       currentStepId: runs.currentStepId,
+      budgetState: runs.budgetState,
+      executionAssignmentId: runs.executionAssignmentId,
+      flowDriverToken: runs.flowDriverToken,
     })
     .from(runs)
     .where(
@@ -716,11 +733,14 @@ async function runTimeLimitPass(
   let deferredCompleted = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
-    const manifest = await resolveRunManifest(db, row);
+    const pending = await currentBudgetTermination(db, row);
 
-    if (!manifest || !row.currentStepId) return;
-
-    const cap = maxDurationMinutesFor(manifest, row.currentStepId);
+    if (!row.currentStepId || (pending && pending.trigger !== "node_duration"))
+      return;
+    const manifest = pending ? null : await resolveRunManifest(db, row);
+    const cap =
+      pending?.limit ??
+      (manifest ? maxDurationMinutesFor(manifest, row.currentStepId) : null);
 
     if (cap === null) return;
 
@@ -735,11 +755,13 @@ async function runTimeLimitPass(
       "watchdog armed for capped Running node",
     );
 
-    if (elapsedMs <= cap * 60_000) return;
+    if (!pending && elapsedMs <= cap * 60_000) return;
     // A finished turn a writer will still move is never killed: the owner
     // applies or poisons a settled one, and a completed receipt settles only
     // while the host's stream is alive (see `completedTurnWitness`).
-    const completed = await completedTurnWitness(db, hosts, row.id, attempt.id);
+    const completed = pending
+      ? null
+      : await completedTurnWitness(db, hosts, row.id, attempt.id);
 
     if (completed) {
       deferredCompleted += 1;
@@ -757,11 +779,8 @@ async function runTimeLimitPass(
       return;
     }
 
-    // Match the live host session by the server-owned (runId, stepId) through
-    // the run's bound client: only the EXACT capped node's session is torn
-    // down, never a later node's live session. When the host cannot be asked
-    // we cannot distinguish "gone" from "unreachable" — leave the run Running
-    // for the next tick rather than mark it Failed with a live agent.
+    // Inventory is scoped to the run. The durable claim below binds the
+    // observed session and exact attempt under the same lock as graph progress.
     let client: BoundClient;
     let live: SupervisorSessionRecord | undefined;
 
@@ -780,23 +799,23 @@ async function runTimeLimitPass(
       return;
     }
 
+    const termination = await claimBudgetTermination(db, {
+      runId: row.id,
+      nodeId: row.currentStepId,
+      nodeDurationAttemptId: attempt.id,
+      scope: "run",
+      meter: "wallclock",
+      current: elapsedMs / 60_000,
+      limit: cap,
+      assignmentId: client.assignment.id,
+      sessionId: live?.sessionId ?? null,
+    });
+
+    if (!termination) return;
     if (live) {
       try {
         await client.deleteSession(live.sessionId);
       } catch (err) {
-        // 5xx / network → retryable: leave the run Running and retry next tick.
-        // Marking Failed without confirming teardown is the split-brain we must
-        // avoid (terminal run, still-live agent).
-        if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-          log.warn(
-            { runId: row.id, err: err.message },
-            "watchdog deleteSession 5xx — leaving Running for next tick",
-          );
-
-          return;
-        }
-        // A fence means a newer driver generation took the run over between
-        // the candidate scan and the kill: it is not ours to terminate.
         if (isFencedError(err)) {
           log.warn(
             { runId: row.id },
@@ -805,15 +824,17 @@ async function runTimeLimitPass(
 
           return;
         }
-        // Terminal failure (e.g. 404 unknown session) → the session is already
-        // gone; safe to proceed to the terminal transition.
         log.warn(
           {
             runId: row.id,
+            terminationId: termination.id,
+            code: isMaisterError(err) ? err.code : null,
             err: err instanceof Error ? err.message : String(err),
           },
-          "watchdog deleteSession terminal failure — session unrecoverable, proceeding",
+          "watchdog teardown unconfirmed — retaining duration stop",
         );
+
+        return;
       }
     }
     // No live session for this (run, node): the capped node's agent is not
@@ -827,9 +848,15 @@ async function runTimeLimitPass(
     // PRECONDITION the sweeper owns, NOT a pending-permission deferred expiry
     // (that is HITL_TIMEOUT). ADR-008 closed union: reuse PRECONDITION.
     const claimed: boolean = await db.transaction(async (tx: Db) => {
+      if (!(await ownsBudgetTermination(tx, row.id, termination))) return false;
       const upd = await tx
         .update(runs)
-        .set({ status: "Failed", endedAt: new Date(), currentStepId: null })
+        .set({
+          status: "Failed",
+          endedAt: new Date(),
+          currentStepId: null,
+          budgetState: sql`${runs.budgetState} - 'termination'`,
+        })
         .where(
           and(
             eq(runs.id, row.id),
@@ -890,6 +917,7 @@ async function runTimeLimitPass(
     });
 
     if (!claimed) {
+      await releaseBudgetTermination(db, row.id, termination);
       log.debug(
         { runId: row.id, nodeId: row.currentStepId },
         "watchdog claim lost — run advanced concurrently; no ledger mutation",
@@ -981,11 +1009,12 @@ type BudgetCandidate = {
   // min-merged into the tree meters below. NULL = env-only, so the policy's
   // limits are the only ones.
   delegationBounds: DelegationBounds | null;
-  budgetState: {
-    ceilingOverride?: BudgetAxis;
-    notified?: Partial<Record<BudgetScope, BudgetRung>>;
-  } | null;
+  budgetState: BudgetState | null;
+  executionAssignmentId: string | null;
+  flowDriverToken: string | null;
   projectId: string | null;
+  specialistAssignmentId: string | null;
+  companyId: string | null;
 };
 
 async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
@@ -1006,7 +1035,11 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
       currentStepId: runs.currentStepId,
       executionPolicy: runs.executionPolicy,
       budgetState: runs.budgetState,
+      executionAssignmentId: runs.executionAssignmentId,
+      flowDriverToken: runs.flowDriverToken,
       projectId: runs.projectId,
+      specialistAssignmentId: assignmentRuntimeBudgetSourceSql(sql`${runs.id}`),
+      companyId: runs.companyId,
     })
     .from(runs)
     .where(
@@ -1024,21 +1057,37 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
   return rows;
 }
 
+/** Spend, failure and elapsed-time declarations bind only at the actual tree root. */
+function rootDelegationBudget(
+  candidate: BudgetCandidate,
+): DelegationBounds["budget"] {
+  return candidate.parentRunId === null
+    ? (candidate.delegationBounds?.budget ?? null)
+    : null;
+}
+
 function hasConfiguredBudgetMeter(candidate: BudgetCandidate): boolean {
   const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
   const override = candidate.budgetState?.ceilingOverride;
+  const nodeBudget = rootDelegationBudget(candidate);
 
-  return (["run", "task", "tree"] as const).some((scope) =>
-    (
-      [
-        "maxTokens",
-        "hardMaxTokens",
-        "consecutiveFailures",
-        "wallClockMinutes",
-      ] as const
-    ).some((meter) =>
-      isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
-    ),
+  return (
+    candidate.specialistAssignmentId != null ||
+    (["run", "task", "tree"] as const).some((scope) =>
+      (
+        [
+          "maxTokens",
+          "hardMaxTokens",
+          "consecutiveFailures",
+          "wallClockMinutes",
+        ] as const
+      ).some((meter) =>
+        isSetLimit(effectiveLimit(snapshotBudget, override, scope, meter)),
+      ),
+    ) ||
+    (["maxTokens", "consecutiveFailures", "wallClockMinutes"] as const).some(
+      (meter) => isSetLimit(nodeBudget?.[meter] ?? null),
+    )
   );
 }
 
@@ -1058,6 +1107,15 @@ async function budgetReconciliationRunIds(
   const rootRunIds = budgeted
     .filter((candidate) => candidate.parentRunId === null)
     .map((candidate) => candidate.id);
+  const specialistAssignmentIds = [
+    ...new Set(
+      budgeted.flatMap((candidate) =>
+        candidate.specialistAssignmentId
+          ? [candidate.specialistAssignmentId]
+          : [],
+      ),
+    ),
+  ];
 
   if (taskIds.length > 0) {
     const taskRuns = await db
@@ -1077,6 +1135,14 @@ async function budgetReconciliationRunIds(
       );
 
     for (const run of treeRuns) runIds.add(run.id);
+  }
+  if (specialistAssignmentIds.length) {
+    const appointments = await db
+      .select({ runId: specialistRunLinks.runId })
+      .from(specialistRunLinks)
+      .where(inArray(specialistRunLinks.assignmentId, specialistAssignmentIds));
+
+    for (const appointment of appointments) runIds.add(appointment.runId);
   }
 
   return [...runIds];
@@ -1171,6 +1237,7 @@ type BudgetVerdict = {
   meter: BudgetMeter;
   current: number;
   limit: number;
+  specialistAssignmentId?: string;
 };
 
 const RUNG_ORDER: Record<BudgetRung, number> = {
@@ -1383,7 +1450,7 @@ async function evaluateBudgetForCandidate(
     // lower an instance policy, never raise it. Spend / time / failure budgets
     // bind at the ROOT ONLY; a nested orchestrator's budget is recorded on its
     // own run row and never metered (residual R-nested).
-    const nodeBudget = candidate.delegationBounds?.budget ?? null;
+    const nodeBudget = rootDelegationBudget(candidate);
     const mergeTree = (
       policyLimit: number | null,
       nodeLimit: number | undefined,
@@ -1622,12 +1689,32 @@ async function actBudgetWarn(
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
 ): Promise<boolean> {
-  const next = mergedBudgetState(candidate.budgetState, verdict.scope, "warn");
-  const upd = await db
-    .update(runs)
-    .set({ budgetState: next })
-    .where(and(eq(runs.id, candidate.id), eq(runs.status, "Running")))
-    .returning({ id: runs.id });
+  const upd = await db.transaction(async (tx: Db) => {
+    const [current] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, candidate.id))
+      .for("no key update");
+
+    if (
+      !current ||
+      current.status !== "Running" ||
+      (await currentBudgetTermination(tx, current))
+    )
+      return [];
+
+    return tx
+      .update(runs)
+      .set({
+        budgetState: mergedBudgetState(
+          current.budgetState,
+          verdict.scope,
+          "warn",
+        ),
+      })
+      .where(eq(runs.id, candidate.id))
+      .returning({ id: runs.id });
+  });
 
   if (upd.length === 0) return false;
 
@@ -1799,6 +1886,14 @@ async function actBudgetEscalate(
 
   try {
     paused = await db.transaction(async (tx: Db) => {
+      const [current] = await tx
+        .select()
+        .from(runs)
+        .where(eq(runs.id, candidate.id))
+        .for("no key update");
+
+      if (!current || (await currentBudgetTermination(tx, current)))
+        return false;
       const source = live
         ? await captureAgentPauseSource(tx, {
             runId: candidate.id,
@@ -1818,7 +1913,7 @@ async function actBudgetEscalate(
             ? { checkpointAt: new Date(), keepaliveUntil: null }
             : {}),
           budgetState: mergedBudgetState(
-            candidate.budgetState,
+            current.budgetState,
             verdict.scope,
             verdict.rung,
           ),
@@ -1978,6 +2073,39 @@ async function actBudgetEscalate(
   return true;
 }
 
+async function ownsBudgetTermination(
+  db: Db,
+  runId: string,
+  intent: BudgetTermination,
+): Promise<boolean> {
+  const [run] = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+
+  return (
+    run !== undefined &&
+    (await currentBudgetTermination(db, run))?.id === intent.id
+  );
+}
+
+async function releaseBudgetTermination(
+  db: Db,
+  runId: string,
+  intent: BudgetTermination,
+): Promise<void> {
+  await db
+    .update(runs)
+    .set({ budgetState: sql`${runs.budgetState} - 'termination'` })
+    .where(
+      and(
+        eq(runs.id, runId),
+        sql`${runs.budgetState}->'termination'->>'id' = ${intent.id}`,
+      ),
+    );
+}
+
 // TERMINATE (run/task scope → terminate the offending run): mirror
 // runTimeLimitPass — match the live session, deleteSession (EXECUTOR_UNAVAILABLE
 // → leave Running for next tick; 404 → proceed), CAS the run terminal, then the
@@ -1994,33 +2122,34 @@ async function actBudgetTerminateRun(
   if (!bound) return false;
   const { client, live } = bound;
 
+  const termination = await claimBudgetTermination(db, {
+    runId: candidate.id,
+    nodeId: candidate.currentStepId,
+    scope: verdict.scope,
+    meter: verdict.meter,
+    current: verdict.current,
+    limit: verdict.limit,
+    assignmentId: client.assignment.id,
+    sessionId: live?.sessionId ?? null,
+  });
+
+  if (!termination) return false;
+
   if (live) {
     try {
       await client.deleteSession(live.sessionId);
     } catch (err) {
-      if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-        log.warn(
-          { runId: candidate.id, err: err.message },
-          "[budget] terminate deleteSession 5xx — leaving Running for next tick",
-        );
-
-        return false;
-      }
-      if (isFencedError(err)) {
-        log.warn(
-          { runId: candidate.id },
-          "[budget] terminate deleteSession fenced — a newer driver generation owns the run; skipping",
-        );
-
-        return false;
-      }
       log.warn(
         {
           runId: candidate.id,
+          scope: verdict.scope,
+          code: isMaisterError(err) ? err.code : null,
           err: err instanceof Error ? err.message : String(err),
         },
-        "[budget] terminate deleteSession terminal failure — session unrecoverable, proceeding",
+        "[FIX] budget teardown unconfirmed — retaining stop owner for retry",
       );
+
+      return false;
     }
   }
 
@@ -2040,11 +2169,13 @@ async function actBudgetTerminateRun(
     const result = await finalizeAgentRun(candidate.id, "Failed", {
       db,
       reason: "budget_breach",
+      budgetTerminationId: termination.id,
       closeOpenHitl: true,
       closeAssignments: { kind: "system", reason: "budget_breach" },
     });
 
     if (!result.finalized) {
+      await releaseBudgetTermination(db, candidate.id, termination);
       log.debug(
         { runId: candidate.id },
         "[budget] agent terminate finalize mismatch — concurrent transition won",
@@ -2074,10 +2205,15 @@ async function actBudgetTerminateRun(
         details: { reason: "budget_breach" },
       }),
       terminal: "failed",
+      budgetTerminationId: termination.id,
     });
 
     // A lost CAS killed nothing: no slot freed, nothing to report.
-    if (!applied) return false;
+    if (!applied) {
+      await releaseBudgetTermination(db, candidate.id, termination);
+
+      return false;
+    }
     await promoteAfterTimeoutKill(db);
     logBudgetTerminated(candidate, verdict);
 
@@ -2093,6 +2229,8 @@ async function actBudgetTerminateRun(
     ? await fetchActiveAttempt(db, candidate.id, candidate.currentStepId)
     : null;
   const claimed: boolean = await db.transaction(async (tx: Db) => {
+    if (!(await ownsBudgetTermination(tx, candidate.id, termination)))
+      return false;
     const upd = await tx
       .update(runs)
       .set({
@@ -2104,6 +2242,10 @@ async function actBudgetTerminateRun(
       .where(
         and(
           eq(runs.id, candidate.id),
+          termination.assignmentId
+            ? eq(runs.executionAssignmentId, termination.assignmentId)
+            : isNull(runs.executionAssignmentId),
+          sql`${runs.budgetState}->'termination'->>'id' = ${termination.id}`,
           eq(runs.status, "Running"),
           candidate.currentStepId
             ? eq(runs.currentStepId, candidate.currentStepId)
@@ -2167,6 +2309,7 @@ async function actBudgetTerminateRun(
   });
 
   if (!claimed) {
+    await releaseBudgetTermination(db, candidate.id, termination);
     log.debug(
       { runId: candidate.id, nodeId: candidate.currentStepId },
       "[budget] flow terminate claim lost — run advanced concurrently",
@@ -2187,6 +2330,24 @@ async function actBudgetTerminateRun(
 // sessions, so the root session + each child session are killed here and the
 // root row is flipped here (Failed for flow/agent; the scratch finalizer is
 // never a tree root).
+function deferOwnedTreeStop(
+  error: unknown,
+  runId: string,
+  stopId: string,
+): false {
+  if (
+    !isMaisterError(error) ||
+    (error.code !== "EXECUTOR_UNAVAILABLE" && error.code !== "CONFLICT")
+  )
+    throw error;
+  log.warn(
+    { runId, stopId, code: error.code, reason: error.details?.reason },
+    "budget tree teardown deferred under its retained stop",
+  );
+
+  return false;
+}
+
 async function actBudgetTerminateTree(
   db: Db,
   hosts: ExecutionHosts,
@@ -2204,44 +2365,58 @@ async function actBudgetTerminateTree(
   if (!bound) return false;
   const { client, live: rootLive } = bound;
 
-  if (rootLive) {
+  const termination = await claimBudgetTermination(db, {
+    runId: candidate.id,
+    nodeId: candidate.currentStepId,
+    scope: verdict.scope,
+    meter: verdict.meter,
+    current: verdict.current,
+    limit: verdict.limit,
+    assignmentId: client.assignment.id,
+    sessionId: rootLive?.sessionId ?? null,
+    specialistAssignmentId: verdict.specialistAssignmentId,
+  });
+
+  if (!termination) return false;
+
+  if (rootLive || candidate.companyId) {
     try {
-      await client.deleteSession(rootLive.sessionId);
+      const sessions = candidate.companyId
+        ? await client.sessionsForRun()
+        : rootLive
+          ? [rootLive]
+          : [];
+
+      for (const session of sessions)
+        if (session.status === "live")
+          await client.deleteSession(session.sessionId);
     } catch (err) {
-      if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
-        log.warn(
-          { runId: candidate.id, err: err.message },
-          "[budget] tree-terminate root deleteSession 5xx — leaving tree for next tick",
-        );
-
-        return false;
-      }
-      if (isFencedError(err)) {
-        log.warn(
-          { runId: candidate.id },
-          "[budget] tree-terminate root deleteSession fenced — a newer driver generation owns the root; skipping",
-        );
-
-        return false;
-      }
       log.warn(
         {
           runId: candidate.id,
+          scope: verdict.scope,
+          code: isMaisterError(err) ? err.code : null,
           err: err instanceof Error ? err.message : String(err),
         },
-        "[budget] tree-terminate root deleteSession terminal failure — proceeding",
+        "[FIX] budget teardown unconfirmed — retaining stop owner for retry",
       );
+
+      return false;
     }
   }
 
   // Rows AND sessions: without the teardown the child agents keep running to
   // completion and the tree token cap stays soft.
-  await cascadeAbandonRunTreeAndStopSessions(
-    candidate.id,
-    candidate.taskId,
-    "budget_exceeded",
-    { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
-  );
+  try {
+    await cascadeAbandonRunTreeAndStopSessions(
+      candidate.id,
+      candidate.taskId,
+      "budget_exceeded",
+      { db, executionHosts: hosts, logLabel: "[budget] tree-terminate" },
+    );
+  } catch (error) {
+    return deferOwnedTreeStop(error, candidate.id, termination.id);
+  }
 
   // The ROOT's own terminal flip is run-kind dispatched, exactly like the
   // run-scope arm. A tree root is any candidate with `root_run_id IS NULL` and
@@ -2252,15 +2427,27 @@ async function actBudgetTerminateTree(
   // token revocation, HITL close, materialization restore, context-mount release
   // or AGENT-pool promotion.
   if (candidate.runKind === "agent") {
-    const { finalizeAgentRun } = await import("@/lib/agents/launch");
-    const result = await finalizeAgentRun(candidate.id, "Failed", {
+    const { prepareAgentRunFinalization } =
+      await import("@/lib/agents/finalization");
+    const prepared = await prepareAgentRunFinalization(candidate.id, "Failed", {
       db,
+      executionHosts: hosts,
       reason: "budget_breach",
+      budgetTerminationId: termination.id,
       closeOpenHitl: true,
       closeAssignments: { kind: "system", reason: "budget_breach" },
-    });
+    }).catch((error: unknown) =>
+      deferOwnedTreeStop(error, candidate.id, termination.id),
+    );
+
+    if (prepared === false) return false;
+    const result = await db.transaction((tx: Db) => prepared.apply(tx));
+
+    await prepared.afterCommit(result);
 
     if (!result.finalized) {
+      if (!termination.specialistAssignmentId)
+        await releaseBudgetTermination(db, candidate.id, termination);
       log.debug(
         { runId: candidate.id },
         "[budget] tree-terminate agent finalize mismatch — concurrent transition won",
@@ -2283,11 +2470,39 @@ async function actBudgetTerminateTree(
         details: { reason: "budget_breach" },
       }),
       terminal: "failed",
+      budgetTerminationId: termination.id,
     });
 
     // A lost CAS killed nothing: no slot freed, nothing to report.
-    if (!applied) return false;
+    if (!applied) {
+      await releaseBudgetTermination(db, candidate.id, termination);
+
+      return false;
+    }
     await promoteAfterTimeoutKill(db);
+    logBudgetTerminated(candidate, verdict);
+
+    return true;
+  }
+
+  if (candidate.runKind === "flow" && candidate.companyId) {
+    const { finalizeCompanyFlowRun } =
+      await import("@/lib/run-results/company-flow-terminal");
+    const finalized = await finalizeCompanyFlowRun({
+      db,
+      rootDb: db,
+      hosts,
+      runId: candidate.id,
+      requested: "Failed",
+      errorCode: "BUDGET_EXCEEDED",
+      reason: "budget_breach",
+      driverToken: termination.driverToken ?? undefined,
+      budgetTerminationId: termination.id,
+    }).catch((error: unknown) =>
+      deferOwnedTreeStop(error, candidate.id, termination.id),
+    );
+
+    if (!finalized) return false;
     logBudgetTerminated(candidate, verdict);
 
     return true;
@@ -2311,6 +2526,8 @@ async function actBudgetTerminateTree(
     runKind: string;
     parentRunId: string | null;
   }> = await db.transaction(async (tx: Db) => {
+    if (!(await ownsBudgetTermination(tx, candidate.id, termination)))
+      return [];
     const rows = await tx
       .update(runs)
       .set({
@@ -2322,6 +2539,10 @@ async function actBudgetTerminateTree(
       .where(
         and(
           eq(runs.id, candidate.id),
+          termination.assignmentId
+            ? eq(runs.executionAssignmentId, termination.assignmentId)
+            : isNull(runs.executionAssignmentId),
+          sql`${runs.budgetState}->'termination'->>'id' = ${termination.id}`,
           inArray(runs.status, ["Running", "WaitingOnChildren"]),
           // Guard on the node `treeRootAttempt` was resolved for, exactly like
           // the run-scope arm: a root that advanced to its next node while
@@ -2397,6 +2618,7 @@ async function actBudgetTerminateTree(
   });
 
   if (upd.length === 0) {
+    await releaseBudgetTermination(db, candidate.id, termination);
     // The flip lost, but the cascade above already committed: every descendant is
     // irreversibly Abandoned while this root survives non-terminal.
     //
@@ -2477,6 +2699,27 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
     candidates,
     PER_PASS_CONCURRENCY,
     async (candidate) => {
+      const pending = await currentBudgetTermination(db, candidate);
+
+      if (pending) {
+        if (pending.trigger === "node_duration") return;
+        const verdict: BudgetVerdict = {
+          rung: "terminate",
+          scope: pending.scope,
+          meter: pending.meter,
+          current: pending.current,
+          limit: pending.limit,
+          specialistAssignmentId: pending.specialistAssignmentId,
+        };
+        const didAct =
+          pending.scope === "tree"
+            ? await actBudgetTerminateTree(db, hosts, candidate, verdict)
+            : await actBudgetTerminateRun(db, hosts, candidate, verdict);
+
+        if (didAct) acted++;
+
+        return;
+      }
       const snapshotBudget = budgetFromSnapshot(candidate.executionPolicy);
       const override = candidate.budgetState?.ceilingOverride;
 
@@ -2484,12 +2727,17 @@ async function runBudgetPass(db: Db, hosts: ExecutionHosts): Promise<number> {
       // neither contributes to the reconciliation set nor receives an action.
       if (!hasConfiguredBudgetMeter(candidate)) return;
 
-      const verdict = await evaluateBudgetForCandidate(
-        db,
-        candidate,
-        snapshotBudget,
-        override,
-      );
+      const assignmentBudget = candidate.specialistAssignmentId
+        ? await readAssignmentRuntimeBudget(db, candidate.id)
+        : null;
+      const verdict: BudgetVerdict | null = assignmentBudget
+        ? { ...assignmentBudget, scope: "tree", rung: "terminate" }
+        : await evaluateBudgetForCandidate(
+            db,
+            candidate,
+            snapshotBudget,
+            override,
+          );
 
       if (!verdict) return;
       if (alreadyActioned(candidate.budgetState, verdict.scope, verdict.rung)) {

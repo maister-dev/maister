@@ -34,8 +34,10 @@ describe("MCP stdio wire contract", () => {
     await close();
   }
 
-  async function connectClient(token: string): Promise<Client> {
-    const connected = await connectCompiledMcp({ baseUrl, token });
+  async function connectClient(
+    identity: Readonly<{ token: string; toolset?: string }>,
+  ): Promise<Client> {
+    const connected = await connectCompiledMcp({ baseUrl, ...identity });
 
     processClosers.set(connected.client, connected.close);
 
@@ -145,7 +147,7 @@ describe("MCP stdio wire contract", () => {
       throw new Error("Expected an HTTP fixture TCP address");
     }
     baseUrl = `http://127.0.0.1:${address.port}`;
-    client = await connectClient("mai_wire_test");
+    client = await connectClient({ token: "mai_wire_test" });
   });
 
   afterAll(async () => {
@@ -241,10 +243,11 @@ describe("MCP stdio wire contract", () => {
     const { tools } = await client.listTools();
 
     expect(
-      tools.map(({ name, description, inputSchema }) => ({
+      tools.map(({ name, description, inputSchema, annotations }) => ({
         name,
         description,
         inputSchema,
+        ...(annotations ? { annotations } : {}),
       })),
     ).toEqual(
       Object.entries(TOOL_SPECS).map(([name, spec]) => ({ name, ...spec })),
@@ -491,6 +494,368 @@ describe("MCP stdio wire contract", () => {
     expect(requests).toHaveLength(count);
   });
 
+  it("inspects appointed assignment revisions through the built company facade and refuses forged selectors locally", async () => {
+    const company = await connectClient({
+      token: "mai_assignment_wire",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_get")?.annotations
+          ?.readOnlyHint,
+      ).toBe(true);
+      const result = await company.callTool({
+        name: "assignment_get",
+        arguments: { assignmentId: "assignment / exact" },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "GET",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact",
+        authorization: "Bearer mai_assignment_wire",
+        body: {},
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        { assignmentId: "assignment", actor: { kind: "user", id: "forged" } },
+        { assignmentId: "" },
+        { assignmentId: "assignment", revision: 1 },
+      ]) {
+        const refused = await company.callTool({
+          name: "assignment_get",
+          arguments: arguments_,
+        });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(before);
+    } finally {
+      await closeClient(company);
+    }
+  });
+
+  it("forwards exact delegated work, collection, clarification and rework through the built company facade", async () => {
+    const company = await connectClient({
+      token: "mai_company_delegation_wire",
+      toolset: "company",
+    });
+    const body = {
+      target: { agentId: "rah:diagnostic" },
+      mode: "run",
+      prompt: "Inspect the retained observation",
+      assignmentWork: {
+        selector: {
+          schemaVersion: 1,
+          assignmentId: "assignment",
+          expectedRevision: 3,
+          inputRevision: 1,
+          contextRevision: 0,
+          logicalWorkId: "inspect",
+          workRevision: 1,
+        },
+        expectedOutcome: "A typed diagnosis",
+      },
+    };
+    const child = { childRunId: "56c46e8e-277f-4b49-8f99-ae3e133371ac" };
+    const clarification = {
+      ...child,
+      requestKey: "clarify-observation",
+      mode: "steer",
+      prompt: "Check if the observation still applies.",
+    };
+    const rework = {
+      ...child,
+      prompt: "Recheck the conclusion.",
+      assignmentWork: {
+        schemaVersion: 1,
+        expectedRevision: 2,
+        workRevision: 1,
+        inputRevision: 1,
+        resultRevision: 1,
+        requestKey: "recheck-conclusion",
+      },
+    };
+
+    try {
+      for (const [name, path, input] of [
+        ["run_delegate", "/api/v1/ext/runs/delegate", body],
+        ["run_collect", "/api/v1/ext/runs/collect", child],
+        ["run_message", "/api/v1/ext/runs/message", clarification],
+        ["run_rework", "/api/v1/ext/runs/rework", rework],
+      ] as const) {
+        expect(
+          (await company.callTool({ name, arguments: input })).isError,
+        ).not.toBe(true);
+        expect(requests.at(-1)).toEqual({
+          method: "POST",
+          url: path,
+          authorization: "Bearer mai_company_delegation_wire",
+          body: input,
+        });
+      }
+      const acceptance = {
+        decision: "accept",
+        expectedRevision: 2,
+        workRevision: 1,
+        inputRevision: 1,
+        resultRevision: 1,
+        reason: "The child supplied the requested result.",
+        idempotencyKey: "accept-observation",
+      };
+
+      expect(
+        (
+          await company.callTool({
+            name: "specialist_assignment_work_decide",
+            arguments: {
+              assignmentId: "assignment",
+              workId: "work",
+              ...acceptance,
+            },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment/work/work/decisions",
+        authorization: "Bearer mai_company_delegation_wire",
+        body: acceptance,
+      });
+    } finally {
+      await closeClient(company);
+    }
+  });
+
+  it("serves native assignment questions through the built facade with exact HTTP forwarding and human answers outside the company toolset", async () => {
+    const company = await connectClient({
+      token: "mai_question_wire",
+      toolset: "company",
+    });
+    const body = {
+      expectedRevision: 4,
+      inputRevision: 1,
+      question: "Which configured component?",
+      schema: {
+        schemaVersion: 1,
+        fields: [
+          { name: "component", type: "string", required: true },
+          {
+            name: "observations",
+            type: "array",
+            items: {
+              type: "object",
+              fields: [{ name: "healthy", type: "boolean" }],
+            },
+          },
+        ],
+      },
+      idempotencyKey: "question-wire-1",
+    };
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_question_ask")
+          ?.annotations?.readOnlyHint,
+      ).toBe(false);
+      expect(
+        listed.tools.some(
+          (tool) => tool.name === "assignment_question_respond",
+        ),
+      ).toBe(false);
+      const asked = await company.callTool({
+        name: "assignment_question_ask",
+        arguments: { assignmentId: "assignment / exact", ...body },
+      });
+
+      expect(asked.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/questions",
+        authorization: "Bearer mai_question_wire",
+        body: { ...body, reTriggerMode: "agent" },
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        {
+          assignmentId: "assignment",
+          ...body,
+          actor: { kind: "user", id: "forged" },
+        },
+        { assignmentId: "assignment", ...body, inputRevision: 0 },
+        {
+          assignmentId: "assignment",
+          ...body,
+          schema: { ...body.schema, schemaVersion: 2 },
+        },
+        { assignmentId: "assignment", ...body, reTriggerMode: "triage" },
+      ])
+        expect(
+          (
+            await company.callTool({
+              name: "assignment_question_ask",
+              arguments: arguments_,
+            })
+          ).isError,
+        ).toBe(true);
+      expect(
+        (
+          await company.callTool({
+            name: "assignment_question_respond",
+            arguments: {
+              assignmentId: "assignment",
+              questionId: "question",
+              expectedRevision: 5,
+              inputRevision: 1,
+              response: { component: "web" },
+              idempotencyKey: "answer-wire-1",
+            },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(requests).toHaveLength(before);
+      const response = {
+        expectedRevision: 5,
+        inputRevision: 1,
+        response: { component: "web" },
+        idempotencyKey: "answer-wire-1",
+      };
+
+      expect(
+        (
+          await client.callTool({
+            name: "assignment_question_respond",
+            arguments: {
+              assignmentId: "assignment / exact",
+              questionId: "question / exact",
+              ...response,
+            },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/questions/question%20%2F%20exact/respond",
+        authorization: "Bearer mai_wire_test",
+        body: response,
+      });
+    } finally {
+      await company.close();
+    }
+  });
+
+  it("serves assignment context through the real company facade with exact selectors and local closed-schema refusal", async () => {
+    const company = await connectClient({
+      token: "mai_context_wire",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+      const context = listed.tools.find(
+        (tool) => tool.name === "assignment_context_get",
+      );
+
+      expect(context?.annotations?.readOnlyHint).toBe(true);
+      const result = await company.callTool({
+        name: "assignment_context_get",
+        arguments: { assignmentId: "assignment / exact", revision: 0 },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(requests.at(-1)).toEqual({
+        method: "GET",
+        url: "/api/v1/ext/specialist-assignments/assignment%20%2F%20exact/context?revision=0",
+        authorization: "Bearer mai_context_wire",
+        body: {},
+      });
+      const before = requests.length;
+
+      for (const arguments_ of [
+        { assignmentId: "assignment", revision: -1 },
+        { assignmentId: "assignment", actor: { kind: "user", id: "forged" } },
+        { assignmentId: "assignment", revision: "0" },
+      ]) {
+        const refused = await company.callTool({
+          name: "assignment_context_get",
+          arguments: arguments_,
+        });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(before);
+    } finally {
+      await closeClient(company);
+    }
+  });
+
+  it("sends exact revisioned context edits through the built company facade without accepting authority fields", async () => {
+    const company = await connectClient({
+      token: "mai_context_write",
+      toolset: "company",
+    });
+
+    try {
+      const listed = await company.listTools();
+
+      expect(
+        listed.tools.find((tool) => tool.name === "assignment_context_update")
+          ?.annotations?.readOnlyHint,
+      ).toBe(false);
+      const input = {
+        assignmentId: "assignment/exact",
+        expectedRevision: 0,
+        expectedInputRevision: 1,
+        idempotencyKey: "context-wire-write",
+        updates: [
+          {
+            id: "open-question",
+            kind: "question",
+            text: "Which independent check is missing?",
+            state: "open",
+            references: [],
+          },
+        ],
+      };
+      const result = await company.callTool({
+        name: "assignment_context_update",
+        arguments: input,
+      });
+
+      expect(result.isError).not.toBe(true);
+      const body = {
+        expectedRevision: input.expectedRevision,
+        expectedInputRevision: input.expectedInputRevision,
+        idempotencyKey: input.idempotencyKey,
+        updates: input.updates,
+      };
+
+      expect(requests.at(-1)).toEqual({
+        method: "PATCH",
+        url: "/api/v1/ext/specialist-assignments/assignment%2Fexact/context",
+        authorization: "Bearer mai_context_write",
+        body,
+      });
+      const before = requests.length;
+      const refused = await company.callTool({
+        name: "assignment_context_update",
+        arguments: { ...input, ownerEpoch: 1 },
+      });
+
+      expect(refused.isError).toBe(true);
+      expect(requests).toHaveLength(before);
+    } finally {
+      await company.close();
+    }
+  });
+
   it.each([true, false])(
     "forwards enqueue=%s and nullable metadata without changing their types",
     async (enqueue) => {
@@ -602,7 +967,7 @@ describe("MCP stdio wire contract", () => {
   });
 
   it("rejects a call without credentials before reaching REST", async () => {
-    const unauthenticated = await connectClient("");
+    const unauthenticated = await connectClient({ token: "" });
     const count = requests.length;
 
     try {
@@ -669,6 +1034,92 @@ describe("MCP stdio wire contract", () => {
         }),
       },
     ]);
+  });
+
+  it("the bundled company facade lists the native knowledge and governed work tools and refuses unrelated operations before REST", async () => {
+    const company = await connectClient({
+      token: "mai_company_wire",
+      toolset: "company",
+    });
+
+    try {
+      const { tools } = await company.listTools();
+
+      expect(tools.map((tool) => tool.name).sort()).toEqual(
+        [
+          "knowledge_search",
+          "knowledge_get",
+          "knowledge_evidence",
+          "knowledge_conflicts",
+          "knowledge_witness_get",
+          "knowledge_proposal_get",
+          "knowledge_capture_source",
+          "knowledge_propose",
+          "assignment_get",
+          "assignment_context_get",
+          "assignment_context_update",
+          "assignment_question_ask",
+          "stand_operation_create",
+          "stand_operation_get",
+          "stand_operation_logs",
+          "stand_operation_observe",
+          "stand_operation_dispatch",
+          "stand_operation_verify",
+          "run_delegate",
+          "run_collect",
+          "run_message",
+          "run_rework",
+          "specialist_assignment_work_decide",
+        ].sort(),
+      );
+      const inspected = await company.callTool({
+        name: "knowledge_get",
+        arguments: { recordId: "record-1", revision: 1 },
+      });
+
+      expect(inspected.isError).not.toBe(true);
+      expect(requests.at(-1)).toMatchObject({
+        method: "GET",
+        url: "/api/v1/ext/knowledge/record-1?revision=1",
+        authorization: "Bearer mai_company_wire",
+      });
+      const intent = {
+        expectedRevision: 2,
+        inputRevision: 1,
+        componentId: "api",
+        action: "restart",
+        idempotencyKey: "fixture-restart",
+      };
+      const retained = await company.callTool({
+        name: "stand_operation_create",
+        arguments: { assignmentId: "assignment-1", ...intent },
+      });
+
+      expect(retained.isError).not.toBe(true);
+      expect(requests.at(-1)).toMatchObject({
+        method: "POST",
+        url: "/api/v1/ext/specialist-assignments/assignment-1/operations",
+        authorization: "Bearer mai_company_wire",
+        body: intent,
+      });
+      const count = requests.length;
+
+      for (const name of [
+        "knowledge_confirm",
+        "knowledge_decide",
+        "knowledge_proposals_list",
+        "librarian_memory_remember",
+        "agent_memory_write",
+        "run_promote",
+      ]) {
+        const refused = await company.callTool({ name, arguments: {} });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(count);
+    } finally {
+      await company.close();
+    }
   });
 
   it("rejects an unknown tool before reaching REST", async () => {

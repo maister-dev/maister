@@ -561,8 +561,8 @@ export async function reconcileManyRunCostRollups(
 // resume tax). COALESCE(..., 0) covers the no-rows case (missing run / empty
 // task / empty tree). Returned as a JS number (token counts are well within
 // Number.MAX_SAFE_INTEGER for any realistic spend).
-const baseTokenSumExpr = sql<number>`coalesce(sum(
-  ${runCostRollups.inputTokens}
+export const baseTokenSumExpr = sql<number>`coalesce(sum(
+  ${runCostRollups.inputTokens}::bigint
   + ${runCostRollups.outputTokens}
   + ${runCostRollups.cacheReadTokens}
   + ${runCostRollups.cacheCreationTokens}

@@ -13,11 +13,21 @@ import type {
   BrainProposalResolution,
   BrainProposalStatus,
 } from "./schema";
+import type { CreateKnowledgeProposalInput } from "./knowledge-types";
+import type { KnowledgeDatabase } from "./knowledge-access";
+import type { KnowledgeProposalReceipt } from "./knowledge-proposals";
+
+export {
+  reviewKnowledgeProposal,
+  confirmKnowledgeRecord,
+} from "./knowledge-proposals";
 
 import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
+
+import { createKnowledgeProposal } from "./knowledge-proposals";
 
 import {
   getBrainAutonomyPolicy,
@@ -213,6 +223,7 @@ async function loadProposalForUpdate(
     SELECT *
     FROM brain_proposals
     WHERE id = ${proposalId} AND project_id = ${projectId}
+      AND kind NOT IN ('knowledge_add','knowledge_correct')
     FOR UPDATE
   `);
 
@@ -232,6 +243,7 @@ export async function getBrainProposal(
     SELECT *, false AS idempotent
     FROM brain_proposals
     WHERE id = ${proposalId} AND project_id = ${projectId}
+      AND kind NOT IN ('knowledge_add','knowledge_correct')
     LIMIT 1
   `);
 
@@ -272,10 +284,27 @@ function assertTransitionActor(
   }
 }
 
-export async function createBrainProposal(
+export function createBrainProposal(
+  db: KnowledgeDatabase,
+  input: CreateKnowledgeProposalInput,
+): Promise<KnowledgeProposalReceipt>;
+export function createBrainProposal(
   db: ProposalDb,
   input: CreateBrainProposalInput,
-): Promise<BrainProposalDto> {
+): Promise<BrainProposalDto>;
+export async function createBrainProposal(
+  db: ProposalDb | KnowledgeDatabase,
+  input: CreateBrainProposalInput | CreateKnowledgeProposalInput,
+): Promise<BrainProposalDto | KnowledgeProposalReceipt> {
+  if ("owner" in input) {
+    if (!("transaction" in db))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Native knowledge submission requires a transaction owner",
+      );
+
+    return createKnowledgeProposal(db, input);
+  }
   assertCreateInput(input);
 
   if (input.clusterHash) {

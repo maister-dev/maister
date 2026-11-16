@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "1640fbd70a86dccaa72c92847ae777044207f363",
+  "verdict": "failed",
+  "processExitCode": 1,
+  "jsonReporterSuccess": false,
+  "unhandledErrors": 0,
+  "durationSeconds": 1554.99,
+  "files": {
+    "passed": 685,
+    "failed": 2,
+    "skipped": 2,
+    "total": 689
+  },
+  "tests": {
+    "passed": 6265,
+    "failed": 7,
+    "skipped": 2,
+    "total": 6274
+  },
+  "productionBuild": {
+    "buildId": "V7PYBUIa-GL6UxezERS79",
+    "durationMs": 21404,
+    "revision": "1640fbd70a86dccaa72c92847ae777044207f363"
+  },
+  "classification": [
+    {
+      "cases": [
+        "IT-CBA-05 normal clarification"
+      ],
+      "observed": "The inner 15-second ordinal wait expired after a successful create ACK beyond the worker five-second tick deadline. Normal teardown did complete.",
+      "isolatedProbe": "Without selecting the new CBC01 test, the same source instead reached input revision 32 and exceeded its outer 300-second test budget."
+    },
+    {
+      "cases": [
+        "IT-CBA-02 multi-originprojectintake"
+      ],
+      "observed": "The 90-second overall test budget expired while the workflow progressed through a native event producer. Its active Run continued into later cases."
+    },
+    {
+      "cases": [
+        "CBS-02permissionlive",
+        "CBS-02permissioncheckpointed",
+        "CBS-02permissioncancelled",
+        "CBS-02poolpromotion"
+      ],
+      "observed": "Cascades from the timed-out intake case: the current host identity guard refused a switch while the original Run remained live, and the shared pool stayed occupied."
+    },
+    {
+      "cases": [
+        "owner-agent-initial retains original result beyond the preview limit"
+      ],
+      "observed": "Session creation was rejected with HTTP 500/SPAWN in eight milliseconds before ACP. No output parsing occurred; the gated process was positively terminated.",
+      "causeLimit": "The original inner registration cause was not retained. It is not classified as an OS resource failure or a PGID collision.",
+      "separateSourceGap": "Natural exits can leave a registered numeric PGID. Reuse can hit active-group uniqueness before IPC. This is mechanically reachable but not proven to explain the original refusal.",
+      "freshProbe": "The exact large-output test passed without changing its logic or assertions. Final full requalification remains required."
+    }
+  ],
+  "cleanup": {
+    "invocationId": "568d8d94-9b8d-4331-a51f-0c2a58260254",
+    "ownedLiveProcesses": 0,
+    "containers": 0,
+    "temporaryRoots": 0,
+    "errors": []
+  },
+  "qualificationBoundary": "Failed receipt retained without reattribution to later fixes; it does not close full-green or CB1 readiness.",
+  "retainedSha256": {
+    "full.log.gz": "9ccc68defda2d4bdc9ff2c6da97a0f4d93c405befd48bb11b13d682e1a5346f3",
+    "results.json.gz": "e52e25ae985932d9f0fe128e1c416cf56f9cab3ff6cae90e9fcc1a10bf17c621",
+    "cleanup.log.gz": "618913ba561e959d97a093f246f49dea61e20140c16227f1fe3f32316fa36a4c",
+    "preview-host-evidence.json.gz": "b3c0dfb8b8d7605d8fc4e84dcfd1e9237cc52d4cadcf224e4e2169170c634e6b",
+    "preview-supervisor.log.gz": "590c7588761aadf7d2e935ed2e9d5245be3f2a6d1a378b4aae2c16285a63607a",
+    "pgid-source-audit.json.gz": "aa7d933476b478cd91938d05ada88fac08ac34bbc154ac943ed5f8cc661516ec"
+  }
+}

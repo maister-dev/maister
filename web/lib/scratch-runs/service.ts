@@ -38,6 +38,7 @@ import {
   ScratchCreateHandoffPending,
 } from "./create-continuation";
 
+import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
@@ -609,6 +610,7 @@ export async function markScratchCrashed(args: {
   runId: string;
   err: unknown;
   expectedAssignmentId?: string;
+  budgetTerminationId?: string;
   // Cost-budget governance: a budget-kill is a DELIBERATE terminal, not a crash,
   // so it must be NON-recoverable (Recover gates on runs.status='Crashed'). With
   // `terminal:"failed"` the run goes terminal `Failed` (+ emits `run.failed`),
@@ -631,6 +633,22 @@ export async function markScratchCrashed(args: {
   };
 
   return db.transaction(async (tx: Db) => {
+    const [run] = await tx
+      .select()
+      .from(runs)
+      .where(eq(runs.id, args.runId))
+      .for("update");
+    const budgetTermination = run
+      ? await currentBudgetTermination(tx, run)
+      : null;
+
+    if (budgetTermination && budgetTermination.id !== args.budgetTerminationId)
+      return { applied: false };
+    if (
+      args.budgetTerminationId &&
+      budgetTermination?.id !== args.budgetTerminationId
+    )
+      return { applied: false };
     // CAS-before-write: only flip a still-live scratch run to Crashed. The
     // allow-list (never `!terminal`) lets the reconcile sweep crash a Running
     // scratch run, while a duplicate call on an already-terminal row is a

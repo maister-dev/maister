@@ -11,6 +11,8 @@ import {
 } from "@/lib/domain-events/dispatch";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches emit-run-status.integration.test.ts).
+import { DOMAIN_EVENT_CONSUMERS } from "@/lib/domain-events/consumers";
+import { closeDb } from "@/lib/db/client";
 import * as fullSchema from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
@@ -33,6 +35,7 @@ import {
 // =============================================================================
 
 const schema = fullSchema as unknown as Record<string, any>;
+const originalDbUrl = process.env.DB_URL;
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -46,6 +49,8 @@ beforeAll(async () => {
 
   pool = testDatabase.pool;
   db = testDatabase.db;
+  // Registered consumers also resolve their runtime connection through getDb().
+  process.env.DB_URL = testDatabase.databaseUrl;
 
   projectId = randomUUID();
   await db.insert(schema.projects).values({
@@ -59,7 +64,16 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await testDatabase?.stop();
+  try {
+    await closeDb();
+  } finally {
+    if (originalDbUrl === undefined) {
+      delete process.env.DB_URL;
+    } else {
+      process.env.DB_URL = originalDbUrl;
+    }
+    await testDatabase?.stop();
+  }
 });
 
 beforeEach(async () => {
@@ -380,4 +394,55 @@ describe("T-D8 — exponential failure backoff", () => {
     expect(c.calls).toBe(1);
     expect(c.received).toHaveLength(1);
   });
+});
+
+it("IT-CBK-03 company knowledge events drain every existing consumer without creating project work", async () => {
+  const companyId = (
+    await pool.query<{ id: string }>("SELECT id FROM companies")
+  ).rows[0]!.id;
+  const inserted = await pool.query<{ id: string }>(
+    "INSERT INTO domain_events(kind,company_id,payload,occurred_at) VALUES('knowledge.record_changed',$1,$2::jsonb,now()) RETURNING id",
+    [
+      companyId,
+      JSON.stringify({
+        owner: { kind: "company", companyId },
+        recordId: randomUUID(),
+        revision: 1,
+        changeId: randomUUID(),
+        cause: "published",
+      }),
+    ],
+  );
+  const consumers: DomainEventConsumer[] = DOMAIN_EVENT_CONSUMERS.map(
+    (consumer) => ({ ...consumer, startFrom: "beginning" }),
+  );
+  const before = await pool.query(
+    "SELECT (SELECT count(*) FROM runs)::int AS runs,(SELECT count(*) FROM webhook_events)::int AS webhooks,(SELECT count(*) FROM librarian_updates)::int AS updates",
+  );
+  const result = await dispatchDomainEvents({ db, consumers });
+
+  expect(result.failures).toBe(0);
+  expect(result.totalDispatched).toBe(consumers.length);
+  expect(
+    (
+      await pool.query(
+        "SELECT cursor_event_id::text,consecutive_failures FROM domain_event_consumers ORDER BY consumer_id",
+      )
+    ).rows,
+  ).toEqual(
+    consumers.map(() => ({
+      cursor_event_id: inserted.rows[0]!.id,
+      consecutive_failures: 0,
+    })),
+  );
+  expect(
+    (
+      await pool.query(
+        "SELECT (SELECT count(*) FROM runs)::int AS runs,(SELECT count(*) FROM webhook_events)::int AS webhooks,(SELECT count(*) FROM librarian_updates)::int AS updates",
+      )
+    ).rows,
+  ).toEqual(before.rows);
+  expect((await dispatchDomainEvents({ db, consumers })).totalDispatched).toBe(
+    0,
+  );
 });

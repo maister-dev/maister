@@ -1,18 +1,30 @@
 import "server-only";
 
-import type { AgentTriggerClaim } from "@/lib/agents/trigger-attempts";
+import type {
+  AgentTriggerClaim,
+  ProjectAgentTriggerClaim,
+} from "@/lib/agents/trigger-attempts";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
-import type { DomainEventRow } from "@/lib/db/schema";
+import type { DomainEventRow, ProjectDomainEventRow } from "@/lib/db/schema";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { resumeQualifiedProjectAssignments } from "@/lib/specialist-assignments/project-source-resume";
+import { dispatchTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import {
   claimCronAgentAttempt,
+  assertProjectAgentTriggerClaim,
   claimEventAgentAttempt,
   settleAgentTriggerAttempt,
 } from "@/lib/agents/trigger-attempts";
-import { resolveAgentChainDepth } from "@/lib/agents/chain-depth";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
+import { dispatchCompanyAgentEvents } from "@/lib/agents/company-event-dispatch";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { MENTION_SUPPRESSION_STATUSES } from "@/lib/agents/summonability";
 import { getDb } from "@/lib/db/client";
@@ -20,10 +32,21 @@ import { pgErrorOf } from "@/lib/db/pg-error";
 import { isAgentTriggerEventKind } from "@/lib/domain-events/taxonomy";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
 import * as schemaModule from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { nextFireAt } from "@/lib/run-schedules/cron";
 import { promoteNextPending } from "@/lib/scheduler";
 import { recordTaskActivityOnce } from "@/lib/social/activity";
+import {
+  PROJECT_COMMENT_REASON_CODES,
+  PROJECT_CRON_REASON_CODES,
+  PROJECT_EVENT_REASON_CODES,
+} from "@/lib/specialist-assignments/project-source-types";
+import { isNativeProjectSpecialist } from "@/lib/specialist-assignments/project-specialist";
+import { submitProjectEventAssignment } from "@/lib/specialist-assignments/project-event-intake";
+import { projectEventSourceReviewSchema } from "@/lib/agents/project-source-review-types";
+import { projectTriggerBindingSnapshotSchema } from "@/lib/agents/trigger-attempt-types";
+import { submitProjectCronAssignment } from "@/lib/specialist-assignments/project-cron-intake";
+import { submitProjectCommentAssignment } from "@/lib/specialist-assignments/project-comment-intake";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents, agentProjectLinks, agentSchedules, runs } =
@@ -37,6 +60,7 @@ const log = pino({
 });
 
 const PER_TICK_LIMIT = 25;
+const SOURCE_RETRY_DELAY_MS = 300000;
 
 export type AgentTickSummary = {
   due: number;
@@ -59,13 +83,17 @@ async function claimAgentScheduleTelemetry(input: {
   scheduleId: string;
   now: Date;
   eventId: number;
-}): Promise<AgentTriggerClaim | null> {
-  return claimEventAgentAttempt(
+}): Promise<ProjectAgentTriggerClaim | null> {
+  const claim = await claimEventAgentAttempt(
     input.db,
     input.scheduleId,
     input.now,
     input.eventId,
   );
+
+  if (claim) assertProjectAgentTriggerClaim(claim);
+
+  return claim;
 }
 
 async function recordAgentScheduleOutcome(input: {
@@ -145,6 +173,9 @@ export async function dispatchDueAgentSchedules(
     projectId: string;
     cronExpr: string;
     timezone: string;
+    requestAtLaunch: string | null;
+    projectSourceReview: ProjectSourceReview | null;
+    bindingRevision: number | null;
   }> = await _db
     .select({
       id: agentSchedules.id,
@@ -152,15 +183,27 @@ export async function dispatchDueAgentSchedules(
       projectId: agentSchedules.projectId,
       cronExpr: agentSchedules.cronExpr,
       timezone: agentSchedules.timezone,
+      requestAtLaunch: agentSchedules.requestAtLaunch,
+      projectSourceReview: agentSchedules.projectSourceReview,
+      bindingRevision: agentProjectLinks.schedulesRevision,
     })
     .from(agentSchedules)
+    .leftJoin(
+      agentProjectLinks,
+      and(
+        eq(agentProjectLinks.projectId, agentSchedules.projectId),
+        eq(agentProjectLinks.agentId, agentSchedules.agentId),
+      ),
+    )
     .where(
       and(
+        sql`${agentSchedules.projectId} IS NOT NULL`,
         eq(agentSchedules.triggerType, "cron"),
         eq(agentSchedules.enabled, true),
         lte(agentSchedules.nextFireAt, now),
       ),
     )
+    .orderBy(agentSchedules.nextFireAt, agentSchedules.id)
     .limit(PER_TICK_LIMIT);
 
   const summary: AgentTickSummary = {
@@ -173,28 +216,108 @@ export async function dispatchDueAgentSchedules(
   };
 
   for (const row of due) {
-    let next: Date;
+    let fence: AgentTriggerClaim | null;
 
     try {
-      next = nextFireAt(row.cronExpr, row.timezone, now);
+      const next = nextFireAt(row.cronExpr, row.timezone, now);
+
+      fence = await claimCronAgentAttempt(_db, row.id, now, next);
     } catch (err) {
-      log.error(
+      if (
+        !isMaisterError(err) ||
+        !["CONFIG", "PRECONDITION", "CONFLICT"].includes(err.code)
+      )
+        throw err;
+      // Refuse a bounded source capture without inventing a fire; a concurrent settings save wins the configuration witness.
+      await _db
+        .update(agentSchedules)
+        .set({
+          nextFireAt: new Date(now.getTime() + SOURCE_RETRY_DELAY_MS),
+          lastOutcome: "refused",
+          lastErrorCode: err.code,
+          lastErrorMessage: "Project source capture requires attention",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(agentSchedules.id, row.id),
+            eq(agentSchedules.enabled, true),
+            lte(agentSchedules.nextFireAt, now),
+            eq(agentSchedules.cronExpr, row.cronExpr),
+            eq(agentSchedules.timezone, row.timezone),
+            sql`${agentSchedules.requestAtLaunch} IS NOT DISTINCT FROM ${row.requestAtLaunch}`,
+            sql`${agentSchedules.projectSourceReview} IS NOT DISTINCT FROM ${row.projectSourceReview === null ? null : JSON.stringify(row.projectSourceReview)}::jsonb`,
+            row.bindingRevision === null
+              ? sql`NOT EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId})`
+              : sql`EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId} AND schedules_revision=${row.bindingRevision})`,
+          ),
+        );
+      summary.refused++;
+      log.warn(
         {
           scheduleId: row.id,
-          cronExpr: row.cronExpr,
-          err: err instanceof Error ? err.message : String(err),
+          agentId: row.agentId,
+          code: err.code,
         },
-        "agent cron schedule has an unusable expression — skipped",
+        "project source capture refused; bounded retry retained",
       );
       continue;
     }
 
-    const fence = await claimCronAgentAttempt(_db, row.id, now, next);
-
     if (!fence) continue;
+    assertProjectAgentTriggerClaim(fence);
     summary.claimed += 1;
 
     try {
+      if (
+        fence.bindingSnapshot.version === 3 ||
+        (await isNativeProjectSpecialist(_db, fence))
+      ) {
+        const native = await submitProjectCronAssignment(_db, fence);
+
+        if (native.projectAdmission) {
+          if (native.projectAdmission.kind === "accepted")
+            await dispatchTaskLaunchIntent(
+              _db,
+              native.projectAdmission.receipt.intentId,
+            );
+          summary.queued++;
+          continue;
+        }
+        if (!native.assignment.runIds.includes(fence.reservedRunId))
+          throw new MaisterError(
+            "CONFLICT",
+            "Native cron intake did not retain its exact reserved Run",
+          );
+        const [execution] = await _db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, fence.reservedRunId));
+
+        if (!execution)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Native cron execution is unavailable",
+            { details: { reason: "project_cron_appointment_unavailable" } },
+          );
+        const outcome = native.duplicate
+          ? "deduplicated"
+          : execution.status === "Pending"
+            ? "queued"
+            : "launched";
+
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: row.id,
+          fence,
+          outcome,
+          runId: fence.reservedRunId,
+          now,
+        });
+        if (execution.status === "Pending") summary.queued++;
+        else summary.launched++;
+        continue;
+      }
       const result = await launch({
         agentId: fence.sourceAgentId,
         projectId: fence.projectId,
@@ -235,7 +358,11 @@ export async function dispatchDueAgentSchedules(
         scheduleId: row.id,
         fence,
         outcome: isMaisterError(err) ? "refused" : "failed",
-        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorCode: isMaisterError(err)
+          ? (PROJECT_CRON_REASON_CODES.find(
+              (reason) => reason === err.details?.reason,
+            ) ?? err.code)
+          : "CRASH",
         errorMessage: "Agent schedule launch was refused",
         now,
       });
@@ -267,6 +394,8 @@ type EventMatchRow = {
   agentId: string;
   projectId: string;
   eventMatch: { kinds?: string[] } | null;
+  projectSourceReview: ProjectSourceReview | null;
+  bindingRevision: number;
 };
 
 type ClarificationAnswerTarget = {
@@ -344,7 +473,7 @@ function clarificationAnswerTarget(
 async function summonMentionedAgents(input: {
   db: Db;
   launch: LaunchFn;
-  event: DomainEventRow;
+  event: ProjectDomainEventRow;
   agentIds: string[];
 }): Promise<void> {
   const { db: _db, launch, event } = input;
@@ -414,6 +543,72 @@ async function summonMentionedAgents(input: {
     if (!fence) continue;
 
     try {
+      if (await isNativeProjectSpecialist(_db, fence)) {
+        if (await chainDepthExhausted(_db, event.id, agentId)) {
+          await recordAgentScheduleOutcome({
+            db: _db,
+            scheduleId: binding.scheduleId,
+            fence,
+            outcome: "refused",
+            errorCode: "chain_depth_exhausted",
+            now: new Date(),
+          });
+          continue;
+        }
+        const native = await submitProjectCommentAssignment(_db, fence);
+
+        if (native.projectAdmission) {
+          if (native.projectAdmission.kind === "accepted")
+            await dispatchTaskLaunchIntent(
+              _db,
+              native.projectAdmission.receipt.intentId,
+            );
+          continue;
+        }
+        const runId = native.assignment.runIds[0];
+
+        if (typeof runId !== "string")
+          throw new MaisterError(
+            "CRASH",
+            "Native comment intake returned without its retained Run",
+          );
+        const [execution] = await _db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        if (!execution)
+          throw new MaisterError(
+            "PRECONDITION",
+            "The native comment's retained execution is unavailable",
+            {
+              details: { reason: "project_comment_appointment_unavailable" },
+            },
+          );
+        await recordAgentScheduleOutcome({
+          db: _db,
+          scheduleId: binding.scheduleId,
+          fence,
+          outcome: native.duplicate
+            ? "deduplicated"
+            : execution?.status === "Pending"
+              ? "queued"
+              : "launched",
+          runId: runId === fence.reservedRunId ? runId : null,
+          now: new Date(),
+        });
+        log.info(
+          {
+            eventId: event.id,
+            agentId,
+            assignmentId: native.assignment.id,
+            runId,
+            duplicate: native.duplicate,
+          },
+          "native comment assignment retained",
+        );
+        continue;
+      }
       // Read-then-launch, serialized ONLY by the singleton dispatcher
       // (`domainEventDispatch: 1` + the per-consumer CAS lease): it holds
       // summon-vs-summon, NOT summon-vs-manual/cron/flow. No launch path has
@@ -529,7 +724,11 @@ async function summonMentionedAgents(input: {
         scheduleId: binding.scheduleId,
         fence,
         outcome: isMaisterError(err) ? "refused" : "failed",
-        errorCode: isMaisterError(err) ? err.code : "CRASH",
+        errorCode: isMaisterError(err)
+          ? (PROJECT_COMMENT_REASON_CODES.find(
+              (reason) => reason === err.details?.reason,
+            ) ?? err.code)
+          : "CRASH",
         errorMessage: "Agent mention summon was refused",
         now: new Date(),
       });
@@ -556,11 +755,22 @@ export function buildAgentTriggersConsumer(
   return {
     id: "agent_triggers",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const _db = opts.db ?? getDb();
       const launch = opts.launch ?? launchAgentRun;
 
       for (const event of events) {
+        if (event.kind === "task.qualification_changed" && event.taskId) {
+          await resumeQualifiedProjectAssignments(
+            _db,
+            event.projectId,
+            event.taskId,
+          );
+          continue;
+        }
         if (!isAgentTriggerEventKind(event.kind)) continue;
         if (isGraphOnlyCutoverFailure(event)) {
           log.debug(
@@ -699,151 +909,350 @@ export function buildAgentTriggersConsumer(
           });
         }
 
-        const rows: EventMatchRow[] = await _db
-          .select({
-            scheduleId: agentSchedules.id,
-            agentId: agentSchedules.agentId,
-            projectId: agentSchedules.projectId,
-            eventMatch: agentSchedules.eventMatch,
-          })
-          .from(agentSchedules)
-          .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
-          .innerJoin(
-            agentProjectLinks,
-            and(
-              eq(agentProjectLinks.agentId, agentSchedules.agentId),
-              eq(agentProjectLinks.projectId, agentSchedules.projectId),
-            ),
-          )
-          .where(
-            and(
-              eq(agentSchedules.triggerType, "event"),
-              eq(agentSchedules.enabled, true),
-              eq(agentSchedules.projectId, event.projectId),
-              eq(agents.enabled, true),
-              sql`${agents.quarantinedAt} IS NULL`,
-              eq(agentProjectLinks.enabled, true),
-            ),
-          );
-
-        const matchingRows = rows
-          .filter((row) => (row.eventMatch?.kinds ?? []).includes(event.kind))
-          .sort((left, right) =>
-            left.scheduleId.localeCompare(right.scheduleId),
-          );
         let ownerRunId: string | null = null;
         let ownerSelected = false;
+        let sourceCursor: string | null = null;
+        const [producing] =
+          event.runId === null
+            ? []
+            : await _db
+                .select({
+                  sourceAgentId: runs.sourceAgentId,
+                  agentId: runs.agentId,
+                })
+                .from(runs)
+                .where(
+                  and(
+                    eq(runs.id, event.runId),
+                    eq(runs.projectId, event.projectId),
+                    sql`${runs.companyId} IS NULL`,
+                  ),
+                );
 
-        for (const row of matchingRows) {
-          const fence = await claimAgentScheduleTelemetry({
-            db: _db,
-            scheduleId: row.scheduleId,
-            now: new Date(),
-            eventId: Number(event.id),
-          });
+        while (true) {
+          const rows: EventMatchRow[] = await _db
+            .select({
+              scheduleId: agentSchedules.id,
+              agentId: agentSchedules.agentId,
+              projectId: agentSchedules.projectId,
+              eventMatch: agentSchedules.eventMatch,
+              projectSourceReview: agentSchedules.projectSourceReview,
+              bindingRevision: agentProjectLinks.schedulesRevision,
+            })
+            .from(agentSchedules)
+            .innerJoin(agents, eq(agents.id, agentSchedules.agentId))
+            .innerJoin(
+              agentProjectLinks,
+              and(
+                eq(agentProjectLinks.agentId, agentSchedules.agentId),
+                eq(agentProjectLinks.projectId, agentSchedules.projectId),
+              ),
+            )
+            .where(
+              and(
+                sourceCursor === null
+                  ? undefined
+                  : gt(agentSchedules.id, sourceCursor),
+                eq(agentSchedules.triggerType, "event"),
+                eq(agentSchedules.enabled, true),
+                eq(agentSchedules.projectId, event.projectId),
+                eq(agents.enabled, true),
+                sql`${agents.quarantinedAt} IS NULL`,
+                eq(agentProjectLinks.enabled, true),
+              ),
+            )
+            .orderBy(agentSchedules.id)
+            .limit(PER_TICK_LIMIT);
 
-          if (!fence) continue;
+          if (rows.length === 0) break;
+          sourceCursor = rows[rows.length - 1]!.scheduleId;
+          for (const row of rows) {
+            let fence: ProjectAgentTriggerClaim | null;
+            let native = false;
 
-          // Self-exclusion (ADR-089): an event actored by the matched agent
-          // never re-triggers it — structural loop termination for the
-          // triage Q&A loop. Its telemetry still explains why no launch occurred.
-          if (event.actorType === "agent" && event.actorId === row.agentId) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "suppressed",
-              errorCode: "PRECONDITION",
-              errorMessage:
-                "Self-actored event is not eligible for this binding",
-              now: new Date(),
-            });
-            continue;
-          }
+            try {
+              native =
+                row.projectSourceReview !== null ||
+                (await isNativeProjectSpecialist(_db, {
+                  projectId: row.projectId,
+                  sourceAgentId: row.agentId,
+                }));
+              const kinds =
+                projectTriggerBindingSnapshotSchema.shape.eventKinds.safeParse(
+                  row.eventMatch?.kinds,
+                );
 
-          if (ownerSelected) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "suppressed",
-              runId: ownerRunId,
-              errorCode: "CONFLICT",
-              errorMessage: "A lower-id matching binding owns this event",
-              now: new Date(),
-            });
-            continue;
-          }
+              if (!kinds.success || kinds.data.length === 0)
+                throw new MaisterError(
+                  "CONFIG",
+                  "Project event source requires validated event kinds",
+                  { details: { reason: "project_event_source_kinds_invalid" } },
+                );
+              if (!kinds.data.includes(event.kind)) continue;
+              if (native) {
+                const review = projectEventSourceReviewSchema.safeParse(
+                  row.projectSourceReview,
+                );
 
-          if (await chainDepthExhausted(_db, event.id, row.agentId)) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: "refused",
-              errorCode: "chain_depth_exhausted",
-              now: new Date(),
-            });
-            continue;
-          }
-
-          ownerSelected = true;
-          try {
-            const result = await launch({
-              agentId: row.agentId,
-              projectId: row.projectId,
-              taskId: event.taskId ?? null,
-              trigger: {
-                source: "domain_event",
+                if (!review.success)
+                  throw new MaisterError(
+                    "NEEDS_INPUT",
+                    "Native project events require a current explicit event review",
+                    { details: { reason: "project_event_review_required" } },
+                  );
+                if (BigInt(event.id) <= BigInt(review.data.eventCursor))
+                  continue;
+              }
+              fence = await claimAgentScheduleTelemetry({
+                db: _db,
+                scheduleId: row.scheduleId,
+                now: new Date(),
                 eventId: Number(event.id),
-                payload: {
-                  kind: event.kind,
-                  payload: event.payload as Record<string, unknown>,
-                },
-              },
-              agentScheduleId: row.scheduleId,
-              runId: fence.reservedRunId,
-              db: _db,
-            });
-            const outcome = outcomeForLaunch(result);
+              });
+            } catch (error) {
+              if (
+                !isMaisterError(error) ||
+                !["CONFIG", "PRECONDITION", "CONFLICT", "NEEDS_INPUT"].includes(
+                  error.code,
+                )
+              )
+                throw error;
+              const reason =
+                typeof error.details?.reason === "string" &&
+                (PROJECT_EVENT_REASON_CODES as readonly string[]).includes(
+                  error.details.reason,
+                )
+                  ? error.details.reason
+                  : error.code;
 
-            ownerRunId = outcome.runId;
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: outcome.outcome,
-              runId: outcome.runId,
-              now: new Date(),
-            });
-            log.info(
-              {
-                eventId: event.id,
-                agentId: row.agentId,
+              await _db
+                .update(agentSchedules)
+                .set({
+                  lastOutcome: "refused",
+                  lastErrorCode: reason,
+                  lastErrorMessage:
+                    "Project event source capture requires attention",
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(agentSchedules.id, row.scheduleId),
+                    eq(agentSchedules.enabled, true),
+                    sql`${agentSchedules.projectSourceReview} IS NOT DISTINCT FROM ${row.projectSourceReview === null ? null : JSON.stringify(row.projectSourceReview)}::jsonb`,
+                    sql`${agentSchedules.eventMatch} IS NOT DISTINCT FROM ${JSON.stringify(row.eventMatch)}::jsonb`,
+                    sql`EXISTS(SELECT 1 FROM agent_project_links WHERE project_id=${row.projectId} AND agent_id=${row.agentId} AND schedules_revision=${row.bindingRevision})`,
+                  ),
+                );
+              log.warn(
+                {
+                  sourceId: row.scheduleId,
+                  eventId: event.id,
+                  code: error.code,
+                  reason: error.details?.reason,
+                },
+                "project event source capture refused",
+              );
+              continue;
+            }
+
+            if (!fence) continue;
+            if (native) {
+              try {
+                const selfAuthored =
+                  (event.actorType === "agent" &&
+                    event.actorId === row.agentId) ||
+                  producing?.sourceAgentId === row.agentId ||
+                  producing?.agentId === row.agentId;
+                const chain = selfAuthored
+                  ? null
+                  : await resolveProjectEventChainDepth(
+                      _db,
+                      row.projectId,
+                      Number(event.id),
+                    );
+
+                if (selfAuthored || chain?.atCap) {
+                  await recordAgentScheduleOutcome({
+                    db: _db,
+                    scheduleId: row.scheduleId,
+                    fence,
+                    outcome: "suppressed",
+                    errorCode: selfAuthored
+                      ? "self_authored_event"
+                      : (chain?.reason ?? "chain_depth_exhausted"),
+                    now: new Date(),
+                  });
+                  continue;
+                }
+                const receipt = await submitProjectEventAssignment(_db, fence);
+
+                if (receipt.projectAdmission) {
+                  if (receipt.projectAdmission.kind === "accepted")
+                    await dispatchTaskLaunchIntent(
+                      _db,
+                      receipt.projectAdmission.receipt.intentId,
+                    );
+                  continue;
+                }
+                const [execution] = await _db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, fence.reservedRunId));
+
+                if (
+                  !receipt.assignment.runIds.includes(fence.reservedRunId) ||
+                  !execution
+                )
+                  throw new MaisterError(
+                    "CRASH",
+                    "Native event intake did not retain its exact reserved Run",
+                  );
+                await recordAgentScheduleOutcome({
+                  db: _db,
+                  scheduleId: row.scheduleId,
+                  fence,
+                  outcome: receipt.duplicate
+                    ? "deduplicated"
+                    : execution.status === "Pending"
+                      ? "queued"
+                      : "launched",
+                  runId: fence.reservedRunId,
+                  now: new Date(),
+                });
+              } catch (error) {
+                if (!isMaisterError(error) || error.code === "CRASH")
+                  throw error;
+                const reason =
+                  typeof error.details?.reason === "string" &&
+                  (PROJECT_EVENT_REASON_CODES as readonly string[]).includes(
+                    error.details.reason,
+                  )
+                    ? error.details.reason
+                    : error.code;
+
+                await recordAgentScheduleOutcome({
+                  db: _db,
+                  scheduleId: row.scheduleId,
+                  fence,
+                  outcome: "refused",
+                  errorCode: reason,
+                  now: new Date(),
+                });
+                log.warn(
+                  {
+                    sourceId: row.scheduleId,
+                    eventId: event.id,
+                    attemptId: fence.id,
+                    code: error.code,
+                    reason,
+                  },
+                  "native project event admission refused",
+                );
+              }
+              continue;
+            }
+
+            // Self-exclusion (ADR-089): an event actored by the matched agent
+            // never re-triggers it — structural loop termination for the
+            // triage Q&A loop. Its telemetry still explains why no launch occurred.
+            if (event.actorType === "agent" && event.actorId === row.agentId) {
+              await recordAgentScheduleOutcome({
+                db: _db,
                 scheduleId: row.scheduleId,
+                fence,
+                outcome: "suppressed",
+                errorCode: "PRECONDITION",
+                errorMessage:
+                  "Self-actored event is not eligible for this binding",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            if (ownerSelected) {
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
+                outcome: "suppressed",
+                runId: ownerRunId,
+                errorCode: "CONFLICT",
+                errorMessage: "A lower-id matching binding owns this event",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            if (await chainDepthExhausted(_db, event.id, row.agentId)) {
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
+                outcome: "refused",
+                errorCode: "chain_depth_exhausted",
+                now: new Date(),
+              });
+              continue;
+            }
+
+            ownerSelected = true;
+            try {
+              const result = await launch({
+                agentId: row.agentId,
+                projectId: row.projectId,
+                taskId: event.taskId ?? null,
+                trigger: {
+                  source: "domain_event",
+                  eventId: Number(event.id),
+                  payload: {
+                    kind: event.kind,
+                    payload: event.payload as Record<string, unknown>,
+                  },
+                },
+                agentScheduleId: row.scheduleId,
+                runId: fence.reservedRunId,
+                db: _db,
+              });
+              const outcome = outcomeForLaunch(result);
+
+              ownerRunId = outcome.runId;
+              await recordAgentScheduleOutcome({
+                db: _db,
+                scheduleId: row.scheduleId,
+                fence,
                 outcome: outcome.outcome,
-              },
-              "event-triggered agent schedule settled",
-            );
-          } catch (err) {
-            await recordAgentScheduleOutcome({
-              db: _db,
-              scheduleId: row.scheduleId,
-              fence,
-              outcome: isMaisterError(err) ? "refused" : "failed",
-              errorCode: isMaisterError(err) ? err.code : "CRASH",
-              errorMessage: "Agent schedule launch was refused",
-              now: new Date(),
-            });
-            log.warn(
-              {
-                eventId: event.id,
-                agentId: row.agentId,
+                runId: outcome.runId,
+                now: new Date(),
+              });
+              log.info(
+                {
+                  eventId: event.id,
+                  agentId: row.agentId,
+                  scheduleId: row.scheduleId,
+                  outcome: outcome.outcome,
+                },
+                "event-triggered agent schedule settled",
+              );
+            } catch (err) {
+              await recordAgentScheduleOutcome({
+                db: _db,
                 scheduleId: row.scheduleId,
-                code: isMaisterError(err) ? err.code : "CRASH",
-              },
-              "event-triggered agent launch refused",
-            );
+                fence,
+                outcome: isMaisterError(err) ? "refused" : "failed",
+                errorCode: isMaisterError(err) ? err.code : "CRASH",
+                errorMessage: "Agent schedule launch was refused",
+                now: new Date(),
+              });
+              log.warn(
+                {
+                  eventId: event.id,
+                  agentId: row.agentId,
+                  scheduleId: row.scheduleId,
+                  code: isMaisterError(err) ? err.code : "CRASH",
+                },
+                "event-triggered agent launch refused",
+              );
+            }
           }
         }
       }
@@ -851,4 +1260,18 @@ export function buildAgentTriggersConsumer(
   };
 }
 
-export const agentTriggersConsumer = buildAgentTriggersConsumer();
+const projectAgentTriggersConsumer = buildAgentTriggersConsumer();
+
+/** The registered consumer composes owner-specific adapters without widening the legacy project injection seam. */
+export const agentTriggersConsumer: DomainEventConsumer = {
+  ...projectAgentTriggersConsumer,
+  async handle(events): Promise<void> {
+    await projectAgentTriggersConsumer.handle(events);
+    if (
+      events.some(
+        (event) => event.companyId !== null && event.projectId === null,
+      )
+    )
+      await dispatchCompanyAgentEvents(getDb(), events);
+  },
+};

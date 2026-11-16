@@ -15,14 +15,15 @@ import {
 import { BRAIN_POLICY } from "./policy";
 import { queryHash, recall, writeBrainSnapshot } from "./recall";
 import { RANKER_VERSION } from "./recall-ranker";
+import { usesNativeKnowledgeTransport } from "./knowledge-execution-access";
 
 // Project Brain (ADR-122) ambient P7 injection (flow runs only). Best-effort:
 // NEVER throws — every failure (enablement query, provider, recall, snapshot)
 // degrades to an undefined projection; it never fails the run. Enablement is
 // runs.brain_context (opt-in; null = off in A) AND the live projects.
 // brain_enabled kill switch, re-checked here on every call. Injection is
-// floored at BRAIN_POLICY.ambientMinConfidence — an item must have been
-// reinforced at least once before it is auto-injected (explicit recall is not
+// floored at BRAIN_POLICY.ambientMinConfidence, which equals the initial
+// confidence so freshly retained items qualify (explicit recall is not
 // floored). The query embedding is memoized per runner process keyed by
 // hash(query + model + dimensions); a failure is negative-cached for
 // AMBIENT_FAILURE_TTL_MS so a provider outage does not add a full retry storm
@@ -90,6 +91,14 @@ export async function getAmbientBrainProjection(
   }
 
   try {
+    if (await usesNativeKnowledgeTransport(args.db, args.runId)) {
+      log.debug(
+        { runId: args.runId, retrieval: "structured_tools" },
+        "native execution retrieves versioned knowledge after role binding",
+      );
+
+      return undefined;
+    }
     // The project kill switch (ADR-122). A launch persists runs.brain_context
     // independently of projects.brain_enabled, and an admin can disable the
     // Brain AFTER a run launched opted-in, so ambient MUST re-check enablement
@@ -128,8 +137,7 @@ export async function getAmbientBrainProjection(
       client,
       queryEmbedding,
       limit: BRAIN_POLICY.ambientK,
-      // Auto-injection floor: only items reinforced at least once (confidence₀
-      // + one step). Explicit recall is deliberately NOT floored.
+      // Auto-injection floor (== confidence₀). Explicit recall is deliberately NOT floored.
       minConfidence: BRAIN_POLICY.ambientMinConfidence,
     });
 

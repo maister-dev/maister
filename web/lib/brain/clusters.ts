@@ -91,7 +91,7 @@ export async function listMemoryClusters(
       FROM brain_items i
       JOIN brain_embeddings e ON e.item_id = i.id
       WHERE i.project_id = ${args.projectId}
-        AND i.status = 'active'
+        AND i.status = 'active' AND i.visibility = 'owner_grants' AND (i.source_restrictions IS NULL OR i.source_restrictions='[]'::jsonb)
         AND i.kind IN (${sql.join(
           kinds.map((kind) => sql`${kind}`),
           sql`, `,

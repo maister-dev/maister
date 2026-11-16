@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://cb-native-qualification.invalid/maister-plugins",
+  "tag": "rah/v1.0.1",
+  "expectedCommit": "14275946ea5587a5d52f9c864ccab5f4ec25d4e7",
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "runIds": [
+    "7f6dd58e-affd-4dfa-b76e-df416c989106"
+  ],
+  "proofs": [],
+  "enforcementProofs": [
+    {
+      "runId": "7f6dd58e-affd-4dfa-b76e-df416c989106",
+      "profile": {
+        "tools": {
+          "allow": [
+            "Read",
+            "Grep",
+            "Glob",
+            "ToolSearch",
+            "mcp__maister__knowledge_search",
+            "mcp__maister__knowledge_get",
+            "mcp__maister__knowledge_evidence",
+            "mcp__maister__knowledge_conflicts",
+            "mcp__maister__knowledge_witness_get",
+            "mcp__maister__knowledge_propose",
+            "mcp__maister__run_delegate",
+            "mcp__maister__run_collect",
+            "mcp__maister__run_cancel"
+          ]
+        },
+        "enforcedClasses": [
+          "tools"
+        ]
+      }
+    }
+  ],
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "nativeProposalIds": [],
+  "ledgerDiagnostics": [
+    {
+      "runId": "7f6dd58e-affd-4dfa-b76e-df416c989106",
+      "parentRunId": null,
+      "status": "Failed",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "19b8d544-4dda-4f2d-9175-de68872f1b15",
+      "parentRunId": "7f6dd58e-affd-4dfa-b76e-df416c989106",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "9eb443ff-fa78-448e-9658-4d69d83cb18a",
+      "parentRunId": "7f6dd58e-affd-4dfa-b76e-df416c989106",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ]
+}

@@ -1235,6 +1235,39 @@ describe("maisterPackageManifestSchema.result_profiles (ADR-165)", () => {
     });
   });
 
+  it("preserves an explicit native findings contract while legacy profiles remain unchanged", () => {
+    const parsed = maisterPackageManifestSchema.parse({
+      ...base,
+      compat: { engine_min: "3.11.0" },
+      result_profiles: {
+        findings: {
+          schema: "./schemas/findings.v1.json",
+          native_contract: "evidence_findings_v1",
+        },
+        legacy: { schema: "./schemas/research-result.v1.json" },
+      },
+    });
+
+    expect(parsed.result_profiles).toEqual({
+      findings: {
+        schema: "./schemas/findings.v1.json",
+        native_contract: "evidence_findings_v1",
+      },
+      legacy: { schema: "./schemas/research-result.v1.json" },
+    });
+    expect(
+      maisterPackageManifestSchema.safeParse({
+        ...base,
+        result_profiles: {
+          findings: {
+            schema: "./schemas/findings.v1.json",
+            native_contract: "model_selected_authority",
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("stays absent when undeclared (sparse — never defaulted to {})", () => {
     expect(
       maisterPackageManifestSchema.parse(base).result_profiles,

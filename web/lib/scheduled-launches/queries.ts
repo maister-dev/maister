@@ -1,12 +1,14 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ScheduledLaunchRequest } from "@/lib/scheduled-launches/types";
 
 import { and, asc, desc, eq, ne, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
-import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import {
   agentProjectLinks,
@@ -529,12 +531,6 @@ async function listProjectAutomationRows(input: {
       : recurringQuery.limit(sourceLimit),
     sourceLimit === undefined ? agentQuery : agentQuery.limit(sourceLimit),
   ]);
-  const operationalOutcomes = await loadOperationalOutcomes(
-    db,
-    bindings.flatMap((row) =>
-      row.lastRunId && row.agentKind === "operational" ? [row.lastRunId] : [],
-    ),
-  );
   const projectIdentifier = input.projectSlug ?? input.projectId;
   const rows: AutomationRow[] = [
     ...launches.map((row) => {
@@ -604,8 +600,7 @@ async function listProjectAutomationRows(input: {
               id: row.lastRunId,
               status: row.runStatus,
               agentKind: row.agentKind,
-              operationalOutcome:
-                operationalOutcomes.get(row.lastRunId) ?? null,
+              operationalOutcome: null,
             }
           : null,
       detailHref: `/api/projects/${projectIdentifier}/automations/${row.triggerType === "cron" ? "agent_cron" : "agent_event"}/${row.id}`,
@@ -616,7 +611,44 @@ async function listProjectAutomationRows(input: {
   return rows.sort(compareAutomationRows);
 }
 
+/** Hydrate only the selected outward rows, while their current source grants remain locked. */
+async function hydrateAutomationEvidence(
+  rows: AutomationRow[],
+  recipient?: KnowledgeRecipient,
+): Promise<AutomationRow[]> {
+  const runIds = rows.flatMap((row) =>
+    row.resultingRun ? [row.resultingRun.id] : [],
+  );
+
+  if (!runIds.length) return rows;
+
+  return getDb().transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(tx, recipient, runIds);
+    const outcomes = await inspectOperationalOutcomes(
+      tx,
+      rows.flatMap((row) =>
+        row.resultingRun?.agentKind === "operational"
+          ? [row.resultingRun.id]
+          : [],
+      ),
+    );
+
+    return rows.map((row) =>
+      row.resultingRun?.agentKind === "operational"
+        ? {
+            ...row,
+            resultingRun: {
+              ...row.resultingRun,
+              operationalOutcome: outcomes.get(row.resultingRun.id) ?? null,
+            },
+          }
+        : row,
+    );
+  });
+}
+
 export async function listProjectAutomations(input: {
+  recipient?: KnowledgeRecipient;
   projectId: string;
   projectSlug?: string;
   limit: number;
@@ -632,7 +664,7 @@ export async function listProjectAutomations(input: {
   const finalRow = page.at(-1);
 
   return {
-    rows: page,
+    rows: await hydrateAutomationEvidence(page, input.recipient),
     nextCursor:
       finalRow && ordered.length > page.length
         ? encodeCursor(cursorFor(finalRow))
@@ -641,6 +673,7 @@ export async function listProjectAutomations(input: {
 }
 
 export async function getProjectAutomationDetail(input: {
+  recipient?: KnowledgeRecipient;
   projectId: string;
   projectSlug?: string;
   kind: AutomationKind;
@@ -651,9 +684,12 @@ export async function getProjectAutomationDetail(input: {
     projectSlug: input.projectSlug,
   });
 
-  return (
-    rows.find(
-      (row) => row.type === input.kind && row.id === input.automationId,
-    ) ?? null
+  const row = rows.find(
+    (row) => row.type === input.kind && row.id === input.automationId,
   );
+
+  if (!row) return null;
+  const [hydrated] = await hydrateAutomationEvidence([row], input.recipient);
+
+  return hydrated ?? null;
 }

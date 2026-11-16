@@ -1,0 +1,45 @@
+✔ holds when every id and every implementation task is covered (1.105958ms)
+✔ a Planned row's primary test need not exist yet; an Implemented one must (0.215125ms)
+✔ rejects an implementation task no row names, and a row naming an undefined task (0.096042ms)
+✔ rejects a declared id absent from the matrix and a matrix row no document declares (0.068417ms)
+✔ only describe/it/test titles count as resolvable test ids (0.196792ms)
+✔ resolves literal table-driven test titles without counting data as tests (0.079708ms)
+✔ M51 group has complete task and test coverage (227.024917ms)
+✔ flat task headers are non-vacuous and missing enforcement fails (0.188459ms)
+✔ operational group covers all 34 contracts and all 15 implementation tasks (79.71425ms)
+✔ agent activity task namespace is non-vacuous and rejects an orphan (0.298125ms)
+✔ agent activity group names all planned obligations and implementation tasks (66.830958ms)
+✔ const-asserted parameter tables do not swallow following requirement-bearing tests (0.061458ms)
+✔ CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable status claims (0.291208ms)
+✖ CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks (72.028042ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 13
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 483.453
+
+✖ failing tests:
+
+test at scripts/validate-requirement-coverage.test.mjs:178:1
+✖ CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks (72.028042ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  44 !== 45
+  
+      at TestContext.<anonymous> (file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-requirement-coverage.test.mjs:185:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 44,
+    expected: 45,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

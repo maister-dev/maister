@@ -480,6 +480,7 @@ it("R18 services later eligible Flow and Agent requests while an older repositor
   const agent = await seedAgentDefinition(database.db, {
     projectId: fixture.projectId,
     installedPath: `${root}/worker-agent`,
+    platformMcp: true,
     terminalDelayMs: 0,
   });
   const peerAgent = await seedAgentDefinition(database.db, {

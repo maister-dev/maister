@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ExecutionAssignment, RunnerSnapshot } from "@/lib/db/schema";
+import type { ExecutionAssignment, RunnerSnapshot, Run } from "@/lib/db/schema";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -10,6 +10,9 @@ import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -517,6 +520,7 @@ async function recoverPendingGateChatCreates(
         db,
         hosts,
         run: { status: row.run.status, runnerSnapshot: active.runnerSnapshot },
+        source: { ...row.run, authorUserId: row.userMessage.authorUserId },
         activeAcpSessionId: active.acpSessionId,
         admitted: {
           turnId: row.turn.id,
@@ -787,6 +791,21 @@ export async function sendGateChatTurn(args: {
       `hitl request ${args.hitlRequestId} not found for run ${args.runId}`,
     );
   }
+  const nativeContext = usesStructuredKnowledgeContext(baseRun);
+
+  if (nativeContext) {
+    if (!args.actorUserId)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Native gate chat requires its current human recipient",
+      );
+    await assertRunKnowledgeDisclosure(
+      d,
+      { kind: "user", userId: args.actorUserId },
+      args.runId,
+    );
+    await assertNativeRunKnowledgeInputs(d, args.runId);
+  }
 
   const availability = gateChatAvailability({
     runStatus: run.status,
@@ -988,6 +1007,7 @@ export async function sendGateChatTurn(args: {
     db: d,
     hosts,
     run,
+    source: { ...baseRun, authorUserId: args.actorUserId ?? null },
     activeAcpSessionId: activeAcpSessionId as string,
     admitted,
     createCommandId: null,
@@ -1008,6 +1028,8 @@ async function driveGateChatTurn(
     db: Db;
     hosts: ExecutionHosts;
     run: Readonly<{ status: string; runnerSnapshot: RunnerSnapshot | null }>;
+    source: Pick<Run, "knowledgeAccess" | "resultContract"> &
+      Readonly<{ authorUserId: string | null }>;
     activeAcpSessionId: string;
     admitted: AdmittedGateChatTurn;
     createCommandId: string | null;
@@ -1231,6 +1253,19 @@ async function driveGateChatTurn(
   let promptResult: PromptResult | null;
 
   try {
+    if (usesStructuredKnowledgeContext(args.source)) {
+      if (!args.source.authorUserId)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Native gate chat requires its current retained human recipient",
+        );
+      await assertRunKnowledgeDisclosure(
+        d,
+        { kind: "user", userId: args.source.authorUserId },
+        args.runId,
+      );
+      await assertNativeRunKnowledgeInputs(d, args.runId);
+    }
     const handle = await client.prompt(
       supervisorSessionId,
       {

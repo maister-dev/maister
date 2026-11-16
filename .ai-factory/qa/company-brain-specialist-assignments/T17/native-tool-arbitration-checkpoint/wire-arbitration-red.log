@@ -1,0 +1,51 @@
+$ vitest run --project integration --passWithNoTests src/__tests__/guardrail-interceptor.integration.test.ts -t 'forces native permission shortcuts'
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/supervisor
+
+ ❯ |integration| src/__tests__/guardrail-interceptor.integration.test.ts (20 tests | 1 failed | 19 skipped) 181ms
+   ❯ capability_guard interceptor (ADR-130) (10)
+     × forces native permission shortcuts through the strict guard before a benign shell command can execute 180ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| src/__tests__/guardrail-interceptor.integration.test.ts > capability_guard interceptor (ADR-130) > forces native permission shortcuts through the strict guard before a benign shell command can execute
+AssertionError: expected [] to match object [ { rule: 'capability_guard', …(2) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "disposition": "deny",
+-     "lifecycle": "pre_tool_call",
+-     "rule": "capability_guard",
+-   },
+- ]
++ []
+
+ ❯ src/__tests__/guardrail-interceptor.integration.test.ts:379:64
+    377|     await sendPrompt(host, sessionId);
+    378|
+    379|     expect(hookTrips(host.registry.snapshotEvents(sessionId))).toMatch…
+       |                                                                ^
+    380|       { rule: "capability_guard", disposition: "deny", lifecycle: "pre…
+    381|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 19 skipped (20)
+   Start at  00:10:03
+   Duration  498ms (tests 42%, import 41%, transform 17%)
+
+[ELIFECYCLE] Command failed with exit code 1.

@@ -203,13 +203,23 @@ function db(): unknown {
     // models a transaction that does not exist.
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(async () => [
-          {
-            projectId: "project-1",
-            taskId: "task-1",
-            locator: artifactLocator,
-          },
-        ]),
+        where: vi.fn(() => {
+          const rows = [
+            {
+              ...legacyParent(),
+              companyId: null,
+              budgetState: null,
+              executionAssignmentId: null,
+              currentStepId: "decide",
+              flowDriverToken: null,
+              locator: artifactLocator,
+            },
+          ];
+
+          return Object.assign(Promise.resolve(rows), {
+            for: vi.fn(async () => rows),
+          });
+        }),
       })),
     })),
   };
@@ -289,13 +299,23 @@ function dbWithRunnerRows(rows: Record<string, unknown>[]): unknown {
     // models a transaction that does not exist.
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(async () => [
-          {
-            projectId: "project-1",
-            taskId: "task-1",
-            locator: artifactLocator,
-          },
-        ]),
+        where: vi.fn(() => {
+          const rows = [
+            {
+              ...legacyParent(),
+              companyId: null,
+              budgetState: null,
+              executionAssignmentId: null,
+              currentStepId: "decide",
+              flowDriverToken: null,
+              locator: artifactLocator,
+            },
+          ];
+
+          return Object.assign(Promise.resolve(rows), {
+            for: vi.fn(async () => rows),
+          });
+        }),
       })),
     })),
   };

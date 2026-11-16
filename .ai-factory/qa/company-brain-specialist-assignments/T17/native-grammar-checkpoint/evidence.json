@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "3.11.1",
+  "baseCommit": "f29ee92e9",
+  "companionCommit": "14275946ea5587a5d52f9c864ccab5f4ec25d4e7",
+  "companionTag": "rah/v1.0.1",
+  "published": false,
+  "task": "T17",
+  "status": "native_grammar_platform_checkpoint_qualified_live_outcome_open",
+  "qualified": [
+    "Native-only seed reuses both existing migration lineages and generated Git fixture helpers. Preflight enforces maister_e2e, zero runs/Brain sources/records and exact generated repository content before provider calls. Runtime roots are invocation-owned temporary paths; cleanup runs after owned processes stop.",
+    "The real v1.0.1 coordinator retrieved records, launched two researchers, collected pending states, parked WaitingOnChildren and resumed after both children failed native validation. The root submitted one pending attributed proposal but no valid final result was accepted. This is failure evidence, not readiness.",
+    "Native result producers now receive the closed nested JSON Schema generated from the actual runtime Zod validator. Both agent prompt overrides and declared Flow producers receive it. Legacy contracts and nonproducer nodes retain their grammar; source/permission/confirmation validation is unchanged.",
+    "Guidance distinguishes returned witness metadata from closed references, direct-child source findings from local IDs, and proposal content from mutation receipts. No citations, result values or model authority are injected.",
+    "Live qualification now writes its safe JSON evidence to a retained output file rather than relying on an in-memory reporter attachment. EN/RU package usage/recovery instructions pass local build and link gates."
+  ],
+  "checks": {
+    "isolationRed": {
+      "failed": 1,
+      "passed": 18
+    },
+    "isolationGreen": {
+      "passed": 20,
+      "files": 2
+    },
+    "grammarRed": {
+      "failed": 1,
+      "passed": 9
+    },
+    "grammarOwningGreen": {
+      "passed": 20,
+      "files": 2
+    },
+    "fullWebUnit": {
+      "passed": 9263,
+      "files": 886
+    },
+    "owningPostgresIntegration": {
+      "passed": 86,
+      "files": 6
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "publicDocsBuild": {
+      "exitCode": 0
+    },
+    "publicDocsLinks": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "failedLive": {
+    "rootRunId": "a84408c7-f070-446e-8d0b-2c873de66959",
+    "childRunIds": [
+      "b99a383b-4ad5-4722-870e-45d7d04a5a61",
+      "943adcf1-303c-4ce8-876f-c8f31571da11"
+    ],
+    "status": "Failed",
+    "resultFailure": "schema_mismatch",
+    "processLeaks": 0
+  },
+  "limits": [
+    "Fresh live depth-1/depth-2/revoked-reference completion, original evidence reduction and human acceptance of write-back remain open. T16/T17 are not marked done.",
+    "A manually interrupted earlier full-fixture run required the existing final process sweep to reap 12 descendants and exited nonzero. The later isolated run cleaned with zero leaks.",
+    "Initial public-doc build and schema-generator checks hit sandbox EPERM; unchanged required tools passed with scoped local cache/IPC access. One test assumed anyOf; the installed Zod generator emits oneOf, so its inspection shape was corrected."
+  ],
+  "noRefactor": "One pure grammar projection is shared by both prompt boundaries; no new scheduler, ledger, migration or permissive output fallback is introduced.",
+  "logs": "log-index.json"
+}

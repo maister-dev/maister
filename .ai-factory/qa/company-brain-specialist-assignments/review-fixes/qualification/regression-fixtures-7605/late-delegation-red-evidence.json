@@ -1,0 +1,104 @@
+{
+  "baseline": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "sourceSha256": "799932b42f42a088f551c0bb60f572fc60bd9832ee1739d34fde4f6081f4da84",
+  "failedCase": "serializes late accepted delegation with the final rework check",
+  "fullRunLog": "/private/tmp/cb-qualification-web-integration-7605ebf59.log",
+  "records": [
+    {
+      "time": 1794225538235,
+      "name": "execution-host",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "assignment-minted",
+      "reason": "launch"
+    },
+    {
+      "time": 1794225538240,
+      "name": "flow-runner",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "runFlow start"
+    },
+    {
+      "time": 1794225538256,
+      "name": "flow-driver",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "flow-driver-acquired"
+    },
+    {
+      "time": 1794225538297,
+      "name": "flow-runner-graph",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "runGraph start"
+    },
+    {
+      "time": 1794225538373,
+      "name": "flow-node-attempts",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "nodeId": "coordinate",
+      "nodeAttemptId": "8c9bc2c5-b3cd-4db6-9292-f9c05cbecd85",
+      "msg": "node-attempt appended",
+      "status": "Pending"
+    },
+    {
+      "time": 1794225538442,
+      "name": "flow-runner-graph",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "nodeId": "coordinate",
+      "msg": "[runner.graph] node materialized"
+    },
+    {
+      "time": 1794225538461,
+      "name": "delegation-bounds",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "nodeId": "coordinate",
+      "nodeAttemptId": "8c9bc2c5-b3cd-4db6-9292-f9c05cbecd85",
+      "msg": "[delegation.bounds] effective bounds snapshotted"
+    },
+    {
+      "time": 1794225538484,
+      "name": "agent-tokens",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "nodeAttemptId": "8c9bc2c5-b3cd-4db6-9292-f9c05cbecd85",
+      "msg": "ephemeral Flow node token issued"
+    },
+    {
+      "time": 1794225538506,
+      "name": "agent-tokens",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "ephemeral Flow node token issued"
+    },
+    {
+      "time": 1794225538698,
+      "name": "task-launch-intent",
+      "msg": "task-launch-accepted"
+    },
+    {
+      "time": 1794225548500,
+      "name": "flow-runner-graph",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "nodeId": "coordinate",
+      "msg": "node action threw \u2014 Failed",
+      "err": "expected +0 to be 1 // Object.is equality",
+      "code": "CRASH"
+    },
+    {
+      "time": 1794225548524,
+      "name": "execution-host",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "assignment-released",
+      "reason": "run_terminal"
+    },
+    {
+      "time": 1794225548530,
+      "name": "flow-runner-graph",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "runGraph ended Crashed"
+    },
+    {
+      "time": 1794225548560,
+      "name": "flow-driver",
+      "runId": "3ec6ee34-c76e-4aff-8ede-6069b73e2344",
+      "msg": "flow-driver-released"
+    }
+  ],
+  "exactIsolatedBaseline": "passed1/1; race requires scheduling interleaving, sourcebarrierallowswrongRunwriter"
+}

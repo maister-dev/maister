@@ -1,0 +1,91 @@
+{
+  "task": "T20.1",
+  "slice": "Existing company token contract extended with exact current graph node credentials",
+  "date": "2026-11-06",
+  "baseCommit": "18de29a720ec8802552c19dce3c5283b88630d47",
+  "status": "Native credential service/storage qualified; graph driver integration pending",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0234_company_flow_node_credentials"
+  ],
+  "red": {
+    "issuance": {
+      "tests": 33,
+      "failed": 1,
+      "log": "issuance-red.log.gz",
+      "failure": "The new native node issuer was unavailable."
+    },
+    "storage": {
+      "tests": 33,
+      "failed": 1,
+      "log": "storage-red.log.gz",
+      "failure": "Existing v1-only company credential reference/native-node constraints refused the real graph node credential."
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 11,
+      "tests": 150,
+      "durationSeconds": 60.47,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 26.25,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    },
+    "drift": {
+      "exitCode": 0,
+      "log": "drift.log.gz"
+    }
+  },
+  "qualified": [
+    "The generated existing-token CHECK migration and replacement reference guard admit only exact v2 graph/current-node/professional/coordinator/input/current initiating authority; v1 tokens require null node.",
+    "Existing secret-hash-only rotation, one-live-company-token-per-Run index, expiry and immutable credential/node bindings are reused without a new table or token kind.",
+    "Run-locked node issuance validates current node role/action intersection and native input/source closure before rotating.",
+    "Real node credentials verify and resolve knowledge principals as the actual professional, including a separate diagnostic persona limited to read.",
+    "Rotation revokes old secrets; new or unattested attempts fence retained credentials; raw missing/stale node, substituted agent/account/company and excess-scope inserts refuse.",
+    "Populated 0233-to-0234 retains real v1 company/project/user token JSON values and v1 verification; actual project deletion cascades its token while retaining company/user history with Brain tables absent.",
+    "Native project evidence access/depth-2 reduction, standalone company lifecycle, bindings, assignments and existing token regressions remain green."
+  ],
+  "qualificationBoundary": "Real PostgreSQL and trusted package fixtures prepare current Run/node cursor through the existing ledger. Prospective-engine compatibility is controlled during reservation; no company graph ACP dispatch, driver terminal cleanup, engine 3.12.0 activation or actual companion/stand pilot is qualified. Migrations were applied only to disposable fixtures.",
+  "notYetQualified": [
+    "Actual company graph loading, persona resolution and capability dispatch",
+    "Human/form/child waits, retained-host continuation and graph terminal token revocation/cleanup",
+    "Activation of engine 3.12.0 and T21 full phase regression",
+    "Installable stand specialist package and actual connector/pilot effects"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "3c503ab8ae9f593ab63ab7f02d2673a4c66a8ab27416a1182614c797a92946f3",
+    "docs/database-schema.md": "df68369fabb45f370c9097feb507014d7b7750042f6421d83a0ad8cbce1bdb0b",
+    "docs/db/specialist-assignments-domain.md": "dbcee0253083c9249f5fcd207ffb210a032c2c742ae1fa0878bdf68af62de28e",
+    "docs/system-analytics/specialist-runtime.md": "70db9b371f98c4926ad191d02717b272ab32fef18c6104f798b77d65d1bbca67",
+    "web/lib/agents/tokens.ts": "a5a0c17b8531894625f60d54d2fc4e03843ab99b034b012face77453710ba28c",
+    "web/lib/tokens/verify.ts": "732edbc3de56a325f081e3dec94906b63a0038368e82aa2e1576c4e631d251b6",
+    "web/lib/brain/knowledge-access.ts": "72b69d3eda0aecba4beae700d085a7ec30bc01b36d5c8006ad217dc57bfca58b",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "f80a1526a2f496d303caee17b75ab135c97ddf5500f070819fc802d096043ed0",
+    "web/lib/db/schema.ts": "e7d793be0faf9028fd1c053d2ed2616e2baa5275d0c586c6867021679b860f9d",
+    "web/lib/db/migrations/0234_company_flow_node_credentials.sql": "c5abf603276beb242096263a3e876b6fa62538da7f9b1f20188e27d953f9361f",
+    "web/lib/db/migrations/meta/0234_snapshot.json": "c5c72b6ffa904e32f514c48eac3726f6fd1bf1187bf2927403ecf345e3479da8",
+    "web/lib/db/migrations/meta/_journal.json": "abff5e0d617ba9af4fd2d6a505fd23b2c005a60f03fd0f89be86c5eee23fedf0"
+  }
+}

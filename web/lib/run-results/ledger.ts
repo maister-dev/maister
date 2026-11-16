@@ -246,7 +246,7 @@ export async function markRunResultStale(
 }
 
 /**
- * Stamp `first_collected_at` on the run's current result. Write-once by the
+ * Stamp the exact result selected while valid, even if rework changes its current validity before the response. Write-once by the
  * `IS NULL` guard, so a repeated collect never moves it — this half of the
  * Lab's consumption metric must mean "the FIRST time the engine served it".
  */
@@ -268,7 +268,7 @@ export async function markRunResultCollected(
         // the caller received revision 1 — and the Lab's consumption metric
         // reads this marker as ground truth about what the engine served.
         eq(runResults.id, resultId),
-        eq(runResults.validity, "valid"),
+        inArray(runResults.validity, ["valid", "stale", "superseded"]),
         isNull(runResults.firstCollectedAt),
       ),
     )

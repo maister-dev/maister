@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-10T10:27:20.861882+00:00",
+  "scope": "Standalone native agent reconciliation of witnessed completion awaiting its existing application owner",
+  "gitHeadAtReceipt": "ad6316adeca0503e1423a9ac9f6d44462d5baa67",
+  "sourceState": "Four owned files were dirty and frozen for owning verification; this is focused qualification, not a committed full-suite or provider receipt.",
+  "sourceSha256": {
+    "web/lib/reconcile.ts": "7ccf14e76baed2e973336c2f557a94611425990877278f5696188be9e72767b9",
+    "web/lib/reconcile-evidence-db.ts": "77ac067c6b51777a1689ade1a839e5429549678836ea159d41c8cdf78df51c74",
+    "web/lib/agents/__tests__/prompt-owners.integration.test.ts": "b4617bcf8d302fd624b424a8f216509def0cdaa2cb2a0314f957b2f7b49e9ee6",
+    "web/lib/__tests__/reconcile-classify.test.ts": "f9035df4820acd80f920739459a77c38f5a978f1e52088ae361768f09a7ea884"
+  },
+  "patch": {
+    "path": "/private/tmp/cb-agent-pending-completion-final.patch",
+    "sha256": "5c736833930933ca302016124f44bf6eb3dcb81da1ee35417dd4d3f049b1ed32",
+    "archive": {
+      "path": "candidate.patch.gz",
+      "sha256": "3e157fb8a9182b5039b2b4e4b8be88eb65da10a258c1072cb05e5da0a5ad6469"
+    }
+  },
+  "red": [
+    {
+      "witness": "red-initial.txt",
+      "assertion": "Initial applying and deferred native completion incorrectly caused swept.crashed=1, expected 0.",
+      "limit": "Original third rework fixture was invalid and is excluded as evidence; operational deferred final cell uses native worktree admission."
+    },
+    {
+      "witness": "red-rework.txt",
+      "assertion": "Corrected genuine Review-to-rework native generation incorrectly caused swept.crashed=1, expected 0."
+    },
+    {
+      "witness": "red-review-ordering.txt",
+      "assertion": "Real application owner published Review after candidate loading, then stale reconciliation incorrectly crashed it."
+    }
+  ],
+  "green": {
+    "nativeFocused": {
+      "passed": 9,
+      "skipped": 62,
+      "seconds": 36.37,
+      "outerExit": 0,
+      "witness": "green-focused.txt"
+    },
+    "owningAndSiblings": {
+      "filesPassed": 5,
+      "testsPassed": 166,
+      "seconds": 1009.42,
+      "outerExit": 0,
+      "witness": "green-owning-siblings.txt",
+      "files": [
+        "lib/agents/__tests__/prompt-owners.integration.test.ts",
+        "lib/__tests__/reconcile-sweep.integration.test.ts",
+        "lib/__tests__/reconcile-host-evidence.integration.test.ts",
+        "lib/agents/__tests__/agent-session-reobserve.integration.test.ts",
+        "lib/execution-host/__tests__/command-recovery.integration.test.ts"
+      ]
+    },
+    "existingClassification": {
+      "filesPassed": 2,
+      "testsPassed": 142,
+      "seconds": 0.939,
+      "outerExit": 0,
+      "witness": "green-classification.txt"
+    },
+    "tscNoEmitExit": 0,
+    "eslintOwnedSourcesExit": 0,
+    "eslintUpdatedClassifierExit": 0,
+    "prettierCheckExit": 0,
+    "gitDiffCheckExit": 0
+  },
+  "nativeCoverage": [
+    "Initial applying completion survives grace then the existing owner worker publishes the typed result and releases its assignment.",
+    "Real operational worktree completion survives persisted owner deferral/retry then the existing owner worker publishes.",
+    "Genuine later rework turn survives pending claim recovery and publishes Review.",
+    "A real owner completion committed after candidate loading wins over the stale generic crash observation.",
+    "Missing evidence, actual protocol quarantine, replaced assignment generation and genuine foreign retained session do not obtain a healthy hold.",
+    "Actual supervisor restart and canonical command recovery retain the turn_lost diagnosis."
+  ],
+  "diagnosticRace": "Fresh Run-locked classification defers any new nonnull prompt disposition; next sweep owns a newly precise lost/poisoned cause. It does not replace that cause with agent_session_gone.",
+  "independentReview": {
+    "agent": "/root/knowledge_fix_audit",
+    "mode": "read-only",
+    "verdict": "No remaining actionable findings after the fresh-specific-disposition correction."
+  },
+  "cleanup": {
+    "completedDiagnosticInvocations": 9,
+    "completedOwningInvocations": 1,
+    "failures": 0,
+    "leaks": 0,
+    "witness": "cleanup.txt",
+    "scope": "Exact IDs derived only from this fix logs; existing releaseInvocation; active/unrelated invocations excluded; raw logs and process ledgers retained."
+  },
+  "limitations": [
+    "No paid provider run was made by this fix task. The original GLM-5.3 live outcome requires a new frozen runtime qualification.",
+    "The original initial teardown deferral detail was not retained; its physical cause is not claimed.",
+    "Terminal failed commands preserve their retained outcome for the existing owner; they do not promise a valid result.",
+    "This receipt does not mark CB0/CB1 T27 complete or replace final full regression."
+  ],
+  "rawWitnesses": {
+    "/private/tmp/cb-agent-pending-completion-RED.log": "0c67d028015b6273f5e422b10aa1ce3961d809d16d48547289882d7e6048132e",
+    "/private/tmp/cb-agent-pending-completion-rework-RED.log": "6e45fdeb00fd29543f03fc0e1a80ed1f8c7af79b35c631ff602549f6685a9ef8",
+    "/private/tmp/cb-agent-pending-completion-review-race-RED.log": "5ce276f9de0099aef00dad669fe65223a25dbd77fd0e8f57a79293b8960623c3",
+    "/private/tmp/cb-agent-pending-completion-GREEN5.log": "58432931d244c7edf0cb57d9b3e5bb3c363ef5225305b26011ba00abee67d7c5",
+    "/private/tmp/cb-agent-pending-completion-owning-siblings.log": "c461e9e9b8e080b32222de9eaeff3074ff4386bd324da20b994a1bf44ff3ce95",
+    "/private/tmp/cb-agent-pending-completion-classification-GREEN.log": "58b518ba2cd1fa6489b64a9502f1dcd2d280d40730a4b30768fa2e2517ffd799",
+    "/private/tmp/cb-agent-pending-completion-types-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/cb-agent-pending-completion-lint-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/cb-agent-pending-completion-classifier-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/cb-agent-pending-completion-format.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    "/private/tmp/cb-agent-pending-completion-cleanup.log": "fad7308062f3f806643264614cba86c543bb573539b476e90d3b890e2e80436f",
+    "/private/tmp/cb-agent-pending-completion-owning-cleanup.log": "08a90ce0c66d9eddd678017bf52ed61da5588b3db043fddd1dd21c1cab99f32f"
+  },
+  "rawWitnessArchives": [
+    {
+      "source": "cb-agent-pending-completion-RED.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "0c67d028015b6273f5e422b10aa1ce3961d809d16d48547289882d7e6048132e",
+      "compressedSha256": "14a50fb0ee3bc3a3fc338475d6edd82111b2f30ab9c56391957246f4bf7b73aa",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-RED.log.gz",
+          "sha256": "14a50fb0ee3bc3a3fc338475d6edd82111b2f30ab9c56391957246f4bf7b73aa"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-rework-RED.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "6e45fdeb00fd29543f03fc0e1a80ed1f8c7af79b35c631ff602549f6685a9ef8",
+      "compressedSha256": "6e1cf3313d8cb76ba3e9c765141bc5c86f50c8a1d6f45c7d51bd21595c0ac31e",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-rework-RED.log.gz",
+          "sha256": "6e1cf3313d8cb76ba3e9c765141bc5c86f50c8a1d6f45c7d51bd21595c0ac31e"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-review-race-RED.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "5ce276f9de0099aef00dad669fe65223a25dbd77fd0e8f57a79293b8960623c3",
+      "compressedSha256": "e6f31f6dce4bd3a03120619b035e451617292eb5f417b241ef6a53525371b551",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-review-race-RED.log.gz",
+          "sha256": "e6f31f6dce4bd3a03120619b035e451617292eb5f417b241ef6a53525371b551"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-GREEN5.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "58432931d244c7edf0cb57d9b3e5bb3c363ef5225305b26011ba00abee67d7c5",
+      "compressedSha256": "6add1b0db1d12012ece2e752b7e5ffcd36d04fa7021cf66591f1d973598edabe",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-GREEN5.log.gz",
+          "sha256": "6add1b0db1d12012ece2e752b7e5ffcd36d04fa7021cf66591f1d973598edabe"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-owning-siblings.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "c461e9e9b8e080b32222de9eaeff3074ff4386bd324da20b994a1bf44ff3ce95",
+      "compressedSha256": "0b83a01641ecb428e20f74534770207f45d8edac24230715d0ea6e56dc20a1b0",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-owning-siblings.log.gz.part-01",
+          "sha256": "180f7696b63c74b3ba6df08308d1233e71fcb630830dda02aa8b6f65804abacc"
+        },
+        {
+          "path": "cb-agent-pending-completion-owning-siblings.log.gz.part-02",
+          "sha256": "18654f6392eea7c717e1b09d2324b178212f5f9cb7de51751adf4ab97d3fc0b8"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-classification-GREEN.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "58b518ba2cd1fa6489b64a9502f1dcd2d280d40730a4b30768fa2e2517ffd799",
+      "compressedSha256": "4a2bf257eb35c869ca5c10bf57a57f3103daa02ae8195eba78771c532cad7aa4",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-classification-GREEN.log.gz",
+          "sha256": "4a2bf257eb35c869ca5c10bf57a57f3103daa02ae8195eba78771c532cad7aa4"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-types-final.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressedSha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-types-final.log.gz",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-lint-final.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressedSha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-lint-final.log.gz",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-classifier-lint.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressedSha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-classifier-lint.log.gz",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-format.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "compressedSha256": "6cd316ae8e81df0ff79776205007450fac3d62e1ba8e884e169e326d7955ebe5",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-format.log.gz",
+          "sha256": "6cd316ae8e81df0ff79776205007450fac3d62e1ba8e884e169e326d7955ebe5"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-cleanup.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "fad7308062f3f806643264614cba86c543bb573539b476e90d3b890e2e80436f",
+      "compressedSha256": "6c8ce3bd6c9c1f122b04bd725c8b8b469d09c6abe012208c27194aa3b4ec5221",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-cleanup.log.gz",
+          "sha256": "6c8ce3bd6c9c1f122b04bd725c8b8b469d09c6abe012208c27194aa3b4ec5221"
+        }
+      ]
+    },
+    {
+      "source": "cb-agent-pending-completion-owning-cleanup.log",
+      "encoding": "Concatenate parts in order then gzip decompress.",
+      "rawSha256": "08a90ce0c66d9eddd678017bf52ed61da5588b3db043fddd1dd21c1cab99f32f",
+      "compressedSha256": "4c4554c685678554e61222f58dfa7474426f8cdd8aa6cc753e9dbcd75e0ae8e2",
+      "parts": [
+        {
+          "path": "cb-agent-pending-completion-owning-cleanup.log.gz",
+          "sha256": "4c4554c685678554e61222f58dfa7474426f8cdd8aa6cc753e9dbcd75e0ae8e2"
+        }
+      ]
+    }
+  ],
+  "documentation": {
+    "path": "docs/system-analytics/reconciliation-gc.md",
+    "sha256": "6d22b60e8035f6c4ebf0b30f14152c44d9ebb9a638ce44cc2fae1c701d21b923",
+    "log": "docs.log.gz",
+    "logSha256": "dc5200be5fd7ab67955be5422fafa26e5ef559ca652cda8eb7e10975f5ae5d4b",
+    "gateExitCode": 0,
+    "mermaidBlocksPassed": 6
+  },
+  "combinedFrozenCandidateGates": {
+    "webUnitPassed": 9312,
+    "webUnitFiles": 891,
+    "webUnitSeconds": 59.97,
+    "receipt": "../budget-stop-ownership-20261110/evidence.json",
+    "contracts": "84requirements/45tasks and generatedschemas pass",
+    "docs": "177tableERD and links pass",
+    "notAFullIntegrationOrProviderQualification": true
+  }
+}

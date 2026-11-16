@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_required_intermediate_coordinator",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "98f7859651053b023ed817c3ddfd0a89f3fd53d85bdc6f95c51a32c67dbdf87c",
+  "mcpBundleSha256": "0baeb2a9d0d879d0f0e3ba320acddae1a3828a129bc53284b7ec796d772115f0",
+  "sourceUnchanged": true,
+  "exitCode": 1,
+  "startedAt": "2026-11-11T09:44:47.335893+00:00",
+  "finishedAt": "2026-11-11T10:13:44.606337+00:00",
+  "invocationId": "73322ce7-b3bc-4c10-bb4b-d4b6832a4750",
+  "package": {
+    "tag": "rah/v1.0.7",
+    "commit": "2f1474bc295ec9522a83fc7e80719be14a42f626",
+    "intermediateNodeMaxDurationMinutes": 10,
+    "intermediateTreeWallClockMinutes": 10
+  },
+  "adapterPackageVersion": "0.95.0",
+  "scenario": "QL-CBX-03",
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "hostGlm53Sessions": 10,
+  "sdkGlm53Sessions": 10,
+  "validTypedResults": 9,
+  "completedTreeSizes": [
+    3
+  ],
+  "depthTwoRootResult": "Valid on attempt one. One required intermediate failed and the complete tree gate refused the scenario.",
+  "failure": "The first deletion began before ACP prompt cancellation and confirmed retirement. A second deletion at the same assignment epoch and host session failed during the first deletion.",
+  "firstDeletionAfterIntermediateAttemptSeconds": 645.90428,
+  "causalityLimit": "The first deletion starts after the package duration cap. Its initiating caller is absent from the retained command projection.",
+  "parallelRegressionSuites": 0,
+  "cleanup": {
+    "id": "73322ce7-b3bc-4c10-bb4b-d4b6832a4750",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 11,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1a2a3e3f643fe7d352afaaee6e8391fe043b98ddd07a4abc71075640d8de07fd",
+      "rawBytes": 544,
+      "compressedSha256": "883ba9a9374f446e7dfa5c922d0c3358a90296d455adf914e4f3cc61b52746ba",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "883ba9a9374f446e7dfa5c922d0c3358a90296d455adf914e4f3cc61b52746ba"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "4e361c80371fe906109cc2c25da3b502eb1f2cd49800c3c3dc5cb2abeb22a944",
+      "rawBytes": 11894,
+      "compressedSha256": "d642ee3e5574b75d64db2c6d23bd371b4933a376af3c994443a8d6238f0506af",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "d642ee3e5574b75d64db2c6d23bd371b4933a376af3c994443a8d6238f0506af"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "e9bf27635771ed44edae9c07ef87bd92a51126f4bcc5a20b4c1b03036fd5c704",
+      "rawBytes": 180663,
+      "compressedSha256": "47ad3b0641f025ffd3c583d284070ac5682d1bdd971eef7707c45d35cb0c4c25",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "47ad3b0641f025ffd3c583d284070ac5682d1bdd971eef7707c45d35cb0c4c25"
+        }
+      ]
+    },
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "98f7859651053b023ed817c3ddfd0a89f3fd53d85bdc6f95c51a32c67dbdf87c",
+      "rawBytes": 29495,
+      "compressedSha256": "db50fd27830af4d11d89001d8188ebc034063224fb6cca200c13eec48b1eb943",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "db50fd27830af4d11d89001d8188ebc034063224fb6cca200c13eec48b1eb943"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "eeee9c4cedf3c8e371423a81391e7f773042bdb3c9c4f4db1d549f8268f2e87c",
+      "rawBytes": 32436,
+      "compressedSha256": "8ae25a8ff43d5ab4378cbf31f2bf1a68d33b347a6f478b06d559afee89342a9f",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "8ae25a8ff43d5ab4378cbf31f2bf1a68d33b347a6f478b06d559afee89342a9f"
+        }
+      ]
+    },
+    {
+      "sourceName": "sdk-models.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "62279274371fc412e19e52bea8ca71e137c7a501e92d4aa32130a37ca0a4c5bf",
+      "rawBytes": 1043,
+      "compressedSha256": "3676fe44a6bbfa24c2a294e650ad517481d45976601b402c9feda6d0dcf815b9",
+      "parts": [
+        {
+          "path": "sdk-models.json.gz",
+          "sha256": "3676fe44a6bbfa24c2a294e650ad517481d45976601b402c9feda6d0dcf815b9"
+        }
+      ]
+    },
+    {
+      "sourceName": "failed-command-sequence.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "986702dc4614f95dc88b032afc39b39386952922f89363404ccad6f6dfc31639",
+      "rawBytes": 2951,
+      "compressedSha256": "b296e68f49809db9104e68603eb0cfbb4aac56bfc94b9f880143e31b23c89a76",
+      "parts": [
+        {
+          "path": "failed-command-sequence.json.gz",
+          "sha256": "b296e68f49809db9104e68603eb0cfbb4aac56bfc94b9f880143e31b23c89a76"
+        }
+      ]
+    },
+    {
+      "sourceName": "failed-run-budget-projection.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "40e98a5066e0a2efc11f8126e0aa34f78394e890a796f0f20650b63327b066ca",
+      "rawBytes": 331,
+      "compressedSha256": "d5b9579c411376ce8001c9f96c91e2e3cd77e5e86240c59329092ff9e381b6cd",
+      "parts": [
+        {
+          "path": "failed-run-budget-projection.json.gz",
+          "sha256": "d5b9579c411376ce8001c9f96c91e2e3cd77e5e86240c59329092ff9e381b6cd"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-witness.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1d8529db9d08e23939c0c776901458143fc5032aa8fa5d3e5a0bf0e874a6b888",
+      "rawBytes": 788,
+      "compressedSha256": "1e0854bc91e150bea60d7a91e5b03c8c9309de5a1a2894ce81ad46a84db17917",
+      "parts": [
+        {
+          "path": "database-volume-witness.json.gz",
+          "sha256": "1e0854bc91e150bea60d7a91e5b03c8c9309de5a1a2894ce81ad46a84db17917"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "database-volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0a08780344633c349611ec83acf4d8b493f71770d863468f3a893b60993533e",
+      "rawBytes": 393,
+      "compressedSha256": "fb66f3fbbf5ff64f8f3b25ca0ac33f352490904feec6d2309ba0fb844109b907",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "fb66f3fbbf5ff64f8f3b25ca0ac33f352490904feec6d2309ba0fb844109b907"
+        }
+      ]
+    }
+  ]
+}

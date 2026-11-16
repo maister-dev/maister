@@ -1,8 +1,11 @@
 import "server-only";
 
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { GateResult, NodeAttempt } from "@/lib/db/schema";
 import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
 import type { Db } from "./runner-core";
+import type { RunResultContract } from "@/lib/run-results/types";
+import type { FindingsContract } from "@/lib/run-results/findings-contract";
 
 import { execFile } from "node:child_process";
 import { join } from "node:path";
@@ -17,6 +20,11 @@ import { getNodeAttemptsForRun } from "./ledger";
 
 import { atomicWriteJson } from "@/lib/atomic";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
+import {
+  isNativeFindingsContract,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
+import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 
 const log = pino({
   name: "run-context",
@@ -52,9 +60,16 @@ export type RunContextFile = {
   gates: Record<string, { status: string; verdict?: unknown }>;
   promoted: Record<string, unknown>;
   brain?: BrainAmbientEntry[];
+  knowledge?: Readonly<{
+    schemaVersion: 1;
+    resultContract?: FindingsContract;
+    retrieval: "structured_tools";
+  }>;
 };
 
 export type BuildRunContextArgs = {
+  resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   taskPrompt: string;
   effectivePrompt?: string;
   clarifications?: TaskClarificationContext[];
@@ -96,6 +111,17 @@ export function buildRunContext(args: BuildRunContextArgs): RunContextFile {
   }
 
   return {
+    ...(usesStructuredKnowledgeContext(args)
+      ? {
+          knowledge: {
+            schemaVersion: 1,
+            ...(isNativeFindingsContract(args.resultContract)
+              ? { resultContract: FINDINGS_CONTRACT }
+              : {}),
+            retrieval: "structured_tools",
+          } as const,
+        }
+      : {}),
     intent: args.taskPrompt,
     task: {
       prompt: args.taskPrompt,
@@ -118,6 +144,8 @@ export function runContextPath(worktreePath: string): string {
 // this so a write failure never fails the run. The `.maister/` git-exclude is the
 // caller's run-start responsibility (ensureWorktreeGitExclude), NOT re-run here.
 export async function writeRunContext(args: {
+  resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   runId: string;
   worktreePath: string;
   taskPrompt: string;
@@ -136,6 +164,8 @@ export async function writeRunContext(args: {
     clarifications,
     db,
     brain,
+    resultContract,
+    knowledgeAccess,
   } = args;
 
   const [nodeAttempts, gateResults] = await Promise.all([
@@ -144,6 +174,8 @@ export async function writeRunContext(args: {
   ]);
 
   const ctx = buildRunContext({
+    resultContract,
+    knowledgeAccess,
     taskPrompt,
     effectivePrompt,
     clarifications,

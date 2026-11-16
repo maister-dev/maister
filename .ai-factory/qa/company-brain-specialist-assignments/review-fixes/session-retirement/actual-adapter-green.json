@@ -1,0 +1,27 @@
+{
+  "evidence": "/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/actual-retirement-evidence-ZhDBNe",
+  "results": [
+    {
+      "source": "candidate",
+      "runId": "retirement-candidate-94de1f79-2b6a-4d76-b1bd-483a3d76e34d",
+      "invocationId": "1009eae1-26ac-4d40-9690-895f7854dcb5",
+      "killGraceMs": 2000,
+      "createStatus": 201,
+      "promptStatus": 200,
+      "deleteStatus": 204,
+      "deleteElapsedMs": 640,
+      "reason": null,
+      "stage": null,
+      "leaderExited": true,
+      "terminalPublished": true,
+      "groupAtResponse": {
+        "state": "retired"
+      },
+      "groupAfter250Ms": {
+        "state": "retired"
+      },
+      "cleanupFailureCount": 0,
+      "remainingOwnedProcesses": 0
+    }
+  ]
+}

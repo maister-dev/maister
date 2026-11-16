@@ -6,8 +6,10 @@ import type {
   ExecutionAssignment,
   ExecutionCommand,
 } from "@/lib/db/schema";
+import type { ExecutionHosts } from "@/lib/execution-host";
 
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
+import pino from "pino";
 
 import { isSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
 
@@ -23,11 +25,18 @@ import {
   runSessions,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
+import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
-import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+
+const log = pino({
+  name: "execution-quiescence",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 type AgentExecutionIdentity = Readonly<{
   id: string;
@@ -325,22 +334,77 @@ export async function assertAgentExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
   applicationCommandId?: string,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
   await assertAgentSessionBindingsQuiescent(db, run, applicationCommandId);
-  await assertNoLiveAgentSessions(db, run);
+  await assertNoLiveAgentSessions(db, run, hosts);
+}
+
+/** Await durable exit projection after teardown without repeating a command or weakening terminal evidence. */
+export async function waitForAgentExecutionQuiescence(
+  db: Db,
+  run: AgentExecutionIdentity,
+  signal?: AbortSignal,
+  hosts?: ExecutionHosts,
+): Promise<void> {
+  const deadline =
+    performance.now() +
+    RUNTIME_EVENT_CLAIM_LEASE_MS +
+    projectionLimitsFromEnv().leaseMs;
+
+  for (;;) {
+    signal?.throwIfAborted();
+    try {
+      await assertAgentExecutionQuiescent(db, run, undefined, hosts);
+
+      return;
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        error.code !== "EXECUTOR_UNAVAILABLE" ||
+        error.details?.reason !== "agent_execution_quiescence_unproven"
+      )
+        throw error;
+      if (performance.now() >= deadline) {
+        log.warn(
+          {
+            runId: run.id,
+            assignmentId: run.executionAssignmentId,
+            reason: error.details.reason,
+          },
+          "canonical execution quiescence deadline exhausted",
+        );
+        throw error;
+      }
+      log.debug(
+        {
+          runId: run.id,
+          assignmentId: run.executionAssignmentId,
+          reason: error.details.reason,
+        },
+        "awaiting canonical execution quiescence wake",
+      );
+    }
+    await runEventWakeBus.wait(
+      run.id,
+      Math.min(250, deadline - performance.now()),
+      signal,
+    );
+  }
 }
 
 /** An unstarted cancellation still requires a fresh host observation. */
 export async function assertAgentCancellationExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
   await assertAgentCancellationBindingsQuiescent(db, run);
-  await assertNoLiveAgentSessions(db, run);
+  await assertNoLiveAgentSessions(db, run, hosts);
 }
 
 /** Await canonical teardown outside a transaction. Wakes are process-local,
@@ -435,9 +499,10 @@ export async function assertTerminalAgentCleanupExecutionQuiescent(
 async function assertNoLiveAgentSessions(
   db: Db,
   run: AgentExecutionIdentity,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
-  const client = await createExecutionHosts({ db }).forAssignment({
+  const client = await (hosts ?? createExecutionHosts({ db })).forAssignment({
     id: run.executionAssignmentId,
   });
   const live = (await client.sessionsForRun()).filter(

@@ -85,7 +85,7 @@ blank).
 ## Shared popup & density conventions
 
 These hold across **every** dialog/popup and screen; an individual doc only
-notes where it *deviates*.
+notes where it _deviates_.
 
 - **Close affordance.** A dialog closes via a top-right **✕** crossmark
   (`aria-label` for screen readers, no visible label), plus Esc and a backdrop
@@ -131,6 +131,8 @@ flowchart TD
     Rail --> Work["work /work — cross-project work table"]
     Rail --> Activity["activity /activity — cross-project feed"]
     Rail --> Inbox["Inbox /inbox — needs-you HITL plus mentions"]
+    Rail --> Knowledge["Company Brain /knowledge — structured records and review"]
+    Settings --> CompanyAccess["Company access /settings/company-grants — explicit authority"]
     Rail --> FlowStudio["Flow Studio /studio"]
     Desk --> Work
     Desk --> Activity
@@ -188,7 +190,10 @@ flowchart TD
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`observatory.md`](observatory.md) | Observatory (delivery attribution, cost/budget, flow-ledger process metrics) | `/observatory`, `/projects/{slug}/observatory` | Existing panels and ADR-134 additions Implemented |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
+| [`company-brain.md`](company-brain.md)                                       | Native knowledge, evidence, proposal review and company authority                                             | `/knowledge`, `/settings/company-grants`                                                    | Implemented locally; runtime qualification separate                |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
+| [`specialist-assignments.md`](specialist-assignments.md) | Specialist assignment list, detail, delegated work, delivery and stand operation controls | `/specialist-assignments`, `/specialist-assignments/{assignmentId}` | Implemented |
+| [`settings-specialists.md`](settings-specialists.md) | Settings → company specialist and coordinator bindings, stand inspection schedules | `/settings/specialists` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (ADR-071) |
 | [`admin/execution-host.md`](admin/execution-host.md) | Execution-host and event-plane diagnostics (admin) | `/admin/execution-host` | Implemented (P0-7) |
 | [`projects/project-agent-history.md`](projects/project-agent-history.md) | Agent detail and retained run/attempt history | `/projects/{slug}/agents/{agentId}` | Implemented (ADR-196) |

@@ -1,8 +1,10 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type {
   ActivityPulseResponse,
+  PulseEventKind,
   ActivityRunSnapshot,
   ActivityRunStatus,
   ActivitySalience,
@@ -11,8 +13,18 @@ import type {
   RunActivitySourceMessage,
 } from "@/lib/ext-activity/types";
 
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 
+import { NON_ATTENTION_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { asProjectRunKind } from "@/lib/runs/run-kind-invariants";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -358,6 +370,7 @@ export async function getActivityPulse(
     salience: ActivitySalience;
     now?: Date;
     client?: DbClient;
+    recipient?: KnowledgeRecipient;
   },
 ): Promise<ActivityPulseResponse> {
   const client = input.client ?? db();
@@ -366,15 +379,27 @@ export async function getActivityPulse(
   // past the snapshot loop — but it has no dependency on `promotable`, so the
   // two synthesized blocks are fetched as one wave rather than in series.
   const [needsYou, promotable, mentionCandidates] = await Promise.all([
-    listProjectNeedsYou(projectId, { db: client }),
+    listProjectNeedsYou(projectId, {
+      db: client,
+      ...(input.recipient ? { recipient: input.recipient } : {}),
+    }),
     listProjectPromotable(projectId, { db: client }),
     listMentionCandidateAgents(client, projectId),
   ]);
   const committedHorizon = sql`${domainEvents.txId} < pg_snapshot_xmin(pg_current_snapshot())`;
+  const pulseKindPredicate = notInArray(domainEvents.kind, [
+    ...NON_ATTENTION_EVENT_KINDS,
+  ]);
   const maxIdRows = await client
     .select({ id: domainEvents.id })
     .from(domainEvents)
-    .where(and(eq(domainEvents.projectId, projectId), committedHorizon))
+    .where(
+      and(
+        eq(domainEvents.projectId, projectId),
+        committedHorizon,
+        pulseKindPredicate,
+      ),
+    )
     .orderBy(desc(domainEvents.id))
     .limit(1);
   const currentTail = toBigInt(maxIdRows[0]?.id ?? 0);
@@ -397,6 +422,7 @@ export async function getActivityPulse(
               eq(domainEvents.projectId, projectId),
               sql`${domainEvents.id} > ${input.since.toString()}::bigint`,
               committedHorizon,
+              pulseKindPredicate,
             ),
           )
           .orderBy(asc(domainEvents.id))
@@ -405,7 +431,8 @@ export async function getActivityPulse(
   const happenedMapped = happenedRows.slice(0, PULSE_PAGE_SIZE).map((row) =>
     mapDomainEventToPulseItem({
       id: BigInt(row.id),
-      kind: row.kind,
+      // The SQL predicate excludes knowledge invalidation before pagination.
+      kind: row.kind as PulseEventKind,
       occurredAt: row.occurredAt,
       runId: row.runId ?? null,
       taskId: row.taskId ?? null,
@@ -472,6 +499,7 @@ export async function getRunActivityResponse(
     salience: ActivitySalience;
     now?: Date;
     client?: DbClient;
+    recipient?: KnowledgeRecipient;
   },
 ): Promise<{
   items: RunActivityItem[];
@@ -485,7 +513,10 @@ export async function getRunActivityResponse(
   if (!run) return null;
 
   const now = input.now ?? new Date();
-  const needsYou = await listProjectNeedsYou(projectId, { db: client });
+  const needsYou = await listProjectNeedsYou(projectId, {
+    db: client,
+    ...(input.recipient ? { recipient: input.recipient } : {}),
+  });
   const { snapshot, items } = await buildRunSnapshot(
     run,
     needsYou,

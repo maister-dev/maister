@@ -7,6 +7,7 @@ import type { DomainEventConsumer } from "./consumers";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { distill } from "@/lib/brain/distill";
 import { isBrainSchemaApplied, isProjectBrainEnabled } from "@/lib/brain/guard";
@@ -14,6 +15,8 @@ import { retain } from "@/lib/brain/retain";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
+import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
+import { MaisterError } from "@/lib/errors";
 
 // Project Brain (ADR-122) harvest consumer. Rides the domain_events dispatcher
 // (startFrom "now", idempotent). Predicate = RUN_TERMINAL_EVENT_KINDS +
@@ -71,6 +74,42 @@ export interface HarvestOpts {
   resolveClient: () => Promise<OpenAiCompatibleClient>;
 }
 
+/** Classify a whole dispatcher batch before any provider receives execution-derived material. */
+async function legacyHarvestRuns(
+  db: HarvestDb,
+  events: readonly DomainEventRow[],
+): Promise<ReadonlySet<string>> {
+  const ids = [
+    ...new Set(
+      events
+        .filter(
+          (event) => isProjectDomainEvent(event) && isHarvestable(event.kind),
+        )
+        .flatMap((event) => (event.runId === null ? [] : [event.runId])),
+    ),
+  ];
+
+  if (!ids.length) return new Set();
+  const { rows } = await db.execute(
+    sql`SELECT id FROM runs WHERE id IN (${sql.join(
+      ids.map((id) => sql`${id}`),
+      sql`, `,
+    )}) AND knowledge_access IS NULL AND result_contract->>'nativeContract' IS DISTINCT FROM ${FINDINGS_CONTRACT}`,
+  );
+  const eligible = new Set<string>();
+
+  for (const row of rows) {
+    if (typeof row.id !== "string")
+      throw new MaisterError(
+        "CONFIG",
+        "Brain harvest source classification returned an invalid execution identity",
+      );
+    eligible.add(row.id);
+  }
+
+  return eligible;
+}
+
 // The harvest core, injectable for tests. A throw propagates to the dispatcher
 // (cursor holds); a normal return advances the cursor.
 export async function harvestEvents(
@@ -79,8 +118,10 @@ export async function harvestEvents(
 ): Promise<void> {
   const { db } = opts;
   let client: OpenAiCompatibleClient | null = null;
+  const legacyRuns = await legacyHarvestRuns(db, events);
 
   for (const event of events) {
+    if (!isProjectDomainEvent(event)) continue;
     if (isGraphOnlyCutoverFailure(event)) {
       log.debug(
         { eventId: event.id, runId: event.runId, reason: "graph-cutover" },
@@ -89,6 +130,17 @@ export async function harvestEvents(
       continue;
     }
     if (!isHarvestable(event.kind)) continue;
+    if (event.runId !== null && !legacyRuns.has(event.runId)) {
+      log.debug(
+        {
+          eventId: event.id,
+          runId: event.runId,
+          reason: "native_or_unavailable_source_requires_proposal",
+        },
+        "Brain harvest withheld unclassified execution write-back",
+      );
+      continue;
+    }
 
     if (!(await isProjectBrainEnabled(db, event.projectId))) {
       // Intentional non-consumption — advance past it.
@@ -144,7 +196,10 @@ export async function harvestEvents(
 export const memoryHarvestConsumer: DomainEventConsumer = {
   id: "memory_harvest",
   startFrom: "now",
-  async handle(events: DomainEventRow[]): Promise<void> {
+  async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+    const events = receivedEvents.filter(isProjectDomainEvent);
+
+    if (events.length === 0) return;
     const db = getDb() as unknown as HarvestDb;
 
     if (!(await isBrainSchemaApplied(db))) return;

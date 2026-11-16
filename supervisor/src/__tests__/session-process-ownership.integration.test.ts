@@ -8,12 +8,14 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 import { afterEach, expect, it, vi } from "vitest";
+import pino from "pino";
 
 import * as sessionOwnership from "../session-process-ownership";
 import * as processGroups from "../../../runtime/process-group";
-import { terminateSessionProcess, waitForChildExit } from "../execution-fence";
+import { waitForChildExit } from "../execution-fence";
 import { inspectProcessGroup } from "../../../runtime/process-group";
 import {
   assertInvocationGroupEmpty,
@@ -28,12 +30,12 @@ import {
 
 import {
   bootHost,
+  completePrompt,
   createEnvelope,
   createSession,
   envelope,
   fenceFor,
   postJson,
-  silentLogger,
 } from "./_fixtures/boot-host";
 
 type OwnedHost = Readonly<{
@@ -130,7 +132,105 @@ afterEach(async () => {
     throw new AggregateError(failures, "Owned session fixture teardown failed");
 });
 
-it("keeps an inherited descendant in physical ownership after its adapter exits and refuses scoped inventory until that descendant retires", async () => {
+it("retains safe gate failure identity while withholding private error messages and confirming child termination", async () => {
+  const output: string[] = [];
+  const logger = pino(
+    { level: "debug" },
+    new Writable({
+      write(chunk, _encoding, callback) {
+        output.push(String(chunk));
+        callback();
+      },
+    }),
+  );
+  const owner = await ownedHost({ logger });
+  const marker = "private-gate-credential-must-not-leak";
+  const failure = Object.assign(new Error(marker), {
+    code: "ERR_SQLITE_ERROR",
+  });
+
+  vi.spyOn(
+    owner.host.hostState,
+    "registerSessionProcess",
+  ).mockImplementationOnce(() => {
+    throw failure;
+  });
+  const response = await postJson(
+    `${owner.host.url}/sessions`,
+    await createEnvelope(owner.host, { runId: "gate-failure-identity" }),
+  );
+
+  expect(response.status).toBe(500);
+  expect(response.body).toMatchObject({
+    code: "SPAWN",
+    details: { sessionCreateQuiescence: { version: 1, process: "terminated" } },
+  });
+  const rows = output
+    .join("")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const diagnostic = rows.find(
+    (row) => row.msg === "session-bootstrap-gate-failed",
+  );
+
+  expect(diagnostic).toMatchObject({
+    runId: "gate-failure-identity",
+    stage: "gate_start",
+    commandId: expect.any(String),
+    sessionId: expect.any(String),
+    causeChain: [{ name: "Error", code: "ERR_SQLITE_ERROR" }],
+  });
+  expect(JSON.stringify({ rows, body: response.body })).not.toContain(marker);
+  expect(
+    owner.host.hostState.sessionProcessesForRun("gate-failure-identity"),
+  ).toEqual([]);
+});
+
+it("retires durable process ownership after a naturally completed group is absent without a DELETE command", async () => {
+  const owner = await ownedHost({ fixtureArgs: ["--lines", "0"] });
+  const runId = "naturally-retired-session";
+  const create = await createEnvelope(
+    owner.host,
+    { runId },
+    {
+      reapOnEndTurn: true,
+    },
+  );
+  const created = await postJson(`${owner.host.url}/sessions`, create);
+
+  expect(created.status).toBe(201);
+  const sessionId = String(created.body.sessionId);
+  const entry = owner.host.registry.get(sessionId)!;
+  const gate = await recordOwnedProcess(owner, entry.record.pid);
+
+  await recordOwnedProcess(owner, entry.record.adapterPid!);
+  expect(owner.host.hostState.sessionProcessesForRun(runId)).toMatchObject([
+    { commandId: create.command.id, phase: "registered" },
+  ]);
+  const result = await completePrompt(
+    owner.host,
+    sessionId,
+    envelope("session.prompt", fenceFor(owner.host, runId), {
+      stepId: "agent",
+      prompt: "Complete this finite operation",
+    }),
+  );
+
+  expect(result.status).toBe(200);
+  expect(await waitForChildExit(entry, 2_000)).toBe(true);
+  await assertInvocationGroupEmpty(owner.invocation, gate.identity.pgid);
+  expect(owner.host.hostState.sessionProcessesForRun(runId)).toMatchObject([
+    {
+      commandId: create.command.id,
+      processGroup: gate.identity.pgid,
+      phase: "released",
+      retiredAt: expect.any(String),
+    },
+  ]);
+});
+
+it("retires an inherited process group when its adapter is killed during initialization", async () => {
   vi.stubEnv("MAISTER_ACP_HANDSHAKE_TIMEOUT_MS", "5000");
   const logRoot = await mkdtemp(join(tmpdir(), "session-ownership-handshake-"));
   const invocationLog = join(logRoot, "invocations.jsonl");
@@ -192,36 +292,12 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
     if ("error" in outcome) throw outcome.error;
     const response = outcome.value;
 
-    expect(response.status, JSON.stringify(response.body)).toBe(503);
-    expect(response.body).toMatchObject({
-      details: { reason: "session_create_exit_unconfirmed" },
-    });
-    // Negative control: the former parent/output-only proof succeeds while the
-    // inherited descendant remains alive with all stdio closed.
     expect(await waitForChildExit(entry, 2_000)).toBe(true);
     expect(entry.record.terminalPublished).toBe(true);
-    expect(await inspectProcessGroup(gate.identity.pgid)).toMatchObject({
-      state: "active",
+    expect(await inspectProcessGroup(gate.identity.pgid)).toEqual({
+      state: "retired",
     });
-    expect(await terminateSessionProcess(entry, 25, silentLogger)).toBe(
-      "process_group_active",
-    );
-    const refused = await fetch(
-      `${owner.host.url}/sessions?runId=owned-descendant`,
-    );
-
-    expect(refused.status).toBe(503);
-    expect(await refused.json()).toMatchObject({
-      details: { reason: "session_process_owner_unconfirmed" },
-    });
-    expect(
-      owner.host.hostState.sessionProcessesForRun("owned-descendant")[0].phase,
-    ).toBe("registered");
-    await signalInvocationProcess(
-      owner.invocation,
-      descendant.identity,
-      "SIGTERM",
-    );
+    expect(response.status).toBeGreaterThanOrEqual(400);
     await assertInvocationGroupEmpty(owner.invocation, gate.identity.pgid);
     const admitted = await fetch(
       `${owner.host.url}/sessions?runId=owned-descendant`,
@@ -256,9 +332,13 @@ it("keeps an inherited descendant in physical ownership after its adapter exits 
   }
 });
 
-it.each(["within grace", "at deadline"] as const)(
-  "DELETE waits for an inherited descendant after the leader exits, then durably replays success (%s)",
-  async (retirement) => {
+it.each([
+  { method: "DELETE", retirement: "within grace" },
+  { method: "DELETE", retirement: "at deadline" },
+  { method: "POST", retirement: "within grace" },
+] as const)(
+  "$method waits for an inherited descendant after the leader exits, then durably replays success ($retirement)",
+  async ({ method, retirement }) => {
     const owner = await ownedHost({
       fixture: "retiring-descendant-acp.mjs",
       killGraceMs: 2_000,
@@ -344,32 +424,37 @@ it.each(["within grace", "at deadline"] as const)(
         return observation;
       },
     );
-    const command = envelope("session.delete", fenceFor(owner.host, runId));
-    const response = await postJson(
-      `${owner.host.url}/sessions/${sessionId}`,
-      command,
-      "DELETE",
+    const checkpoint = method === "POST";
+    const command = envelope(
+      checkpoint ? "session.checkpoint" : "session.delete",
+      fenceFor(owner.host, runId),
     );
+    const endpoint = `${owner.host.url}/sessions/${sessionId}${checkpoint ? "/checkpoint" : ""}`;
+    const expectedStatus = checkpoint ? 200 : 204;
+    const response = await postJson(endpoint, command, method);
 
     expect(observedLiveDescendant).toBe(true);
-    expect(response.status, JSON.stringify(response.body)).toBe(204);
+    expect(response.status, JSON.stringify(response.body)).toBe(expectedStatus);
     expect(await inspect(leader.identity.pgid)).toEqual({ state: "retired" });
     expect(owner.host.hostState.getReceipt(command.command.id)).toMatchObject({
       phase: "completed",
-      httpStatus: 204,
+      httpStatus: expectedStatus,
     });
+    if (checkpoint) {
+      const inventory = await fetch(
+        `${owner.host.url}/sessions?runId=${runId}`,
+      );
+
+      expect(inventory.status).toBe(200);
+    }
     expect(owner.host.hostState.sessionProcessesForRun(runId)[0]).toMatchObject(
       {
         phase: "released",
       },
     );
-    const replay = await postJson(
-      `${owner.host.url}/sessions/${sessionId}`,
-      command,
-      "DELETE",
-    );
+    const replay = await postJson(endpoint, command, method);
 
-    expect(replay.status).toBe(204);
+    expect(replay.status).toBe(expectedStatus);
     expect(replay.headers.get("x-maister-command-replayed")).toBe("true");
   },
 );

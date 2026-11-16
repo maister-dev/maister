@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_complete_regression",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "e78f13b0636e52d0dcc0f7c96277241cde20da48ec7e5726e9b8d0f6f1e7fd57",
+  "laterLiveCandidateSha256": "98f7859651053b023ed817c3ddfd0a89f3fd53d85bdc6f95c51a32c67dbdf87c",
+  "runtimeDeltaToLaterCandidate": "The shared native findings prompt adds an explicit retained-selection mapping instruction.",
+  "tests": {
+    "passed": 6299,
+    "failed": 3,
+    "skipped": 12
+  },
+  "files": {
+    "passed": 688,
+    "failed": 3
+  },
+  "failedSuites": [
+    {
+      "path": "lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "cases": [
+        "IT-CBA-05 persists and activates a company assignment clarification through its real owned checkpoint without a task (normal)",
+        "IT-CBA-05 persists and activates a company assignment clarification through its real owned checkpoint without a task (activation-recovery)"
+      ]
+    },
+    {
+      "path": "lib/queries/__tests__/digest.integration.test.ts",
+      "cases": []
+    },
+    {
+      "path": "lib/flows/graph/__tests__/prompt-owners.integration.test.ts",
+      "cases": [
+        "owner-flow-admission: ai_judgment rolls back an INSERT blocked past the driver lease"
+      ]
+    }
+  ],
+  "focusedRetries": {
+    "companyClarification": 4,
+    "flowLeaseAndRework": 2,
+    "digest": 10
+  },
+  "workers": 2,
+  "productionBuild": {
+    "revision": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+    "buildId": "ODIsN340knnfL_sdo6f7_",
+    "artifactPath": "/private/tmp/cb-model-pin-final-regression-wehrai7z/web/.next",
+    "invocationId": "86755ac1-49af-4c91-a6fb-f21d995c922a"
+  },
+  "outcome": {
+    "code": 1,
+    "signal": null
+  },
+  "cleanupErrors": [],
+  "independentCleanup": {
+    "id": "86755ac1-49af-4c91-a6fb-f21d995c922a",
+    "errors": [],
+    "containers": []
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 8,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "e45576408342da53fdd0730323868ed549496d28df28e86e807a32faad027b3b",
+      "rawBytes": 803,
+      "compressedSha256": "39e64a6cbfa9aec41884b0a3949c30f457e0d80e2caec8598bbc02b8db3d75f1",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "39e64a6cbfa9aec41884b0a3949c30f457e0d80e2caec8598bbc02b8db3d75f1"
+        }
+      ]
+    },
+    {
+      "sourceName": "vitest.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "2cc9fd011fbf5505ad4d6ad93ae4a712c08bc71270225c0af110a4a6e5774b1d",
+      "rawBytes": 2578124,
+      "compressedSha256": "23ef819d4891e681158c8ed9ee529847de882b70068076d33489be831fb78b94",
+      "parts": [
+        {
+          "path": "vitest.json.gz",
+          "sha256": "23ef819d4891e681158c8ed9ee529847de882b70068076d33489be831fb78b94"
+        }
+      ]
+    },
+    {
+      "sourceName": "vitest.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "09f0e21c42b77f1f9720fb9914cfed64097dba08227f35d5efe31f291edf3ed2",
+      "rawBytes": 35524440,
+      "compressedSha256": "b719bcb26b01dde4ecd06d29a1f59facaf12ed1d0545c2d7079496a49d42b833",
+      "parts": [
+        {
+          "path": "vitest.log.gz.01",
+          "sha256": "1a90850b52de2ba9dae1a89be60b44439a2e648391ec9925bc830d14f1fdcbcf"
+        },
+        {
+          "path": "vitest.log.gz.02",
+          "sha256": "0c471b876a33ab516f6443c2e63ad985286bbb63f2ecd6ee501f69fa2ad84992"
+        },
+        {
+          "path": "vitest.log.gz.03",
+          "sha256": "c03cdd88553649ff3c26727efc414f7996b7b3e723c9b2658246eff96ff28312"
+        },
+        {
+          "path": "vitest.log.gz.04",
+          "sha256": "5c392857aec007bf9b0c9e265a02db6574cbd389916560f811bbc9e048c2eea0"
+        },
+        {
+          "path": "vitest.log.gz.05",
+          "sha256": "f489441a5ab37ec2f3619f01a81ab66713aed6b257506602e351f23ceb64fc1b"
+        },
+        {
+          "path": "vitest.log.gz.06",
+          "sha256": "7686a892e70e46847f3dcb46acb25f35dece722e1779b6258eeb6abd8d8a9961"
+        },
+        {
+          "path": "vitest.log.gz.07",
+          "sha256": "3b63b8f62c67fe44a4b8e16871c3558fc6a7ae503a873e762122af9710e28044"
+        },
+        {
+          "path": "vitest.log.gz.08",
+          "sha256": "726310fec8f4eba99ab0fe3db09ecc1e8e26c655ebc018a02821d1120b156062"
+        }
+      ]
+    },
+    {
+      "sourceName": "launcher.mts",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "9ac19b1a2c1ce34a63df07c3691f80329c162228bdb562fecbf2d5d999ca1415",
+      "rawBytes": 3476,
+      "compressedSha256": "57dfc6bde38181d3c06e06c630137feb1101a0ca45e0add92232e4938b8a0b27",
+      "parts": [
+        {
+          "path": "launcher.mts.gz",
+          "sha256": "57dfc6bde38181d3c06e06c630137feb1101a0ca45e0add92232e4938b8a0b27"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8079714667782dbd5579ce8c405da05a3e57d6d957e88633466a3f8c4779f51e",
+      "rawBytes": 393,
+      "compressedSha256": "13af6693993f524e4b1ddfa525f2f502f2ebf24e1a33255ee85e6d437ef9c942",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "13af6693993f524e4b1ddfa525f2f502f2ebf24e1a33255ee85e6d437ef9c942"
+        }
+      ]
+    },
+    {
+      "sourceName": "failed-suites.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "5b6a190d9f508cfe6af9fbea15c36a79ae8937d89a7d68d612ff32de452b2503",
+      "rawBytes": 890,
+      "compressedSha256": "701f0e8068ae7631f05843dd0774f9e6c28d1ba8951cb000abf5ad28bcc8d36c",
+      "parts": [
+        {
+          "path": "failed-suites.json.gz",
+          "sha256": "701f0e8068ae7631f05843dd0774f9e6c28d1ba8951cb000abf5ad28bcc8d36c"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-digest-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "afc472806f5fa1ec05215a8a9338d5f0b3140562a9dd5f4f459118ea920d8f63",
+      "rawBytes": 803,
+      "compressedSha256": "d5c1f65f7f601cd1a7c703867d3538a5e522719208ccbe617d169bc2d8f1b5d7",
+      "parts": [
+        {
+          "path": "isolated-digest-metadata.json.gz",
+          "sha256": "d5c1f65f7f601cd1a7c703867d3538a5e522719208ccbe617d169bc2d8f1b5d7"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-digest-vitest.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3849416f86a01dcc49dd3b2b18f20558d6f3b1b274a78380eeb1df7655afd1b2",
+      "rawBytes": 4139,
+      "compressedSha256": "63541996ede248115b376a2bfa04127aefc163e4a472298d92e221d4b99a3f3f",
+      "parts": [
+        {
+          "path": "isolated-digest-vitest.json.gz",
+          "sha256": "63541996ede248115b376a2bfa04127aefc163e4a472298d92e221d4b99a3f3f"
+        }
+      ]
+    }
+  ]
+}

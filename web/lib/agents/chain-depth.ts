@@ -1,6 +1,8 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
+import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -25,7 +27,109 @@ export type ChainDepth = {
   // consumer's idempotent contract means a throw redelivers the whole window
   // forever.
   atCap: boolean;
+  reason?:
+    "company_event_chain_unclassified" | "project_event_chain_unclassified";
 };
+
+/** Native coordinator terminal facts are system-authored but still spend their producing Run's event-chain budget. */
+export async function resolveCompanyEventChainDepth(
+  db: SqlTransaction,
+  eventId: number,
+): Promise<ChainDepth> {
+  const row = (
+    await db.execute(sql`
+    SELECT event.actor_type,producing.agent_chain_depth,
+      (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=coalesce(producing.retry_of_run_id,producing.id)
+          AND invocation.company_id=producing.company_id AND invocation.project_id IS NULL
+          AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
+          AND invocation.schedule_id=producing.agent_schedule_id
+          AND (producing.retry_of_run_id IS NULL OR company_event_retry_still_authorized(producing.id))
+      ))) AS chain_classified
+    FROM domain_events event JOIN runs producing ON producing.id=event.run_id
+      AND producing.company_id=event.company_id AND producing.project_id IS NULL
+      AND producing.company_execution_snapshot IS NOT NULL
+    WHERE event.id=${eventId} AND event.company_id IS NOT NULL AND event.project_id IS NULL
+    FOR SHARE OF event,producing
+  `)
+  ).rows[0];
+
+  if (row?.actor_type === "user")
+    return resolveAgentChainDepth({
+      db,
+      trigger: { source: "domain_event", eventId },
+    });
+  const cap = maxAgentChainDepth();
+
+  if (
+    row?.chain_classified !== true ||
+    typeof row.agent_chain_depth !== "number" ||
+    !Number.isSafeInteger(row.agent_chain_depth) ||
+    row.agent_chain_depth < 0
+  ) {
+    log.warn(
+      { eventId, reason: "company_event_chain_unclassified" },
+      "company event has no classified producing chain; admission refused",
+    );
+
+    return {
+      depth: cap,
+      atCap: true,
+      reason: "company_event_chain_unclassified",
+    };
+  }
+  const depth = row.agent_chain_depth + 1;
+
+  return { depth, atCap: depth > cap };
+}
+
+/** Project professional events retain the producing chain even for system-authored Flow terminal facts. */
+export async function resolveProjectEventChainDepth(
+  db: SqlTransaction,
+  projectId: string,
+  eventId: number,
+): Promise<ChainDepth> {
+  const row = (
+    await db.execute(sql`
+    SELECT event.actor_type,event.run_id,producing.agent_chain_depth,
+      (producing.knowledge_access->>'state'='complete' AND EXISTS (
+        SELECT 1 FROM specialist_run_links appointment WHERE appointment.run_id=producing.id
+      ) AND (producing.trigger_source IN ('manual','cron','webhook') OR (producing.trigger_source='domain_event' AND EXISTS (
+        SELECT 1 FROM agent_trigger_attempts invocation WHERE invocation.reserved_run_id=coalesce(producing.retry_of_run_id,producing.id)
+          AND invocation.project_id=producing.project_id AND invocation.company_id IS NULL
+          AND invocation.trigger_source='domain_event' AND invocation.trigger_event_id=producing.trigger_event_id
+          AND invocation.schedule_id=producing.agent_schedule_id
+          AND (producing.retry_of_run_id IS NULL OR EXISTS (
+            SELECT 1 FROM agent_retry_intents retry WHERE retry.created_run_id=producing.id
+              AND retry.source_run_id=producing.retry_of_run_id AND retry.state='launched'
+              AND (project_event_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'event')
+                OR project_comment_retry_source_matches(retry.source_run_id,retry.actor_user_id,retry.recipe->'replacement'->'comment'))))
+      )))) AS chain_classified
+    FROM domain_events event LEFT JOIN runs producing ON producing.id=event.run_id
+      AND producing.project_id=event.project_id AND producing.company_id IS NULL
+    WHERE event.id=${eventId} AND event.project_id=${projectId} AND event.company_id IS NULL
+    FOR SHARE OF event
+  `)
+  ).rows[0];
+  const cap = maxAgentChainDepth();
+
+  if (row?.actor_type === "user" && row.run_id === null)
+    return { depth: 0, atCap: cap <= 0 };
+  if (
+    row?.chain_classified !== true ||
+    typeof row.agent_chain_depth !== "number" ||
+    !Number.isSafeInteger(row.agent_chain_depth) ||
+    row.agent_chain_depth < 0
+  )
+    return {
+      depth: cap,
+      atCap: true,
+      reason: "project_event_chain_unclassified",
+    };
+  const depth = row.agent_chain_depth + 1;
+
+  return { depth, atCap: depth > cap };
+}
 
 // ADR-156: `boundRunId` is parsed from the run-bound token NAME, so it is
 // server-derived but NOT guaranteed to reference a live `runs` row — a token can

@@ -4,8 +4,8 @@ import { buildLeftRailSections } from "@/components/chrome/left-rail-sections";
 
 const label = (key: string): string => key;
 
-// The order is ADR-172 D4's, not an accident of insertion: Home / Projects /
-// Work / Activity / Inbox / Flow Studio / Observatory, then the admin tail.
+// Native Knowledge (ADR-202) extends the ADR-172 spine after Inbox;
+// administrator-only destinations remain in the tail.
 describe("buildLeftRailSections", () => {
   it("projects every member-permitted section, including Observatory", () => {
     expect(
@@ -16,6 +16,7 @@ describe("buildLeftRailSections", () => {
       "work",
       "activity",
       "inbox",
+      "knowledge",
       "studio",
       "observatory",
     ]);
@@ -41,6 +42,7 @@ describe("buildLeftRailSections", () => {
       "work",
       "activity",
       "inbox",
+      "knowledge",
       "studio",
       "observatory",
       "agents",

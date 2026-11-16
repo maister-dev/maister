@@ -15,6 +15,8 @@
 //                                  field, no "model" config option (the
 //                                  supervisor cannot apply → advisory).
 import { randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -42,7 +44,35 @@ function configOptions(currentValue) {
 }
 
 class ModelsAgent {
-  currentModel = "glm-5.1";
+  currentModel =
+    MODE === "env-model"
+      ? (process.env.ANTHROPIC_MODEL ?? "glm-5.1")
+      : "glm-5.1";
+
+  async recordModel(method, params) {
+    if (MODE !== "env-model") return;
+    const tracePath = process.env.MOCK_ACP_MODELS_TRACE_PATH;
+
+    if (!tracePath) throw new Error("env-model requires a model trace path");
+    const options = params._meta?.claudeCode?.options ?? {};
+    const settings = JSON.parse(
+      await readFile(path.join(params.cwd, ".claude/settings.local.json"), "utf8"),
+    );
+
+    // The installed adapter passes options.model to the SDK; its settings.env
+    // is merged after the inherited process environment. Record both inputs
+    // so a correct adapter picker alone cannot hide an unpinned SDK startup.
+    await writeFile(
+      tracePath,
+      JSON.stringify({
+        method,
+        model: this.currentModel,
+        sdkModel: options.model ?? settings.env?.ANTHROPIC_MODEL ?? this.currentModel,
+        configuredModelOption: options.model ?? null,
+        permissionAsk: options.settings?.permissions?.ask ?? null,
+      }),
+    );
+  }
 
   async initialize() {
     return {
@@ -56,7 +86,7 @@ class ModelsAgent {
     };
   }
 
-  async newSession() {
+  async newSession(params) {
     if (MODE === "reject-newsession") {
       throw new Error("mock newSession rejection");
     }
@@ -64,6 +94,8 @@ class ModelsAgent {
     if (MODE === "hang-newsession") {
       return new Promise(() => {});
     }
+
+    await this.recordModel("session/new", params);
 
     return {
       sessionId: `mock-${randomUUID()}`,
@@ -75,7 +107,7 @@ class ModelsAgent {
           { modelId: "glm-5.1", name: "GLM-5.1" },
           { modelId: "glm-5", name: "GLM-5" },
         ],
-        currentModelId: "glm-5.1",
+        currentModelId: this.currentModel,
       },
     };
   }
@@ -84,7 +116,8 @@ class ModelsAgent {
     return {};
   }
 
-  async resumeSession() {
+  async resumeSession(params) {
+    await this.recordModel("session/resume", params);
     // ResumeSessionResponse carries model state too — the resumed-session
     // application/harvest tests read it.
     return {
@@ -96,7 +129,7 @@ class ModelsAgent {
           { modelId: "glm-5.1", name: "GLM-5.1" },
           { modelId: "glm-5", name: "GLM-5" },
         ],
-        currentModelId: "glm-5.1",
+        currentModelId: this.currentModel,
       },
     };
   }

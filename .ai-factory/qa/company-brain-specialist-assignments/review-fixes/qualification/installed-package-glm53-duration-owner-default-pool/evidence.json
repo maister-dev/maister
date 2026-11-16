@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_actual_installed_package_all_glm53",
+  "sourceHead": "f203ad5fb544b260b566799bc39fb280a40bbc87",
+  "candidateSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+  "mcpBundleSha256": "0baeb2a9d0d879d0f0e3ba320acddae1a3828a129bc53284b7ec796d772115f0",
+  "sourceUnchanged": true,
+  "startedAt": "2026-11-11T10:47:18.728869+00:00",
+  "finishedAt": "2026-11-11T11:07:39.101746+00:00",
+  "exitCode": 1,
+  "invocationId": "0bc9a0b7-d154-4c8f-bc52-3d6f050e39a7",
+  "package": {
+    "tag": "rah/v1.0.9",
+    "commit": "88b38dc3080b1b2ab4c060e364a2199dd02bf393"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapterPackageVersion": "0.95.0",
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "qualifier": "QL-CBX-03",
+  "playwrightStats": {
+    "startTime": "2026-11-11T10:47:26.150Z",
+    "duration": 1212389.605,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "runtimeModelWitnesses": 10,
+  "validTypedResults": 8,
+  "qualifiedTreeSizes": [
+    3
+  ],
+  "configuredAgentSlots": 3,
+  "durationStop": {
+    "runId": "0fc7aa9b-3b5c-4504-bd3e-af13543cd02d",
+    "attemptId": "5e2ec698-8257-44fe-8d8a-02f3a1ff0122",
+    "deleteCommandId": "29ece781-0979-4195-87e8-d5ba3e251113",
+    "cancelledPromptId": "113ab98e-be7a-4ca7-93cd-d8c582f254cf",
+    "deleteStartedAt": "2026-11-11T11:07:33.268+00:00",
+    "deleteConfirmedAt": "2026-11-11T11:07:35.69+00:00",
+    "terminalAttemptAt": "2026-11-11T11:07:35.7+00:00",
+    "postPromptSessionDeletes": 1,
+    "reason": "max_duration"
+  },
+  "unqualifiedRoot": {
+    "runId": "3901459d-991e-4491-be50-66023a5be4a5",
+    "reason": "orchestrator_stuck"
+  },
+  "cleanup": {
+    "id": "0bc9a0b7-d154-4c8f-bc52-3d6f050e39a7",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 9,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "7a0abf2b211e14b82ccbd5ebe30f6d727fb20dbbd8ce6ed591fc70f2c777580e",
+      "rawBytes": 544,
+      "compressedSha256": "6f768f2c032bbbf2281491026aba75e3bc974ee83eb1fbed2431a0cd2a893390",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "6f768f2c032bbbf2281491026aba75e3bc974ee83eb1fbed2431a0cd2a893390"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "cdbe36f2b5c8fec210b9bfa3a2b70cdc417cef9e78f98e0e0953a1281634c3ff",
+      "rawBytes": 10503,
+      "compressedSha256": "6ca4e9084cf39b729850231584655dd38f13b2933ef6b0472a092070166bfe7c",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "6ca4e9084cf39b729850231584655dd38f13b2933ef6b0472a092070166bfe7c"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ebc88b2f14ef59ab8a19d37a766f5bc59b2e48bd0184b47b86d14a030f6e4a79",
+      "rawBytes": 146043,
+      "compressedSha256": "d057a32d85ede79a2fcbd68e774ceaa485243f38c3dbb0fd53144c0264411a4c",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "d057a32d85ede79a2fcbd68e774ceaa485243f38c3dbb0fd53144c0264411a4c"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "88e44c51927c64814716113380bf5056b56f4d3f43427a1b875284a4a062a9a1",
+      "rawBytes": 30110,
+      "compressedSha256": "4011d8be12a5442e4167fdd734d83c21d75b4b0c9986839663e2059e5582d787",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "4011d8be12a5442e4167fdd734d83c21d75b4b0c9986839663e2059e5582d787"
+        }
+      ]
+    },
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+      "rawBytes": 14582,
+      "compressedSha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-witness.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a07f820c97d37e1d8db40e6c62bf8a2946c9cc9f7ea7d96c190055ddc4901fc8",
+      "rawBytes": 772,
+      "compressedSha256": "31c1f11da9dc74fc542f545d9a55feea51756743fb5e709553497880d7decaa0",
+      "parts": [
+        {
+          "path": "database-volume-witness.json.gz",
+          "sha256": "31c1f11da9dc74fc542f545d9a55feea51756743fb5e709553497880d7decaa0"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "database-volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a04551f144c441de2a152996ff3d7a9be49912571efeddc1230892a431fb8755",
+      "rawBytes": 393,
+      "compressedSha256": "34c1d855c118fefc5f4b254444b2e2d1d4000d0e312d8c248d13f2ec13565495",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "34c1d855c118fefc5f4b254444b2e2d1d4000d0e312d8c248d13f2ec13565495"
+        }
+      ]
+    },
+    {
+      "sourceName": "package-release-gate.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "13d4a47b3da317e9210a15ef9f2c5f82f5c66346a5c87edfcec13db345714d9b",
+      "rawBytes": 42485,
+      "compressedSha256": "da4f86813895f9c3bbefbbfdedd013aaeb25eaa0e4a4c6701905061e7fe7d047",
+      "parts": [
+        {
+          "path": "package-release-gate.log.gz",
+          "sha256": "da4f86813895f9c3bbefbbfdedd013aaeb25eaa0e4a4c6701905061e7fe7d047"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 an installation administrator grants explicit company access without a repository or implicit content access
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 company policy uses current administrator state and rejects fabricated principals, actors and unsupported confirmation policy
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-06 company policy pages keep exact large revocation reasons within a bounded response and credential-scoped continuation
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-03 concurrent administrators serialize conflicting grants before publication and retain one actionable policy winner

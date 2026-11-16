@@ -1,0 +1,121 @@
+schemaVersion: 1
+name: rah-research
+compat:
+  engine_min: 3.11.1
+metadata:
+  title: Evidence research child
+  summary: Read-only structured knowledge research through governed native findings.
+runner_profiles:
+  core-claude:
+    capability_agent: claude
+    adapter: claude
+    provider:
+      kind: anthropic
+sessions:
+  research:
+    runner: core-claude
+result:
+  export:
+    schema: ./schemas/evidence-findings.v1.json
+    native_contract: evidence_findings_v1
+    from:
+      - research
+    required: true
+nodes:
+  - id: research
+    type: orchestrator
+    session: research
+    settings:
+      agent: rah:coordinator
+      workspaceAccess: read
+      permissionMode: ask
+      enforcement:
+        tools: strict
+      tools:
+        claude:
+          - Read
+          - Grep
+          - Glob
+          - ToolSearch
+          - mcp__maister__knowledge_search
+          - mcp__maister__knowledge_get
+          - mcp__maister__knowledge_evidence
+          - mcp__maister__knowledge_conflicts
+          - mcp__maister__knowledge_witness_get
+          - mcp__maister__run_delegate
+          - mcp__maister__run_collect
+          - mcp__maister__run_cancel
+        codex:
+          - shell
+      limits:
+        maxDurationMinutes: 10
+      delegation:
+        max_depth: 2
+        max_fanout: 2
+        max_active_children: 2
+        budget:
+          max_tokens: 60000
+          wall_clock_minutes: 10
+          max_child_runs: 4
+          consecutive_failures: 2
+    action:
+      prompt: |-
+        Previous validation feedback (empty on the first attempt): {{ review_comments }}
+        If feedback is present, correct that result defect using existing authorized evidence and completed work.
+        Do not repeat completed effects or submit changed proposal content under an existing idempotency key.
+        Research {{ task.prompt }}.
+        Delegate at most two agent children with run_delegate, mode run, workspace none, resultProfile findings:
+        rah:evidence-researcher for the question and rah:contradiction-researcher for contradictions and limitations.
+        Pass the exact owner and references from the request.
+        Collect every launched direct child through run_collect and inspect result.value and resultRevision.
+        If run_collect reports nonterminal children, end this turn with a short pending status and no final output block.
+        The harness parks this same run and resumes it when child work settles. On resume collect the existing child IDs;
+        do not launch replacement children, poll in a loop, start a shell timer, or read background-task files.
+        Do not accept process exit, prose, or child Done alone as evidence of the required outcome.
+        Default to lossless retention rather than summarizing the child result. For each collected child finding,
+        copy assertion, basis, supporting, contradicting, missingEvidence, limitations and openQuestions EXACTLY.
+        Change only id to a compact unique output id, and replace sourceFindings with the exact direct-child
+        {childRunId,resultRevision,findingId}. Add selection with disposition retained and exactly that one outputFindingId.
+        For each finding in a direct child's collected result.value.findings, findingId is THAT finding object's id.
+        childRunId is that direct child's run ID and resultRevision is its collected resultRevision.
+        Never copy childRunId or findingId from the child's own sourceFindings or selection; those identify an earlier depth.
+        Rework reuses already launched child IDs and collected result revisions; do not redelegate the completed work.
+        Retained requires byte-identical assertion and unchanged basis; never paraphrase an entry while calling it retained.
+        Copy every original version/digest field and every missing-evidence/limitation/question string, without shortening or rewriting.
+        If an explicitly requested combined conclusion is necessary, use disposition combined and basis inferred,
+        and copy ALL original evidence, missingEvidence, limitations and openQuestions entries exactly into every mapped output.
+        Use omitted only with a specific reason and empty outputFindingIds. Never drop a source silently.
+        Use up to 32 findings so bounded child output can survive depth two; no extra summary-size target overrides evidence preservation.
+        Original evidence survives intermediate coordinators; acceptance never confirms a fact.
+        Never fetch grandchildren directly. Use only governed delegation/collection; no Task, Agent, hidden subagents,
+        parallel scheduler, independent retry loop or filesystem-based handoff. Source denial is a blocker, not permission to paraphrase withheld content.
+        Return exactly one final fenced block labelled json maister:output. Its value must be evidence_findings_v1:
+        {"schemaVersion":1,"findings":[],"knowledgeProposals":[],"selection":[]}.
+        Each finding has id, assertion, basis (observed or inferred), supporting and contradicting reference arrays,
+        missingEvidence, limitations, openQuestions, and sourceFindings. Use at most 32 findings.
+        Use minimal exact references: {kind:"knowledge",id,revision}, {kind:"witness",id}, or {kind:"result",id,revision}.
+        An immutable witness ID binds its captured source version and digest; inspect its evidence view for those details.
+        Do not retype optional long digests or version strings unless explicitly requested. If supplied, they must match exactly.
+        Reducers must preserve any optional version/digest fields already present in collected child references.
+        Do not fabricate an ID, citation, timestamp, source, author, permission or confirmation.
+        When proof is missing, leave reference arrays empty and populate missingEvidence with
+        {state:"absent",reason:"the specific missing check"}; preserve stale/unknown applicability and unresolved questions.
+        Retrieval rank is not confirmation. Multiple quotes of one source are one source.
+        Keep opposing claims distinct; never choose truth by score or silently overwrite a claim.
+        Acceptance of work is separate from fact confirmation. knowledgeProposals contains reviewable additions/corrections only;
+        do not call knowledge_decide or knowledge_confirm. Never include credentials, raw private logs, or unbounded source text.
+    output:
+      result:
+        schema: ./schemas/evidence-findings.v1.json
+        required: true
+        on_mismatch: retry
+    rework:
+      allowedTargets:
+        - research
+      workspacePolicies:
+        - keep
+      maxLoops: 2
+      commentsVar: review_comments
+    transitions:
+      success: done
+      retry: research

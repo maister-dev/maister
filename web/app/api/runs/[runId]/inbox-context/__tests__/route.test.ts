@@ -30,6 +30,11 @@ const selectChain = () => ({
   },
 });
 
+// Legacy fixture; native admission is qualified by the real-Postgres disclosure suite.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({ select: selectChain }) }));
 
 vi.mock("@/lib/authz", () => ({

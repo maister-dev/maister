@@ -3,6 +3,7 @@ import "server-only";
 import type { TasklessAgentFlowCarrierAdmission } from "@/lib/agents/carrier-launch-authority";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
+import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import type { AgentActivitySnapshot } from "@/lib/agents/activity-types";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ProjectAction } from "@/lib/authz";
@@ -29,6 +30,16 @@ import {
   queryErrorDiagnostics,
   redactQueryError,
 } from "@/lib/db/pg-error";
+import {
+  resolveAgentChainDepth,
+  resolveProjectEventChainDepth,
+} from "@/lib/agents/chain-depth";
+import {
+  prepareProjectCoordinatorAssignmentAdmission,
+  assertProjectAssignmentTaskInput,
+} from "@/lib/specialist-assignments/project-admission";
+import { activateInitialSpecialistAssignmentRunInTransaction } from "@/lib/specialist-assignments/store";
+import { contentDigest } from "@/lib/evaluations/digest";
 import { loadFlowScheduledRequestSource } from "@/lib/agents/scheduled-request-lineage";
 import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { assertScheduledRequestConsumer } from "@/lib/agents/scheduled-request-flow";
@@ -97,10 +108,12 @@ import { normalizeNodeMcps } from "@/lib/config.schema";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
+import { nativeKnowledgeCaptureAtLaunch } from "@/lib/brain/knowledge-launch-capture";
 import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { assertFlowLaunchable } from "@/lib/flows/launchability-gate";
 import { admitDelegatedChild } from "@/lib/orchestrator/admission";
+import { assertNativeFlowInputBinding } from "@/lib/orchestrator/native-input";
 import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
@@ -301,6 +314,7 @@ const log = pino({
 
 export type LaunchRunInput = {
   taskId: string;
+  specialistAssignment?: ProjectAssignmentAdmission;
   flowId?: string;
   runnerId?: string;
   baseBranch?: string;
@@ -639,6 +653,24 @@ async function* executeFlowLaunch(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+  await assertProjectAssignmentTaskInput(
+    _db as unknown as ExecutionDb,
+    project.id,
+    task.id,
+    input.specialistAssignment,
+  );
+  const nativeInput = assertNativeFlowInputBinding({
+    taskId: task.id,
+    taskInput: task.delegationSpec?.nativeInput,
+    launchInput: input.delegationSnapshot?.nativeInput,
+    parentRunId: input.parentRunId,
+    carrierTaskId: input.delegationSnapshot?.carrierTaskId,
+    target: input.agentId
+      ? { kind: "agent", id: input.agentId }
+      : input.delegationSnapshot
+        ? { kind: "flow", id: input.delegationSnapshot.flowId }
+        : undefined,
+  });
   const inheritanceSource = membershipSourceForLaunch(input);
   const inheritedRequest = accepted
     ? accepted.settings.relaunchSource?.scheduledRequestSnapshot
@@ -914,6 +946,15 @@ async function* executeFlowLaunch(
       `flow "${flow.id}" is not enabled for project ${project.slug}`,
     );
   }
+  if (nativeInput && input.delegationSnapshot?.flowId !== flow.id) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native delegated input cannot be redirected to another Flow",
+      {
+        details: { reason: "native_delegation_input_binding_required" },
+      },
+    );
+  }
 
   // M39 Stream B (ADR-107): gate the supervisor's readiness BEFORE advancing the
   // project pin. The dominant transient failure (supervisor down/restarting) must
@@ -1036,6 +1077,7 @@ async function* executeFlowLaunch(
   const runId =
     accepted?.claim.identity.runId ??
     input.agentTriggerReservation?.runId ??
+    input.specialistAssignment?.source?.runId ??
     scheduledReservation?.runId ??
     randomUUID();
   // ADR-150: set inside the run-insert tx when a controlled-launch re-drive
@@ -1925,6 +1967,65 @@ async function* executeFlowLaunch(
 
       await _db.transaction(async (tx: any) => {
         await accepted?.beginBinding(tx);
+        if (input.specialistAssignment && !agentId)
+          throw new MaisterError(
+            "CONFIG",
+            "Project assignment coordinator admission requires its responsible professional role",
+          );
+        const nativeChain = input.specialistAssignment
+          ? input.specialistAssignment.source?.kind === "event"
+            ? await resolveProjectEventChainDepth(
+                tx,
+                project.id,
+                input.specialistAssignment.source.eventId,
+              )
+            : await resolveAgentChainDepth({
+                db: tx,
+                trigger: {
+                  source: input.triggerSource ?? "manual",
+                  eventId: input.triggerEventId,
+                },
+              })
+          : null;
+
+        if (nativeChain?.atCap)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Project coordinator event chain is exhausted",
+            {
+              details: {
+                reason: nativeChain.reason ?? "chain_depth_exhausted",
+              },
+            },
+          );
+        const assignmentAdmission =
+          input.specialistAssignment && agentId
+            ? await prepareProjectCoordinatorAssignmentAdmission(
+                tx,
+                input.specialistAssignment,
+                {
+                  projectId: project.id,
+                  runId,
+                  triggerSource: input.triggerSource ?? null,
+                  triggerEventId: input.triggerEventId ?? null,
+                  agentScheduleId: input.agentScheduleId ?? null,
+                  scheduledRequestSnapshot,
+                  agentChainDepth: nativeChain?.depth,
+                  agentId,
+                  taskId: task.id,
+                  executionPolicy,
+                  resultContract,
+                  coordinatorFlow: {
+                    flowId: flow.id,
+                    flowRefId: flow.flowRefId,
+                    flowRevisionId: revision.id,
+                    resolvedRevision: revision.resolvedRevision,
+                    manifestSha256: contentDigest(revision.manifest),
+                  },
+                },
+              )
+            : null;
+
         await ctx.assertLaunchOwnership?.(tx);
         await taskAdmission.apply(tx);
 
@@ -1959,6 +2060,14 @@ async function* executeFlowLaunch(
             projectId: project.id,
             reservation: input.agentTriggerReservation,
           });
+        const knowledgeAccess =
+          assignmentAdmission?.capture ??
+          (await nativeKnowledgeCaptureAtLaunch(tx, resultContract, {
+            parentRunId: input.parentRunId ?? null,
+            sourceRestrictions: [
+              { kind: "project_context", projectId: project.id },
+            ],
+          }));
         const insertedRun = await tx
           .insert(runs)
           .values({
@@ -1997,10 +2106,15 @@ async function* executeFlowLaunch(
             // agent's persona on every ai_coding node.
             agentId: agentId ?? null,
             sourceAgentId: agentId ?? null,
+            ...(nativeChain ? { agentChainDepth: nativeChain.depth } : {}),
             launchedAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activitySortAt: agentActivity ? sql`CURRENT_TIMESTAMP` : null,
             activityTimestampProvenance: agentActivity ? "launch" : null,
-            agentActivitySnapshot: agentActivity,
+            agentActivitySnapshot:
+              assignmentAdmission?.activity ?? agentActivity,
+            ...(assignmentAdmission
+              ? { agentConfig: assignmentAdmission.configuration }
+              : {}),
             // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
             // partial unique (agent_id, trigger_event_id) index is the race backstop
             // for a CONCURRENT redelivery (the sequential one is caught by
@@ -2067,6 +2181,7 @@ async function* executeFlowLaunch(
             // SAME insert as the pin it came from (W8). NULL when the flow
             // declares no `result.export`.
             resultContract,
+            knowledgeAccess,
           })
           .onConflictDoNothing()
           .returning({ id: runs.id });
@@ -2243,6 +2358,18 @@ async function* executeFlowLaunch(
         });
 
         await accepted?.bindRun(tx);
+        if (input.specialistAssignment)
+          await activateInitialSpecialistAssignmentRunInTransaction(
+            tx,
+            input.specialistAssignment.userId,
+            input.specialistAssignment.assignmentId,
+            {
+              runId,
+              inputRevision: input.specialistAssignment.inputRevision,
+              expectedRevision: input.specialistAssignment.expectedRevision,
+              role: "coordinator",
+            },
+          );
         await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {

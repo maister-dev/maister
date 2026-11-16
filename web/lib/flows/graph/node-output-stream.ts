@@ -13,6 +13,7 @@ export type SentinelOutput = Readonly<{
   block: string | null;
   blockHasLine: boolean;
   payload: RawNodeOutputPayload;
+  assistantMessageId: string | null;
 }>;
 
 export function emptySentinelOutput(): SentinelOutput {
@@ -24,6 +25,7 @@ export function emptySentinelOutput(): SentinelOutput {
     block: "",
     blockHasLine: false,
     payload: { kind: "absent" },
+    assistantMessageId: null,
   };
 }
 
@@ -141,4 +143,32 @@ export function finishSentinelOutput(
   maxBytes: number,
 ): RawNodeOutputPayload {
   return finishLine(state, maxBytes).payload;
+}
+
+/** Preserve ACP message boundaries when parsing a fence in streamed assistant content. */
+export function appendAssistantSentinelOutput(
+  previous: SentinelOutput,
+  update: unknown,
+  text: string,
+  maxBytes: number,
+): SentinelOutput {
+  if (text.length === 0) return previous;
+  const id =
+    typeof update === "object" &&
+    update !== null &&
+    "messageId" in update &&
+    typeof update.messageId === "string" &&
+    update.messageId.length > 0
+      ? update.messageId
+      : null;
+
+  if (id === null || id === previous.assistantMessageId)
+    return appendSentinelOutput(previous, text, maxBytes);
+  const next: SentinelOutput = {
+    ...emptySentinelOutput(),
+    payload: finishSentinelOutput(previous, maxBytes),
+    assistantMessageId: id,
+  };
+
+  return appendSentinelOutput(next, text, maxBytes);
 }

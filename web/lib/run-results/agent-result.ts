@@ -7,9 +7,10 @@ import type { OperationalValidationDiagnostic } from "@/lib/run-results/operatio
 
 import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { validateResultValue } from "@/lib/run-results/validate";
 import {
-  operationalResultV1Schema,
+  operationalResultSchema,
   operationalValidationDiagnostics,
 } from "@/lib/run-results/operational-schema";
 
@@ -40,9 +41,12 @@ function validationDiagnostics(
 ): { validationDiagnostics?: OperationalValidationDiagnostic[] } {
   if (contract.kind !== "agent_operational") return {};
   if (reason === "schema_mismatch") {
-    const parsed = operationalResultV1Schema.safeParse(value, {
-      reportInput: true,
-    });
+    const parsed = operationalResultSchema(contract.contractName).safeParse(
+      value,
+      {
+        reportInput: true,
+      },
+    );
 
     if (!parsed.success)
       return {
@@ -124,6 +128,10 @@ export function decideAgentResultFromOutput(args: {
   const verdict = validateResultValue({
     raw: JSON.stringify(block.value),
     schema: args.contract.schema,
+    nativeContract:
+      args.contract.kind === "agent_operational"
+        ? undefined
+        : args.contract.nativeContract,
     maxBytes: args.maxBytes ?? nodeOutputMaxBytes(),
     label: "public result",
   });
@@ -138,16 +146,23 @@ export function decideAgentResultFromOutput(args: {
   }
 
   if (args.contract.kind === "agent_operational") {
-    const operational = operationalResultV1Schema.safeParse(verdict.value, {
+    const expectedVersion =
+      args.contract.contractName === OPERATIONAL_EVIDENCE_CONTRACT ? 2 : 1;
+    const operational = operationalResultSchema(
+      args.contract.contractName,
+    ).safeParse(verdict.value, {
       reportInput: true,
     });
 
-    if (args.contract.semanticVersion !== 1 || !operational.success)
+    if (
+      args.contract.semanticVersion !== expectedVersion ||
+      !operational.success
+    )
       return {
         kind: "invalid",
         reason: "schema_mismatch",
         validationDiagnostics:
-          args.contract.semanticVersion !== 1
+          args.contract.semanticVersion !== expectedVersion
             ? [{ code: "unsupported_version", path: "schemaVersion" }]
             : !operational.success
               ? operationalValidationDiagnostics(operational.error.issues)

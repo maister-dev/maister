@@ -171,7 +171,7 @@ async function loadSource(
            s.chunker_version, s.enabled, p.repo_path, p.main_branch
     FROM brain_sources s
     JOIN projects p ON p.id = s.project_id
-    WHERE s.id = ${job.source_id} AND s.project_id = ${job.project_id}
+    WHERE s.id = ${job.source_id} AND s.project_id = ${job.project_id} AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
   `);
 
   return (rows.rows[0] as unknown as SourceRow | undefined) ?? null;

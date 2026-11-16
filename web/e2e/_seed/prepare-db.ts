@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
  * Playwright starts `webServer` before `globalSetup`; keeping this outside
  * global setup lets the production migration guard observe an applied ledger.
  */
-export async function prepareE2eDatabase(
+async function migrateE2eDatabase(
   databaseUrl: string,
   environment: NodeJS.ProcessEnv,
 ): Promise<void> {
@@ -30,8 +30,30 @@ export async function prepareE2eDatabase(
     stdio: "inherit",
     env,
   });
+}
+
+export async function prepareE2eDatabase(
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  await migrateE2eDatabase(databaseUrl, environment);
   execFileSync("pnpm", ["exec", "tsx", "e2e/_seed/seed-e2e.ts"], {
     stdio: "inherit",
-    env,
+    env: { ...environment, DB_URL: databaseUrl, NODE_ENV: "test" },
   });
+}
+
+export async function prepareNativeCompanyBrainDatabase(
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  await migrateE2eDatabase(databaseUrl, environment);
+  execFileSync(
+    "pnpm",
+    ["exec", "tsx", "e2e/_seed/seed-native-company-brain.ts"],
+    {
+      stdio: "inherit",
+      env: { ...environment, DB_URL: databaseUrl, NODE_ENV: "test" },
+    },
+  );
 }

@@ -1,0 +1,75 @@
+{
+  "task": "T20.1",
+  "slice": "Explicit company assignment prompt context",
+  "date": "2026-11-06",
+  "baseCommit": "0204a20bdad0ab1207305a70adaa88a757c4dfe7",
+  "status": "Prompt projection qualified; company graph admission/dispatch remains open",
+  "engineVersion": "3.11.1",
+  "red": {
+    "tests": 2,
+    "failed": 2,
+    "failure": "The required company assignment projection was unavailable; existing task context required a repository Task.",
+    "log": "red.log.gz"
+  },
+  "gates": {
+    "focused": {
+      "exitCode": 0,
+      "files": 2,
+      "tests": 9,
+      "log": "focused-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 888,
+      "tests": 9290,
+      "durationSeconds": 29.11,
+      "log": "unit-green.log.gz"
+    },
+    "integration": {
+      "exitCode": 0,
+      "files": 3,
+      "tests": 25,
+      "durationSeconds": 82.72,
+      "log": "integration-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Company assignment namespace retains exact input revision/digest and frozen objective; no dummy Task, task attempt or project slug.",
+    "Strict repository-only template references fail, input text is never reparsed, reserved namespaces cannot be injected through rework variables.",
+    "Cloned company projection does not mutate stored assignment input/owner.",
+    "Project prompt shape and shared ledger/artifact/environment/executor semantics remain compatible.",
+    "Existing ACP renderer accepts an explicit context union rather than pretending a company context has a Task."
+  ],
+  "notYetQualified": [
+    "Company Flow execution persistence, native admission/loading/materialization/dispatch",
+    "Company human/form continuation and result-only finalization/cleanup/recovery",
+    "Project assignment namespace wiring",
+    "Engine 3.12.0 activation, actual coordinator package and stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "0a0de31a4936015aa775d7dc6c8ba61778ba13464c725acc18a2fb9760dba5b8",
+    "docs/flow-dsl.md": "8a79330e360fff974ce0e5aabbb14520450aeac25394a560ea549257c231a748",
+    "docs/system-analytics/specialist-runtime.md": "04216984c3d18c36ea322b0c4c2b03a56faac3a5feeff066c9ff9f2aed2c983d",
+    "web/lib/flows/context.ts": "ed398a5a94b6a3fa97c93d4fc0bd1b1dc0c0a323989691a43ef2798ad53a3d46",
+    "web/lib/flows/types.ts": "0801b847bab604e78b5ac3616052a6d39226071758f599f65c0d1fb2655b7fc3",
+    "web/lib/flows/runner-agent.ts": "fd46b56559e91c43e56d3f94cf49cbe3d213b3d1933b77da7a2cdc1449a11086",
+    "web/lib/flows/flow-dsl-grammar.ts": "6c9c61ed18d35e68595d6e9de614681dd06febad76b86e8f415462b92c270ab6",
+    "web/lib/flows/__tests__/company-context.test.ts": "c2b5198b834b0265b1b11cf870924cf27e79e68763020260fca37fe16966a644"
+  }
+}

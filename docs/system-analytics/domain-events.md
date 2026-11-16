@@ -459,6 +459,10 @@ The cause reaches the flow/agent run page, the scratch
 detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
 `data` is unchanged.
 
+### Company knowledge and specialist extension (Implemented / Designed)
+
+The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi.yaml) defines content-free owner-aware facts. Implemented `knowledge.record_changed` and `specialist.assignment_changed` emit in their owning transaction and advance existing durable consumer cursors; they are excluded from ordinary agent trigger selection. Native knowledge reads apply current service access rather than depending on a new projection consumer. The registered `specialist_assignment_delivery` consumer handles exact captured result availability through existing delivery transports. Assignment-owner continuation wakes and `stand.operation_changed` reconciliation remain Designed with their owning cooperation/stand writers; no such consumer is implied by taxonomy or schema presence. Current project events retain their owner and schema. Source/target bodies and credentials never enter metadata payloads.
+
 ## Expectations
 
 - The `emitDomainEvent` INSERT MUST share the transaction of its domain write

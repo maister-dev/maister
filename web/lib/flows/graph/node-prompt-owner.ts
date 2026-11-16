@@ -17,7 +17,7 @@ import pino from "pino";
 import { lockFlowPromptOwner } from "./prompt-owner-authority";
 import { childCrashPrecededTerminal } from "./permission-park-crash";
 import {
-  appendSentinelOutput,
+  appendAssistantSentinelOutput,
   emptySentinelOutput,
   finishSentinelOutput,
 } from "./node-output-stream";
@@ -369,7 +369,12 @@ export async function decodeNodePromptCompletion(input: {
 
       if (text === null) continue;
       stdout = appendCapped(stdout, text, 1_048_576);
-      sentinel = appendSentinelOutput(sentinel, text, maxBytes);
+      sentinel = appendAssistantSentinelOutput(
+        sentinel,
+        event.payload?.update,
+        text,
+        maxBytes,
+      );
     }
   }
   const ok =

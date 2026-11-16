@@ -632,9 +632,22 @@ uncommitted children under READ COMMITTED, and would both read the same
 pre-insert count — so both would admit and the ancestor's cap would be blown.
 Admission therefore also takes the delegation lock on the **tree root** before
 counting: the coarsest scope that contains every ancestor, still per-tree rather
-than the platform-wide mutex. The order is always parent-then-root on every
-path, so admissions cannot deadlock; when the parent IS the root the key repeats
-and the advisory lock is re-entrant within the transaction.
+than the platform-wide mutex. The shared helper takes delegation advisory locks
+in tree-root-then-parent order, including task/plan pre-admission. A root owner
+can reenter admission for a nested parent while a competing nested admission
+waits at the root; it cannot hold that nested key and create an inverted cycle.
+The actual chain and bounds are reread after locking. Changed ancestry refuses
+with `CONFLICT/delegation_lineage_changed`; a missing, cyclic or over-64 chain
+refuses with `CONFIG/delegation_lineage_invalid`. When parent and root coincide,
+one reentrant key suffices. The helper also takes root-to-parent Run fences with
+`FOR NO KEY UPDATE NOWAIT` and rereads statuses and bounds before admission.
+Terminal ancestors refuse with `PRECONDITION/delegation_ancestor_inactive`;
+contention with an existing execution writer returns
+`CONFLICT/delegation_execution_busy` and rolls back rather than waiting under the
+tree key. Task-parent qualification uses this order as well. Non-key source locks
+remain compatible with event foreign keys. These fences do not replace current
+source/receiving-role permission checks or assignment ownership; full native
+cooperation and cancellation/recovery remain T27/T29.
 
 ### Active-children concurrency is a queue, not a refusal
 
@@ -695,6 +708,10 @@ makes the coordinator's job **collect only**:
 - Hidden adapter subagents are excluded structurally: `enforcement.tools: strict`
   plus a `tools` allow-list omitting the subagent tool, enforced by
   `capability_guard` ([`guardrail-hooks.md`](guardrail-hooks.md)).
+
+### Company specialist extension (Designed)
+
+The [specialist cooperation contract](specialist-cooperation.md) specifies the owner-aware extension. Existing project/human/RAH behavior remains implemented; company scope and business-assignment behavior are not implied by those existing mechanisms.
 
 ## Expectations
 

@@ -1,0 +1,90 @@
+$ tsx e2e/run.ts company-brain.spec.ts --project authed --workers 1 --retries 0 -g 'correction retains'
+{"invocationId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","event":"process-registered","parentPid":23946,"rootId":"none","runtime":"darwin/arm64/node-24.15.0","pid":23953,"pgid":23920,"role":"runner","caseName":"e2e","rootRole":"invocation","bootId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","outcome":"registered"}
+{"level":30,"time":1794209482068,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"e2e-wrapper","invocationId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","ledger":"/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-e2e/processes/9a970464-d27c-4d81-8fc5-7dcdef51a6b8","lane":"e2e","msg":"e2e invocation minted"}
+{"level":30,"time":1794209482082,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-daemon-contact","outcome":"passed","durationMs":13,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1794209482082,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1794209482093,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-client-construction","outcome":"passed","durationMs":11,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1794209482094,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1794209482996,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"container-start","outcome":"passed","durationMs":902,"containerId":"610f0a81979ee63b93d2950d77d020865dffa2b98a289d71cc73a1350af92f4e","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+◇ injected env (0) from .env
+◇ injected env (0) from .env.test
+◇ injected env (0) from .env.test.local
+{"level":30,"time":1794209483862,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.12.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1794209483870,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"db:migrate","driver":"postgres","url":"postgres://test:***@localhost:56384/maister_e2e","stage":null,"msg":"running migrations"}
+(node:24004) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1794209484425,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"db:migrate","migration":"0094_postgres_graph_only_cutover","candidateCount":0,"transitionedCount":0,"nodeAttemptsClosed":0,"hitlRequestsCancelled":0,"assignmentsClosed":0,"sessionsCleared":0,"msg":"M43 graph-only cut-over migration summary"}
+{"level":30,"time":1794209484431,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"db:migrate","nextMigration":"0134_lovely_tarot","msg":"Stage B additive data-plane migrations committed; validating destructive preservation cut-over"}
+{"level":30,"time":1794209485039,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"facts","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1794209485042,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"schedules","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1794209485045,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"baseline","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1794209485050,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"complete","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1794209485050,"pid":24004,"hostname":"MacBook-Pro-2.local","name":"db:migrate","msg":"migrations done"}
+◇ injected env (0) from .env
+◇ injected env (0) from .env.test
+◇ injected env (0) from .env.test.local
+{"level":30,"time":1794209485590,"pid":24033,"hostname":"MacBook-Pro-2.local","name":"db:migrate:brain","driver":"postgres","url":"postgres://test:***@localhost:56384/maister_e2e","msg":"running brain-lineage migrations"}
+{"level":30,"time":1794209485692,"pid":24033,"hostname":"MacBook-Pro-2.local","name":"db:migrate:brain","msg":"brain migrations done"}
+seed-e2e: seeded m11a b28e60a7-7480-43b4-b1ce-b9d346e3dff8, m11b 57ab2657-252c-418f-902c-a9a6c3aaca6e, m12 7e21a68f-251f-4f5f-8026-02c25c9e0f72 (e2e-m12), board e2e-acceptance-board, scratch e2e-acceptance-scratch, m11c-visible 82e4f5d7-23f9-46a5-8b93-2a32564df05d (e2e-m11c-visible), m11c-refuse c12045fd-3a09-4b2f-a586-8bca2b6c8f17 (e2e-m11c-refuse), m19 crashed e2a88dce-1554-4933-8834-a993152c0ff7 (e2e-m19), m15 failed 7e5313ee-6d95-4e31-a451-1e2d7c299935 overridden 6fc3dead-3c4d-4fc3-ac6f-4bc6ea4ea7be (e2e-m15), m16 run b1f1056b-e40e-4106-b589-e976a46e800a gate ci-test-report (e2e-m16), m17 proj1 8c51bb19-ab0a-4aee-8d0e-7b76ba6dbb1a proj2 017d54da-7f5b-4194-ad07-71f7f1abf678 (e2e-m17-project1, e2e-m17-project2), budget-fork 1791b89a-2b1f-41d1-b263-ce2c6b94f29c (e2e-budget-fork), m18 merge 10bfe22d-341f-4b56-a6e4-2ef3d09c3377 conflict f8d43906-d382-4f55-9900-95a488b69545 pr 416fa2fe-d42a-4c7a-9f5c-6a1e3097935f (e2e-m18), m27 flow 7082c329-513b-4c74-9f31-a27b4e6e9356 scratch c5729cbb-4538-4e9f-abb3-c3b8d0c7619d (e2e-m27), m22 run 45d9c992-2056-48d2-937b-8724d41f8889 (e2e-m22), scratch-detail 620a2f29-7daf-42a7-9d84-be2b301e275c (e2e-scratch-detail), m23 project e2e-m23, flows-authoring cap d1721307-9e5f-4b02-8cc5-d0de420b420f (e2e-flows-authoring), review-comments 0fb167b6-5b1a-4091-929c-351f15cfe7dc (e2e-review-comments), flow-studio-artifacts cap 522aec32-79e3-4a04-ad14-4fded6198655 (e2e-flow-studio-artifacts), flow-viewer ref aif-flow-viewer (e2e-flow-viewer), platform-agents e2e-agents-pkg:e2e-helper/e2e-agents-pkg:e2e-auditor (e2e-agents)
+{"level":30,"time":1794209483008,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","lineage":"bare","phase":"ready","durationMs":939,"containerId":"610f0a81979ee63b93d2950d77d020865dffa2b98a289d71cc73a1350af92f4e","endpoint":"postgres://localhost:56384/maister_e2e","msg":"started bare test database"}
+{"invocationId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","event":"process-registered","parentPid":23953,"rootId":"none","runtime":"darwin/arm64/node-24.15.0","pid":25962,"pgid":25962,"role":"playwright","caseName":"e2e","rootRole":"invocation","bootId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","outcome":"registered"}
+[WebServer] (node:25979) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:25980) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:25986) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:25986) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+[WebServer] (node:26056) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+test-supervisor: listening on http://127.0.0.1:7788
+
+Running 2 tests using 1 worker
+
+(node:26069) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [setup] › e2e/auth.setup.ts:19:1 › authenticate seeded admin (1.6s)
+(node:26097) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:26115) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:26119) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:26138) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:26163) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  2 [authed] › e2e/company-brain.spec.ts:23:1 › E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text (9.8s)
+
+
+  1) [authed] › e2e/company-brain.spec.ts:23:1 › E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text
+
+    Error: expect(page).toHaveURL(expected) failed
+
+    Expected pattern: /\/knowledge\/proposals\/[^/]+$/
+    Received string:  "http://localhost:3100/knowledge/f8057e56-43e8-4920-878c-7b4e726fe8a9/correct"
+    Timeout: 5000ms
+
+    Call log:
+      - Expect "toHaveURL" with timeout 5000ms
+        14 × locator resolved to <html lang="ru" class="font-sans-system font-mono-system light">…</html>
+           - unexpected value "http://localhost:3100/knowledge/f8057e56-43e8-4920-878c-7b4e726fe8a9/correct"
+
+
+      93 |     await retained.check();
+      94 |     await page.getByRole("button", { name: "Отправить предложение", exact: true }).click();
+    > 95 |     await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
+         |                        ^
+      96 |     const correctionId = page.url().split("/").at(-1)!;
+      97 |     const retainedDraft = z.object({ draft: z.object({
+      98 |       missingEvidence: z.array(z.object({ state: z.string(), reason: z.string() })),
+        at /Users/kaa/.codex/worktrees/2599/mAIster/web/e2e/company-brain.spec.ts:95:24
+
+    Error Context: test-results/company-brain-E2E-CBU-01-c-12d5f-thored-diagnostic-like-text-authed/error-context.md
+
+  1 failed
+    [authed] › e2e/company-brain.spec.ts:23:1 › E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text
+  1 passed (17.0s)
+{"invocationId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","event":"sweep-complete","parentPid":23946,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":23953,"pgid":0,"rootRole":"invocation","bootId":"9a970464-d27c-4d81-8fc5-7dcdef51a6b8","outcome":"clean","leaks":0}
+{"level":30,"time":1794209509227,"pid":23953,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"stop","durationMs":186,"containerId":"610f0a81979ee63b93d2950d77d020865dffa2b98a289d71cc73a1350af92f4e","endpoint":"postgres://localhost:56384/maister_e2e","msg":"stopped test database"}
+[ELIFECYCLE] Command failed with exit code 1.

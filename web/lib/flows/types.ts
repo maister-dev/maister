@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { MaisterErrorCode } from "@/lib/errors";
 import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
+import type { AssignmentObjectiveInput } from "@/lib/specialist-assignments/types";
 import type { RawNodeOutputPayload } from "./graph/node-output";
 import type { CheckpointStopReason } from "@/lib/execution-host/checkpoint-interruption";
 
@@ -71,6 +72,21 @@ export type FlowContext = {
   // agent steps; author-facing prompts never see it.
   consensus?: Record<string, string>;
 };
+
+/** Company graph input is an assignment; it never impersonates a repository Task. */
+export type CompanyFlowContext = Omit<FlowContext, "task" | "run"> & {
+  assignment: AssignmentObjectiveInput & {
+    id: string;
+    inputRevision: number;
+    inputSha256: string;
+  };
+  run: {
+    id: string;
+    owner: { kind: "company"; companyId: string };
+  };
+};
+
+export type ExecutionFlowContext = FlowContext | CompanyFlowContext;
 
 export type StepResult = {
   ok: boolean;

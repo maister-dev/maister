@@ -1,0 +1,10 @@
+Source: /private/tmp/cb-agent-pending-completion-GREEN5.log
+SHA256: 58432931d244c7edf0cb57d9b3e5bb3c363ef5225305b26011ba00abee67d7c5
+Outer exit: 0
+
+$ vitest run --project integration --passWithNoTests lib/agents/__tests__/prompt-owners.integration.test.ts --maxWorkers=1 -t owner-agent-reconcile
+
+ Test Files  1 passed (1)
+      Tests  9 passed | 62 skipped (71)
+   Start at  13:02:48
+   Duration  36.37s (tests 97%, import 2%, transform 1%)

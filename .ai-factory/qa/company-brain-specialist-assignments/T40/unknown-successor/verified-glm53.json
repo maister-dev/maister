@@ -1,0 +1,137 @@
+{
+  "sourceHead": "cd936063b3dd3129b1eb03fa05c59fd11c5073a5",
+  "candidateSha256": "4bd77fd60dc93fbbf56f6ce85247344da233bda21954670ac61a7c20c4cdbbc8",
+  "mcpBundleSha256": "6f1772154e3425d9665948a2db4aae2ef426757080d4954166a07c25fda586ac",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T17:03:20.690538+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T17:12:52.233453+00:00",
+  "status": "verified_authorized_successor_after_uncertain_effect",
+  "browser": {
+    "startTime": "2026-11-14T17:03:28.799Z",
+    "duration": 563052.386,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "faultFixture": {
+    "mode": "throw after real systemd restart and before recording its final target receipt",
+    "sourceSha256": "da6bee72ce1ab4243aa9754c40cb660449777f61f7833c29dc31b88048ed0261",
+    "witness": {
+      "event": "qualification_effect_before_receipt",
+      "operationId": "4b9552a1-897b-4679-b97f-3ed622feb132",
+      "invocationId": "7e612d4ad9cf49f6a5811c58f490de88"
+    }
+  },
+  "observations": {
+    "stand-unknown-successor-proof": {
+      "predecessorId": "4b9552a1-897b-4679-b97f-3ed622feb132",
+      "originalRunId": "d7e56418-0dd9-41fe-8d0b-b2080d8d2985",
+      "successorId": "a508cb52-d62c-4df7-add7-77f3eaa72df7",
+      "successorRunId": "d8c065a0-112b-4614-a896-46e7540272a8",
+      "evidence": {
+        "successorEffect": "confirmed_applied",
+        "successorPermits": 1,
+        "predecessorEffect": "unknown",
+        "independentHealthy": true,
+        "predecessorPermits": 1,
+        "predecessorDisposition": "authorized_successor",
+        "predecessorVerification": 0,
+        "predecessorConfirmedReceipts": 0
+      }
+    },
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "c7cc7b02-8fca-4c35-a14d-fb85aea69b11",
+      "runId": "d8c065a0-112b-4614-a896-46e7540272a8",
+      "operationId": "a508cb52-d62c-4df7-add7-77f3eaa72df7",
+      "resultRevision": 1,
+      "deliveryId": "84b1d9fa-9aa6-4162-b4f8-f31c00ef7a37",
+      "verificationIds": [
+        "c3e8d25d-5b20-47d8-b420-374c3a299229"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "8b27c2e8-e06d-442c-88a6-bd263f4a692e",
+      "knowledgeRecordId": "a3c9d293-e7b2-43de-b074-4858f6101264",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "710893bf-1d95-4324-bdf7-fce46abe7a19",
+      "attempt_id": "136a1190-a002-4d67-bf6c-c9f38e4e9ca8",
+      "run_id": "add260ed-93e6-4da6-bf22-cbdc19be7b43",
+      "status": "Done",
+      "delivery_id": "f5204cb7-d1a4-4f8c-b0a1-2f86e730ee13",
+      "suppressed": true,
+      "operation_id": "86cabacd-2bda-43a3-b1aa-0979d7f2dd8f",
+      "verification_id": "f1ca4901-a6c7-442e-9af5-9cccdfbf3d26",
+      "commands": 0
+    },
+    "stand-runtime-model-proof": [
+      {
+        "runId": "60f2143a-0783-4d91-ae77-9086b861d7a2",
+        "sessionId": "e60f6ed5-f504-4cca-b244-6197a7e6333e",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "6a9411ef-1e52-4d36-935d-615caaf70db0",
+        "sessionId": "ce54ace2-81be-43ec-9bc3-97064db9b3ff",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "add260ed-93e6-4da6-bf22-cbdc19be7b43",
+        "sessionId": "3c067652-1baa-4b4d-88e4-5a04c5ae814e",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "d7e56418-0dd9-41fe-8d0b-b2080d8d2985",
+        "sessionId": "81c82f9e-5d91-4a37-854b-2dfa36919cb0",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "d8c065a0-112b-4614-a896-46e7540272a8",
+        "sessionId": "4953b1ae-aca2-4ffc-b855-ba3f35427889",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      }
+    ]
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "limitation": "The original model response failed native attempted-count validation. Its Run finished Failed while the independent effect ledger remained unknown and recoverable. The separate successor Run returned a valid accepted result."
+}

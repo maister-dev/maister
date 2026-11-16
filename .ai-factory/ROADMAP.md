@@ -11,6 +11,9 @@
 
 ## Milestones
 
+- [x] **CB0. Structured Company Brain** — Native company/project records, evidence and proposal review, with locally qualified GLM-5.3 retrieval and depth-two reduction on pinned `rah/v1.0.9`. [Contract and qualification evidence](../docs/system-analytics/company-brain.md).
+- [x] **CB1. Specialist assignments and governed stand maintenance** — Locally qualified on current master and with the pinned GLM-5.3 stand package. The pilot passed clarification, coordinator and specialist interruption, lost restart replies, authorized recovery, independent verification and governed write-back. [Implementation and qualification plan](plans/codex-company-brain-specialist-assignments.md).
+
 - [x] **M0. Spike: ACP library + cross-process resume + codex parity** — completed 2026-05-25. Verdicts: (a) `@agentclientprotocol/claude-agent-acp@0.37.0` + `@agentclientprotocol/codex-acp@0.0.44` + `@agentclientprotocol/sdk@0.22.1` (Apache-2.0) — pin in `supervisor/package.json`; (b) cross-process `claude --resume <uuid>` verified live ("ALBATROSS-42" round-trip), sessions at `~/.claude/projects/<cwd-encoded>/<uuid>.jsonl`; (c) codex via `codex-acp` adapter binary (bundles `@openai/codex` 0.128+), supervisor spawn dispatches on `executor.agent`; (d) z.ai works as plain env-router (`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`) — CCR is multi-provider intelligent routing, optional. Each respawn rebuilds ~$0.28 of cache_creation tokens, so 30-min keep-alive saves real money, not just UX.
 
 - [x] **M1. Drizzle schema + Postgres** — tables `projects | tasks | runs | workspaces | hitl_requests | flows | executors`. New fields: `runs.executor_id`, `runs.acp_session_id`, `runs.flow_version`, `runs.checkpoint_at`, `tasks.attempt_number` UNIQUE per task. Docker compose for Postgres 16, migrations, seed. Shipped 2026-05-26 via `feature/poc-foundation`.

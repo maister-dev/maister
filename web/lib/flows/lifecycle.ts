@@ -3,7 +3,8 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { and, eq, ne } from "drizzle-orm";
 import pino from "pino";
@@ -13,6 +14,7 @@ import {
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
 import { getDb } from "@/lib/db/client";
+import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -70,6 +72,11 @@ type RevisionRow = {
   packageStatus: string;
 };
 
+/** Package preinstallation retains absolute paths; attachment uses the equivalent file URL. */
+function canonicalInstalledSource(source: string): string {
+  return isAbsolute(source) ? pathToFileURL(source).href : source;
+}
+
 async function loadFlow(
   db: Db,
   projectId: string,
@@ -115,7 +122,10 @@ async function loadRevisionForFlow(
       `revision ${revisionId} not found for flow "${flowRefId}"`,
     );
   }
-  if (rev.source !== expectedSource) {
+  if (
+    canonicalInstalledSource(rev.source) !==
+    canonicalInstalledSource(expectedSource)
+  ) {
     throw new MaisterError(
       "PRECONDITION",
       `revision ${revisionId} was installed from a different source than this project's "${flowRefId}" flow`,
@@ -512,6 +522,12 @@ export async function removeRevision(args: {
         `revision ${args.revisionId} is the enabled revision of a project`,
       );
     }
+
+    if (await hasCompanyCoordinatorFlowReference(tx, args.revisionId))
+      throw new MaisterError(
+        "CONFLICT",
+        "The Flow revision is pinned by a current company specialist binding; detach or replace that binding first",
+      );
 
     const updated = await tx
       .update(flowRevisions)

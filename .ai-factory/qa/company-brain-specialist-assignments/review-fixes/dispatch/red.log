@@ -1,0 +1,252 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1794209078473,"pid":947,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.12.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1794209079214,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1794209079214,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1794209079222,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1794209079223,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":24,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1794209080092,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":868,"containerId":"27e62698b51aef420c9097f34ffea7870ffa10c7dd20556280aac706391a4f75","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1794209080095,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":896,"containerId":"27e62698b51aef420c9097f34ffea7870ffa10c7dd20556280aac706391a4f75","endpoint":"postgres://localhost:56359/task_agent_admission","msg":"started bare test database"}
+(node:947) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1794209080929,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main","phase":"migrate","endpoint":"postgres://localhost:56359/task_agent_admission","msg":"applied main test database migrations"}
+{"level":30,"time":1794209081094,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"f924cfd4-f994-44ce-9c61-6b29e1f29d10","taskId":"60b5d45c-a1f3-49e7-9b50-07f168b4527c","principalKind":"session_user","basis":"manual","taskRevision":1,"inputRevision":1,"inputDigest":"0c8971882b44c4114c8060747288587a35994e325224dac5f4f970aabc0ad9d9","settingsDigest":"d4ab3ce5edf027b10bedd61d30c26c85b5e8a1dfbc39dfc89b610abe0e64fe55","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209081287,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"60b5d45c-a1f3-49e7-9b50-07f168b4527c","flowRefId":"43ee9504-6791-43e0-93d7-543b039eca92","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","capabilityNodes":0,"platformRunners":1,"projectFlowRoles":0,"skippedFlowRoleValidation":true,"msg":"[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"}
+{"level":30,"time":1794209081474,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"60b5d45c-a1f3-49e7-9b50-07f168b4527c","runId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","createdByUserId":"665ccf8c-509e-4ea0-9962-8a3f548bafd1","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","branch":"maister/task-60b5d45c-a1f3-49e7-9b50-07f168b4527c/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/25aae7ca-975f-4812-8e49-34cf5c0e14a0","msg":"POST /api/runs preconditions ok"}
+{"level":30,"time":1794209081570,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree","projectRepoPath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/repo","branch":"maister/task-60b5d45c-a1f3-49e7-9b50-07f168b4527c/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/25aae7ca-975f-4812-8e49-34cf5c0e14a0","startPoint":"b2b6df16261dbdddfc24e9ceb578bd0a2f992ce9","msg":"addWorktree"}
+{"level":30,"time":1794209081648,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree-provenance","runId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/25aae7ca-975f-4812-8e49-34cf5c0e14a0","msg":"installed managed worktree provenance"}
+{"level":30,"time":1794209081929,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","assignmentId":"74ff30d6-c6ff-4356-968c-5bc979353c13","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209081985,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","pool":"flow","liveCount":1,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209081997,"pid":947,"hostname":"MacBook-Pro-2.local","name":"social-relations","fromTaskId":"60b5d45c-a1f3-49e7-9b50-07f168b4527c","kind":"parent_of","toTaskId":"192594f2-7b97-4ffa-8b4e-d415a0895454","actor":"system","created":true,"msg":"relation added"}
+{"level":30,"time":1794209082078,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"0ebc7256-6d22-4965-9cfc-785cb7ba9462","taskId":"192594f2-7b97-4ffa-8b4e-d415a0895454","principalKind":"system","basis":"execution_child","taskRevision":0,"inputRevision":1,"inputDigest":"3dc1d8a0ad8fd39c2c5de5217ce5f5ba8973cc11baaadcd97a43c89f6e2fd654","settingsDigest":"cb74b4d6392a4c3621de10f98a49719c523fdef35f3ac5d5bc195f5d1199c878","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":40,"time":1794209082089,"pid":947,"hostname":"MacBook-Pro-2.local","name":"orchestrator-admission","parentRunId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","ancestorRunId":"25aae7ca-975f-4812-8e49-34cf5c0e14a0","msg":"delegation yielded to an existing execution writer"}
+{"level":40,"time":1794209082095,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-dispatch","intentId":"0ebc7256-6d22-4965-9cfc-785cb7ba9462","causeChain":[{"name":"MaisterError","code":"CONFLICT"}],"errorType":"MaisterError","msg":"accepted launch held before preparation claim"}
+{"level":30,"time":1794209082110,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-cancel","intentId":"0ebc7256-6d22-4965-9cfc-785cb7ba9462","stateVersion":3,"runId":null,"msg":"task-launch-cancelled"}
+{"level":30,"time":1794209082174,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"35f68437-8c8f-41b2-99f5-346ec6e43681","taskId":"4a587465-fcc8-44bd-ab8f-af2cec51f451","principalKind":"session_user","basis":"manual","taskRevision":1,"inputRevision":1,"inputDigest":"48183b4ee9661a4e60acd5080f48b1615a67f53270407aa020fbbb882a937177","settingsDigest":"d4ab3ce5edf027b10bedd61d30c26c85b5e8a1dfbc39dfc89b610abe0e64fe55","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209082344,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"4a587465-fcc8-44bd-ab8f-af2cec51f451","flowRefId":"43ee9504-6791-43e0-93d7-543b039eca92","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","capabilityNodes":0,"platformRunners":1,"projectFlowRoles":0,"skippedFlowRoleValidation":true,"msg":"[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"}
+{"level":30,"time":1794209082535,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"4a587465-fcc8-44bd-ab8f-af2cec51f451","runId":"07fb43d4-a4ce-46a6-8397-748053a701d9","createdByUserId":"665ccf8c-509e-4ea0-9962-8a3f548bafd1","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","branch":"maister/task-4a587465-fcc8-44bd-ab8f-af2cec51f451/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/07fb43d4-a4ce-46a6-8397-748053a701d9","msg":"POST /api/runs preconditions ok"}
+{"level":30,"time":1794209082632,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree","projectRepoPath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/repo","branch":"maister/task-4a587465-fcc8-44bd-ab8f-af2cec51f451/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/07fb43d4-a4ce-46a6-8397-748053a701d9","startPoint":"b2b6df16261dbdddfc24e9ceb578bd0a2f992ce9","msg":"addWorktree"}
+{"level":30,"time":1794209082711,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree-provenance","runId":"07fb43d4-a4ce-46a6-8397-748053a701d9","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/07fb43d4-a4ce-46a6-8397-748053a701d9","msg":"installed managed worktree provenance"}
+{"level":30,"time":1794209082991,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"07fb43d4-a4ce-46a6-8397-748053a701d9","assignmentId":"03f40d29-f6cb-4f24-95de-02b33c03a244","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209083044,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"07fb43d4-a4ce-46a6-8397-748053a701d9","pool":"flow","liveCount":2,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209083055,"pid":947,"hostname":"MacBook-Pro-2.local","name":"social-relations","fromTaskId":"4a587465-fcc8-44bd-ab8f-af2cec51f451","kind":"parent_of","toTaskId":"980f4d7e-2fd1-4702-b586-9be308d4a794","actor":"system","created":true,"msg":"relation added"}
+{"level":30,"time":1794209083120,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"1d1e596a-a4c2-4c82-a95f-05a356cf9104","taskId":"980f4d7e-2fd1-4702-b586-9be308d4a794","principalKind":"system","basis":"execution_child","taskRevision":0,"inputRevision":1,"inputDigest":"dc208e16665398325c6d59a74137a6004e97c3785b61b9d4d57dca7a6a22f6fc","settingsDigest":"e8b611a18ed0c32f0a5e73eb7096f718545ac27ff15a223059ecc180ec8275c5","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":40,"time":1794209083135,"pid":947,"hostname":"MacBook-Pro-2.local","name":"orchestrator-admission","parentRunId":"07fb43d4-a4ce-46a6-8397-748053a701d9","ancestorRunId":"07fb43d4-a4ce-46a6-8397-748053a701d9","msg":"delegation yielded to an existing execution writer"}
+{"level":40,"time":1794209083139,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-dispatch","intentId":"1d1e596a-a4c2-4c82-a95f-05a356cf9104","causeChain":[{"name":"MaisterError","code":"CONFLICT"}],"errorType":"MaisterError","msg":"accepted launch held before preparation claim"}
+{"level":30,"time":1794209083145,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-cancel","intentId":"1d1e596a-a4c2-4c82-a95f-05a356cf9104","stateVersion":3,"runId":null,"msg":"task-launch-cancelled"}
+{"level":30,"time":1794209083199,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"03c8bce3-ce7e-47d3-9013-e21edfb53f85","taskId":"058a1607-a375-48bf-b962-5fb75f97340f","principalKind":"session_user","basis":"manual","taskRevision":1,"inputRevision":1,"inputDigest":"573e4f8b5b3031ec433c46fabc4fcfa43af6079c28a497f1f45e5f4a8d83e45b","settingsDigest":"d4ab3ce5edf027b10bedd61d30c26c85b5e8a1dfbc39dfc89b610abe0e64fe55","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209083366,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"058a1607-a375-48bf-b962-5fb75f97340f","flowRefId":"43ee9504-6791-43e0-93d7-543b039eca92","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","capabilityNodes":0,"platformRunners":1,"projectFlowRoles":0,"skippedFlowRoleValidation":true,"msg":"[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"}
+{"level":30,"time":1794209083551,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"058a1607-a375-48bf-b962-5fb75f97340f","runId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","createdByUserId":"665ccf8c-509e-4ea0-9962-8a3f548bafd1","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","branch":"maister/task-058a1607-a375-48bf-b962-5fb75f97340f/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/06f0f443-35b9-400b-b4e3-b7cb2cf171bc","msg":"POST /api/runs preconditions ok"}
+{"level":30,"time":1794209083642,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree","projectRepoPath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/repo","branch":"maister/task-058a1607-a375-48bf-b962-5fb75f97340f/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/06f0f443-35b9-400b-b4e3-b7cb2cf171bc","startPoint":"b2b6df16261dbdddfc24e9ceb578bd0a2f992ce9","msg":"addWorktree"}
+{"level":30,"time":1794209083719,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree-provenance","runId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/06f0f443-35b9-400b-b4e3-b7cb2cf171bc","msg":"installed managed worktree provenance"}
+{"level":30,"time":1794209083997,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","assignmentId":"f3cdc71c-b5ab-47fb-a0a9-9c90743123bc","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209084049,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","pool":"flow","liveCount":3,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209084060,"pid":947,"hostname":"MacBook-Pro-2.local","name":"social-relations","fromTaskId":"058a1607-a375-48bf-b962-5fb75f97340f","kind":"parent_of","toTaskId":"63020638-1e3b-4e64-8afa-0458bcac1c27","actor":"system","created":true,"msg":"relation added"}
+{"level":30,"time":1794209084130,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"54c14823-7de5-4d2f-8cc2-f1da938e203f","taskId":"63020638-1e3b-4e64-8afa-0458bcac1c27","principalKind":"system","basis":"execution_child","taskRevision":0,"inputRevision":1,"inputDigest":"67cc02eced50f0f9a41eab3fd2a457839a4a093d76ea4de07ce908ad6465e13e","settingsDigest":"513bbf00b97e65ae2eb87f33378d297ea24ec07444f16bb44512e816eb438390","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":40,"time":1794209084210,"pid":947,"hostname":"MacBook-Pro-2.local","name":"orchestrator-admission","parentRunId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","ancestorRunId":"06f0f443-35b9-400b-b4e3-b7cb2cf171bc","msg":"delegation yielded to an existing execution writer"}
+{"level":50,"time":1794209084211,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agents-launch","runId":"5684c9ef-4172-4e2a-ad7b-6f3a95752a28","intentId":"54c14823-7de5-4d2f-8cc2-f1da938e203f","stage":"agent_run_binding","errorType":"MaisterError","msg":"accepted agent run binding failed"}
+{"level":40,"time":1794209084213,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-dispatch","intentId":"54c14823-7de5-4d2f-8cc2-f1da938e203f","runId":"5684c9ef-4172-4e2a-ad7b-6f3a95752a28","preparationPhase":"reserved","state":"held","attempts":0,"reason":"delegation_execution_busy","causeChain":[{"name":"MaisterError","code":"CONFLICT"}],"errorType":"MaisterError","msg":"[FIX:launch-dispatch] current preparation stopped"}
+{"level":30,"time":1794209084222,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-cancel","intentId":"54c14823-7de5-4d2f-8cc2-f1da938e203f","stateVersion":4,"runId":null,"msg":"task-launch-cancelled"}
+{"level":30,"time":1794209084290,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"fb66f019-3be3-4f3e-9eeb-c5b7c178e24a","taskId":"1cc0f39e-4b0c-415d-9979-3e3d39daf49d","principalKind":"session_user","basis":"manual","taskRevision":1,"inputRevision":1,"inputDigest":"4953bbbec1cb1316012a60ff337ac9a7a4acb96757c23b58cd86326aed3b7c2d","settingsDigest":"d4ab3ce5edf027b10bedd61d30c26c85b5e8a1dfbc39dfc89b610abe0e64fe55","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209084459,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"1cc0f39e-4b0c-415d-9979-3e3d39daf49d","flowRefId":"43ee9504-6791-43e0-93d7-543b039eca92","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","capabilityNodes":0,"platformRunners":1,"projectFlowRoles":0,"skippedFlowRoleValidation":true,"msg":"[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"}
+{"level":30,"time":1794209084651,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"1cc0f39e-4b0c-415d-9979-3e3d39daf49d","runId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","createdByUserId":"665ccf8c-509e-4ea0-9962-8a3f548bafd1","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","branch":"maister/task-1cc0f39e-4b0c-415d-9979-3e3d39daf49d/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/3cfa8046-e822-4dc7-b4bf-b9a33727f179","msg":"POST /api/runs preconditions ok"}
+{"level":30,"time":1794209084747,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree","projectRepoPath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/repo","branch":"maister/task-1cc0f39e-4b0c-415d-9979-3e3d39daf49d/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/3cfa8046-e822-4dc7-b4bf-b9a33727f179","startPoint":"b2b6df16261dbdddfc24e9ceb578bd0a2f992ce9","msg":"addWorktree"}
+{"level":30,"time":1794209084827,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree-provenance","runId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/3cfa8046-e822-4dc7-b4bf-b9a33727f179","msg":"installed managed worktree provenance"}
+{"level":30,"time":1794209085104,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","assignmentId":"b32067b2-6516-439f-b41e-1195f0386b18","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209085158,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","pool":"flow","liveCount":4,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209085168,"pid":947,"hostname":"MacBook-Pro-2.local","name":"social-relations","fromTaskId":"1cc0f39e-4b0c-415d-9979-3e3d39daf49d","kind":"parent_of","toTaskId":"c028758b-8b50-465f-ac88-ca3fc8dc7f62","actor":"system","created":true,"msg":"relation added"}
+{"level":30,"time":1794209085231,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"4d0a9d11-ee2e-42ae-b034-a2804adb7cb4","taskId":"c028758b-8b50-465f-ac88-ca3fc8dc7f62","principalKind":"system","basis":"execution_child","taskRevision":0,"inputRevision":1,"inputDigest":"df1159aacf182fe6044a3c8643ce184a99924cbbbf15cc62f30760c13b830ea4","settingsDigest":"09a05abc34d32172b5f6dd7592be058e9cd28b242918fe5b45857768118d5c47","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209085305,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"734dc3e7-b35d-4608-8c08-0110698f057f","assignmentId":"8bd15f03-6f4c-4867-8861-921553cfd7a0","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":40,"time":1794209085323,"pid":947,"hostname":"MacBook-Pro-2.local","name":"orchestrator-admission","parentRunId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","ancestorRunId":"3cfa8046-e822-4dc7-b4bf-b9a33727f179","msg":"delegation yielded to an existing execution writer"}
+{"level":30,"time":1794209085340,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"734dc3e7-b35d-4608-8c08-0110698f057f","assignmentId":"8bd15f03-6f4c-4867-8861-921553cfd7a0","assignmentEpoch":1,"reason":"abandoned","msg":"assignment-released"}
+{"level":30,"time":1794209085344,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-cancel","intentId":"4d0a9d11-ee2e-42ae-b034-a2804adb7cb4","stateVersion":5,"runId":"734dc3e7-b35d-4608-8c08-0110698f057f","msg":"task-launch-cancelled"}
+{"level":30,"time":1794209085398,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"80e0480c-985b-4919-abaa-38cde046cdf2","taskId":"ee3f64cb-256b-41aa-8e37-daddc1846ac1","principalKind":"session_user","basis":"manual","taskRevision":1,"inputRevision":1,"inputDigest":"94438fd734c30886e201349f6045e12d8727426b4fa3d45b110af69f51742c6f","settingsDigest":"d4ab3ce5edf027b10bedd61d30c26c85b5e8a1dfbc39dfc89b610abe0e64fe55","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209085562,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"ee3f64cb-256b-41aa-8e37-daddc1846ac1","flowRefId":"43ee9504-6791-43e0-93d7-543b039eca92","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","capabilityNodes":0,"platformRunners":1,"projectFlowRoles":0,"skippedFlowRoleValidation":true,"msg":"[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"}
+{"level":30,"time":1794209085758,"pid":947,"hostname":"MacBook-Pro-2.local","name":"service-runs","taskId":"ee3f64cb-256b-41aa-8e37-daddc1846ac1","runId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","createdByUserId":"665ccf8c-509e-4ea0-9962-8a3f548bafd1","runnerId":"4c71ed33-f810-47b4-853b-95e1c87c28d6","runnerResolutionTier":"launchOverride","capabilityAgent":"claude","branch":"maister/task-ee3f64cb-256b-41aa-8e37-daddc1846ac1/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/e7db953a-0bd9-4b80-9d28-12c2ddad9a13","msg":"POST /api/runs preconditions ok"}
+{"level":30,"time":1794209085845,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree","projectRepoPath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/repo","branch":"maister/task-ee3f64cb-256b-41aa-8e37-daddc1846ac1/attempt-2","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/e7db953a-0bd9-4b80-9d28-12c2ddad9a13","startPoint":"b2b6df16261dbdddfc24e9ceb578bd0a2f992ce9","msg":"addWorktree"}
+{"level":30,"time":1794209085921,"pid":947,"hostname":"MacBook-Pro-2.local","name":"worktree-provenance","runId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","worktreePath":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/e7db953a-0bd9-4b80-9d28-12c2ddad9a13","msg":"installed managed worktree provenance"}
+{"level":30,"time":1794209086191,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","assignmentId":"ba52bcfe-c206-41de-91da-6d9b858391f2","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209086241,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","pool":"flow","liveCount":5,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209086252,"pid":947,"hostname":"MacBook-Pro-2.local","name":"social-relations","fromTaskId":"ee3f64cb-256b-41aa-8e37-daddc1846ac1","kind":"parent_of","toTaskId":"69ce5be4-e883-4d9b-8f02-27c4d34bf47a","actor":"system","created":true,"msg":"relation added"}
+{"level":30,"time":1794209086321,"pid":947,"hostname":"MacBook-Pro-2.local","name":"task-launch-intent","intentId":"394a7fd7-da13-4792-bdb3-6416844f3ca6","taskId":"69ce5be4-e883-4d9b-8f02-27c4d34bf47a","principalKind":"system","basis":"execution_child","taskRevision":0,"inputRevision":1,"inputDigest":"dc4c31fbfb56f5dc7186e9b4aa5c02e7869574c68ee669cdf007114774c5c785","settingsDigest":"9aa05faf6b5d2e4e8ed3615ec43d1d29878ebe1b2a86e994bf1e0bcf2fbd0bfc","triageStatus":null,"msg":"task-launch-accepted"}
+{"level":30,"time":1794209086399,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"reason":"launch","supersededId":null,"msg":"assignment-minted"}
+{"level":30,"time":1794209086429,"pid":947,"hostname":"MacBook-Pro-2.local","name":"scheduler","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","pool":"agent","liveCount":1,"cap":32,"msg":"tryStartRun → started"}
+{"level":30,"time":1794209086463,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-preparation","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","resourceId":"f1d9483acf25cebf691882e008fca6cca3834ed549116f089ef26cd9096bab33","msg":"agent-preparation-claimed"}
+{"level":30,"time":1794209086474,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-preparation","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","phase":"baseline_ready","generation":0,"msg":"agent-preparation-advanced"}
+{"level":30,"time":1794209086478,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-dirty-watchdog","adapterId":"claude","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","cwd":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/0fd1f094-6b5b-4665-a405-69ab2e394851","materializer":"claude-settings","msg":"L2 read-only settings materialized"}
+{"level":30,"time":1794209086481,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-tokens","agentId":"launch-agents:events","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","tokenId":"ea069d6c-8e71-428b-864a-deb4054baa10","msg":"ephemeral agent token issued"}
+{"level":30,"time":1794209086489,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-preparation","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","phase":"materialized","generation":1,"msg":"agent-preparation-advanced"}
+{"level":40,"time":1794209086505,"pid":947,"hostname":"MacBook-Pro-2.local","name":"orchestrator-admission","parentRunId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","ancestorRunId":"e7db953a-0bd9-4b80-9d28-12c2ddad9a13","msg":"delegation yielded to an existing execution writer"}
+{"level":30,"time":1794209086506,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-preparation","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","phase":"failed","msg":"agent-preparation-advanced"}
+{"level":50,"time":1794209086507,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agents-launch","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","errorType":"MaisterError","code":"CONFLICT","reason":"delegation_execution_busy","msg":"agent session spawn/prompt failed"}
+{"level":40,"time":1794209086507,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-create-failure","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","stage":"materialization_witness","primaryFailure":{"runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"preparationId":"859a7d1d-6d40-4033-b9db-2a21c5fe246f","stage":"materialization_witness","causeChain":[{"name":"MaisterError","code":"CONFLICT"}]},"msg":"agent-preparation-failure-settlement"}
+{"level":30,"time":1794209086516,"pid":947,"hostname":"MacBook-Pro-2.local","name":"execution-host","component":"assignments","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","assignmentId":"ed9e3722-12b7-4de3-8c10-49be89230788","assignmentEpoch":1,"reason":"run_terminal","msg":"assignment-released"}
+{"level":30,"time":1794209086520,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-incidents","episodeId":"e3a5e772-73c4-4910-bd2d-22ef6882231d","projectId":"7a187623-1980-4f0a-8c76-06ae5ea2bbbf","agentId":"launch-agents:events","reasonCode":"delegation_execution_busy","recovered":false,"msg":"agent-incident-episode-created"}
+{"level":30,"time":1794209086537,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-materialization","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","cwd":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/0fd1f094-6b5b-4665-a405-69ab2e394851","ownershipState":"released","restoredPathCount":2,"preservedPathCount":0,"remainingLeaseCount":0,"msg":"agent materialization lease released"}
+{"level":30,"time":1794209086537,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-dirty-watchdog","cwd":"/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/task-agent-admission-Dx5EYL/worktrees/7a187623-1980-4f0a-8c76-06ae5ea2bbbf/0fd1f094-6b5b-4665-a405-69ab2e394851","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","msg":"agent materialization restored"}
+{"level":30,"time":1794209086537,"pid":947,"hostname":"MacBook-Pro-2.local","name":"agent-finalization","runId":"0fd1f094-6b5b-4665-a405-69ab2e394851","outcome":"Failed","status":"Failed","hasReason":true,"msg":"agent run finalized"}
+{"level":30,"time":1794209086709,"pid":947,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":165,"containerId":"27e62698b51aef420c9097f34ffea7870ffa10c7dd20556280aac706391a4f75","endpoint":"postgres://localhost:56359/task_agent_admission","msg":"stopped test database"}
+ ❯ |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts (40 tests | 5 failed | 35 skipped) 7520ms
+   × retains accepted child identity and budget across transient parent contention at queued_claim 1130ms
+   × retains accepted child identity and budget across transient parent contention at scheduler_claim 1035ms
+   × retains accepted child identity and budget across transient parent contention at preparation_binding 1076ms
+   × retains accepted child identity and budget across transient parent contention at first_dispatch 1123ms
+   × retains accepted child identity and budget across transient parent contention at agent_dispatch 1199ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts > retains accepted child identity and budget across transient parent contention at queued_claim
+AssertionError: expected { …(40) } to match object { state: 'queued', attempts: +0, …(5) }
+(72 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -15,7 +15,7 @@
+    },
+    "cleanupState": null,
+    "dispatchCommittedAt": null,
+    "inputDigest": "3dc1d8a0ad8fd39c2c5de5217ce5f5ba8973cc11baaadcd97a43c89f6e2fd654",
+    "settingsDigest": "cb74b4d6392a4c3621de10f98a49719c523fdef35f3ac5d5bc195f5d1199c878",
+-   "state": "queued",
++   "state": "held",
+  }
+
+ ❯ lib/tasks/__tests__/launch-agent-admission.integration.test.ts:2629:24
+    2627|         .where(eq(taskLaunchIntents.id, accepted.intentId));
+    2628|
+    2629|       expect(deferred).toMatchObject({
+       |                        ^
+    2630|         state:
+    2631|           phase === "first_dispatch" || phase === "agent_dispatch"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts > retains accepted child identity and budget across transient parent contention at scheduler_claim
+AssertionError: expected { …(40) } to match object { state: 'queued', attempts: +0, …(5) }
+(72 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -15,7 +15,7 @@
+    },
+    "cleanupState": null,
+    "dispatchCommittedAt": null,
+    "inputDigest": "dc208e16665398325c6d59a74137a6004e97c3785b61b9d4d57dca7a6a22f6fc",
+    "settingsDigest": "e8b611a18ed0c32f0a5e73eb7096f718545ac27ff15a223059ecc180ec8275c5",
+-   "state": "queued",
++   "state": "held",
+  }
+
+ ❯ lib/tasks/__tests__/launch-agent-admission.integration.test.ts:2629:24
+    2627|         .where(eq(taskLaunchIntents.id, accepted.intentId));
+    2628|
+    2629|       expect(deferred).toMatchObject({
+       |                        ^
+    2630|         state:
+    2631|           phase === "first_dispatch" || phase === "agent_dispatch"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts > retains accepted child identity and budget across transient parent contention at preparation_binding
+AssertionError: expected { …(40) } to match object { state: 'queued', attempts: +0, …(5) }
+(86 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -11,11 +11,11 @@
+        "planRevision": "agent-child-fixture-v1",
+        "relationId": "2941aa5b-da9b-4568-9525-40953f04fc24",
+        "version": 1,
+      },
+    },
+-   "cleanupState": null,
++   "cleanupState": "pending",
+    "dispatchCommittedAt": null,
+    "inputDigest": "67cc02eced50f0f9a41eab3fd2a457839a4a093d76ea4de07ce908ad6465e13e",
+    "settingsDigest": "513bbf00b97e65ae2eb87f33378d297ea24ec07444f16bb44512e816eb438390",
+-   "state": "queued",
++   "state": "held",
+  }
+
+ ❯ lib/tasks/__tests__/launch-agent-admission.integration.test.ts:2629:24
+    2627|         .where(eq(taskLaunchIntents.id, accepted.intentId));
+    2628|
+    2629|       expect(deferred).toMatchObject({
+       |                        ^
+    2630|         state:
+    2631|           phase === "first_dispatch" || phase === "agent_dispatch"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts > retains accepted child identity and budget across transient parent contention at first_dispatch
+AssertionError: expected { …(40) } to match object { state: 'run_bound', …(6) }
+(86 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -15,7 +15,7 @@
+    },
+    "cleanupState": null,
+    "dispatchCommittedAt": null,
+    "inputDigest": "df1159aacf182fe6044a3c8643ce184a99924cbbbf15cc62f30760c13b830ea4",
+    "settingsDigest": "09a05abc34d32172b5f6dd7592be058e9cd28b242918fe5b45857768118d5c47",
+-   "state": "run_bound",
++   "state": "held",
+  }
+
+ ❯ lib/tasks/__tests__/launch-agent-admission.integration.test.ts:2629:24
+    2627|         .where(eq(taskLaunchIntents.id, accepted.intentId));
+    2628|
+    2629|       expect(deferred).toMatchObject({
+       |                        ^
+    2630|         state:
+    2631|           phase === "first_dispatch" || phase === "agent_dispatch"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  |integration| lib/tasks/__tests__/launch-agent-admission.integration.test.ts > retains accepted child identity and budget across transient parent contention at agent_dispatch
+AssertionError: expected { …(40) } to match object { state: 'run_bound', …(6) }
+(86 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -15,7 +15,7 @@
+    },
+    "cleanupState": null,
+    "dispatchCommittedAt": null,
+    "inputDigest": "dc4c31fbfb56f5dc7186e9b4aa5c02e7869574c68ee669cdf007114774c5c785",
+    "settingsDigest": "9aa05faf6b5d2e4e8ed3615ec43d1d29878ebe1b2a86e994bf1e0bcf2fbd0bfc",
+-   "state": "run_bound",
++   "state": "settled",
+  }
+
+ ❯ lib/tasks/__tests__/launch-agent-admission.integration.test.ts:2629:24
+    2627|         .where(eq(taskLaunchIntents.id, accepted.intentId));
+    2628|
+    2629|       expect(deferred).toMatchObject({
+       |                        ^
+    2630|         state:
+    2631|           phase === "first_dispatch" || phase === "agent_dispatch"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 35 skipped (40)
+   Start at  10:24:37
+   Duration  8.75s (tests 87%, import 9%, transform 4%)

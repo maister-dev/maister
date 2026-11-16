@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -8,8 +11,109 @@ import {
   evaluateCoverage,
   matrixRows,
   planTaskIds,
+  repoRoot,
   testIdsInSource,
 } from "./validate-requirement-coverage.mjs";
+
+test("CT-CBX-05 qualification migration units resolve to their actual journal tags", () => {
+  const manifest = readFileSync(
+    join(
+      repoRoot,
+      "docs/system-analytics/company-brain-specialists-qualification.md",
+    ),
+    "utf8",
+  );
+  const units = [
+    ...manifest.matchAll(/^\| (Main|Brain) (\d{4}) ([a-z_]+)(?:\s|\|)/gm),
+  ];
+
+  assert.ok(
+    units.length > 0,
+    "qualification must name concrete migration units",
+  );
+  for (const [, lineage, number, name] of units) {
+    const directory = lineage === "Main" ? "migrations" : "brain-migrations";
+    const journal = JSON.parse(
+      readFileSync(
+        join(repoRoot, "web/lib/db", directory, "meta/_journal.json"),
+        "utf8",
+      ),
+    );
+    const tag = `${number}_${name}`;
+
+    assert.ok(
+      journal.entries.some((entry) => entry.tag === tag),
+      `${lineage} ${tag} must match the actual journal`,
+    );
+  }
+});
+
+test("CT-CBX-05 the release manifest identifies unchanged specifications and recorded qualification outcomes", () => {
+  const qualificationRoot = join(
+    repoRoot,
+    ".ai-factory/qa/company-brain-specialist-assignments",
+  );
+  const manifest = JSON.parse(
+    readFileSync(join(qualificationRoot, "T43/release-candidate.json"), "utf8"),
+  );
+  const digest = (data) => createHash("sha256").update(data).digest("hex");
+  const standReceipts = [
+    "CB1_combined",
+    "CB1_coordinator",
+    "CB1_diagnostic",
+    "CB1_successor",
+  ];
+
+  assert.ok(Object.keys(manifest.specs).length > 0);
+  for (const role of ["CB0", ...standReceipts]) {
+    assert.equal(manifest.receipts[role]?.exitCode, 0, role);
+  }
+  if (manifest.currentMaster.fullWeb === "passed") {
+    assert.equal(manifest.receipts.current_master_web?.exitCode, 0);
+  }
+  // A specification edited after qualification must be declared: the qualified
+  // digest stays as recorded and the amendment names the current one, so the
+  // manifest never claims coverage of text it did not qualify.
+  const amendments = new Map(
+    (manifest.postQualificationAmendments ?? []).map((amendment) => [
+      amendment.path,
+      amendment,
+    ]),
+  );
+
+  for (const amendment of amendments.values()) {
+    assert.equal(amendment.qualifiedSha256, manifest.specs[amendment.path], amendment.path);
+    assert.ok(amendment.reason?.trim(), amendment.path);
+  }
+  for (const [path, sha256] of Object.entries(manifest.specs)) {
+    assert.equal(
+      digest(readFileSync(join(repoRoot, path))),
+      amendments.get(path)?.currentSha256 ?? sha256,
+      path,
+    );
+  }
+  for (const [role, { path, sha256, exitCode }] of Object.entries(manifest.receipts)) {
+    const data = readFileSync(join(qualificationRoot, path));
+    const receipt = JSON.parse(data.toString("utf8"));
+
+    assert.equal(digest(data), sha256, path);
+    assert.equal(receipt.exitCode ?? receipt.outcome?.code, exitCode, path);
+    if (standReceipts.includes(role)) {
+      assert.equal(receipt.packageCommit, manifest.implementation.companionCommit, path);
+      assert.equal(receipt.packageTag, manifest.implementation.companionTag, path);
+    }
+    if (role === "current_master_web") {
+      assert.equal(receipt.master, manifest.currentMaster.commit, path);
+      assert.equal(receipt.revision, manifest.currentMaster.testedRevision, path);
+      assert.equal(receipt.committedCandidate, manifest.currentMaster.candidate, path);
+      assert.equal(receipt.patchSha256, manifest.currentMaster.candidatePatchSha256, path);
+      assert.ok(receipt.tests.passed > 0, path);
+      assert.equal(receipt.tests.failed, 0, path);
+      assert.equal(receipt.candidateUnchanged, true, path);
+      assert.deepEqual(receipt.cleanup, { processLeaks: 0, errors: [] }, path);
+    }
+  }
+});
 
 const PREFIXES = ["LCV", "LAU"];
 const PHASES = /^T[1-6]\./;
@@ -150,4 +254,40 @@ test("agent activity group names all planned obligations and implementation task
 test("const-asserted parameter tables do not swallow following requirement-bearing tests", () => {
   const source = 'it.each(["live"] as const)("owner %s", () => {});\nit("IT-UX-11 permissions", () => {});\nit("IT-UX-17 continuation", () => {});\nit.each([true])("other %s", () => {});';
   assert.deepEqual([...testIdsInSource(source, ["UX"])], ["IT-UX-11", "IT-UX-17"]);
+});
+
+test("CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable status claims", () => {
+  const input = {
+    ids: ["LCV-01"],
+    rows: matrixRows(row("LCV-01", "T1.1", "IT-LCV-01"), PREFIXES),
+    tasks: ["T1.1"], suiteIds: new Set(), prefixes: PREFIXES,
+    implementationPhases: PHASES,
+  };
+  for (const [change, expected] of [
+    [{ ids: [] }, /no requirement ids/],
+    [{ tasks: [] }, /no plan tasks/],
+    [{ ids: ["LCV-01", "LCV-01"] }, /duplicate requirement LCV-01/],
+    [{ tasks: ["T1.1", "T1.1"] }, /duplicate task T1.1/],
+    [{ rows: matrixRows(row("LCV-01", "T1.1", "prose only", "Implemented"), PREFIXES) }, /no recognizable primary test id/],
+    [{ rows: matrixRows(row("LCV-01", "T1.1", "IT-LCV-01", "Ready"), PREFIXES) }, /unsupported status Ready/],
+  ]) {
+    assert.match(evaluateCoverage({ ...input, ...change }).join("\n"), expected);
+  }
+  assert.throws(
+    () => matrixRows(row("LCV-01", "T1.1", "IT-LCV-01") + "\n" + row("LCV-01", "T2.1", "IT-LCV-02"), PREFIXES),
+    /duplicate matrix row LCV-01/,
+  );
+});
+
+test("CT-CBX-05 company group discovers all 86 contracts and 45 enforcing tasks", () => {
+  const group = COVERAGE_GROUPS["company-brain-specialists"];
+  assert.ok(group, "company group must be registered");
+  const result = checkGroupCoverage(group);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.ids.length, 86);
+  assert.equal(result.rows.size, 86);
+  assert.equal(result.tasks.filter((id) => group.implementationPhases.test(id)).length, 45);
+  assert.ok(result.tasks.includes("T04.1"));
+  assert.ok(result.tasks.includes("T20.1"));
+  assert.ok(group.implementationPhases.test("T08.1"));
 });

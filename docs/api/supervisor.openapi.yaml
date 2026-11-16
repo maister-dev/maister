@@ -790,6 +790,202 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/dispatch:
+    post:
+      tags: [execution-host]
+      operationId: dispatchStandRestart
+      summary: Dispatch one fenced stand restart command
+      description: The existing execution-host fence and receipt ledger retain the exact command.
+        A replay observes that receipt. The operation can produce an unknown result requiring
+        a separate recovery read. The endpoint, credentials and service command are absent
+        from the payload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StandDispatchCommand"
+      responses:
+        "200":
+          description: Existing command receipt or outcome of the admitted dispatch.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid command, stale placement fence or missing stand transport.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/receipt:
+    post:
+      tags: [execution-host]
+      operationId: readStandReceipt
+      summary: Read the original helper receipt under a current recovery permit
+      description: Resolves the exact configured helper from the target incarnation. This read
+        can run after original placement release and never sends a mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+      responses:
+        "200":
+          description: The original authenticated helper receipt or a missing receipt.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [receipt]
+                properties:
+                  receipt: { type: object, nullable: true }
+        "409":
+          description: Invalid selector, missing configuration or refused read authority.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: The bounded receipt read failed and the effect remains uncertain.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/observe:
+    post:
+      tags: [execution-host]
+      operationId: observeStandOperation
+      summary: Observe the exact configured unit before restart
+      description: Uses a current reconciliation permit and a pinned helper. It reads the
+        service state and returns a target sequence without admitting a mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId, resourceKey]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+                resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "200":
+          description: Exact authenticated helper observation.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operationId, targetIncarnation, requestDigest, resourceKey, sequence, invocationId, state, capturedAt]
+                properties:
+                  operationId: { type: string, format: uuid }
+                  targetIncarnation: { type: string, format: uuid }
+                  requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  sequence: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                  invocationId: { type: string, pattern: '^[a-f0-9]{32}$', nullable: true }
+                  state: { type: string, enum: [active, inactive, failed, unknown] }
+                  capturedAt: { type: string, format: date-time }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: Target observation unavailable or failed identity validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/verify:
+    post:
+      tags: [execution-host]
+      operationId: verifyStandOperation
+      summary: Observe independent health on the configured target
+      description: Sends a fresh platform nonce and exact operation identity to the pinned helper
+        under a current verification permit. A mismatched identity, nonce or issue time fails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId, verificationNonce, issuedAt]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+                kind:
+                  type: string
+                  enum: [inspection]
+                  description: Selects the read-only health endpoint. Omit for post-restart verification.
+                verificationNonce: { type: string, format: uuid }
+                issuedAt: { type: string, format: date-time }
+      responses:
+        "200":
+          description: An exact independent target observation.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: Verification was unavailable or failed identity validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /stand-operations/logs:
+    post:
+      tags: [execution-host]
+      operationId: readStandLogs
+      summary: Read sanitized logs from the exact configured helper
+      description: Uses the configured helper and a current operation-bound logs permit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId, targetIncarnation, requestDigest, ownerEpoch, componentId]
+              properties:
+                operationId: { type: string, format: uuid }
+                targetIncarnation: { type: string, format: uuid }
+                requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+      responses:
+        "200":
+          description: Authorized bounded sanitized excerpt.
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: Invalid selector or missing configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: The helper log read was unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/adopt:
     post:
       tags: [execution-host]
@@ -1171,6 +1367,11 @@ paths:
         Returns after the adapter process starts and the ACP handshake returns
         an `acpSessionId`; everything after that is observable via the SSE
         stream.
+
+        An explicit effective Claude model is passed to both the adapter
+        process and the SDK on creation and resume. The explicit selection
+        takes precedence over model environment values. The `default`
+        selection retains native model resolution.
 
         Capability launch fields are server-derived by the web tier.
         `capabilityProfileObjectId` and `capabilityInstructionsObjectId` name
@@ -2437,6 +2638,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+
 components:
   parameters:
     RuntimeObjectId:
@@ -3113,6 +3315,14 @@ components:
               minLength: 1
               maxLength: 128
               description: Capability ref id, the server's name on the ACP wire.
+            platformOrigin:
+              type: string
+              enum: [maister_facade]
+              description: >-
+                Private manager attestation for its injected native facade.
+                Catalog definitions cannot set this field. It permits classification
+                of known native read tools; it grants no source access or mutation
+                authority and is stripped before the ACP MCP descriptor is sent.
         - $ref: "#/components/schemas/McpServerFields"
       description: |
         One gated MCP catalog entry on `POST /sessions`. `additionalProperties`
@@ -3429,6 +3639,16 @@ components:
                     type: string
                     minLength: 1
                   description: Allowed MCP server namespaces.
+            allowedToolApproval:
+              type: string
+              enum: [execution_policy]
+              description: |
+                Optional server-derived approval boundary. When present, an in-profile
+                tool passes to the existing execution permission policy (ask or automatic
+                approval); capability admission alone never supplies human approval.
+                Absent preserves legacy inline approval. Out-of-profile denial and its
+                consecutive-denial breaker apply before either approval path. Native
+                company Flow profiles set this literal and include it in the profile digest.
             enforcedClasses:
               type: array
               minItems: 1
@@ -4162,6 +4382,7 @@ components:
         - repo_path_mismatch
         - inside_state_dir
         - outside_workspace
+        - owner_mismatch
       description: |
         (Implemented — ADR-166) Which adoption rule rejected a path; present
         iff `details.reason = workspace_rejected`.
@@ -4385,11 +4606,40 @@ components:
         to `repoPath` (arbitrary location); `directory` — a plain directory
         under the roots (local-package assistant, ephemeral read-only
         checkouts, agent `none`).
+    CompanyWorkspaceOwner:
+      type: object
+      additionalProperties: false
+      required: [kind, companyId]
+      properties:
+        kind: { type: string, enum: [company] }
+        companyId: { type: string, minLength: 1, maxLength: 128, pattern: '^[^\u0000]+$' }
     AdoptWorkspacePayload:
+      example:
+        runId: run-company-1
+        projectSlug: _company
+        owner: { kind: company, companyId: company-1 }
+        kind: directory
+        path: /worktrees/.company/c2ecd1fc77aba72e4fc2c10e754e2a3d79a1e9a1f7953fa56f43b2cbb6e122c4
       type: object
       required: [runId, projectSlug, kind, path]
       additionalProperties: false
+      allOf:
+        - oneOf:
+            - required: [owner]
+              properties:
+                projectSlug: { type: string, enum: [_company] }
+                kind: { type: string, enum: [directory] }
+              not:
+                anyOf:
+                  - required: [repoPath]
+                  - required: [contextMounts]
+            - properties:
+                projectSlug:
+                  not: { type: string, enum: [_company] }
+              not:
+                required: [owner]
       properties:
+        owner: { $ref: "#/components/schemas/CompanyWorkspaceOwner" }
         runId:
           type: string
           minLength: 1
@@ -4400,8 +4650,14 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|_librarian)$"
+          pattern: "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|_librarian|_company)$"
           description: |
+            `_company` is the reserved runtime namespace for an explicit company
+            owner, never a registered project. It requires `owner`, directory
+            kind, no repository or context mounts, and a managed path ending in
+            `.company/sha256(JSON.stringify([companyId,runId]))`. The owner is
+            retained in host SQLite and returned from handle inspection. Reusing
+            an active path under another owner refuses with `owner_mismatch`.
             Stored on the handle; the host derives `run_dir` from it and never
             resolves it against registered projects. Kebab-case, or
             (Designed — ADR-185) the one reserved literal `_librarian` for the
@@ -4448,6 +4704,43 @@ components:
               path: { type: string, minLength: 1, maxLength: 4096 }
               ref: { type: string, minLength: 1, maxLength: 255 }
               commit: { type: string, minLength: 7, maxLength: 64 }
+    StandDispatchCommand:
+      type: object
+      required: [command, fence, payload]
+      additionalProperties: false
+      properties:
+        command:
+          type: object
+          required: [id, kind, issuedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string, format: uuid }
+            kind: { type: string, enum: [stand.dispatch] }
+            issuedAt: { type: string, format: date-time }
+        fence: { $ref: "#/components/schemas/CommandFence" }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [operationId, targetIncarnation, componentId, action, requestDigest, resourceKey, ownerEpoch, businessOwnerEpoch, nodeAttemptId, beforeObservationId, before]
+          properties:
+            operationId: { type: string, format: uuid }
+            targetIncarnation: { type: string, format: uuid }
+            componentId: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' }
+            action: { type: string, enum: [restart] }
+            requestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+            resourceKey: { type: string, pattern: '^[a-f0-9]{64}$' }
+            ownerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            businessOwnerEpoch: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            nodeAttemptId: { type: string, format: uuid, nullable: true }
+            beforeObservationId: { type: string, format: uuid }
+            predecessorId: { type: string, format: uuid }
+            before:
+              type: object
+              additionalProperties: false
+              required: [invocationId, state]
+              properties:
+                invocationId: { type: string, pattern: '^[a-f0-9]{32}$', nullable: true }
+                state: { type: string, enum: [active, inactive, failed] }
     AdoptWorkspaceRequest:
       type: object
       required: [command, fence, payload]
@@ -4495,7 +4788,19 @@ components:
       required: [executionWorkspaceId, runId, projectSlug, kind, adoptedAt]
       additionalProperties: false
       description: (Implemented — ADR-166) Path-free projection of an adopted handle.
+      allOf:
+        - oneOf:
+            - required: [owner]
+              properties:
+                projectSlug: { type: string, enum: [_company] }
+                kind: { type: string, enum: [directory] }
+            - properties:
+                projectSlug:
+                  not: { type: string, enum: [_company] }
+              not:
+                required: [owner]
       properties:
+        owner: { $ref: "#/components/schemas/CompanyWorkspaceOwner" }
         executionWorkspaceId: { type: string, pattern: "^ws_[0-9a-f]{32}$" }
         runId: { type: string }
         projectSlug: { type: string }
@@ -5069,6 +5374,7 @@ components:
         manifest bindings replace an active assignment, never a forged fence.
         Matching chunk/seal retries replay; changed bytes or generation is 409.
         Local OS authority, explicit enablement and revocation govern access.
+
 
 x-ab-stabilization:
   status: Designed

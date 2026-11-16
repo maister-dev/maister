@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
 import type { DelegationSnapshot } from "@/lib/db/schema";
 
 import { eq } from "drizzle-orm";
@@ -261,10 +262,12 @@ export function flowDelegationSnapshot(
     carrierTaskId: string;
     mode: "task" | "run";
     runnerOverride: string | null;
+    nativeInput?: NativeDelegationInput;
   },
 ): FlowDelegationSnapshotInput {
   return {
     kind: "flow",
+    ...(args.nativeInput ? { nativeInput: args.nativeInput } : {}),
     flowId: resolved.flowId,
     flowRefId: resolved.flowRefId,
     carrierTaskId: args.carrierTaskId,

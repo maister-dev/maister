@@ -1,10 +1,18 @@
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   fakeEmbeddingClient,
@@ -19,8 +27,10 @@ import {
   resetAmbientCache,
   selectAmbientItems,
 } from "@/lib/brain/ambient";
+import { BRAIN_POLICY } from "@/lib/brain/policy";
 import { retain } from "@/lib/brain/retain";
 import { writeRunContext } from "@/lib/flows/graph/run-context";
+import { buildFlowExportContract } from "@/lib/run-results/contract";
 
 // T4.3 — ambient P7 (flow runs). Real pgvector; the embedding client is injected.
 
@@ -66,16 +76,67 @@ beforeEach(async () => {
     {},
     { db: ctx.db, client },
   );
-  // Ambient injection is floored at BRAIN_POLICY.ambientMinConfidence (0.4) —
-  // an item must have been reinforced at least once. Simulate the recurrence
-  // promotion directly (a near-dup reinforce is not reachable with orthogonal
-  // one-hot test vectors).
-  await ctx.db.execute(
-    sql`UPDATE brain_items SET confidence = 0.5 WHERE project_id = ${projectId}`,
-  );
 });
 
 describe("getAmbientBrainProjection (T4.3)", () => {
+  it("IT-CBE-06 native context advertises structured retrieval without embedding or injecting the unversioned ambient projection", async () => {
+    const contract = buildFlowExportContract({
+      flowRefId: "native-context",
+      resolvedRevision: "a".repeat(40),
+      flowRevisionId: "pinned-context",
+      schemaPath: "./schemas/findings.v1.json",
+      nativeContract: "evidence_findings_v1",
+      schema: { schemaVersion: 1, fields: [] },
+      sha256: "b".repeat(64),
+      required: true,
+      producerNodeIds: ["coordinator"],
+    });
+
+    await ctx.db.execute(
+      sql`UPDATE runs SET result_contract=${JSON.stringify(contract)}::jsonb WHERE id=${runId}`,
+    );
+    const embed = vi.fn(client.embed);
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "resolve the failing gate",
+      runId,
+      client: { ...client, embed },
+    });
+
+    expect(brain).toBeUndefined();
+    expect(embed).not.toHaveBeenCalled();
+    expect(await ambientSnapshotCount()).toBe(0);
+    const worktreePath = await mkdtemp(join(tmpdir(), "native-run-context-"));
+
+    try {
+      await mkdir(join(worktreePath, ".maister"), { recursive: true });
+      await writeRunContext({
+        runId,
+        worktreePath,
+        taskPrompt: "Use evidence-linked findings.",
+        db: ctx.db,
+        resultContract: contract,
+      });
+      const context: unknown = JSON.parse(
+        await readFile(join(worktreePath, ".maister", "run.json"), "utf8"),
+      );
+
+      expect(context).toMatchObject({
+        knowledge: {
+          schemaVersion: 1,
+          resultContract: "evidence_findings_v1",
+          retrieval: "structured_tools",
+        },
+      });
+      expect(context).not.toHaveProperty("brain");
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns top-K and writes an ambient snapshot when brain_context = true", async () => {
     const brain = await getAmbientBrainProjection({
       db: ctx.db,
@@ -169,15 +230,17 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     expect(Number(snaps.rows[0]?.n)).toBe(0);
   });
 
-  it("floors ambient injection at ambientMinConfidence: a fresh (never-reinforced) item is NOT injected", async () => {
-    // A brand-new project with one fresh retain at confidence₀ = 0.3 — below
-    // the 0.4 auto-injection floor ("recurrence promotes").
+  it("injects a freshly retained item: the ambient floor never exceeds the initial confidence", async () => {
+    // Retain no longer reinforces, so nothing can lift an item above confidence₀.
+    expect(BRAIN_POLICY.ambientMinConfidence).toBeLessThanOrEqual(
+      BRAIN_POLICY.initialConfidence,
+    );
     const freshProject = await seedBrainProject(ctx.db);
     const freshRun = await seedRun(freshProject);
 
     await retain(
       freshProject,
-      { kind: "lesson", content: "unvetted fresh lesson" },
+      { kind: "lesson", content: "fresh lesson" },
       {},
       { db: ctx.db, client },
     );
@@ -187,8 +250,35 @@ describe("getAmbientBrainProjection (T4.3)", () => {
       projectId: freshProject,
       brainContext: true,
       taskTitle: "Fix",
-      taskPrompt: "unvetted fresh lesson",
+      taskPrompt: "fresh lesson",
       runId: freshRun,
+      client,
+    });
+
+    expect(brain?.map((entry) => entry.content)).toEqual(["fresh lesson"]);
+  });
+
+  it("floors ambient injection at ambientMinConfidence: an item below the floor is NOT injected", async () => {
+    const lowProject = await seedBrainProject(ctx.db);
+    const lowRun = await seedRun(lowProject);
+
+    await retain(
+      lowProject,
+      { kind: "lesson", content: "low-confidence lesson" },
+      {},
+      { db: ctx.db, client },
+    );
+    await ctx.db.execute(
+      sql`UPDATE brain_items SET confidence = ${BRAIN_POLICY.ambientMinConfidence - 0.1} WHERE project_id = ${lowProject}`,
+    );
+
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId: lowProject,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "low-confidence lesson",
+      runId: lowRun,
       client,
     });
 

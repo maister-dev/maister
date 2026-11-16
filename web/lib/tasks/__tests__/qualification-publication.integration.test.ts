@@ -89,6 +89,9 @@ async function fixture(snapshot?: null) {
   );
   const context = await operationalWorkspace(db, run);
 
+  if (context.ownerKind !== "project")
+    throw new Error("Expected a project fixture");
+
   await addDetachedWorktree({
     projectRepoPath: context.repoPath,
     worktreePath: context.cwd,

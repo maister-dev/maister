@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ProjectAssignmentAdmission } from "@/lib/specialist-assignments/project-admission";
 import type { Db } from "@/lib/execution-host/db";
 import type { LaunchAgentRunInput, LoadedAgentContext } from "./launch";
 import type {
@@ -27,7 +28,12 @@ import {
   flows,
   projects,
 } from "@/lib/db/schema";
+import {
+  resolveDelegatableFlow,
+  flowDelegationSnapshot,
+} from "@/lib/flows/delegatable-flow";
 import { createTaskLaunchServerSource } from "@/lib/tasks/launch-server-source";
+import { projectCommentCarrierMatchesSource } from "@/lib/specialist-assignments/project-source-handoff";
 import { launchRefusal } from "@/lib/tasks/launch-resolution";
 import { agentTargetMetadataToken } from "@/lib/tasks/launch-agent-resolution";
 import { taskExecutionChildAdmissionProof } from "@/lib/tasks/qualification-admission";
@@ -41,6 +47,7 @@ async function assertAgentTaskDomainEventSource(
     taskId: string;
     eventId: number | null;
     parentRunId: string | null;
+    assignment?: ProjectAssignmentAdmission;
   }>,
 ): Promise<void> {
   if (scope.eventId === null) {
@@ -60,10 +67,24 @@ async function assertAgentTaskDomainEventSource(
     .from(domainEvents)
     .where(eq(domainEvents.id, scope.eventId));
 
+  const nativeSource = scope.assignment?.source;
+  const nativeCommentCarrier =
+    event &&
+    nativeSource?.kind === "task_comment" &&
+    nativeSource.eventId === event.id &&
+    event.kind === "task.comment_added" &&
+    event.taskId !== null &&
+    (await projectCommentCarrierMatchesSource(
+      db,
+      scope.taskId,
+      event.taskId,
+      scope.assignment,
+    ));
+
   if (
     !event ||
     event.projectId !== scope.projectId ||
-    (event.taskId && event.taskId !== scope.taskId)
+    (event.taskId && event.taskId !== scope.taskId && !nativeCommentCarrier)
   )
     throw launchRefusal("launch_source_unavailable", "PRECONDITION");
 }
@@ -122,6 +143,7 @@ async function agentTaskSourceSnapshot(
       taskId: input.taskId,
       eventId: input.trigger.eventId ?? null,
       parentRunId: input.parentRunId ?? null,
+      assignment: input.specialistAssignment,
     });
   const instance = context.link
     .executionPolicyOverride as AgentExecutionPolicyRecommendation | null;
@@ -140,7 +162,28 @@ async function agentTaskSourceSnapshot(
     flow && scheduledRequestSnapshot?.requestAtLaunch
       ? await resolveScheduledRequestFlowRevision(db, flow)
       : undefined;
+  const nativeFlow =
+    flow && input.nativeInput
+      ? await resolveDelegatableFlow(
+          { projectId: input.projectId, flowId: flow.id },
+          db,
+        )
+      : null;
   const execution = {
+    ...(input.nativeInput ? { nativeInput: input.nativeInput } : {}),
+    ...(input.specialistAssignment
+      ? { specialistAssignment: input.specialistAssignment }
+      : {}),
+    ...(nativeFlow && input.nativeInput
+      ? {
+          delegationSnapshot: flowDelegationSnapshot(nativeFlow, {
+            carrierTaskId: input.taskId,
+            mode: "task",
+            runnerOverride: input.launchOverrideRunnerId ?? null,
+            nativeInput: input.nativeInput,
+          }),
+        }
+      : {}),
     ...(flow ? { flowId: flow.id } : {}),
     agentId: input.agentId,
     agentActivity: buildAgentActivitySnapshot(input.agentId, context.effective),
@@ -319,6 +362,7 @@ export async function assertStoredAgentTriggerLaunchSource(
       taskId: source.taskId,
       eventId: execution.triggerEventId ?? null,
       parentRunId: execution.parentRunId ?? null,
+      assignment: execution.specialistAssignment,
     });
   const identity = {
     agentId: execution.agentId,

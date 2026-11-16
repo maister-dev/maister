@@ -1,5 +1,30 @@
 # Runs domain ERD
 
+## Native knowledge actor snapshot (Implemented)
+
+Main `0233_native_knowledge_execution` adds nullable immutable
+`node_attempts.knowledge_actor` metadata to the existing ledger. It records the
+server-resolved role/package/digest that actually executed a native Flow node;
+legacy NULL remains unknown. Logical identity pointers and update-only guards
+leave project/attempt cascades intact. The exact shape, binding, recovery and
+source-capture rules are owned by [evidence findings](../system-analytics/evidence-findings.md#flow-role-attestation-and-source-capture).
+
+## Company cancellation intent (Implemented)
+
+Main `0252_company_run_cancellation` adds nullable
+`runs.company_cancellation_intent`: a closed v1 server-recorded stop intent with
+`userId`, `requestedAt`, `assignmentId` and `driverToken`. Existing rows retain
+NULL. The first currently authorized operator claims it under the Run lock
+before any session teardown; it is immutable and remains inspectable after
+Abandoned. Another operator receives an ownership conflict rather than replacing
+attribution. This is Run control metadata, not another attempt or command ledger.
+Current authority is rechecked before physical deletion and terminal application.
+The DB guard rejects new create/prompt/input/steer commands and Done/Failed
+completion while cancellation is pending. Prompt application defers and Flow
+driver claims/commits yield; cancellation settles only with canonical quiescence.
+An unknown teardown response remains retryable under the retained intent.
+No Brain foreign key or repository is introduced.
+
 ## Cut-over runs-domain transition (ADR-131 — Implemented)
 
 The post-0093/0094 runs domain has no STEP_RUNS entity or fallback join.
@@ -150,6 +175,7 @@ erDiagram
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume); Implemented ADR-114 (0082): moved to run_sessions (per session)"
         text current_step_id "runner cursor"
+        jsonb company_cancellation_intent "0252: immutable server stop intent; NULL for legacy/project runs"
         text flow_version "tag snapshot; scratch sentinel"
         text flow_revision "git SHA snapshot; manual sentinel"
         text flow_revision_id FK "nullable for scratch"
@@ -670,11 +696,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   **(Implemented, migration 0060, ADR-099)** one persistent child per
   `addressable_key` within a run-tree; backs star-routed messaging address
   resolution.
-- `runs_agent_trigger_event_unique` partial UNIQUE on
-  `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
+- `runs_agent_trigger_event_uq` partial UNIQUE on
+  `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL AND company_id IS NULL` —
   **(Implemented)** the outbox→spawn no-dup claim: at-least-once event
   redelivery converges to exactly one agent run (ADR-089). See
-  [agents-domain.md](agents-domain.md).
+  [agents-domain.md](agents-domain.md). Company events use
+  `runs_company_trigger_event_uq` on company/professional/subscription/event;
+  [native source guards](specialist-assignments-domain.md#canonical-intake-receipts)
+  bind the exact existing invocation and preserve historical null triggers (`0255_company_event_admission`).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. **(migration 0057)** made **partial**
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant

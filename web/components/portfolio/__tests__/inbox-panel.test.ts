@@ -1,4 +1,4 @@
-import type { InboxItemView } from "@/lib/queries/inbox";
+import type { LegacyInboxItemView } from "@/lib/queries/inbox";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -17,10 +17,12 @@ const labels = {
   readAll: "Mark all read",
   readAllBusy: "Marking…",
   empty: "No unread notifications.",
+  company: "Company",
+  run: "Run",
   eventKind: { comment_added: "comment", task_mentioned: "mention" },
 };
 
-function item(over: Partial<InboxItemView> = {}): InboxItemView {
+function item(over: Partial<LegacyInboxItemView> = {}): LegacyInboxItemView {
   return {
     id: "i1",
     projectSlug: "maister",

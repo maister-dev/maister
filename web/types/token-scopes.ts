@@ -60,6 +60,28 @@ export const TOKEN_SCOPES = [
   // tokens, the can_read_brain / can_write_brain link axes.
   "memory:read",
   "memory:write",
+  // Native structured knowledge has separate current owner/source policies.
+  "knowledge:read",
+  "knowledge:propose",
+  "knowledge:review",
+  "knowledge:confirm",
+  "knowledge:manage",
+  "specialists:read",
+  // Assignment clients use current owner/source authority; context mutation requires read and update.
+  "assignments:read",
+  "assignments:submit",
+  "assignments:update",
+  "assignments:accept",
+  // Human answers are never granted to agent, coordinator or librarian credentials.
+  "assignments:answer",
+  // Human delivery recovery is excluded from every machine grant set.
+  "assignments:recover",
+  // Cancellation stops owned agents; like recovery it is never in a machine grant set.
+  "assignments:cancel",
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
+  "targets:recover",
   // ADR-152 (agent memory): the agent's OWN per-attachment memory.md. A SEPARATE
   // store from Project Brain — reusing `memory:write` would make one grant open
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
@@ -124,6 +146,13 @@ export const AGENT_TOKEN_SCOPES = [
   // still gated by can_read_brain / can_write_brain on the agent-project link.
   "memory:read",
   "memory:write",
+  // Read/propose only. Work acceptance never grants factual confirmation authority.
+  "knowledge:read",
+  "knowledge:propose",
+  // Context reads require an exact native assignment/input appointment and complete source capture.
+  // This scope alone grants no assignment browsing, Brain read or cross-project reach.
+  "assignments:read",
+  "assignments:update",
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
   "agent_memory:write",
@@ -240,6 +269,10 @@ export type LibrarianOnlyTokenScope =
 // same list instead of mirroring it.
 export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
   "hitl:respond:human",
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
+  "targets:recover",
 ]);
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

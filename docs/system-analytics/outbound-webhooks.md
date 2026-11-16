@@ -263,6 +263,17 @@ byte-identically by every retry and replay; only `deliveryId` and `attempt` are
 injected at send. `data` carries ids, statuses, and titles ONLY — NEVER secrets,
 env values, tokens, or raw agent output.
 
+Native knowledge execution events replace per-type `data` with
+`{contentState: "source_restricted"}`: a project subscription has no current
+Company Brain receiving principal. Capture applies the main-run enrollment
+predicate inside the existing outbox INSERT; fanout and send/replay enforce it
+for retained native rows too. Identity/type/time and server-controlled project
+and run status references remain available. Native failure prose and decisions
+remain in current-authorized execution views. This requires no Brain lookup,
+confirmation, scheduler, ledger or deletion guard. Legacy NULL-capture payloads
+and numeric user-scoped attention events keep their existing shapes. The full
+source contract is [evidence-linked findings](evidence-findings.md#project-webhook-delivery).
+
 ```json
 {
   "apiVersion": 1,

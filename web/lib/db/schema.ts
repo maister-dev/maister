@@ -1,4 +1,38 @@
+import type { StandInspectionAppointment } from "@/lib/stand-operations/scheduled-inspection-types";
+import type {
+  AssignmentWorkDefinition,
+  AssignmentWorkBounds,
+  AssignmentWorkWitness,
+  SpecialistWorkDecisionState,
+} from "@/lib/specialist-assignments/work-types";
+import type { ProjectSourceHandoff } from "@/lib/specialist-assignments/project-source-types";
 import type { CoordinatorChildLaunchContext } from "@/lib/orchestrator/child-launch-context";
+import type { AssignmentResultWitness } from "@/lib/specialist-assignments/delivery-types";
+import type { AssignmentContextSnapshot } from "@/lib/specialist-assignments/context-types";
+import type { CompanyRunCancellationIntent } from "@/lib/runs/cancellation-types";
+import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
+import type { CompanyFlowBindingSnapshot } from "@/lib/agents/company-flow-binding-types";
+import type { NativeDelegationInput } from "@/lib/orchestrator/native-input-types";
+import type { AgentSpecialist } from "@/lib/agents/specialist";
+import type {
+  CompanySpecialistBindingSnapshot,
+  CompanyBindingAuthoritySnapshot,
+} from "@/lib/agents/company-binding-types";
+import type {
+  AssignmentOrigin,
+  AssignmentDestination,
+  AssignmentObjectiveInput,
+  AssignmentStandingSnapshot,
+  AssignmentAuthoritySnapshot,
+  SpecialistRunRole,
+} from "@/lib/specialist-assignments/types";
+import type { KnowledgeAttribution } from "@/lib/brain/record-types";
+import type {
+  CompanyGrantWitness,
+  KnowledgeAccessCapture,
+  KnowledgeAccessRestriction,
+  NativeKnowledgeActor,
+} from "@/lib/company/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type {
@@ -42,6 +76,7 @@ import type {
 } from "@/lib/run-results/types";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
+import type { StandTargetReceipt } from "@/lib/stand-operations/operation-types";
 import type {
   AutoPromotionConfig,
   LaneClass,
@@ -90,6 +125,11 @@ import type {
   AgentRetryAllocation,
 } from "@/lib/agents/retry-types";
 import type { JsonValue } from "@/lib/hitl-response-contract";
+import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
+import type {
+  StandComponentConfig,
+  StandTargetConnection,
+} from "@/lib/stand-operations/target-types";
 
 import { sql } from "drizzle-orm";
 import {
@@ -113,8 +153,21 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import {
+  companyAgentSnapshotShape,
+  companyFlowSnapshotShape,
+} from "@/lib/agents/company-agent-scope-schema";
+import { agentRetryRecipeScopeShape } from "@/lib/agents/retry-scope-schema";
+import { triggerBindingScopeShape } from "@/lib/agents/trigger-scope-schema";
+import { projectSourceReviewShape } from "@/lib/agents/project-source-review-schema";
+import { projectSourceHandoffShape } from "@/lib/specialist-assignments/project-source-handoff-schema";
 import { scheduledRequestShape } from "@/lib/agents/scheduled-request-schema";
 import { TASK_LAUNCH_STATES } from "@/lib/tasks/launch-types";
+import {
+  specialistActorShape,
+  specialistInputPlanesShape,
+} from "@/lib/specialist-assignments/schema";
+import { SPECIALIST_ASSIGNMENT_STATUSES } from "@/lib/specialist-assignments/types";
 import {
   CONFIG_PERSIST_STATES,
   CONFIG_PUSH_STATES,
@@ -122,6 +175,18 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { ADDITIONAL_CREATE_OWNER_SHAPES } from "@/lib/execution-host/create-owner-contract";
+import {
+  COMPANY_ACTIONS,
+  type CompanyAction,
+  type ConfirmationClass,
+} from "@/lib/company/types";
+import {
+  STAND_ACTIONS,
+  STAND_PERMIT_PURPOSES,
+  STAND_DISPOSITIONS,
+  STAND_EFFECT_STATES,
+  STAND_VERIFICATION_STATES,
+} from "@/lib/stand-operations/operation-types";
 import { PROMPT_OWNER_SHAPES } from "@/lib/execution-host/prompt-owner-contract";
 import {
   ASSIGNMENT_STATES,
@@ -185,6 +250,105 @@ export const users = pgTable(
   },
   (t) => ({
     idxAccountStatus: index("users_account_status_idx").on(t.accountStatus),
+  }),
+);
+
+export const companies = pgTable(
+  "companies",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    installationSingleton: boolean("installation_singleton")
+      .notNull()
+      .default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    singleton: unique("companies_installation_singleton_unique").on(
+      t.installationSingleton,
+    ),
+    singletonCheck: check(
+      "companies_singleton_check",
+      sql`${t.installationSingleton} = true`,
+    ),
+  }),
+);
+
+export const companyGrants = pgTable(
+  "company_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    principalType: text("principal_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    principalId: text("principal_id").notNull(),
+    action: text("action", { enum: COMPANY_ACTIONS })
+      .$type<CompanyAction>()
+      .notNull(),
+    revision: integer("revision").notNull().default(1),
+    confirmationClasses: jsonb("confirmation_classes")
+      .$type<ConfirmationClass[]>()
+      .notNull()
+      .default([]),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    creationKey: text("creation_key"),
+    creationDigest: text("creation_digest"),
+    revocationKey: text("revocation_key"),
+    revocationDigest: text("revocation_digest"),
+    revokedBy: text("revoked_by").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    revocationReason: text("revocation_reason"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => ({
+    livePrincipalAction: uniqueIndex(
+      "company_grants_live_principal_action_unique",
+    )
+      .on(t.companyId, t.principalType, t.principalId, t.action)
+      .where(sql`${t.revokedAt} IS NULL`),
+    creationRequestAction: uniqueIndex(
+      "company_grants_creation_request_action_unique",
+    )
+      .on(t.companyId, t.createdBy, t.creationKey, t.action)
+      .where(sql`${t.creationKey} IS NOT NULL`),
+    creationReceiptCheck: check(
+      "company_grants_creation_receipt_check",
+      sql`((${t.creationKey} IS NULL AND ${t.creationDigest} IS NULL) OR (length(${t.creationKey}) BETWEEN 8 AND 128 AND ${t.creationDigest} ~ '^[a-f0-9]{64}$')) IS TRUE`,
+    ),
+    revocationReceiptCheck: check(
+      "company_grants_revocation_receipt_check",
+      sql`(((${t.revocationKey} IS NULL AND ${t.revocationDigest} IS NULL AND ${t.revokedBy} IS NULL AND ${t.revocationReason} IS NULL) OR (${t.revokedAt} IS NOT NULL AND ${t.revokedBy} IS NOT NULL AND length(${t.revocationKey}) BETWEEN 8 AND 128 AND ${t.revocationDigest} ~ '^[a-f0-9]{64}$' AND length(${t.revocationReason}) BETWEEN 1 AND 2000 AND ${t.revision}>1)) AND (${t.creationKey} IS NULL OR ${t.revokedAt} IS NULL OR ${t.revocationKey} IS NOT NULL)) IS TRUE`,
+    ),
+    principalCheck: check(
+      "company_grants_principal_check",
+      sql`${t.principalType} IN ('user','agent','system') AND length(${t.principalId}) BETWEEN 1 AND 192`,
+    ),
+    actionCheck: check(
+      "company_grants_action_check",
+      sql`${t.action} IN (${sql.raw(COMPANY_ACTIONS.map((action) => "'" + action + "'").join(", "))})`,
+    ),
+    revisionCheck: check(
+      "company_grants_revision_check",
+      sql`${t.revision} > 0`,
+    ),
+    confirmationCheck: check(
+      "company_grants_confirmation_check",
+      sql`jsonb_typeof(${t.confirmationClasses}) = 'array' AND ${t.confirmationClasses} <@ '["assertion","observation","decision","procedure"]'::jsonb AND (${t.action} = 'knowledge:confirm' OR ${t.confirmationClasses} = '[]'::jsonb)`,
+    ),
   }),
 );
 
@@ -661,9 +825,12 @@ export const actorIdentities = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     kind: text("kind", {
       enum: ["user", "api_token", "internal_agent", "system"],
     }).notNull(),
@@ -683,6 +850,21 @@ export const actorIdentities = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "actor_identities_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyKind: check(
+      "actor_identities_company_kind",
+      sql`${t.companyId} IS NULL OR ${t.kind} IN ('user','system')`,
+    ),
+    companyUser: uniqueIndex("actor_identities_company_user_uq")
+      .on(t.companyId, t.userId)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.kind}='user'`),
+    companySystem: uniqueIndex("actor_identities_company_system_uq")
+      .on(t.companyId, t.systemKey)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.kind}='system'`),
+    companyIndex: index("actor_identities_company_idx").on(t.companyId),
     uniqProjectUserActor: uniqueIndex("actor_identities_project_user_uq")
       .on(t.projectId, t.userId)
       .where(sql`${t.kind} = 'user'`),
@@ -1002,6 +1184,7 @@ export const agents = pgTable(
     ).$type<OperationalCompletion>(),
     taskQualification:
       jsonb("task_qualification").$type<AgentTaskQualification>(),
+    specialist: jsonb("specialist").$type<AgentSpecialist>(),
     workspace: text("workspace", {
       enum: ["none", "repo_read", "worktree"],
     }).notNull(),
@@ -1042,13 +1225,23 @@ export const agents = pgTable(
   },
   (t) => ({
     idxPackageName: index("agents_package_name_idx").on(t.packageName),
+    specialistCheck: check(
+      "agents_specialist_check",
+      sql`${t.specialist} IS NULL OR (CASE WHEN jsonb_typeof(${t.specialist})='object' AND jsonb_typeof(${t.specialist}->'responsibilities')='array' AND jsonb_typeof(${t.specialist}->'targetClasses')='array' THEN
+        ${t.specialist} ?& ARRAY['responsibilities','targetClasses']
+        AND ${t.specialist}-ARRAY['responsibilities','targetClasses']='{}'::jsonb
+        AND jsonb_array_length(${t.specialist}->'responsibilities') BETWEEN 1 AND 32
+        AND jsonb_array_length(${t.specialist}->'targetClasses') BETWEEN 1 AND 32
+        AND NOT jsonb_path_exists(${t.specialist}, '$.*[*] ? (@.type() != "string" || !(@ like_regex "^.{1,255}.?$" flag "s") || !(@ like_regex "[^[:space:]]"))')
+        ELSE false END) IS TRUE`,
+    ),
     taskQualificationCheck: check(
       "agents_task_qualification_check",
       sql`${t.taskQualification} IS NULL OR (jsonb_typeof(${t.taskQualification})='object' AND ${t.taskQualification}->>'contract'='v1' AND ${t.taskQualification}->>'role' IN ('intake','qualifier') AND ${t.taskQualification}-ARRAY['contract','role']='{}'::jsonb AND ${t.kind}='operational' AND ${t.mode}='session' AND (${t.taskQualification}->>'role'<>'qualifier' OR ${t.workspace}='repo_read' AND ${t.workspaceRef}='task_target')) IS TRUE`,
     ),
     kindCompletionCheck: check(
       "agents_kind_completion_check",
-      sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} = '{"contract":"operational_v1"}'::jsonb AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
+      sql`((${t.kind} = 'code_delivery' AND ${t.completionContract} IS NULL) OR (${t.kind} = 'operational' AND ${t.completionContract} IN ('{"contract":"operational_v1"}'::jsonb,'{"contract":"operational_evidence_v2"}'::jsonb) AND ${t.mode} = 'session' AND ${t.flowRef} IS NULL)) IS TRUE`,
     ),
   }),
 );
@@ -1132,18 +1325,31 @@ export const agentSchedules = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    agentId: text("agent_id")
-      .notNull()
-      .references(() => agents.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    projectAgentId: text("project_agent_id").generatedAlwaysAs(
+      sql`CASE WHEN project_id IS NOT NULL THEN agent_id ELSE NULL END`,
+    ),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id"),
+    companySpecialistBindingId: text("company_specialist_binding_id"),
+    companyFlowBindingId: text("company_flow_binding_id"),
+    companyConfigRevision: integer("company_config_revision"),
+    createdBy: text("created_by"),
+    creationKey: text("creation_key"),
+    creationDigest: text("creation_digest"),
+    projectSourceReview: jsonb(
+      "project_source_review",
+    ).$type<ProjectSourceReview>(),
     // ADR-151: `mention` rows carry no cron and no event_match — both shape
     // CHECKs are `<>`-guarded, and the column itself has no value CHECK, so
     // the third value needed no migration.
     triggerType: text("trigger_type", {
       enum: ["cron", "event", "mention"],
     }).notNull(),
+    standInspection:
+      jsonb("stand_inspection").$type<StandInspectionAppointment>(),
     requestAtLaunch: text("request_at_launch"),
     cronExpr: text("cron_expr"),
     timezone: text("timezone"),
@@ -1185,6 +1391,52 @@ export const agentSchedules = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    projectAgent: foreignKey({
+      name: "agent_schedules_project_agent_fk",
+      columns: [t.projectAgentId],
+      foreignColumns: [agents.id],
+    }).onDelete("cascade"),
+    company: foreignKey({
+      name: "agent_schedules_company_fk",
+      columns: [t.companyId],
+      foreignColumns: [companies.id],
+    }).onDelete("restrict"),
+    companySpecialist: foreignKey({
+      name: "agent_schedules_company_specialist_fk",
+      columns: [t.companySpecialistBindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    companyFlow: foreignKey({
+      name: "agent_schedules_company_flow_fk",
+      columns: [t.companyFlowBindingId],
+      foreignColumns: [companyFlowBindings.id],
+    }).onDelete("restrict"),
+    owner: check(
+      "agent_schedules_owner_check",
+      sql`((${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.companySpecialistBindingId} IS NULL AND ${t.companyFlowBindingId} IS NULL AND ${t.companyConfigRevision} IS NULL AND ${t.createdBy} IS NULL AND ${t.creationKey} IS NULL AND ${t.creationDigest} IS NULL) OR (${t.projectId} IS NULL AND ${t.companyId} IS NOT NULL AND ${t.companySpecialistBindingId} IS NOT NULL AND ${t.companyConfigRevision}>0 AND char_length(${t.createdBy}) BETWEEN 1 AND 192 AND ${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$' AND ${t.triggerType} IN ('cron','event'))) IS TRUE`,
+    ),
+    projectSourceReviewShape: check(
+      "agent_schedules_project_review_check",
+      sql`(${t.projectSourceReview} IS NULL OR (${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.triggerType} IN ('cron','event') AND (${t.projectSourceReview}->'schemaVersion'<>'2'::jsonb OR ${t.triggerType}='event') AND ${projectSourceReviewShape(sql`${t.projectSourceReview}`)})) IS TRUE`,
+    ),
+    companyCreation: uniqueIndex("agent_schedules_company_creation_uq")
+      .on(t.companyId, t.createdBy, t.creationKey)
+      .where(sql`${t.companyId} IS NOT NULL`),
+    companyAgent: index("agent_schedules_company_agent_idx").on(
+      t.companyId,
+      t.agentId,
+      t.id,
+    ),
+    projectDue: index("agent_schedules_project_due_idx")
+      .on(t.nextFireAt, t.id)
+      .where(
+        sql`${t.projectId} IS NOT NULL AND ${t.triggerType}='cron' AND ${t.enabled}=true`,
+      ),
+    companyDue: index("agent_schedules_company_due_idx")
+      .on(t.companyId, t.nextFireAt, t.id)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND ${t.triggerType}='cron' AND ${t.enabled}=true`,
+      ),
     requestShape: check(
       "agent_schedules_request_shape",
       sql`${t.requestAtLaunch} IS NULL OR (${t.triggerType} = 'cron' AND char_length(${t.requestAtLaunch}) BETWEEN 1 AND 8000)`,
@@ -1215,17 +1467,23 @@ export const agentTriggerAttempts = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()::text`),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id"),
     sourceAgentId: text("source_agent_id").notNull(),
     scheduleId: text("schedule_id").notNull(),
     bindingSnapshot: jsonb("binding_snapshot")
       .$type<AgentTriggerBindingSnapshot>()
       .notNull(),
+    specialistAssignment: jsonb(
+      "specialist_assignment",
+    ).$type<ProjectSourceHandoff>(),
     scheduledRequestSnapshot: jsonb(
       "scheduled_request_snapshot",
     ).$type<ScheduledAgentRequestSnapshot>(),
+    standInspection:
+      jsonb("stand_inspection").$type<StandInspectionAppointment>(),
     fence: integer("fence").notNull(),
     deliveryKey: text("delivery_key").notNull(),
     triggerSource: text("trigger_source", {
@@ -1251,6 +1509,31 @@ export const agentTriggerAttempts = pgTable(
     scopeKey: text("scope_key").notNull().default("unknown"),
   },
   (t) => ({
+    company: foreignKey({
+      name: "agent_trigger_attempts_company_fk",
+      columns: [t.companyId],
+      foreignColumns: [companies.id],
+    }).onDelete("restrict"),
+    companyHistory: index("agent_trigger_attempt_company_history_idx")
+      .on(t.companyId, t.sourceAgentId, t.claimedAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+    projectDue: index("agent_trigger_attempt_project_due_idx")
+      .on(t.dueAt, t.id)
+      .where(
+        sql`${t.projectId} IS NOT NULL AND (${t.outcome} IS NULL OR ${t.outcome}='unknown')`,
+      ),
+    companyDue: index("agent_trigger_attempt_company_due_idx")
+      .on(t.companyId, t.dueAt, t.id)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND (${t.outcome} IS NULL OR ${t.outcome}='unknown')`,
+      ),
+    specialistAssignmentLookup: index("agent_trigger_attempt_assignment_idx")
+      .on(sql`(${t.specialistAssignment}->'assignment'->>'id')`)
+      .where(sql`${t.specialistAssignment} IS NOT NULL`),
+    specialistAssignment: check(
+      "agent_trigger_attempts_specialist_assignment_shape",
+      projectSourceHandoffShape(t.specialistAssignment),
+    ),
     requestShape: check(
       "agent_trigger_attempts_scheduled_request_shape",
       sql`${scheduledRequestShape(t.scheduledRequestSnapshot)} AND (${t.scheduledRequestSnapshot} IS NULL OR (${t.triggerSource} = 'cron' AND ${t.scheduledRequestSnapshot}->>'scheduleId' = ${t.scheduleId} AND ${t.scheduledRequestSnapshot}->>'triggerAttemptId' = ${t.id})) IS TRUE`,
@@ -1274,7 +1557,7 @@ export const agentTriggerAttempts = pgTable(
       .where(sql`${t.outcome} IS NULL OR ${t.outcome} = 'unknown'`),
     shape: check(
       "agent_trigger_attempt_shape_check",
-      sql`(${t.fence} > 0 AND ${t.triggerSource} IN ('cron','domain_event') AND ${t.provenance} IN ('claim','legacy_latest') AND jsonb_typeof(${t.bindingSnapshot}) = 'object' AND ${t.bindingSnapshot}->'version' = '1'::jsonb AND ${t.bindingSnapshot}->>'scheduleId' = ${t.scheduleId} AND ((${t.settledAt} IS NULL AND ${t.outcome} IS NULL) OR (${t.settledAt} IS NOT NULL AND ${t.outcome} IN ('launched','queued','refused','deduplicated','suppressed','failed','unknown'))) AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})) IS TRUE`,
+      sql`(${t.fence} > 0 AND ${t.triggerSource} IN ('cron','domain_event') AND ${t.provenance} IN ('claim','legacy_latest') AND jsonb_typeof(${t.bindingSnapshot}) = 'object' AND ${triggerBindingScopeShape(t.bindingSnapshot, t.projectId, t.companyId)} AND ${t.bindingSnapshot}->>'scheduleId' = ${t.scheduleId} AND ((${t.settledAt} IS NULL AND ${t.outcome} IS NULL) OR (${t.settledAt} IS NOT NULL AND ${t.outcome} IN ('launched','queued','refused','deduplicated','suppressed','failed','unknown'))) AND (${t.runId} IS NULL OR ${t.originalRunId} = ${t.runId})) IS TRUE`,
     ),
   }),
 );
@@ -1946,6 +2229,7 @@ export type DelegationSnapshot =
       kind?: "agent";
       agentDefinitionId: string;
       revisionId: string;
+      nativeInput?: NativeDelegationInput;
     }
   | {
       kind: "runner";
@@ -1969,6 +2253,7 @@ export type DelegationSnapshot =
   // only.
   | {
       kind: "flow";
+      nativeInput?: NativeDelegationInput;
       flowId: string;
       flowRefId: string;
       flowRevisionId: string;
@@ -1994,6 +2279,7 @@ export type DelegationSnapshot =
 export type TaskDelegationSpec =
   | {
       kind?: "agent";
+      nativeInput?: NativeDelegationInput;
       agentId: string;
       workspace?: "none" | "repo_read" | "worktree";
       runnerOverride?: string;
@@ -2005,6 +2291,7 @@ export type TaskDelegationSpec =
     }
   | {
       kind: "flow";
+      nativeInput?: NativeDelegationInput;
       flowId: string;
       runnerOverride?: string;
     };
@@ -2014,6 +2301,12 @@ export const runs = pgTable(
   {
     id: text("id").primaryKey(),
     runKind: text("run_kind", { enum: RUN_KINDS }).notNull().default("flow"),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    companyExecutionSnapshot: jsonb(
+      "company_execution_snapshot",
+    ).$type<CompanyExecutionSnapshot>(),
     taskQualificationSnapshot: jsonb(
       "task_qualification_snapshot",
     ).$type<TaskQualificationLaunchSnapshot>(),
@@ -2038,6 +2331,7 @@ export const runs = pgTable(
     activityTimestampProvenance: text(
       "activity_timestamp_provenance",
     ).$type<AgentActivityTimestampProvenance>(),
+    knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
     agentActivitySnapshot: jsonb(
       "agent_activity_snapshot",
     ).$type<AgentActivitySnapshot>(),
@@ -2204,6 +2498,9 @@ export const runs = pgTable(
       .default(0),
     // Flow traversal coordination, separate from execution-host assignment and
     // prompt application. Every continuation write checks this renewable token.
+    companyCancellationIntent: jsonb(
+      "company_cancellation_intent",
+    ).$type<CompanyRunCancellationIntent>(),
     flowDriverToken: text("flow_driver_token"),
     flowDriverLeaseExpiresAt: timestamp("flow_driver_lease_expires_at", {
       withTimezone: true,
@@ -2356,6 +2653,17 @@ export const runs = pgTable(
     ),
   },
   (t) => ({
+    companyAgentShape: check(
+      "runs_company_agent_shape_check",
+      sql`((${t.companyId} IS NULL AND ${t.companyExecutionSnapshot} IS NULL) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.flowRevisionId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='agent' AND ${t.agentKind}='operational' AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.resultContract}->'definition'->>'id'=${t.sourceAgentId} AND ${companyAgentSnapshotShape(t.companyExecutionSnapshot, t.companyId)}) OR (${t.companyId} IS NOT NULL AND ${t.companyExecutionSnapshot} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL AND ${t.flowId} IS NULL AND ${t.localPackageId} IS NULL AND ${t.runKind}='flow' AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.persistent}=false AND ${t.sourceAgentId} IS NOT NULL AND (${t.agentId} IS NULL OR ${t.agentId}=${t.sourceAgentId}) AND ${t.flowRevisionId} IS NOT NULL AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb AND ${t.resultContract}->>'flowRevisionId'=${t.flowRevisionId} AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema')='object' AND ${companyFlowSnapshotShape(t.companyExecutionSnapshot, t.companyId)})) IS TRUE`,
+    ),
+    companyPendingPool: index("runs_company_pending_pool_idx")
+      .on(t.runKind)
+      .where(sql`${t.companyId} IS NOT NULL AND ${t.status}='Pending'`),
+    companyHistoryIndex: index("runs_company_agent_history_idx")
+      .on(t.companyId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+
     taskQualificationShape: check(
       "runs_task_qualification_snapshot_check",
       sql`${t.taskQualificationSnapshot} IS NULL OR (${t.runKind} = 'agent' AND ${t.agentKind} = 'operational' AND jsonb_typeof(${t.taskQualificationSnapshot}) = 'object' AND ${t.taskQualificationSnapshot}->'version' = '1'::jsonb AND ${t.taskQualificationSnapshot}->>'role' IN ('intake','qualifier') AND (${t.taskQualificationSnapshot}->>'role' <> 'qualifier' OR ${t.agentWorkspace} = 'repo_read' AND ${t.taskQualificationSnapshot}->>'taskId' = ${t.taskId} AND length(${t.taskQualificationSnapshot}->>'target') BETWEEN 1 AND 255 AND ${t.taskQualificationSnapshot}->>'sha' ~ '^[a-f0-9]{40}([a-f0-9]{24})?$')) IS TRUE`,
@@ -2396,6 +2704,10 @@ export const runs = pgTable(
     agentActivityHistoryIndex: index("runs_agent_activity_history_idx")
       .on(t.projectId, t.sourceAgentId, t.activitySortAt.desc(), t.id.desc())
       .where(sql`${t.sourceAgentId} IS NOT NULL`),
+    knowledgeAccessCheck: check(
+      "runs_knowledge_access_check",
+      sql`${t.knowledgeAccess} IS NULL OR (jsonb_typeof(${t.knowledgeAccess})='object' AND ${t.knowledgeAccess}->'schemaVersion'='1'::jsonb AND ${t.knowledgeAccess}->>'state' IN ('capturing','complete','unknown') AND jsonb_typeof(${t.knowledgeAccess}->'generation')='number' AND ${t.knowledgeAccess}->>'generation' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.knowledgeAccess}->'restrictions')='array') IS TRUE`,
+    ),
     agentActivitySnapshotCheck: check(
       "runs_agent_activity_snapshot_check",
       sql`(${t.sourceAgentId} IS NULL AND ${t.agentActivitySnapshot} IS NULL AND ${t.activitySortAt} IS NULL AND ${t.activityTimestampProvenance} IS NULL) OR (${t.sourceAgentId} IS NOT NULL AND ${t.activitySortAt} IS NOT NULL AND ${t.activityTimestampProvenance} IN ('launch','verified_creation','legacy_estimate','migration_estimate') AND (${t.activityTimestampProvenance} <> 'launch' OR ${t.launchedAt} IS NOT NULL) AND (${t.agentActivitySnapshot} IS NULL OR (jsonb_typeof(${t.agentActivitySnapshot}) = 'object' AND ${t.agentActivitySnapshot}->'version' = '1'::jsonb AND ${t.agentActivitySnapshot}->>'agentId' = ${t.sourceAgentId} AND ${t.agentActivitySnapshot}->>'definitionSha256' ~ '^[a-f0-9]{64}$'))) IS TRUE`,
@@ -2403,11 +2715,16 @@ export const runs = pgTable(
     operationalDueIndex: index("runs_operational_cleanup_due_idx")
       .on(sql`(${t.operationalCleanup}->>'dueAt')`, t.id)
       .where(
-        sql`${t.agentKind} = 'operational' AND ${t.operationalCleanup}->>'state' IN ('armed','retry','removed','preserving')`,
+        sql`(${t.agentKind} = 'operational' OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND ${t.operationalCleanup}->>'state' IN ('armed','retry','removed','preserving')`,
       ),
     operationalContractCheck: check(
       "runs_operational_contract_check",
-      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND NOT (coalesce(${t.workspaceMode}, 'own') = 'shared' AND ${t.agentWorkspace} = 'worktree') AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND ${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
+      sql`((${t.agentKind} IS NULL OR ${t.agentKind} = 'code_delivery') AND coalesce(${t.resultContract}->>'kind', '') <> 'agent_operational' OR ${t.agentKind} = 'operational' AND ${t.runKind} = 'agent' AND ${t.persistent} = false AND NOT (coalesce(${t.workspaceMode}, 'own') = 'shared' AND ${t.agentWorkspace} = 'worktree') AND ${t.agentWorkspace} IN ('none','repo_read','worktree') AND ${t.resultContract}->>'kind' = 'agent_operational' AND
+        ((${t.resultContract}->'schemaVersion' = '1'::jsonb AND ${t.resultContract}->'semanticVersion' = '1'::jsonb)
+        OR (${t.resultContract}->>'contractName'='operational_evidence_v2' AND ${t.resultContract}->'schemaVersion'='2'::jsonb AND ${t.resultContract}->'semanticVersion'='2'::jsonb
+          AND ${t.resultContract}->'definition'->'completion'->>'contract'='operational_evidence_v2'
+          AND ${t.resultContract}->>'schemaRef'='maister:operational_evidence_v2@'||(${t.resultContract}->>'sha256')))
+        AND ${t.resultContract}->'required' = 'true'::jsonb AND ${t.resultContract}->>'sha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.resultContract}->'schema') = 'object' AND jsonb_typeof(${t.resultContract}->'definition') = 'object' AND jsonb_typeof(${t.resultContract}->'provenance') = 'object') IS TRUE`,
     ),
     operationalTerminalCheck: check(
       "runs_operational_terminal_check",
@@ -2415,11 +2732,15 @@ export const runs = pgTable(
     ),
     operationalBaselineCheck: check(
       "runs_operational_baseline_check",
-      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR ${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR (${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+    ),
+    companyCancellationIntentCheck: check(
+      "runs_company_cancellation_intent_check",
+      sql`${t.companyCancellationIntent} IS NULL OR (${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND jsonb_typeof(${t.companyCancellationIntent})='object' AND ${t.companyCancellationIntent}->'version'='1'::jsonb AND ${t.companyCancellationIntent} ?& array['version','userId','requestedAt','assignmentId','driverToken'] AND ${t.companyCancellationIntent} - array['version','userId','requestedAt','assignmentId','driverToken']='{}'::jsonb AND jsonb_typeof(${t.companyCancellationIntent}->'userId')='string' AND char_length(${t.companyCancellationIntent}->>'userId') BETWEEN 1 AND 128 AND ${t.companyCancellationIntent}->>'requestedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$' AND (${t.companyCancellationIntent}->'assignmentId'='null'::jsonb OR jsonb_typeof(${t.companyCancellationIntent}->'assignmentId')='string') AND (${t.companyCancellationIntent}->'driverToken'='null'::jsonb OR jsonb_typeof(${t.companyCancellationIntent}->'driverToken')='string')) IS TRUE`,
     ),
     operationalCleanupCheck: check(
       "runs_operational_cleanup_check",
-      sql`${t.operationalCleanup} IS NULL OR (${t.agentKind} = 'operational' AND jsonb_typeof(${t.operationalCleanup}) = 'object' AND ${t.operationalCleanup}->'version' = '1'::jsonb AND ${t.operationalCleanup}->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND ${t.operationalCleanup}->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND ${t.operationalCleanup}->>'workspace' IN ('none','repo_read','worktree') AND ${t.operationalCleanup}->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(${t.operationalCleanup}->'revision') = 'number' AND ${t.operationalCleanup}->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.operationalCleanup}->'evidenceIds') = 'array' AND (${t.operationalCleanup}->'lease' = 'null'::jsonb OR jsonb_typeof(${t.operationalCleanup}->'lease') = 'object' AND ${t.operationalCleanup}->'lease' ?& array['id','owner','expiresAt']) AND (${t.operationalCleanup}->>'state' <> 'released' OR jsonb_typeof(${t.operationalCleanup}->'releasedAt') = 'string') AND (${t.operationalCleanup}->>'state' NOT IN ('removed','released') OR jsonb_typeof(${t.operationalCleanup}->'removedAt') = 'string')) IS TRUE`,
+      sql`${t.operationalCleanup} IS NULL OR ((${t.agentKind} = 'operational' OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalCleanup}) = 'object' AND ${t.operationalCleanup}->'version' = '1'::jsonb AND ${t.operationalCleanup}->>'state' IN ('retained','armed','preserving','removed','released','retry','exhausted') AND ${t.operationalCleanup}->>'resourceKind' IN ('worktree','ephemeral_checkout','plain_directory','shared_repository') AND ${t.operationalCleanup}->>'workspace' IN ('none','repo_read','worktree') AND ${t.operationalCleanup}->'attempts' IN ('0'::jsonb,'1'::jsonb,'2'::jsonb,'3'::jsonb,'4'::jsonb,'5'::jsonb) AND jsonb_typeof(${t.operationalCleanup}->'revision') = 'number' AND ${t.operationalCleanup}->>'revision' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.operationalCleanup}->'evidenceIds') = 'array' AND (${t.operationalCleanup}->'lease' = 'null'::jsonb OR jsonb_typeof(${t.operationalCleanup}->'lease') = 'object' AND ${t.operationalCleanup}->'lease' ?& array['id','owner','expiresAt']) AND (${t.operationalCleanup}->>'state' <> 'released' OR jsonb_typeof(${t.operationalCleanup}->'releasedAt') = 'string') AND (${t.operationalCleanup}->>'state' NOT IN ('removed','released') OR jsonb_typeof(${t.operationalCleanup}->'removedAt') = 'string')) IS TRUE`,
     ),
     flowDriverClaim: check(
       "runs_flow_driver_claim_check",
@@ -2470,7 +2791,14 @@ export const runs = pgTable(
     // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
-      .where(sql`${t.triggerEventId} IS NOT NULL`),
+      .where(
+        sql`${t.triggerEventId} IS NOT NULL AND ${t.companyId} IS NULL AND ${t.retryOfRunId} IS NULL`,
+      ),
+    uniqCompanyTriggerEvent: uniqueIndex("runs_company_trigger_event_uq")
+      .on(t.companyId, t.sourceAgentId, t.agentScheduleId, t.triggerEventId)
+      .where(
+        sql`${t.companyId} IS NOT NULL AND ${t.triggerEventId} IS NOT NULL AND ${t.retryOfRunId} IS NULL`,
+      ),
     uniqScheduledLaunch: unique("runs_scheduled_launch_id_unique").on(
       t.scheduledLaunchId,
     ),
@@ -6311,6 +6639,10 @@ export const nodeAttempts = pgTable(
     materializationPlan: jsonb(
       "materialization_plan",
     ).$type<MaterializationPlan | null>(),
+    // Native role attribution belongs to this attempt, independently of the Flow's launch source agent.
+    knowledgeActor: jsonb(
+      "knowledge_actor",
+    ).$type<NativeKnowledgeActor | null>(),
     // ADR-162 (migration 0127): which structured-output contract judged this
     // attempt. Written on the SAME ledger UPDATE that closes the attempt, on
     // the success path AND on the seam-failure path; markNodeReworked never
@@ -6338,6 +6670,10 @@ export const nodeAttempts = pgTable(
       t.nodeId,
       t.attempt,
     ),
+    knowledgeActorCheck: check(
+      "node_attempts_knowledge_actor_check",
+      sql`${t.knowledgeActor} IS NULL OR (jsonb_typeof(${t.knowledgeActor})='object' AND ${t.knowledgeActor}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.knowledgeActor}->'agentId')='string' AND length(${t.knowledgeActor}->>'agentId') BETWEEN 1 AND 192 AND jsonb_typeof(${t.knowledgeActor}->'packageInstallId')='string' AND length(${t.knowledgeActor}->>'packageInstallId') BETWEEN 1 AND 128 AND jsonb_typeof(${t.knowledgeActor}->'packageName')='string' AND length(${t.knowledgeActor}->>'packageName') BETWEEN 1 AND 128 AND jsonb_typeof(${t.knowledgeActor}->'definitionSha256')='string' AND ${t.knowledgeActor}->>'definitionSha256' ~ '^[a-f0-9]{64}$' AND ${t.knowledgeActor} - ARRAY['schemaVersion','agentId','packageInstallId','packageName','definitionSha256']='{}'::jsonb AND pg_column_size(${t.knowledgeActor})<=8192) IS TRUE`,
+    ),
     actionPromptOrdinalCheck: check(
       "node_attempts_action_prompt_ordinal_check",
       sql`${t.actionPromptOrdinal} >= 0`,
@@ -6352,7 +6688,7 @@ export const nodeAttempts = pgTable(
     ),
     actionResumeCheck: check(
       "node_attempts_action_resume_check",
-      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
+      sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'clarification' AND jsonb_typeof(${t.actionResume}->'questionId')='string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId')='string' AND (${t.actionResume}->'answer'='null'::jsonb OR (jsonb_typeof(${t.actionResume}->'answer')='object' AND jsonb_typeof(${t.actionResume}->'answer'->'inputRevision')='number' AND ${t.actionResume}->'answer'->>'inputSha256' ~ '^[a-f0-9]{64}$' AND ${t.actionResume}->'answer'->>'receiptSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.actionResume}->'answer'->'checkpointCommandId')='string'))) OR (${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(
@@ -6792,9 +7128,12 @@ export const assignments = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     runId: text("run_id")
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
@@ -6869,6 +7208,17 @@ export const assignments = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "assignments_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyShape: check(
+      "assignments_company_shape",
+      sql`${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ${t.branch} IS NULL AND ${t.ref} IS NULL)`,
+    ),
+    companyStatus: index("assignments_company_status_idx")
+      .on(t.companyId, t.status, t.createdAt.desc(), t.id.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
     uniqHitlRequest: unique("assignments_hitl_request_uq").on(t.hitlRequestId),
     idxProjectStatus: index("assignments_project_status_idx").on(
       t.projectId,
@@ -6891,9 +7241,12 @@ export const assignmentEvents = pgTable(
     assignmentId: text("assignment_id")
       .notNull()
       .references(() => assignments.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     runId: text("run_id")
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
@@ -6925,6 +7278,13 @@ export const assignmentEvents = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    ownerShape: check(
+      "assignment_events_owner_shape",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.companyId} IS NOT NULL)`,
+    ),
+    companyCreated: index("assignment_events_company_created_idx")
+      .on(t.companyId, t.createdAt, t.id)
+      .where(sql`${t.companyId} IS NOT NULL`),
     idxAssignment: index("assignment_events_assignment_idx").on(t.assignmentId),
     idxProjectCreated: index("assignment_events_project_created_idx").on(
       t.projectId,
@@ -6962,6 +7322,13 @@ export const hitlRequests = pgTable(
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
+    specialistAssignmentId: text("specialist_assignment_id").references(
+      () => specialistAssignments.id,
+      { onDelete: "restrict" },
+    ),
+    specialistInputRevision: integer("specialist_input_revision"),
+    specialistAnswerInputRevision: integer("specialist_answer_input_revision"),
+    specialistAnswer: jsonb("specialist_answer"),
     activationState: text("activation_state", {
       enum: ["pending_termination", "active", "failed"],
     }),
@@ -7015,6 +7382,36 @@ export const hitlRequests = pgTable(
   },
   (t) => ({
     idxRun: index("hitl_requests_run_idx").on(t.runId),
+    specialistInput: foreignKey({
+      name: "hitl_specialist_input_fk",
+      columns: [t.specialistAssignmentId, t.specialistInputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    specialistAnswerInput: foreignKey({
+      name: "hitl_specialist_answer_input_fk",
+      columns: [t.specialistAssignmentId, t.specialistAnswerInputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    specialistSubject: check(
+      "hitl_specialist_subject_check",
+      sql`((${t.specialistAssignmentId} IS NULL AND ${t.specialistInputRevision} IS NULL AND ${t.specialistAnswerInputRevision} IS NULL) OR (${t.specialistAssignmentId} IS NOT NULL AND ${t.specialistInputRevision}>0 AND ${t.kind}='agent_question' AND ${t.taskId} IS NULL AND (${t.specialistAnswerInputRevision} IS NULL OR (${t.specialistAnswerInputRevision}>${t.specialistInputRevision} AND ${t.respondedAt} IS NOT NULL)))) IS TRUE`,
+    ),
+    specialistRequest: uniqueIndex("hitl_specialist_question_request_uq")
+      .on(
+        t.specialistAssignmentId,
+        sql`(${t.schema}->'assignmentQuestion'->>'principalKey')`,
+        sql`(${t.schema}->'assignmentQuestion'->>'requestKey')`,
+      )
+      .where(sql`${t.specialistAssignmentId} IS NOT NULL`),
+    specialistHistory: index("hitl_specialist_question_history_idx")
+      .on(t.specialistAssignmentId, t.createdAt, t.id)
+      .where(sql`${t.specialistAssignmentId} IS NOT NULL`),
     uniqDecisionRequest: uniqueIndex("hitl_requests_decision_request_uq")
       .on(t.runId, t.sourceArtifactId, t.decisionId)
       .where(sql`${t.kind} = 'decision_request'`),
@@ -7045,7 +7442,7 @@ export const hitlRequests = pgTable(
       "hitl_requests_agent_question_shape_check",
       sql`(
         ${t.kind} = 'agent_question'
-        AND ${t.taskId} IS NOT NULL
+        AND ((${t.taskId} IS NOT NULL AND ${t.specialistAssignmentId} IS NULL) OR (${t.taskId} IS NULL AND ${t.specialistAssignmentId} IS NOT NULL))
         AND ${t.activationState} IS NOT NULL
         AND ${t.reTriggerMode} IS NOT NULL
         AND ${t.schema} IS NOT NULL
@@ -7908,6 +8305,12 @@ export const projectTokens = pgTable(
     project_id: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
+    company_id: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    company_run_id: text("company_run_id").references(() => runs.id, {
+      onDelete: "cascade",
+    }),
     name: text("name").notNull(),
     token_kind: text("token_kind", {
       enum: ["project", "user", "agent", "librarian"],
@@ -7925,6 +8328,11 @@ export const projectTokens = pgTable(
     // ADR-186: a librarian token is minted for exactly one librarian turn and
     // revoked when that turn ends.
     librarian_turn_id: text("librarian_turn_id"),
+    // Native coordinator authority is bound to the exact attempt that received this token.
+    knowledge_node_attempt_id: text("knowledge_node_attempt_id").references(
+      () => nodeAttempts.id,
+      { onDelete: "cascade" },
+    ),
     prefix: text("prefix").notNull(),
     token_hash: text("token_hash").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull().default(["*"]),
@@ -7950,6 +8358,13 @@ export const projectTokens = pgTable(
     }),
   },
   (t) => ({
+    companyScopeCheck: check(
+      "project_tokens_company_scope_check",
+      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read","assignments:update","assignments:accept","targets:read","targets:logs","targets:restart"]'::jsonb)) IS TRUE`,
+    ),
+    companyLiveRunIndex: uniqueIndex("project_tokens_company_live_run_uq")
+      .on(t.company_run_id)
+      .where(sql`${t.company_id} IS NOT NULL AND ${t.revoked_at} IS NULL`),
     idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
     idxProject: index("project_tokens_project_idx").on(t.project_id),
     idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
@@ -7957,6 +8372,13 @@ export const projectTokens = pgTable(
     idxRunOrigin: index("project_tokens_run_origin_idx")
       .on(t.project_id, t.origin_kind, t.bound_run_id)
       .where(sql`${t.bound_run_id} IS NOT NULL`),
+    idxKnowledgeNodeAttempt: index(
+      "project_tokens_knowledge_node_attempt_idx",
+    ).on(t.knowledge_node_attempt_id),
+    knowledgeNodeAttemptCheck: check(
+      "project_tokens_knowledge_node_attempt_check",
+      sql`${t.knowledge_node_attempt_id} IS NULL OR (${t.token_kind}='project' AND ${t.name} ~ '^orchestrator-run:.+$') OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.name}='agent-run:'||${t.company_run_id})`,
+    ),
     idxOwnerCreated: index("project_tokens_owner_created_idx").on(
       t.owner_user_id,
       t.created_at,
@@ -7967,7 +8389,7 @@ export const projectTokens = pgTable(
     ),
     agentProjectCheck: check(
       "project_tokens_agent_project_check",
-      sql`${t.token_kind} != 'agent' OR (${t.project_id} IS NOT NULL AND ${t.agent_id} IS NOT NULL)`,
+      sql`${t.token_kind} != 'agent' OR (${t.agent_id} IS NOT NULL AND ((${t.project_id} IS NOT NULL AND ${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.project_id} IS NULL AND ${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL)))`,
     ),
     userOwnerCheck: check(
       "project_tokens_user_owner_check",
@@ -8240,6 +8662,10 @@ export const webhookDeliveries = pgTable(
       () => pushSubscriptions.id,
       { onDelete: "cascade" },
     ),
+    specialistDeliveryId: text("specialist_delivery_id").references(
+      () => specialistDeliveryReceipts.id,
+      { onDelete: "restrict" },
+    ),
     status: text("status", { enum: ["pending", "delivered", "dead"] })
       .notNull()
       .default("pending"),
@@ -8274,7 +8700,10 @@ export const webhookDeliveries = pgTable(
     // neither has nowhere to go and would be claimed forever by the drain pass.
     oneTarget: check(
       "webhook_deliveries_one_target",
-      sql`(${t.subscriptionId} IS NULL) <> (${t.pushSubscriptionId} IS NULL)`,
+      sql`num_nonnulls(${t.subscriptionId},${t.pushSubscriptionId},${t.specialistDeliveryId})=1`,
+    ),
+    uniqSpecialistTarget: unique("webhook_deliveries_specialist_target_uq").on(
+      t.specialistDeliveryId,
     ),
     uniqSubscriptionEvent: uniqueIndex("webhook_deliveries_sub_event_uq").on(
       t.subscriptionId,
@@ -8558,6 +8987,19 @@ export const taskSubscribers = pgTable(
 
 export type InboxSourceRef =
   | {
+      kind: "stand_incident";
+      incidentId: string;
+      operationId: string;
+      assignmentId: string;
+    }
+  | {
+      kind: "assignment_delivery";
+      assignmentId: string;
+      deliveryId: string;
+      runId: string;
+      resultRevision: number;
+    }
+  | {
       kind: "comment" | "mention";
       taskId: string;
       commentId: string;
@@ -8580,14 +9022,28 @@ export const inboxItems = pgTable(
       enum: ["user", "agent"],
     }).notNull(),
     recipientId: text("recipient_id").notNull(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    taskId: text("task_id")
-      .notNull()
-      .references(() => tasks.id, { onDelete: "cascade" }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    assignmentDeliveryId: text("assignment_delivery_id").references(
+      () => specialistDeliveryReceipts.id,
+      { onDelete: "restrict" },
+    ),
+    standIncidentId: text("stand_incident_id").references(
+      () => standIncidentEpisodes.id,
+      { onDelete: "restrict" },
+    ),
     eventKind: text("event_kind", {
-      enum: TASK_ACTIVITY_EVENT_KINDS,
+      enum: [
+        ...TASK_ACTIVITY_EVENT_KINDS,
+        "assignment_result_available",
+        "stand_incident_opened",
+        "stand_incident_resolved",
+      ],
     }).notNull(),
     sourceRef: jsonb("source_ref").$type<InboxSourceRef>().notNull(),
     readAt: timestamp("read_at", { withTimezone: true, mode: "date" }),
@@ -8596,6 +9052,27 @@ export const inboxItems = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    nativeIdentity: unique("inbox_items_assignment_delivery_uq").on(
+      t.assignmentDeliveryId,
+    ),
+    incidentIdentity: unique("inbox_items_stand_incident_transition_uq").on(
+      t.standIncidentId,
+      t.recipientId,
+      t.eventKind,
+    ),
+    owner: check(
+      "inbox_items_owner_check",
+      sql`(CASE WHEN ${t.standIncidentId} IS NOT NULL THEN
+        ${t.assignmentDeliveryId} IS NULL AND ${t.recipientType}='user' AND ${t.taskId} IS NULL
+        AND (${t.companyId} IS NULL)<>(${t.projectId} IS NULL)
+        AND ${t.eventKind} IN ('stand_incident_opened','stand_incident_resolved')
+      ELSE ((${t.assignmentDeliveryId} IS NULL AND ${t.companyId} IS NULL
+        AND ${t.projectId} IS NOT NULL AND ${t.taskId} IS NOT NULL
+        AND ${t.eventKind} NOT IN ('assignment_result_available','stand_incident_opened','stand_incident_resolved'))
+        OR (${t.assignmentDeliveryId} IS NOT NULL AND ${t.eventKind}='assignment_result_available'
+        AND ${t.recipientType}='user' AND ((${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.taskId} IS NULL)
+        OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)))) END) IS TRUE`,
+    ),
     idxRecipient: index("inbox_items_recipient_idx").on(
       t.recipientType,
       t.recipientId,
@@ -8608,7 +9085,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available', 'stand_incident_opened', 'stand_incident_resolved')`,
     ),
   }),
 );
@@ -8645,15 +9122,20 @@ export const domainEvents = pgTable(
       .primaryKey()
       .generatedAlwaysAsIdentity(),
     kind: text("kind", { enum: DOMAIN_EVENT_KINDS }).notNull(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
     runId: text("run_id").references(() => runs.id, { onDelete: "cascade" }),
     actorType: text("actor_type", { enum: ["user", "system", "agent"] }),
     actorId: text("actor_id"),
+    assignmentResult:
+      jsonb("assignment_result").$type<AssignmentResultWitness>(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     occurredAt: timestamp("occurred_at", {
       withTimezone: true,
@@ -8669,8 +9151,25 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
     ),
+    ownerCheck: check(
+      "domain_events_owner_check",
+      sql`(${t.projectId} IS NULL) <> (${t.companyId} IS NULL)`,
+    ),
+    companyKindCheck: check(
+      "domain_events_company_kind_check",
+      sql`(${t.companyId} IS NULL OR (${t.taskId} IS NULL AND ((${t.kind} IN ('knowledge.record_changed','specialist.assignment_changed') AND ${t.runId} IS NULL) OR (${t.kind} IN ('run.done','run.failed','run.crashed','run.abandoned','run.needs_input','run.escalated','run.operational_attention_acknowledged','run.operational_cleanup_changed') AND ${t.runId} IS NOT NULL)))) IS TRUE`,
+    ),
+    specialistAssignmentIdx: index("domain_events_specialist_assignment_idx")
+      .on(sql`(${t.payload}->>'assignmentId')`, t.id)
+      .where(sql`${t.kind}='specialist.assignment_changed'`),
+    companyKindIdIdx: index("domain_events_company_kind_id_idx")
+      .on(t.companyId, t.kind, t.id)
+      .where(sql`${t.companyId} IS NOT NULL`),
+    projectSequenceIdx: index("domain_events_project_sequence_idx")
+      .on(t.projectId, t.id)
+      .where(sql`${t.projectId} IS NOT NULL`),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
       sql`${t.actorType} in ('user', 'system', 'agent')`,
@@ -8703,7 +9202,17 @@ export const domainEvents = pgTable(
       ),
   }),
 );
-export type DomainEventRow = typeof domainEvents.$inferSelect;
+export type DomainEventRow = Omit<
+  typeof domainEvents.$inferSelect,
+  "companyId" | "assignmentResult"
+> & {
+  companyId?: string | null;
+  assignmentResult?: AssignmentResultWitness | null;
+};
+export type ProjectDomainEventRow = Omit<
+  DomainEventRow,
+  "projectId" | "companyId"
+> & { projectId: string; companyId?: null };
 export type DomainEventInsert = typeof domainEvents.$inferInsert;
 
 export const domainEventConsumers = pgTable("domain_event_consumers", {
@@ -9936,9 +10445,12 @@ export const agentRetryIntents = pgTable(
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()::text`),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     sourceAgentId: text("source_agent_id").notNull(),
     sourceRunId: text("source_run_id").notNull(),
     actorIdentity: text("actor_identity").notNull(),
@@ -9995,9 +10507,23 @@ export const agentRetryIntents = pgTable(
       t.sourceAgentId,
       t.createdAt.desc(),
     ),
+    companyIndex: index("agent_retry_company_idx")
+      .on(t.companyId, t.sourceAgentId, t.createdAt.desc())
+      .where(sql`${t.companyId} IS NOT NULL`),
+    ownerCheck: check(
+      "agent_retry_owner_check",
+      sql`((${t.projectId} IS NOT NULL AND ${t.companyId} IS NULL) OR (${t.projectId} IS NULL AND ${t.companyId} IS NOT NULL))`,
+    ),
     recipeCheck: check(
       "agent_retry_recipe_check",
-      sql`(jsonb_typeof(${t.recipe}) = 'object' AND ${t.recipe}->'version' IN ('1'::jsonb,'2'::jsonb) AND (${t.recipe}->'version' = '1'::jsonb OR ${t.recipe}->>'strategy' IN ('pre_work_retry','fresh_qualification')) AND ${t.recipe}->>'agentId' = ${t.sourceAgentId} AND ${t.recipe}->>'projectId' = ${t.projectId} AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.previewFingerprint} ~ '^[a-f0-9]{64}$' AND pg_column_size(${t.recipe}) <= 1048576) IS TRUE`,
+      agentRetryRecipeScopeShape(
+        t.recipe,
+        t.projectId,
+        t.companyId,
+        t.sourceAgentId,
+        t.requestDigest,
+        t.previewFingerprint,
+      ),
     ),
     stateCheck: check(
       "agent_retry_state_check",
@@ -10081,6 +10607,1546 @@ export const taskQualifications = pgTable(
     shape: check(
       "task_qualification_shape_check",
       sql`(${t.policyVersion} = 1 AND ${t.inputRevision} >= 1 AND ${t.revision} >= 1 AND ${t.inputDigest} ~ '^[a-f0-9]{64}$' AND ${t.payloadDigest} ~ '^[a-f0-9]{64}$' AND ((${t.evidenceSha} IS NULL AND ${t.value}->>'decision' <> 'ready') OR ${t.evidenceSha} ~ '^[a-f0-9]{40}([a-f0-9]{24})?$') AND ${t.authorKind} IN ('user','project_token','agent_run') AND (${t.authorKind} <> 'agent_run' OR ${t.originalRunId} IS NOT NULL AND ${t.authorTokenId} IS NOT NULL) AND (${t.authorRunId} IS NULL OR ${t.authorRunId} = ${t.originalRunId}) AND pg_column_size(${t.value}) <= 131072 AND validate_task_qualification_v1(${t.value}) AND ((${t.publicationState} = 'candidate' AND ${t.publishedAt} IS NULL AND ${t.publicationReason} IS NULL AND ${t.authorKind} = 'agent_run') OR (${t.publicationState} = 'accepted' AND ${t.publishedAt} IS NOT NULL AND ${t.publicationReason} IS NULL) OR (${t.publicationState} = 'rejected' AND ${t.publishedAt} IS NOT NULL AND length(${t.publicationReason}) BETWEEN 1 AND 256))) IS TRUE`,
+    ),
+  }),
+);
+
+// Durable business work links the existing run/result plane; it never owns execution attempts.
+export const specialistAssignments = pgTable(
+  "specialist_assignments",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "restrict",
+    }),
+    specialistBindingId: text("specialist_binding_id").notNull(),
+    projectTaskId: text("project_task_id").references(() => tasks.id, {
+      onDelete: "restrict",
+    }),
+    requester: jsonb("requester").$type<KnowledgeAttribution>().notNull(),
+    responsible: jsonb("responsible").$type<KnowledgeAttribution>().notNull(),
+    status: text("status", { enum: SPECIALIST_ASSIGNMENT_STATUSES })
+      .notNull()
+      .default("queued"),
+    revision: integer("revision").notNull().default(1),
+    inputRevision: integer("input_revision").notNull().default(1),
+    contextRevision: integer("context_revision").notNull().default(0),
+    origin: jsonb("origin").$type<AssignmentOrigin>().notNull(),
+    destination: jsonb("destination").$type<AssignmentDestination>().notNull(),
+    blockers: jsonb("blockers")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
+    acceptanceId: text("acceptance_id"),
+    terminalReason: text("terminal_reason"),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    owner: check(
+      "specialist_assignments_owner_check",
+      sql`(${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL) OR (${t.companyId} IS NULL AND ${t.projectId} IS NOT NULL)`,
+    ),
+    revisions: check(
+      "specialist_assignments_revision_check",
+      sql`${t.revision}>0 AND ${t.inputRevision}>0 AND ${t.contextRevision}>=0`,
+    ),
+    state: check(
+      "specialist_assignments_state_check",
+      sql`${t.status} IN ('queued','active','waiting_input','waiting_children','waiting_resource','reconciling','awaiting_acceptance','completed','failed','cancelled')`,
+    ),
+    requester: check(
+      "specialist_assignments_requester_check",
+      specialistActorShape(t.requester),
+    ),
+    responsible: check(
+      "specialist_assignments_responsible_check",
+      sql`${specialistActorShape(t.responsible)} AND ${t.responsible}->>'kind'='agent' AND ${t.responsible}->'runId'='null'::jsonb AND ${t.responsible}->'attemptId'='null'::jsonb`,
+    ),
+    binding: check(
+      "specialist_assignments_binding_check",
+      sql`char_length(${t.specialistBindingId}) BETWEEN 1 AND 128`,
+    ),
+    projectTaskOwner: check(
+      "specialist_assignments_project_task_owner_check",
+      sql`${t.projectTaskId} IS NULL OR ${t.projectId} IS NOT NULL`,
+    ),
+    projectTask: index("specialist_assignments_project_task_idx")
+      .on(t.projectTaskId)
+      .where(sql`${t.projectTaskId} IS NOT NULL`),
+    metadata: check(
+      "specialist_assignments_metadata_check",
+      sql`(jsonb_typeof(${t.origin})='object' AND jsonb_typeof(${t.destination})='object' AND jsonb_typeof(${t.blockers})='array' AND pg_column_size(${t.origin})<=8192 AND pg_column_size(${t.destination})<=8192 AND pg_column_size(${t.blockers})<=131072) IS TRUE`,
+    ),
+    terminal: check(
+      "specialist_assignments_terminal_check",
+      sql`((${t.status}='completed' AND ${t.acceptanceId} IS NOT NULL AND ${t.completedAt} IS NOT NULL AND ${t.terminalReason} IS NULL) OR (${t.status} IN ('failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} ~ '[^[:space:]]' AND char_length(${t.terminalReason})<=2000) OR (${t.status} NOT IN ('completed','failed','cancelled') AND ${t.acceptanceId} IS NULL AND ${t.completedAt} IS NULL AND ${t.terminalReason} IS NULL)) IS TRUE`,
+    ),
+    companyStatus: index("specialist_assignments_company_status_idx").on(
+      t.companyId,
+      t.status,
+      t.updatedAt,
+      t.id,
+    ),
+    projectQueued: index("specialist_assignments_project_queued_idx")
+      .on(t.updatedAt, t.id)
+      .where(sql`${t.projectId} IS NOT NULL AND ${t.status}='queued'`),
+    projectStatus: index("specialist_assignments_project_status_idx").on(
+      t.projectId,
+      t.status,
+      t.updatedAt,
+      t.id,
+    ),
+    responsibleActivity: index("specialist_assignments_responsible_idx").on(
+      sql`(${t.responsible}->>'id')`,
+      t.updatedAt,
+      t.id,
+    ),
+  }),
+);
+
+/** Exact-replay receipts for operator input, continue and cancel controls on one assignment. */
+export const specialistAssignmentControlReceipts = pgTable(
+  "specialist_assignment_control_receipts",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    action: text("action").$type<"input" | "continue" | "cancel">().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    revision: integer("revision").notNull(),
+    status: text("status").notNull(),
+    reason: text("reason"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({
+      name: "specialist_assignment_control_receipts_pk",
+      columns: [t.assignmentId, t.actorUserId, t.action, t.idempotencyKey],
+    }),
+    pendingCancel: uniqueIndex("specialist_assignment_pending_cancel")
+      .on(t.assignmentId)
+      .where(sql`${t.nextAttemptAt} IS NOT NULL`),
+    dueCancel: index("specialist_assignment_due_cancel")
+      .on(t.nextAttemptAt, t.assignmentId)
+      .where(sql`${t.nextAttemptAt} IS NOT NULL`),
+    pendingShape: check(
+      "specialist_assignment_pending_cancel_shape",
+      sql`${t.nextAttemptAt} IS NULL OR (${t.action}='cancel' AND ${t.status}='active' AND ${t.reason} IS NOT NULL)`,
+    ),
+    shape: check(
+      "specialist_assignment_control_receipts_shape_check",
+      sql`${t.action} IN ('input','continue','cancel') AND ${t.revision} BETWEEN 1 AND 2147483647 AND ${t.requestSha256} ~ '^[0-9a-f]{64}$' AND ${t.idempotencyKey} ~ '^[A-Za-z0-9._:-]{8,128}$'`,
+    ),
+  }),
+);
+
+export const specialistOwnerClaims = pgTable(
+  "specialist_owner_claims",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    placementId: text("placement_id")
+      .notNull()
+      .references(() => executionAssignments.id, { onDelete: "restrict" }),
+    epoch: integer("epoch").notNull(),
+    epochStartedAt: timestamp("epoch_started_at", { withTimezone: true }),
+    renewedAt: timestamp("renewed_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    valid: check(
+      "specialist_owner_claims_valid",
+      sql`${t.epoch}>0 AND ${t.expiresAt}>${t.renewedAt}`,
+    ),
+  }),
+);
+
+export const specialistInputRevisions = pgTable(
+  "specialist_input_revisions",
+  {
+    assignmentId: text("assignment_id").notNull(),
+    revision: integer("revision").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    objectiveInput: jsonb("objective_input")
+      .$type<AssignmentObjectiveInput>()
+      .notNull(),
+    standingDefinition: jsonb("standing_definition")
+      .$type<AssignmentStandingSnapshot>()
+      .notNull(),
+    scheduledRequest:
+      jsonb("scheduled_request").$type<ScheduledAgentRequestSnapshot>(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<KnowledgeAccessCapture["restrictions"]>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    digest: text("digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.revision] }),
+    assignment: foreignKey({
+      name: "specialist_input_revisions_assignment_fk",
+      columns: [t.assignmentId],
+      foreignColumns: [specialistAssignments.id],
+    }).onDelete("restrict"),
+    version: check(
+      "specialist_input_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.schemaVersion}=1`,
+    ),
+    planes: check(
+      "specialist_input_revisions_planes_check",
+      specialistInputPlanesShape(
+        t.objectiveInput,
+        t.standingDefinition,
+        t.authoritySnapshot,
+        t.sourceRestrictions,
+      ),
+    ),
+    actor: check(
+      "specialist_input_revisions_actor_check",
+      specialistActorShape(t.actor),
+    ),
+    digest: check(
+      "specialist_input_revisions_digest_check",
+      sql`${t.digest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    scheduledRequest: check(
+      "specialist_input_revisions_scheduled_check",
+      scheduledRequestShape(t.scheduledRequest),
+    ),
+  }),
+);
+
+export const standTargets = pgTable(
+  "stand_targets",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    incarnationId: text("incarnation_id").notNull(),
+    configRevision: integer("config_revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    incarnation: unique("stand_targets_company_incarnation_unique").on(
+      t.companyId,
+      t.incarnationId,
+    ),
+    listing: index("stand_targets_company_created_idx").on(
+      t.companyId,
+      t.createdAt,
+      t.id,
+    ),
+    revision: check("stand_targets_revision_check", sql`${t.configRevision}>0`),
+    identity: check(
+      "stand_targets_incarnation_check",
+      sql`${t.incarnationId} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`,
+    ),
+  }),
+);
+
+export const standTargetRevisions = pgTable(
+  "stand_target_revisions",
+  {
+    targetId: text("target_id")
+      .notNull()
+      .references(() => standTargets.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    enabled: boolean("enabled").notNull(),
+    connection: jsonb("connection").$type<StandTargetConnection>().notNull(),
+    componentIds: jsonb("component_ids").$type<readonly string[]>().notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.targetId, t.revision] }),
+    delivery: unique("stand_target_revisions_actor_delivery_unique").on(
+      t.actorId,
+      t.deliveryKey,
+    ),
+    shape: check(
+      "stand_target_revisions_shape_check",
+      sql`${t.revision}>0 AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND jsonb_typeof(${t.connection})='object' AND jsonb_typeof(${t.authority})='object' AND jsonb_typeof(${t.componentIds})='array' AND jsonb_array_length(${t.componentIds}) BETWEEN 1 AND 32`,
+    ),
+  }),
+);
+
+export const standComponents = pgTable(
+  "stand_components",
+  {
+    targetId: text("target_id").notNull(),
+    configRevision: integer("config_revision").notNull(),
+    componentId: text("component_id").notNull(),
+    canonicalResourceKey: text("canonical_resource_key").notNull(),
+    config: jsonb("config").$type<StandComponentConfig>().notNull(),
+    runbookSha256: text("runbook_sha256").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.targetId, t.configRevision, t.componentId] }),
+    targetRevision: foreignKey({
+      name: "stand_components_target_revision_fk",
+      columns: [t.targetId, t.configRevision],
+      foreignColumns: [
+        standTargetRevisions.targetId,
+        standTargetRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "stand_components_shape_check",
+      sql`(${t.componentId} ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$' AND ${t.canonicalResourceKey} ~ '^[a-f0-9]{64}$' AND ${t.runbookSha256} ~ '^[a-f0-9]{64}$' AND ${t.config}->>'id'=${t.componentId}) IS TRUE`,
+    ),
+  }),
+);
+
+export const standOperations = pgTable(
+  "stand_operations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    inputSha256: text("input_sha256").notNull(),
+    assignmentRevision: integer("assignment_revision").notNull(),
+    targetId: text("target_id").notNull(),
+    configRevision: integer("config_revision").notNull(),
+    componentId: text("component_id").notNull(),
+    resourceKey: text("resource_key").notNull(),
+    targetIncarnation: text("target_incarnation").notNull(),
+    action: text("action", { enum: STAND_ACTIONS }).notNull(),
+    initiatingUserId: text("initiating_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    initiatingExecution: jsonb("initiating_execution").$type<
+      Readonly<{ agentId: string; runId: string; nodeAttemptId: string | null }>
+    >(),
+    deliveryKey: text("delivery_key").notNull(),
+    deliveryDigest: text("delivery_digest").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    authority: jsonb("authority")
+      .$type<readonly CompanyGrantWitness[]>()
+      .notNull(),
+    effectState: text("effect_state", { enum: STAND_EFFECT_STATES })
+      .notNull()
+      .default("not_dispatched"),
+    verificationState: text("verification_state", {
+      enum: STAND_VERIFICATION_STATES,
+    })
+      .notNull()
+      .default("not_checked"),
+    disposition: text("disposition", { enum: STAND_DISPOSITIONS })
+      .notNull()
+      .default("pending"),
+    revision: integer("revision").notNull().default(1),
+    predecessorId: text("predecessor_id").references(
+      (): AnyPgColumn => standOperations.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("stand_operations_assignment_delivery_unique").on(
+      t.assignmentId,
+      t.initiatingUserId,
+      t.deliveryKey,
+    ),
+    resource: unique("stand_operations_id_resource_unique").on(
+      t.id,
+      t.resourceKey,
+    ),
+    observation: unique("stand_operations_observation_identity_unique").on(
+      t.id,
+      t.targetIncarnation,
+      t.resourceKey,
+      t.requestDigest,
+    ),
+    successor: unique("stand_operations_predecessor_unique").on(
+      t.predecessorId,
+    ),
+    assignmentInput: foreignKey({
+      name: "stand_operations_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    component: foreignKey({
+      name: "stand_operations_component_fk",
+      columns: [t.targetId, t.configRevision, t.componentId],
+      foreignColumns: [
+        standComponents.targetId,
+        standComponents.configRevision,
+        standComponents.componentId,
+      ],
+    }).onDelete("restrict"),
+    revisions: check(
+      "stand_operations_revisions_check",
+      sql`${t.inputRevision}>0 AND ${t.assignmentRevision}>0 AND ${t.revision}>0`,
+    ),
+    digests: check(
+      "stand_operations_digests_check",
+      sql`${t.inputSha256} ~ '^[a-f0-9]{64}$' AND ${t.resourceKey} ~ '^[a-f0-9]{64}$' AND ${t.deliveryDigest} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$'`,
+    ),
+    states: check(
+      "stand_operations_states_check",
+      sql`${t.action} IN ('inspect','logs','restart','verify') AND ${t.effectState} IN ('not_dispatched','dispatching','confirmed_applied','confirmed_not_applied','unknown') AND ${t.verificationState} IN ('not_checked','healthy','unhealthy','inconclusive') AND ${t.disposition} IN ('pending','proved_applied','proved_not_applied','unresolved_hold','authorized_successor') AND jsonb_typeof(${t.authority})='array'`,
+    ),
+  }),
+);
+
+export const standResourceClaims = pgTable(
+  "stand_resource_claims",
+  {
+    resourceKey: text("canonical_resource_key").primaryKey(),
+    operationId: text("operation_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull().default(1),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    unresolved: boolean("unresolved").notNull().default(true),
+  },
+  (t) => ({
+    operation: foreignKey({
+      name: "stand_resource_claims_exact_operation_fk",
+      columns: [t.operationId, t.resourceKey],
+      foreignColumns: [standOperations.id, standOperations.resourceKey],
+    }).onDelete("restrict"),
+    expiry: index("stand_resource_claims_expiry_idx").on(
+      t.unresolved,
+      t.expiresAt,
+    ),
+    epoch: check(
+      "stand_resource_claims_epoch_check",
+      sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991`,
+    ),
+  }),
+);
+
+export const standOperationObservations = pgTable(
+  "stand_operation_observations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id").notNull(),
+    targetIncarnation: text("target_incarnation").notNull(),
+    resourceKey: text("resource_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    invocationId: text("invocation_id"),
+    observedState: text("observed_state", {
+      enum: ["active", "inactive", "failed", "unknown"],
+    }).notNull(),
+    recoveryRevision: integer("recovery_revision"),
+    recoveryReadEpoch: bigint("recovery_read_epoch", { mode: "number" }),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    operation: foreignKey({
+      name: "stand_operation_observations_identity_fk",
+      columns: [
+        t.operationId,
+        t.targetIncarnation,
+        t.resourceKey,
+        t.requestDigest,
+      ],
+      foreignColumns: [
+        standOperations.id,
+        standOperations.targetIncarnation,
+        standOperations.resourceKey,
+        standOperations.requestDigest,
+      ],
+    }).onDelete("restrict"),
+    sequence: unique("stand_operation_observations_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_operation_observations_shape_check",
+      sql`${t.targetSequence} BETWEEN 1 AND 9007199254740991
+        AND (${t.invocationId} IS NULL OR ${t.invocationId} ~ '^[A-Za-z0-9._:-]{1,128}$')
+        AND ${t.observedState} IN ('active','inactive','failed','unknown')`,
+    ),
+    recoveryWitness: check(
+      "stand_operation_observations_recovery_check",
+      sql`((${t.recoveryRevision} IS NULL AND ${t.recoveryReadEpoch} IS NULL)
+        OR (${t.recoveryRevision}>0 AND ${t.recoveryReadEpoch} BETWEEN 1 AND 9007199254740991)) IS TRUE`,
+    ),
+  }),
+);
+
+export const standRecoveryDecisions = pgTable(
+  "stand_recovery_decisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    operationRevision: integer("operation_revision").notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    decision: text("decision", {
+      enum: ["hold", "authorize_successor"],
+    }).notNull(),
+    inspectionIds: jsonb("inspection_ids").$type<readonly string[]>().notNull(),
+    reason: text("reason").notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    decisionDigest: text("decision_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("stand_recovery_decisions_delivery_unique").on(
+      t.operationId,
+      t.actorId,
+      t.deliveryKey,
+    ),
+    revision: unique("stand_recovery_decisions_revision_unique").on(
+      t.operationId,
+      t.operationRevision,
+    ),
+    shape: check(
+      "stand_recovery_decisions_shape_check",
+      sql`${t.operationRevision}>0 AND ${t.decision} IN ('hold','authorize_successor')
+        AND ${t.decisionDigest} ~ '^[a-f0-9]{64}$'
+        AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND char_length(${t.reason})<=2000 AND ${t.reason} ~ '[^[:space:]]'
+        AND jsonb_typeof(${t.authority})='object'
+        AND jsonb_typeof(${t.inspectionIds})='array' AND jsonb_array_length(${t.inspectionIds})<=16`,
+    ),
+  }),
+);
+
+export const standReadClaims = pgTable(
+  "stand_read_claims",
+  {
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    purpose: text("purpose", {
+      enum: ["reconcile", "logs", "verify"],
+    }).notNull(),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    tokenId: text("token_id").references(() => projectTokens.id, {
+      onDelete: "cascade",
+    }),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.operationId, t.purpose] }),
+    shape: check(
+      "stand_read_claims_shape_check",
+      sql`${t.purpose} IN ('reconcile','logs','verify') AND ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND jsonb_typeof(${t.authority})='object'`,
+    ),
+  }),
+);
+
+/** Scheduler-only backoff marker: a refused or unsettled sweep attempt rotates the candidate out of the bounded head. */
+export const standRecoveryAttempts = pgTable(
+  "stand_recovery_attempts",
+  {
+    operationId: text("operation_id")
+      .primaryKey()
+      .references(() => standOperations.id, { onDelete: "cascade" }),
+    attempts: integer("attempts").notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", {
+      withTimezone: true,
+    }).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (t) => ({
+    due: index("stand_recovery_attempts_due_idx").on(t.nextAttemptAt),
+    shape: check(
+      "stand_recovery_attempts_shape_check",
+      sql`${t.attempts} BETWEEN 1 AND 2147483647 AND ${t.nextAttemptAt}>=${t.lastAttemptAt}`,
+    ),
+  }),
+);
+
+export const standAuthorizationPermits = pgTable(
+  "stand_authorization_permits",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    nonce: text("nonce").notNull(),
+    purpose: text("purpose", { enum: STAND_PERMIT_PURPOSES }).notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    nonce: unique("stand_authorization_permits_operation_nonce_unique").on(
+      t.operationId,
+      t.nonce,
+    ),
+    dispatch: uniqueIndex("stand_authorization_permits_dispatch_unique")
+      .on(t.operationId)
+      .where(sql`${t.purpose}='dispatch'`),
+    shape: check(
+      "stand_authorization_permits_shape_check",
+      sql`${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND ${t.purpose} IN ('dispatch','reconcile','logs','verify')
+        AND ${t.nonce} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND ${t.expiresAt} > ${t.issuedAt} AND ${t.expiresAt} <= ${t.issuedAt} + interval '5 seconds'`,
+    ),
+  }),
+);
+
+export const standOperationReceipts = pgTable(
+  "stand_operation_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    targetReceiptRevision: integer("target_receipt_revision").notNull(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    permitId: text("permit_id").references(() => standAuthorizationPermits.id, {
+      onDelete: "restrict",
+    }),
+    receipt: jsonb("receipt").$type<StandTargetReceipt>().notNull(),
+    receiptDigest: text("receipt_digest").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    revision: unique("stand_operation_receipts_revision_unique").on(
+      t.operationId,
+      t.targetReceiptRevision,
+    ),
+    sequence: unique("stand_operation_receipts_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_operation_receipts_shape_check",
+      sql`${t.targetReceiptRevision} BETWEEN 1 AND 3
+      AND ${t.targetSequence} BETWEEN 1 AND 9007199254740991
+      AND ${t.receiptDigest} ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.receipt})='object'`,
+    ),
+  }),
+);
+
+export const standVerifications = pgTable(
+  "stand_verifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    operationId: text("operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    effectReceiptId: text("effect_receipt_id").references(
+      () => standOperationReceipts.id,
+      { onDelete: "restrict" },
+    ),
+    actorId: text("actor_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    nonce: text("nonce").notNull().unique(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }).notNull(),
+    targetProbeId: text("target_probe_id").notNull().unique(),
+    targetSequence: bigint("target_sequence", { mode: "number" }).notNull(),
+    state: text("state", {
+      enum: ["healthy", "unhealthy", "inconclusive"],
+    }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    sequence: unique("stand_verifications_operation_sequence_unique").on(
+      t.operationId,
+      t.targetSequence,
+    ),
+    shape: check(
+      "stand_verifications_shape_check",
+      sql`${t.state} IN ('healthy','unhealthy','inconclusive')
+      AND ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991 AND ${t.targetSequence} BETWEEN 1 AND 9007199254740991`,
+    ),
+  }),
+);
+
+export const standIncidentEpisodes = pgTable(
+  "stand_incident_episodes",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    resourceKey: text("resource_key").notNull(),
+    reason: text("reason", {
+      enum: ["verification_unhealthy", "verification_inconclusive"],
+    }).notNull(),
+    state: text("state", { enum: ["open", "resolved"] })
+      .notNull()
+      .default("open"),
+    firstOperationId: text("first_operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    lastOperationId: text("last_operation_id")
+      .notNull()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    occurrenceCount: integer("occurrence_count").notNull().default(1),
+    firstAt: timestamp("first_at", { withTimezone: true }).notNull(),
+    lastAt: timestamp("last_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    recoveryVerificationId: text("recovery_verification_id").references(
+      () => standVerifications.id,
+      { onDelete: "restrict" },
+    ),
+  },
+  (t) => ({
+    active: uniqueIndex("stand_incident_open_resource_reason_uq")
+      .on(t.resourceKey, t.reason)
+      .where(sql`${t.state}='open'`),
+    timeline: index("stand_incident_resource_timeline_idx").on(
+      t.resourceKey,
+      t.lastAt,
+      t.id,
+    ),
+    shape: check(
+      "stand_incident_episode_shape_check",
+      sql`${t.resourceKey} ~ '^[a-f0-9]{64}$'
+      AND ${t.reason} IN ('verification_unhealthy','verification_inconclusive')
+      AND ${t.occurrenceCount}>0 AND ${t.lastAt}>=${t.firstAt}
+      AND ((${t.state}='open' AND ${t.resolvedAt} IS NULL AND ${t.recoveryVerificationId} IS NULL)
+        OR (${t.state}='resolved' AND ${t.resolvedAt}>=${t.lastAt} AND ${t.recoveryVerificationId} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export const standRestartApprovals = pgTable(
+  "stand_restart_approvals",
+  {
+    operationId: text("operation_id")
+      .primaryKey()
+      .references(() => standOperations.id, { onDelete: "restrict" }),
+    approvedBy: text("approved_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    requestDigest: text("request_digest").notNull(),
+    operationRevision: integer("operation_revision").notNull(),
+    approvalDigest: text("approval_digest").notNull(),
+    deliveryKey: text("delivery_key").notNull(),
+    reason: text("reason").notNull(),
+    authority: jsonb("authority").$type<CompanyGrantWitness>().notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    shape: check(
+      "stand_restart_approvals_shape_check",
+      sql`${t.operationRevision}>0 AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.approvalDigest} ~ '^[a-f0-9]{64}$' AND ${t.deliveryKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND char_length(${t.reason})<=2000 AND ${t.reason} ~ '[^[:space:]]' AND jsonb_typeof(${t.authority})='object'`,
+    ),
+  }),
+);
+
+/** Immutable working context is business evidence, never a parallel execution ledger. */
+export const specialistContextRevisions = pgTable(
+  "specialist_context_revisions",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    baseRevision: integer("base_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    context: jsonb("context").$type<AssignmentContextSnapshot>().notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<readonly KnowledgeAccessRestriction[]>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    ownerEpoch: bigint("owner_epoch", { mode: "number" }),
+    executionEpoch: integer("execution_epoch"),
+    principalKey: text("principal_key").notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    contentDigest: text("content_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.revision] }),
+    request: unique("specialist_context_request_uq").on(
+      t.assignmentId,
+      t.principalKey,
+      t.requestKey,
+    ),
+    input: foreignKey({
+      name: "specialist_context_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    revision: check(
+      "specialist_context_revision_check",
+      sql`(${t.schemaVersion}=1 AND ${t.revision}>0 AND ${t.baseRevision}>=0 AND ${t.revision}=${t.baseRevision}+1 AND ${t.inputRevision}>0 AND (${t.ownerEpoch} IS NULL OR ${t.ownerEpoch} BETWEEN 1 AND 9007199254740991)) IS TRUE`,
+    ),
+    identity: check(
+      "specialist_context_identity_check",
+      sql`(${t.principalKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.contentDigest} ~ '^[a-f0-9]{64}$' AND char_length(${t.requestKey}) BETWEEN 8 AND 128 AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]+$') IS TRUE`,
+    ),
+    actor: check(
+      "specialist_context_actor_check",
+      sql`(${specialistActorShape(t.actor)} AND (${t.actor}->>'kind'<>'user' OR ${t.ownerEpoch} IS NULL)) IS TRUE`,
+    ),
+    executionEpochShape: check(
+      "specialist_context_execution_epoch_check",
+      sql`(${t.executionEpoch} IS NULL OR (${t.actor}->>'kind'='agent' AND ${t.executionEpoch}>0)) IS TRUE`,
+    ),
+    snapshot: check(
+      "specialist_context_snapshot_check",
+      sql`(jsonb_typeof(${t.context})='object'
+    AND ${t.context} ?& ARRAY['schemaVersion','inputRevision','inputSha256','entries']
+    AND ${t.context}-ARRAY['schemaVersion','inputRevision','inputSha256','entries']='{}'::jsonb
+    AND ${t.context}->'schemaVersion'='1'::jsonb AND ${t.context}->'inputRevision'=to_jsonb(${t.inputRevision})
+    AND jsonb_typeof(${t.context}->'inputSha256')='string' AND ${t.context}->>'inputSha256' ~ '^[a-f0-9]{64}$'
+    AND CASE WHEN jsonb_typeof(${t.context}->'entries')='array' THEN jsonb_array_length(${t.context}->'entries')<=256 ELSE false END
+    AND octet_length(${t.context}::text)<=131072 AND jsonb_typeof(${t.sourceRestrictions})='array'
+    AND octet_length(${t.sourceRestrictions}::text)<=131072) IS TRUE`,
+    ),
+  }),
+);
+
+/** Logical request revisions and business decisions; execution attempts remain on Runs. */
+export const specialistWork = pgTable(
+  "specialist_work",
+  {
+    id: text("id")
+      .notNull()
+      .default(sql`gen_random_uuid()::text`),
+    workRevision: integer("work_revision").notNull(),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    inputSha256: text("input_sha256").notNull(),
+    logicalWorkId: text("logical_work_id").notNull(),
+    revision: integer("revision").notNull().default(1),
+    decisionState: text("decision_state")
+      .$type<SpecialistWorkDecisionState>()
+      .notNull()
+      .default("open"),
+    parentRunId: text("parent_run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    definition: jsonb("definition").$type<AssignmentWorkDefinition>().notNull(),
+    definitionSha256: text("definition_sha256").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    bounds: jsonb("bounds").$type<AssignmentWorkBounds>().notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<readonly KnowledgeAccessRestriction[]>()
+      .notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    sourceKey: text("source_key").notNull(),
+    reservedRunId: text("reserved_run_id").notNull(),
+    childRunId: text("child_run_id").references(() => runs.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.id, t.workRevision] }),
+    logicalRevision: unique("specialist_work_logical_revision_uq").on(
+      t.assignmentId,
+      t.logicalWorkId,
+      t.workRevision,
+    ),
+    sourceIdentity: unique("specialist_work_source_uq").on(t.sourceKey),
+    reservation: unique("specialist_work_reserved_run_uq").on(t.reservedRunId),
+    childIdentity: uniqueIndex("specialist_work_child_run_uq")
+      .on(t.childRunId)
+      .where(sql`${t.childRunId} IS NOT NULL`),
+    input: foreignKey({
+      name: "specialist_work_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_work_shape_check",
+      sql`(
+      char_length(${t.id}) BETWEEN 1 AND 128 AND ${t.workRevision}>0 AND ${t.inputRevision}>0 AND ${t.revision}>0
+      AND char_length(${t.logicalWorkId}) BETWEEN 1 AND 128 AND ${t.logicalWorkId} ~ '^[A-Za-z0-9._:-]+$'
+      AND ${t.decisionState} IN ('open','clarification_requested','accepted','rejected','rework_requested','cancelled')
+      AND ${t.inputSha256} ~ '^[a-f0-9]{64}$' AND ${t.definitionSha256} ~ '^[a-f0-9]{64}$'
+      AND ${t.requestSha256} ~ '^[a-f0-9]{64}$' AND ${t.sourceKey} ~ '^[a-f0-9]{64}$'
+      AND char_length(${t.reservedRunId}) BETWEEN 1 AND 128 AND ${t.reservedRunId}<>${t.parentRunId}
+      AND (${t.childRunId} IS NULL OR ${t.childRunId}=${t.reservedRunId})
+    ) IS TRUE`,
+    ),
+    actor: check(
+      "specialist_work_actor_check",
+      sql`(${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='agent' AND ${t.actor}->>'runId'=${t.parentRunId}) IS TRUE`,
+    ),
+    definition: check(
+      "specialist_work_definition_check",
+      sql`(
+      jsonb_typeof(${t.definition})='object' AND ${t.definition}->'schemaVersion'='1'::jsonb
+      AND ${t.definition} ?& ARRAY['schemaVersion','objectiveInput','target','context','parent']
+      AND ${t.definition}-ARRAY['schemaVersion','objectiveInput','target','context','parent']='{}'::jsonb
+      AND jsonb_typeof(${t.definition}->'objectiveInput')='object' AND jsonb_typeof(${t.definition}->'target')='object'
+      AND ${t.definition}->'target'->>'kind' IN ('project_agent','project_flow','company_agent','company_flow')
+      AND jsonb_typeof(${t.definition}->'context')='object' AND jsonb_typeof(${t.definition}->'parent')='object'
+      AND ${t.definition}->'parent'->>'runId'=${t.parentRunId}
+      AND ${t.definition}->'parent'->'nodeAttemptId'=${t.actor}->'attemptId'
+      AND octet_length(${t.definition}::text)<=131072
+    ) IS TRUE`,
+    ),
+    authority: check(
+      "specialist_work_authority_check",
+      sql`(
+      jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
+      AND ${t.authoritySnapshot}->'actor'=${t.actor} AND jsonb_typeof(${t.authoritySnapshot}->'witnesses')='array'
+      AND jsonb_typeof(${t.authoritySnapshot}->'executionPolicy')='object'
+      AND jsonb_typeof(${t.authoritySnapshot}->'capturedAt')='string' AND octet_length(${t.authoritySnapshot}::text)<=32768
+      AND jsonb_typeof(${t.sourceRestrictions})='array' AND octet_length(${t.sourceRestrictions}::text)<=65536
+    ) IS TRUE`,
+    ),
+    bounds: check(
+      "specialist_work_bounds_check",
+      sql`(
+      jsonb_typeof(${t.bounds})='object' AND ${t.bounds}->'schemaVersion'='1'::jsonb
+      AND ${t.bounds} ?& ARRAY['schemaVersion','maxDepth','maxFanout','maxActiveChildren','maxChildRuns','maxTokens','wallClockMinutes','consecutiveFailures']
+      AND ${t.bounds}-ARRAY['schemaVersion','maxDepth','maxFanout','maxActiveChildren','maxChildRuns','maxTokens','wallClockMinutes','consecutiveFailures']='{}'::jsonb
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxDepth')='number' THEN (${t.bounds}->>'maxDepth')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxDepth')::numeric)=(${t.bounds}->>'maxDepth')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxFanout')='number' THEN (${t.bounds}->>'maxFanout')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxFanout')::numeric)=(${t.bounds}->>'maxFanout')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxActiveChildren')='number' THEN (${t.bounds}->>'maxActiveChildren')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxActiveChildren')::numeric)=(${t.bounds}->>'maxActiveChildren')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxChildRuns')='number' THEN (${t.bounds}->>'maxChildRuns')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'maxChildRuns')::numeric)=(${t.bounds}->>'maxChildRuns')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'maxTokens')='number' THEN (${t.bounds}->>'maxTokens')::numeric BETWEEN 1 AND 9007199254740991 AND trunc((${t.bounds}->>'maxTokens')::numeric)=(${t.bounds}->>'maxTokens')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'wallClockMinutes')='number' THEN (${t.bounds}->>'wallClockMinutes')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'wallClockMinutes')::numeric)=(${t.bounds}->>'wallClockMinutes')::numeric ELSE false END
+      AND CASE WHEN jsonb_typeof(${t.bounds}->'consecutiveFailures')='number' THEN (${t.bounds}->>'consecutiveFailures')::numeric BETWEEN 1 AND 2147483647 AND trunc((${t.bounds}->>'consecutiveFailures')::numeric)=(${t.bounds}->>'consecutiveFailures')::numeric ELSE false END
+      AND octet_length(${t.bounds}::text)<=8192
+    ) IS TRUE`,
+    ),
+    assignmentHistory: index("specialist_work_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+      t.workRevision,
+    ),
+    parentWork: index("specialist_work_parent_idx").on(
+      t.parentRunId,
+      t.id,
+      t.workRevision,
+    ),
+  }),
+);
+
+/** Final business acceptance references the exact existing root result and input. */
+export const specialistAcceptances = pgTable(
+  "specialist_acceptances",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull().unique(),
+    expectedRevision: integer("expected_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    contextRevision: integer("context_revision").notNull(),
+    resultId: text("result_id")
+      .notNull()
+      .references(() => runResults.id, { onDelete: "restrict" }),
+    resultRevision: integer("result_revision").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    verificationIds: jsonb("verification_ids")
+      .$type<readonly string[]>()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    input: foreignKey({
+      name: "specialist_acceptances_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_acceptances_shape_check",
+      sql`(
+        ${t.expectedRevision}>0 AND ${t.inputRevision}>0 AND ${t.contextRevision}>=0 AND ${t.resultRevision}>0
+        AND ${specialistActorShape(t.actor)} AND ${t.actor}->>'kind'='user'
+        AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb
+        AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor}
+        AND pg_column_size(${t.authoritySnapshot})<=32768
+        AND (CASE WHEN jsonb_typeof(${t.verificationIds})='array' THEN jsonb_array_length(${t.verificationIds})<=16 ELSE false END)
+        AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
+        AND char_length(${t.reason}) BETWEEN 1 AND 2000
+      ) IS TRUE`,
+    ),
+  }),
+);
+
+/** Immutable decisions about exact collected results from an appointed child. */
+export const specialistWorkDecisions = pgTable(
+  "specialist_work_decisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    workId: text("work_id").notNull(),
+    workRevision: integer("work_revision").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<AssignmentAuthoritySnapshot>()
+      .notNull(),
+    decision: text("decision")
+      .$type<"rework" | "accept" | "reject">()
+      .notNull(),
+    resultId: text("result_id")
+      .notNull()
+      .references(() => runResults.id, { onDelete: "restrict" }),
+    resultRevision: integer("result_revision").notNull(),
+    interruptionCommandId: text("interruption_command_id").references(
+      () => executionCommands.id,
+      { onDelete: "restrict" },
+    ),
+    requestKey: text("request_key").notNull(),
+    requestSha256: text("request_sha256").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    work: foreignKey({
+      name: "specialist_work_decisions_work_fk",
+      columns: [t.workId, t.workRevision],
+      foreignColumns: [specialistWork.id, specialistWork.workRevision],
+    }).onDelete("restrict"),
+    delivery: unique("specialist_work_decisions_delivery_uq").on(
+      t.workId,
+      t.requestKey,
+    ),
+    terminalDecision: unique("specialist_work_decisions_revision_uq").on(
+      t.workId,
+      t.workRevision,
+    ),
+    shape: check(
+      "specialist_work_decisions_shape_check",
+      sql`(
+        ${t.workRevision}>0 AND ${t.expectedRevision}>0 AND ${t.inputRevision}>0
+        AND ${t.resultRevision}>0 AND ${t.decision} IN ('rework','accept','reject')
+        AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$'
+        AND ${t.requestSha256} ~ '^[a-f0-9]{64}$'
+        AND char_length(${t.reason}) BETWEEN 1 AND 8000
+        AND ${specialistActorShape(t.actor)}
+        AND ((${t.decision}='rework' AND ${t.actor}->>'kind'='agent')
+          OR (${t.decision} IN ('accept','reject') AND (
+            (${t.actor}->>'kind'='user' AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb)
+            OR (${t.actor}->>'kind'='agent' AND jsonb_typeof(${t.actor}->'runId')='string')
+          )))
+        AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb
+        AND ${t.authoritySnapshot}->'actor'=${t.actor}
+        AND pg_column_size(${t.authoritySnapshot})<=32768
+      ) IS TRUE`,
+    ),
+  }),
+);
+
+export const specialistRunLinks = pgTable(
+  "specialist_run_links",
+  {
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => specialistAssignments.id, { onDelete: "restrict" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "restrict" }),
+    inputRevision: integer("input_revision").notNull(),
+    role: text("role").$type<SpecialistRunRole>().notNull(),
+    workId: text("work_id"),
+    workRevision: integer("work_revision"),
+    workWitness: jsonb("work_witness").$type<AssignmentWorkWitness>(),
+    rootAppointmentEpoch: integer("root_appointment_epoch"),
+    linkedAt: timestamp("linked_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.assignmentId, t.runId] }),
+    oneAssignment: unique("specialist_run_links_run_uq").on(t.runId),
+    rootAppointment: uniqueIndex("specialist_run_links_root_appointment_uq")
+      .on(t.assignmentId, t.rootAppointmentEpoch)
+      .where(sql`${t.rootAppointmentEpoch} IS NOT NULL`),
+    rootAppointmentShape: check(
+      "specialist_run_links_root_appointment_check",
+      sql`${t.rootAppointmentEpoch} IS NULL OR (${t.rootAppointmentEpoch}>0 AND ${t.workId} IS NULL AND ${t.role} IN ('specialist','coordinator','continuation'))`,
+    ),
+    input: foreignKey({
+      name: "specialist_run_links_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_run_links_shape_check",
+      sql`(${t.inputRevision}>0 AND ${t.role} IN ('coordinator','specialist','child','continuation') AND ((${t.workId} IS NULL AND ${t.workRevision} IS NULL) OR (${t.workId} IS NOT NULL AND ${t.workRevision} IS NOT NULL AND char_length(${t.workId}) BETWEEN 1 AND 128 AND ${t.workRevision}>0))) IS TRUE`,
+    ),
+    nativeWork: check(
+      "specialist_run_links_work_witness_check",
+      sql`(${t.workWitness} IS NULL OR (
+      jsonb_typeof(${t.workWitness})='object' AND ${t.workWitness}->'schemaVersion'='1'::jsonb
+      AND ${t.workWitness}-ARRAY['schemaVersion','id','workRevision','definitionSha256']='{}'::jsonb
+      AND ${t.workWitness}->>'id'=${t.workId} AND ${t.workWitness}->'workRevision'=to_jsonb(${t.workRevision})
+      AND ${t.workWitness}->>'definitionSha256' ~ '^[a-f0-9]{64}$'
+      AND ${t.role} IN ('child','continuation') AND octet_length(${t.workWitness}::text)<=1024
+    )) IS TRUE`,
+    ),
+    assignmentInput: index("specialist_run_links_input_idx").on(
+      t.assignmentId,
+      t.inputRevision,
+      t.linkedAt,
+      t.runId,
+    ),
+  }),
+);
+
+/** Immutable source-delivery receipt; execution remains on the existing Run ledgers. */
+export const specialistIntakeReceipts = pgTable(
+  "specialist_intake_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    sourceKind: text("source_kind").$type<AssignmentOrigin["kind"]>().notNull(),
+    sourceKey: text("source_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    disposition: text("disposition")
+      .$type<"created" | "delegated">()
+      .notNull()
+      .default("created"),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    workId: text("work_id"),
+    workRevision: integer("work_revision"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    delivery: unique("specialist_intake_receipts_delivery_uq").on(
+      t.sourceKind,
+      t.sourceKey,
+    ),
+    input: foreignKey({
+      name: "specialist_intake_receipts_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_intake_receipts_shape_check",
+      sql`(${t.sourceKind} IN ('manual','task_comment','schedule','event','webhook','delegation') AND ${t.sourceKey} ~ '^[a-f0-9]{64}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ((${t.disposition}='created' AND ${t.workId} IS NULL AND ${t.workRevision} IS NULL) OR (${t.disposition}='delegated' AND ${t.sourceKind}='delegation' AND ${t.workId} IS NOT NULL AND ${t.workRevision}>0)) AND ${t.inputRevision}>0 AND char_length(${t.assignmentId}) BETWEEN 1 AND 128) IS TRUE`,
+    ),
+    work: foreignKey({
+      name: "specialist_intake_receipts_work_fk",
+      columns: [t.workId, t.workRevision],
+      foreignColumns: [specialistWork.id, specialistWork.workRevision],
+    }).onDelete("restrict"),
+    attribution: check(
+      "specialist_intake_receipts_actor_check",
+      specialistActorShape(t.actor),
+    ),
+    assignmentHistory: index("specialist_intake_receipts_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+    ),
+  }),
+);
+
+/** Immutable origin-routing receipt; transport attempts stay on webhook_deliveries. */
+export const specialistDeliveryReceipts = pgTable(
+  "specialist_delivery_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    assignmentId: text("assignment_id").notNull(),
+    inputRevision: integer("input_revision").notNull(),
+    runId: text("run_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    signal: text("signal").$type<"result_available">().notNull(),
+    sourceEventId: text("source_event_id").notNull(),
+    outboxEventId: text("outbox_event_id").notNull(),
+    snapshot: jsonb("snapshot").$type<AssignmentResultWitness>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    signalIdentity: unique("specialist_delivery_receipts_signal_uq").on(
+      t.assignmentId,
+      t.runId,
+      t.resultRevision,
+      t.signal,
+    ),
+    outboxIdentity: unique("specialist_delivery_receipts_outbox_uq").on(
+      t.outboxEventId,
+    ),
+    input: foreignKey({
+      name: "specialist_delivery_receipts_input_fk",
+      columns: [t.assignmentId, t.inputRevision],
+      foreignColumns: [
+        specialistInputRevisions.assignmentId,
+        specialistInputRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "specialist_delivery_receipts_shape_check",
+      sql`(${t.signal}='result_available' AND ${t.inputRevision}>0 AND ${t.resultRevision}>0 AND ${t.sourceEventId} ~ '^[1-9][0-9]{0,23}$' AND jsonb_typeof(${t.snapshot})='object' AND pg_column_size(${t.snapshot})<=131072 AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND ${t.snapshot}->>'assignmentId'=${t.assignmentId} AND ${t.snapshot}->>'runId'=${t.runId} AND ${t.snapshot}->'inputRevision'=to_jsonb(${t.inputRevision}) AND ${t.snapshot}->'resultRevision'=to_jsonb(${t.resultRevision})) IS TRUE`,
+    ),
+    assignmentHistory: index("specialist_delivery_receipts_assignment_idx").on(
+      t.assignmentId,
+      t.createdAt,
+      t.id,
+    ),
+    sourceRun: index("specialist_delivery_receipts_run_idx").on(
+      t.runId,
+      t.resultRevision,
+    ),
+  }),
+);
+
+export const companySpecialistBindings = pgTable(
+  "company_specialist_bindings",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    agentId: text("agent_id").notNull(),
+    packageInstallId: text("package_install_id"),
+    revision: integer("revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    detachedAt: timestamp("detached_at", { withTimezone: true, mode: "date" }),
+    createdBy: text("created_by").notNull(),
+    creationKey: text("creation_key").notNull(),
+    creationDigest: text("creation_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identity: check(
+      "company_specialist_bindings_identity_check",
+      sql`char_length(${t.agentId}) BETWEEN 1 AND 192 AND ${t.agentId} ~ '^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$' AND char_length(${t.createdBy}) BETWEEN 1 AND 192`,
+    ),
+    revision: check(
+      "company_specialist_bindings_revision_check",
+      sql`${t.revision}>0`,
+    ),
+    lifecycle: check(
+      "company_specialist_bindings_lifecycle_check",
+      sql`(${t.detachedAt} IS NULL AND ${t.packageInstallId} IS NOT NULL) OR (${t.detachedAt} IS NOT NULL AND ${t.packageInstallId} IS NULL AND ${t.enabled}=false)`,
+    ),
+    creation: check(
+      "company_specialist_bindings_creation_check",
+      sql`${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    liveRole: uniqueIndex("company_specialist_bindings_live_role_uq")
+      .on(t.companyId, t.agentId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    creationReceipt: unique("company_specialist_bindings_creation_uq").on(
+      t.companyId,
+      t.createdBy,
+      t.creationKey,
+    ),
+    package: foreignKey({
+      name: "company_specialist_bindings_package_fk",
+      columns: [t.packageInstallId],
+      foreignColumns: [packageInstalls.id],
+    }).onDelete("restrict"),
+    companyPage: index("company_specialist_bindings_company_idx").on(
+      t.companyId,
+      t.agentId,
+      t.id,
+    ),
+    currentPin: index("company_specialist_bindings_package_idx").on(
+      t.packageInstallId,
+      t.id,
+    ),
+  }),
+);
+
+export const companySpecialistBindingRevisions = pgTable(
+  "company_specialist_binding_revisions",
+  {
+    bindingId: text("binding_id").notNull(),
+    revision: integer("revision").notNull(),
+    snapshot: jsonb("snapshot")
+      .$type<CompanySpecialistBindingSnapshot>()
+      .notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<CompanyBindingAuthoritySnapshot>()
+      .notNull(),
+    actor: jsonb("actor").$type<KnowledgeAttribution>().notNull(),
+    requestActorId: text("request_actor_id").notNull(),
+    operation: text("operation")
+      .$type<"created" | "updated" | "detached">()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.bindingId, t.revision] }),
+    binding: foreignKey({
+      name: "company_specialist_binding_revisions_head_fk",
+      columns: [t.bindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    version: check(
+      "company_specialist_binding_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.operation} IN ('created','updated','detached')`,
+    ),
+    actor: check(
+      "company_specialist_binding_revisions_actor_check",
+      sql`${specialistActorShape(t.actor)} AND (${t.actor}->>'kind'='user' AND ${t.actor}->>'id'=${t.requestActorId} AND ${t.actor}->'runId'='null'::jsonb AND ${t.actor}->'attemptId'='null'::jsonb AND char_length(${t.requestActorId}) BETWEEN 1 AND 192) IS TRUE`,
+    ),
+    receipt: check(
+      "company_specialist_binding_revisions_receipt_check",
+      sql`${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.snapshotDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    snapshot: check(
+      "company_specialist_binding_revisions_snapshot_check",
+      sql`(jsonb_typeof(${t.snapshot})='object' AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.snapshot}->'definition')='object' AND jsonb_typeof(${t.snapshot}->'configuration')='object' AND jsonb_typeof(${t.snapshot}->'effectiveConfiguration')='object' AND jsonb_typeof(${t.snapshot}->'grantActions')='array' AND jsonb_typeof(${t.snapshot}->'executionPolicy')='object' AND pg_column_size(${t.snapshot})<=2097152 AND jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'=${t.actor} AND jsonb_typeof(${t.authoritySnapshot}->'witness')='object' AND pg_column_size(${t.authoritySnapshot})<=32768) IS TRUE`,
+    ),
+    request: unique("company_specialist_binding_revisions_request_uq").on(
+      t.bindingId,
+      t.requestActorId,
+      t.requestKey,
+    ),
+  }),
+);
+
+export const companyFlowBindings = pgTable(
+  "company_flow_bindings",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    companyId: text("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "restrict" }),
+    flowRefId: text("flow_ref_id").notNull(),
+    flowRevisionId: text("flow_revision_id"),
+    packageInstallId: text("package_install_id"),
+    specialistBindingId: text("specialist_binding_id"),
+    revision: integer("revision").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(false),
+    detachedAt: timestamp("detached_at", { withTimezone: true, mode: "date" }),
+    createdBy: text("created_by").notNull(),
+    creationKey: text("creation_key").notNull(),
+    creationDigest: text("creation_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identity: check(
+      "company_flow_bindings_identity_check",
+      sql`char_length(${t.flowRefId}) BETWEEN 1 AND 128 AND char_length(${t.createdBy}) BETWEEN 1 AND 192 AND ${t.revision}>0`,
+    ),
+    lifecycle: check(
+      "company_flow_bindings_lifecycle_check",
+      sql`(${t.detachedAt} IS NULL AND ${t.flowRevisionId} IS NOT NULL AND ${t.packageInstallId} IS NOT NULL AND ${t.specialistBindingId} IS NOT NULL) OR (${t.detachedAt} IS NOT NULL AND ${t.flowRevisionId} IS NULL AND ${t.packageInstallId} IS NULL AND ${t.specialistBindingId} IS NULL AND ${t.enabled}=false)`,
+    ),
+    creation: check(
+      "company_flow_bindings_creation_check",
+      sql`${t.creationKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.creationDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    liveFlow: uniqueIndex("company_flow_bindings_live_flow_uq")
+      .on(t.companyId, t.flowRefId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    creationReceipt: unique("company_flow_bindings_creation_uq").on(
+      t.companyId,
+      t.createdBy,
+      t.creationKey,
+    ),
+    companyPage: index("company_flow_bindings_company_idx").on(
+      t.companyId,
+      t.flowRefId,
+      t.id,
+    ),
+    currentFlow: foreignKey({
+      name: "company_flow_bindings_flow_fk",
+      columns: [t.flowRevisionId],
+      foreignColumns: [flowRevisions.id],
+    }).onDelete("restrict"),
+    currentPackage: foreignKey({
+      name: "company_flow_bindings_package_fk",
+      columns: [t.packageInstallId],
+      foreignColumns: [packageInstalls.id],
+    }).onDelete("restrict"),
+    currentSpecialist: foreignKey({
+      name: "company_flow_bindings_specialist_fk",
+      columns: [t.specialistBindingId],
+      foreignColumns: [companySpecialistBindings.id],
+    }).onDelete("restrict"),
+    flowPin: index("company_flow_bindings_flow_idx").on(t.flowRevisionId),
+    packagePin: index("company_flow_bindings_package_idx").on(
+      t.packageInstallId,
+    ),
+    rolePin: index("company_flow_bindings_specialist_idx").on(
+      t.specialistBindingId,
+    ),
+  }),
+);
+
+export const companyFlowBindingRevisions = pgTable(
+  "company_flow_binding_revisions",
+  {
+    bindingId: text("binding_id").notNull(),
+    revision: integer("revision").notNull(),
+    snapshot: jsonb("snapshot").$type<CompanyFlowBindingSnapshot>().notNull(),
+    authoritySnapshot: jsonb("authority_snapshot")
+      .$type<CompanyBindingAuthoritySnapshot>()
+      .notNull(),
+    requestActorId: text("request_actor_id").notNull(),
+    operation: text("operation")
+      .$type<"created" | "updated" | "detached">()
+      .notNull(),
+    requestKey: text("request_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    snapshotDigest: text("snapshot_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    primary: primaryKey({ columns: [t.bindingId, t.revision] }),
+    binding: foreignKey({
+      name: "company_flow_binding_revisions_head_fk",
+      columns: [t.bindingId],
+      foreignColumns: [companyFlowBindings.id],
+    }).onDelete("restrict"),
+    version: check(
+      "company_flow_binding_revisions_version_check",
+      sql`${t.revision}>0 AND ${t.operation} IN ('created','updated','detached')`,
+    ),
+    receipt: check(
+      "company_flow_binding_revisions_receipt_check",
+      sql`char_length(${t.requestActorId}) BETWEEN 1 AND 192 AND ${t.requestKey} ~ '^[A-Za-z0-9._:-]{8,128}$' AND ${t.requestDigest} ~ '^[a-f0-9]{64}$' AND ${t.snapshotDigest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    snapshot: check(
+      "company_flow_binding_revisions_snapshot_check",
+      sql`(jsonb_typeof(${t.snapshot})='object' AND ${t.snapshot}->'schemaVersion'='1'::jsonb AND jsonb_typeof(${t.snapshot}->'manifest')='object' AND jsonb_typeof(${t.snapshot}->'specialist')='object' AND jsonb_typeof(${t.snapshot}->'roleMappings')='object' AND ${t.snapshot}->'execution'='{"workspace":"none","completion":"result"}'::jsonb AND pg_column_size(${t.snapshot})<=4194304 AND jsonb_typeof(${t.authoritySnapshot})='object' AND ${t.authoritySnapshot}->'schemaVersion'='1'::jsonb AND ${t.authoritySnapshot}->'actor'->>'kind'='user' AND ${t.authoritySnapshot}->'actor'->>'id'=${t.requestActorId} AND ${t.authoritySnapshot}->'actor'->'runId'='null'::jsonb AND ${t.authoritySnapshot}->'actor'->'attemptId'='null'::jsonb AND pg_column_size(${t.authoritySnapshot})<=32768) IS TRUE`,
+    ),
+    request: unique("company_flow_binding_revisions_request_uq").on(
+      t.bindingId,
+      t.requestActorId,
+      t.requestKey,
     ),
   }),
 );

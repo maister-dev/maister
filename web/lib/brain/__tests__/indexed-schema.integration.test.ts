@@ -248,7 +248,7 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
     ).resolves.toBe(true);
   });
 
-  it("deleting a project cascades indexed-tier rows", async () => {
+  it("project deletion cascades indexed evidence and local record history", async () => {
     const projectId = await seedBrainProject(ctx.db);
     const { chunkId, sourceId } = await insertIndexedFixture(projectId);
 
@@ -275,7 +275,7 @@ describe("brain indexed-tier schema (ADR-127, migration 0003)", () => {
       VALUES (${randomUUID()}, ${projectId}, ${sourceId}, 'event', 'queued')
     `);
 
-    await ctx.db.execute(sql`DELETE FROM projects WHERE id = ${projectId}`);
+    await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectId]);
 
     await expect(countRows("brain_sources", projectId)).resolves.toBe(0);
     await expect(countRows("brain_chunks", projectId)).resolves.toBe(0);

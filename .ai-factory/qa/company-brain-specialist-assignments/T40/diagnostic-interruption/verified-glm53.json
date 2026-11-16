@@ -1,0 +1,112 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "5ad8574a8ab023c2b13fe8ca321f74443d2fcb5e94a65d366350c0aac31ce57a",
+  "mcpBundleSha256": "aa4b8b62e0d5949468d33b564b3fff15cb273d9e1b478b90a3bc850509e98eee",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T15:26:00.844626+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T15:31:29.675025+00:00",
+  "status": "verified_interrupted_diagnostic_and_stand_acceptance",
+  "browser": {
+    "startTime": "2026-11-14T15:26:07.789Z",
+    "duration": 321440.926,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "observations": {
+    "stand-diagnostic-interruption": {
+      "assignmentId": "1ac2defc-b25a-45e5-aa2f-29b99aeb3eab",
+      "coordinatorRunId": "1417baae-5a7c-4414-99e5-0e1946ffc1da",
+      "runId": "ee151f04-afe4-4a11-a288-3619a3e8f52d",
+      "sessionId": "4899b951-ad36-4d3d-aa4b-b560d908999e",
+      "commandId": "450a046c-c2f5-4a35-a1a4-74df28d1fe88",
+      "placementId": "ad803998-a45f-4296-8a81-dba3413d5700",
+      "placementEpoch": 1,
+      "adapterPid": 15034
+    },
+    "stand-diagnostic-recovery": {
+      "assignmentId": "1ac2defc-b25a-45e5-aa2f-29b99aeb3eab",
+      "runId": "1417baae-5a7c-4414-99e5-0e1946ffc1da",
+      "operationId": "87fa7e75-bda1-46a1-8806-f6942f10527a",
+      "original_run_id": "ee151f04-afe4-4a11-a288-3619a3e8f52d",
+      "recovered_run_id": "44f21e1e-cd59-41da-a606-c999796bc308",
+      "original_revision": 1,
+      "recovered_revision": 2,
+      "interruption_command_id": "450a046c-c2f5-4a35-a1a4-74df28d1fe88",
+      "result_revision": 1
+    },
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "1ac2defc-b25a-45e5-aa2f-29b99aeb3eab",
+      "runId": "1417baae-5a7c-4414-99e5-0e1946ffc1da",
+      "operationId": "87fa7e75-bda1-46a1-8806-f6942f10527a",
+      "resultRevision": 1,
+      "deliveryId": "895c79eb-bbd4-446f-9365-a2eaf3c0e0a1",
+      "verificationIds": [
+        "694b6e56-f447-4f03-aeaa-5c6710c4d331"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "4b5f953c-cf97-4606-8758-84ec1c59de29",
+      "knowledgeRecordId": "eb9361b3-14ff-41ee-b425-141967053cb0",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    },
+    "stand-inspection-proof": {
+      "scheduleId": "b5bf2363-e63a-4396-b305-b3ab96ab71eb",
+      "attempt_id": "ba62c688-e50e-4aed-977e-c276889689f7",
+      "run_id": "a55a11c3-7ec7-4efd-aabf-273e50bfe12c",
+      "status": "Done",
+      "delivery_id": "da38a734-ceae-4971-8998-97f5afeb0879",
+      "suppressed": true,
+      "operation_id": "6a614d71-ebf0-43b6-a181-dbc59ade28fc",
+      "verification_id": "2a7d00b7-bb0d-4c72-8084-45375af90b33",
+      "commands": 0
+    },
+    "stand-runtime-model-proof": [
+      {
+        "runId": "1417baae-5a7c-4414-99e5-0e1946ffc1da",
+        "sessionId": "bc6104ad-b2b0-411b-a03c-108a9449fca4",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "44f21e1e-cd59-41da-a606-c999796bc308",
+        "sessionId": "2c70937c-b0ea-406c-8188-081609bcbc2f",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      },
+      {
+        "runId": "a55a11c3-7ec7-4efd-aabf-273e50bfe12c",
+        "sessionId": "294d576f-dfaf-42cd-ba67-f26b8c8f27c2",
+        "runnerId": "cb-live-claude",
+        "configuredModel": "glm-5.3",
+        "reportedModels": [],
+        "sdkModels": [
+          "glm-5.3"
+        ]
+      }
+    ]
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  }
+}

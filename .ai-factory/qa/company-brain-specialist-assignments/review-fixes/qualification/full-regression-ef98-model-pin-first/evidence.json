@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_complete_regression",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "c263043f81ed958d6fb6aeab297193d79312baf58e0156a35742a54d60814817",
+  "scope": "Supervisor model pin and live runtime model assertion before the MCP discovery and disk-backed test harness changes.",
+  "tests": {
+    "passed": 6285,
+    "failed": 13,
+    "skipped": 15
+  },
+  "files": {
+    "passed": 685,
+    "failed": 6
+  },
+  "wrapperExitCode": 1,
+  "failureClasses": [
+    "Docker CLI absent from launcher PATH",
+    "real supervisor startup deadline in steering",
+    "LA08 retry deadline assertion",
+    "Flow rework recovery deadline",
+    "wrapper-side loader descendant reaped"
+  ],
+  "focusedRetry": "Steering 13/13 and launch selection plus PostgreSQL discovery 27/27 pass with native launcher and correct PATH. Their teardown succeeds. The complete first receipt remains failed.",
+  "independentCleanup": {
+    "id": "2ece86a0-bebb-439b-986d-014f55c824ee",
+    "errors": [],
+    "containers": []
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 9,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "vitest.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "fee7c89d0c06b28aaa1a18cf1c9ce24d8d2ff563775e9c3dfb03bd8e3491935e",
+      "rawBytes": 2574611,
+      "compressedSha256": "43a8a9c4bdd97201986663c265a481e216fb37940b6d05853b4f0aafd46fc4ba",
+      "parts": [
+        {
+          "path": "vitest.json.gz",
+          "sha256": "43a8a9c4bdd97201986663c265a481e216fb37940b6d05853b4f0aafd46fc4ba"
+        }
+      ]
+    },
+    {
+      "sourceName": "vitest.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "43202ffa52bce90187b867fd0565cf78e44d5ca41475c7d7ec229e285bb4ca87",
+      "rawBytes": 34555820,
+      "compressedSha256": "624b0fcbe10ddd2989114fa8fbb2acd2c1e6a24977a1cb5df0abdbf909e7010e",
+      "parts": [
+        {
+          "path": "vitest.log.gz.01",
+          "sha256": "1e37d4df436ef58456e9a9cf874b35ae59d007aad524b838f5c8e42e79e41761"
+        },
+        {
+          "path": "vitest.log.gz.02",
+          "sha256": "32c93f6e9b9b971d82e4166df801e0607f45b49aa78aff360b18e4fce06ef3ae"
+        },
+        {
+          "path": "vitest.log.gz.03",
+          "sha256": "4e2ff864e67339b664d9f8ad2158a8e5ac3f73b70761a8a30f4332326cbf3468"
+        },
+        {
+          "path": "vitest.log.gz.04",
+          "sha256": "f03f4d79d928d3eca1ddd0be048685a384e4dc25ab3efa990cf365fbddab1c89"
+        },
+        {
+          "path": "vitest.log.gz.05",
+          "sha256": "a81c0530b9b553cf22f9b30101a12d9e44f91db57c78202457123d6dd2328f16"
+        },
+        {
+          "path": "vitest.log.gz.06",
+          "sha256": "44731b660613191d131c96662feccd5085ee88fca65f2264c94155c93ebaf567"
+        },
+        {
+          "path": "vitest.log.gz.07",
+          "sha256": "7e85098abcdeee13a524ddcaf6e3c569496f81ec0c3b89ab9e631627b5d6699a"
+        },
+        {
+          "path": "vitest.log.gz.08",
+          "sha256": "6b5703b04da60747b2a30e63fbd8cf6bf5b3bd2779d1bbda992a5369c1a586e7"
+        }
+      ]
+    },
+    {
+      "sourceName": "launcher.mts",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "35a174643f3f2d78995f483e527f5467aff45a0d666421cbbca856cd959af9d2",
+      "rawBytes": 3069,
+      "compressedSha256": "2f5173d68118b361844f4513cf317c53cb41f17c0fd3c74274d148f221af705b",
+      "parts": [
+        {
+          "path": "launcher.mts.gz",
+          "sha256": "2f5173d68118b361844f4513cf317c53cb41f17c0fd3c74274d148f221af705b"
+        }
+      ]
+    },
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "4e9cc680c58f2aabc5daf85ae7df7b722a98e897616415fc8c74aef2697d5760",
+      "rawBytes": 1224,
+      "compressedSha256": "59a3578a958b6813f6add45e61eded8961622613f00e3f0b6b7262517e460b3b",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "59a3578a958b6813f6add45e61eded8961622613f00e3f0b6b7262517e460b3b"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1e44a1c6b24b42b7026e3e39569549d18ece6444170f593172798e46f338062a",
+      "rawBytes": 42226,
+      "compressedSha256": "5707530dd21dbda53fddc638e716113c57e79856b0aaef934588b11c3d8c179a",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "5707530dd21dbda53fddc638e716113c57e79856b0aaef934588b11c3d8c179a"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-steering-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "d4c4590acdd210b67f6303a246c741ceb79cbebe67dc57b76bc2130fa84ebea7",
+      "rawBytes": 791,
+      "compressedSha256": "c0f92f313d45393c90cb142322b1b00f3196c083d0b7669eaa3f6c78f66ec99c",
+      "parts": [
+        {
+          "path": "isolated-steering-metadata.json.gz",
+          "sha256": "c0f92f313d45393c90cb142322b1b00f3196c083d0b7669eaa3f6c78f66ec99c"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-steering-vitest.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "677cfa53bb5ffc518b1e634c176a6698955a9c3023fff81a1e8ac29d21bb220a",
+      "rawBytes": 6324,
+      "compressedSha256": "4cde758166b9fd221e603fe5d2edbdeb6ec7ae15f550aabbc880b66eb0d04092",
+      "parts": [
+        {
+          "path": "isolated-steering-vitest.json.gz",
+          "sha256": "4cde758166b9fd221e603fe5d2edbdeb6ec7ae15f550aabbc880b66eb0d04092"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-launch-and-pg-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3e2b48478c93cb6d2c361d6cd0658ddbc8bbed77251d6c7ccbb6678c54aa349c",
+      "rawBytes": 791,
+      "compressedSha256": "8d1961fb5c5cd9e4dcb072bd8da291e380c7e957ca81dfa0b6ec1a7546c6f5c9",
+      "parts": [
+        {
+          "path": "isolated-launch-and-pg-metadata.json.gz",
+          "sha256": "8d1961fb5c5cd9e4dcb072bd8da291e380c7e957ca81dfa0b6ec1a7546c6f5c9"
+        }
+      ]
+    },
+    {
+      "sourceName": "isolated-launch-and-pg-vitest.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "e0c4511d885e82afaac6cd6e2b1d9d93ab8dad7f38052b4793429614efb9ad9b",
+      "rawBytes": 10537,
+      "compressedSha256": "f26fd1a32b8fec4c2794e08a1376a4e2c3d107458956334ab95c76b9970760b3",
+      "parts": [
+        {
+          "path": "isolated-launch-and-pg-vitest.json.gz",
+          "sha256": "f26fd1a32b8fec4c2794e08a1376a4e2c3d107458956334ab95c76b9970760b3"
+        }
+      ]
+    }
+  ]
+}

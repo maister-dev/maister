@@ -1,0 +1,78 @@
+{
+  "task": "T20",
+  "slice": "Atomic company Run reservation through native session and host placement",
+  "date": "2026-11-06",
+  "baseCommit": "ca33167eda9188718cfe7555cd42923d02e9c40a",
+  "status": "Internal reservation qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "policy-red.log.gz",
+    "failure": "A queued assignment requesting unattended autonomy was accepted under a supervised reviewed specialist policy."
+  },
+  "intermediateFailures": [
+    "Initial reservation omitted the required nullable work field in the existing link contract; corrected without weakening schema.",
+    "Test fixture queries used incorrect token/command column names; corrected to native company_run_id/run_id.",
+    "Type checking found fixture database generic and owner union mismatches; corrected using the actual database handle and explicit company owner."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 11,
+      "tests": 126,
+      "log": "integration-green.log.gz"
+    },
+    "finalOwningIntegration": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 23,
+      "log": "owning-final.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "typecheck.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Concurrent exact assignment reservations commit one Run/session/placement/link and return a conflict for the competitor.",
+    "No synthetic project, ACP command or Pending credential is created.",
+    "Current source denial rolls back every execution record, assignment transition and transactional event. Source project deletion succeeds.",
+    "Reviewed company binding runner is frozen in run_sessions; a disabled selected runner refuses despite a ready platform default.",
+    "Normalized assignment execution policy must equal the reviewed role policy; equivalent empty overrides remain valid.",
+    "Declared project private memory refuses rather than silently ignoring it.",
+    "Existing project runner selection, diagnostics, qualification, workspace and memory launch suites remain green."
+  ],
+  "notYetQualified": [
+    "Actual company ACP session start, frozen assignment prompt and current-authority dispatch guard",
+    "Company session interruption/resume/recovery and activity/read models",
+    "Company result-only Flow execution and remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-agent-launch.ts": "4fec0a0d6a369fd5a9bec7f07b45578dc001286a7ff7091b428180181df022fe",
+    "web/lib/agents/company-agent-context.ts": "29c6d3659f85887d4dfbe885485b3463b2826823fc8c1716c7f3469048249172",
+    "web/lib/agents/runner-readonly-evidence.ts": "ab560ec90af03f1d57132383681577d626b0cc17a466a72898bc0188ef6a9b52",
+    "web/lib/agents/launch.ts": "a6ffec98b938ce434729f607ff2f1e714d7d576d9862e0ab28f6211c269db8b6",
+    "web/lib/acp-runners/resolve.ts": "463ad62e83a69bb55098019c316e603c0e06eaa79cb3b8a492d269958b614871",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "b1bc442d3230db8cf0e8ed8366922ae6bf41690ef5a8c0b12b19d2d9425e0808"
+  }
+}

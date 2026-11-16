@@ -1,0 +1,116 @@
+{
+  "task": "T24",
+  "date": "2026-11-07",
+  "baseCommit": "be816aa38",
+  "slice": "Native session and bearer question/answer adapters, actual MCP facade, safe forms and bounded same-Run clarification",
+  "status": "T24 native platform complete; installed-package CBA-05 remains T36/T40",
+  "gates": {
+    "owningIntegration": {
+      "tests": 234,
+      "files": 10,
+      "durationSeconds": 291.16,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 28.68,
+      "exitCode": 0
+    },
+    "mcpUnitAndContracts": {
+      "tests": 422,
+      "files": 6,
+      "exitCode": 0
+    },
+    "builtMcpWire": {
+      "tests": 13,
+      "files": 1,
+      "exitCode": 0
+    },
+    "webAndMcpTypes": {
+      "exitCode": 0
+    },
+    "targetedLintAndFormat": {
+      "exitCode": 0,
+      "preexistingMcpWarning": "Unused _assignmentId in an existing context forwarding assertion; no lint errors"
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 173,
+      "exitCode": 0
+    },
+    "publicEnglishRussianBuildAndLinks": {
+      "exitCode": 0
+    }
+  },
+  "redToGreen": [
+    "Missing native session and bearer routes failed at the actual owned runtime entry point",
+    "Built stdio facade did not list native question tools",
+    "Human answer token scope was missing from the current vocabulary",
+    "Reserved or duplicate answer fields and caller server metadata could create unanswerable or misleading questions",
+    "A real Run accepted another question after 32 native answers, beyond its bounded original-input lineage",
+    "Closed-Run state was returned before current human authority; unknown question selectors did not use the documented 404",
+    "The contract test treated JSON Schema const and its equivalent singleton OpenAPI enum differently"
+  ],
+  "qualified": [
+    "Current own-assignment read/update and real Run/node credentials ask through native HTTP and retain actual server authorship",
+    "Human answers use the same exact input/business CAS and immutable receipt as existing Inbox answers",
+    "Current personal answer credentials are revalidated inside the answer transaction; company machine tools and grants cannot answer human work",
+    "Session and bearer malformed/forged/stale/oversized requests use the documented safe statuses and private no-store DTOs",
+    "Concurrent native/Inbox answers retain one input; personal-token replay, current grant revocation and credential revocation are qualified",
+    "Raw unsafe/deep structures, reserved server envelopes, duplicate fields, 65-field forms and exhausted retained input space refuse before checkpointing",
+    "32 actual answers resume one Run through input 33; the next new question refuses before another checkpoint and leaves the appointment active",
+    "Company Flow node grant refusal and approval, exact node authorship, rotated-credential replay and host-pressure deferral use actual controlled ACP and the production C3 dispatcher",
+    "The bundled company facade exposes assignment_question_ask with write effects, forwards exact nested forms and locally refuses closed-schema violations; human answer tooling is outside that toolset",
+    "English/Russian token labels and public operation guidance agree with actual scope vocabulary and API contracts"
+  ],
+  "testHarnessCorrections": [
+    "Use the actual token_audit_log table and retain its required identified-revoked-token refusal receipt",
+    "Size the long history test timeout for its 32 real checkpoint/resume cycles; the initial timeout is retained as harness evidence, not a platform RED",
+    "Keep existing stale reservation qualification before the new Flow scenario and reuse the retained host identity"
+  ],
+  "limitations": [
+    "No actual stand-specialist package or stand-maintenance pilot readiness is claimed; those remain T36/T40",
+    "Business responsibility leases/fencing remain T29; current native questions use unambiguous actual Run appointments and existing execution epochs",
+    "Full Phase 5 global integration and production build are still required at the phase exit",
+    "No migration, scheduler, execution engine or attempt ledger is introduced"
+  ],
+  "sourceSha256": {
+    "docs/api/external/operations.openapi.yaml": "d9dd6aabbbec3d3bf6b27997e27065372e734cec2db7351eea5890cb3cbe50b8",
+    "docs/api/web.openapi.yaml": "67adbccd5fd136f318c1b031766558fd8b890a98b64556d00d8f29766430d684",
+    "docs/db/specialist-assignments-domain.md": "ac7bdfdcf3ecfc20f32361b723a64ba6e651067ad3fdcfd49dc0a6cded4df78d",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "2df4dee19a7dd488e796b7642ae0869fc90d0de83503a95e887e22eaaff879fb",
+    "docs/system-analytics/specialist-assignments.md": "62c45d7e584d13692611e92e9733b757a2b3c95a36cc89c1b6c3bb548d693bdb",
+    "mcp/src/__tests__/stdio.integration.test.ts": "56bbf9d5c783fe8dfe2351cd62fe6bbd9492e5cbbff8dd087c2c062c8db58487",
+    "mcp/src/__tests__/tool-contract.test.ts": "3449e873b997088361e18df50bb176cad0a3f27c0b07c51df57ff7fa499d8f66",
+    "mcp/src/__tests__/tools.test.ts": "2fd5790915ae2210d467c5e23c9f77f66b9e9e5bbeab9a59e317b3cc68896cf0",
+    "mcp/src/knowledge-tools.ts": "49efc2fc8c81510f9ff6ea13754984ed1b8c183d2eb81201ccafe26538f9348a",
+    "runtime/company-flow-tools.ts": "8799d42e156b8361af70e90b986b21bf3f358f9e20138916052a56ab19eff174",
+    "runtime/knowledge-tool-effects.ts": "61255046d6f4d374385df1343e17638ffbd0c2073b31c6d0be6816b6c4661757",
+    "runtime/knowledge-tool-input.schema.json": "aa4af7995a5501f52e204888dc6fe3207bea804ab8b255903a2e54bebbb778aa",
+    "site-docs/guides/company-specialist-webhooks.md": "02100c946d43051c1d0e8a237cc7056541fd91d93516075d979f11ab2ba4d24d",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "914b451453b924928af3382801d3960978b8e18df7e8e344541cadfa390e4575",
+    "web/app/api/specialist-assignments/[assignmentId]/questions/[questionId]/respond/route.ts": "2cc79cf604f0ed9961e7494341b895c554b4776d4264695386e139eb17f19047",
+    "web/app/api/specialist-assignments/[assignmentId]/questions/route.ts": "f28d3ec2f3c1481bf9b8908efbb42c2804606fcf472d1e61edf5f7a0a834526a",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/questions/[questionId]/respond/route.ts": "aaac11a0fed72c85fba39660ba3ce18428c4dc7458957511622c4f3ed426c6ca",
+    "web/app/api/v1/ext/specialist-assignments/[assignmentId]/questions/route.ts": "28db12f66f80bb4a23f54cc570c41193efd086ef647bb2092ec166cdbbd4df60",
+    "web/components/board/panels/__tests__/integrations-panel.test.ts": "0e439a7328ad981ad59bf18901e9aa7ff07ae09adab55d17c31dbe6e3561ce89",
+    "web/components/board/panels/integrations-panel.tsx": "9a0bc735670653d60ae120e8b4739e42dbed6f0f0e7f9b1fc74958d7fe729cdd",
+    "web/components/board/token-actions.tsx": "eb2454842224d653903cb6a0c467062aff315d820b9840c8562c8f7c3f45473c",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "75d3dcb8ff98a68d9d3220f6ce4837e173f452ead3f6ca4ba83ed0be4645e111",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "bb6f7250d53d3c7b12af76bcbd0035c35708a09ffc7dcedab5ba136b23771b93",
+    "web/lib/brain/knowledge-tool-contract.ts": "906385dca5c2523199bc3e1afe7a0514ddf273963e69c15d20596a7d23367f27",
+    "web/lib/services/assignment-question-response.ts": "22a514c05c04f21f3e9a35947ca83f0295a07cd3273cb448428bed40601116f7",
+    "web/lib/services/assignment-question.ts": "cc14c55a6dbdf8f8c349417ab3e3404d85f576033bb25ed4a49dfb7ac3ac5ca1",
+    "web/lib/specialist-assignments/question-capacity.ts": "64bc35c7ece6d6941438141b2eea409e87ba24cadbf2c004030cbd326ab07d38",
+    "web/lib/specialist-assignments/question-form.ts": "9d1af5f01618b066c26d5c51a1abbcf4174ad6f16464be3c625429be3c61422e",
+    "web/lib/specialist-assignments/question-http.ts": "e5f02e25e6e5ae711cb0e2de9a29c5c953bc24a15136269c7141a8289c8dbd10",
+    "web/lib/specialist-assignments/question-input.ts": "32d3cff85ec3347cdfa08a5792fbea7b303b2c92ae4ec2e49f11ba031f6d97a3",
+    "web/messages/en.json": "15222a80f34eda2a647ac53f0d437bb640b9d79915c16e82f717dd62aae40cee",
+    "web/messages/ru.json": "d13947e53c2078b1561b6bd6155dd63196a6053793ea3a01d3952d1fbe6a1f9b",
+    "web/types/token-scopes.ts": "10ae2327360c37b6e88fef4cbb8e2250f0b658dc5afcce8bc3e1eb665a9b3a3d"
+  }
+}

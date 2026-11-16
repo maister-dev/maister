@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "testedHead": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "headAndRuntimeFixedDuringRun": true,
+  "verdict": "passed",
+  "scope": "local real Git-loader/ACP/browser qualification; no remote publication, stand mutation or CB1 pilot",
+  "package": {
+    "tag": "rah/v1.0.4",
+    "commit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.1",
+    "permissionPolicy": "default"
+  },
+  "testCases": {
+    "authentication": 1,
+    "installedPackageWorkflow": 1
+  },
+  "durationMinutes": 21.8,
+  "roots": [
+    "a3ae3c3c-18f5-4eac-b273-6ff7e9179842",
+    "8a02e783-d111-4228-8f1b-2d2fd95483ad",
+    "ae10556f-d74d-4f55-8e2c-a8e579a3af86"
+  ],
+  "treeSizes": [
+    3,
+    7,
+    1
+  ],
+  "typedResults": 11,
+  "nativeProposalIds": [
+    "9ce26efa-4d45-45e7-a1c3-cdedb0f14f1a",
+    "7c163db3-4524-44fa-9c32-04e111980928"
+  ],
+  "observedSchemaSha256": [
+    "b9b4268990ecd525c2f8e490109a0b171f055499857c031a38f2c65794e04021"
+  ],
+  "failedFlowAttempts": 0,
+  "controls": [
+    "depth-one retrieval and reduction",
+    "depth-two original evidence retention",
+    "stale and conflicting references",
+    "same-source independence limits",
+    "explicit missing service-health evidence",
+    "real revoked reference handling",
+    "attributable agent proposal and governed human write-back without implicit fact confirmation",
+    "English and Russian evidence inspection"
+  ],
+  "screenshotsVisuallyInspected": [
+    "rah-root-d2-en.png",
+    "rah-root-d2-ru.png"
+  ],
+  "cleanup": {
+    "ownedProcessLeaks": 0,
+    "databaseStopped": true
+  },
+  "redactions": {
+    "providerSecrets": 0,
+    "managedCredentials": 0
+  },
+  "files": {
+    "live.log.gz": "5b248f99b720a3dc77f1b168c7fdaf30e77e618909e6a8d4892a3cd23f8ff400",
+    "native-package-qualification.json": "36372e392b51a5e55a0a681332f145cada45dcd45b0a376cbb2d87b346eba7f0",
+    "rah-root-d1-en.png": "b1b192519accf907bc74cbd86f3b8ca0845b3cd6d3ea5f5261e8552f886d4b45",
+    "rah-root-d1-ru.png": "ae43dac8ae72466196e297be2e69ecd7750d327b6f255c0a64e0da0fe422167e",
+    "rah-root-d2-en.png": "2ce7e1ece8c9d85c49635bc004ffaca09a3a8c70ac64e38b69cdade595708e02",
+    "rah-root-d2-ru.png": "d25ba54561e17ca90f93322399251c12fcf3256038cb6a2e81600e74f537011c"
+  }
+}

@@ -89,7 +89,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         );
       const queue =
         search.get("operationalGrouping") === "agent"
-          ? await getDecisionsQueue(owner.id, owner.role)
+          ? await getDecisionsQueue(owner.id, owner.role, { companyIds: [] })
           : await computeLegacyDecisionsQueue(owner.id, owner.role);
 
       // Project to exactly the documented ExtDecisionItem shape. The internal

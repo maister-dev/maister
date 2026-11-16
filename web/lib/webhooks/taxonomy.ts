@@ -34,6 +34,7 @@ export const WEBHOOK_EVENT_TYPES = [
   "attention.decision_closed",
   "attention.decisions_changed",
   "attention.digest",
+  "assignment.result_available",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];

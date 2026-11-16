@@ -104,6 +104,19 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
     does not add another editor or a synthetic agent Run now action. The
     stable IDs and schedules revision make an unseen concurrent binding change a
     visible conflict rather than a delete-and-reinsert loss.
+    Cron and event rows include **Review for specialist assignments** (EN/RU). Checking it
+    requests approval of the current pinned professional and recurring input
+    using the actual operator's current settings authority. The server records
+    the witness; the form sends only intent. Unchecking clears approval and keeps
+    ordinary editing/repair available when a pin is broken. Existing reviewed rows
+    seed the checkbox from their server witness. See the
+    [native cron contract](../../system-analytics/specialist-assignments.md#reviewed-project-cron-invocation).
+    Event rows separately expose **Share the producing run context** (EN/RU),
+    enabled only with source review. It seeds from the current event review and
+    submits sharing intent without server metadata. Its hint explains the exact
+    producing context and current underlying access. Review excludes pre-enrollment
+    events; an unchanged selector retains enrollment across saves. See the
+    [native event contract](../../system-analytics/specialist-assignments.md#reviewed-project-event-invocation).
     **(Implemented, ADR-151)** a third row type, **mention**, takes no cron and no
     event input — it is the operator's grant that lets anyone with
     `commentTask` summon this agent by writing `@<agentId>` in a task comment

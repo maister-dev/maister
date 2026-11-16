@@ -1,0 +1,80 @@
+{
+  "baseline": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+  "checkout": "/private/tmp/maister-session-retirement-a365ede86",
+  "files": [
+    {
+      "path": "supervisor/src/execution-fence.ts",
+      "baselineSha256": "12f5d516a7955eeea85618b9181f1d8788afe642c802dc0911081349c517b696",
+      "candidateSha256": "6411f43df1aa95f98407e70bcd20027cf7c89352abe0ecf8842a011b7f89da36"
+    },
+    {
+      "path": "supervisor/src/__tests__/session-process-ownership.integration.test.ts",
+      "baselineSha256": "c477768345d07bb8af1325d07b876dddea99e21e879a2f8b132e28f596e08344",
+      "candidateSha256": "6f9d319f44de35c00b9e6896ad2dc16b9c7944855f50bd93434da7c03938a9be"
+    },
+    {
+      "path": "supervisor/test/fixtures/term-delayed-descendant-acp.mjs",
+      "baselineSha256": null,
+      "candidateSha256": "f1084d744dcb7d9f119ee8286b28bcd17ec70ab88028267333aa42cf8397d727"
+    }
+  ],
+  "patch": "/private/tmp/maister-session-retirement-candidate.patch",
+  "patchSha256": "a345e1f0faaad0c834d0beba4ace2fa53be9a54e18719732c07a32656e1086c1",
+  "regression": {
+    "redLog": "/private/tmp/maister-session-retirement-red.log",
+    "observed": "real200ms TERM-delayed descendant makes baseline DELETE503 instead of204; leader/output precede descendant retirement",
+    "greenLog": "/private/tmp/maister-session-retirement-green-final.log",
+    "passed": 30
+  },
+  "actualAdapter": {
+    "baselineReceipt": "/private/tmp/maister-session-retirement-actual-probe.json",
+    "baseline": "prompt200; DELETE503in21ms process_exit; leader+terminal confirmed; group active atresponse and250mslater; exactownedcleanup reaped survivor",
+    "candidateReceipt": "/private/tmp/maister-session-retirement-actual-probe-candidate-final.json",
+    "candidate": "prompt200; DELETE204in640ms; leader+terminal confirmed; group retired atresponse and250mslater; cleanup0failures/0ownedprocesses"
+  },
+  "validation": {
+    "supervisorIntegration": {
+      "log": "/private/tmp/maister-session-retirement-supervisor-integration.log",
+      "filesPassed": 40,
+      "testsPassed": 388,
+      "ownedLaneCleanup": "passed134ms"
+    },
+    "supervisorUnit": {
+      "log": "/private/tmp/maister-session-retirement-supervisor-unit.log",
+      "filesPassed": 51,
+      "testsPassed": 523
+    },
+    "typecheck": {
+      "log": "/private/tmp/maister-session-retirement-types.log",
+      "exitCode": 0
+    },
+    "lint": "/private/tmp/maister-session-retirement-lint-final.log",
+    "diffCheck": 0
+  },
+  "audit": {
+    "agent": "dispatch_fix_audit",
+    "verdict": "No actionable correctness finding",
+    "boundedness": "Each phase shares monotonic remaining grace for leader/output/group observations; existing process inspector retains5s per-probe timeout, so one probe may overrun a small grace. Failclosed if inspection unavailable; no post-leader-exit group signal."
+  },
+  "primaryQualification": {
+    "head": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+    "workingTreeMatchesCandidate": true,
+    "files": 2,
+    "passed": 30,
+    "log": "primary-green.log.gz"
+  },
+  "retainedSha256": {
+    "diagnostic-smoke.log.gz": "53e3fa9941d12311da861ef6255195aef6bf18cb4afed5ae70b6935ff39433a9",
+    "primary-green.log.gz": "cee1eb395c77b07e7f95fe5ec8b4f380525057a8295721efaac35ee13dbc4092",
+    "green.log.gz": "a8988fca3519db84e93cd705c95495a8fc8596418758cab2bdc2c801a84287f3",
+    "supervisor-integration.log.gz": "53af203d743daee36ee8ceba842a0aa550e53c37ba0d2bd4c5f0c18dd0a49db2",
+    "actual-adapter-green.json": "6e369ccd2b4989eece84eca8b5fc6540e6067cb08085427bae95d23faf3ac813",
+    "red.log.gz": "1e3d0557c1b40dcffc4376bb54856636438525469ff6e01536c13907da1c0ec6",
+    "supervisor-unit.log.gz": "b17dcb451edc4ea34d34429ad8d7927c01107324317f45b95019e927527cab4b",
+    "actual-adapter-red.json": "ae992a630a415ab0e3093c7f222d05f6de23f38fec6b6cf7e9d18c66fe1ac27b"
+  },
+  "candidateHandoff": {
+    "primaryRuntimeEdited": false,
+    "commitsCreated": false
+  }
+}

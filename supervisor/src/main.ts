@@ -43,6 +43,7 @@ import {
   MAX_OBJECT_RESPONSE_SPOOL_BYTES,
 } from "./runtime-object-files";
 import { runtimeRoot } from "./runtime-root";
+import { loadStandTransport } from "./stand-operations/transport";
 import { resolveWorkspaceRoots } from "./workspace-roots";
 
 const DEFAULT_PORT = 7777;
@@ -84,6 +85,11 @@ export function buildRegisterRoutesOptions(deps: {
   hostState: HostState;
   workspaceRoots: string[];
   producerPauseMaxMs?: number;
+  dispatchStandRestart?: RegisterRoutesOptions["dispatchStandRestart"];
+  readStandReceipt?: RegisterRoutesOptions["readStandReceipt"];
+  observeStandOperation?: RegisterRoutesOptions["observeStandOperation"];
+  readStandLogs?: RegisterRoutesOptions["readStandLogs"];
+  verifyStandOperation?: RegisterRoutesOptions["verifyStandOperation"];
 }): RegisterRoutesOptions {
   return {
     app: deps.app,
@@ -99,6 +105,11 @@ export function buildRegisterRoutesOptions(deps: {
     },
     hostState: deps.hostState,
     workspaceRoots: deps.workspaceRoots,
+    dispatchStandRestart: deps.dispatchStandRestart,
+    readStandReceipt: deps.readStandReceipt,
+    observeStandOperation: deps.observeStandOperation,
+    readStandLogs: deps.readStandLogs,
+    verifyStandOperation: deps.verifyStandOperation,
   };
 }
 
@@ -228,6 +239,11 @@ export async function start(): Promise<void> {
   });
   const stopRuntimeEventPruner = startRuntimeEventPruner(hostState, logger);
 
+  const standTargetsFile = process.env.MAISTER_STAND_TRANSPORT_TARGETS_FILE;
+  const standTransport = standTargetsFile
+    ? loadStandTransport(standTargetsFile, logger)
+    : undefined;
+
   registerRoutes(
     buildRegisterRoutesOptions({
       app,
@@ -238,6 +254,11 @@ export async function start(): Promise<void> {
       hostState,
       workspaceRoots,
       producerPauseMaxMs: testProducerPauseMaxMs(),
+      dispatchStandRestart: standTransport?.dispatch,
+      readStandReceipt: standTransport?.readReceipt,
+      observeStandOperation: standTransport?.observe,
+      readStandLogs: standTransport?.logs,
+      verifyStandOperation: standTransport?.verify,
     }),
   );
 

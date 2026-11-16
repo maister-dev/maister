@@ -7,6 +7,8 @@
 // changed sources refused at the copy and verify boundaries, a coordinated
 // snapshot set that restores and completes the cut-over, and a fresh install.
 
+import type { Pool } from "pg";
+
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -27,7 +29,6 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createMigrationRootBefore } from "@/lib/db/m43-cutover-migration-root";
@@ -40,6 +41,8 @@ import {
   type ImportProgress,
 } from "@/lib/execution-host/import-maintenance";
 import {
+  closeTestPool,
+  createTestPool,
   startBarePostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -62,12 +65,7 @@ const LARGE_LOG_BYTES = 5 * IMPORT_CHUNK_BYTES + 17;
 const IMPORT_ID = "at11-cutover";
 
 type Phase =
-  | "inventory"
-  | "copy"
-  | "associate"
-  | "rows"
-  | "verify"
-  | "finalize-proof";
+  "inventory" | "copy" | "associate" | "rows" | "verify" | "finalize-proof";
 
 type SourceListing = Map<string, { size: number; sha256: string }>;
 
@@ -586,7 +584,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const running of supervisors.splice(0))
     await running.stop().catch(() => undefined);
-  await restoredPool?.end();
+  if (restoredPool) await closeTestPool(restoredPool);
   for (const database of extraDatabases.splice(0)) await database.stop();
   await testDatabase?.stop();
   for (const directory of [
@@ -1259,7 +1257,7 @@ describe("AT-11 baseline upgrade", () => {
     const restoredUrl = new URL(testDatabase.databaseUrl);
 
     restoredUrl.pathname = `/${restoredName}`;
-    restoredPool = new Pool({
+    restoredPool = createTestPool({
       connectionString: restoredUrl.toString(),
       max: 2,
     });

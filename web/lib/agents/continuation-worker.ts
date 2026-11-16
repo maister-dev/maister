@@ -36,6 +36,7 @@ import {
   scratchRuns,
 } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { isFencedError } from "@/lib/execution-host/deliverer";
 import { ADMISSIBLE_PROMPT_INCARNATION_STATES } from "@/lib/execution-host/session-binding";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
@@ -437,6 +438,14 @@ export function startAgentContinuationWorker(input: {
         if (controller.signal.aborted) return;
         if (error instanceof AgentPromptContinuationPending || signal.aborted)
           return;
+        if (isFencedError(error)) {
+          reason = null;
+          log.info(
+            { workerId, runId: cursor },
+            "agent continuation ownership yielded",
+          );
+          return;
+        }
         reason = isMaisterError(error) ? error.code : "service_failure";
         log.error(
           { workerId, reason, runId: cursor },

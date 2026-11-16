@@ -54,22 +54,24 @@ completion:
 ```
 
 Omitted kind resolves to code_delivery; its existing workspace/review/promotion
-semantics are unchanged. Operational requires exactly operational_v1. Operational
+semantics are unchanged. Operational requires a versioned completion contract.
+The existing `operational_v1` requires engine 3.9.0 or newer.
+`operational_evidence_v2` requires engine 3.12.0 or newer. Operational
 subagent/persona-only binding, `flow:`, persistent session, shared writable
 workspace and delegated resultProfile override are refused before allocation.
 Independent finite delegated sessions remain supported with their own workspace.
 `none` and `repo_read` retain their read-only tool restrictions; kind does not
 make shell available in those modes. Both intake variants keep worktree/session.
 
-Package `compat.engine_min` must be >=3.9.0 for operational declarations. Optional
-engine_max is inclusive. Absent compat on legacy packages retains current behavior.
+Package `compat.engine_min` must meet the selected operational contract's floor.
+Optional `engine_max` is inclusive. Absent compat on legacy packages retains current behavior.
 An older engine refuses the new package floor. Remote/local install,
 attach/update, Studio validation, registry projection, compatibility CLI and
 effective launch enforce the same operational declaration. Unknown contracts fail.
 
 Snapshot kind, exact schema, semantic-validator version, schemaRef/digest,
 required=true, package install/revision and definition digest in the initial run
-transaction. Built-in schemaRef is `maister:operational_v1@<sha256>`. Prompts always
+transaction. Built-in schema references use `maister:<contract>@<sha256>`. Prompts always
 include the frozen completion appendix, including overridePrompt, queued start and
 resume. Package update/detach/resync cannot replace these facts. Legacy null run
 kind means code_delivery; it never triggers operational reclassification.

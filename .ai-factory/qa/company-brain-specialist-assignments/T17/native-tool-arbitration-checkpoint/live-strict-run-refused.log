@@ -1,0 +1,217 @@
+$ tsx e2e/run.ts --config playwright.live.config.ts live-company-brain-specialists.spec.ts --project=live-supervisor --workers=1 --retries=0
+{"invocationId":"383c14f3-3907-4cf3-a089-c95029e3c52f","event":"process-registered","parentPid":44925,"rootId":"none","runtime":"darwin/arm64/node-24.15.0","pid":44935,"pgid":44912,"role":"runner","caseName":"e2e-live","rootRole":"invocation","bootId":"383c14f3-3907-4cf3-a089-c95029e3c52f","outcome":"registered"}
+{"level":30,"time":1793739362355,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"e2e-wrapper","invocationId":"383c14f3-3907-4cf3-a089-c95029e3c52f","ledger":"/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-e2e/processes/383c14f3-3907-4cf3-a089-c95029e3c52f","lane":"e2e-live","msg":"e2e invocation minted"}
+{"level":30,"time":1793739362371,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793739362371,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793739362379,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"docker-client-construction","outcome":"passed","durationMs":8,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793739362380,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"container-create-start","preparationDurationMs":24,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793739363262,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"container-start","outcome":"passed","durationMs":881,"containerId":"d1130b5e2b90c0b65fc7ddb0aac68433fe2c371c850fb5fc17f33051232234a2","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+◇ injected env (0) from .env
+◇ injected env (0) from .env.test
+◇ injected env (0) from .env.test.local
+{"level":30,"time":1793739364026,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.11.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793739364045,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"db:migrate","driver":"postgres","url":"postgres://test:***@localhost:57937/maister_e2e","stage":null,"msg":"running migrations"}
+(node:44979) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+{"level":30,"time":1793739364498,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"db:migrate","migration":"0094_postgres_graph_only_cutover","candidateCount":0,"transitionedCount":0,"nodeAttemptsClosed":0,"hitlRequestsCancelled":0,"assignmentsClosed":0,"sessionsCleared":0,"msg":"M43 graph-only cut-over migration summary"}
+{"level":30,"time":1793739364502,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"db:migrate","nextMigration":"0134_lovely_tarot","msg":"Stage B additive data-plane migrations committed; validating destructive preservation cut-over"}
+{"level":30,"time":1793739364820,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"facts","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1793739364825,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"schedules","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1793739364828,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"baseline","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1793739364832,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"agent-activity-backfill","version":1,"phase":"complete","processed":0,"cumulative":0,"msg":"agent-activity-cutover-page"}
+{"level":30,"time":1793739364833,"pid":44979,"hostname":"MacBook-Pro-2.local","name":"db:migrate","msg":"migrations done"}
+◇ injected env (0) from .env
+◇ injected env (0) from .env.test
+◇ injected env (0) from .env.test.local
+{"level":30,"time":1793739365359,"pid":45002,"hostname":"MacBook-Pro-2.local","name":"db:migrate:brain","driver":"postgres","url":"postgres://test:***@localhost:57937/maister_e2e","msg":"running brain-lineage migrations"}
+{"level":30,"time":1793739365452,"pid":45002,"hostname":"MacBook-Pro-2.local","name":"db:migrate:brain","msg":"brain migrations done"}
+seed-e2e: seeded m11a a2d9161d-56f3-4f39-bf2c-7d893ba7f917, m11b 159e5892-ffd1-4fa1-b5ff-027e50cabc53, m12 02879103-7f22-4d13-8944-460a6125540f (e2e-m12), board e2e-acceptance-board, scratch e2e-acceptance-scratch, m11c-visible 2cbddfde-a4cc-480b-87f6-6bd35fb1dc31 (e2e-m11c-visible), m11c-refuse 23b9ca4f-0fc6-45e1-8637-7f8da32ba5fe (e2e-m11c-refuse), m19 crashed f7cfb6ff-a6b3-4386-941e-645444ca9a53 (e2e-m19), m15 failed 36cd9ada-aa30-4c31-afc2-08f5450892b7 overridden 94704fce-f5a9-4e52-b95d-68dfe80849fc (e2e-m15), m16 run da6b1d66-89bd-4423-bb6c-0ccfae91f2c8 gate ci-test-report (e2e-m16), m17 proj1 7fcab078-5e9f-4348-8c89-59a3026e5df8 proj2 e83bc468-aae9-4e2e-b76a-4d15ff709e8b (e2e-m17-project1, e2e-m17-project2), budget-fork 83cc2132-5f72-4dcf-9753-91c47ab4bc9b (e2e-budget-fork), m18 merge e35a6cbb-20e8-4b68-b34a-1f3e22d95a42 conflict e167c9bb-f128-4422-b2e2-55c4eef494b3 pr 480c7fce-e4de-4b24-af79-cc8aa20d1283 (e2e-m18), m27 flow 52844302-3d66-4e54-9bd4-8887a6f73475 scratch cd791556-55d0-4254-a08a-2ccaa91924e0 (e2e-m27), m22 run 80842175-0837-428e-87d9-38baae17eb8e (e2e-m22), scratch-detail 9233489e-0194-4d98-ac35-228b1bc5dacf (e2e-scratch-detail), m23 project e2e-m23, flows-authoring cap a78c36ec-0615-4d84-a364-f7e8ae53e0c1 (e2e-flows-authoring), review-comments 880d0779-c44b-4326-a5c6-c54654d0e217 (e2e-review-comments), flow-studio-artifacts cap dd65b88f-9e01-4b8a-bd0e-2b53e41aa0b2 (e2e-flow-studio-artifacts), flow-viewer ref aif-flow-viewer (e2e-flow-viewer), platform-agents e2e-agents-pkg:e2e-helper/e2e-agents-pkg:e2e-auditor (e2e-agents)
+{"level":30,"time":1793739363267,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","lineage":"bare","phase":"ready","durationMs":911,"containerId":"d1130b5e2b90c0b65fc7ddb0aac68433fe2c371c850fb5fc17f33051232234a2","endpoint":"postgres://localhost:57937/maister_e2e","msg":"started bare test database"}
+{"invocationId":"383c14f3-3907-4cf3-a089-c95029e3c52f","event":"process-registered","parentPid":44935,"rootId":"none","runtime":"darwin/arm64/node-24.15.0","pid":46997,"pgid":46997,"role":"playwright","caseName":"e2e-live","rootRole":"invocation","bootId":"383c14f3-3907-4cf3-a089-c95029e3c52f","outcome":"registered"}
+[WebServer] (node:47009) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] $ tsx watch --env-file-if-exists=.env src/main.ts
+[WebServer] .env not found. Continuing without it.
+[WebServer] (node:47022) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] .env not found. Continuing without it.
+[WebServer] (node:47028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47028) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47029) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47030) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47036) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47036) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+[WebServer] [instrumentation] recovery sweeps failed (continuing boot): git worktree list failed: fatal: cannot change to '/private/var/folders/p3/lj5f1_ys6650hwvry91_qr2c0000gn/T/maister-test-worktrees/e2e-live/5ecd5e81-4862-445f-bbe7-c302bdf05f66/fixtures/54481a4c-fe6d-4c58-9db6-fcfcd974431d': No such file or directory
+[WebServer] (node:47099) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 2 tests using 1 worker
+
+(node:47124) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [setup] › e2e/auth.setup.ts:19:1 › authenticate seeded admin (3.5s)
+(node:47202) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47254) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47255) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47291) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47303) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47304) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47305) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47306) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47307) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47318) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47319) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47359) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47360) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47371) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47373) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47374) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47375) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47376) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47377) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47389) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47390) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:47391) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] [@git-diff-view/core] Multiple instances of @git-diff-view/core detected in the current environment.
+[WebServer] (node:47566) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=validate-cwd durationMs=2 totalMs=2
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=settings durationMs=13 totalMs=15
+[WebServer] [session/query] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e resume=none apiType=native baseUrl=native
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=prepare-query durationMs=4 totalMs=18
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=sdk-initialize durationMs=665 totalMs=683
+[WebServer] [authStatus] session account carries no identity signal; keeping probe
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=models durationMs=1 totalMs=684
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=modes durationMs=0 totalMs=684
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=agents durationMs=0 totalMs=684
+[WebServer] [session/create] sessionId=33dbd6cb-4c71-4f70-9eb7-0cd6642b900e phase=register durationMs=1 totalMs=685
+[WebServer] (node:48065) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:48092) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:48252) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:48256) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:48263) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:48269) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:50795) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=validate-cwd durationMs=2 totalMs=2
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=settings durationMs=12 totalMs=15
+[WebServer] [session/query] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 resume=none apiType=native baseUrl=native
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=prepare-query durationMs=3 totalMs=18
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=sdk-initialize durationMs=357 totalMs=375
+[WebServer] [authStatus] session account carries no identity signal; keeping probe
+[WebServer] [session/models] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=set-model durationMs=1 model=opus outcome=success
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=models durationMs=2 totalMs=377
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=modes durationMs=0 totalMs=377
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=agents durationMs=0 totalMs=377
+[WebServer] [session/create] sessionId=b50cbd4e-885e-472f-ad32-1ecfd1b518a2 phase=register durationMs=1 totalMs=378
+[WebServer] (node:50977) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=validate-cwd durationMs=0 totalMs=0
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=settings durationMs=14 totalMs=14
+[WebServer] [session/query] sessionId=69b69e35-d747-476c-b257-e91132efe6db resume=none apiType=native baseUrl=native
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=prepare-query durationMs=3 totalMs=18
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=sdk-initialize durationMs=396 totalMs=413
+[WebServer] [authStatus] session account carries no identity signal; keeping probe
+[WebServer] [session/models] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=set-model durationMs=2 model=opus outcome=success
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=models durationMs=3 totalMs=417
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=modes durationMs=0 totalMs=417
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=agents durationMs=0 totalMs=417
+[WebServer] [session/create] sessionId=69b69e35-d747-476c-b257-e91132efe6db phase=register durationMs=1 totalMs=418
+[WebServer] (node:52814) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53062) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53078) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53102) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53118) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53130) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:53134) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71441) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71492) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71543) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71558) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71572) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71603) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:71909) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:72612) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:72613) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  2 [live-supervisor] › e2e/live-company-brain-specialists.spec.ts:148:1 › QL-CBX-03 the real pinned RAH package retrieves structured company knowledge and preserves original evidence through depth two (7.0m)
+
+
+  1) [live-supervisor] › e2e/live-company-brain-specialists.spec.ts:148:1 › QL-CBX-03 the real pinned RAH package retrieves structured company knowledge and preserves original evidence through depth two 
+
+    Error: A governed refusal or pending HITL does not qualify completion
+
+    expect(received).toMatch(expected)
+
+    Expected pattern: /^(Done|Review)$/
+    Received string:  "Abandoned"
+
+      569 |         ),
+      570 |         "A governed refusal or pending HITL does not qualify completion",
+    > 571 |       ).toMatch(/^(Done|Review)$/);
+          |         ^
+      572 |       const tree = await inspectTree(launched.runId);
+      573 |
+      574 |       expect(
+        at /Users/kaa/.codex/worktrees/2599/mAIster/web/e2e/live-company-brain-specialists.spec.ts:571:9
+
+    Error Context: test-results/live-company-brain-special-96e38--evidence-through-depth-two-live-supervisor/error-context.md
+
+  Slow test file: [live-supervisor] › e2e/live-company-brain-specialists.spec.ts (7.0m)
+  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel
+  1 failed
+    [live-supervisor] › e2e/live-company-brain-specialists.spec.ts:148:1 › QL-CBX-03 the real pinned RAH package retrieves structured company knowledge and preserves original evidence through depth two 
+  1 passed (7.2m)
+{"invocationId":"383c14f3-3907-4cf3-a089-c95029e3c52f","event":"sweep-complete","parentPid":44925,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":44935,"pgid":0,"rootRole":"invocation","bootId":"383c14f3-3907-4cf3-a089-c95029e3c52f","outcome":"clean","leaks":0}
+{"level":30,"time":1793739801912,"pid":44935,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"e2e","phase":"stop","durationMs":187,"containerId":"d1130b5e2b90c0b65fc7ddb0aac68433fe2c371c850fb5fc17f33051232234a2","endpoint":"postgres://localhost:57937/maister_e2e","msg":"stopped test database"}
+[ELIFECYCLE] Command failed with exit code 1.

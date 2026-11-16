@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "8bc807ff9",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "red": [
+    "Actual Inbox context returned 200 without source grant.",
+    "After a real native knowledge read, task/comment POST returned 201 and accepted company-derived content into stores lacking its source envelope.",
+    "Actual private-memory CAS returned 200 for company-derived content after accepting a safe native private write.",
+    "Result DTO returned its native payload when a real grant was revoked after the initial disclosure transaction and before delayed assembly completed."
+  ],
+  "green": [
+    "Source-aware Inbox read gates before and after assembly.",
+    "Native shared task/comment/relation/HITL request sinks refuse before effects with the existing required refusal audit.",
+    "Safe native private notes remain supported; additional sources refuse without overwriting the file under a run-capture lock through the existing CAS.",
+    "DTO and run view perform final source admission before returning assembled material.",
+    "Legacy CAS and relation fixtures use retained real legacy run rows, preserving their existing contracts rather than using nonexistent bound IDs."
+  ],
+  "validation": {
+    "realPostgres": {
+      "passed": 78,
+      "files": 7
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "apiContracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "pending": [
+    "Remaining repository/workbench/export channels, aggregate execution/automation projections and automatic write destinations.",
+    "Source-aware assignment clarification/delivery, evidence UI and full integration phase qualification.",
+    "Native capability activation, installed package/live ACP and pilot qualification."
+  ],
+  "logs": [
+    {
+      "path": "inbox-red.log.gz",
+      "uncompressedSha256": "22bbe8202700581b56388150fc5cfa4f9464c893e9a1d00f30e19e2ad3122ec3"
+    },
+    {
+      "path": "shared-store-red.log.gz",
+      "uncompressedSha256": "ebf13d4814870fbde71d09da1e2ee649e471757b05ddbde3bd5ebb4593cb7ce1"
+    },
+    {
+      "path": "private-memory-red.log.gz",
+      "uncompressedSha256": "c096bb6fbcbae6c8d280d59af914335f51a0529fc45bd260b0ac515ad2ec8716"
+    },
+    {
+      "path": "delayed-dto-red.log.gz",
+      "uncompressedSha256": "97f55cd7fe6d11cfdb841263985090ab6c3485026efd12368613ccab49f05ebb"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "26081df1e5e59308a3ef5164834fa3c2b7a19eccefe76dece7824e766166d341"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "810c78fb89f13748516e866b32f71ab57c3c92c1bdca75faaa00b7cbd853bd88"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "6c655985fd8724c3d763ad5345e859df179474fbb9072fef54d40384366445b6"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "0f6b567d0d821068c28c32bcb45f37900c623b9abdf3072de8636360f8231738"
+    }
+  ]
+}

@@ -36,6 +36,7 @@ export default [
         "e2e/**/*.test.ts",
       ],
       exclude: [
+        "lib/**/*.qualification.test.ts",
         "lib/**/*.integration.test.ts",
         "app/**/*.integration.test.ts",
         "scripts/**/*.integration.test.ts",
@@ -70,6 +71,20 @@ export default [
       setupFiles: ["./test-support/vitest-worktree-root.setup.ts"],
       testTimeout: 60_000,
       hookTimeout: 60_000,
+    },
+  },
+  {
+    resolve: { alias },
+    test: {
+      // Real external-package qualification; inputs are required, never skipped.
+      name: "qualification",
+      maxWorkers,
+      include: ["lib/**/*.qualification.test.ts"],
+      environment: "node",
+      env: testEnvironment,
+      setupFiles: ["./test-support/vitest-worktree-root.setup.ts"],
+      testTimeout: 600_000,
+      hookTimeout: 300_000,
     },
   },
 ] satisfies TestProjectInlineConfiguration[];

@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "baselineCommit": "46cb4a08a",
+  "companionCommit": "3a58f18",
+  "status": "partial_checkpoint_qualified",
+  "recordedAt": "2026-11-03T19:59:27.663652+00:00",
+  "qualified": [
+    "The existing smoke CLI can use a schema-validated explicit RunnerLaunch JSON, a configured model/provider and default/ask permissions; it registers a harmless isolated MCP server and denies probe requests without storing allow rules.",
+    "Each shell/MCP prompt must independently reach requestPermission. A real ACP fixture with repeated first-prompt callbacks fails when the per-probe guard is removed.",
+    "The actual pinned Claude 0.95.0 adapter sends stable tool metadata in an earlier tool_call and a partial permission request. Both the production bounded decoder and SDK smoke client retain only live same-session/same-call name and kind, at most 32 entries/4 KiB. Foreign, terminal and evicted metadata cannot supply identity.",
+    "Contradictory explicit tool kind/name and oversized identity fail before permission dispatch using existing typed output-failure contracts.",
+    "Real Claude/configured-GLM-5.1 provider calls after the fix expose Bash and mcp__maister__hitl_list identities and both denied callbacks. Real Codex 2.2.2 with configured gpt-6.1-sol remains refused for absent callbacks; generic handshake success does not qualify strict execution."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 48,
+      "files": 4
+    },
+    "owningUnit": {
+      "passed": 18,
+      "files": 3
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAndErd": "passed",
+    "realClaudeProbe": "passed",
+    "realCodexStrictProbe": "expected_refusal"
+  },
+  "qualificationLimits": [
+    "This qualifies adapter/protocol seams only. No actual installed RAH depth-1/depth-2 execution or CB0/CB1/stand readiness is claimed. The new live package scenario remains unexecuted.",
+    "The initial Claude observation inherited host auto permissions; explicit ask settings were needed. Prototype traces use isolated synthetic tools, not Company Brain or a real Inbox.",
+    "The first identity fix reached the SDK smoke transport only; the retained failed integration proved production callbacks are intercepted by the bounded decoder, which now shares the same context.",
+    "The phase-wide web integration rerun remains in progress. This shared supervisor change occurred during that run; its owning checks are separately recorded. Full supervisor regression and final exact-build gates remain pending.",
+    "No migration, parallel execution ledger or Brain prerequisite for project deletion is added."
+  ],
+  "logs": [
+    {
+      "path": "codex-initial-refusal.log.gz",
+      "uncompressedSha256": "e22dd090b5b22841462205bae32c1dc358ef2d9e5f5e894c54bfa52b8ea7549b"
+    },
+    {
+      "path": "codex-real-observation.log.gz",
+      "uncompressedSha256": "df18817ce33a2ef26886ebcad76758d0cbaef9aada3364d1b8b9910efeda21af"
+    },
+    {
+      "path": "claude-host-mode-observation.log.gz",
+      "uncompressedSha256": "7fdbf2ccfc9ee2e7a78e105107159e16636df9ea594081bb2acbbf6ccf686fa9"
+    },
+    {
+      "path": "claude-ask-before-delta.log.gz",
+      "uncompressedSha256": "75cbaa4756edc66b1e9b6e7bb9aba0c80fcaa5c65a76192cc5f18890ef0f8e47"
+    },
+    {
+      "path": "claude-real-identity-green.log.gz",
+      "uncompressedSha256": "3c74d97e9714d280de1a4579d4cd45905685e599e1dc3bffdd29dbf0eb3834ef"
+    },
+    {
+      "path": "claude-real-smoke-green.log.gz",
+      "uncompressedSha256": "197ed1f9929ef6bd5156ffeb1f71129b41dbee72e4c7f76565d1719c954a8fc3"
+    },
+    {
+      "path": "codex-current-refusal.log.gz",
+      "uncompressedSha256": "2854586b30311dcbc2bcb935a75a9da09faaf306018788d21fae3a34568c0a21"
+    },
+    {
+      "path": "permission-delta-red.log.gz",
+      "uncompressedSha256": "9476d76ee0632fecaf8a1369e7a9f0f9a0b5458e6d3e869d38dd8a71e4070a18"
+    },
+    {
+      "path": "permission-delta-sdk-only-failure.log.gz",
+      "uncompressedSha256": "cb5443fed6e54a5e8990502de8cf84eb614a35a646373a90ba8bf28b0c737edf"
+    },
+    {
+      "path": "identity-mismatch-red.log.gz",
+      "uncompressedSha256": "77fa377efb13edc9e8c891cbb7137c1c53e56d81c5aa59159f7e5a3a7bd0f631"
+    },
+    {
+      "path": "per-probe-accounting-red.log.gz",
+      "uncompressedSha256": "c117baeeb34fca4ce916784254f439552da79cd14249d54b3aefa08dfc6c9ebb"
+    },
+    {
+      "path": "owning-integration.log.gz",
+      "uncompressedSha256": "60edd3411e883b01e528f66ba9581a1958caaee933b63091483901ffcbff0bbc"
+    },
+    {
+      "path": "owning-unit.log.gz",
+      "uncompressedSha256": "ef264cd2a2bd320d24272d6fd90a834817f1c666804210933956ed5a970c86d4"
+    },
+    {
+      "path": "lint.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "typecheck.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts.log.gz",
+      "uncompressedSha256": "9df6e6fe2e70aec626897bb9a34aa4544395b707f682f868f4ff7412cb480da4"
+    },
+    {
+      "path": "docs.log.gz",
+      "uncompressedSha256": "d48bc74a086b82c78a4b9b9ed8b91f1d8f774dcc1cff1ba2269b7659da829321"
+    },
+    {
+      "path": "real-probe.mts.gz",
+      "uncompressedSha256": "12d1e309338c93ade10d121ecf652aa918319f5ffd4591c116832f34418d3e51"
+    },
+    {
+      "path": "real-probe-server.mjs.gz",
+      "uncompressedSha256": "4ca25e2f25ba1c4bf0b539b274adb8e3ebe742b85e073d9eec9133c74074ed36"
+    },
+    {
+      "path": "configured-runner.json.gz",
+      "uncompressedSha256": "39256b420fa17ea339a7b8e33740c57b12df366ca7d41b04ea979b40f21cf4a7"
+    }
+  ]
+}

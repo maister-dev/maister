@@ -1,0 +1,73 @@
+{
+  "baseCommit": "834b098622132604a130bd461b18050e38aa1a48",
+  "candidate": "/private/tmp/maister-migration-session-834b09862",
+  "files": {
+    "web/lib/brain/knowledge-disclosure.ts": "a8bf425d0639619870e32e0cd8cf88f379779a84a19d352f39d23e688a25c05f",
+    "web/lib/brain/knowledge-access.ts": "faf070891f596c4071e60b802bfdafc20d432b852458177c33bdd4590b886d72",
+    "web/lib/brain/__tests__/company-records.integration.test.ts": "a6d9aa813aede54a4e69a6fbfbc461e6e98ff2fc7af9de712e21fabf5bebab73",
+    "web/lib/brain/knowledge-token-lock.ts": "3a8846721a0d6049f885d11e374dd699087700696eed08db910871763e1ede9a"
+  },
+  "regressions": {
+    "red": {
+      "testsFailed": 3,
+      "log": "/private/tmp/cb-native-token-order-red.log"
+    },
+    "green": {
+      "testsPassed": 3,
+      "log": "/private/tmp/cb-native-token-order-green.log"
+    }
+  },
+  "typecheck": {
+    "exitCode": 0,
+    "log": "/private/tmp/cb-native-token-order-typecheck.log"
+  },
+  "lint": {
+    "exitCode": 0,
+    "log": "/private/tmp/cb-native-token-order-lint.log"
+  },
+  "independentReview": "dispatch_fix_audit: no actionable defects; current scopes reauthorized; wait-race expiry rechecked; no grant by name",
+  "patch": "/private/tmp/cb-native-token-order.patch",
+  "owningBatch": {
+    "command": "vitest run --project integration --maxWorkers=2 lib/brain/ lib/specialist-assignments/__tests__/store.integration.test.ts lib/agents/__tests__/company-agent-context.integration.test.ts lib/agents/__tests__/company-flow-context.integration.test.ts app/api/knowledge/__tests__/knowledge.integration.test.ts lib/services/__tests__/agent-question.integration.test.ts",
+    "filesPassed": 19,
+    "filesFailed": 1,
+    "testsPassed": 283,
+    "testsFailed": 1,
+    "log": "/private/tmp/cb-native-token-order-consumers.log",
+    "failure": "Detached checkout lacked ignored mcp/dist artifact at first built-MCP invocation; added read-only symlink to existing artifact and reran API suite"
+  },
+  "apiRerun": {
+    "command": "vitest run --project integration app/api/knowledge/__tests__/knowledge.integration.test.ts",
+    "filesPassed": 1,
+    "testsPassed": 15,
+    "log": "/private/tmp/cb-native-token-order-api-rerun.log"
+  },
+  "currentUniqueScenarioCount": 284,
+  "countNote": "283 first-batch successes plus1 repaired built-MCP case; API rerun repeats14 earlier successes",
+  "primaryQualification": {
+    "head": "adf22d076",
+    "workingTreeIncludesContinuationFix": true,
+    "initialBroadRun": {
+      "passed": 278,
+      "failed": 6,
+      "files": 20,
+      "maxWorkers": 4,
+      "log": "primary-broad-failed.log.gz"
+    },
+    "affectedConsumerRerun": {
+      "passed": 110,
+      "files": 3,
+      "maxWorkers": 2,
+      "log": "primary-affected-green.log.gz"
+    },
+    "interpretation": "Current affected consumers pass with both fixes. Earlier failed statements/timeouts are retained; the changed source and concurrency do not establish resource pressure as their sole cause."
+  },
+  "retainedLogSha256": {
+    "green.log.gz": "0ef93b31f270e7b58cf24fa8b8a638d1299d2d9cbbf8d8cf141b215cf2619f70",
+    "candidate-consumers.log.gz": "74f0c4947d25069f395293e43722ec0014654414faf1ad0db5b6f73e6a906af6",
+    "candidate-api-rerun.log.gz": "d9c47f41bcd59367f2c98ec29518caf7049b5e2f3434ea5e556d8ffda498650a",
+    "primary-affected-green.log.gz": "fcdc76ce33c30fe536a73b3232fd6e8d84d323e2f1a7b958f35fdb0223fe4cfa",
+    "primary-broad-failed.log.gz": "cbfb755f8ae9cebe5c47c2c55db19acfe7b5c2ea4038dea5c9e77247d0169aa8",
+    "red.log.gz": "e4965b8cb41dfa748458c8651ce4f9e3971693ab3b8e0d797ffbae8da3b3a773"
+  }
+}

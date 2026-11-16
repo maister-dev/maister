@@ -515,6 +515,7 @@ describe("AT-02 physical runtime storage", () => {
         ALTER TABLE command_receipts DROP COLUMN terminal_stream_id;
         ALTER TABLE command_receipts DROP COLUMN terminal_sequence;
         ALTER TABLE command_receipts DROP COLUMN retired_at;
+        ALTER TABLE workspaces DROP COLUMN company_id;
         ALTER TABLE runtime_objects DROP COLUMN producer_path;
         ALTER TABLE runtime_objects DROP COLUMN sealed_device;
         ALTER TABLE runtime_objects DROP COLUMN sealed_inode;

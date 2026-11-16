@@ -1,0 +1,46 @@
+✔ accepts a complete, indexed Stage B specification fixture (13.818333ms)
+✔ accepts a complete, indexed M51 specification fixture (5.886417ms)
+✔ accepts a complete, indexed Run trace specification fixture (5.684541ms)
+✔ accepts a complete, indexed Librarian specification fixture (8.192542ms)
+✔ rejects a missing Librarian document and an LMM id with no matrix row (6.319084ms)
+✔ rejects a TRC requirement with no row in the run-trace matrix (6.400584ms)
+✔ rejects a TRC traceability row whose primary test cell is blank (5.387375ms)
+✔ accepts aligned Markdown traceability tables (5.568166ms)
+✔ rejects missing R5 sections and excess expectation bullets (5.474791ms)
+✔ rejects duplicate requirements, a missing primary test, and broken artifacts (6.216292ms)
+✔ rejects a missing M51 analytics document, naming the M51 group (6.283708ms)
+✔ rejects an M51 requirement with no row in m51-traceability.md (6.1495ms)
+✔ rejects an M51 traceability row whose primary test cell is blank (5.622459ms)
+✔ labels duplicate ids with their own group (5.320042ms)
+✔ validateAnalyticsGroup reports a group with no documents on disk (5.268583ms)
+✔ rejects an unindexed analytics document (7.765042ms)
+✖ company specifications are enforced by the registered documentation command (7.29975ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 16
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 146.186583
+
+✖ failing tests:
+
+test at scripts/validate-docs-indexes.test.mjs:389:1
+✖ company specifications are enforced by the registered documentation command (7.29975ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /specialist-cooperation.*missing R5 section State machine/. Input:
+  
+  ''
+  
+      at file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-docs-indexes.test.mjs:394:12
+      at async withFixture (file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-docs-indexes.test.mjs:167:5)
+      at async TestContext.<anonymous> (file:///Users/kaa/.codex/worktrees/2599/mAIster/scripts/validate-docs-indexes.test.mjs:390:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: /specialist-cooperation.*missing R5 section State machine/,
+    operator: 'match',
+    diff: 'simple'
+  }

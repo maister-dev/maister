@@ -1,0 +1,101 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Native human task-comment assignment intake and exact source appointment",
+  "baseCommit": "cdce4c08c",
+  "status": "Human native comment/standalone/coordinator routing qualified; T22 project automation routing and later clarification/delegation remain open",
+  "red": {
+    "case": "Actual settings/comment HTTP and registered consumer retained no native work; busy suppression discarded independent intent",
+    "expectedAssignments": 2,
+    "actualAssignments": 0,
+    "exitCode": 1
+  },
+  "gates": {
+    "integration": {
+      "tests": 169,
+      "files": 8,
+      "durationSeconds": 70.05,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 25.48,
+      "exitCode": 0
+    },
+    "ordinaryTriggers": {
+      "tests": 38,
+      "files": 1,
+      "durationSeconds": 3.62,
+      "exitCode": 0
+    },
+    "completeOwningAfterClockCorrection": {
+      "tests": 38,
+      "files": 1,
+      "durationSeconds": 43.36,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "exitCode": 0,
+      "requirements": 84
+    },
+    "docsAndErd": {
+      "exitCode": 0,
+      "tables": 172
+    },
+    "publicEnRuBuild": {
+      "exitCode": 0
+    },
+    "publicLinks": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "The actual registered agent_triggers consumer selects native professionals from the effective project package pin, preserving ordinary-agent legacy summons.",
+    "Actual operator settings and task-comment HTTP calls retain two independent human comment assignments and existing reserved Runs under host pressure instead of busy suppression. Their literal stored source and actual human attribution survive in immutable input.",
+    "Manual and comment work share the existing project canonical intake/admission service; original manual identity, source v1 snapshots, input/authority planes and late atomic receipt adoption are preserved.",
+    "A version-one server-only source appointment validates the actual open existing claim, selector, event, owned task/comment, addressed professional and matching human author. Standalone and coordinator Run insertion recheck the reserved identity and actual stored trigger fields before effects.",
+    "Actual scheduler/default standalone and coordinator drivers, real supervisor and controlled ACP processes complete valid required results. The coordinator uses its existing carrier, retaining source task/comment origin and destination separately.",
+    "A rolled-back real-claim probe proves wrong Run identity and changed selector refuse without persisting invented attempts or source changes. Actual cursor rewind preserves three assignments and exactly one create/prompt pair per Run.",
+    "Revoking the actual comment author launch authority before dispatch leaves no unauthorized assignment or ACP work and records the refusal on the existing attempt.",
+    "A posted comment exceeding the native 8000-character input cap remains stored, creates no assignment/Run, and records project_comment_input_too_large. The existing incident card has English/Russian actionable input remediation without copying comment text.",
+    "Required-result verification is server-injected; assignment completion and Brain factual confirmation remain separate. Original comment destination is frozen while delivery and explicit clarification correlation remain their later tasks.",
+    "Ordinary trigger regression, company cron/event/webhook, all authenticated manual entries and populated main-only compatibility/Brain-independent project deletion remain green. No migration or execution ledger was added."
+  ],
+  "corrections": [
+    "Adding a real coordinator comment introduced a third legitimate carrier; the workflow count now accounts for all three coordinator assignments rather than the earlier two manual ones.",
+    "The first combined gate saw no due agent-tick job after an earlier case advanced the shared clock, leaving two queued native source Runs and cascading fixture ownership failures. The test now explicitly makes its owned job due and requires one succeeded registered tick; scheduler runtime behavior was unchanged.",
+    "Oversized source input receives an explicit safe reason token and localized remediation rather than an ambiguous source-unavailable error."
+  ],
+  "limits": [
+    "T22 remains open for remaining project automation source adaptation. Project source creator attribution is still legacy-null under the existing owner CHECK and must be extended without invented historical authority.",
+    "Explicit context/update/clarification correlation and durable result delivery remain T23-T26; governed native agent-authored requests remain T27. Existing source appointments cannot impersonate a user.",
+    "No new migration, scheduler, parallel attempt ledger, real-model qualification, installable stand package, target mutation, pilot or production readiness, push or deployment is claimed.",
+    "Current runtime integration is 169/8; the final complete unit/type gates also include the localized incident presentation. Full global integration last completed in T21 and remains a later phase gate."
+  ],
+  "sourceSha256": {
+    "web/lib/specialist-assignments/intake-types.ts": "991f9b24c09a3f6cdefe9d59e77b94ead99c2140aa3c0da8191d7cbea41f19dd",
+    "web/lib/specialist-assignments/project-manual-intake.ts": "3fa59f7c6df0d2523392197216cab2ae6cc534bd1e185caeb9eed41c073a5b6d",
+    "web/lib/specialist-assignments/project-request-intake.ts": "01ef192db3227cdfb3c266604d8407457eb91c911675a899dc3b5e05b54d66fb",
+    "web/lib/specialist-assignments/project-source-types.ts": "f2f51d1a6ee526c3b88d26e06d7948ed0abaf2384a1a668fde9304af01643c79",
+    "web/lib/specialist-assignments/project-comment-appointment.ts": "e6f2138142d61a5a27ecab28c48259aaec494f1361b7d3a618f8f331adf6e4e1",
+    "web/lib/specialist-assignments/project-comment-intake.ts": "657cba9968df1f1d609a3f9ba3eb08c63997491e1a1146ff17b565e63c1b5a00",
+    "web/lib/specialist-assignments/project-admission.ts": "b2f81f2321d32dacde5831f53b6c64a84fd248821403752c8825cd0ce2128563",
+    "web/lib/agents/triggers.ts": "61aa249ce377af93c617a873bdddda6b569c3f888c2599a6f584a692f4132fe1",
+    "web/lib/agents/launch.ts": "d80676d99dfa29418c881cffee3f5f0ded9fc9898d0c6447e299705d2122bb21",
+    "web/lib/services/runs.ts": "00cb4e31cac8b2bcdd1fc2efd2f66953e4535301c588cc479469cb0c91caf96b",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "0ef8a106fc72aece6fb26b53a880c7cd1f3807413433ca352aba2b4ea7142e12",
+    "web/components/agents/agent-incident-card.tsx": "6f87e7fa6eef218ec000399f24471b6e85ee184d96ad1911edb4ca58abd9fd53",
+    "web/messages/en.json": "655f53e1b6f4c330b6e0f38fff04485f1f8f284e96b37e33db65063ff3df67a6",
+    "web/messages/ru.json": "8905c07b0cc1170e595468df5a71564968bcbb6660ca8f0b8d91c689aaa95b1b"
+  }
+}

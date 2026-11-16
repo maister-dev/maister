@@ -8,6 +8,15 @@ const routeMocks = vi.hoisted(() => ({
   getRunActivityResponse: vi.fn(),
 }));
 
+// This legacy serialization fixture does not use a database; native run/source
+// admission and cross-project refusal are qualified in the real Postgres suites.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/tokens/run-project", () => ({
+  runProjectResolver: () => async () => "proj-1",
+}));
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => ({ name: "db" }),
 }));
@@ -202,6 +211,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
         limit: 25,
         salience: "normal",
         client: { name: "db" },
+        recipient: { kind: "token", tokenId: "tok-1" },
       },
     );
     await expect(res.json()).resolves.toEqual({
@@ -324,6 +334,7 @@ describe("GET /api/v1/ext/runs/[runId]/activity", () => {
         limit: 25,
         salience: "normal",
         client: { name: "db" },
+        recipient: { kind: "token", tokenId: "tok-1" },
       },
     );
   });

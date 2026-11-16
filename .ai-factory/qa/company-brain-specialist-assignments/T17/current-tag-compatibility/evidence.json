@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "actual_archived_tag_compatibility_passed_live_gate_separate",
+  "engineVersion": "3.11.1",
+  "checks": {
+    "actualArchivedTags": {
+      "passed": 41,
+      "failed": 0
+    },
+    "newV103ArchiveCommand": {
+      "exitCode": 0
+    },
+    "newV104ArchiveCommand": {
+      "exitCode": 0
+    }
+  },
+  "method": "39 retained exact local tag archives plus immutable rah/v1.0.3 and rah/v1.0.4 archives; combined inventory rechecked against all 41 current peeled local tag commits. Archive bytes validated through the real package compatibility loader.",
+  "limits": [
+    "No package hooks, model prompts or services executed by this static gate.",
+    "Local tags are not published remote availability or live workflow readiness.",
+    "Complete live qualification remains separate."
+  ],
+  "tagManifest": "tag-manifest.json",
+  "prior39TagProof": "../compatibility-status-checkpoint/evidence.json"
+}

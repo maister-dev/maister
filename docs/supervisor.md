@@ -139,11 +139,10 @@ Request payload (`envelope.payload`):
   "stepId": "plan",                         // step attribution; log file: <runId>/<hostSessionId>.log
   "runner": {
     "version": 1,
-    "runnerId": "claude-code-env-router",
+    "runnerId": "claude-code-glm",
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "glm-5.1",
-    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": {
       "kind": "anthropic_compatible",
       "baseUrl": "https://api.z.ai/api/anthropic",
@@ -417,6 +416,52 @@ write lifecycle across smoke processes; its OS lock is released if a process
 crashes, so an older probe cannot overwrite a newer generic failure. Initialize, session
 creation, and each permission probe are independently bounded to ten seconds;
 a timeout is an error and never produces fresh eligibility evidence.
+
+Strict tools/MCP launch also requires `smoke.capabilityEnforcement.status="ok"`.
+Run `smoke:acp claude --capability-enforcement --runner /path/to/runner.json --cache /path/to/adapter-smoke-cache.json`
+with the installed runner's `RunnerLaunch` JSON (version, runnerId, adapter,
+capabilityAgent, model, provider and default permission policy). Provider secrets
+remain environment references. A runner file requires exactly its matching adapter.
+The probe creates an isolated working directory and a private MCP server with empty
+`hitl_list` and read-only `probe_read` tools; it has no connection to Inbox or Brain.
+Its four independently checked calls cover a write command, a benign shell command,
+and both MCP effect annotations. Each target tool must reach `requestPermission`
+within sixty seconds; duplicate callbacks or tool discovery cannot qualify it.
+ToolSearch alone is allowed once to discover the isolated MCP tools; target calls
+are denied without persisting permission rules. Claude governed sessions and probes
+receive host-owned inline `permissions.ask=["*"]` settings and disable permission
+bypass on both new and resumed sessions. Default mode alone does not arbitrate safe
+native tools. The same rule covers read-only sessions without a materialized project
+settings file. Capability smoke contract version 2 is stored in the private cache;
+older successful evidence becomes pending and requires a fresh ritual. The public
+diagnostic shape and historical run snapshots remain compatible.
+
+Engine 3.11.1 includes this native arbitration fix. RAH package `rah/v1.0.1`
+declares that minimum; the native findings format retains its 3.11.0 floor and
+historical result revisions remain valid. Root proposal write-back needs both its
+declared strict tool and current `knowledge:propose` authority. Intermediate research
+and control Flows keep read-only tool policies.
+
+The manager stamps only its injected native MCP descriptor with optional private
+`platformOrigin=maister_facade`. This field never reaches ACP and cannot originate
+in an authored MCP catalog entry. It lets read-only sessions classify the native
+knowledge GET tools from the shared effect contract; endpoint source grants and
+strict capability guards still apply. Model/MCP annotations cannot grant authority.
+Capability prompts have a 60-second deadline; initialization/session creation keep
+the ten-second bound. A successful probe demonstrates these observed permission
+callbacks and identities, not completion of an application workflow or pilot.
+
+ACP permission requests may contain only changes to an earlier tool-call event.
+The production bounded decoder and smoke client share a live identity context,
+keyed by ACP session and tool-call ID. Only explicit adapter tool-name metadata
+and kind are retained, at most 32 entries and 4 KiB of encoded identity data per
+connection; raw input, diffs and arbitrary metadata are not cached. Terminal
+calls are removed, and bounded eviction cannot lend identity to another call.
+Contradictory announced/requested names or kinds fail before permission dispatch
+with `ACP_PROTOCOL`, `required_output_incomplete` and
+`outputFailure="producer_permission_invalid"`. An identity exceeding the context
+bound uses the existing `producer_retained_limit` classification. Current source
+authority and permission decisions remain separate from this protocol context.
 
 `envRefs` contains a fixed safe catalog of known runner env-ref names plus the
 comma-separated names in `MAISTER_DIAGNOSTIC_ENV_REFS`. It reports presence
@@ -803,20 +848,23 @@ calls `pendingPermissions.cancel(sessionId, requestId, "checkpoint")`
 — the same wire-level outcome shape the operator-cancel path produces,
 plus a supervisor-side `reason` marker that propagates onto the
 `session.exited` event. The supervisor then `markIntentionalShutdown`s
-the session with `reason="checkpoint"`, SIGTERMs the child, and waits
-for graceful exit up to `MAISTER_KILL_GRACE_MS`. If the grace expires
-the supervisor SIGKILLs and returns `503 EXECUTOR_UNAVAILABLE` — the
-web sweeper treats this as retryable and re-attempts on the next tick.
+the session with `reason="checkpoint"` and uses the owned session teardown.
+After SIGTERM it waits for terminal output and positive retirement of the
+process group. If the leader stays alive past `MAISTER_KILL_GRACE_MS`,
+teardown can escalate through the still-owned leader and verify retirement
+within a second grace window. When retirement remains uncertain, Web retains
+the pending checkpoint and reconciles it on the next sweep.
 
 Status codes:
 
 - `200 { alreadyCheckpointed: boolean, sessionId, monotonicId }` —
-  graceful exit completed (or idempotent ack if the session was
-  already in `exited`/`crashed`).
+  terminal output and group retirement confirmed. The same proof applies to a
+  new checkpoint command for an already exited or crashed session.
 - `404 { code: "PRECONDITION" }` — unknown sessionId.
 - `409 { code: "PRECONDITION" }` — body contained unknown keys.
-- `503 { code: "EXECUTOR_UNAVAILABLE" }` — SIGTERM grace expired,
-  SIGKILL was issued; sweeper retries.
+- `503 { code: "EXECUTOR_UNAVAILABLE" }` — the owned session did not retire
+  within the available grace. The response includes the stage requiring
+  reconciliation.
 
 #### Checkpoint + Resume lifecycle
 
@@ -1175,6 +1223,15 @@ with immutable run/assignment/epoch/session identity, registered process group,
 OS boot identity and PID namespace,
 phase (`registered`, `unproven`, `released`) and registration/retirement times.
 The host records a gated process group before permitting adapter execution.
+After native exit and output drain, heartbeat releases that exact recorded
+command/session/assignment owner when its captured OS boot and PID namespace
+still match and the kernel positively reports whole-group absence (`ESRCH`).
+This observation precedes terminal publication and sends no process signal.
+Live descendants or unavailable observations retain the obligation for existing
+scoped recovery. Historical unknown owners are not backfilled as retired.
+Gate-start failures log the original bounded error identities and codes with
+server-recorded command/session IDs. Raw error messages, paths, arguments,
+environment and stderr stay excluded; the existing HTTP refusal remains intact.
 Recovery observes that group without treating its numeric ID as authority to
 signal another process. An active group or unavailable observation keeps the
 original create unresolved; confirmed group retirement within the recorded PID
@@ -1426,6 +1483,12 @@ unit spawn test.
 
 ## ACP Wire Lifecycle
 
+Claude ACP 0.95 may report an unknown context-window count as
+`usage_update.used: null` when an Anthropic-compatible provider omits cache
+counters. The supervisor retains this advisory frame in the raw stream and
+does not publish a numeric context measurement. It still validates the
+terminal prompt response and records any available token usage separately.
+
 The supervisor speaks JSON-RPC via
 `@agentclientprotocol/sdk@0.22.1`'s `ClientSideConnection` for every
 session. `POST /sessions` creates the adapter process and ACP session;
@@ -1445,7 +1508,6 @@ until the web tier calls `POST /sessions/:id/input`.
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "claude-sonnet-4-6",
-    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": { "kind": "anthropic" },
     "permissionPolicy": "default"
   },
@@ -1459,6 +1521,11 @@ During migration `executor` remains required for backward compatibility. When
 launch source of truth and derives the effective executor/env/argv from it.
 `runner.env` values keep their stored form; the supervisor resolves only values
 with the `env:` prefix and passes all other values literally.
+
+For Claude, the explicit effective model takes precedence over inherited,
+runner and adapter model environment values. The supervisor passes it as
+`ANTHROPIC_MODEL` and as the SDK model option when it creates or resumes a
+session. The `default` selection uses Claude's native model resolution.
 
 The response includes the negotiated ACP session id:
 
@@ -1589,3 +1656,15 @@ Supervisor boot requires Node >=24.15.0 <25. Runtime pressure and projection set
 ## Operational agents
 
 Operational agents use the existing session/input/permission protocol and assignment fences. Multiple permission requests retain separate request IDs, choices and delivery receipts; checkpoint continuation does not grant unanswered requests. No operational-kind-specific supervisor wire field or automatic approval is introduced.
+
+## Configured stand operation transport
+
+[Stand maintenance](system-analytics/stand-maintenance.md) extends the existing execution-host boundary with five routes; exact envelopes are in [supervisor OpenAPI](api/supervisor.openapi.yaml).
+
+- `POST /stand-operations/dispatch` sends one restart command under the active run fence. The existing command/receipt ledger retains it with a typed stand-operation owner, never a new command/attempt ledger.
+- `POST /stand-operations/receipt` reads the original helper receipt under a current recovery permit.
+- `POST /stand-operations/observe` observes the exact configured unit before a restart under a current reconciliation permit.
+- `POST /stand-operations/verify` observes independent health with a fresh platform nonce.
+- `POST /stand-operations/logs` reads sanitized logs under a current operation-bound logs permit.
+
+The read routes use an operation-bound permit and the historical origin run, not a released session fence. The target endpoint, credential and unit come only from frozen server configuration; the helper is resolved from the target incarnation and pinned.

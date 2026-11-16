@@ -1,0 +1,81 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793675014468,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793675014527,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":13,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793675014527,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793675014536,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793675014537,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":23,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793675014653,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":11,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793675014653,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793675014660,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":7,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793675014661,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":19,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793675015405,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":867,"containerId":"88119688fac521002b473b68b666cc21b4865778a4c3ceaf929a0453ba9ecd62","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793675015416,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":902,"containerId":"88119688fac521002b473b68b666cc21b4865778a4c3ceaf929a0453ba9ecd62","endpoint":"postgres://localhost:64045/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793675015691,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":214,"querySubmissions":6,"durationMs":275,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675015730,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":39,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675015730,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:64045/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793675015880,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":1218,"containerId":"aa4c35402462ada6bbb3b4cfe140e987d0f4029b34b415cb11eff15b9414a1ca","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793675015885,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":1243,"containerId":"aa4c35402462ada6bbb3b4cfe140e987d0f4029b34b415cb11eff15b9414a1ca","endpoint":"postgres://localhost:64046/native_company_grants","msg":"started bare test database"}
+{"level":30,"time":1793675016004,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"tokens-issue","tokenId":"dc757e25-968c-4b74-a8aa-72d3b58b1e29","ownerUserId":"dffdadcd-7aa7-44f1-aaeb-c95250cec6c5","scopeCount":2,"global":true,"hasExpiry":false,"msg":"api token issued"}
+{"level":30,"time":1793675016165,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":214,"querySubmissions":6,"durationMs":279,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675016182,"pid":58975,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":167,"containerId":"88119688fac521002b473b68b666cc21b4865778a4c3ceaf929a0453ba9ecd62","endpoint":"postgres://localhost:64045/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (13 tests | 1 failed | 12 skipped) 1670ms
+   × IT-CBX-02 native external validation keeps the established 422 contract and concealed references remain 404 16ms
+{"level":30,"time":1793675016202,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":11,"querySubmissions":6,"durationMs":36,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793675016202,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:64046/native_company_grants","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793675016220,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"company:grants","companyId":"ac97f70c-8f07-445b-9153-1f7d563a5b51","administratorId":"a2fe78aa-bd44-4f71-a6e3-6d5d7b17037b","principalKind":"user","principalId":"a2fe78aa-bd44-4f71-a6e3-6d5d7b17037b","count":1,"msg":"explicit company authority granted"}
+{"level":30,"time":1793675016485,"pid":58976,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":183,"containerId":"aa4c35402462ada6bbb3b4cfe140e987d0f4029b34b415cb11eff15b9414a1ca","endpoint":"postgres://localhost:64046/native_company_grants","msg":"stopped test database"}
+ ❯ |integration| app/api/company/grants/__tests__/grants.integration.test.ts (5 tests | 1 failed | 4 skipped) 2097ms
+   × IT-CBK-01 an installation administrator grants explicit company access without a repository or implicit content access 100ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBX-02 native external validation keeps the established 422 contract and concealed references remain 404
+AssertionError: expected 400 to be 422 // Object.is equality
+
+- Expected
++ Received
+
+- 422
++ 400
+
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:1975:26
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |integration| app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 an installation administrator grants explicit company access without a repository or implicit content access
+AssertionError: [{"instancePath":"/details","schemaPath":"#/properties/details/required","keyword":"required","params":{"missingProperty":"reason"},"message":"must have required property 'reason'"}]: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ assertContract app/api/company/grants/__tests__/grants.integration.test.ts:41:60
+     39|
+     40|   if (!validate) throw new Error(`Missing native company contract ${na…
+     41|   expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
+       |                                                            ^
+     42| }
+     43| function request(method: string, body: unknown): NextRequest {
+ ❯ app/api/company/grants/__tests__/grants.integration.test.ts:178:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 16 skipped (18)
+   Start at  06:03:33
+   Duration  2.58s (tests 79%, import 16%, transform 5%)

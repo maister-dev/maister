@@ -101,9 +101,14 @@ export default async function InboxPage(): Promise<ReactElement> {
                 readAll: tp("notifReadAll"),
                 readAllBusy: tp("notifReadAllBusy"),
                 empty: tp("notifEmpty"),
+                company: t("company"),
+                run: t("resultRun"),
                 eventKind: {
                   comment_added: tp("notifKind.commentAdded"),
                   task_mentioned: tp("notifKind.taskMentioned"),
+                  assignment_result_available: t("resultAvailable"),
+                  stand_incident_opened: t("standIncidentOpened"),
+                  stand_incident_resolved: t("standIncidentResolved"),
                 },
               }}
             />

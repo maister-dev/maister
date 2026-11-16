@@ -1,0 +1,145 @@
+{
+  "task": "T20",
+  "slice": "Native company permission, current human response authority and owned delivery",
+  "date": "2026-11-06",
+  "baseCommit": "94d2667126ecbac559f74cd6e586ab040437f833",
+  "status": "Native company live permission and checkpoint/reissue/current-grant delivery qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0231_company_hitl_wait_events"
+  ],
+  "red": {
+    "authority": {
+      "log": "authority-red.log.gz",
+      "failure": "An initiating company reader/updater without assignments:answer received HTTP 200 and permission execution rather than 403."
+    },
+    "waitFact": {
+      "log": "wait-event-red.log.gz",
+      "failure": "The native company permission committed no run.needs_input fact."
+    },
+    "resumeActor": {
+      "log": "checkpoint-resume-red.log.gz",
+      "failure": "The reissued company permission input acknowledged externally, but human completion failed because the new row had no retained responding actor."
+    }
+  },
+  "intermediateFailures": [
+    "The first fixture used an ordinary read tool, correctly auto-allowed by the read-only execution policy; changed the fixture to the registered knowledge_propose control-plane tool permission. No proposal call or Brain confirmation is performed.",
+    "The upgrade seed omitted required domain_events.occurred_at; corrected all event seeds, then the populated upgrade passed.",
+    "The first supervisor unit run missed three process output frames; the unchanged full suite passed on a separate run with local process permissions.",
+    "The sandboxed contracts check could not create the tsx IPC socket; the permitted check passed.",
+    "The checkpoint fixture first awaited the old in-process driver indefinitely; it must explicitly detach that driver after checkpoint and start the real continuation worker for deferred evidence. Neither production evidence nor timeouts were weakened.",
+    "Parameterized live/checkpoint fixtures originally reused one specialist identity, correctly refused by the existing one-current-binding invariant; installed distinct role identities.",
+    "The revoked reissue assertion initially expected a new human row; its transaction correctly rolls back. The final scenario observes the durable host permission event and absence of input/new human state before re-grant.",
+    "The final type check required passing the concrete test database, rather than its wider transaction-capable Db type, to the existing project capacity seed helper."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 5,
+      "tests": 50,
+      "durationSeconds": 26.37,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "supervisorIntegration": {
+      "exitCode": 0,
+      "files": 37,
+      "tests": 347,
+      "log": "supervisor-integration.log.gz"
+    },
+    "supervisorUnit": {
+      "exitCode": 0,
+      "files": 50,
+      "tests": 500,
+      "log": "supervisor-unit-green.log.gz"
+    },
+    "promptOwnerRecovery": {
+      "exitCode": 0,
+      "tests": 62,
+      "files": 1,
+      "durationSeconds": 860.98,
+      "log": "prompt-owner-recovery.log.gz",
+      "sourceBoundary": "Complete regression before the additive company-only reissue actor inheritance; final project permission/reissue cases rerun separately."
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "drift.log.gz"
+    },
+    "projectResumeFinal": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 3,
+      "otherCasesSkipped": 59,
+      "durationSeconds": 14.27,
+      "log": "project-resume-final.log.gz"
+    },
+    "checkpointCurrentGrant": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 2,
+      "otherCasesSkipped": 31,
+      "durationSeconds": 8.82,
+      "log": "checkpoint-current-grant.log.gz"
+    }
+  },
+  "qualified": [
+    "A real trusted installed operational role uses the native company driver, actual supervisor/ACP child and canonical projection worker to request and receive one governed tool permission.",
+    "The permission wait fact, exact owner and existing human assignment are retained transactionally without project/task identity.",
+    "Current explicit company read/answer and inherited source access govern human consent, including a transactional action-time recheck. Administrator or launch authority alone does not supply human consent.",
+    "A refused response persists no answer, acknowledgement or session.input command.",
+    "Authorized consent records its session-derived company actor; the actual owned delivery creates one input command and completes human work only after acknowledgement.",
+    "The operational Run completes with its typed result while the business assignment remains active at revision 3.",
+    "Populated migration preserves existing project wait/company metadata facts and rejects missing, foreign and retargeted company Run identities.",
+    "Actual native sweeper checkpoint releases the company execution generation; the existing continuation worker reconciles retained evidence and resumes without a project or new business assignment.",
+    "A reissued company permission claims its human work under the original human decision actor, rechecking current read/answer/source authority before preparing input. ACK completes both linked human assignments under that actor.",
+    "Revocation while the saved choice awaits shared pool capacity permits no input command. A re-grant allows the retained choice to complete through one input command; original and reissued human attribution remain inspectable."
+  ],
+  "notYetQualified": [
+    "Complete company interruption/restart recovery beyond the qualified idle permission path",
+    "Company Inbox/full Run UI",
+    "Real-model companion-package or stand operations pilot",
+    "Remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "b2894e15595a106fd3de64795849edd317c8b99427e1e93d064c985785e74ce6",
+    "docs/api/web.openapi.yaml": "b7000c2ad8c136b78f0ecdbab2ece2ceb5212edab322ef17b3085e909a390094",
+    "docs/database-schema.md": "3881e493b78ef0a417163b1867c5006332373728837786cec6ae0a2e07aeab28",
+    "docs/db/domain-events.md": "5440df9dac392a904004d79e1385ad6c15686f85737b49044619717e3c39f9c0",
+    "docs/system-analytics/specialist-runtime.md": "65730ee5f8b158b2a9dc16cee829c5b02ed268c5ea8b56eb7fd091b668e8b20c",
+    "supervisor/test/fixtures/mock-acp-lifecycle.mjs": "8c8689f6a2ab9d8371461a20419c0412cb39c02be29461530058bd02c099f3f9",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "6f0bb80b11f3a9458fd0de509fd503a6de2221ca2d7f6fcf9d76893695a99d62",
+    "web/lib/agents/permission-resume.ts": "9098aa40bb5a3e572029a9e5f60df5b74a7aae3cf3cb97925becaf5d09e73d8f",
+    "web/lib/agents/permission.ts": "b9b2b707ffb6a86ae7dc0574744eea224c6aa475400457c4f8f8faf8eee8b779",
+    "web/lib/db/__tests__/migration-company-hitl-events.integration.test.ts": "21d2d979bda606c05811cea7ecadd2a1441a875a7ee4f578ee3cca048c5fc0b5",
+    "web/lib/db/migrations/0231_company_hitl_wait_events.sql": "5c14ce3dd1256cba121b91e3624683f392f373ca483448125e7b61b8f5a6e4f5",
+    "web/lib/db/migrations/meta/0231_snapshot.json": "e95310804d67c1a63a2cc1cf14f7ec5821212b18d1611b0ce9de12532c7e3909",
+    "web/lib/db/migrations/meta/_journal.json": "3aca0da62cf52258b23554af9b4e6ff33babc3b06795a4ef9f4abd65effe23c8",
+    "web/lib/db/schema.ts": "b78f6b9da66930997f8dd4f77a8986cf7bbb4c66bfceafcf630e76fbfc1f7dd9",
+    "web/lib/runs/hitl-create.ts": "f25ee7f5d5ca1a157db9ce490133ba87a13967f1c3f3a757fa8cca9186c0f772",
+    "web/lib/services/hitl.ts": "62ef083aee1bd1ce9432813b440d0d6ef167d40c84160079e1e946326b84531b"
+  }
+}

@@ -25,6 +25,14 @@ Inside `web/`, two organizational axes coexist:
    `supervisor-client`, `projects`, `scheduler`, `db`, `reconcile`)
    organized by concern, not by feature.
 
+Native company identity and grant administration live in `web/lib/company/`; structured knowledge,
+proposal review and evidence inspection extend `web/lib/brain/`. Session and bearer Route Handlers
+share these server-only services, while generated MCP inputs preserve the same native contracts.
+The `/knowledge` and `/settings/company-grants` server-rendered surfaces use these same services;
+client mutation controls submit strict native requests and preserve uncertain delivery identities.
+Private agent and personal librarian memory remain separate stores. Current contracts and persistence
+boundaries live in `docs/system-analytics/company-brain.md` and `docs/db/company-brain-domain.md`.
+
 Inside `supervisor/`, modules organized by concern: `acp-client`, `spawn`,
 `heartbeat`, `checkpoint`, `http-api`.
 
@@ -225,6 +233,50 @@ web/lib/supervisor-client ──HTTP──► supervisor/src/http-api  ──►
   existing result, domain-event, execution-host and workspace lifecycle ledgers.
   [Operational contracts](../docs/system-analytics/operational-agents.md) own
   their validated combinations and recovery semantics.
+- `lib/stand-operations/` owns reviewed stand configurations. The registry
+  retains current company authority, exact runbook witnesses and one canonical
+  systemd resource identity for aliases of the same configured unit.
+- `lib/specialist-assignments/` owns business assignment state and immutable
+  input/authority snapshots. It links the existing execution/result ledgers
+  and emits content-free facts on the existing domain outbox. Current action
+  and source access are checked in the transaction; historical grants never
+  authorize current operations. Company assignment storage has no repository
+  dependency. Company manual intake composes the existing native reservation
+  transaction bodies, then wakes the existing pool scheduler after commit.
+  Session API handlers only parse bounded input and return currently authorized
+  DTOs. Project standalone intake preserves the original queued request before
+  existing repository admission and links the assignment inside the existing Run
+  transaction. Project coordinator intake freezes the exact provider and initial
+  existing task while keeping private assignment input out of the shared task.
+  Browser, personal-token and versioned existing project launch handlers reuse
+  the same canonical intake/reader. Project route owner/attachment identity is
+  server-resolved; late atomic receipt adoption cannot re-enter completed admission.
+  Native project cron/event review metadata belongs to the existing schedule head
+  and collection CAS; `lib/agents/project-source-review.ts` validates current
+  settings authority and hashes the reviewed input. Null legacy history remains
+  unknown. Explicit source review intent preserves ordinary editing/repair without
+  a working pin. Reviewed project cron claims capture source v3 and reuse canonical
+  assignment intake, the existing reserved Run and separate scheduled input v1;
+  fresh admission validates the exact current source appointment and authority.
+  Binding-source guards refuse downgraded claims. Project event assignment routing
+  remains a separate T22 extension.
+  Human task mentions of actual pinned professionals use that same project request
+  service before the legacy busy check. A versioned internal source appointment
+  revalidates the stored author/comment, existing claim/selector and reserved Run
+  inside standalone/coordinator insertion; independent requests remain queued.
+  Registered company cron dispatch extends the existing agent tick and trigger
+  claim/reconciliation ledger; no new scheduler or attempt store is introduced.
+  Native cron source enablement requires declared triggers, current creator
+  authority, enabled reviewed bindings and a nonempty recurring request.
+  The registered event consumer composes its existing project adapter with native
+  company event intake. Native cron/event creation shares source receipts, current
+  authority and reviewed binding validation. Event enablement additionally requires
+  the receiving agent's current assignment-read grant and reviewed limit. The
+  existing inbound event route negotiates a bounded company webhook envelope;
+  actual personal-user attribution and canonical receipt identity survive token
+  rotation, using the same native transaction as manual work. No parallel clock
+  or attempt ledger is introduced.
+  Verified assignment acceptance retains its gate; native company execution is implemented.
 - ✅ Server Action (`app/.../actions.ts`) imports from `lib/*`.
 - ✅ `lib/supervisor-client.ts` imports the wire error taxonomy plus a small set
   of client-safe pure modules (the execution-host lag predicate and default,

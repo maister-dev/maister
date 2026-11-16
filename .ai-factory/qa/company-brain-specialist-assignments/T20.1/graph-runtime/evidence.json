@@ -1,0 +1,110 @@
+{
+  "task": "T20.1",
+  "slice": "Native company graph dispatch and terminal lifecycle",
+  "date": "2026-11-07",
+  "baseCommit": "89c10e7ca2707dee256f4e63b03d94824392fad4",
+  "status": "Checkpoint qualified; T20.1 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0236_company_flow_runtime"
+  ],
+  "gates": {
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9312,
+      "durationSeconds": 26.85
+    },
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 7,
+      "tests": 152,
+      "durationSeconds": 139.78
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "schema-drift": {
+      "exitCode": 0,
+      "log": "schema-drift.log.gz"
+    },
+    "erd": {
+      "exitCode": 0,
+      "log": "erd.log.gz"
+    }
+  },
+  "red": {
+    "loader": "1/37 failed",
+    "dispatch": "1/38 failed",
+    "queued-authority": "1/38 failed"
+  },
+  "qualificationBoundary": "Actual PostgreSQL, pinned Git fixture package, owned supervisor, controlled ACP, prospective engine and capability metadata. Not real model, companion or stand readiness.",
+  "extendedProjectBaseline": "Earlier 1530.53-second run: six files passed, one obsolete native callback failure. Corrected native path is included in final seven-file gate; not a fully green final-source regression.",
+  "notYetQualified": [
+    "Human/form waits, cancellation, permission and idle interruption recovery",
+    "Unsupported native combination audit",
+    "Engine activation and full T21 regression",
+    "Real companion package and stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "e09efd6ed6686d7ab050038333d10a3d4f0f6ee03f2b67f486cfa59e5b8c7ce9",
+    "AGENTS.md": "1a2a285fcce0c44c56554252b0361a662996e58982b4bff6e4d27954acbb025c",
+    "docs/database-schema.md": "4562dd7996c5a34cf72454166fe079d56db1cedba828606971e6eb8da048f123",
+    "docs/db/company-brain-domain.md": "075a2db7cc02b62b8d0d5628ca6526272bb823155b0101f17c086c5ee90d63a8",
+    "docs/db/domain-events.md": "d6af276bcb3ba24122a13134deebe96a5b92d1a6f52d4b7913d63866a5ccd103",
+    "docs/db/operational-agents-domain.md": "6f48ed40478009a4a8e081b998265dc7482dd4b610542252dde0b1087791155f",
+    "docs/db/runs-domain.md": "a9c0acae29d993bcea42fa1c73b3478e3fe40af2c0b705f45e0dcb0735622bee",
+    "docs/db/specialist-assignments-domain.md": "1e875f9221bbe4a296079858bc2b28f5dc519e683fb24d14f2214a7828a4c9aa",
+    "docs/system-analytics/specialist-runtime.md": "17e6ea0396dbebeb49a2ef467409ce7499a20e116a8c89863c95635e82421a6b",
+    "web/app/api/runs/[runId]/rework-claim/claim/route.ts": "1779cbb83ee348365d29dd0322f18a378837efedbc3c1c50077794f0f5bce446",
+    "web/app/api/runs/[runId]/rework-claim/return/route.ts": "c0a4156172af0bf43f50af65f5f75958aa233815baf7ce96036bea4cad69000b",
+    "web/app/api/runs/[runId]/takeover/claim/route.ts": "441ee779d852dd3708e44fabc58a55385633d3f7df3c15953fb2d2c469cfbd85",
+    "web/app/api/runs/[runId]/takeover/return/route.ts": "219c5ced489a617088b1aa2d748a4f6b8b01c6cf434f20f46322a589f605764b",
+    "web/app/api/runs/__tests__/takeover.test.ts": "b6c5a348fe53ee186c8086bb6da2772f4c66ef20cf16c12bd6a0be9e748f29f4",
+    "web/app/api/v1/ext/runs/__tests__/delegate-flow-arm.integration.test.ts": "6c816d42ddfafc90bcd1146204b0db8820989c2c08892bce9c7de9b74dbc4e75",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "248587b447578a1ae30dffc2c3b374158831cbfba9d38e0a3aebb1ecea5924c2",
+    "web/lib/agents/company-flow-materialization.ts": "62e24a13916ce60807b51506d322ab46480f84873c79a18b0ba77561a115e525",
+    "web/lib/agents/company-flow-workspace.ts": "69c94df60bdc1d1a3d8ffe87716bb36d3ccaaa744012ab1f8edee5b0e9c44d26",
+    "web/lib/agents/finalization.ts": "9aea1cd63b3e2b987b78491199bf126823ac93c3a2d0241f420397d719f78755",
+    "web/lib/agents/launch.ts": "a8f3bc1c969f98981db27326f8b6e5f3d3675e519ae388bd3f7ffc733941f04a",
+    "web/lib/agents/materialization-manifest.ts": "b220ded904b842efb6a5e36a6d7a507c61fe35a6fe8c020193837f984202da9c",
+    "web/lib/agents/operational-context.ts": "80cb0492dbde4c668ddca8ce47030f984fc282fb03358ba55b2f6a1b79eaaaaa",
+    "web/lib/agents/resource-cleanup.ts": "5123610f3839b70df9d508b1ff7da43fc27b0c524c2eb65dd9f518017ad041ab",
+    "web/lib/db/migrations/0236_company_flow_runtime.sql": "2763f53c6affcb49fc31e97416d0d724d06fb157d5d4d6e39a233f8832e7e2f0",
+    "web/lib/db/migrations/meta/0236_snapshot.json": "d0cca7bcd926871b023f641e8c81ef4d84ee410c498d2754d9a9b77447a08c8d",
+    "web/lib/db/migrations/meta/_journal.json": "b4eae75376317f874576b04028c5a90537ab8ae0063dfa0cf24cb9014175ce87",
+    "web/lib/db/schema.ts": "5adecdd945bb35f2d78e80745bd641e14cfcc9bc3e521604aaef6322fcc3c6e4",
+    "web/lib/execution-host/__tests__/fixtures/runtime-data-boundary-inventory.ts": "d501ee92157278dec84e08eea32e1d663e0f4f281afc4523ac2b941518db4897",
+    "web/lib/flows/graph/__tests__/driver-claim.integration.test.ts": "945eaa8dd6d2430c0e7bbca72d4322550d3e45eea734ee23f9be9d8c6dd6af92",
+    "web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts": "05b39400ac7d1541c4de4e0dfbb7ada81d441ebb45c4acc6c6e407d429d59eac",
+    "web/lib/flows/graph/consensus/runtime.ts": "d4753d81a01dfb30e737075eddbb968682db47b7d138664b2af8e2b933ae7cd0",
+    "web/lib/flows/graph/default-artifacts.ts": "36dc0a65b5340e137b2e91c92457a1ba54214128115bf385c56e63168ad0f67f",
+    "web/lib/flows/graph/gates-exec.ts": "8e7334dbeedc94f75779ac187af9c7527f81272f255ca2691f20341a0a4b44f2",
+    "web/lib/flows/graph/runner-core.ts": "ba45cf2ce659456e1f33254f8502e7b6c40399a91077781f9a19ad496bfeab8e",
+    "web/lib/flows/graph/runner-graph.ts": "9dcfbf7419532ee6524840fbe8279e9273ccb4b17f58c2ba36597f2f5c9e7b9e",
+    "web/lib/flows/runner-agent.ts": "c8bfc4387ca55c3c2a1d3da29853193252bdc5cfa902aebd7360d7957b6e60ab",
+    "web/lib/flows/runner-cli.ts": "3b0b56b50d07afcbc15aab2cf53bc32b96c7487a490cbe0e9219221a358ffc9a",
+    "web/lib/flows/runner.ts": "20016fd1752918765b96a589377c5e04f16f8eb9e3034b03901670ceea7af918",
+    "web/lib/gc/operational-disposition.ts": "2472d9402a775d923f8e9c5d96b40e62f8db7439cc8622deff0a0d1cb08b2096",
+    "web/lib/run-results/company-flow-terminal.ts": "07dd18657435b5a74ba2a8886aafc7315c8462795bcaa8b3f74aa659f0fad74a"
+  }
+}

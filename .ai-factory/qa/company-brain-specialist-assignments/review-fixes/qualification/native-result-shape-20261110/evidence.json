@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "status": "native grammar and package guidance verified locally; renewed actual GLM-5.3 qualification pending",
+  "actualRed": "../live-glm53-b081694ea/evidence.json",
+  "observedViolation": "Two actual GLM-5.3 leaf results put selection in four finding objects; the closed native schema correctly refused them.",
+  "change": "Clarify root-level selection in the shared native appendix, supply one typed executable nonempty leaf example with explicit absent evidence and no source identities, and clarify the installed RAH guidance. No schema, authority, migration or accepted historical output changes.",
+  "localTDD": {
+    "red": "Existing launch grammar test rejects old guidance without an executable nonempty leaf example.",
+    "greenUnit": {
+      "passed": 10,
+      "files": 1
+    },
+    "nativeInstallerAndFindingsReduction": {
+      "passed": 49,
+      "files": 3,
+      "seconds": 6.12
+    },
+    "webUnitAfterGuidance": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 27.9
+    },
+    "lint": "passed"
+  },
+  "companion": {
+    "checkout": "/private/tmp/maister-rah-selection-shape",
+    "branch": "codex/rah-selection-shape",
+    "commit": "1fd4b30aa37f861b22e139d0a8e910be1f319873",
+    "tag": "rah/v1.0.5",
+    "publication": "local only",
+    "priorPinUnchanged": "rah/v1.0.4 at a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+    "guideLanguages": [
+      "en",
+      "ru"
+    ],
+    "qualificationScope": "Actual installer/reduction contract tests used identical candidate bytes before the local commit; exact pinned live Git-loader qualification remains pending."
+  },
+  "independentReview": "No concrete issues; no fabricated citations, no extra fenced output block, no loosened validator or authority, and EN/RU guidance matches.",
+  "sources": [
+    {
+      "path": "web/lib/run-results/findings-prompt.ts",
+      "sha256": "1e285d9318b7a45e6db7a696a001e0f8e3ab8253c87fda7f1c821d62e6eff5ad"
+    },
+    {
+      "path": "web/lib/agents/__tests__/launch.test.ts",
+      "sha256": "879f23f8f0b9b5292c4d0b56ab4b6f59730698b7aa3ccd6bf599cab3e09b6744"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "cb-glm53-native-shape-red.log.gz",
+      "sha256": "d1b984f7dff9fec03b3be22e0a05801c1489d651fc41b3bd0c5807f5021acff8",
+      "sourceSha256": "b3ecd9ca713713eada367a0b301867444563d8263b3bd49a4d1b22615d3c34a4"
+    },
+    {
+      "path": "cb-glm53-native-shape-green.log.gz",
+      "sha256": "ddfe234e14e430b1f67fc4219408ea8905091bacbcf08c0f847a0d083c8ef79c",
+      "sourceSha256": "e886cdca702a6dcd795215598ffb4349dcdb025d53188a1c1e2f8d4af643aaa6"
+    },
+    {
+      "path": "cb-glm53-native-shape-owning.log.gz",
+      "sha256": "2ee8dd1bc76ddfcfd1c9be2f9b57fd66d50d69659c8d48f836208be3c6b2f445",
+      "sourceSha256": "0ec8d06c84cc114514d15c47a3cc027abef4b9bdd0ef14a6229d5481a48ae9ff"
+    },
+    {
+      "path": "cb-glm53-native-shape-web-unit.log.gz",
+      "sha256": "5ebf1c2f03e5210ca024f4f7b1413c610b4d4bedcc703ddc3f7bc971d660c595",
+      "sourceSha256": "4719e86a8f3feed10df0df181473bd097aa625c1f0adb9746c11c3d324519368"
+    },
+    {
+      "path": "cb-glm53-native-shape-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-glm53-native-shape-format.log.gz",
+      "sha256": "fa4472bf6c42a57b7e1758efc044a35ff38aa7872f8a45a10d229cd15ee9047a",
+      "sourceSha256": "ae18a6ab56d95270809c588ce7c5dc0704f6e393c00f3d03f6b12cd8b361b47d"
+    },
+    {
+      "path": "cb-glm53-native-violations.json.gz",
+      "sha256": "a306efcaa3b196d3392eb3bcb66745d3d9b3239fbb2573fffc571681d6ed823d",
+      "sourceSha256": "f1f19e964a9becbe5d37ae61d85088d1c4deb55437b86c009ac582c94fe5f1c0"
+    }
+  ]
+}

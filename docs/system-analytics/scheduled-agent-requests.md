@@ -2,6 +2,16 @@
 
 **Status: Implemented.** Request-bearing writes require the compatible migration and complete runtime on every worker; follow the release and rollback procedure below.
 
+Company-owned native cron/event sources use the existing registered dispatcher,
+reserved Run and version-2 binding snapshot; their operational and coordinator
+paths are qualified in [specialist runtime](specialist-runtime.md). Reviewed
+project cron sources add version-3 binding snapshots and canonical assignments,
+under the [native admission contract](specialist-assignments.md#reviewed-project-cron-invocation).
+The invocation request grammar below remains v1, including explicit empty input
+and unchanged legacy project bytes. Review, original input and current execution
+authority remain separate; a source review never grants lasting permissions.
+
+
 ## Purpose
 
 A cron schedule may contribute a literal current request without changing its reusable agent definition, project context, configuration, memory, permission policy or completion contract. This domain owns desired schedule input, immutable claimed input and protected historical disclosure; existing scheduler, agent and Flow lifecycles remain their owners.
@@ -119,7 +129,15 @@ Generate attempt ID before insert so the envelope is complete in the claim trans
 
 IDs inside snapshots are durable audit values, **no schedule/catalog FK or cascade**. Existing `runs.agent_schedule_id ON DELETE SET NULL` remains unchanged; snapshots remain intact. Existing project-level retention/cascade rules remain unchanged. No new index is needed: fetch by existing attempt/run IDs and bounded history pages.
 
-Schedule deletion must not invalidate a claimed launch through the existing nullable FK. In each run-insert transaction, resolve the optional live `agent_schedule_id` with a project/agent-scoped `SELECT ... FOR KEY SHARE`: if the matching row is already gone, insert NULL; if present, hold the key lock through insert so concurrent deletion waits and then applies ON DELETE SET NULL. The original scheduleId always remains in the immutable snapshot. This existence read is solely for the optional FK, never for request content, enabled state or cadence. Apply it to both standalone and Flow inserts; absence/disablement of a schedule after claim is not a launch refusal. Agent/attachment/project trust or authorization revocation is a separate existing admission refusal with retained evidence. Schedule FK resolution precedes run INSERT and does not introduce a schedule→attachment lock.
+For legacy project cron admission, schedule deletion must not invalidate a claimed launch through the existing nullable FK. In each run-insert transaction, resolve the optional live `agent_schedule_id` with a project/agent-scoped `SELECT ... FOR KEY SHARE`: if the matching row is already gone, insert NULL; if present, hold the key lock through insert so concurrent deletion waits and then applies ON DELETE SET NULL. The original scheduleId always remains in the immutable snapshot. This existence read is solely for the optional FK, never for request content, enabled state or cadence. Apply it to both standalone and Flow inserts; absence/disablement of a schedule after claim is not a legacy launch refusal. Agent/attachment/project trust or authorization revocation is a separate existing admission refusal with retained evidence. Schedule FK resolution precedes run INSERT and does not introduce a schedule→attachment lock.
+
+Reviewed native project assignment admission additionally requires its exact live,
+enabled source and unchanged review/selector before a fresh Run is inserted.
+Changing or withdrawing that review can refuse fresh admission without rewriting
+the claimed input. Already admitted Run input stays immutable and is governed by
+current assignment/action authority. This additional native policy does not change
+legacy v1 claim semantics; its complete source appointment is defined in the
+[owning assignment contract](specialist-assignments.md#reviewed-project-cron-invocation).
 
 DB CHECKs must reject malformed JSON shape, unsupported version, invalid text type/length and missing identifiers using explicit null-safe predicates (`IS TRUE`); attempt snapshot IDs must equal its own ID/schedule_id and require cron origin. Run snapshots may survive into authorized manual restart descendants, so do not constrain them to current `trigger_source='cron'`. Extend the existing attempt identity guard and add a run snapshot immutability guard: UPDATE cannot change either column, including NULL→value. Set snapshots only on insert. Parse snapshots on action/read paths; corrupt/unsupported input refuses with safe CONFIG reason, never silently drops text or reads today's schedule.
 
@@ -228,7 +246,7 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 
 - Existing rows: all three added columns nullable/default NULL; no request inferred, no historical snapshot fabricated. Existing prompts and other triggers remain byte-equivalent when no current-request block applies.
 - Old clients: omitted per-row field preserves existing request for retained IDs; explicit null clears. Strict older servers cannot accept the field, so deploy server support before exposing the editor. Existing-row migration preserves scheduling cadence, IDs, revisions, attempts and evidence.
-- Retry recipe compatibility: current writes use the existing version-2 strategy/qualification contract; both version-1 and version-2 recipes support optional frozen input. Add the snapshot only when present; absent means legacy null. Preserve canonical serialization/digest of already persisted version-1 recipes exactly. Do not rewrite pending recipe hashes; test reading/delivering pre-upgrade intents and new request-bearing intents. Version-1 recipes without the new property retain their original serialized shape and digest.
+- Retry recipe compatibility: project writes use the existing version-2 strategy/qualification contract; both version-1 and version-2 recipes support optional frozen input. Add the snapshot only when present; absent means legacy null. Preserve canonical serialization/digest of already persisted version-1 recipes exactly. Do not rewrite pending recipe hashes; test reading/delivering pre-upgrade intents and new request-bearing intents. Version-1 recipes without the new property retain their original serialized shape and digest. Company-owned retry storage uses explicit v3 owner/binding/assignment references under main `0239_company_retry_scope`; project v1/v2 JSON is unchanged. The original v1 scheduled-request envelope remains separate and immutable. Company retry admission is not enabled by storage; see [retained retry scope](specialist-runtime.md#retained-retry-scope).
 - Digest compatibility includes both recipe bytes and retry contextDigest: for a legacy source with SQL NULL snapshot, omit the new property from every hash input, rather than adding a null-valued key. For a new envelope (including captured-empty), include the canonical full snapshot in context/recipe equality. Same source request and reordered JSON object keys compare equal; changed input under the same used identity conflicts. A current schedule edit must not invalidate a retry preview of an unchanged source run.
 - Allocated records: ADR-199 and migration 0213_scheduled_agent_requests. Migration 0210 belongs to agent retry strategies; child-run peek owns 0211 and 0212. Recheck allocation against integration HEAD before merging; never renumber an applied migration or a published ADR.
 - Additive migration package: Drizzle schema, new SQL, journal entry and matching snapshot. Trigger/CHECK SQL belongs to the new migration, never edits applied migrations. Validate schema↔snapshot↔SQL and generated ERD; fresh DB and populated upgrade DB must both pass. Budget a post-rebase numbering/conflict pass before merge; never renumber published ADRs or applied migrations.
@@ -254,6 +272,10 @@ EN label: **Request at launch**. Help: “Optional request for each invocation o
 | Immutable SQL evidence                                           | migration `0213_scheduled_agent_requests.sql`                                                                   |
 
 Trigger payload keys do not establish scheduled lineage. Ordinary manual, event and webhook payloads retain their existing meaning; only the explicit internal input contract carries a protected envelope. Source derivation checks project/task/agent ownership, and origin equality includes captured-empty envelopes. Malformed or conflicting evidence is refused rather than reconstructed from a live schedule.
+
+### Company specialist extension (Implemented / Designed)
+
+The [specialist runtime contract](specialist-runtime.md) owns implemented company bindings, standalone/result-only graph execution and scoped invocation. Existing project admission remains authoritative for repository work. Assignment-scoped delegation, exact-result acceptance, replacement-owner recovery and the stand pilot remain Designed in the [cooperation contract](specialist-cooperation.md).
 
 ## Expectations
 

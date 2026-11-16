@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "task": "T16",
+  "status": "installation_contract_checkpoint_qualified",
+  "companionCommit": "3a58f1851dbdfdae2e21b98784b34939642d6f49",
+  "engineVersion": "3.11.0",
+  "qualified": [
+    "The actual companion RAH candidate has four native evidence Flows and three persistent professional role definitions, pinned schema materialization, bounded direct-child delegation and original-reference reduction prompts; EN/RU installation/recovery guidance keeps source authority and confirmation separate.",
+    "One actual-Postgres lifecycle scenario installs the production candidate, proves no execution, refuses untrusted enable/role resolution and foreign source identity, trusts without native auto-enable, checks exact schema bytes/hashes, explicitly enables and proves trusted reattachment remains Installed.",
+    "Actual launch-policy validation detected the unsupported strict workspace declaration and missing required tool/ask settings. The companion now uses supported read intent, explicit ask and strict exact Brain/delegation tools; no filesystem sandbox is claimed.",
+    "All 36 pre-existing actual archived companion tags pass the existing compatibility loader under engine 3.11.0. Historical tag bytes, not a relabeled working tree, were checked."
+  ],
+  "tests": {
+    "actualCandidateLifecycle": {
+      "passed": 1,
+      "files": 1
+    },
+    "historicalArchivedTags": {
+      "passed": 36
+    }
+  },
+  "qualificationLimits": [
+    "The first install attempt failed fixture Docker discovery, not a product invariant. Loader missing-package evidence is a missing deliverable, not runtime RED. Both are retained separately.",
+    "The default platform copy is hermetic regression material; the owning lifecycle gate consumed the actual external companion checkout.",
+    "No package tag, push or release wrapper has run yet. T16 stays open for the immutable candidate and real workflow qualification with T17; no depth-2, write-back or stand-pilot readiness is implied."
+  ],
+  "logs": [
+    {
+      "path": "loader-missing-candidate.log.gz",
+      "uncompressedSha256": "9dfeb568962898ba250046dfcef05a26677ec72c7abeb782e3cca6d42e7bb6cd"
+    },
+    {
+      "path": "loader-green.log.gz",
+      "uncompressedSha256": "c70d2baf9af5a66cf319a46bb4c3b10d1501bc8d12cad318d51f912137cb5236"
+    },
+    {
+      "path": "fixture-docker-failure.log.gz",
+      "uncompressedSha256": "8af35e45db65263fa4492eef6b18ba6f71ac33f5b589c6e594999b502bd322c7"
+    },
+    {
+      "path": "trust-enable-red.log.gz",
+      "uncompressedSha256": "e9efb18231ac9d9fae80a7ecabd1dff2f3a42daed007433503bcf915ea9eaa0b"
+    },
+    {
+      "path": "source-identity-red.log.gz",
+      "uncompressedSha256": "1aec6a7550b4bde6a3d5cf68fdd0cd628e990dfff5dbe4949cc2a5c30bb9b22b"
+    },
+    {
+      "path": "install-lifecycle-green.log.gz",
+      "uncompressedSha256": "3d417b64b99a4f8d54f6d4efd32d42d07aff4b880072874d2c6c7d629e029d31"
+    },
+    {
+      "path": "actual-launch-policy-red.log.gz",
+      "uncompressedSha256": "d53456ff399084e42c1bc4e8206b59d4cc18895d1f5e90009a39873148c8e9d1"
+    },
+    {
+      "path": "actual-launch-policy-green.log.gz",
+      "uncompressedSha256": "ba1ece9246ebcc1cc640cb2588f6e838d1395fbc80db3b04c7ef4d2d562899c8"
+    },
+    {
+      "path": "historical-tag-compatibility.log.gz",
+      "uncompressedSha256": "8fcd151e30523c2c87616ba371a29c853371c8d8324d37f9222e62bf11cffcd0"
+    },
+    {
+      "path": "historical-tag-manifest.log.gz",
+      "uncompressedSha256": "d9e95d1666736dcba4f69b8fe4e9cd5ced9ea04abe668c35484550fec006b8ea"
+    }
+  ]
+}

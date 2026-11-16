@@ -64,7 +64,7 @@ type TrackedTestPool = Pool & {
   readonly [CONNECTIONS_CLOSED]: () => Promise<void>;
 };
 
-function createTestPool(options: PoolConfig): TrackedTestPool {
+export function createTestPool(options: PoolConfig): TrackedTestPool {
   const pool = new Pool(options);
   const connections = new Set<Promise<void>>();
 
@@ -88,7 +88,7 @@ function isTrackedTestPool(pool: Pool): pool is TrackedTestPool {
   return CONNECTIONS_CLOSED in pool;
 }
 
-async function closeTestPool(pool: Pool): Promise<void> {
+export async function closeTestPool(pool: Pool): Promise<void> {
   if (!isTrackedTestPool(pool))
     throw new Error("Test database pool has no connection-retirement owner");
   try {
@@ -105,6 +105,7 @@ export type TestDatabaseOptions = {
   databaseName: string;
   lane?: TestDatabaseLane;
   poolMax?: number;
+  storage?: "volume";
 };
 
 type TestDatabaseClient = NodePgDatabase<Record<string, never>> &
@@ -290,6 +291,10 @@ async function allocatePostgresContainer(
 ): Promise<StartedPostgreSqlContainer> {
   const invocation = invocationFromEnvironment();
   const allocationId = randomUUID();
+  const storage =
+    options.storage === "volume"
+      ? { ...postgresStorage, storageKind: "volume", storageLimitBytes: null }
+      : postgresStorage;
 
   if (invocation) await registerContainerAllocation(invocation);
   logger.info(
@@ -297,14 +302,19 @@ async function allocatePostgresContainer(
       lane,
       phase: "container-create-start",
       preparationDurationMs: Date.now() - startedAt,
-      ...postgresStorage,
+      ...storage,
     },
     "starting owned PostgreSQL container",
   );
   const containerStartedAt = Date.now();
 
   try {
-    const container = await new PostgreSqlContainer(PGVECTOR_IMAGE)
+    const postgres = new PostgreSqlContainer(PGVECTOR_IMAGE);
+    const storageConfigured =
+      storage.storageKind === "tmpfs"
+        ? postgres.withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
+        : postgres;
+    const container = await storageConfigured
       .withDatabase(options.databaseName)
       .withUsername("test")
       .withPassword("test")
@@ -325,7 +335,6 @@ async function allocatePostgresContainer(
         timeout: 1_000,
         retries: 250,
       })
-      .withTmpFs({ [postgresStorage.storagePath]: "rw,size=512m" })
       .withCommand([
         "postgres",
         "-c",
@@ -354,7 +363,7 @@ async function allocatePostgresContainer(
         outcome: "passed",
         durationMs: containerStartDurationMs,
         containerId: container.getId(),
-        ...postgresStorage,
+        ...storage,
       },
       "started owned PostgreSQL container",
     );
@@ -764,7 +773,20 @@ export type PostgresTestDbTemplate = {
 export async function startMainAndBrainPostgresTestDbTemplate(
   options: TestDatabaseOptions,
 ): Promise<PostgresTestDbTemplate> {
-  const template = await startMainAndBrainPostgresTestDb(options);
+  return startPostgresTestDbTemplate(options, startMainAndBrainPostgresTestDb);
+}
+
+export async function startMainPostgresTestDbTemplate(
+  options: TestDatabaseOptions,
+): Promise<PostgresTestDbTemplate> {
+  return startPostgresTestDbTemplate(options, startMainPostgresTestDb);
+}
+
+async function startPostgresTestDbTemplate(
+  options: TestDatabaseOptions,
+  start: (options: TestDatabaseOptions) => Promise<StartedPostgresTestDb>,
+): Promise<PostgresTestDbTemplate> {
+  const template = await start(options);
   const lane = options.lane ?? "integration";
   const templateName = quoteDatabaseIdentifier(
     template.container.getDatabase(),

@@ -14,7 +14,6 @@ import {
 } from "vitest";
 
 import { readLaunchResult } from "@/e2e/_seed/launch-stream";
-import { COMMAND_POLICY } from "@/lib/execution-host/deliverer";
 import {
   readAdapterInvocations,
   readAdapterPrompts,
@@ -961,19 +960,24 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
         },
       );
     const request = await checkpointRequest.awaitReached();
-    const checkpointTimeout = COMMAND_POLICY["session.checkpoint"].timeoutMs;
 
-    if (checkpointTimeout === null)
-      throw new Error("The checkpoint wire must have a bounded deadline");
-    // Both prerequisites share the real wire budget; neither gets a fresh
-    // arbitrary deadline that can expire before the held response does.
-    const checkpointDeadline = Date.now() + checkpointTimeout;
+    if (!request.commandId)
+      throw new Error(
+        "The original checkpoint has no durable command identity",
+      );
+    // This lock covers only settlement of the original command. The Run and
+    // successor attempt can progress independently after the real ACK arrives.
+    const oldSettlement = await stack.holdWrite({
+      caseId: "P4-stale-checkpoint-settlement",
+      table: "execution_commands",
+      matches: { id: request.commandId, state: "succeeded" },
+    });
     const oldAck = stack.proxy.arm(
       {
         caseId: "P4-stale-ACK",
         method: "POST",
         path: /^\/sessions\/[^/]+\/checkpoint$/,
-        commandId: request.commandId!,
+        commandId: request.commandId,
       },
       "hold-response",
     );
@@ -1034,13 +1038,25 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     );
 
     expect(restart.status, await restart.clone().text()).toBe(202);
+    const currentAssignment = await stack.database.pool.query<{
+      epoch: number;
+      state: string;
+    }>(
+      `SELECT a.epoch, a.state FROM runs r JOIN execution_assignments a
+        ON a.id=r.execution_assignment_id WHERE r.id=$1`,
+      [runId],
+    );
+
+    expect(currentAssignment.rows).toEqual([{ epoch: 2, state: "active" }]);
+    expect(oldResponseSettled, "old checkpoint handler is still pending").toBe(
+      false,
+    );
+    oldAck.release();
+    await oldSettlement.awaitReached();
     receipt.release();
-    // The successor epoch is the stale-ACK boundary. Its preparation can take
-    // longer than the held checkpoint's wire deadline on a loaded host; audit
-    // ownership now, and verify preparation at the publication barrier later.
     expect(
       oldResponseSettled,
-      "successor assignment commits before old handler settles",
+      "original checkpoint handler awaits its ACK settlement",
     ).toBe(false);
     expect(
       (
@@ -1060,7 +1076,7 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
         return result.rows[0]?.application_state === "superseded" ? true : null;
       },
-      Math.max(0, checkpointDeadline - Date.now()),
+      60_000,
       "old prompt application drained before stale ACK audit",
     );
     const snapshot = async (): Promise<unknown> =>
@@ -1091,7 +1107,7 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
 
         return attempts.rows[0]?.id ?? null;
       },
-      Math.max(0, checkpointDeadline - Date.now()),
+      60_000,
       "successor attempt owns the cursor before stale ACK audit",
     );
 
@@ -1099,8 +1115,10 @@ it("P4: delayed checkpoint ACK reaches its original handler after successor epoc
     await stack.database.pool.query("TRUNCATE s52_stale_writes");
     const before = await snapshot();
 
-    expect(oldResponseSettled, "old ACK still owns a live wire").toBe(false);
-    oldAck.release();
+    expect(oldResponseSettled, "old handler has yet to apply its ACK").toBe(
+      false,
+    );
+    await oldSettlement.release();
     const outcome = await oldResponse;
 
     if (outcome.kind === "error") throw outcome.error;

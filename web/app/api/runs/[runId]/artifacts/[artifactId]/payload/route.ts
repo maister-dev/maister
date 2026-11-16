@@ -7,6 +7,11 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+  protectRunKnowledgeStream,
+} from "@/lib/brain/knowledge-run-disclosure";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -103,6 +108,11 @@ function httpStatusForAuthz(code: string): number | null {
 }
 
 function errorResponse(err: unknown, runId: string): NextResponse {
+  if (isRunKnowledgeUnavailable(err))
+    return NextResponse.json(
+      { code: err.code, message: err.message },
+      { status: 409 },
+    );
   if (isMaisterError(err)) {
     const status = httpStatusForAuthz(err.code);
 
@@ -162,7 +172,7 @@ export async function GET(
   const { runId, artifactId } = await params;
 
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     const detail = await getRunDetail(runId);
 
@@ -171,6 +181,9 @@ export async function GET(
     }
 
     await requireProjectAction(detail.projectId, "readBoard");
+    const recipient = { kind: "user" as const, userId: sessionUser.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const db = getDb() as unknown as Db;
     const artifactRows = (await db
@@ -264,10 +277,18 @@ export async function GET(
           headers.set("content-range", content.contentRange);
       }
 
-      return new Response(content.body, {
-        status: !preview && content.contentRange ? 206 : 200,
-        headers,
-      });
+      return new Response(
+        await protectRunKnowledgeStream(
+          getDb(),
+          recipient,
+          runId,
+          content.body,
+        ),
+        {
+          status: !preview && content.contentRange ? 206 : 200,
+          headers,
+        },
+      );
     }
 
     // ADR-120 (P2, D7): delegate to the SHARED resolver — the SAME locator
@@ -282,6 +303,7 @@ export async function GET(
       ...(preview ? { maxBytes: ARTIFACT_PREVIEW_MAX_BYTES } : {}),
     });
 
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
     switch (resolved.kind) {
       case "text":
         if (preview)

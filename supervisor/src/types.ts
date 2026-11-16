@@ -324,7 +324,11 @@ function refineMcpServerFields(
 }
 
 export const McpServerInputSchema = z
-  .object({ name: z.string().min(1).max(128), ...mcpServerFields })
+  .object({
+    name: z.string().min(1).max(128),
+    platformOrigin: z.literal("maister_facade").optional(),
+    ...mcpServerFields,
+  })
   .strict()
   .superRefine(refineMcpServerFields);
 
@@ -358,6 +362,7 @@ export const EnvRefsResponseSchema = z
 // web-resolved and delivered here so the supervisor stays config-free.
 export const SessionEnforcementProfileSchema = z
   .object({
+    allowedToolApproval: z.literal("execution_policy").optional(),
     tools: z
       .object({ allow: z.array(z.string().min(1)) })
       .strict()
@@ -427,6 +432,7 @@ const projectSlugSchema = z
   .refine(
     (slug) =>
       slug === LIBRARIAN_PROJECT_SLUG ||
+      slug === "_company" ||
       /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug),
     "projectSlug must be kebab-case",
   );
@@ -780,6 +786,7 @@ export const WORKSPACE_RULES = [
   "repo_path_mismatch",
   "inside_state_dir",
   "outside_workspace",
+  "owner_mismatch",
 ] as const;
 
 export type WorkspaceRule = (typeof WORKSPACE_RULES)[number];
@@ -855,6 +862,17 @@ export const AdoptWorkspacePayloadSchema = z
   .object({
     runId: runIdSchema,
     projectSlug: projectSlugSchema,
+    owner: z
+      .object({
+        kind: z.literal("company"),
+        companyId: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[^\0]+$/u),
+      })
+      .strict()
+      .optional(),
     kind: WorkspaceKindSchema,
     path: adoptPathSchema,
     repoPath: adoptPathSchema.optional(),
@@ -862,6 +880,22 @@ export const AdoptWorkspacePayloadSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (
+      (value.projectSlug === "_company") !==
+        (value.owner?.kind === "company") ||
+      (value.owner !== undefined &&
+        (value.kind !== "directory" ||
+          value.repoPath !== undefined ||
+          value.contextMounts !== undefined))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["owner"],
+        message:
+          "Company workspaces require an explicit company owner, _company runtime namespace and an isolated directory without repository mounts",
+      });
+    }
+
     if (value.kind === "directory" && value.repoPath !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -903,6 +937,7 @@ export type WorkspaceRecordResponse = {
   kind: WorkspaceKind;
   adoptedAt: string;
   releasedAt: string | null;
+  owner?: { kind: "company"; companyId: string };
 };
 
 export const CommandReceiptSchema = z

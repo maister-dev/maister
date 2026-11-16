@@ -20,14 +20,88 @@ import {
   taskLaunchRouting,
   TASK_LAUNCH_TOOL_SPECS,
 } from "./task-launch-tools";
+import {
+  KNOWLEDGE_TOOL_SPECS,
+  isKnowledgeTool,
+  parseKnowledgeToolArguments,
+  knowledgeToolRouting,
+} from "./knowledge-tools";
 
 export type ToolSpec = {
   description: string;
   inputSchema: Tool["inputSchema"];
+  annotations?: Tool["annotations"];
+};
+
+const standOperationSelector: ToolSpec["inputSchema"] = {
+  type: "object",
+  additionalProperties: false,
+  required: ["operationId"],
+  properties: { operationId: { type: "string", minLength: 1, maxLength: 128 } },
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   ...TASK_LAUNCH_TOOL_SPECS,
+  ...KNOWLEDGE_TOOL_SPECS,
+  stand_operation_get: {
+    description:
+      "Read the current effect, independent verification, and receipt IDs for an operation appointed to this specialist.",
+    inputSchema: standOperationSelector,
+    annotations: { readOnlyHint: true },
+  },
+  stand_operation_logs: {
+    description:
+      "Read a bounded sanitized log excerpt for the appointed stand operation under a current logs grant.",
+    inputSchema: standOperationSelector,
+    annotations: { readOnlyHint: true },
+  },
+  stand_operation_observe: {
+    description:
+      "Observe the exact configured service before an approved restart. Retains the target observation as evidence.",
+    inputSchema: standOperationSelector,
+  },
+  stand_operation_dispatch: {
+    description:
+      "Dispatch one already approved restart under the current execution fence. If delivery is uncertain, inspect the original operation and use the human recovery flow.",
+    inputSchema: standOperationSelector,
+  },
+  stand_operation_verify: {
+    description:
+      "Run a fresh independent health probe after the operation has a confirmed applied restart receipt.",
+    inputSchema: standOperationSelector,
+  },
+  stand_operation_create: {
+    description:
+      "Retain one exact operation intent for a configured component appointed to this assignment, or adopt the exact restart successor already appointed by a human. Reuse the same idempotency key and input on replay. A restart intent awaits exact human approval and current execution authorization.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "assignmentId",
+        "expectedRevision",
+        "inputRevision",
+        "componentId",
+        "action",
+        "idempotencyKey",
+      ],
+      properties: {
+        assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+        expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        componentId: { type: "string", minLength: 1, maxLength: 128 },
+        action: {
+          type: "string",
+          enum: ["inspect", "logs", "restart", "verify"],
+        },
+        idempotencyKey: {
+          type: "string",
+          minLength: 8,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9._:-]+$",
+        },
+      },
+    },
+  },
   task_create: {
     description:
       "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage). `flowId` accepts either the flow's UUID or its ref (e.g. `aif-bugfix`), as returned by `flow_list` (`id` or `ref`).",
@@ -399,7 +473,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   memory_retain: {
     description:
-      "Retain a project-memory item (ADR-122). Embeds and dedup-or-reinforces. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
+      "Retain a project-memory item (ADR-122). Embeds; an exact duplicate is a no-op, a near item is recorded as a review candidate, never merged. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -532,16 +606,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      anyOf: [
-        { required: ["operationKey"] },
-        {
-          properties: {
-            mode: { const: "run" },
-            target: { required: ["agentId"] },
-          },
-          required: ["mode", "target"],
-        },
-      ],
+      // Claude omits tools with a root union. Dispatch enforces the conditional key.
       properties: {
         operationKey: {
           type: "string",
@@ -600,6 +665,59 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
             "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
         },
         runnerOverride: { type: "string", minLength: 1 },
+        assignmentWork: {
+          type: "object",
+          additionalProperties: false,
+          description:
+            "Exact native assignment work. Use a workspace-none agent with a required result contract or a reviewed company result-only Flow. The server resolves ownership and installed bindings.",
+          required: ["selector", "expectedOutcome"],
+          properties: {
+            expectedOutcome: { type: "string", minLength: 1, maxLength: 4000 },
+            selector: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schemaVersion",
+                "assignmentId",
+                "expectedRevision",
+                "inputRevision",
+                "contextRevision",
+                "logicalWorkId",
+                "workRevision",
+              ],
+              properties: {
+                schemaVersion: { type: "integer", const: 1 },
+                assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+                expectedRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
+                inputRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
+                contextRevision: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 2147483647,
+                },
+                logicalWorkId: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 128,
+                  pattern: "^[A-Za-z0-9._:-]+$",
+                },
+                workRevision: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 2147483647,
+                },
+              },
+            },
+          },
+        },
         resultProfile: {
           type: "string",
           minLength: 1,
@@ -686,7 +804,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_collect: {
     description:
-      "Collect results, status, and produced artifacts from the orchestrator's delegated child runs. Pass exactly one of childRunId (one child) or all:true (every child). result.value is the validated public result — use it, not outputText (deprecated); resultStatus says why it is absent (pending|valid|absent|missing|stale|invalid|unavailable) and resultFailure carries the reason. Collect is idempotent and shows only your DIRECT children. Research flow children finish by themselves when they publish a result and change nothing; collect BEFORE run_cancel — a failure-terminal child reports unavailable. Operational agents (engine >=3.9.0) return operationalOutcome with reported/effective outcomes, counts, references, diagnostics, integrity and cleanup evidence. Partial/blocked/failed operations remain failure-terminal with resultStatus unavailable; operationalOutcome is diagnostic evidence, never a success substitute. Operational delegation cannot use persistent, shared writable workspace, or resultProfile. Returns an array of { childRunId, status, settled, resultStatus, result, resultRevision, resultFailure, operationalOutcome, artifacts, diffRef?, outputText? }.",
+      "Collect results, status, and produced artifacts from the orchestrator's delegated child runs. Pass exactly one of childRunId (one child) or all:true (every child). result.value is the validated public result — use it, not outputText (deprecated); resultStatus says why it is absent (pending|valid|absent|missing|stale|invalid|unavailable) and resultFailure carries the reason. Collect is idempotent and shows only your DIRECT children. Research flow children finish by themselves when they publish a result and change nothing; collect BEFORE run_cancel — a failure-terminal child reports unavailable. Operational agents (engine >=3.9.0) return operationalOutcome with reported/effective outcomes, counts, references, diagnostics, integrity and cleanup evidence. Partial/blocked/failed operations remain failure-terminal with resultStatus unavailable; operationalOutcome is diagnostic evidence, never a success substitute. Operational delegation cannot use persistent, shared writable workspace, or resultProfile. Native children also return assignmentWork with exact work, input and business revisions for rework. A project caller with only assignment scope must name the exact childRunId. Returns an array of { childRunId, status, settled, resultStatus, result, resultRevision, assignmentWork?, resultFailure, operationalOutcome, artifacts, diffRef?, outputText? }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -794,7 +912,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_message: {
     description:
-      "Send a follow-up to a PERSISTENT child agent in the calling orchestrator's run-tree by exactly one of addressableKey or childRunId. Input is saved before dispatch. A busy session or full agent pool leaves it queued for normal resume; a completed turn re-parks the child. Reuse requestKey to retry the same message without duplicating it; different input under that key is refused. Addressing stays within the caller's own tree. Flow children have no addressable agent session and are refused PRECONDITION. mode 'steer' injects the prompt into the child's RUNNING turn when its session supports it and queues it otherwise; mode 'queue' (default) always waits for the next turn. Returns { childRunId, messageId, status, messageState, delivery }; delivery 'steered' means it reached the running turn, 'queued' that it awaits the next turn.",
+      "Send a follow-up to a child agent. For native assignment work, the exact originating professional must specify childRunId, mode 'steer', and requestKey. The finite child needs an active turn on a steering-capable session. It never queues a successor on refusal. Reuse the same key and prompt to inspect an uncertain outcome. For a persistent child in the caller's tree, use exactly one of addressableKey or childRunId. The default 'queue' mode waits for its next turn, and 'steer' queues if the running turn cannot accept it. Input is saved before dispatch. Different input under the same key is refused. Flow children require their own continuation. Returns { childRunId, messageId, status, messageState, delivery }.",
     inputSchema: {
       type: "object",
       properties: {
@@ -820,14 +938,65 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_rework: {
     description:
-      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. Agent children only — a flow child owns its own review/rework loop and is refused PRECONDITION (promote or cancel it instead). The child must be a direct child of the bound orchestrator run and currently in Review. A full agent pool refuses the claim with CONFLICT. The accepted prompt is retained with its new assignment and survives Web restart. It resumes with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status } with the current run status, which may already reflect completion.",
+      "Request rework from an exact direct child. Native result-only work uses the work and result revisions from run_collect. For an interrupted first read-only company attempt, set assignmentWork.mode to recover_interrupted and supply the original objective as prompt. Recovery requires the platform's causal crash receipt and physical retirement, keeps the original input and consumes the remaining budget. Retry the same requestKey with identical input to read the same continuation. Legacy project rework resumes a direct agent child in Review. Returns { childRunId, status }.",
     inputSchema: {
       type: "object",
       properties: {
         childRunId: { type: "string" },
         prompt: { type: "string", minLength: 1, maxLength: 1_000_000 },
+        assignmentWork: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            schemaVersion: { type: "integer", const: 1 },
+            expectedRevision: { type: "integer", minimum: 1 },
+            workRevision: { type: "integer", minimum: 1 },
+            inputRevision: { type: "integer", minimum: 1 },
+            resultRevision: { type: "integer", minimum: 1 },
+            mode: { type: "string", const: "recover_interrupted" },
+            requestKey: { type: "string", pattern: "^[A-Za-z0-9._:-]{8,128}$" },
+          },
+          required: [
+            "schemaVersion",
+            "expectedRevision",
+            "workRevision",
+            "inputRevision",
+            "resultRevision",
+            "requestKey",
+          ],
+        },
       },
       required: ["childRunId", "prompt"],
+    },
+  },
+  specialist_assignment_work_decide: {
+    description:
+      "Accept or reject a collected direct child result using its exact assignment, work, input and result revisions. Requires current acceptance authority. The decision is retained and the assignment stays open for separate review.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        assignmentId: { type: "string", minLength: 1, maxLength: 128 },
+        workId: { type: "string", minLength: 1, maxLength: 128 },
+        decision: { type: "string", enum: ["accept", "reject"] },
+        expectedRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        workRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        inputRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        resultRevision: { type: "integer", minimum: 1, maximum: 2147483647 },
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
+        idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9._:-]{8,128}$" },
+      },
+      required: [
+        "assignmentId",
+        "workId",
+        "decision",
+        "expectedRevision",
+        "workRevision",
+        "inputRevision",
+        "resultRevision",
+        "reason",
+        "idempotencyKey",
+      ],
     },
   },
   run_sync: {
@@ -1210,13 +1379,10 @@ export async function dispatchTool(opts: {
   }
 
   if (isDelegationAdmissionTool(name)) {
-    const schema = Object.fromEntries(
-      Object.entries(TOOL_SPECS[name].inputSchema).filter(
-        ([key]) => key !== "anyOf",
-      ),
-    );
     const parsed = z
-      .fromJSONSchema(schema as z.core.JSONSchema.JSONSchema)
+      .fromJSONSchema(
+        TOOL_SPECS[name].inputSchema as z.core.JSONSchema.JSONSchema,
+      )
       .safeParse(args);
     const taskBacked =
       name === "run_plan" ||
@@ -1259,9 +1425,29 @@ export async function dispatchTool(opts: {
     }
   }
 
+  const nativeArguments = isKnowledgeTool(name)
+    ? parseKnowledgeToolArguments(name, args)
+    : args;
+
+  if (nativeArguments === null) {
+    const publicBody = {
+      code: "CONFIG",
+      message: "Invalid structured knowledge tool input",
+      details: { reason: "knowledge_tool_input_invalid" },
+    };
+
+    return {
+      isError: true,
+      status: 400,
+      code: publicBody.code,
+      message: publicBody.message,
+      publicBody,
+    };
+  }
+
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
-  const { operationKey, ...routedArgs } = args;
+  const { operationKey, ...routedArgs } = nativeArguments;
   const { method, path, body } = resolveRouting(
     name,
     coerceNumericArgs(name, routedArgs),
@@ -1294,7 +1480,9 @@ export async function dispatchTool(opts: {
       name === "hitl_respond" ||
       name === "ask_human" ||
       isLaunchAdmissionTool(name) ||
-      isDelegationAdmissionTool(name)
+      isDelegationAdmissionTool(name) ||
+      isKnowledgeTool(name) ||
+      name.startsWith("stand_operation_")
     )
       return structuredResponseToToolError(res);
 
@@ -1362,8 +1550,36 @@ function resolveRouting(
   body?: unknown;
 } {
   if (isTaskLaunchTool(name)) return taskLaunchRouting(name, args);
+  if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
 
   switch (name) {
+    case "stand_operation_get":
+    case "stand_operation_logs":
+    case "stand_operation_observe":
+    case "stand_operation_dispatch":
+    case "stand_operation_verify": {
+      const id = encodeURIComponent(String(args.operationId));
+      const path = `/api/v1/ext/stand-operations/${id}`;
+
+      if (name === "stand_operation_get") return { method: "GET", path };
+      const action =
+        name === "stand_operation_verify"
+          ? "verification"
+          : name.slice("stand_operation_".length);
+
+      return { method: "POST", path: `${path}/${action}` };
+    }
+    case "stand_operation_create": {
+      const { assignmentId, ...body } = args as {
+        assignmentId: string;
+      } & Record<string, unknown>;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(assignmentId)}/operations`,
+        body,
+      };
+    }
     case "project_list":
       return { method: "GET", path: `/api/v1/ext/projects` };
     case "project_get": {
@@ -1823,6 +2039,7 @@ function resolveRouting(
         addressableKey,
         runnerOverride,
         resultProfile,
+        assignmentWork,
       } = args as {
         target: { agentId?: string; flowId?: string };
         mode: string;
@@ -1834,6 +2051,7 @@ function resolveRouting(
         addressableKey?: string;
         runnerOverride?: string;
         resultProfile?: string;
+        assignmentWork?: Record<string, unknown>;
       };
       const body: Record<string, unknown> = { target, mode, prompt };
 
@@ -1844,6 +2062,7 @@ function resolveRouting(
       if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
       if (resultProfile !== undefined) body.resultProfile = resultProfile;
+      if (assignmentWork !== undefined) body.assignmentWork = assignmentWork;
 
       return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };
     }
@@ -1993,15 +2212,39 @@ function resolveRouting(
       };
     }
     case "run_rework": {
-      const { childRunId, prompt } = args as {
+      const { childRunId, prompt, assignmentWork } = args as {
         childRunId: string;
         prompt: string;
+        assignmentWork?: Record<string, unknown>;
       };
 
       return {
         method: "POST",
         path: `/api/v1/ext/runs/rework`,
-        body: { childRunId, prompt },
+        body: {
+          childRunId,
+          prompt,
+          ...(assignmentWork ? { assignmentWork } : {}),
+        },
+      };
+    }
+    case "specialist_assignment_work_decide": {
+      const { assignmentId, workId, ...body } = args as {
+        assignmentId: string;
+        workId: string;
+        decision: "accept" | "reject";
+        expectedRevision: number;
+        workRevision: number;
+        inputRevision: number;
+        resultRevision: number;
+        reason: string;
+        idempotencyKey: string;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/specialist-assignments/${encodeURIComponent(assignmentId)}/work/${encodeURIComponent(workId)}/decisions`,
+        body,
       };
     }
     case "run_sync": {

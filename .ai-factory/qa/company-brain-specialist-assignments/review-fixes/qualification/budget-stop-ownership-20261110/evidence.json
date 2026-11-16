@@ -1,0 +1,379 @@
+{
+  "schemaVersion": 1,
+  "scope": "Durable budget stop in existing Run state; no new scheduler, execution ledger, public API field or migration.",
+  "baseHead": "e5028fa00eee9958d9da02c718689508d3edd4a6",
+  "sourceFiles": [
+    {
+      "path": "web/lib/runs/keepalive-sweeper.ts",
+      "sha256": "d0f86009681ca4e852099c2090b98059c10e70ba271829cddd89824d7e64f302"
+    },
+    {
+      "path": "web/lib/runs/execution-policy.ts",
+      "sha256": "a8d610d80f7d4a513f323772031a3c7d47d50d54363af2f4eb018199d7208f94"
+    },
+    {
+      "path": "web/lib/runs/budget-termination.ts",
+      "sha256": "e9c07463a19cde4af4818da63de88ff7595a93b563df7a1ff9b3a4fb4be22097"
+    },
+    {
+      "path": "web/lib/runs/state-transitions.ts",
+      "sha256": "eb9802fdf48461e3d2ca42683709cdc4fffb2809bf978e020783d298bb99758c"
+    },
+    {
+      "path": "web/lib/runs/hitl-create.ts",
+      "sha256": "adb025d993718a4e8aa6512286345d152d876bb9b365dfaec4a36475a6e51450"
+    },
+    {
+      "path": "web/lib/flows/graph/driver-claim.ts",
+      "sha256": "0ad32714488bb02c460079beb6384e90dbf8f0d8ada3d0ff59f57ff28f3a89f0"
+    },
+    {
+      "path": "web/lib/flows/graph/prompt-permission.ts",
+      "sha256": "446b7c5195ebf037e69610ecc1370e5bc660f889739371c24e9be74a9d88c3d0"
+    },
+    {
+      "path": "web/lib/agents/finalization.ts",
+      "sha256": "1c9f633b048a2a95ff2c5e1e56df7ba06f2ce498e421cd8eb0e87c4916e53ce8"
+    },
+    {
+      "path": "web/lib/agents/park.ts",
+      "sha256": "247fc4e3766b70968ee88dfa54beacb719368194dfe57aff60a4eda2361287f1"
+    },
+    {
+      "path": "web/lib/agents/permission.ts",
+      "sha256": "cfbb61ad85c1ff7c04f9879434721e00562d5358f570b52c937d56787bf8ae34"
+    },
+    {
+      "path": "web/lib/agents/launch.ts",
+      "sha256": "fd372019dfd942f6a85d84d63bbb17372aad4c170248e38ce5c38b202cc1b3d4"
+    },
+    {
+      "path": "web/lib/scratch-runs/service.ts",
+      "sha256": "03b2f3c19d4d45814db3dcd8b72e1467b2d6825f925043118a101187b08aaedc"
+    },
+    {
+      "path": "web/lib/scratch-runs/events.ts",
+      "sha256": "b99929429782a8223ea01cfc4d35a89666f8b65f6f751ddae9fc67e9f495a074"
+    },
+    {
+      "path": "web/lib/execution-host/ledger.ts",
+      "sha256": "7b777921e3fa64c2df267baa10f2d22e0a5d9e36323a64b24ecaeaecc26e7716"
+    },
+    {
+      "path": "web/lib/runs/__tests__/budget-stop-ownership.integration.test.ts",
+      "sha256": "ea774f1b3df2a3f7cb8cc2bb53e996ae29a9b44b749ee942baf8431b0db89a7f"
+    },
+    {
+      "path": "web/lib/runs/__tests__/budget-watchdog.integration.test.ts",
+      "sha256": "1b76126af8e3c98c410cb0fa869facce9987697c92c9223f8445acb3f48e60ef"
+    },
+    {
+      "path": "web/lib/runs/__tests__/state-transitions-crash.test.ts",
+      "sha256": "3fad46ff4461ab569e75f99107d635a35cfc57fe5d9a8321d176aa0308cd3b96"
+    },
+    {
+      "path": "web/lib/scratch-runs/__tests__/incarnation-terminal.integration.test.ts",
+      "sha256": "4d1023a050c46d9f7542f9f0c4251e4b577290a759b298fc5cebf5c7bf5ccb24"
+    },
+    {
+      "path": "web/lib/scratch-runs/__tests__/permission-terminal.integration.test.ts",
+      "sha256": "73e05e903aa534c53f403294abf8be87f8970b7830b05826a5b75dd154784180"
+    },
+    {
+      "path": "web/lib/flows/graph/consensus/__tests__/runtime.test.ts",
+      "sha256": "eba9d4f57746d2ce9545a90cd7d6210176b89f24821be38fd7fd1a6f13acc296"
+    },
+    {
+      "path": "web/lib/flows/graph/__tests__/runner-graph-form.test.ts",
+      "sha256": "864a71fb661c1a70b2dbaea3718ef6b258b229dd76a3ee0650469808e84488a7"
+    },
+    {
+      "path": "web/lib/flows/graph/__tests__/runner-graph.m17.test.ts",
+      "sha256": "ded020a53edc0dc8693d26a6efc8471d6be66595ea7b0fc53a364101e0a6f410"
+    },
+    {
+      "path": ".ai-factory/patches/2026-11-10-12.48.md",
+      "sha256": "47ab1a66fdb99f3f53b16a21a575b71e92e5df1e52cc3b1d3bb240e45f879eb8"
+    },
+    {
+      "path": "web/lib/runs/stop.ts",
+      "sha256": "1f3b6eadb85e6261abda3748d2740afa669d80c51d71bf82fbe43faec61b787a"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "40a17753c6dc0ee041010819325480fcf2eb9b35bdff1bb0a1f92853ead320ad"
+    },
+    {
+      "path": "docs/system-analytics/execution-policy.md",
+      "sha256": "6b33a49ea5ce3e323bc662c1b3e5253ecfd3f4d72743aca3d2f278b761f24f39"
+    }
+  ],
+  "behavior": [
+    "Pending cause retained before external teardown; exact current ownership rechecked after I/O.",
+    "Unknown/refused DELETE retains ownership and original verdict; typed absence permits settlement.",
+    "Native and legacy terminal/park/permission/HITL writers respect the current stop.",
+    "Current company authority is checked before first-owner cancellation arbitration; no competing intent or command.",
+    "Previously completed independent failures and successor generations are preserved."
+  ],
+  "verification": {
+    "distinctFocusedPassingIntegrationAssertions": 164,
+    "companyFirstOwnerAndHttpControls": 2,
+    "affectedExistingUnitFixtures": 37,
+    "fullWebUnit": {
+      "passed": 9312,
+      "files": 891,
+      "seconds": 59.97,
+      "exitCode": 0,
+      "sourceQualification": "Combined frozen budget and pending-agent recovery candidate; separate file hashes retained. Not a coherent full integration pass."
+    },
+    "typesExit": 0,
+    "lintExit": 0,
+    "contracts": "84requirements/45tasks and generated schemas pass.",
+    "docs": "177tableERD and canonical indexes pass.",
+    "independentReview": "No remaining actionable findings; runtime, company ordering and fixture reviews."
+  },
+  "provenance": "Focused runs overlap and were executed as each closure was fixed. Reported distinct count is union of passed assertion identities across their retained JSON reports, not a single final suite total. Complete committed-source integration/live qualification remains required.",
+  "historicalFailures": [
+    "Retained real REDs for ACP interruption, prior failure, scratch projection, parks, permission races, DELETE refusal, legacy transaction gap and HITL rollback.",
+    "Combined owning run hit a180second database setup timeout; unchanged time-limit suite passed serially.",
+    "Complete unit run initially failed13cases because3existing DB stubs lacked the new lock chain; assertions unchanged and full9312thenpass."
+  ],
+  "artifacts": [
+    {
+      "path": "cb-budget-agent-recovery-contracts.log.gz",
+      "sha256": "f4eb7835c52bce77524d146860ace7acf94067d45559618ff251a0ba2404e4ed",
+      "rawSha256": "87ae9a26ce7aa299e0e4b103e79da609fda13a0c33002e71837ec3d595a109b4"
+    },
+    {
+      "path": "cb-budget-agent-recovery-docs.log.gz",
+      "sha256": "6d4e06064cfdbb3970e8cafc491b2ee484ad10b16f6f9bd63fa81b36eafcaeb5",
+      "rawSha256": "1f0540947f1bd5137b1964929e8361a860b447e3b945ada601dc5b180d14f89e"
+    },
+    {
+      "path": "cb-budget-agent-recovery-web-unit-final.log.gz",
+      "sha256": "de4cfb04308d18243cbfe5b614275ed4fb40882faa4e51aa92eb5979963a5f27",
+      "rawSha256": "aff6e1cf1d17ada51c5ea7a8467c9fe2d3db4987b8c06312f7cd641388ca748e"
+    },
+    {
+      "path": "cb-budget-agent-recovery-web-unit.log.gz",
+      "sha256": "d4533b16a1b8cb7161fbb112aeb7a9ccc2310a37a28b553566dfe47c14d1878c",
+      "rawSha256": "f14ffdee1a22d104db419a4fc42cc14f90fe7facfd48dab6a1fb5670c5e12390"
+    },
+    {
+      "path": "cb-budget-stop-consensus-unit-red.log.gz",
+      "sha256": "a0519c983726669ecec2816ce1fc6f961935dbd1d558e44d1c1e1b5017a6707a",
+      "rawSha256": "90dfe39deb3bcef22a25650d7717f8db9ec801ad35a1d5ed47d5d848e0b6fb56"
+    },
+    {
+      "path": "cb-budget-stop-final-lint-all.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-budget-stop-final.json.gz",
+      "sha256": "9a4c2a604ccb58343d5e0b86f5ce4063173917f5bb2d7fbde066ff2b28c68870",
+      "rawSha256": "f786dcf6f9feee5eefe126edcde6ffbed21e6f8848f0ebe91de1b1248ab80add"
+    },
+    {
+      "path": "cb-budget-stop-final.log.gz",
+      "sha256": "658834e581b0742c270ae148a62d9d17151a8e9237d9d54ec946b694bb5f95fb",
+      "rawSha256": "87f36192e64d7f54dd1f6c4c3cc7950fda61d4c0b0fffdee560d8725d4bd5766"
+    },
+    {
+      "path": "cb-budget-stop-final5-units.log.gz",
+      "sha256": "209b9c5a867d2e2986bda69b1c8382e8064b43416d248aae1b03c24cd26437e7",
+      "rawSha256": "c23aed57e67ddcde07980cd67bd02876f909d0df3c73626bb83714796deb0722"
+    },
+    {
+      "path": "cb-budget-stop-final6-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-budget-stop-hitl-green.json.gz",
+      "sha256": "6b718073f77a9522c3c0144dcbda6dcaba7f423790dd3bba7e252348ca6abda5",
+      "rawSha256": "c72b95ada312ff56cbd784a92a8be2617120dfba26962ab7e00fb90ee23003b8"
+    },
+    {
+      "path": "cb-budget-stop-hitl-green.log.gz",
+      "sha256": "ecc73d4ebdd8d7ea30db38b55b3a03a87ff842947229e1be75b3dbbd42e02c13",
+      "rawSha256": "b07b2554582d8f2987631f40a7c9ee7765dcc9a347acd5c8443d85ff812e43a1"
+    },
+    {
+      "path": "cb-budget-stop-hitl-red.json.gz",
+      "sha256": "a0a7f95c688e3943655d916e017e84acfa59e494eb954557f9102e357f31ebc5",
+      "rawSha256": "ee32267751c6779017f587c84b3180a0308e26db2ddcee35aa6d11197b98e36d"
+    },
+    {
+      "path": "cb-budget-stop-hitl-red.log.gz",
+      "sha256": "d36bbd29b77b67dd9115d0b78fe29fcabcf4b9a02a018cef64f451c226058ac9",
+      "rawSha256": "e4b4a6d9a77c8f6469690135d1979ce4781cc5a8452abbde6a1a036d347b8c18"
+    },
+    {
+      "path": "cb-budget-stop-legacy-green.json.gz",
+      "sha256": "d2734c7ace19e305c7c98b28c35820e896c2ec607fc610ec2e20d30d5fdbcd9c",
+      "rawSha256": "1ff0f937366af0e661bb3a9e0920ad2835b6aca55d5f0e5667e35a3e48e7c9bd"
+    },
+    {
+      "path": "cb-budget-stop-legacy-green.log.gz",
+      "sha256": "d6bd8640d4bca692db50f40ced76f68d8fe8eb043004c183f986b89570751f4b",
+      "rawSha256": "8265456d53370416777fa2be13418da7e67d79cfed6490cbda3876c2918e4239"
+    },
+    {
+      "path": "cb-budget-stop-legacy-red.json.gz",
+      "sha256": "95c0759872a916672fc41bc0e90de542e9ebf4aef2cc466a3cfd6e884e7b82c4",
+      "rawSha256": "3be6f9f9754a1c17eff7dc70ac0cd024aaf515490ae895302d548e6df8ad21c0"
+    },
+    {
+      "path": "cb-budget-stop-legacy-red.log.gz",
+      "sha256": "ccfdac6cfb93f5ad471d8510a1292e94ba0d573921054e34a50000596225498d",
+      "rawSha256": "ff96286ac8eec0aee1d7c152d3e3c0e77a9762ac7c3c0605d2e6175438fd809a"
+    },
+    {
+      "path": "cb-budget-stop-lifecycle-green.json.gz",
+      "sha256": "a8eebe57db7c6e0feae94c31daad6d51a5828526ff4563950f099ad70fa727c8",
+      "rawSha256": "4f184a4f6b93e79d43e18761030721f4b8320ff58c07d584bcedbeca6fbe7a64"
+    },
+    {
+      "path": "cb-budget-stop-lifecycle-green.log.gz",
+      "sha256": "f76091bc7e0ab327780480336c442835cd2217bb95c9ce7458b7883ecfe44a06",
+      "rawSha256": "a50013915e151fa2449c2a8a2b386824dfbcb02d84afa6863f3c34d14c9853a0"
+    },
+    {
+      "path": "cb-budget-stop-mocks-green.log.gz",
+      "sha256": "cd0fc3e07713351266ce5c971454602a733fe6719161680571cdd98ab5081c0a",
+      "rawSha256": "195f10d2aa4de71002e6a1e63ab3823a1e5321f7418217a6f263f56a24537a62"
+    },
+    {
+      "path": "cb-budget-stop-normal-permission.json.gz",
+      "sha256": "e66e4f35698e5daf1bae0995fa47f6f11d97a571cbecd2cddab21028f4d5853c",
+      "rawSha256": "fc6ef4a99c6bb111a0a53fadf48e1819176a9447f2c513b69e5087a06756e743"
+    },
+    {
+      "path": "cb-budget-stop-normal-permission.log.gz",
+      "sha256": "335f82b81350cd1adc08b1be4ebb1de3636439649a1baecc7135d0129138528d",
+      "rawSha256": "eee231ba04e6c68516035481c9fa891e0342c80613ecea62577b5858cd33e704"
+    },
+    {
+      "path": "cb-budget-stop-owner-evidence.json.gz",
+      "sha256": "7120278c1ae9083af18487aace70cf781d01cf256046cb28e2f3e0963a6e6afe",
+      "rawSha256": "a50183a9d5720c969d7ab525fbe32cc66ef96f7ef085b4bd0ea89967e15b3dbd"
+    },
+    {
+      "path": "cb-budget-stop-owner.patch.gz",
+      "sha256": "ced76d4ffe7f5d9244feac78e2574e5a5b90eeae8fdbd3a4680adfcc8bfc213d",
+      "rawSha256": "dbe1bcb2971d3da24bc8ea88bb7fe71a68deaf22561be47454f2113068278966"
+    },
+    {
+      "path": "cb-budget-stop-park-red.json.gz",
+      "sha256": "9a063eb422dcb73428a26b65b1992dc2eb2811fd2ae054b50a97d9932c1052f3",
+      "rawSha256": "e258ada9244846b8c05c528d5db536d901b553c31231aeebc378ab04a9644439"
+    },
+    {
+      "path": "cb-budget-stop-park-red.log.gz",
+      "sha256": "b4412af02e03673b71c450b611d276bae819b2a7ccfa8c9cfd3f09da013ecc9e",
+      "rawSha256": "590a2f1589d156c63a90ab9c19b4cec3b1622b98f571f78c65aa3e54dfacae5d"
+    },
+    {
+      "path": "cb-budget-stop-permission-red.json.gz",
+      "sha256": "c43f41320d344d89eea9534a33bd3bbc4537160c8009975d6034f7e0c368ecab",
+      "rawSha256": "6e35af866a78514d47ca8b3af4d493ee39371ccfea3b86bd1a0f26ddfe0fc953"
+    },
+    {
+      "path": "cb-budget-stop-permission-red.log.gz",
+      "sha256": "d72ef9a6ff3d927e8a992fa0d59d73b4d7eb856359e2a8a15dbe2e8cff669763",
+      "rawSha256": "a6776fb8febd8454229d450ad87306de2dba8be63170a362da7429c6754e0038"
+    },
+    {
+      "path": "cb-budget-stop-prior-red.json.gz",
+      "sha256": "a72e3553d133c32dbe357cd5421bdad936cebb2c6fc06d059e9e90c874edc8e2",
+      "rawSha256": "4d45c01501398b84b390a21f1d704d6964de63884a040be607816b04ea488177"
+    },
+    {
+      "path": "cb-budget-stop-prior-red.log.gz",
+      "sha256": "29b34fb584ca79d75b1d43f59ae278d29bd6a422ab11b601e8c56a55f79f9f5c",
+      "rawSha256": "0caed55d8cb78795b880f3903bfab007c056b1b73e58d1c5a56dee20843a8549"
+    },
+    {
+      "path": "cb-budget-stop-red2.json.gz",
+      "sha256": "3ec5b72b7f413b955a2b2e069260aa3ed74d9659c07d322d3d807b57c382975a",
+      "rawSha256": "6661066572aaff1339910a0cd4e8e2ef4e93f60d302016ad8d921d0bbdb935a9"
+    },
+    {
+      "path": "cb-budget-stop-red2.log.gz",
+      "sha256": "e84e51932e89df37e5cd556abf84e3c8d351fa8eb40f1999d627895eae8f9412",
+      "rawSha256": "3a46cc060bc922687729c9f55b4ac6e55f7da268522a47a30b75d519903c29cb"
+    },
+    {
+      "path": "cb-budget-stop-refusal-red.json.gz",
+      "sha256": "5f184c335ff82fc04361e5355dcb0341ebb17bd801e4c3b9e2b96d273b952e9c",
+      "rawSha256": "306e86dc1d7378751a2580f4e9a0b01a0128f59b92d232e06a372118197fbef8"
+    },
+    {
+      "path": "cb-budget-stop-refusal-red.log.gz",
+      "sha256": "fc051bdf201d1a3770931b952abd666d4f56f743ab6bf22af4ebeb1c8f62b8e5",
+      "rawSha256": "9becc9e2d43ff42e47cc3abb3cbe8c6e38a248d3006d508564f0761b5a84278e"
+    },
+    {
+      "path": "cb-budget-stop-scratch-green.json.gz",
+      "sha256": "0ef389f7a4c7fcc6d2c1556241a39935b3469b2c9c9e02da79608e016d56ee5f",
+      "rawSha256": "67a5ffab837ba302a1310b72b75121e8d512be3b35ac944c709768c7215294e7"
+    },
+    {
+      "path": "cb-budget-stop-scratch-green.log.gz",
+      "sha256": "4451252d5e85f729458ae393b557abb1a9b66a08583ae08694cf5780a1a7d39f",
+      "rawSha256": "3ac5695f7d79f2d0da95ef4dca49c0bf4605d5ca2f0bc029f208317cec825a76"
+    },
+    {
+      "path": "cb-budget-stop-scratch-red.json.gz",
+      "sha256": "112e3326a38e81e90e02085d84249a07e732bb22d997e32cad426d20851d15bd",
+      "rawSha256": "cd5fd365a37cf6bb2431905e00f46fbe30a548456c3b0616652a2d05c2d557f9"
+    },
+    {
+      "path": "cb-budget-stop-scratch-red.log.gz",
+      "sha256": "6e8f29ebaf19040f298ae3d54687fde5afe7cb95bda1802213e798a1057db8a0",
+      "rawSha256": "bada54c89b53273814581f76968e4d35d6e7595530595ce36b0bbadaa4e1fefc"
+    },
+    {
+      "path": "cb-budget-stop-serial.json.gz",
+      "sha256": "b44519bfc723b541688788d90b927aefd26def54c6e26c352e3b792db470422a",
+      "rawSha256": "166dde8f3ac657a08143109fb20c9f620eb2d00a402fcd031a6cfda5cf1e2b2e"
+    },
+    {
+      "path": "cb-budget-stop-serial.log.gz",
+      "sha256": "152466bf2bf7a8fdd27167d799f39b7408d7edd0e56bc3d230dc370dec271f31",
+      "rawSha256": "655efc410c407675525fa61f13589d0747ecea79f69671306cf8812a0859656f"
+    },
+    {
+      "path": "cb-budget-stop-siblings.txt.gz",
+      "sha256": "ad69ba5fb6c9ebbf0897494be8001c97e13c7bfed2e7fb6fa82e723036ea4907",
+      "rawSha256": "d734cb7f3a55a9506f3b7892feefbc3a37d1082b9dd43ec13037ea42f6448021"
+    },
+    {
+      "path": "cb-company-stop-order-green.log.gz",
+      "sha256": "8afe7b304f62bd06a93b01dab5aeaf2a657020c66ea285167627419ec7fb850b",
+      "rawSha256": "b75fa564894e0aef1d76d5cd67a598098fb721a2e97fc180c0bdf08cdcc062d2"
+    },
+    {
+      "path": "cb-company-stop-order-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-company-stop-order-red.log.gz",
+      "sha256": "c7c4be239b65e76e23cfd3c2b1878aace417e7f7ae40fb223a57f431009704f2",
+      "rawSha256": "629768094aa63582509f369d28b1e3ac7ca28994bf1c25547b3594699fb39b5c"
+    },
+    {
+      "path": "cb-company-stop-order-types-final.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-company-stop-ordering-evidence.json.gz",
+      "sha256": "a34ef32ec20bfa4eee66d3b56fd0408dc4c2ece8b57e3a68e9a03c9eef64f778",
+      "rawSha256": "73f941ec70c32a6e8e27005dfe8fedeb8718dc59d65fec93162aba02eb01ea1c"
+    }
+  ],
+  "readiness": "Current full integration and actual GLM-5.3 package qualification remain open; CB1 pilot/T27\u2013T43 unqualified."
+}

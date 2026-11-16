@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import type { HostState } from "../../host-state";
 import type { CommandEnvelope, CommandKind } from "../../types";
 import type { RuntimeEventSubscribers } from "../../runtime-event-subscribers";
+import type { DispatchStandRestart } from "../../stand-operations/contracts";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -77,6 +78,7 @@ export type BootedHost = {
 };
 
 export type BootHostOptions = {
+  dispatchStandRestart?: DispatchStandRestart;
   limits?: RuntimeLimits;
   now?: () => Date;
   fixture?: string;
@@ -143,6 +145,7 @@ export async function bootHost(
     hostState,
     workspaceRoots,
     runtimeEventSubscribers: opts.runtimeEventSubscribers,
+    dispatchStandRestart: opts.dispatchStandRestart,
   });
 
   const stopHeartbeat = startHeartbeatWatcher({

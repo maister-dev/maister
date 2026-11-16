@@ -13,6 +13,7 @@ import { sourceReindexConsumer } from "@/lib/brain/index-triggers";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 import { librarianFollowupConsumer } from "@/lib/librarian/followup";
+import { specialistAssignmentDeliveryConsumer } from "@/lib/specialist-assignments/delivery-capture";
 
 const log = pino({
   name: "domain-events-noop",
@@ -89,4 +90,5 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // run-terminal domain events. External repo edits remain manual reindex.
   sourceReindexConsumer,
   librarianFollowupConsumer,
+  specialistAssignmentDeliveryConsumer,
 ];

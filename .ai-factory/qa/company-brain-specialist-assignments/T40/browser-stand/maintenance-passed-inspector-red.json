@@ -1,0 +1,48 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "a0c1a8be3de43e2131522db6d7e7897fe28edd4a37fe4875063dfd22a2f57f64",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "b26d369d30bf959fa882f79a05ce42f686ee8886",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:23:16.804934+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:30:49.873599+00:00",
+  "invocationId": "963546c4-9aa0-4877-8053-63206447ee5b",
+  "status": "maintenance_and_write_back_passed_scheduled_result_missing",
+  "observations": {
+    "stand-pilot-proof": {
+      "packageTag": "stand-operations/v0.1.0",
+      "packageCommit": "b26d369d30bf959fa882f79a05ce42f686ee8886",
+      "runner": {
+        "id": "cb-live-claude",
+        "model": "glm-5.3"
+      },
+      "assignmentId": "f2797c66-9fa8-43c6-a840-c1bb2747ad92",
+      "runId": "825a0c6b-5b8a-42b6-aa70-27569c0625e6",
+      "operationId": "43fd48fa-124c-4ad1-bbb7-6ba89a6bbdf2",
+      "resultRevision": 1,
+      "verificationIds": [
+        "831d2a03-5340-4d9a-9374-3b427838c821"
+      ],
+      "acceptedChildren": 1,
+      "knowledgeProposalId": "5d771e9c-750e-462c-b956-a5df058c12a4",
+      "knowledgeRecordId": "731321a1-4652-4cce-ba62-9df1501f7feb",
+      "knowledgeRecordRevision": 1,
+      "knowledgeConfirmation": "unconfirmed"
+    }
+  },
+  "inspectionFailure": {
+    "runId": "4fcb28d5-2632-4532-a32a-bd105b4fa311",
+    "status": "Failed",
+    "reason": "result_missing",
+    "canonicalOpeningOffset": 89,
+    "openingStartsOnNewLine": false,
+    "probeState": "healthy"
+  },
+  "cleanup": {
+    "leaks": 0,
+    "outcome": "clean"
+  }
+}

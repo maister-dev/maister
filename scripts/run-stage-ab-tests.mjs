@@ -171,6 +171,8 @@ export function vitestArgs({ files, reportPath, concurrency }) {
   ];
 }
 
+const processCleanupSuite = "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts";
+
 // Frozen acceptance case names make partial collection fail, even when the suite survives.
 export const requiredIsolationCases = {
   "test-support/__tests__/supervisor-fault-proxy.integration.test.ts": [
@@ -215,7 +217,7 @@ export const requiredIsolationCases = {
     "I3: a SIGKILLed web restarts through production initialization under the same isolation and continues the run",
     "I4: the supervisor and its private root are untouched by the web's death and restart"
   ],
-  "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts": [
+  [processCleanupSuite]: [
     "O-build-lock: a proved dead owner is reclaimed and the verified artifact is reused",
     "O-exit: 'success' retains the exact outcome and finishes cleanup",
     "O-exit: 'assertion failure' retains the exact outcome and finishes cleanup",
@@ -258,7 +260,15 @@ export const requiredIsolationCases = {
   ]
 };
 
-export function validateLaneReport(report, files) {
+export function isolationCaseTitles(file, platform = process.platform) {
+  const titles = requiredIsolationCases[file] ?? [];
+
+  return platform === "darwin" && file === processCleanupSuite
+    ? [...titles, "O-signal: rereads a retiring native helper without signalling an unverified member"]
+    : titles;
+}
+
+export function validateLaneReport(report, files, platform = process.platform) {
   assert.equal(new Set(files).size, files.length, "A/B selected owning suite is duplicated");
   assert.equal(report.testResults.length, files.length, "A/B report suite count differs from selected owning suites");
   const resultsByFile = new Map(files.map((file) => [file, []]));
@@ -277,14 +287,16 @@ export function validateLaneReport(report, files) {
 
     assert(result.assertionResults.length > 0, `A/B discovery is empty: ${file}`);
     assert(result.assertionResults.every((item) => item.status === "passed"), `A/B case failed or was skipped: ${file}`);
-    for (const title of requiredIsolationCases[file] ?? []) {
+    const requiredTitles = isolationCaseTitles(file, platform);
+
+    for (const title of requiredTitles) {
       assert.equal(result.assertionResults.filter((item) => item.title === title).length, 1,
         `A/B required case missing or duplicated: ${file}: ${title}`);
     }
     if (laneSuites.isolation.includes(file) ||
       file === "test-support/__tests__/linux-isolation-driver.integration.test.ts" ||
       file === "test-support/__tests__/execution-ab-preflight.integration.test.ts")
-      assert.equal(result.assertionResults.length, requiredIsolationCases[file].length,
+      assert.equal(result.assertionResults.length, requiredTitles.length,
         `A/B unexpected isolation case: ${file}`);
   }
   assert.equal(report.numFailedTests, 0);
@@ -343,7 +355,7 @@ export async function runStageAbLane({ slice, files = slice === "isolation" ? is
     await registerProcess(invocation, { role: "runner", caseName: slice, rootRole: "invocation", root: null, bootId: invocation.id, logFile: null }, process.pid);
     logInvocation(invocation, "lane-selection", {
       platform: process.platform, slice, files, concurrency,
-      requiredCases: files.flatMap((file) => requiredIsolationCases[file] ?? []),
+      requiredCases: files.flatMap((file) => isolationCaseTitles(file)),
     });
     if (slice !== "supervisor") {
       const reaper = await retainLaneReaper(acquisition.signal);

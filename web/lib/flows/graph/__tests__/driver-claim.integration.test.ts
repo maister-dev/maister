@@ -33,7 +33,7 @@ import { seedGraphRun } from "@/test-support/graph-run-seed";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 import { runAgentStep } from "@/lib/flows/runner-agent";
-import { loadRun } from "@/lib/flows/graph/runner-core";
+import { loadProjectRun as loadRun } from "@/lib/flows/graph/runner-core";
 import { buildContext } from "@/lib/flows/context";
 
 let database: StartedPostgresTestDb;

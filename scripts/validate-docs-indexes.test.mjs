@@ -81,7 +81,21 @@ const AGENT_ACTIVITY = {
   ],
 };
 
-const GROUPS = [STAGE_B, M51, RUN_TRACE, LIBRARIAN, OPERATIONAL, AGENT_ACTIVITY];
+const COMPANY = {
+  label: "Company Brain and specialists",
+  traceabilityFile: "company-brain-specialists-traceability.md",
+  documents: [
+    ["company-brain.md", "CBK-01", "EDGE-CBK-01"],
+    ["company-brain-evidence.md", "CBE-01", "EDGE-CBE-01"],
+    ["evidence-findings.md", "CBE-04", "EDGE-CBE-04"],
+    ["specialist-runtime.md", "CBS-01", "EDGE-CBS-01"],
+    ["specialist-assignments.md", "CBA-01", "EDGE-CBA-01"],
+    ["specialist-cooperation.md", "CBC-01", "EDGE-CBC-01"],
+    ["stand-maintenance.md", "CBO-01", "EDGE-CBO-01"],
+    ["company-brain-specialists-qualification.md", "CBX-01", "EDGE-CBX-01"],
+  ],
+};
+const GROUPS = [STAGE_B, M51, RUN_TRACE, LIBRARIAN, OPERATIONAL, AGENT_ACTIVITY, COMPANY];
 
 function documentBody(requirement, edge, traceability = "") {
   return `# Fixture\n\n## Purpose\n\nText.\n\n## Domain entities\n\n- Entity.\n\n## State machine\n\nText.\n\n## Process flows\n\nText.\n\n## Expectations\n\n- **${requirement}:** Contract.\n\n## Edge cases\n\n- **${edge}:** Case.\n\n## Linked artifacts\n\n- [Artifact](artifact.md)\n${traceability}`;
@@ -369,5 +383,14 @@ test("rejects an unindexed analytics document", async () => {
     await writeFile(readme, current.replace("| Fixture | [execution-event-plane.md](execution-event-plane.md) | fixture |\n", ""));
     const failures = validateDocsIndexes(root).failures.join("\n");
     assert.match(failures, /execution-event-plane.md is not linked/);
+  });
+});
+
+test("company specifications are enforced by the registered documentation command", async () => {
+  await withFixture(async (root) => {
+    const document = join(root, "system-analytics", "specialist-cooperation.md");
+    const current = await readFile(document, "utf8");
+    await writeFile(document, current.replace("## State machine", "## Missing section"));
+    assert.match(validateDocsIndexes(root).failures.join("\n"), /specialist-cooperation.*missing R5 section State machine/);
   });
 });

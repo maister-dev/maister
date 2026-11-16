@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { launchRun } from "@/lib/services/runs";
@@ -22,6 +21,8 @@ import { qualificationFixture } from "@/test-support/task-qualification";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 import { initRepo, git } from "@/test-support/git-fixture";
 import {
+  closeTestPool,
+  createTestPool,
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -167,7 +168,7 @@ it("IT-UX-19 refuses unassessed delivery and legacy triage bypass, pins current 
       )
     ).rows[0].snapshot,
   ).toEqual(admission.snapshot);
-  const oldWriter = new Pool({
+  const oldWriter = createTestPool({
     connectionString: database.databaseUrl,
     max: 1,
   });
@@ -179,7 +180,7 @@ it("IT-UX-19 refuses unassessed delivery and legacy triage bypass, pins current 
       constraint: "task_qualification_writer_capability",
     });
   } finally {
-    await oldWriter.end();
+    await closeTestPool(oldWriter);
   }
   const legacy = randomUUID();
 

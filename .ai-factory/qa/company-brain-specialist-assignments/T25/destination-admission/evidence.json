@@ -1,0 +1,65 @@
+{
+  "task": "T25",
+  "date": "2026-11-07",
+  "baseCommit": "3dab28021",
+  "slice": "Authoritative destination admission and origin-delivery SDD dependency refinement",
+  "status": "Checkpoint only; T25 remains open",
+  "gates": {
+    "owningIntegration": {
+      "tests": 237,
+      "files": 10,
+      "durationSeconds": 294.99,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 27.0,
+      "exitCode": 0
+    },
+    "webTypesAndChangedLintFormat": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsErd": {
+      "tables": 173,
+      "exitCode": 0
+    }
+  },
+  "redToGreen": [
+    "Native assignment creation accepted a foreign Inbox recipient",
+    "A company assignment or wrong task/thread could be retained as a task reply destination",
+    "A foreign or platform outbound subscription could become the frozen reply target"
+  ],
+  "qualified": [
+    "Refusal before assignment, immutable input and domain outbox persistence",
+    "Valid requester-owned Inbox",
+    "Valid current same-project task and optional thread",
+    "Company-to-task, wrong project/task and unavailable thread refusal",
+    "Enabled requester-owned outbound subscription acceptance",
+    "Changed recipient ownership, platform ownership, disabled and missing subscription refusal",
+    "All existing company/project manual, trigger, webhook, task-comment, question and continuation paths remain green"
+  ],
+  "harnessNotes": [
+    "New project fixtures originally preceded the existing no-project company qualification; cases moved after it, preserving the original invariant"
+  ],
+  "limitations": [
+    "No schema or migration in this checkpoint",
+    "No delivery receipt, worker dispatch, replay or native result Inbox projection implemented yet",
+    "Accepted-outcome delivery is owned by real T28 acceptance; no fake completion or acceptance introduced",
+    "CBA-06 and T25 remain incomplete until full channel and recovery qualification",
+    "No stand or pilot readiness claim"
+  ],
+  "sourceSha256": {
+    "docs/api/external/operations.openapi.yaml": "fdb5d2b4c40a51f572b97ac4d41ce8c3d2c8cfc2dd21251cc879b7b63060f79b",
+    "docs/api/web.openapi.yaml": "65897de75ff7762686edaffd13cbfde019cb3f93e969745635f83a209631b91c",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "cd7443bbe59a5631a8ee080eb60c46a747b1e8f77f92139b8cecf1027d5dc150",
+    "docs/system-analytics/specialist-assignments.md": "bc8ae37d791117e7c24fd887ce0939dae995636d0a12cbb9258a08a55397adf0",
+    "web/lib/specialist-assignments/__tests__/store.integration.test.ts": "df940133284b6ff1e0a00ad5715b1e77854c68749c7bd6aab611240f42626057",
+    "web/lib/specialist-assignments/destination.ts": "7b2d6dad4f7f319cf76d9d330c78e1117935a6b5ccbbfeafece086c3481333e1",
+    "web/lib/specialist-assignments/store.ts": "c8189afeb1f27f8d68c2e4de27c3bf536d5748d32c4ffae97f1bd90267cb4079"
+  }
+}

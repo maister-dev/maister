@@ -44,6 +44,15 @@ Add feature read services in `web/lib/runs/peek-read-model.ts` and serializable 
 
 Authorization rules:
 
+Company agent Runs use the shared `assertCompanyRunReadAccess` guard: explicit current
+`assignments:read`, an exact retained Run/input link and complete source capture.
+The capture must include that immutable assignment input; all inherited sources
+must remain readable. Missing/unauthorized company Runs and incomplete captures
+share concealed 404; unavailable inherited sources return 409. This reader policy
+is independent of specialist/provider execution eligibility, so retirement does
+not erase authorized history. Every project-less ancestry edge uses its own
+persisted owner; company ownership never creates a project grant.
+
 - The anchor, selected Run, listed children and every breadcrumb must independently pass existing project/owner access checks. Preserve not-found concealment for non-members, missing and unrelated resources. A content-level 403 is shown only after Run metadata access is established. Session expiry uses existing authentication behavior.
 - Current public-result DTO is explicitly shown on the full Run page after project membership, including for a viewer; retain that public projection policy. Raw transcripts, artifact/runtime-object bytes and repository-derived evidence require `readRepoFiles`. Do not treat “public” as unauthenticated or bypass stricter evidence routes.
 - Flow detail is an explicit allow-list of existing read-model fields: no full `getRunDetail` serialization, raw HITL context, settings secrets, absolute host paths or hidden result payloads. Reuse existing redaction for user-visible facts. Operational evidence links obey the underlying content gate.

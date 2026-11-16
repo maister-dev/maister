@@ -8,6 +8,7 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { runs } from "@/lib/db/schema";
@@ -123,6 +124,9 @@ export async function PATCH(
     }
 
     await requireProjectAction(run.projectId, "answerHitl");
+    const recipient = { kind: "user" as const, userId: sessionUser.id };
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     const actor = {
       userId: sessionUser.id,
@@ -137,6 +141,8 @@ export async function PATCH(
     if (!updated) {
       return NextResponse.json({ message: "not found" }, { status: 404 });
     }
+
+    await assertRunKnowledgeDisclosure(dbh, recipient, runId);
 
     return NextResponse.json({ comment: toCommentDto(updated) });
   } catch (err) {

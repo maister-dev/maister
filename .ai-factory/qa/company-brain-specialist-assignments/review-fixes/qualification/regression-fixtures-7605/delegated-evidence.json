@@ -1,0 +1,22 @@
+{
+  "checkout": "/private/tmp/maister-migration-triage-7605ebf59",
+  "base": "7605ebf5967ceb7d9834aa1f5f3a97993175570a",
+  "file": "web/lib/services/__tests__/launch-run-delegated.integration.test.ts",
+  "sourceSha256": "198583bb9c52b10fd8edfbf112dff8fc1cd0156105163916873dfe70a1c8422e",
+  "lastSourceCommit": "abb4578d0a514700c5b29f48aa4c4baaa92070c2 fix: preserve accepted child work through parent lifecycle",
+  "primaryFullRun": {
+    "log": "/private/tmp/cb-qualification-web-integration-7605ebf59.log",
+    "line": 88521,
+    "observation": "0 test failed suite summary, final error stack not yet available; no functional RED established"
+  },
+  "isolated": {
+    "command": "web/node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/services/__tests__/launch-run-delegated.integration.test.ts",
+    "log": "/private/tmp/cb-delegated-launch-7605-isolated.log",
+    "passed": 7,
+    "failed": 0,
+    "durationSeconds": 20.87
+  },
+  "sourceModified": false,
+  "primaryModified": false,
+  "assessment": "Collection failure not reproduced in isolated frozen source; no justified import/export or runtime patch. Await original final stack."
+}

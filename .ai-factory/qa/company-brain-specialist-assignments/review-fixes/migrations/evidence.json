@@ -1,0 +1,74 @@
+{
+  "baseCommit": "834b098622132604a130bd461b18050e38aa1a48",
+  "candidate": "/private/tmp/maister-migration-session-834b09862",
+  "files": {
+    "web/lib/db/migrate.ts": "114727c0b3ccea5fa900c34625238af3dd1b41331f439642dc8a342b23ae0922",
+    "web/lib/db/migrate-brain.ts": "a4e3f57dbb9b42358cc50adafcb5708dfe7ee0920b69297d526de8611dcfd4e6",
+    "web/lib/db/migration-session.ts": "b3da3fca882885e68e1dafb0da9701648134a6cd30f5ed5640f5ec41f2b2657d",
+    "web/lib/db/__tests__/migration-session-cli.integration.test.ts": "755fed7dfb4c7f08d90cf9bcd8826763ed6b8dd37e69fbc9d86ab713e0a75aaa"
+  },
+  "primaryRuntimeFiles": {
+    "web/lib/db/migrate.ts": {
+      "unchangedFromBase": true,
+      "sha256": "9e4a6c97930463556cedde23eede0183168eb22f036292eec025801eeb57f082"
+    },
+    "web/lib/db/migrate-brain.ts": {
+      "unchangedFromBase": true,
+      "sha256": "275ac7cfab449517deee864a2484bbc30b1bb3648daeab02577649c424fee5a0"
+    }
+  },
+  "qualification": {
+    "baselineRed": {
+      "testsFailed": 2,
+      "log": "/private/tmp/cb-fix-migration-session-candidate-baseline-red.log"
+    },
+    "newGreen": {
+      "testsPassed": 2,
+      "log": "/private/tmp/cb-fix-migration-session-candidate-green-final.log"
+    },
+    "actualCliConsumers": {
+      "filesPassed": 4,
+      "testsPassed": 16,
+      "log": "/private/tmp/cb-fix-migration-session-candidate-consumers.log",
+      "command": "vitest run --project integration --maxWorkers=2 lib/db/__tests__/staged-migrate-cli.integration.test.ts lib/db/__tests__/stage-b-migrate-cli.integration.test.ts lib/db/__tests__/check-migrations.integration.test.ts scripts/__tests__/legacy-import-cutover.integration.test.ts"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "/private/tmp/cb-fix-migration-session-candidate-typecheck-final.log"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "/private/tmp/cb-fix-migration-session-candidate-lint-final.log"
+    },
+    "independentReview": "No blockers;120s is per statement, not total transaction or upgrade deadline"
+  },
+  "patches": {
+    "runtime": "/private/tmp/cb-fix-migration-session-runtime.patch",
+    "allFourFiles": "/private/tmp/cb-fix-migration-session-all.patch"
+  },
+  "primaryQualification": {
+    "testedHead": "853ca6fa1",
+    "workingTreeFilesMatchCandidate": true,
+    "tests": 18,
+    "files": 5,
+    "command": "CI=true pnpm --filter maister-web test:integration lib/db/__tests__/migration-session-cli.integration.test.ts lib/db/__tests__/staged-migrate-cli.integration.test.ts lib/db/__tests__/stage-b-migrate-cli.integration.test.ts lib/db/__tests__/check-migrations.integration.test.ts scripts/__tests__/legacy-import-cutover.integration.test.ts --maxWorkers=2",
+    "log": "primary-green.log.gz",
+    "checks": {
+      "docs": "passed",
+      "contracts": "passed",
+      "webTypecheck": "passed",
+      "scopedLint": "passed"
+    }
+  },
+  "retainedLogSha256": {
+    "primary-green.log.gz": "4aa1531a6f6536b3345c279c1171e1b990c70cf161c6d08784bf8d71efaca308",
+    "green.log.gz": "00411c564d9e31fe23a4ca2de5a9d882bcc6eb277a2d5381d24264b5b124cab1",
+    "docs.log.gz": "5535b562bafff3dc79abaf3129657e8b1a1a51908411e7428b8b0df2bf45d044",
+    "existing-consumers.log.gz": "10ac80339d491850cd4a8043218c8081f1d050623b2acfe3d85584acb556934a",
+    "contracts.log.gz": "0459bfa5b2929099213db3d730cb15753cc0aee6ccafe8a5e4534b8c337c79e9",
+    "types.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "red.log.gz": "2861d76a8db2d6a346dea81e3edc124945824e966f55e601973e2f40e091dc55",
+    "lint.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+  },
+  "scope": "Local PostgreSQL CLI qualification; applied SQL, journals and snapshots unchanged; 5s per lock wait and120s per statement, not whole-upgrade deadline"
+}

@@ -52,7 +52,7 @@ jobs:
       # generated ERD — and did (`execution_event_skips` in `schema.ts` with no
       # `docs/db/erd.dbml` row, found during M51's rebase). Docker-free: the ERD
       # check reads the Drizzle schema, not a database.
-      - name: Validate docs (repo-wide) + API contracts
+      - name: Validate docs, Company Brain traceability and API contracts
         run: |
           pnpm validate:docs:all
           pnpm validate:contracts
@@ -62,7 +62,7 @@ jobs:
 
       - name: Typecheck (web)
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm --filter maister-web typecheck
 
       - name: Unit tests (web)
@@ -135,6 +135,24 @@ jobs:
           # Runtime client initialization includes Docker, Compose discovery and DNS.
           # Keep container/exec output namespaces disabled; diagnose the unchanged probe deadline.
           DEBUG: testcontainers
+
+  company-brain-specialist-acceptance:
+    name: Company Brain and specialist browser acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.22.3
+      - uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.3.0
+          cache: true
+          cache_dependency_path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maister-web exec playwright install --with-deps chromium
+      - run: pnpm --filter maister-web test:e2e --project=authed e2e/company-brain.spec.ts e2e/specialist-assignments.spec.ts
 
   execution-data-plane:
     name: A/B web (Node ${{ matrix.node }}, shard ${{ matrix.shard }}/2)
@@ -216,11 +234,12 @@ jobs:
           cache_dependency_path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maister-web test:unit
-      - run: pnpm test:runtime:compatibility
+      - id: runtime_compatibility
+        run: pnpm test:runtime:compatibility
       - run: pnpm --filter maister-web exec playwright install --with-deps chromium
       - run: pnpm --filter maister-web test:e2e:execution-ab
       - uses: actions/upload-artifact@v7.0.2
-        if: always()
+        if: ${{ always() && (steps.runtime_compatibility.outcome == 'success' || steps.runtime_compatibility.outcome == 'failure') }}
         with:
           name: node-26-web-compatibility
           path: |
@@ -239,6 +258,8 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=4096 --dns-result-order=ipv4first
       MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
+      # Keep Web's projection and recovery slots serial on the shared Intel VM.
+      MAISTER_PROJECTION_CONCURRENCY: "1"
     steps:
       - name: Record runner and evidence location
         shell: bash
@@ -341,7 +362,7 @@ jobs:
           if-no-files-found: error
 
   execution-isolation-complete:
-    name: A/B isolation complete (macOS Intel, 7 suites / 51 cases)
+    name: A/B isolation complete (macOS Intel, 7 suites / 52 cases)
     needs: [execution-isolation]
     # Validate failed parts, but do not delay a newer PR run after cancellation.
     if: ${{ !cancelled() }}

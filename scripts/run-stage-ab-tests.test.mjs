@@ -3,7 +3,7 @@ import { globSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, webRemainderFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
+import { isolationCaseTitles, laneConcurrency, lanePackages, laneSuites, vitestArgs, validateLaneReport, requiredIsolationCases, webShardFiles, webRemainderFiles, parseLaneInvocation } from "./run-stage-ab-tests.mjs";
 import { buildMaxWorkers, testMaxWorkers } from "./validation-resources.mjs";
 
 test("a host worker ceiling is opt-in and rejects ambiguous limits", () => {
@@ -55,12 +55,12 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
   }
 });
 
-test("isolation CI parts retain the complete disjoint 19/22/10 whole-suite inventory", () => {
+test("isolation CI parts retain the complete disjoint 20/22/10 whole-suite inventory", () => {
   const parts = [1, 2, 3].map((part) => parseLaneInvocation(["isolation", "--part", `${part}/3`], "darwin"));
 
   assert.deepEqual(parts.map(({ files }) => files), [laneSuites.isolation.slice(0, 2), laneSuites.isolation.slice(2, 6), laneSuites.isolation.slice(6)]);
   assert.deepEqual(parts.flatMap(({ files }) => files), laneSuites.isolation);
-  assert.deepEqual(parts.map(({ files }) => files.reduce((total, file) => total + requiredIsolationCases[file].length, 0)), [19, 22, 10]);
+  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [20, 22, 10]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
   for (const args of [["isolation", "--part", "0/3"], ["isolation", "--part", "4/3"],
     ["isolation", "--part", "1/2"], ["web", "--part", "1/3"], ["supervisor", "--part", "1/3"]])
@@ -153,18 +153,18 @@ test("the complete isolation manifest passes and rejects duplicate or skipped re
   const files = Object.keys(requiredIsolationCases);
   const report = {
     testResults: files.map((file) => ({ name: `/repo/web/${file}`, assertionResults:
-      requiredIsolationCases[file].map((title) => ({ title, status: "passed" })) })),
+      isolationCaseTitles(file, "linux").map((title) => ({ title, status: "passed" })) })),
     numFailedTests: 0, numPendingTests: 0, numTodoTests: 0,
     numRuntimeErrorTestSuites: 0, success: true,
   };
 
-  validateLaneReport(report, files);
+  validateLaneReport(report, files, "linux");
   const duplicated = structuredClone(report);
   duplicated.testResults[0].assertionResults.push(duplicated.testResults[0].assertionResults[0]);
-  assert.throws(() => validateLaneReport(duplicated, files), /required case/);
+  assert.throws(() => validateLaneReport(duplicated, files, "linux"), /required case/);
   const skipped = structuredClone(report);
   skipped.testResults[0].assertionResults[0].status = "pending";
-  assert.throws(() => validateLaneReport(skipped, files), /case failed or was skipped/);
+  assert.throws(() => validateLaneReport(skipped, files, "linux"), /case failed or was skipped/);
 });
 
 test("the native boot reporter accepts exactly the nine declared production worker controls", () => {
@@ -214,15 +214,31 @@ const linuxTitles = [
   "LI-parent: startup ready and active-probe parent death close the namespace before exit-sweep containment",
 ];
 
-test("platform selection requires Linux56 and preserves Darwin51", () => {
+test("platform selection requires Linux56 and Darwin52", () => {
   const linux = parseLaneInvocation(["isolation"], "linux");
   const darwin = parseLaneInvocation(["isolation"], "darwin");
 
   assert.deepEqual(linux.files, [...laneSuites.isolation, linuxOwner]);
-  assert.equal(linux.files.flatMap((file) => requiredIsolationCases[file]).length, 56);
-  assert.deepEqual(requiredIsolationCases[linuxOwner], linuxTitles);
+  assert.equal(linux.files.flatMap((file) => isolationCaseTitles(file, "linux")).length, 56);
+  assert.deepEqual(isolationCaseTitles(linuxOwner, "linux"), linuxTitles);
   assert.deepEqual(darwin.files, laneSuites.isolation);
-  assert.equal(darwin.files.flatMap((file) => requiredIsolationCases[file]).length, 51);
+  assert.equal(darwin.files.flatMap((file) => isolationCaseTitles(file, "darwin")).length, 52);
+});
+
+test("the native retiring-helper case is required on macOS only", () => {
+  const file = "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts";
+  const title = "O-signal: rereads a retiring native helper without signalling an unverified member";
+  const result = { name: `/repo/web/${file}`, assertionResults:
+    requiredIsolationCases[file].map((caseTitle) => ({ title: caseTitle, status: "passed" })) };
+  const report = {
+    testResults: [result], numFailedTests: 0, numPendingTests: 0, success: true,
+  };
+
+  validateLaneReport(report, [file], "linux");
+  assert.throws(() => validateLaneReport(report, [file], "darwin"), /required case missing.*retiring native helper/u);
+  result.assertionResults.push({ title, status: "passed" });
+  validateLaneReport(report, [file], "darwin");
+  assert.throws(() => validateLaneReport(report, [file], "linux"), /unexpected isolation case/u);
 });
 
 test("Linux isolation refuses parts and unknown platforms refuse selection", () => {
@@ -247,7 +263,7 @@ test("every completed Linux control is mandatory in a passing reporter", () => {
 
 test("isolation reporters reject an unexpected passing case as inventory drift", () => {
   for (const file of [linuxOwner, ...laneSuites.isolation]) {
-    const titles = file === linuxOwner ? linuxTitles : requiredIsolationCases[file];
+    const titles = file === linuxOwner ? linuxTitles : isolationCaseTitles(file);
     const report = {
       testResults: [{ name: `/repo/web/${file}`, assertionResults:
         [...titles, "unexpected passing case"].map((title) => ({ title, status: "passed" })) }],

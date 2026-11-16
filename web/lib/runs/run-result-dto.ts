@@ -1,10 +1,18 @@
 import "server-only";
 
+import type { EvidenceFindingsV1 } from "@/lib/run-results/findings-types";
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { RunResultContract } from "@/lib/run-results/types";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ResultStatus } from "@/lib/run-results/types";
 
 import { eq } from "drizzle-orm";
 
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
+import { projectNativeFindings } from "@/lib/run-results/findings-projection";
+import { MaisterError } from "@/lib/errors";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { deriveResultStatus } from "@/lib/run-results/status";
@@ -20,6 +28,7 @@ type Db = any;
 // cannot leak into a client-visible payload by accident.
 
 export type RunPublicResultDto = {
+  findings?: EvidenceFindingsV1;
   operationalOutcome: OperationalOutcome | null;
   /** `<flowRefId>@<rev12>:<schemaStem>`; null when the run has no contract. */
   schemaRef: string | null;
@@ -51,24 +60,36 @@ export type RunPublicResultDto = {
 export async function loadRunPublicResult(
   db: Db,
   runId: string,
+  recipient?: KnowledgeRecipient,
 ): Promise<RunPublicResultDto | null> {
   const runRows = (await db
     .select({
       status: runs.status,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
       promotedHeadSha: runs.promotedHeadSha,
       mergeCommitSha: runs.mergeCommitSha,
     })
     .from(runs)
     .where(eq(runs.id, runId))) as {
     status: string;
-    resultContract: { schemaRef: string; required: boolean } | null;
+    resultContract: RunResultContract | null;
+    knowledgeAccess: KnowledgeAccessCapture | null;
     promotedHeadSha: string | null;
     mergeCommitSha: string | null;
   }[];
   const run = runRows[0];
 
   if (!run) return null;
+  if (usesStructuredKnowledgeContext(run)) {
+    if (!recipient)
+      throw new MaisterError(
+        "CONFIG",
+        "Native execution material requires a current receiving principal",
+        { details: { reason: "native_recipient_required" } },
+      );
+    await assertRunKnowledgeDisclosure(db, recipient, runId);
+  }
 
   const { resolvePublicResult } = await import("@/lib/run-results/ledger");
   const { newest, valid } = await resolvePublicResult(db, runId);
@@ -96,8 +117,13 @@ export async function loadRunPublicResult(
   // nulls `result` for exactly this case. One plane, one rule.
   const served = resultStatus === "valid" ? valid : null;
 
-  return {
-    operationalOutcome: await loadOperationalOutcome(db, runId),
+  const findings = projectNativeFindings(
+    run.resultContract,
+    served?.value ?? null,
+  );
+  const result: RunPublicResultDto = {
+    ...(findings ? { findings } : {}),
+    operationalOutcome: await loadOperationalOutcome(db, runId, recipient),
     schemaRef: run.resultContract?.schemaRef ?? newest?.schemaRef ?? null,
     resultStatus,
     revision: valid?.revision ?? newest?.revision ?? null,
@@ -113,4 +139,9 @@ export async function loadRunPublicResult(
     completedWithoutPromotion:
       run.status === "Done" && !run.promotedHeadSha && !run.mergeCommitSha,
   };
+
+  if (recipient && usesStructuredKnowledgeContext(run))
+    await assertRunKnowledgeDisclosure(db, recipient, runId);
+
+  return result;
 }

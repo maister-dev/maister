@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { isMaisterError } from "@/lib/errors";
 import {
   parseRunActivityLimit,
@@ -48,7 +49,7 @@ export async function GET(
     {
       scopeLabel: "runs:read",
       admitLibrarian: true,
-      resolveLibrarianProjectId: runProjectResolver(runId),
+      resolveProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       db,
@@ -64,11 +65,24 @@ export async function GET(
         const salience = parseActivitySalience(
           req.nextUrl.searchParams.get("salience"),
         );
+
+        if ((await runProjectResolver(runId)({ db })) !== ctx.projectId)
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "run not found" },
+            { status: 404 },
+          );
+        const recipient = {
+          kind: "token" as const,
+          tokenId: ctx.actor.tokenId,
+        };
+
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
         const response = await getRunActivityResponse(ctx.projectId, runId, {
           sinceId,
           limit,
           salience,
           client: db,
+          recipient,
         });
 
         if (!response) {
@@ -90,6 +104,8 @@ export async function GET(
           },
           "served ext run activity",
         );
+
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
 
         return NextResponse.json(serializeRunActivityResponse(response), {
           status: 200,

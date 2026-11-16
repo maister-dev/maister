@@ -1,0 +1,32 @@
+{
+  "task": "T05",
+  "baseRevision": "d10830e98e9e23b88ef5f18c18f58ad16ecd0bd2",
+  "primaryIds": [
+    "IT-CBK-01",
+    "IT-CBX-01"
+  ],
+  "red": {
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/company-records.integration.test.ts",
+    "discovered": 1,
+    "failed": 1,
+    "assertion": "installation company table absent: expected true, received false",
+    "output": "red.log"
+  },
+  "greenRefactor": {
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__/company-records.integration.test.ts lib/db/__tests__/migration-company-brain-specialists.integration.test.ts lib/__tests__/authz.integration.test.ts lib/__tests__/authz-db-authoritative.integration.test.ts lib/__tests__/authz-workbench.integration.test.ts",
+    "files": 5,
+    "passed": 22,
+    "failed": 0,
+    "skipped": 0,
+    "output": "green-refactor.log",
+    "refactor": "Keep existing active-user authorization; scoped grant query rechecks account state. Formatting and import ordering only; no further behavior refactor required."
+  },
+  "otherGates": {
+    "migrationAuthzUnitRegressions": 26,
+    "typecheck": "passed",
+    "eslint": "passed, zero warnings",
+    "generatedMigrationDrift": "No schema changes, nothing to migrate",
+    "generatedErdTables": 155
+  },
+  "scope": "Singleton company, explicit user action grants/current revocation and populated main upgrade. Record restrictions/Brain owners, authenticated agent scope and HTTP management are implemented in subsequent owning tasks; aggregate requirements remain Planned."
+}

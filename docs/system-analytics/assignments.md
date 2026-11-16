@@ -83,6 +83,10 @@ sequenceDiagram
     W->>DB: record artifacts, flip run Running, complete assignment
 ```
 
+### Company specialist extension (Implemented / Designed)
+
+The existing human-work tables support explicit company ownership and current assignment grants. Native business assignments remain separate heads linked to existing Runs, under the [specialist assignment contract](specialist-assignments.md). Company intake, context, clarification and result-availability delivery are implemented; business acceptance and replacement-owner recovery remain Designed.
+
 ## Expectations
 
 - Assignments are the read model for pending work; `runs.status` remains the

@@ -43,6 +43,41 @@
       "when": 1783200000000,
       "tag": "0006_brain_indexing_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793655080649,
+      "tag": "0007_company_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793656190603,
+      "tag": "0008_company_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793657990454,
+      "tag": "0009_knowledge_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793661833389,
+      "tag": "0010_source_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793667660307,
+      "tag": "0011_proposal_source_access",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,18 @@
+Source: /private/tmp/cb-agent-pending-completion-cleanup.log
+SHA256: fad7308062f3f806643264614cba86c543bb573539b476e90d3b890e2e80436f
+Outer exit: 0
+{"invocationId":"862d90d3-76bb-4361-bbde-d1679926f766","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"862d90d3-76bb-4361-bbde-d1679926f766","outcome":"clean","leaks":0}
+{"invocationId":"a5f39fe3-204e-49c9-9c65-c4b21e35d9eb","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"a5f39fe3-204e-49c9-9c65-c4b21e35d9eb","outcome":"clean","leaks":0}
+{"invocationId":"da5a4f07-6cd0-44dd-bd35-6bd1f0935503","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"da5a4f07-6cd0-44dd-bd35-6bd1f0935503","outcome":"clean","leaks":0}
+{"invocationId":"c72991d6-57e6-41c3-b83d-6a91e01c5aca","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"c72991d6-57e6-41c3-b83d-6a91e01c5aca","outcome":"clean","leaks":0}
+{"invocationId":"1033ac4f-01e6-4831-88ee-4f736d4f7aab","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"1033ac4f-01e6-4831-88ee-4f736d4f7aab","outcome":"clean","leaks":0}
+{"invocationId":"7c565469-90a9-420d-8e23-6ebf41a2c8c8","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"7c565469-90a9-420d-8e23-6ebf41a2c8c8","outcome":"clean","leaks":0}
+{"invocationId":"5df19e0b-6d25-4e7f-a42f-61eee2b532f2","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"5df19e0b-6d25-4e7f-a42f-61eee2b532f2","outcome":"clean","leaks":0}
+{"invocationId":"df301130-ff4f-40f1-a0ce-69c6d75a7ccb","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"df301130-ff4f-40f1-a0ce-69c6d75a7ccb","outcome":"clean","leaks":0}
+{"invocationId":"452e2b50-b9fe-4c4a-949b-cbec7e731e8f","event":"sweep-complete","parentPid":21681,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":21687,"pgid":0,"rootRole":"invocation","bootId":"452e2b50-b9fe-4c4a-949b-cbec7e731e8f","outcome":"clean","leaks":0}
+{"event":"owned-cleanup-finished","invocationCount":9,"failures":0}
+Source: /private/tmp/cb-agent-pending-completion-owning-cleanup.log
+SHA256: 08a90ce0c66d9eddd678017bf52ed61da5588b3db043fddd1dd21c1cab99f32f
+Outer exit: 0
+{"invocationId":"793a3de1-00ac-486b-ba72-e614245496fa","event":"sweep-complete","parentPid":61747,"rootId":"invocation","runtime":"darwin/arm64/node-24.15.0","role":"runner","caseName":"lane-exit","pid":61753,"pgid":0,"rootRole":"invocation","bootId":"793a3de1-00ac-486b-ba72-e614245496fa","outcome":"clean","leaks":0}
+{"event":"owned-cleanup-finished","invocationCount":1,"failures":0}

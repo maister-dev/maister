@@ -1,0 +1,1 @@
+CREATE INDEX "runs_company_pending_pool_idx" ON "runs" USING btree ("run_kind") WHERE "runs"."company_id" IS NOT NULL AND "runs"."status"='Pending';

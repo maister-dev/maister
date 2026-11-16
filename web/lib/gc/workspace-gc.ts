@@ -2,6 +2,8 @@ import "server-only";
 
 import type { PreserveResult, PreserveWorktreeArgs } from "@/lib/gc/preserve";
 import type { RemoveOwnedWorktreeArgs } from "@/lib/worktree";
+import type { RunResultContract } from "@/lib/run-results/types";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 
 import { access } from "node:fs/promises";
 
@@ -24,6 +26,7 @@ import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { projectPublicationPolicy } from "@/lib/brain/knowledge-project-publication";
 import * as schemaModule from "@/lib/db/schema";
 import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
 import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
@@ -100,6 +103,9 @@ export interface RunWorkspaceGcSweepOptions {
 }
 
 type CandidateRow = {
+  workspaceMode?: string | null;
+  resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   workspaceId: string;
   worktreePath: string;
   parentRepoPath: string;
@@ -266,6 +272,9 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
       rootRunId: runs.rootRunId,
       runKind: runs.runKind,
       runStatus: runs.status,
+      resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+      workspaceMode: runs.workspaceMode,
       archivedBranch: workspaces.archivedBranch,
       archivedAt: workspaces.archivedAt,
       archivedCommit: workspaces.archivedCommit,
@@ -505,13 +514,22 @@ export async function runWorkspaceGcSweep(
       }
 
       const baseRef = await resolveBaseRef({ projectId: cand.projectId, db });
+      const sourcePolicy = projectPublicationPolicy(cand, cand.projectId);
+      const archivePush =
+        gcArchivePush() && ["legacy", "project_context"].includes(sourcePolicy);
+
+      if (gcArchivePush() && !archivePush)
+        log.info(
+          { runId: cand.runId, sourcePolicy, archivePush: false },
+          "native source policy keeps GC preservation local",
+        );
       const r = (await preserve({
         worktreePath: cand.worktreePath,
         parentRepoPath: cand.parentRepoPath,
         branch: cand.branch,
         baseRef,
         runId: cand.runId,
-        archivePush: gcArchivePush(),
+        archivePush,
       })) as PreserveResult;
 
       if (!r.ok) {

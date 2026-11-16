@@ -1,0 +1,52 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "68c47da76ef60d6b59e92623c07fdb9ac3aef3d4ff1cf1d953bd7a19e8ac6cca",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "b188576cb06e5970c93660a198db4655cdda4043",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T12:57:34.854993+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T13:00:47.865245+00:00",
+  "invocationId": "ea67ecc4-b594-48ad-b970-0ca9fae36d93",
+  "verdict": "clarification_and_accepted_diagnostic_observed",
+  "scope": "Browser fault harness attempted to launch a cron-only observer for the independent conflict check. No restart was dispatched in this run.",
+  "events": [
+    {
+      "assignmentId": "4ba51c21-49de-4145-af3a-44626bacc4f5",
+      "runId": "291ac6c0-8edd-42f4-9005-80a471e2cdb9",
+      "hitlRequestId": "e7cef098-90f4-4a9a-8ae0-f43aed0bfb24",
+      "inputRevision": 1,
+      "msg": "assignment clarification retained before source checkpoint"
+    },
+    {
+      "assignmentId": "4ba51c21-49de-4145-af3a-44626bacc4f5",
+      "runId": "291ac6c0-8edd-42f4-9005-80a471e2cdb9",
+      "inputRevision": 2,
+      "msg": "clarification answer and existing resume intent committed"
+    },
+    {
+      "operationId": "1cf29003-55ea-4caf-9ede-ececb5763bc8",
+      "assignmentId": "4ba51c21-49de-4145-af3a-44626bacc4f5",
+      "effectState": "not_dispatched",
+      "msg": "stand operation intent retained"
+    },
+    {
+      "assignmentId": "4ba51c21-49de-4145-af3a-44626bacc4f5",
+      "rootRunId": "291ac6c0-8edd-42f4-9005-80a471e2cdb9",
+      "workId": "1f968785-4460-437c-a8d7-a05a87ee2e01",
+      "workRevision": 1,
+      "msg": "delegated intake retained one work reservation"
+    },
+    {
+      "assignmentId": "4ba51c21-49de-4145-af3a-44626bacc4f5",
+      "workId": "1f968785-4460-437c-a8d7-a05a87ee2e01",
+      "workRevision": 1,
+      "decisionId": "cd254818-3988-4d57-8fed-c9ae316e2f6d",
+      "resultRevision": 1,
+      "status": "accepted",
+      "msg": "exact specialist work decision retained"
+    }
+  ]
+}

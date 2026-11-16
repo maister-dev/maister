@@ -1,11 +1,18 @@
 import type { FormSchema } from "@/lib/config.schema";
+import type { OperationalCompletion } from "@/lib/agents/kind";
 import type {
+  OperationalResult,
   OperationalResultV1,
   OperationalValidationCode,
   OperationalValidationDiagnostic,
 } from "@/lib/run-results/operational-types";
 
 import { z } from "zod";
+
+import { evidenceFindingsV1Schema } from "./findings-types";
+
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
+import { postgresTextSchema } from "@/lib/text-schema";
 
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const nonempty = (maximum: number) =>
@@ -49,10 +56,8 @@ const diagnosticSchema = z
   })
   .strict();
 
-/** Version 1 is immutable; changes require a new supported semantic version. */
-export const operationalResultV1Schema = z
+const operationalResultBaseSchema = z
   .object({
-    schemaVersion: z.literal(1),
     outcome: z.enum(["success", "partial", "blocked", "failed"]),
     summary: nonempty(2000),
     coverage: z
@@ -74,138 +79,175 @@ export const operationalResultV1Schema = z
     references: z.array(referenceSchema).max(1000),
     diagnostics: z.array(diagnosticSchema).max(100),
   })
+  .strict();
+
+function validateOperationalSummary(
+  value: Omit<OperationalResultV1, "schemaVersion">,
+  context: z.RefinementCtx,
+): void {
+  const fail = (
+    rule: OperationalValidationCode,
+    path: string[],
+    message: string,
+  ): void =>
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message,
+      params: { operationalRule: rule },
+    });
+  const { counts, coverage, references, diagnostics } = value;
+
+  if (counts.attempted !== counts.completed + counts.failed)
+    fail(
+      "attempted_count_mismatch",
+      ["counts", "attempted"],
+      "attempted must equal completed + failed",
+    );
+  if (counts.attempted + counts.skipped > counts.scanned)
+    fail(
+      "scanned_count_exceeded",
+      ["counts", "scanned"],
+      "attempted + skipped must not exceed scanned",
+    );
+  if (counts.created > counts.attempted)
+    fail(
+      "created_count_exceeded",
+      ["counts", "created"],
+      "created must not exceed attempted",
+    );
+  if (coverage.state === "complete" && coverage.remainingKnown !== 0)
+    fail(
+      "complete_coverage_remaining",
+      ["coverage", "remainingKnown"],
+      "complete coverage requires remainingKnown=0",
+    );
+  if (coverage.state === "not_started" && counts.scanned !== 0)
+    fail(
+      "not_started_has_scanned",
+      ["counts", "scanned"],
+      "not_started coverage cannot report scanned work",
+    );
+  const ids = new Set(references.map((reference) => reference.id));
+  const identities = references.map(
+    (reference) => `${reference.kind}:${reference.id}`,
+  );
+
+  if (new Set(identities).size !== identities.length)
+    fail(
+      "duplicate_reference",
+      ["references"],
+      "reference identities must be unique",
+    );
+  if (
+    diagnostics.some((diagnostic) =>
+      diagnostic.referenceIds?.some((id) => !ids.has(id)),
+    )
+  )
+    fail(
+      "undeclared_diagnostic_reference",
+      ["diagnostics"],
+      "diagnostic referenceIds must resolve to declared references",
+    );
+  const error = diagnostics.some(
+    (diagnostic) => diagnostic.severity === "error",
+  );
+  const unresolved = references.some(
+    (reference) => reference.state === "unresolved",
+  );
+  const progress =
+    counts.completed > 0 ||
+    counts.created > 0 ||
+    references.some(
+      (reference) =>
+        reference.kind === "operation_receipt" &&
+        reference.state === "confirmed",
+    );
+
+  if (
+    value.outcome === "success" &&
+    (coverage.state !== "complete" || counts.failed > 0 || error || unresolved)
+  )
+    fail(
+      "success_inconsistent",
+      ["outcome"],
+      "success requires complete coverage without failed work, errors or unresolved effects",
+    );
+  if (value.outcome === "partial" && !progress)
+    fail(
+      "partial_requires_progress",
+      ["outcome"],
+      "partial requires confirmed progress",
+    );
+  if (
+    value.outcome === "partial" &&
+    !error &&
+    coverage.state === "complete" &&
+    counts.failed === 0 &&
+    !unresolved
+  )
+    fail(
+      "partial_requires_incomplete_work",
+      ["outcome"],
+      "partial requires incomplete or failed work",
+    );
+  if ((value.outcome === "blocked" || value.outcome === "failed") && !error)
+    fail(
+      "error_diagnostic_required",
+      ["diagnostics"],
+      "blocked/failed requires an actionable error diagnostic",
+    );
+  if (counts.failed > 0 && !error)
+    fail(
+      "failed_work_requires_error",
+      ["diagnostics"],
+      "failed work requires an actionable error diagnostic",
+    );
+  if (
+    counts.created >
+    references.filter((reference) => reference.state === "confirmed").length
+  )
+    fail(
+      "creation_reference_missing",
+      ["references"],
+      "confirmed creations require their confirmed references",
+    );
+}
+
+/** Version 1 is immutable; changes require a new supported semantic version. */
+export const operationalResultV1Schema = z
+  .object({ schemaVersion: z.literal(1), ...operationalResultBaseSchema.shape })
   .strict()
+  .superRefine(validateOperationalSummary);
+
+const evidenceIds = z
+  .array(postgresTextSchema.min(1).max(128).regex(/\S/))
+  .max(32)
+  .refine(
+    (ids) => new Set(ids).size === ids.length,
+    "evidence IDs must be unique",
+  );
+
+export const operationalEvidenceV2Schema = operationalResultBaseSchema
+  .extend({
+    schemaVersion: z.literal(2),
+    findings: evidenceFindingsV1Schema,
+    operationIds: evidenceIds,
+    verificationIds: evidenceIds,
+  })
   .superRefine((value, context) => {
-    const fail = (
-      rule: OperationalValidationCode,
-      path: string[],
-      message: string,
-    ): void =>
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path,
-        message,
-        params: { operationalRule: rule },
-      });
-    const { counts, coverage, references, diagnostics } = value;
-
-    if (counts.attempted !== counts.completed + counts.failed)
-      fail(
-        "attempted_count_mismatch",
-        ["counts", "attempted"],
-        "attempted must equal completed + failed",
-      );
-    if (counts.attempted + counts.skipped > counts.scanned)
-      fail(
-        "scanned_count_exceeded",
-        ["counts", "scanned"],
-        "attempted + skipped must not exceed scanned",
-      );
-    if (counts.created > counts.attempted)
-      fail(
-        "created_count_exceeded",
-        ["counts", "created"],
-        "created must not exceed attempted",
-      );
-    if (coverage.state === "complete" && coverage.remainingKnown !== 0)
-      fail(
-        "complete_coverage_remaining",
-        ["coverage", "remainingKnown"],
-        "complete coverage requires remainingKnown=0",
-      );
-    if (coverage.state === "not_started" && counts.scanned !== 0)
-      fail(
-        "not_started_has_scanned",
-        ["counts", "scanned"],
-        "not_started coverage cannot report scanned work",
-      );
-    const ids = new Set(references.map((reference) => reference.id));
-    const identities = references.map(
-      (reference) => `${reference.kind}:${reference.id}`,
-    );
-
-    if (new Set(identities).size !== identities.length)
-      fail(
-        "duplicate_reference",
-        ["references"],
-        "reference identities must be unique",
-      );
-    if (
-      diagnostics.some((diagnostic) =>
-        diagnostic.referenceIds?.some((id) => !ids.has(id)),
-      )
-    )
-      fail(
-        "undeclared_diagnostic_reference",
-        ["diagnostics"],
-        "diagnostic referenceIds must resolve to declared references",
-      );
-    const error = diagnostics.some(
-      (diagnostic) => diagnostic.severity === "error",
-    );
-    const unresolved = references.some(
-      (reference) => reference.state === "unresolved",
-    );
-    const progress =
-      counts.completed > 0 ||
-      counts.created > 0 ||
-      references.some(
-        (reference) =>
-          reference.kind === "operation_receipt" &&
-          reference.state === "confirmed",
-      );
-
-    if (
-      value.outcome === "success" &&
-      (coverage.state !== "complete" ||
-        counts.failed > 0 ||
-        error ||
-        unresolved)
-    )
-      fail(
-        "success_inconsistent",
-        ["outcome"],
-        "success requires complete coverage without failed work, errors or unresolved effects",
-      );
-    if (value.outcome === "partial" && !progress)
-      fail(
-        "partial_requires_progress",
-        ["outcome"],
-        "partial requires confirmed progress",
-      );
-    if (
-      value.outcome === "partial" &&
-      !error &&
-      coverage.state === "complete" &&
-      counts.failed === 0 &&
-      !unresolved
-    )
-      fail(
-        "partial_requires_incomplete_work",
-        ["outcome"],
-        "partial requires incomplete or failed work",
-      );
-    if ((value.outcome === "blocked" || value.outcome === "failed") && !error)
-      fail(
-        "error_diagnostic_required",
-        ["diagnostics"],
-        "blocked/failed requires an actionable error diagnostic",
-      );
-    if (counts.failed > 0 && !error)
-      fail(
-        "failed_work_requires_error",
-        ["diagnostics"],
-        "failed work requires an actionable error diagnostic",
-      );
-    if (
-      counts.created >
-      references.filter((reference) => reference.state === "confirmed").length
-    )
-      fail(
-        "creation_reference_missing",
-        ["references"],
-        "confirmed creations require their confirmed references",
-      );
+    validateOperationalSummary(value, context);
+    for (const [index, reference] of value.references.entries())
+      if (reference.kind === "operation_receipt")
+        context.addIssue({
+          code: "custom",
+          path: ["references", index, "kind"],
+          message:
+            "Use server operation identities to reference an effect receipt",
+          params: {
+            operationalRule: "operation_receipt_requires_server_reference",
+          },
+        });
   });
 
 const validationPath =
@@ -256,7 +298,14 @@ export function operationalValidationDiagnostics(
 
       return {
         code: operationalIssueCode(issue),
-        path: path.length <= 128 && validationPath.test(path) ? path : "$",
+        path:
+          path.length <= 128 &&
+          (validationPath.test(path) ||
+            /^(?:operationIds|verificationIds)(?:\[\d{1,2}\])?$/.test(path))
+            ? path
+            : issue.path[0] === "findings"
+              ? "findings"
+              : "$",
       };
     });
 
@@ -298,10 +347,39 @@ export const OPERATIONAL_FORM_SCHEMA: FormSchema = {
   ],
 };
 
+export const OPERATIONAL_EVIDENCE_FORM_SCHEMA: FormSchema = {
+  ...OPERATIONAL_FORM_SCHEMA,
+  fields: [
+    ...OPERATIONAL_FORM_SCHEMA.fields,
+    { name: "findings", type: "json", required: true },
+    {
+      name: "operationIds",
+      type: "array",
+      items: { type: "string" },
+      required: true,
+    },
+    {
+      name: "verificationIds",
+      type: "array",
+      items: { type: "string" },
+      required: true,
+    },
+  ],
+};
+
+export function operationalResultSchema(
+  contract: OperationalCompletion["contract"],
+) {
+  return contract === OPERATIONAL_EVIDENCE_CONTRACT
+    ? operationalEvidenceV2Schema
+    : operationalResultV1Schema;
+}
+
 export function parseOperationalResult(
   value: unknown,
-): OperationalResultV1 | null {
-  const parsed = operationalResultV1Schema.safeParse(value);
+  contract: OperationalCompletion["contract"] = "operational_v1",
+): OperationalResult | null {
+  const parsed = operationalResultSchema(contract).safeParse(value);
 
   return parsed.success ? parsed.data : null;
 }

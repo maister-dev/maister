@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { HitlItem } from "@/lib/queries/hitl";
 import type { NeedsYouItem } from "@/lib/ext-activity/types";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -26,7 +27,7 @@ function mapHitlItemToNeedsYouItem(item: HitlItem): NeedsYouItem {
 
 export async function listProjectNeedsYou(
   projectId: string,
-  deps?: { db?: Db },
+  deps?: { db?: Db; recipient?: KnowledgeRecipient },
 ): Promise<NeedsYouItem[]> {
   const inbox = await getHitlInbox(projectId, deps);
 

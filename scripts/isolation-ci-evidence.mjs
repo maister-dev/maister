@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isolationPartFiles, laneSuites, requiredIsolationCases, validateLaneReport } from "./run-stage-ab-tests.mjs";
+import { isolationCaseTitles, isolationPartFiles, laneSuites, validateLaneReport } from "./run-stage-ab-tests.mjs";
 
 export const isolationPreflightFiles = ["test-support/__tests__/execution-ab-preflight.integration.test.ts"];
 export const isolationReceiptSchema = "maister.isolation-ci-stage.v1";
@@ -34,8 +34,8 @@ export function isolationStageFiles(stage, part) {
 }
 
 export function validateIsolationReport(report, files) {
-  validateLaneReport(report, files);
-  const expectedCases = files.reduce((total, file) => total + requiredIsolationCases[file].length, 0);
+  validateLaneReport(report, files, "darwin");
+  const expectedCases = files.flatMap((file) => isolationCaseTitles(file, "darwin")).length;
 
   assert.equal(report.numTotalTests, expectedCases, "isolation report total differs from exact case manifest");
   assert.equal(report.numPassedTests, expectedCases, "isolation report passed total differs from exact case manifest");
@@ -43,7 +43,7 @@ export function validateIsolationReport(report, files) {
     const result = report.testResults.find((row) => row.name.replaceAll("\\", "/").endsWith(`/${file}`));
 
     assert.equal(result.status, "passed", `isolation owning suite failed: ${file}`);
-    assert.deepEqual(result.assertionResults.map((row) => row.title).sort(), [...requiredIsolationCases[file]].sort(), `isolation case names differ: ${file}`);
+    assert.deepEqual(result.assertionResults.map((row) => row.title).sort(), [...isolationCaseTitles(file, "darwin")].sort(), `isolation case names differ: ${file}`);
   }
 
   return expectedCases;
@@ -105,7 +105,7 @@ export async function aggregateIsolationEvidence(directory, identity, jobResult)
   assert.equal(new Set(stages.map(({ receipt }) => receipt.invocationId)).size, 6, "outer isolation invocations must be distinct");
   const parts = stages.filter(({ receipt }) => receipt.stage === "part");
   const files = parts.flatMap((row) => row.files);
-  const cases = laneSuites.isolation.reduce((total, file) => total + requiredIsolationCases[file].length, 0);
+  const cases = laneSuites.isolation.flatMap((file) => isolationCaseTitles(file, "darwin")).length;
 
   assert.deepEqual(files, laneSuites.isolation, "combined isolation inventory is incomplete or duplicated");
   assert.equal(parts.reduce((total, row) => total + row.cases, 0), cases, "combined isolation must retain the exact required case manifest");

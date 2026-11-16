@@ -4,6 +4,7 @@ import pino from "pino";
 
 import {
   loadRun,
+  CompanyFlowLoadFailure,
   resolveFlowRuntimeRoot,
   type Db,
   type LoadedRun,
@@ -23,6 +24,8 @@ import { withFlowDriver } from "./graph/driver-lifetime";
 import { wakeParkedCoordinator } from "./graph/coordinator-wake";
 
 import { getDb } from "@/lib/db/client";
+import { promoteNextPending } from "@/lib/scheduler";
+import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import {
   createExecutionHosts,
   ensureAssignment,
@@ -51,10 +54,46 @@ export async function runFlow(
   try {
     loaded = await loadRun(db, runId);
   } catch (error) {
+    if (error instanceof CompanyFlowLoadFailure) {
+      const finalized = await finalizeCompanyFlowRun({
+        db,
+        rootDb: db,
+        runId,
+        requested: "Failed",
+        errorCode: error.code,
+        admissionRefusedBeforeTraversal: true,
+        reason:
+          typeof error.details?.reason === "string"
+            ? error.details.reason
+            : "company_flow_admission_refused",
+        hosts: opts.executionHosts,
+      });
+
+      // Early authority refusal releases a slot before graph traversal owns its
+      // normal exit wake. Continue the existing queue only after terminal CAS.
+      if (finalized)
+        await promoteNextPending({
+          db,
+          runFlow: (nextRunId) =>
+            runFlow(nextRunId, {
+              db,
+              runtimeRoot,
+              executionHosts: opts.executionHosts,
+            }),
+        });
+    }
     logger.error({ error, runId }, "runFlow loadRun failed");
     throw error;
   }
 
+  if (loaded.run.companyCancellationIntent) {
+    logger.info(
+      { companyId: loaded.run.companyId },
+      "company graph continuation deferred to retained cancellation",
+    );
+
+    return;
+  }
   const graph = compileManifest(loaded.manifest);
   const requirements = flowTraversalRequirements(graph);
 

@@ -184,6 +184,10 @@ sequenceDiagram
   `flow_revisions` + `capability_imports` row, THEN the existing post-trust
   setup path runs per-member `setup.sh` (never at install — fetch and execute
   stay physically separate, ADR-021/ADR-042/ADR-069).
+  Native evidence-export members remain `Installed` after this operation;
+  enable their exact revisions separately. Trusted-cache reattachment follows
+  the same rule. [Native lifecycle](evidence-findings.md#contract-selection-and-frozen-compatibility)
+  defines this capability boundary; legacy ready-member auto-enable remains.
 
 ### Attachment-pinning lifecycle
 

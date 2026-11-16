@@ -1,11 +1,12 @@
 import "server-only";
 
-import type { DomainEventRow } from "@/lib/db/schema";
+import type { ProjectDomainEventRow } from "@/lib/db/schema";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getDb } from "@/lib/db/client";
 import {
   librarianConversations,
@@ -77,7 +78,7 @@ async function followedConversations(
 
 async function deliver(
   db: Db,
-  event: DomainEventRow,
+  event: ProjectDomainEventRow,
   conversationId: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -154,7 +155,10 @@ export function buildLibrarianFollowupConsumer(db?: Db): DomainEventConsumer {
   return {
     id: "librarian_followup",
     startFrom: "now",
-    async handle(events) {
+    async handle(receivedEvents) {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const client = db ?? getDb();
 
       for (const event of events) {

@@ -71,7 +71,7 @@ import {
   PromptOwnerDeferred,
 } from "@/lib/execution-host/prompt-owners";
 import {
-  appendSentinelOutput,
+  appendAssistantSentinelOutput,
   emptySentinelOutput,
   finishSentinelOutput,
 } from "@/lib/flows/graph/node-output-stream";
@@ -138,6 +138,12 @@ export async function lockAgentPromptSession(
 
   if (run?.runKind !== "agent" || run.status !== "Running")
     throw new PromptOwnerInvariantError("agent_initial_admission_generation");
+  if (run.companyId != null) {
+    const { loadCompanyAgentSessionContext } =
+      await import("./company-session-context");
+
+    await loadCompanyAgentSessionContext(tx, runId);
+  }
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
     .from(runSessions)
@@ -817,7 +823,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         const text = agentMessageText(event.payload?.update);
 
         if (text !== null)
-          sentinel = appendSentinelOutput(sentinel, text, maxBytes);
+          sentinel = appendAssistantSentinelOutput(
+            sentinel,
+            event.payload?.update,
+            text,
+            maxBytes,
+          );
       }
     }
     const succeeded =
@@ -836,9 +847,16 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         signal,
       );
     const [run] = await db
-      .select({ persistent: runs.persistent, status: runs.status })
+      .select({
+        persistent: runs.persistent,
+        status: runs.status,
+        companyCancellationIntent: runs.companyCancellationIntent,
+      })
       .from(runs)
       .where(eq(runs.id, ref.runId));
+
+    if (run?.companyCancellationIntent)
+      throw new PromptOwnerDeferred("company_cancellation_pending");
     const persistent = run?.persistent ?? false;
 
     // ADR-183 D-M3: the host parked this turn under outbox pressure. The run

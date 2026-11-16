@@ -60,6 +60,9 @@ import { pgErrorOf } from "@/lib/db/pg-error";
 export type OwnedSessionOptions = Readonly<{
   assertCommit?: (tx: Db) => Promise<void>;
   prepareContinuation?: () => Promise<OwnedCreateContinuation>;
+  bindCredentials?: (
+    tx: Db,
+  ) => Promise<NonNullable<CreateSessionPayload["mcpServers"]>>;
 }>;
 export type { OwnedCreateContinuation } from "./create-continuation";
 
@@ -493,6 +496,16 @@ async function createOwnedSessionFromIntent(
               tx,
               createContinuationObjectIds(continuation),
             );
+          const admittedPayload =
+            !predecessor && input.options?.bindCredentials
+              ? {
+                  ...normalized,
+                  mcpServers: [
+                    ...(normalized.mcpServers ?? []),
+                    ...(await input.options.bindCredentials(tx)),
+                  ],
+                }
+              : normalized;
           const envelope = buildEnvelope({
             commandId,
             kind: "session.create",
@@ -500,7 +513,7 @@ async function createOwnedSessionFromIntent(
             assignmentId: client.assignment.id,
             assignmentEpoch: client.assignment.epoch,
             runId: authority.runId,
-            payload: normalized,
+            payload: admittedPayload,
             issuedAt,
           });
           const intent = storeCreateIntent({
@@ -526,7 +539,7 @@ async function createOwnedSessionFromIntent(
             assignment: client.assignment,
             host: client.host,
             kind: "session.create",
-            payload: normalized,
+            payload: admittedPayload,
             createIntent: intent,
             maxAttempts: COMMAND_POLICY["session.create"].maxAttempts,
             logger,

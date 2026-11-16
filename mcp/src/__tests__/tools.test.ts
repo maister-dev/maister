@@ -58,6 +58,11 @@ describe("TOOL_SPECS registry", () => {
         "activity_pulse",
         "agent_memory_write",
         "ask_human",
+        "assignment_get",
+        "assignment_context_get",
+        "assignment_context_update",
+        "assignment_question_ask",
+        "assignment_question_respond",
         "clarification_cancel",
         "clarification_list",
         "clarification_request",
@@ -74,6 +79,17 @@ describe("TOOL_SPECS registry", () => {
         "hitl_inbox",
         "hitl_list",
         "hitl_respond",
+        "knowledge_capture_source",
+        "knowledge_witness_get",
+        "knowledge_propose",
+        "knowledge_proposal_get",
+        "knowledge_proposals_list",
+        "knowledge_decide",
+        "knowledge_confirm",
+        "knowledge_conflicts",
+        "knowledge_evidence",
+        "knowledge_get",
+        "knowledge_search",
         "memory_clusters",
         "memory_propose",
         "memory_recall",
@@ -110,6 +126,13 @@ describe("TOOL_SPECS registry", () => {
         "librarian_memory_remember",
         "project_members_list",
         "runner_list",
+        "specialist_assignment_work_decide",
+        "stand_operation_create",
+        "stand_operation_get",
+        "stand_operation_logs",
+        "stand_operation_observe",
+        "stand_operation_dispatch",
+        "stand_operation_verify",
         "task_complete",
         "task_create",
         "task_get",
@@ -814,6 +837,42 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       mode: "task",
       prompt: "Do the subtask",
       title: "Subtask",
+    });
+  });
+
+  it("forwards exact native assignment work through run_delegate", async () => {
+    mockOnce({ childRunId: "child-1", status: "Pending" }, 202);
+    const assignmentWork = {
+      selector: {
+        schemaVersion: 1,
+        assignmentId: "assignment-1",
+        expectedRevision: 3,
+        inputRevision: 1,
+        contextRevision: 0,
+        logicalWorkId: "diagnose",
+        workRevision: 1,
+      },
+      expectedOutcome: "A typed health observation",
+    };
+
+    await dispatchTool({
+      name: "run_delegate",
+      args: {
+        operationKey: "delegate-assignment",
+        target: { agentId: "pkg:worker" },
+        mode: "run",
+        prompt: "Read the health witness",
+        assignmentWork,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    expect(parsedBody(lastRequest().init)).toEqual({
+      target: { agentId: "pkg:worker" },
+      mode: "run",
+      prompt: "Read the health witness",
+      assignmentWork,
     });
   });
 

@@ -9,12 +9,14 @@ import type {
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { isMaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions, getHitlRequestsForRun } from "@/lib/queries/hitl";
 import { runProjectResolver } from "@/lib/tokens/run-project";
-import { handleExt } from "@/lib/tokens/ext-handler";
+import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -79,37 +81,54 @@ export async function GET(
     {
       scopeLabel: SCOPE,
       admitLibrarian: true,
-      resolveLibrarianProjectId: runProjectResolver(runId),
+      resolveProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,
       method: "GET",
       requireScope: true,
       db,
     },
     async (ctx) => {
-      // Existence-hide: a run outside the token's project is indistinguishable
-      // from a missing run (both 404).
-      const runRows = await db
-        .select({ id: runs.id })
-        .from(runs)
-        .where(and(eq(runs.id, runId), eq(runs.projectId, ctx.projectId)));
+      try {
+        // Existence-hide: a run outside the token's project is indistinguishable
+        // from a missing run (both 404).
+        const runRows = await db
+          .select({ id: runs.id })
+          .from(runs)
+          .where(and(eq(runs.id, runId), eq(runs.projectId, ctx.projectId)));
 
-      if (runRows.length === 0) {
+        if (runRows.length === 0) {
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "run not found" },
+            { status: 404 },
+          );
+        }
+
+        const recipient = {
+          kind: "token" as const,
+          tokenId: ctx.actor.tokenId,
+        };
+
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
+        const rows = await getHitlRequestsForRun(runId, ctx.projectId, { db });
+
+        const externallyVisible = rows.filter(
+          (row) => row.kind !== "decision_request",
+        );
+
+        await assertRunKnowledgeDisclosure(db, recipient, runId);
+
         return NextResponse.json(
-          { code: "NOT_FOUND", message: "run not found" },
-          { status: 404 },
+          { hitl: externallyVisible.map(toExtHitlDTO) },
+          { status: 200 },
+        );
+      } catch (error) {
+        if (!isMaisterError(error)) throw error;
+
+        return NextResponse.json(
+          { code: error.code, message: error.message },
+          { status: httpStatusForExtCode(error.code) },
         );
       }
-
-      const rows = await getHitlRequestsForRun(runId, ctx.projectId, { db });
-
-      const externallyVisible = rows.filter(
-        (row) => row.kind !== "decision_request",
-      );
-
-      return NextResponse.json(
-        { hitl: externallyVisible.map(toExtHitlDTO) },
-        { status: 200 },
-      );
     },
   );
 }

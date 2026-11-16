@@ -13,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { DatabaseError, Pool } from "pg";
+import { DatabaseError } from "pg";
 
 import { parseCommandOutputReferenceV2 } from "../../../../runtime/command-evidence";
 import { issueOwnedPrompt } from "../ledger";
@@ -87,6 +87,8 @@ import {
 } from "@/test-support/execution-host-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
+  closeTestPool,
+  createTestPool,
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -1486,7 +1488,10 @@ describe("AT-01 bounded output on the production supervisor", () => {
     const { db, producer, handle } = await settledOwnerFixture(
       "owner-shutdown-failure",
     );
-    const pool = new Pool({ connectionString: database.databaseUrl, max: 2 });
+    const pool = createTestPool({
+      connectionString: database.databaseUrl,
+      max: 2,
+    });
     const workerDb = drizzle(pool, { schema: fullSchema });
     let preparing = false;
     const owners = createPromptOwnerRegistry([
@@ -1504,7 +1509,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
 
     try {
       await expect.poll(() => preparing, { timeout: 15_000 }).toBe(true);
-      await pool.end();
+      await closeTestPool(pool);
       await expect(recovering.stop()).rejects.toThrow("pool after calling end");
       const [retained] = await db
         .select()
@@ -1521,7 +1526,7 @@ describe("AT-01 bounded output on the production supervisor", () => {
       });
     } finally {
       await recovering.stop().catch(() => undefined);
-      if (!pool.ended) await pool.end();
+      if (!pool.ended) await closeTestPool(pool);
       await producer.client.deleteSession(producer.session.hostSessionId);
     }
   });

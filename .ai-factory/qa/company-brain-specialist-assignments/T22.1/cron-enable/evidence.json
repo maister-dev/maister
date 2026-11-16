@@ -1,0 +1,68 @@
+{
+  "task": "T22.1",
+  "slice": "Current-authority native company cron source enablement",
+  "date": "2026-11-07",
+  "baseCommit": "fa6b57c70",
+  "status": "Native cron service/registered dispatch qualified; public settings and event/webhook adapters remain open",
+  "red": {
+    "case": "Authorized enabled company cron source refused by the previous qualification gate",
+    "testsPassed": 36,
+    "testsFailed": 1,
+    "durationSeconds": 27.74,
+    "exitCode": 1
+  },
+  "gates": {
+    "owningIntegration": {
+      "tests": 126,
+      "files": 4,
+      "durationSeconds": 70.4,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9318,
+      "files": 889,
+      "durationSeconds": 29.04,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Standalone and coordinator sources are created enabled through the actual service, then run through the registered scheduler/default pool/owned supervisor and required valid results. Only the clock is advanced in positive fixtures.",
+    "A damaged earlier source is safely refused and deferred five minutes under configuration CAS while healthy work is reserved.",
+    "Host pressure leaves the original Run Pending with no ACP create/prompt; replay returns the same assignment and admission wake executes the retained Run.",
+    "Current initiating read-authority revocation after reservation terminalizes initial dispatch Failed with zero ACP create/prompt. Durable assignment remains active for governed recovery rather than being falsely completed.",
+    "Enabled creation requires declared cron, enabled reviewed role/coordinator, nonempty normalized request and current creator source-management/read plus assignment read/submit/update grants. Disabled drafts remain supported.",
+    "Missing normalized request refuses NEEDS_INPUT; disabled coordinator refuses PRECONDITION. Existing replay, lost settlement/unknown reconciliation and project trigger behavior remain qualified."
+  ],
+  "corrections": [
+    "The first combined run retained an obsolete generic-gate expectation. Its fixture has a disabled coordinator, so the assertion now owns the precise company_flow_binding_disabled precondition rather than guessing unsupported-trigger precedence."
+  ],
+  "limits": [
+    "The native source creation service is implemented; public company source routes/settings remain T37.",
+    "Event/webhook adapters and complete T22/T22.1 remain open; no package/stand pilot readiness is claimed.",
+    "Missing-request clarification is T24; enabled creation refuses missing input without starting work.",
+    "Primary T21 full integration remains running on frozen a48a002b2; changes are isolated and not yet integrated."
+  ],
+  "sourceSha256": {
+    "web/lib/agents/company-schedules.ts": "1f09569a2e6a0c07898372ec96a44ae44ccf8660c554eb2e45cae125c09c89ed",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "16264bccf6380cf8dea38dbbf8570aa113ded6224b8115d56e3916b884b87d54",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "a56736489ab5a51e904c36e4f01a1fcebb77c0998d9828ca0fa4e2fe6ece81f6",
+    "web/lib/agents/__tests__/company-flow-bindings.integration.test.ts": "930907b5762eb3b2d91ddc76781ae363dbc8d9d4e7983662310271e86b85d079",
+    "docs/api/web.openapi.yaml": "caa5278007e92e93e77df341c3da2696bdb48756ec8170bf0a3c8f2f3925e288",
+    "docs/system-analytics/specialist-runtime.md": "46f785fbc580f2940f4e133a9ec58f5e2f24425cf5cbf5067635ec0ae7c28255"
+  }
+}

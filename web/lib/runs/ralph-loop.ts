@@ -7,6 +7,7 @@ import type { LaunchRunContext, LaunchRunInput } from "@/lib/services/runs";
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { isProjectDomainEvent } from "@/lib/domain-events/scope";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -54,7 +55,10 @@ export function buildRalphLoopConsumer(
   return {
     id: "ralph_loop",
     startFrom: "now",
-    async handle(events: DomainEventRow[]): Promise<void> {
+    async handle(receivedEvents: DomainEventRow[]): Promise<void> {
+      const events = receivedEvents.filter(isProjectDomainEvent);
+
+      if (events.length === 0) return;
       const _db = opts.db ?? getDb();
       const launch = opts.launch;
       const max = (opts.maxAttempts ?? ralphMaxAttempts)();

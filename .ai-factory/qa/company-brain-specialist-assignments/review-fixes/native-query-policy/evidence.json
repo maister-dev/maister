@@ -1,0 +1,144 @@
+{
+  "checkout": "/private/tmp/maister-policy-explain-a365ede86",
+  "base": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+  "files": {
+    "web/lib/brain/knowledge-disclosure.ts": "70f716136351e6e5da82bd6f53779e9b238033fd745b45d79234bef33eda2ee9",
+    "web/lib/brain/__tests__/knowledge-query-planning.integration.test.ts": "f589fc96f7ef437295d1952c14017a055f7ac8e0bfa2366d8d7e9c6df69510a9"
+  },
+  "patch": "/private/tmp/cb-native-policy-jit.patch",
+  "patchSha256": "51a31f33e8c5983285caff2233281eaf71f5cdcde5b1cfac30b569957e2e4c32",
+  "commands": {
+    "red": "web/node_modules/.bin/vitest run --project integration --maxWorkers=1 lib/brain/__tests__/knowledge-query-planning.integration.test.ts",
+    "greenConsumers": "web/node_modules/.bin/vitest run --project integration --maxWorkers=2 lib/brain/__tests__/knowledge-query-planning.integration.test.ts lib/brain/__tests__/company-records.integration.test.ts lib/brain/__tests__/proposals.integration.test.ts lib/run-results/__tests__/findings-access.integration.test.ts app/api/knowledge/__tests__/knowledge.integration.test.ts",
+    "types": "web/node_modules/.bin/tsc --noEmit --incremental false",
+    "lint": "web/node_modules/.bin/eslint lib/brain/knowledge-disclosure.ts lib/brain/__tests__/knowledge-query-planning.integration.test.ts"
+  },
+  "results": {
+    "red": {
+      "failed": 2,
+      "log": "/private/tmp/cb-native-policy-jit-red.log"
+    },
+    "green": {
+      "passed": 2,
+      "log": "/private/tmp/cb-native-policy-jit-green.log"
+    },
+    "consumers": {
+      "files": 5,
+      "passed": 61,
+      "durationSeconds": 44.27,
+      "log": "/private/tmp/cb-native-policy-jit-consumers.log"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "/private/tmp/cb-native-policy-jit-types.log"
+    },
+    "lint": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "/private/tmp/cb-native-policy-jit-lint.log"
+    },
+    "diffCheck": {
+      "exitCode": 0
+    }
+  },
+  "measurement": "/private/tmp/cb-native-policy-explain.json",
+  "measurementLog": "/private/tmp/cb-native-policy-explain.log",
+  "scope": "No global setting, timeout, access or disclosure changes; transaction setting restored by PostgreSQL on commit/rollback; company history unmodified after measured low-cost no-JIT empty-history plan.",
+  "independentAudit": {
+    "agent": "/root/dispatch_fix_audit",
+    "result": "no actionable defects",
+    "scope": "transaction-local bounds, same-session restoration, authority semantics, recursive CTE consumer sweep"
+  },
+  "measurementSummary": {
+    "conflicts": [
+      {
+        "mode": "default",
+        "planningMs": 48.473,
+        "executionMs": 3382.56,
+        "jit": {
+          "Functions": 651,
+          "Options": {
+            "Inlining": true,
+            "Optimization": true,
+            "Expressions": true,
+            "Deforming": true
+          },
+          "Timing": {
+            "Generation": 18.805,
+            "Inlining": 70.223,
+            "Optimization": 1892.624,
+            "Emission": 1387.877,
+            "Total": 3369.529
+          }
+        },
+        "rootRows": 2,
+        "rootCost": 515859.5
+      },
+      {
+        "mode": "default-repeat",
+        "planningMs": 41.885,
+        "executionMs": 3332.28,
+        "jit": {
+          "Functions": 651,
+          "Options": {
+            "Inlining": true,
+            "Optimization": true,
+            "Expressions": true,
+            "Deforming": true
+          },
+          "Timing": {
+            "Generation": 15.619,
+            "Inlining": 29.073,
+            "Optimization": 1896.603,
+            "Emission": 1389.759,
+            "Total": 3331.053
+          }
+        },
+        "rootRows": 2,
+        "rootCost": 515859.5
+      },
+      {
+        "mode": "jit-off",
+        "planningMs": 41.357,
+        "executionMs": 0.441,
+        "rootRows": 2,
+        "rootCost": 515859.5
+      },
+      {
+        "mode": "analyzed-default",
+        "planningMs": 34.841,
+        "executionMs": 0.367,
+        "rootRows": 2,
+        "rootCost": 4385.78
+      },
+      {
+        "mode": "analyzed-jit-off",
+        "planningMs": 34.975,
+        "executionMs": 0.395,
+        "rootRows": 2,
+        "rootCost": 4385.78
+      }
+    ],
+    "companyHistory": {
+      "planningMs": 1.704,
+      "executionMs": 0.102,
+      "totalCost": 7488.75,
+      "rootRows": 0
+    },
+    "historyLimitation": "Fresh synthetic fixture has no matching company Run history row; no populated/large history performance claim"
+  },
+  "primaryQualification": {
+    "head": "a365ede86810e00fd5314e386f90243e0b4deb2c",
+    "workingTreeMatchesCandidate": true,
+    "files": 5,
+    "passed": 61,
+    "log": "primary-green.log.gz"
+  },
+  "retainedSha256": {
+    "primary-green.log.gz": "2f9bbd09c32fd9b109be3d0aaefd281878bd4ffee4d623da36836544542cb1d4",
+    "green.log.gz": "640e3870907f8df771493a191e0c93c0f19d66883b0d63cd6585fbba64511257",
+    "measurements.json": "0589d8cacda99fd56920f85414604d0591cfd1d437a2137c29e69fd7909c7e27",
+    "consumers.log.gz": "3bc394b1f8847465fd0458d14f971f29697b28f5b541c3931ab56d4a615a1bdb",
+    "red.log.gz": "0013fabc1808f693493e382ee58d91ec3ffc6f2f55ca078945979814d4dcad01"
+  }
+}

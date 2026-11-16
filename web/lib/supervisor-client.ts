@@ -1381,6 +1381,7 @@ export type WireEnvelope<TPayload = unknown> = {
 export type WorkspaceKindWire = "git_worktree" | "repo_checkout" | "directory";
 
 export type AdoptWorkspaceWirePayload = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   runId: string;
   projectSlug: string;
   kind: WorkspaceKindWire;
@@ -1396,6 +1397,7 @@ export type AdoptWorkspaceWireResult = {
 };
 
 export type WorkspaceRecordWire = {
+  owner?: Readonly<{ kind: "company"; companyId: string }>;
   executionWorkspaceId: string;
   runId: string;
   projectSlug: string;
@@ -1616,6 +1618,115 @@ export function parseRuntimeObjectWireMetadata(
   }
 
   return parsed.data;
+}
+
+export async function dispatchStandRestart(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/dispatch",
+    body: envelope,
+    ctx: "dispatchStandRestart",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return response.body;
+}
+
+export async function readStandReceipt(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+  }>,
+): Promise<unknown> {
+  const response = await request<{ receipt: unknown }>({
+    method: "POST",
+    path: "/stand-operations/receipt",
+    body: selector,
+    ctx: "readStandReceipt",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 18_000,
+  });
+
+  if (!response.body || !Object.hasOwn(response.body, "receipt"))
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Stand receipt response is unavailable",
+    );
+
+  return response.body.receipt;
+}
+
+export async function observeStandOperation(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+    componentId: string;
+    resourceKey: string;
+  }>,
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/observe",
+    body: selector,
+    ctx: "observeStandOperation",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 7000,
+  });
+
+  return response.body;
+}
+
+export async function verifyStandOperation(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+    componentId: string;
+    verificationNonce: string;
+    kind?: "inspection";
+    issuedAt: string;
+  }>,
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/verify",
+    body: selector,
+    ctx: "verifyStandOperation",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 7000,
+  });
+
+  return response.body;
+}
+
+export async function readStandLogs(
+  selector: Readonly<{
+    operationId: string;
+    targetIncarnation: string;
+    requestDigest: string;
+    ownerEpoch: number;
+    componentId: string;
+  }>,
+): Promise<unknown> {
+  const response = await request<unknown>({
+    method: "POST",
+    path: "/stand-operations/logs",
+    body: selector,
+    ctx: "readStandLogs",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: 7000,
+  });
+
+  return response.body;
 }
 
 export async function adoptWorkspace(

@@ -14,7 +14,7 @@ info:
     this AsyncAPI doc therefore models the channel from the **consumer's**
     perspective, so the `subscribe` operation = "events the consumer receives".
 
-    **Curated taxonomy, not raw session noise.** Events are 22 curated
+    **Curated taxonomy, not raw session noise.** Events are 23 curated
     lifecycle facts mapped from MAIster DB transitions (run started, needs
     input, HITL requested/responded, review, promoted, done, failed, crashed,
     abandoned, PR merged/closed/conflicts, rework claimed/returned, escalated,
@@ -28,6 +28,14 @@ info:
     subscription owned by that user. A platform-wide subscription (one with no
     project) MUST NOT receive user-scoped events, and a user subscription MUST
     NOT receive project-scoped ones.
+
+    **Native assignment replies.** `assignment.result_available` uses null
+    project/run envelope blocks and exact versioned result references in data.
+    It is delivered only to the configured destination retained on the native
+    assignment. It never fans out to sibling or platform subscriptions. Internal
+    assignment Inbox/task targets share the delivery worker and attempts while
+    remaining available when external webhooks are disabled; native outbound
+    replies pause without losing their intent. This is availability, not acceptance.
 
     **Envelope.** Every delivery body is one `WebhookEnvelope` (`apiVersion: 1`)
     with a stable `id`, the `type`, `occurredAt`, the per-delivery `deliveryId`
@@ -318,7 +326,7 @@ components:
 
     WebhookEventType:
       type: string
-      description: The 22 curated outbound event types.
+      description: The 23 curated outbound event types.
       enum:
         - run.started
         - run.needs_input
@@ -342,6 +350,7 @@ components:
         - attention.decision_closed
         - attention.decisions_changed
         - attention.digest
+        - assignment.result_available
 
     ProjectBlock:
       type: object
@@ -394,6 +403,11 @@ components:
         reused byte-identically across retries/replays; only `deliveryId` and
         `attempt` are injected per send. `data` carries IDs/statuses/titles
         only — NEVER secrets, env values, tokens, or raw agent output.
+        Native knowledge executions use DataSourceRestricted for every
+        project-scoped event type: project subscriptions confer no source
+        receiving authority. This projection is enforced at capture, fanout
+        and send/replay, including retained native payloads. The envelope
+        retains its server-controlled identity/type/status references.
       required:
         - apiVersion
         - id
@@ -437,6 +451,7 @@ components:
         data:
           description: Per-type payload (discriminated by `type`).
           oneOf:
+            - $ref: "#/components/schemas/DataSourceRestricted"
             - $ref: "#/components/schemas/DataRunStarted"
             - $ref: "#/components/schemas/DataRunNeedsInput"
             - $ref: "#/components/schemas/DataRunEscalated"
@@ -455,6 +470,48 @@ components:
             - $ref: "#/components/schemas/DataRunPrConflicts"
             - $ref: "#/components/schemas/DataGateDecided"
             - $ref: "#/components/schemas/DataPing"
+            - $ref: "#/components/schemas/DataAssignmentResultAvailable"
+
+    DataAssignmentResultAvailable:
+      type: object
+      description: |
+        Native result availability, separate from work acceptance or Brain confirmation.
+        Private to the one frozen requester-owned configured subscription; never
+        broadcast to platform, project, sibling subscriptions or push endpoints.
+        Current requester/source/target authority is repeated before every send.
+      additionalProperties: false
+      required: [ownerUserId, assignmentDeliveryId, assignmentId, inputRevision, correlationId, result, href]
+      properties:
+        ownerUserId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentDeliveryId: { type: string, format: uuid }
+        assignmentId: { type: string, format: uuid }
+        inputRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        correlationId:
+          description: Frozen originating interaction correlation; null for internal transports.
+          oneOf: [{type: string, minLength: 1, maxLength: 128}, {type: "null"}]
+        href: { type: string, pattern: '^/runs/[^/]+$' }
+        result:
+          type: object
+          additionalProperties: false
+          required: [runId, revision, sha256, witnessAlgorithm, schemaRef, schemaVersion, schemaSha256]
+          properties:
+            runId: { type: string, format: uuid }
+            revision: { type: integer, minimum: 1, maximum: 2147483647 }
+            sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+            witnessAlgorithm: { type: string, const: postgres_jsonb_sha256_v1 }
+            schemaRef: { type: string, minLength: 1, maxLength: 512 }
+            schemaVersion: { type: integer, minimum: 1, maximum: 2147483647 }
+            schemaSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+
+    DataSourceRestricted:
+      type: object
+      description: Native execution data is available through current-authorized execution views, not project subscription authority.
+      required: [contentState]
+      additionalProperties: false
+      properties:
+        contentState:
+          type: string
+          const: source_restricted
 
     DataRunStarted:
       type: object

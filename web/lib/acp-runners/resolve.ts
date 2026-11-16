@@ -191,9 +191,30 @@ export function resolveAgentRunner(
     { tier: "projectDefault", runnerId: input.project.defaultRunnerId },
     { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
   ];
-  const runnerById = new Map(
-    input.runners.map((runner) => [runner.id, runner]),
-  );
+
+  return resolveStandaloneRunner(input.agent, input.runners, candidates);
+}
+
+/** Company bindings participate in the shared resolver without a project tier. */
+export function resolveCompanyAgentRunner(input: {
+  readonly bindingRunnerId: string | null;
+  readonly agent: AgentRunnerResolutionInput["agent"];
+  readonly platform: { readonly defaultRunnerId: string | null };
+  readonly runners: readonly RunnerCatalogEntry[];
+}): RunnerResolution {
+  return resolveStandaloneRunner(input.agent, input.runners, [
+    { tier: "binding", runnerId: input.bindingRunnerId },
+    { tier: "agentDefault", runnerId: input.agent.runnerId },
+    { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
+  ]);
+}
+
+function resolveStandaloneRunner(
+  agent: AgentRunnerResolutionInput["agent"],
+  runners: readonly RunnerCatalogEntry[],
+  candidates: readonly Candidate[],
+): RunnerResolution {
+  const runnerById = new Map(runners.map((runner) => [runner.id, runner]));
 
   for (const candidate of candidates) {
     if (!candidate.runnerId) continue;
@@ -202,10 +223,7 @@ export function resolveAgentRunner(
       runnerById.get(candidate.runnerId),
     );
 
-    if (
-      input.agent.mode === "subagent" &&
-      runner.capabilityAgent !== "claude"
-    ) {
+    if (agent.mode === "subagent" && runner.capabilityAgent !== "claude") {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a subagent-mode definition — .claude/agents materialization requires a claude-capability runner`,
@@ -213,22 +231,19 @@ export function resolveAgentRunner(
     }
 
     if (
-      input.agent.workspace !== "worktree" &&
+      agent.workspace !== "worktree" &&
       runner.permissionPolicy === "dangerously_skip_permissions"
     ) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `agent runner ${runner.id} uses dangerously_skip_permissions — incompatible with the ${input.agent.workspace} workspace read-only enforcement (ADR-090 L1)`,
+        `agent runner ${runner.id} uses dangerously_skip_permissions — incompatible with the ${agent.workspace} workspace read-only enforcement (ADR-090 L1)`,
       );
     }
 
-    if (
-      input.agent.workspace !== "worktree" &&
-      runner.readOnlyCapable !== true
-    ) {
+    if (agent.workspace !== "worktree" && runner.readOnlyCapable !== true) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a ${input.agent.workspace} agent — adapter is not readOnlyCapable`,
+        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a ${agent.workspace} agent — adapter is not readOnlyCapable`,
       );
     }
 
@@ -749,7 +764,7 @@ export type RunSessionResolutionInput = {
   readonly projectFlow: { readonly defaultRunnerId?: string | null };
   readonly platformFlow: { readonly defaultRunnerId?: string | null };
   readonly project: { readonly defaultRunnerId?: string | null };
-  readonly platform: { readonly defaultRunnerId: string };
+  readonly platform: { readonly defaultRunnerId: string | null };
   readonly runners: readonly RunnerCatalogEntry[];
 };
 

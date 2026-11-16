@@ -228,6 +228,7 @@ export async function seedAgentDefinition(
   input: FixtureTerminal & {
     projectId: string;
     installedPath: string;
+    platformMcp?: boolean;
   },
 ): Promise<{ agentId: string; packageName: string }> {
   const packageId = randomUUID();
@@ -252,7 +253,7 @@ export async function seedAgentDefinition(
       "description: durable worker fixture",
       "workspace: none",
       "mode: session",
-      "platform_mcp: false",
+      `platform_mcp: ${input.platformMcp ?? false}`,
       "triggers:",
       "  - manual",
       "risk_tier: read_only",

@@ -1,0 +1,10 @@
+Source: /private/tmp/cb-agent-pending-completion-owning-siblings.log
+SHA256: c461e9e9b8e080b32222de9eaeff3074ff4386bd324da20b994a1bf44ff3ce95
+Outer exit: 0
+
+$ vitest run --project integration --passWithNoTests lib/agents/__tests__/prompt-owners.integration.test.ts lib/__tests__/reconcile-sweep.integration.test.ts lib/__tests__/reconcile-host-evidence.integration.test.ts lib/agents/__tests__/agent-session-reobserve.integration.test.ts lib/execution-host/__tests__/command-recovery.integration.test.ts --maxWorkers=1
+
+ Test Files  5 passed (5)
+      Tests  166 passed (166)
+   Start at  13:07:01
+   Duration  1009.42s (tests 100%)

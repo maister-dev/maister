@@ -41,6 +41,49 @@ nodes: [ ... ]                   # required and non-empty
   flow with no \`human\` node claimable at all. Compile-time only: it is never
   persisted to a DB column, and an operator can never override it.
 
+## Plain-workspace result declaration (runtime qualification pending)
+
+The optional manifest-level \`execution\` is a strict object:
+
+\`\`\`yaml
+compat: { engine_min: 3.12.0 }
+execution: { workspace: none, completion: result }
+result:
+  export: { schema: ./schemas/diagnosis.json, from: [diagnose], required: true }
+\`\`\`
+
+This declaration requires \`engine_min >= 3.12.0\` and a mandatory result export.
+It does not carry ownership or grants; the server binding supplies those.
+Absent \`execution\` preserves existing repository behavior without new defaults.
+The declared subset allows only \`ai_coding\`, \`orchestrator\`, \`human\`, and
+\`form\` nodes. It refuses \`setup\`, shell \`requirements\`, pre-finish gates,
+repository \`context_repos\`, writable workspace access, human \`allowTakeover\`
+and \`allowFurtherTracks\`, repository \`diff\`/\`commit_set\` outputs and
+repository \`plan_review\`. AI/coordinator \`finish.human\` is refused in favor
+of an explicit human node. Explicit retry and rework workspace policies must be
+\`keep\`; an omitted retry workspace policy retains its repository rewind default
+and is therefore refused here. Use explicit human/form nodes and required result
+validation. Company result-only graphs require engine 3.12.0 or newer and a
+current reviewed company binding. Enablement and launch enforce the declared
+engine range before execution; no project carrier or repository is synthesized.
+The initial native company path also refuses package/node \`mcps\`, node
+\`skills\`, \`restrictions\`, \`tools\`, \`settingsProfile\`, \`artifactAccess\`, \`enforcement\`,
+\`hooks\` and permission-mode overrides. Its current reviewed professional policy
+supplies the exact native knowledge MCP-only surface; project capability defaults
+and ambient built-in tools cannot enter through this declaration.
+
+The company graph prompt contract uses \`assignment.id\`, \`assignment.inputRevision\`,
+\`assignment.inputSha256\`, and the frozen objective fields \`assignment.objective\`,
+\`assignment.expectedOutcome\`, \`assignment.input\`, \`assignment.targetIds\`,
+\`assignment.inputRefs\`, \`assignment.constraints\`, \`assignment.expectedResult\`,
+and \`assignment.verification\`. Its real \`run.id\` and company \`run.owner\` do
+not imply a Task: \`task.*\`, \`run.attemptNumber\` and \`run.projectSlug\` are
+absent for company execution. Undefined repository-only references fail strict
+rendering. Shared \`executor\`, \`steps\`, \`artifacts\` and filtered \`env\`
+semantics are unchanged. Input text is inserted once, never reparsed as templates.
+Native company dispatch and project-assignment wiring still require runtime
+qualification; this context contract alone does not enable company execution.
+
 ## Node types (discriminated by \`type\`)
 
 Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`output\`,

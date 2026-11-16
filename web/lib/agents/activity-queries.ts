@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
+import type { SQL } from "drizzle-orm";
 import type { Db } from "@/lib/execution-host/db";
 import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { RunStatusValue } from "@/lib/runs/run-status-values";
@@ -16,6 +18,7 @@ import type { AgentTriggerAttemptOutcome } from "@/lib/agents/trigger-attempt-ty
 
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import pino from "pino";
 
 import {
   agentTriggerAttempts,
@@ -26,6 +29,10 @@ import {
   runs,
   workspaces,
 } from "@/lib/db/schema";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { installationCompany } from "@/lib/company/grants";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { companyRunHistoryReadPolicy } from "@/lib/agents/company-run-read-access";
 import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import {
   decodeAgentActivityCursor,
@@ -35,7 +42,13 @@ import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { RUN_STATUS_VALUES } from "@/lib/runs/run-status-values";
 import { MaisterError } from "@/lib/errors";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
-import { loadOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+
+const log = pino({
+  name: "agent-activity",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 type AgentOutcome = OperationalTerminal["effectiveOutcome"];
 type RunSummary = {
@@ -122,9 +135,8 @@ export async function getAgentActivitySummaries(
   );
 }
 
-const historySchema = z
+const agentRunHistoryFiltersSchema = z
   .object({
-    projectId: z.string().min(1).max(256),
     agentId: z.string().min(1).max(256),
     limit: z.number().int().min(1).max(100).default(25),
     cursor: z.string().min(1).max(2048).optional(),
@@ -138,6 +150,13 @@ const historySchema = z
   })
   .strict();
 
+const historySchema = agentRunHistoryFiltersSchema
+  .extend({ projectId: z.string().min(1).max(256) })
+  .strict();
+
+export type CompanyAgentHistoryFilter = z.input<
+  typeof agentRunHistoryFiltersSchema
+>;
 export type AgentHistoryFilter = z.input<typeof historySchema>;
 export type AgentHistoryItem = {
   runId: string;
@@ -184,8 +203,7 @@ export async function getAgentRunHistory(
     throw new MaisterError("CONFIG", "Invalid agent history filters", {
       details: { issues: parsed.error.issues },
     });
-  const { projectId, agentId, limit, cursor, status, triggerSource, outcome } =
-    parsed.data;
+  const { projectId, agentId, status, triggerSource, outcome } = parsed.data;
   const scope = JSON.stringify([
     "runs",
     projectId,
@@ -194,6 +212,88 @@ export async function getAgentRunHistory(
     triggerSource ?? null,
     outcome ?? null,
   ]);
+
+  return readAgentRunHistoryPage(
+    db,
+    parsed.data,
+    scope,
+    eq(runs.projectId, projectId),
+  );
+}
+
+/** Current company authority and captured source closure govern retained metadata, including retired roles. */
+export async function getCompanyAgentRunHistory(
+  db: Db,
+  userId: string,
+  input: CompanyAgentHistoryFilter,
+): Promise<ActivityPage<AgentHistoryItem>> {
+  const parsed = agentRunHistoryFiltersSchema.safeParse(input);
+
+  if (!parsed.success)
+    throw new MaisterError("CONFIG", "Invalid company agent history filters", {
+      details: { issues: parsed.error.issues },
+    });
+
+  return db.transaction(async (tx) => {
+    const companyId = await installationCompany(tx);
+    const authority = await authorizeCompanyUserAction(
+      tx,
+      userId,
+      companyId,
+      "assignments:read",
+    );
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      { kind: "user", userId },
+      "knowledge:read",
+    );
+
+    if (identity.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A current receiving user is required for company history",
+      );
+    const { agentId, status, triggerSource, outcome, cursor } = parsed.data;
+    const scope = JSON.stringify([
+      "company-runs",
+      companyId,
+      agentId,
+      userId,
+      authority.witness.authorityId,
+      authority.witness.revision,
+      status ?? null,
+      triggerSource ?? null,
+      outcome ?? null,
+    ]);
+    const page = await readAgentRunHistoryPage(
+      tx,
+      parsed.data,
+      scope,
+      sql`${runs.companyId}=${companyId} AND (${companyRunHistoryReadPolicy(identity)})`,
+    );
+
+    log.debug(
+      {
+        companyId,
+        agentId,
+        userId,
+        itemCount: page.items.length,
+        continued: cursor !== undefined,
+      },
+      "company retained history read",
+    );
+
+    return page;
+  });
+}
+
+async function readAgentRunHistoryPage(
+  db: Db,
+  input: z.output<typeof agentRunHistoryFiltersSchema>,
+  scope: string,
+  ownerReadPolicy: SQL,
+): Promise<ActivityPage<AgentHistoryItem>> {
+  const { agentId, limit, cursor, status, triggerSource, outcome } = input;
   const bounds = await activityPageBounds(db, scope, cursor);
   const rows = await db
     .select({
@@ -220,7 +320,7 @@ export async function getAgentRunHistory(
     )
     .where(
       and(
-        eq(runs.projectId, projectId),
+        ownerReadPolicy,
         eq(runs.sourceAgentId, agentId),
         inArray(runs.runKind, ["agent", "flow"]),
         sql`${runs.activitySortAt} <= ${bounds.upper}::timestamptz`,
@@ -234,7 +334,10 @@ export async function getAgentRunHistory(
           : undefined,
       ),
     )
-    .orderBy(desc(runs.activitySortAt), desc(runs.id))
+    .orderBy(
+      sql`${runs.activitySortAt} DESC NULLS LAST`,
+      sql`${runs.id} DESC NULLS LAST`,
+    )
     .limit(limit + 1);
   const items: AgentHistoryItem[] = rows.slice(0, limit).map((row) => {
     if (
@@ -274,82 +377,94 @@ export async function getAgentRunHistory(
 export async function loadAgentHistoryEvidence(
   db: Db,
   page: ActivityPage<AgentHistoryItem>,
-  scope: { projectId: string; agentId: string },
+  scope: { projectId: string; agentId: string; recipient?: KnowledgeRecipient },
 ): Promise<
   ActivityPage<AgentHistoryItem & { operationalOutcome?: OperationalOutcome }>
 > {
   const ids = page.items.map((row) => row.runId);
-  const [outcomes, snapshots] = await Promise.all([
-    loadOperationalOutcomes(db, ids),
-    ids.length
-      ? db
-          .select({ id: runs.id, snapshot: runs.scheduledRequestSnapshot })
-          .from(runs)
-          .where(
-            and(
-              eq(runs.projectId, scope.projectId),
-              eq(runs.sourceAgentId, scope.agentId),
-              inArray(runs.id, ids),
-            ),
-          )
-      : Promise.resolve([]),
-  ]);
-  const requests = new Map(
-    snapshots.map((row) => [
-      row.id,
-      parseScheduledRequestSnapshot(row.snapshot),
-    ]),
-  );
 
-  return {
-    ...page,
-    items: page.items.map((row) => {
-      const operationalOutcome = outcomes.get(row.runId);
-      const scheduledRequest = requests.get(row.runId);
+  return db.transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(tx, scope.recipient, ids);
+    const [outcomes, snapshots] = await Promise.all([
+      inspectOperationalOutcomes(tx, ids),
+      ids.length
+        ? tx
+            .select({ id: runs.id, snapshot: runs.scheduledRequestSnapshot })
+            .from(runs)
+            .where(
+              and(
+                eq(runs.projectId, scope.projectId),
+                eq(runs.sourceAgentId, scope.agentId),
+                inArray(runs.id, ids),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    const requests = new Map(
+      snapshots.map((row) => [
+        row.id,
+        parseScheduledRequestSnapshot(row.snapshot),
+      ]),
+    );
 
-      return {
-        ...row,
-        ...(operationalOutcome ? { operationalOutcome } : {}),
-        ...(scheduledRequest ? { scheduledRequest } : {}),
-      };
-    }),
-  };
+    return {
+      ...page,
+      items: page.items.map((row) => {
+        const operationalOutcome = outcomes.get(row.runId);
+        const scheduledRequest = requests.get(row.runId);
+
+        return {
+          ...row,
+          ...(operationalOutcome ? { operationalOutcome } : {}),
+          ...(scheduledRequest ? { scheduledRequest } : {}),
+        };
+      }),
+    };
+  });
 }
 
 /** Call only after a live readRepoFiles grant; raw input never enters the base page projection. */
 export async function loadAgentAttemptEvidence(
   db: Db,
   page: ActivityPage<AgentAttemptItem>,
-  scope: { projectId: string; agentId: string },
+  scope: { projectId: string; agentId: string; recipient?: KnowledgeRecipient },
 ): Promise<ActivityPage<AgentAttemptItem>> {
   const ids = page.items.map((row) => row.attemptId);
 
-  if (!ids.length) return page;
-  const rows = await db
-    .select({
-      id: agentTriggerAttempts.id,
-      snapshot: agentTriggerAttempts.scheduledRequestSnapshot,
-    })
-    .from(agentTriggerAttempts)
-    .where(
-      and(
-        eq(agentTriggerAttempts.projectId, scope.projectId),
-        eq(agentTriggerAttempts.sourceAgentId, scope.agentId),
-        inArray(agentTriggerAttempts.id, ids),
-      ),
+  return db.transaction(async (tx) => {
+    await authorizeRunsKnowledgeDisclosure(
+      tx,
+      scope.recipient,
+      page.items.flatMap((row) => (row.runId === null ? [] : [row.runId])),
     );
-  const requests = new Map(
-    rows.map((row) => [row.id, parseScheduledRequestSnapshot(row.snapshot)]),
-  );
 
-  return {
-    ...page,
-    items: page.items.map((row) => {
-      const scheduledRequest = requests.get(row.attemptId);
+    if (!ids.length) return page;
+    const rows = await tx
+      .select({
+        id: agentTriggerAttempts.id,
+        snapshot: agentTriggerAttempts.scheduledRequestSnapshot,
+      })
+      .from(agentTriggerAttempts)
+      .where(
+        and(
+          eq(agentTriggerAttempts.projectId, scope.projectId),
+          eq(agentTriggerAttempts.sourceAgentId, scope.agentId),
+          inArray(agentTriggerAttempts.id, ids),
+        ),
+      );
+    const requests = new Map(
+      rows.map((row) => [row.id, parseScheduledRequestSnapshot(row.snapshot)]),
+    );
 
-      return { ...row, ...(scheduledRequest ? { scheduledRequest } : {}) };
-    }),
-  };
+    return {
+      ...page,
+      items: page.items.map((row) => {
+        const scheduledRequest = requests.get(row.attemptId);
+
+        return { ...row, ...(scheduledRequest ? { scheduledRequest } : {}) };
+      }),
+    };
+  });
 }
 
 /** Server-private execution evidence; the page owner must authorize repository-content access first. */

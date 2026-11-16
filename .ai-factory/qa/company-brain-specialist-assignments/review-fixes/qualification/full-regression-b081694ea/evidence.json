@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-10T07:44:52.002003+00:00",
+  "sourceHead": "b081694eafab72ddfd3cce8bfd2fc02462a65511",
+  "productionBuildId": "ELv0oqTV0IspkjxAJuLyH",
+  "invocationId": "14946d16-fcfd-40d9-8a11-588e9d34cd73",
+  "status": "failed",
+  "exitCode": 1,
+  "files": {
+    "passed": 681,
+    "failed": 6,
+    "skipped": 2,
+    "total": 689
+  },
+  "tests": {
+    "passed": 6266,
+    "failed": 6,
+    "skipped": 2,
+    "total": 6274
+  },
+  "unhandledErrors": 2,
+  "seconds": 1592.13,
+  "failureClasses": [
+    "Scratch empty-create replay overwrites later dialog; deterministic real PG RED retained separately.",
+    "P2 predicate observes delivering during third probe budget; isolated unchanged P2 passed, not RED.",
+    "Stop fixture assumes canonical ingest within 80ms and leaves rejected wait unobserved.",
+    "Company checkpoint reaches Done but cleanup retry has no sweep in fixture; exact original blocker unknown.",
+    "Operational integrity fixture excludes legitimate agent_session_teardown_pending recovered deferral.",
+    "Librarian fixture does not own the automatic successor lifetime.",
+    "Unhandled PostgreSQL client termination in social-board-migration replay teardown."
+  ],
+  "cleanup": {
+    "ownedLivePids": [],
+    "containers": [],
+    "survivingRoots": [],
+    "errors": [],
+    "quiescent": true
+  },
+  "artifacts": [
+    {
+      "path": "vitest.json.gz",
+      "rawSha256": "236b2e81c2573b5d68e922062c764db13a3f69cee0ad752ba09c2038bae9d7b9",
+      "sha256": "07849fea59b44de68e8e03f4df31f3f90c43ff897933b1d03c53646752f1e2b4",
+      "ephemeralClientDiagnosticRedacted": false
+    },
+    {
+      "path": "cleanup.log.gz",
+      "rawSha256": "0d98a89c5709caead69846abccdfc1aee7042bd7bef5b5fe8966717dab64b247",
+      "sha256": "21f6f6e2e77a2729cbc6d51a8477ba155ffefa4836d49c939ee79c8fe74787ff",
+      "ephemeralClientDiagnosticRedacted": false
+    },
+    {
+      "path": "partition-investigation.json.gz",
+      "rawSha256": "ece9e878cdc93319ce2b2f7fab670a173ea5a8cee560ecbce629380cc783b161",
+      "sha256": "c09e4304cae257298bff586af51a91b5ff453005166c1438e497cce7741e533e",
+      "ephemeralClientDiagnosticRedacted": false
+    },
+    {
+      "path": "web-integration.log.gz.part-01",
+      "sha256": "bfff78399a75d84e3b10fc96fdfeabc925096e2e36d0eeebba5bd084ab55e6f9"
+    },
+    {
+      "path": "web-integration.log.gz.part-02",
+      "sha256": "75e530e758b8dbedbc29a0a34be2a0725522b846d1aeadffa798f87964de1501"
+    },
+    {
+      "path": "web-integration.log.gz.part-03",
+      "sha256": "ed3d562700d5d82b5bfe1049b2d90952612f4de24cbd2aa0cd0cf914e8fc0987"
+    },
+    {
+      "path": "web-integration.log.gz.part-04",
+      "sha256": "a33b7ab6f370dd137f945a0cb241e53afd3453c559c013987cb64a9e104d91b8"
+    },
+    {
+      "path": "web-integration.log.gz.part-05",
+      "sha256": "74c6e9731052a2ae57a2fa6f897a331db88fa9db006ba8ad96617eb95e1f2182"
+    },
+    {
+      "path": "web-integration.log.gz.part-06",
+      "sha256": "1d0c4a1373ed32d240e9be211b232b50b1cf2808804a99207ec6daacfab77aa0"
+    },
+    {
+      "path": "web-integration.log.gz.part-07",
+      "sha256": "9590e0f21f7cad5c53a72c1a0bbbf4fe296aaf788a7f719332eacff41917c0a7"
+    },
+    {
+      "path": "web-integration.log.gz.part-08",
+      "sha256": "e725b8f667d9e7ab632def9befc3531a564464b6bad189912579e1e37178eebe"
+    },
+    {
+      "path": "web-integration.log.gz.part-09",
+      "sha256": "c723286ef81704b9e7e6165635f221c6c33d0a36825ce6964a7533a8a519b700"
+    },
+    {
+      "path": "web-integration.log.gz.part-10",
+      "sha256": "05700dca30c85557a3589090a8f83603bac5e612ac4074b0536f0da6936cf0f8"
+    }
+  ],
+  "integrationLogBundle": {
+    "encoding": "Concatenate the listed part files in order, then gzip decompress.",
+    "compressedSha256": "bf145e742639d0b5aff510eb1b394aa3608c6b504c1d0110654f1487fbcb533e",
+    "rawSha256": "b700c762e136c0d93861d61c925df30057588b49f37842d300c502a275f35496",
+    "ephemeralClientDiagnosticRedacted": true,
+    "parts": [
+      "web-integration.log.gz.part-01",
+      "web-integration.log.gz.part-02",
+      "web-integration.log.gz.part-03",
+      "web-integration.log.gz.part-04",
+      "web-integration.log.gz.part-05",
+      "web-integration.log.gz.part-06",
+      "web-integration.log.gz.part-07",
+      "web-integration.log.gz.part-08",
+      "web-integration.log.gz.part-09",
+      "web-integration.log.gz.part-10"
+    ]
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "6ab11973cb5448d98af80719883fa33047c0d185",
+  "task": "T15",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Actual child collection checks current receiving token source access before outputText/artifact/result disclosure and before one-time exact revision marker.",
+    "Reduction requires complete source-finding accounting and preserves support, contradictions, missing evidence, limitations, questions and exact origins through depth 2; root cannot directly collect its grandchild.",
+    "Publication refusal remains committed as invalid result/failed attempt outside the outer graph transaction.",
+    "Actual artifact list/payload and legacy/paged transcript HTTP routes refuse project members lacking company source access and permit explicitly granted readers.",
+    "Source-controlled streams stop before a subsequent unauthorized chunk, cancel their upstream, and permit project deletion while open; company knowledge survives.",
+    "Native run detail and file pane have English/Russian source-unavailable presentation; paged inspector source checks batch run captures.",
+    "Legacy NULL-capture routes retain their existing tests and behavior."
+  ],
+  "tests": {
+    "realPostgres": {
+      "files": 8,
+      "passed": 122
+    },
+    "legacyRouteUnit": {
+      "files": 4,
+      "passed": 58
+    },
+    "fullWebUnit": {
+      "files": 886,
+      "passed": 9261
+    },
+    "typecheck": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed",
+    "requirements": 84
+  },
+  "initialFullSuiteFailure": {
+    "cause": "First boot exceeded its 5-second test budget while the full unit suite and eight-container Postgres workload ran concurrently; late boot completion then contaminated the next timer count assertion.",
+    "evidence": "full-unit-concurrent-load.log.gz",
+    "resolution": "Unchanged boot suite passes 7/7 in isolation and full web unit passes 9261/9261 when run without the concurrent Postgres workload. No skips, timeout increases or production changes were used."
+  },
+  "pending": [
+    "Remaining unclassified shared-store writes and outward execution/automation/export channels.",
+    "Structured findings/evidence-link presentation and unavailable/stale/conflict browser qualification.",
+    "Additional rework/size/budget/recovery cases and full integration phase checkpoint.",
+    "Capability activation, real installed companion package, live ACP and stand pilot qualification."
+  ],
+  "logs": [
+    {
+      "name": "collection-red",
+      "path": "collection-red.log.gz",
+      "uncompressedSha256": "b53f7592ac82da650e9d93c4bc3807842aea65a0f448043d167d2fdc2f903aac"
+    },
+    {
+      "name": "reduction-red",
+      "path": "reduction-red.log.gz",
+      "uncompressedSha256": "476194110efb39ae33c7e3254f33bc48be1f5e934fd3778ef3f32e8bf49070e6"
+    },
+    {
+      "name": "ledger-dto-red",
+      "path": "ledger-dto-red.log.gz",
+      "uncompressedSha256": "e502902b5d3ced80625f26c4b9e3787a4eda1d7b47ea349ca4cbfa143c3c0696"
+    },
+    {
+      "name": "artifact-stream-red",
+      "path": "artifact-stream-red.log.gz",
+      "uncompressedSha256": "b6123acb407bfe3b879623d14a2cbf4d88ea3ba5f7138803c9bf68ad26882c74"
+    },
+    {
+      "name": "transcript-red",
+      "path": "transcript-red.log.gz",
+      "uncompressedSha256": "5ffe1c86403712028499c92316fa7cc4d363901cdb83b7600c715f645cc3a9b8"
+    },
+    {
+      "name": "owning-integration-green",
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "578796f4b1fb5f1ebb6c8afeabe3e0c83ba3fde66ba0e35e7616c8a9e10f3e6c"
+    },
+    {
+      "name": "legacy-route-unit-green",
+      "path": "legacy-route-unit-green.log.gz",
+      "uncompressedSha256": "9e82395c5d2f81001003102524988e4f8ae4c9bf864ac21d37eeb115d0385aea"
+    },
+    {
+      "name": "full-unit-concurrent-load",
+      "path": "full-unit-concurrent-load.log.gz",
+      "uncompressedSha256": "c103222405017d4d52d5fe79508543385c6cb4c610b094ea7f0c13e867cb8a86"
+    },
+    {
+      "name": "boot-isolated-green",
+      "path": "boot-isolated-green.log.gz",
+      "uncompressedSha256": "cfb7da97a5bdf39f3f5cc4fba90d852b78a4c77cc9a0cbf99f9e7b24fa557e35"
+    },
+    {
+      "name": "full-unit-exclusive-green",
+      "path": "full-unit-exclusive-green.log.gz",
+      "uncompressedSha256": "b2a86a59ac4a7a97cd875cb7dbfe966f8a9dd615797acc989effb76fc3dac252"
+    },
+    {
+      "name": "typecheck-green",
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "name": "contracts-green",
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "e3c463258335340e9e922c15c485ded57e8c2919bcd135a48b4a34fdabdbda07"
+    },
+    {
+      "name": "docs-green",
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "e477e3539a91cebca9c17b329b8d66599a8da754e2379fe1139a339a1e5f7e0a"
+    },
+    {
+      "name": "coverage-green",
+      "path": "coverage-green.log.gz",
+      "uncompressedSha256": "8e25876bba564c649a74a39f693601987b5a6471bd7b4a079ddbbc509b04ba08"
+    }
+  ]
+}

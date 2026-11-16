@@ -706,7 +706,12 @@ it("DB02 upgrades immutable v1 intent history without inventing missing executio
           [historicalTriggerId],
         )
       ).rows[0].value,
-    ).toEqual(historicalTrigger);
+    ).toEqual({
+      ...historicalTrigger,
+      company_id: null,
+      specialist_assignment: null,
+      stand_inspection: null,
+    });
     await expect(
       partial.pool.query(
         "UPDATE agent_trigger_attempts SET run_id=$2,original_run_id=$2 WHERE id=$1",
@@ -868,6 +873,11 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
           attempts: 0,
           reason: null,
           cancellation_receipt: null,
+          lease_token: null,
+          lease_expires_at: null,
+          preparation_identity: null,
+          preparation_phase: null,
+          terminal_outcome: null,
         }),
       ],
     );
@@ -905,7 +915,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     const readHistory = async () => ({
       run: (
         await partial.pool.query(
-          "SELECT to_jsonb(r) value FROM runs r WHERE id=$1",
+          "SELECT to_jsonb(r)-ARRAY['knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent'] value FROM runs r WHERE id=$1",
           [command.runId],
         )
       ).rows[0].value,
@@ -917,7 +927,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       ).rows[0].value,
       token: (
         await partial.pool.query(
-          "SELECT to_jsonb(t)-ARRAY['bound_run_id','origin_kind','revocation_reason'] value FROM project_tokens t WHERE id=$1",
+          "SELECT to_jsonb(t)-ARRAY['bound_run_id','origin_kind','revocation_reason','company_id','company_run_id','knowledge_node_attempt_id'] value FROM project_tokens t WHERE id=$1",
           [tokenId],
         )
       ).rows[0].value,
@@ -942,7 +952,20 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     expect(
       (
         await partial.pool.query(
-          "SELECT bound_run_id,origin_kind,revocation_reason FROM project_tokens WHERE id=$1",
+          "SELECT knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent FROM runs WHERE id=$1",
+          [command.runId],
+        )
+      ).rows[0],
+    ).toEqual({
+      knowledge_access: null,
+      company_id: null,
+      company_execution_snapshot: null,
+      company_cancellation_intent: null,
+    });
+    expect(
+      (
+        await partial.pool.query(
+          "SELECT bound_run_id,origin_kind,revocation_reason,company_id,company_run_id,knowledge_node_attempt_id FROM project_tokens WHERE id=$1",
           [tokenId],
         )
       ).rows[0],
@@ -950,6 +973,9 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       bound_run_id: null,
       origin_kind: null,
       revocation_reason: null,
+      company_id: null,
+      company_run_id: null,
+      knowledge_node_attempt_id: null,
     });
     expect(
       (

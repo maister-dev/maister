@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "status": "minimal_reference_guidance_checkpoint_qualified_actual_workflow_open",
+  "engineVersion": "3.11.1",
+  "basePlatformCommit": "c1940c8f1",
+  "failedLivePackage": {
+    "tag": "rah/v1.0.2",
+    "commit": "1b1682b28b6131a794af7e3751ed9c56cf7d7c32"
+  },
+  "nextPackage": {
+    "tag": "rah/v1.0.3",
+    "commit": "2074179904b09917a81e86585bdccd4fe2952d20",
+    "localAnnotatedTag": true,
+    "published": false
+  },
+  "qualified": [
+    "A fresh actual v1.0.2 child returned a 63-character hexadecimal value in the optional witness sha256 field. The actual runtime schema rejected findings[1].contradicting[1].sha256. The coordinator reported an unavailable child and completed a structurally valid result; the qualification correctly did not accept the incomplete required tree. Cleanup was clean with zero process leaks.",
+    "Native producer guidance now prefers exact record/result revisions and immutable witness IDs. A witness identity already binds the retained source version/digest; optional supplied witnesses still must match exactly, and any optional fields present in a collected child reference remain mandatory through reduction. No hash repair, padding, citation invention or permissive validation is introduced.",
+    "Production Flow and role prompts plus EN/RU companion guidance match the platform instruction. Existing real-Postgres positive minimal-witness and negative version/digest cases remain green, along with depth-two closure/reference checks.",
+    "The live harness now reports incomplete child control states before parsing their absent valid payloads, giving a direct actionable failure rather than a secondary null-field schema error.",
+    "The normal clean companion release wrapper passed and created local annotated rah/v1.0.3 from committed bytes."
+  ],
+  "checks": {
+    "owningPostgres": {
+      "passed": 48,
+      "files": 3
+    },
+    "fullWebUnit": {
+      "passed": 9263,
+      "files": 886
+    },
+    "actualCompanionRelease": {
+      "passed": 1,
+      "exitCode": 0
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "The fresh actual v1.0.3 complete workflow has not yet run. Prior v1.0.2 depth-one success remains separate evidence; full depth two, proposal/result equality, human review, revoked-reference control and localized UI must still qualify. T16/T17 remain open.",
+    "No publication, deployment or stand-maintenance readiness is claimed."
+  ],
+  "noRefactor": "Reference resolution, immutable evidence storage and strict native validation are unchanged. The refinement reduces redundant model transcription; original reference closure is preserved.",
+  "logs": "log-index.json"
+}

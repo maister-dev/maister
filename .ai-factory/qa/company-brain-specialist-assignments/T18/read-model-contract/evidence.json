@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "task": "T18",
+  "status": "designed_contract_read_model_corrected_storage_pending",
+  "red": "Expanded real assignment response example failed existing closed DTO before schema correction.",
+  "green": "Both public surfaces accept the complete response and exact accepted-result revision. Floating result identity, incomplete webhook origin and arbitrary outbound URL fail concrete examples.",
+  "checks": {
+    "contracts": {
+      "exitCode": 0,
+      "surfaceExamples": 77
+    },
+    "docsAndErd": {
+      "exitCode": 0,
+      "tables": 164
+    }
+  },
+  "scope": "SDD correction only. No assignment table, service or route is claimed implemented; historical input/authority inspection remains required.",
+  "environment": "Initial full checks reached sandbox tsx IPC EPERM; authorized retries both exited zero.",
+  "noRefactor": "Preserved existing endpoint and mutation revision semantics; added missing read fields and closed source/destination unions."
+}

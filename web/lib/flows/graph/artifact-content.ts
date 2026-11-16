@@ -9,6 +9,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { truncateUtf8 } from "@/lib/utf8";
 import * as schemaModule from "@/lib/db/schema";
 import { readRuntimeObjectContent } from "@/lib/execution-host/runtime-objects";
 import { MaisterError } from "@/lib/errors";

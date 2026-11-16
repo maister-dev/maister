@@ -1,14 +1,16 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { sendAgentMessage } from "@/lib/agents/launch";
+import { sendAgentMessage, sendDelegatedAgentSteer } from "@/lib/agents/launch";
+import { captureNativeChildInput } from "@/lib/orchestrator/native-child-input";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
+import { cooperationScope } from "@/lib/specialist-assignments/cooperation-scope";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -44,6 +46,47 @@ const bodySchema = z
 
 type MessageBody = z.infer<typeof bodySchema>;
 
+async function messageDelegatedChild(
+  db: Db,
+  body: MessageBody,
+  sourceRunId: string,
+  tokenId: string,
+): Promise<NextResponse> {
+  if (!body.childRunId || body.mode !== "steer" || !body.requestKey)
+    return NextResponse.json(
+      {
+        code: "CONFIG",
+        message:
+          "A delegated clarification requires childRunId, mode steer and requestKey",
+      },
+      { status: 422 },
+    );
+
+  try {
+    const result = await sendDelegatedAgentSteer(
+      db,
+      body.childRunId,
+      body.prompt,
+      { sourceRunId, tokenId },
+      body.requestKey,
+    );
+
+    return NextResponse.json(result);
+  } catch (err) {
+    if (!isMaisterError(err)) throw err;
+    const reason = err.details?.reason;
+
+    return NextResponse.json(
+      {
+        code: err.code,
+        message: err.message,
+        ...(typeof reason === "string" ? { details: { reason } } : {}),
+      },
+      { status: httpStatusForExtCode(err.code) },
+    );
+  }
+}
+
 export async function POST(
   req: NextRequest,
   _routeCtx: object,
@@ -58,6 +101,9 @@ export async function POST(
       scopeLabel: "runs:delegate",
       endpoint: ENDPOINT,
       method: "POST",
+      allowCompanyActorWithoutProject: true,
+      resolveScopeLabel: async ({ actor, db }) =>
+        cooperationScope(db, actor, "runs:delegate"),
       db,
     },
     async (ctx) => {
@@ -87,6 +133,8 @@ export async function POST(
           { status: httpStatusForExtCode("PRECONDITION") },
         );
       }
+      if (ctx.actor.companyId !== undefined)
+        return messageDelegatedChild(db, body, callerRunId, ctx.actor.tokenId);
 
       // Finding 1 (Codex adversarial review): resolve the caller orchestrator
       // scoped to the token's project AND fail closed if it is missing or has
@@ -123,6 +171,9 @@ export async function POST(
           id: runs.id,
           runKind: runs.runKind,
           persistent: runs.persistent,
+          delegated: sql<boolean>`EXISTS (
+            SELECT 1 FROM specialist_work work WHERE work.reserved_run_id=runs.id
+          )`,
         })
         .from(runs)
         .where(
@@ -147,6 +198,16 @@ export async function POST(
           { status: httpStatusForExtCode("PRECONDITION") },
         );
       }
+      if (child.delegated)
+        return messageDelegatedChild(db, body, callerRunId, ctx.actor.tokenId);
+      if (ctx.scopeLabel === "assignments:update")
+        return NextResponse.json(
+          {
+            code: "UNAUTHORIZED",
+            message: "Assignment-scoped messaging requires exact native work",
+          },
+          { status: 403 },
+        );
 
       // ADR-163 D2: branch on run_kind BEFORE the persistent check, so a flow
       // child gets the reason that actually applies to it — a flow child has no
@@ -174,6 +235,11 @@ export async function POST(
       }
 
       try {
+        await captureNativeChildInput(
+          db,
+          { kind: "token", tokenId: ctx.actor.tokenId },
+          { sourceRunId: callerRunId, childRunId: child.id },
+        );
         const result = await sendAgentMessage(child.id, body.prompt, {
           db,
           requestKey: body.requestKey,
@@ -183,8 +249,22 @@ export async function POST(
         return NextResponse.json(result, { status: 200 });
       } catch (err) {
         if (isMaisterError(err)) {
+          const reason = err.details?.reason;
+
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            {
+              code: err.code,
+              message: err.message,
+              ...(typeof reason === "string" &&
+              [
+                "native_steer_reconciliation_required",
+                "knowledge_reference_unavailable",
+                "knowledge_capture_profile_required",
+                "native_input_target_required",
+              ].includes(reason)
+                ? { details: { reason } }
+                : {}),
+            },
             { status: httpStatusForExtCode(err.code) },
           );
         }

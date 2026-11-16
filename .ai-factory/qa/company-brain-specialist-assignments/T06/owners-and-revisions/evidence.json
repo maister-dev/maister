@@ -1,0 +1,49 @@
+{
+  "task": "T06",
+  "baseRevision": "d10830e98e9e23b88ef5f18c18f58ad16ecd0bd2",
+  "specSha256": "32d8f793363ad11050db335f20ee5e1d59c220341985032a92c88452598565f0",
+  "red": [
+    {
+      "case": "missing current revision/legacy backfill",
+      "outputs": [
+        "records-red.log",
+        "upgrade-red.log"
+      ]
+    },
+    {
+      "case": "restricted record disclosed by old recall",
+      "output": "restricted-red.log"
+    },
+    {
+      "case": "native head changed without immutable revision",
+      "output": "head-red.log"
+    },
+    {
+      "case": "narrow grant left owner-grants projection",
+      "output": "record-grants-red.log"
+    },
+    {
+      "case": "project deletion blocked by Brain history (user-required compatibility)",
+      "output": "project-delete-red.log",
+      "failed": 2
+    }
+  ],
+  "greenRefactor": {
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__ lib/db/__tests__/migration-company-brain-specialists.integration.test.ts",
+    "files": 16,
+    "passed": 115,
+    "failed": 0,
+    "skipped": 0,
+    "output": "project-delete-final.log",
+    "refactor": "Keep narrow normal-history guards and recognize the owning-project deletion cascade. Retain legacy project read restrictions, shared owner checks and honest revisions. Isolated test reset uses TRUNCATE."
+  },
+  "regressions": {
+    "unitFiles": 11,
+    "unitPassed": 84,
+    "typecheck": "passed",
+    "eslint": "passed, zero warnings",
+    "erdTables": 158,
+    "typecheckOutput": "project-delete-typecheck.log"
+  },
+  "testCorrection": "Source-owner trigger rejects company indexing before the project NOT NULL check. Project-delete tests positively verify local record, revision, grant, accepted-change and indexed-evidence cascades, following the user instruction; direct history removal still refuses."
+}

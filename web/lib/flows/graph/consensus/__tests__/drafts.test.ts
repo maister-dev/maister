@@ -82,7 +82,13 @@ function fakeDb(args: {
           if (shape && "executionDataPlaneMode" in shape) {
             return Promise.resolve(
               args.parentMode
-                ? [{ executionDataPlaneMode: args.parentMode }]
+                ? [
+                    {
+                      executionDataPlaneMode: args.parentMode,
+                      knowledgeAccess: null,
+                      resultContract: null,
+                    },
+                  ]
                 : [],
             );
           }

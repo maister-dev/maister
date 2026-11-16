@@ -124,7 +124,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 16;
+export const HOST_STATE_SCHEMA_VERSION = 17;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -236,6 +236,7 @@ export type SettledReceiptRow = CommandReceiptRow & {
 };
 
 export type WorkspaceRow = {
+  companyId?: string | null;
   id: string;
   runId: string;
   projectSlug: string;
@@ -646,7 +647,7 @@ CREATE TABLE IF NOT EXISTS run_fences (
   epoch INTEGER NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS});
+CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS},company_id TEXT CHECK ((company_id IS NULL AND project_slug <> '_company') OR (company_id IS NOT NULL AND length(company_id) BETWEEN 1 AND 128 AND project_slug='_company' AND kind='directory' AND repo_path IS NULL AND context_mounts IS NULL)));
 ${WORKSPACES_ACTIVE_INDEX};
 CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
@@ -1007,6 +1008,13 @@ function migrateV15ToV16(
   }
 }
 
+const MIGRATE_V16_TO_V17 = `
+BEGIN IMMEDIATE;
+ALTER TABLE workspaces ADD COLUMN company_id TEXT CHECK ((company_id IS NULL AND project_slug <> '_company') OR (company_id IS NOT NULL AND length(company_id) BETWEEN 1 AND 128 AND project_slug='_company' AND kind='directory' AND repo_path IS NULL AND context_mounts IS NULL));
+PRAGMA user_version = 17;
+COMMIT;
+`;
+
 function applySchema(
   db: DatabaseSync,
   context: HostProcessContext,
@@ -1052,6 +1060,7 @@ function applySchema(
   if (Number(user_version) < 14) migrateV13ToV14(db);
   if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
   if (Number(user_version) < 16) migrateV15ToV16(db, context, observedAt);
+  if (Number(user_version) < 17) db.exec(MIGRATE_V16_TO_V17);
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -2209,8 +2218,8 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       return storage.write(() => {
         db.prepare(
           `INSERT INTO workspaces
-           (id, run_id, project_slug, kind, path, real_path, repo_path, run_dir, context_mounts, adopted_at, released_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, run_id, project_slug, kind, path, real_path, repo_path, run_dir, context_mounts, adopted_at, released_at, company_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           row.id,
           row.runId,
@@ -2223,6 +2232,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           row.contextMounts ? JSON.stringify(row.contextMounts) : null,
           row.adoptedAt,
           row.releasedAt,
+          row.companyId ?? null,
         );
       });
     },
@@ -3477,6 +3487,9 @@ function toHostRuntimeEventRow(
 
 function toWorkspaceRow(row: Record<string, unknown>): WorkspaceRow {
   return {
+    ...(row.company_id === null || row.company_id === undefined
+      ? {}
+      : { companyId: String(row.company_id) }),
     id: String(row.id),
     runId: String(row.run_id),
     projectSlug: String(row.project_slug),

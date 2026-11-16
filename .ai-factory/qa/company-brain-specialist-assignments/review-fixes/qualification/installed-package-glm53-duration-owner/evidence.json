@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_actual_installed_package_all_glm53",
+  "sourceHead": "f203ad5fb544b260b566799bc39fb280a40bbc87",
+  "candidateSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+  "mcpBundleSha256": "0baeb2a9d0d879d0f0e3ba320acddae1a3828a129bc53284b7ec796d772115f0",
+  "sourceUnchanged": true,
+  "startedAt": "2026-11-11T11:09:06.292559+00:00",
+  "finishedAt": "2026-11-11T11:34:58.173159+00:00",
+  "exitCode": 0,
+  "invocationId": "a9163b48-f2a9-4011-a00d-ae7b9b2e81a9",
+  "package": {
+    "tag": "rah/v1.0.9",
+    "commit": "88b38dc3080b1b2ab4c060e364a2199dd02bf393"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "configuredAgentSlots": 4,
+  "adapter": {
+    "id": "claude",
+    "version": null,
+    "path": "/Users/kaa/.codex/worktrees/2599/mAIster/supervisor/node_modules/.bin/claude-agent-acp",
+    "available": true,
+    "smoke": {
+      "capabilityEnforcement": {
+        "status": "ok"
+      }
+    }
+  },
+  "adapterPackageVersion": "0.95.0",
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "qualifier": "QL-CBX-03",
+  "playwrightStats": {
+    "startTime": "2026-11-11T11:09:13.328Z",
+    "duration": 1544270.1670000001,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "treeSizes": [
+    3,
+    7,
+    1
+  ],
+  "treeDepths": [
+    1,
+    2,
+    0
+  ],
+  "typedResults": 11,
+  "runtimeModelWitnesses": 11,
+  "sdkModelWitnesses": 11,
+  "nativeProposals": 2,
+  "screenshotsInspected": 4,
+  "dataClassification": "generated synthetic corpus in a fresh owned database and temporary repository; no existing Brain or private repository input",
+  "assertionsQualified": [
+    "Real Git-loader and native ACP launch with exact package and model pins.",
+    "Original evidence and direct-child findings survive depth-two coordinator reduction.",
+    "Missing, stale, conflicting, and unauthorized evidence receives explicit handling.",
+    "One source never produces independent confirmation by repetition.",
+    "Attributable write-back proceeds through separate native proposal review.",
+    "English and Russian run result evidence links are visible."
+  ],
+  "scopeLimits": [
+    "Company-owned structured records are accessed through project-admitted RAH executions in this scenario.",
+    "Company-only assignment delegation and the CB1 stand pilot retain their own open qualification."
+  ],
+  "cleanup": {
+    "id": "a9163b48-f2a9-4011-a00d-ae7b9b2e81a9",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 14,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "6d13df824acadef7457a93a4e5b289691b38d0dcf51fc1b017cedbae6a7bf149",
+      "rawBytes": 573,
+      "compressedSha256": "a4c1050fe2abb5b804627411c40ebf9df0bad133ad7d0556adc7e7c109f72145",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "a4c1050fe2abb5b804627411c40ebf9df0bad133ad7d0556adc7e7c109f72145"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "3e38f50fb5bf139db0f7979f15367f77f8fffb6bbc0e91b061880d496ff99866",
+      "rawBytes": 6804,
+      "compressedSha256": "faf6b9c89fbbfba285e7410f8806ccfa687869510f599aeb71e55bc404d0cee5",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "faf6b9c89fbbfba285e7410f8806ccfa687869510f599aeb71e55bc404d0cee5"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "87b4a74181e987d7db5d23c25af549bd6d9ff7e28b8208dfd900374d5e7978cf",
+      "rawBytes": 409356,
+      "compressedSha256": "2e1950b1ff0dfb7ac3f0d9d04ee3773ae1eade6ea55b2051df91d1b6611c23ac",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "2e1950b1ff0dfb7ac3f0d9d04ee3773ae1eade6ea55b2051df91d1b6611c23ac"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "45dcb259bdd7e4ddbdfd1ce13d93187bd2d2788a076b2fcb924b7537faf2103e",
+      "rawBytes": 31783,
+      "compressedSha256": "4e495febc3781361aa121de756c3e04e97c091645cb7b47ec8fef255f839f0a5",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "4e495febc3781361aa121de756c3e04e97c091645cb7b47ec8fef255f839f0a5"
+        }
+      ]
+    },
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8a7a9d0a2205f4d4ea70ea0b1240ed1c59f4739d4e42e9b75900e4667bb87c32",
+      "rawBytes": 14582,
+      "compressedSha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "beb0513674a26825c36fea7cd510db3fdcadc26797817d844969c93c86567f44"
+        }
+      ]
+    },
+    {
+      "sourceName": "sdk-models.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "df3f19d8c3ad6729ef5cf81b095c95eac6593e5ad73096d2a3048179045b0f3c",
+      "rawBytes": 1191,
+      "compressedSha256": "464022d0c953aa7ba6367094a0813404d6b407224967bf6857f172188fbd7818",
+      "parts": [
+        {
+          "path": "sdk-models.json.gz",
+          "sha256": "464022d0c953aa7ba6367094a0813404d6b407224967bf6857f172188fbd7818"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-witness.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f29a8008b209394758fce806497e8d7fc8864e577f329ac19a8d0cc2ec9bb9b0",
+      "rawBytes": 772,
+      "compressedSha256": "09ebdd20c5714fefb9bbe7e1a0805b1064fb764bc10b5fc062a9b384e53c3ea9",
+      "parts": [
+        {
+          "path": "database-volume-witness.json.gz",
+          "sha256": "09ebdd20c5714fefb9bbe7e1a0805b1064fb764bc10b5fc062a9b384e53c3ea9"
+        }
+      ]
+    },
+    {
+      "sourceName": "database-volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "database-volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "151de4fb077a0e188071dd19eaf5cd603a8a171183939d2ec6a2f31fd0a8e5e0",
+      "rawBytes": 393,
+      "compressedSha256": "b047a7d5f6a95ab7ea5729910c67590cedba2991d90424d82bd888e775e02139",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "b047a7d5f6a95ab7ea5729910c67590cedba2991d90424d82bd888e775e02139"
+        }
+      ]
+    },
+    {
+      "sourceName": "package-release-gate.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "13d4a47b3da317e9210a15ef9f2c5f82f5c66346a5c87edfcec13db345714d9b",
+      "rawBytes": 42485,
+      "compressedSha256": "da4f86813895f9c3bbefbbfdedd013aaeb25eaa0e4a4c6701905061e7fe7d047",
+      "parts": [
+        {
+          "path": "package-release-gate.log.gz",
+          "sha256": "da4f86813895f9c3bbefbbfdedd013aaeb25eaa0e4a4c6701905061e7fe7d047"
+        }
+      ]
+    },
+    {
+      "sourceName": "rah-root-d1-en.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "dba51611b3833d67e17918a2d8dddca251e5af47485b795a7365c98edd5f5466",
+      "rawBytes": 2036366,
+      "compressedSha256": "2088819295431c274df31fbaf50a19176ecba1f9c95fbae77b40ebe5c86cc4ef",
+      "parts": [
+        {
+          "path": "rah-root-d1-en.png.gz.01",
+          "sha256": "565b5534fb0220a094e768c71c2e1f39db3427a0f9466a7e6d28a615777d8c3c"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.02",
+          "sha256": "f3af91ff71dfc237f0d9b567ca8afdb411ab7a25799c82ee3bdf66d5c05b4573"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.03",
+          "sha256": "0160fb674a1608e15053edbfe48c6bd7b828f056e1508a90eba69edfa156dc2e"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.04",
+          "sha256": "b293832aec8db2846c809d39e52d3bf1d180eb1ab1578fd3b535c5dda0cc0f35"
+        },
+        {
+          "path": "rah-root-d1-en.png.gz.05",
+          "sha256": "fcd784aa6cf6493943de9eb3f79eaeade01c0e76819195b6646f4f7194c4227e"
+        }
+      ]
+    },
+    {
+      "sourceName": "rah-root-d1-ru.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "7eedcbd71c03a7c35850882bd070da4edcfa7150a85ee660fb29954c62b2940b",
+      "rawBytes": 2108304,
+      "compressedSha256": "d5aa88f7b384a218c3f3ebeffc113ed699c1afc491ec5202c9a1a25a0336e923",
+      "parts": [
+        {
+          "path": "rah-root-d1-ru.png.gz.01",
+          "sha256": "4221ac368896397bdb772a2fd0688e08af8918a67d1284ce7ba59d7e554593c4"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.02",
+          "sha256": "66b475cb88ea0de3a767bd050fe6ef5801fd1c2ab185f46b622ccd8a0ab6a816"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.03",
+          "sha256": "88de5ec10d44c9f7fd5fc5f8c83477597db3ba4284382af89bd6308f1b297a03"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.04",
+          "sha256": "6107e46d7081a7e99025a78166ab00e8d54500eccd7c8f5d11810c44398f2c17"
+        },
+        {
+          "path": "rah-root-d1-ru.png.gz.05",
+          "sha256": "fe3b4b6c3868bc37d71e88c6fb253aa0a9c8ab13bafb94f019f486fe0f832e88"
+        }
+      ]
+    },
+    {
+      "sourceName": "rah-root-d2-en.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "ecf1d21ce37115c78dc8b92ac358f649769e7031d5a8ac82a448b9b11cfb8391",
+      "rawBytes": 4462888,
+      "compressedSha256": "8df2ab5d1189555a800520f594021971ed340a362c9ace73d878539e95693924",
+      "parts": [
+        {
+          "path": "rah-root-d2-en.png.gz.01",
+          "sha256": "c1a74e0690a160bf0f9d44bcdf2636bfd15e574d4312b56262dc1d3adf2d3a28"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.02",
+          "sha256": "866c96de0a4ec74815d8f79216573d3f34f2bc5db3b115724916df1a886994ef"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.03",
+          "sha256": "1f831272265b30b0ce6438aff7d577f45d13adafa8acb69adad3e0d956253f07"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.04",
+          "sha256": "3d2e549692d2165460d0d73a2fad16bd1832f706f0f6d21e7e9897e93f22f35c"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.05",
+          "sha256": "3e1bfff15f46d7a5575a5d3e2d1be3da61ead95f27a767d99de2353a365ab353"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.06",
+          "sha256": "41e3d57b14cfc77781da9fa63d2772405648adb45266b1f4a0b45f83526699c8"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.07",
+          "sha256": "425bedaacaa90e36ba3746035601b706fd276d407954e9c251bdf129ce3c9a63"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.08",
+          "sha256": "1f3c12695c3d771e1ae63068088f1581188eb320e7dd0a41ff640e5981880a47"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.09",
+          "sha256": "e5c69fb21224f1baad5ea1ea31d49fab5060108154649e3e364ecc44a6e0dde8"
+        },
+        {
+          "path": "rah-root-d2-en.png.gz.10",
+          "sha256": "57fb19cc78f11940f55dfc738365d9fd7b56b99b0fdd571c5ebed80dfd4ec7ed"
+        }
+      ]
+    },
+    {
+      "sourceName": "rah-root-d2-ru.png",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "02de8e8595b82c68fbbd327d7fd394dc1fe957e587109b1f7a1b079528cb445e",
+      "rawBytes": 4606047,
+      "compressedSha256": "d196a5cb7c0d429460fc73b05eacb843b40a03cce55624797069e2f31c3b1959",
+      "parts": [
+        {
+          "path": "rah-root-d2-ru.png.gz.01",
+          "sha256": "3ee7dab843bbfa3fa600039a1c726bee00664da212793b1fa5bd42009b5e1fc0"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.02",
+          "sha256": "dcf99ab89fa7932cd57770bdd93c860afc1400284c58cab4adf36f913213a07f"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.03",
+          "sha256": "afa78cb485880a7c59572f55192085df4836621121ef4893d7aadbd386b94852"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.04",
+          "sha256": "5aa70dc46fdac7f5ede3960f7878234f1bffeb0dc08fb9c6ebc43bfe6a607ffe"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.05",
+          "sha256": "3012e7d3ca162d7d13f32bf4eb78bea83803ca79b6926c9f6ff4697ff94e413b"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.06",
+          "sha256": "d942409721b754b21029a6a43d3a701923f464b380299aa6658a8befa3254bf1"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.07",
+          "sha256": "117159e8bc3e2fbb736d3999e535dfb013f3ea5302d9cfc98b3295cb19ead02c"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.08",
+          "sha256": "8514b2a465ef79a56847a27b8c7174c8818894bcbbb1528224db598402965426"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.09",
+          "sha256": "e394b7b937b3e9b2953ba24e0ac0391fa9f9a539bee673ba41b296bda0c78230"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.10",
+          "sha256": "45dfb8c2c9501b3d74d3d10865bf1ef08dc2de420a71c8fceafcffc1a8128654"
+        },
+        {
+          "path": "rah-root-d2-ru.png.gz.11",
+          "sha256": "9792b5089aae254cc1a983daa9e794cd451a1237a399b3775a253c48d65fd6a3"
+        }
+      ]
+    }
+  ]
+}

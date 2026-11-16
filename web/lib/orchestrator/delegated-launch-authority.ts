@@ -11,6 +11,7 @@ import type { DelegateBody } from "./delegation-request";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { inspectNativeDelegationInput } from "./native-input";
 import { delegateBodySchema } from "./delegation-request";
 import {
   parseDelegationPlanRevision,
@@ -112,6 +113,9 @@ async function readDelegatedSnapshot(
     .from(runs)
     .where(and(eq(runs.id, parentRunId), eq(runs.projectId, projectId)));
   const body = payload.request;
+  const nativeInput = task?.delegationSpec?.nativeInput
+    ? inspectNativeDelegationInput(task.delegationSpec.nativeInput)
+    : undefined;
 
   if (
     !task ||
@@ -121,8 +125,13 @@ async function readDelegatedSnapshot(
     operation?.kind !== "delegate" ||
     operation.identity !== currentOperation.identity ||
     operation.payloadDigest !== retryDigest(body) ||
-    task.prompt !== body.prompt ||
-    task.title !== (body.title ?? titleFromPrompt(body.prompt))
+    (nativeInput
+      ? nativeInput.sourceRunId !== parentRunId ||
+        nativeInput.prompt !== body.prompt ||
+        nativeInput.title !== (body.title ?? titleFromPrompt(body.prompt)) ||
+        nativeInput.target.kind !== (body.target.flowId ? "flow" : "agent")
+      : task.prompt !== body.prompt ||
+        task.title !== (body.title ?? titleFromPrompt(body.prompt)))
   )
     throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
   const common = {
@@ -150,7 +159,11 @@ async function readDelegatedSnapshot(
       task.delegationSpec?.kind !== "flow" ||
       task.delegationSpec.flowId !== resolved.flowId ||
       task.flowId !== resolved.flowId ||
-      task.delegationSpec.runnerOverride !== body.runnerOverride
+      task.delegationSpec.runnerOverride !== body.runnerOverride ||
+      (nativeInput &&
+        (nativeInput.target.id !== resolved.flowId ||
+          task.title !== resolved.flowRefId ||
+          task.prompt !== resolved.flowRefId))
     )
       throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
 
@@ -168,6 +181,7 @@ async function readDelegatedSnapshot(
           carrierTaskId: taskId,
           mode: body.mode,
           runnerOverride: body.runnerOverride ?? null,
+          ...(nativeInput ? { nativeInput } : {}),
         }),
       },
     };
@@ -177,7 +191,11 @@ async function readDelegatedSnapshot(
   if (
     !agentId ||
     task.delegationSpec?.kind === "flow" ||
-    task.delegationSpec?.agentId !== agentId
+    task.delegationSpec?.agentId !== agentId ||
+    (nativeInput &&
+      (nativeInput.target.id !== agentId ||
+        task.title !== agentId ||
+        task.prompt !== agentId))
   )
     throw launchRefusal("delegation_launch_source_changed", "PRECONDITION");
   const effective = await resolveEffectiveAgentDefinition(
@@ -193,6 +211,7 @@ async function readDelegatedSnapshot(
       agentId,
       projectId,
       taskId,
+      ...(nativeInput ? { nativeInput } : {}),
       launchOverrideRunnerId: body.runnerOverride ?? null,
       parentRunId,
       rootRunId: parent.rootRunId ?? parent.id,
@@ -233,6 +252,7 @@ async function readDelegatedSnapshot(
     execution: {
       ...common,
       agentId,
+      ...(nativeInput ? { nativeInput } : {}),
       resultContract,
       persistent: body.persistent ?? false,
       addressableKey: body.addressableKey ?? null,

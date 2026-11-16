@@ -8,14 +8,17 @@
 // (window-numbering, next_task_number = max+1, task_key derivation +
 // deterministic uniquify ladder TES -> TEST -> TES2).
 
+import type { Pool } from "pg";
+
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  closeTestPool as retireReplayPool,
+  createTestPool,
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
@@ -360,15 +363,16 @@ describe("0043 schema shape (fresh DB, full chain)", () => {
 
 describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
   let replayPool: Pool;
+  let replayUri: string;
 
   beforeAll(async () => {
     await pool.query(`create database replay_backfill`);
 
-    const replayUri = container
+    replayUri = container
       .getConnectionUri()
       .replace(/\/maister_test(\?|$)/, "/replay_backfill$1");
 
-    replayPool = new Pool({ connectionString: replayUri });
+    replayPool = createTestPool({ connectionString: replayUri });
 
     const tags = journalTags();
     // Numeric partition: migrations AFTER 0043 may depend on the social
@@ -410,7 +414,7 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
   }, 180_000);
 
   afterAll(async () => {
-    await replayPool?.end();
+    if (replayPool) await retireReplayPool(replayPool);
   });
 
   it("numbers existing tasks per project by (created_at, id) from 1", async () => {
@@ -475,5 +479,59 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
          values ('p5', 'dup-key', 'Dup', '/tmp/p5', '/tmp/m.yaml', 'TES')`,
       ),
     ).rejects.toMatchObject({ code: "23505" });
+  });
+
+  it("waits for the replay pool's real PostgreSQL connection to retire before teardown completes", async () => {
+    const replay = createTestPool({ connectionString: replayUri });
+    const client = await replay.connect();
+    const backend = await client.query<{ pid: number }>(
+      "SELECT pg_backend_pid() AS pid",
+    );
+    const reached = Promise.withResolvers<void>();
+    const retired = Promise.withResolvers<void>();
+
+    client.once("end", retired.resolve);
+    const end = client.end.bind(client);
+    let releaseClose: (() => void) | undefined;
+    const close = vi.spyOn(client, "end").mockImplementation((callback) => {
+      releaseClose = () => end(callback);
+      reached.resolve();
+    });
+
+    client.release();
+    let finished = false;
+    const outcome = Promise.allSettled([retireReplayPool(replay)]).then(
+      (results) => {
+        finished = true;
+
+        return results;
+      },
+    );
+    const failures: unknown[] = [];
+
+    try {
+      await reached.promise;
+      // The actual socket stays connected while pg-pool has removed its idle
+      // client. A local pool counter is not evidence of PostgreSQL retirement.
+      const live = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM pg_stat_activity WHERE pid=$1",
+        [backend.rows[0]!.pid],
+      );
+
+      expect(live.rows).toEqual([{ count: 1 }]);
+      expect(finished).toBe(false);
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      releaseClose?.();
+      const [results] = await Promise.all([outcome, retired.promise]);
+
+      close.mockRestore();
+      for (const result of results)
+        if (result.status === "rejected") failures.push(result.reason);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length)
+      throw new AggregateError(failures, "Replay pool retirement failed");
   });
 });

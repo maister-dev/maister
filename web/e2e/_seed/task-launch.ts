@@ -45,7 +45,7 @@ export async function readTaskLaunchReceipt(
 
 /** Runtime scenarios follow the exact durable association, never the latest Run of a task. */
 export async function waitForTaskLaunchRun(
-  receipt: TaskLaunchReceipt,
+  receipt: Pick<TaskLaunchReceipt, "intentId" | "taskId">,
 ): Promise<string> {
   const load = (): Promise<TaskLaunchBinding | null> =>
     singleValue<TaskLaunchBinding>(

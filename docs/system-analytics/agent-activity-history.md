@@ -6,6 +6,18 @@
 
 Present all active agent executions and retained run/trigger-attempt history without treating rowless sessions as physical workspaces.
 
+Company specialist metadata history uses `GET /api/specialists/{specialistId}/runs`
+and the same latest-first Run projection/cursor as project history. The server
+derives the installation company and requires current explicit `assignments:read`.
+Complete capture, exact immutable assignment-input linkage and inherited source
+access filter rows before `LIMIT`; unavailable source rows cannot consume public
+page slots. Retired/disabled roles retain readable history. Company cursors bind
+the receiving user, exact read-grant identity/revision, owner, specialist and
+filters; revocation refuses access and a new grant invalidates an older cursor.
+Metadata omits scheduled input and diagnostic prose. Protected content remains
+on the separately authorized Run evidence/transcript surfaces. Company activity UI,
+full Run navigation and company trigger-attempt dispatch remain later slices.
+
 ## Domain entities
 
 - Agent identity and frozen activity/admission snapshots.

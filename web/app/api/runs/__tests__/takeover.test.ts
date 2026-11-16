@@ -231,7 +231,7 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/flows/graph/runner-core", () => ({
   loadRunProjectId: async () =>
     loadedRef.value ? ((loadedRef.value.run as Row).projectId as string) : null,
-  loadRun: async () => {
+  loadProjectRun: async () => {
     if (!loadedRef.value) {
       throw new MaisterError("PRECONDITION", "run not found: run-1");
     }

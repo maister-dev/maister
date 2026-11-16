@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { CollectedWorkRevision } from "@/lib/specialist-assignments/child-authority";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
+import type { KnowledgeRecipient } from "@/lib/brain/knowledge-run-disclosure";
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
 import type { ArtifactLocator } from "@/lib/db/schema";
 import type {
@@ -9,9 +12,14 @@ import type {
   RunResultInvalidReason,
 } from "@/lib/run-results/types";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  assertRunKnowledgeDisclosure,
+  authorizeRunKnowledgeDisclosure,
+} from "@/lib/brain/knowledge-run-disclosure";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -21,6 +29,7 @@ import {
   resolvePublicResult,
 } from "@/lib/run-results/ledger";
 import { deriveResultStatus } from "@/lib/run-results/status";
+import { authorizeNativeChildCollection } from "@/lib/specialist-assignments/child-authority";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { artifactInstances, runs } = schemaModule as unknown as Record<
@@ -57,6 +66,8 @@ export type CollectResult = {
   resultStatus: ResultStatus;
   result: PublicRunResult | null;
   resultRevision: number | null;
+  recoveryMode?: "recover_interrupted";
+  assignmentWork?: CollectedWorkRevision;
   resultFailure: { reason: RunResultInvalidReason; message: string } | null;
   artifacts: CollectArtifact[];
   diffRef?: string;
@@ -154,33 +165,66 @@ const SETTLED: ReadonlySet<string> = new Set(SETTLED_RUN_STATUSES);
 export type CollectedChild = {
   result: CollectResult;
   servedResultId: string | null;
+  knowledgeDisclosureRequired?: true;
+  nativeWorkParentId?: string;
 };
+
+type ChildOwner =
+  | { projectId: string; companyId?: never }
+  | { companyId: string; projectId?: never };
+
+function childOwnerPredicate(owner: ChildOwner) {
+  return owner.companyId === undefined
+    ? eq(runs.projectId, owner.projectId)
+    : and(eq(runs.companyId, owner.companyId), isNull(runs.projectId));
+}
 
 export async function collectChild(
   db: Db,
-  args: { parentRunId: string; projectId: string; childRunId: string },
+  args: ChildOwner & {
+    parentRunId: string;
+    childRunId: string;
+    recipient: KnowledgeRecipient;
+  },
 ): Promise<CollectedChild> {
   const runRows = (await db
     .select({
       status: runs.status,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+      nativeWork: sql<boolean>`EXISTS (
+        SELECT 1 FROM specialist_work work WHERE work.reserved_run_id=runs.id
+      )`,
     })
     .from(runs)
     .where(
       and(
         eq(runs.id, args.childRunId),
         eq(runs.parentRunId, args.parentRunId),
-        eq(runs.projectId, args.projectId),
+        childOwnerPredicate(args),
       ),
-    )) as { status: string; resultContract: RunResultContract | null }[];
+    )) as {
+    status: string;
+    resultContract: RunResultContract | null;
+    knowledgeAccess: KnowledgeAccessCapture | null;
+    nativeWork: boolean;
+  }[];
   const run = runRows[0];
 
-  if (!run) {
+  if (!run || (args.companyId !== undefined && !run.nativeWork)) {
     throw new MaisterError(
       "PRECONDITION",
       "run is not a child of the bound orchestrator run",
     );
   }
+  const assignmentWork = run.nativeWork
+    ? await db.transaction((tx: Db) => authorizeNativeChildCollection(tx, args))
+    : undefined;
+
+  const knowledgeDisclosureRequired = usesStructuredKnowledgeContext(run);
+
+  if (knowledgeDisclosureRequired)
+    await assertRunKnowledgeDisclosure(db, args.recipient, args.childRunId);
 
   const artifactRows = (await db
     .select({
@@ -215,11 +259,29 @@ export async function collectChild(
   const outputText = outputTextFromArtifacts(artifactRows);
 
   const servedRow = resultStatus === "valid" ? valid : null;
+  const recoveryMode =
+    args.companyId !== undefined &&
+    assignmentWork &&
+    newest?.invalidReason === "result_missing"
+      ? (
+          await db.execute(sql`
+            SELECT specialist_interrupted_child_prompt(${assignmentWork.id},${assignmentWork.workRevision},${newest.id}) IS NOT NULL AS supported
+          `)
+        ).rows[0]?.supported === true
+      : false;
 
   return {
     servedResultId: servedRow?.id ?? null,
+    ...(run.nativeWork ? { nativeWorkParentId: args.parentRunId } : {}),
+    ...(knowledgeDisclosureRequired
+      ? { knowledgeDisclosureRequired: true as const }
+      : {}),
     result: {
-      operationalOutcome: await loadOperationalOutcome(db, args.childRunId),
+      operationalOutcome: await loadOperationalOutcome(
+        db,
+        args.childRunId,
+        args.recipient,
+      ),
       childRunId: args.childRunId,
       status: run.status,
       settled: SETTLED.has(run.status),
@@ -228,6 +290,8 @@ export async function collectChild(
         ? { schemaRef: servedRow.schemaRef, value: servedRow.value }
         : null,
       resultRevision: valid?.revision ?? newest?.revision ?? null,
+      ...(recoveryMode ? { recoveryMode: "recover_interrupted" as const } : {}),
+      ...(assignmentWork ? { assignmentWork } : {}),
       // The invalid row is the ONE durable source. A failure-terminal child that
       // simply died (W4) has none, and reports null rather than a guess.
       resultFailure:
@@ -269,22 +333,21 @@ function invalidReasonMessage(reason: RunResultInvalidReason): string {
       return "the published result exceeded the array length limit";
     case "schema_mismatch":
       return "the published result did not satisfy its declared schema";
+    case "reference_invalid":
+      return "the native findings contain an unavailable reference or incomplete source capture";
   }
 }
 
 /** The bound orchestrator's DIRECT children, in insertion order. */
 export async function directChildRunIds(
   db: Db,
-  args: { parentRunId: string; projectId: string },
+  args: ChildOwner & { parentRunId: string },
 ): Promise<string[]> {
   const rows = (await db
     .select({ id: runs.id })
     .from(runs)
     .where(
-      and(
-        eq(runs.parentRunId, args.parentRunId),
-        eq(runs.projectId, args.projectId),
-      ),
+      and(eq(runs.parentRunId, args.parentRunId), childOwnerPredicate(args)),
     )) as { id: string }[];
 
   return rows.map((r) => r.id);
@@ -301,15 +364,36 @@ export async function directChildRunIds(
 export async function markCollected(
   db: Db,
   collected: readonly CollectedChild[],
+  recipient: KnowledgeRecipient,
 ): Promise<void> {
   const served = collected.filter(
     (c): c is CollectedChild & { servedResultId: string } =>
       c.result.resultStatus === "valid" && c.servedResultId !== null,
   );
 
-  if (served.length === 0) return;
+  const governed = collected.filter((item) => item.knowledgeDisclosureRequired);
+
+  const native = collected.filter(
+    (item): item is CollectedChild & { nativeWorkParentId: string } =>
+      item.nativeWorkParentId !== undefined,
+  );
+
+  if (served.length === 0 && governed.length === 0 && native.length === 0)
+    return;
 
   await db.transaction(async (tx: Db) => {
+    for (const item of native)
+      await authorizeNativeChildCollection(tx, {
+        parentRunId: item.nativeWorkParentId,
+        childRunId: item.result.childRunId,
+        recipient,
+      });
+    for (const item of governed)
+      await authorizeRunKnowledgeDisclosure(
+        tx,
+        recipient,
+        item.result.childRunId,
+      );
     for (const item of served) {
       // Keyed on the SERVED row, not the run: a rework that superseded it and
       // published a new revision between the read above and this write must not

@@ -25,6 +25,7 @@ import { MaisterError } from "@/lib/errors";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { AGENT_EXECUTION_STATUS } from "@/lib/agents/activity-status";
 import { takeSchedulerLock } from "@/lib/scheduler";
+import { lockDelegationParent } from "@/lib/orchestrator/admission";
 
 const log = pino({
   name: "task-qualification-admission",
@@ -540,11 +541,12 @@ export async function assertExecutionParentAdmission(
   projectId: string,
   parentRunId: string,
 ): Promise<typeof runs.$inferSelect> {
+  await lockDelegationParent(db, parentRunId);
   const [parent] = await db
     .select()
     .from(runs)
     .where(and(eq(runs.id, parentRunId), eq(runs.projectId, projectId)))
-    .for("update");
+    .for("no key update");
 
   if (
     !parent ||

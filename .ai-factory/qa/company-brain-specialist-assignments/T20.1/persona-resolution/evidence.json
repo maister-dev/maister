@@ -1,0 +1,72 @@
+{
+  "task": "T20.1",
+  "slice": "Actual shared Flow resolver for company professionals and node attribution",
+  "date": "2026-11-06",
+  "baseCommit": "e3725b247438d0c5951fb65a20edff19cfad169a",
+  "status": "Shared persona resolution qualified; company graph materialization/driver integration pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "persona": {
+      "tests": 35,
+      "failed": 2,
+      "log": "persona-red.log.gz",
+      "failure": "The real shared Flow resolver required a project for both the company driving role and independently bound diagnostic professional."
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 115,
+      "durationSeconds": 54.51,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 26.39,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "The existing Flow resolver explicitly selects current reviewed company provider/binding bytes without a project attachment or catalog-source retargeting.",
+    "Current exact owner/input/coordinator/read/update/source authority and the selected role/provider definition are checked before persona prompt return.",
+    "Actual root and independently configured diagnostic personas use the existing immutable node professional attestor and retain their actual authorship.",
+    "Company resolution requires an exact current node; another role cannot use the responsible driving-persona trigger exception.",
+    "Session/workspace-none current professional policy prevents company materialized subagents; effective configuration remains separate from the professional instructions.",
+    "Existing project agent-driven personas, native package contracts, evidence access and depth-2 reduction remain green."
+  ],
+  "qualificationBoundary": "Real trusted local package/PostgreSQL/native reservation fixtures use controlled prospective-engine compatibility and existing ledger-prepared current nodes. Persona resolution is exercised directly through the actual shared service; no company graph ACP/materialization/driver dispatch, 3.12.0 activation or actual companion/stand pilot is qualified.",
+  "notYetQualified": [
+    "Plain directory baseline/adoption and strict native graph capability materialization",
+    "Explicit company branch in existing graph loader/traversal/driver",
+    "Human/form/child waits, graph terminal token revocation/cleanup and host restart",
+    "Engine 3.12.0 activation, T21 full phase regression and real companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "717fc1a000b7da91378717052faacb1d693a2e0115dd1f7f51dfe4418301d3dd",
+    "AGENTS.md": "04914c806611627c3665296b93c33f7cc0d23b06f90a0446c1d446bd91a63579",
+    "docs/system-analytics/specialist-runtime.md": "0fbdd7e8ab84719290aa6169c405362e8c3d9a2f53d922c3cbdac44b5e656d85",
+    "web/lib/agents/company-flow-persona.ts": "dd9a22674bee6ee2357f52c5bf71fed0ab7ded8995159703672b338c7c41c58f",
+    "web/lib/agents/flow-binding.ts": "ca5a1a98a5840526f4ae7440df86290588e29fce5db86f34e7e78b81b9661c7c",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "e76f27f9cde7f802cd8fbebab4fcc6f2ba1d217bdaed518ba42fbf3c2392ba32"
+  }
+}

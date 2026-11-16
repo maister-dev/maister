@@ -10,14 +10,16 @@ for the dispatch mechanics, the kind taxonomy, and the consumer contract, and
 
 ```mermaid
 erDiagram
-    PROJECTS ||--o{ DOMAIN_EVENTS : "emitted per project"
+    PROJECTS o|--o{ DOMAIN_EVENTS : "project owner"
+    COMPANIES o|--o{ DOMAIN_EVENTS : "company owner"
     TASKS o|--o{ DOMAIN_EVENTS : "task-scoped facts (nullable FK)"
     RUNS o|--o{ DOMAIN_EVENTS : "run-scoped facts (nullable FK)"
 
     DOMAIN_EVENTS {
         bigint id PK "GENERATED ALWAYS AS IDENTITY — dispatch ordering key"
-        text kind "one of 15 taxonomy kinds; CHECK-enforced"
-        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text kind "code-owned taxonomy; CHECK-enforced"
+        text project_id FK "NULL -> projects(id) ON DELETE CASCADE; exclusive owner"
+        text company_id FK "NULL -> companies(id) ON DELETE RESTRICT; exclusive owner"
         text task_id FK "NULL -> tasks(id) ON DELETE CASCADE; task.* kinds"
         text run_id FK "NULL -> runs(id) ON DELETE CASCADE; run.* and gate.* kinds"
         text actor_type "NULL; user|system|agent CHECK — ADR-083 polymorphic pair"
@@ -48,7 +50,9 @@ not a table.
 
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
-| `domain_events` | `CHECK` | `kind` | Taxonomy allow-list (15 kinds, ADR-086; widened to 13 by migration `0125` for ADR-160 `run.rework_claimed` / `run.rework_returned`, and to 15 by `0167` for `run.review_opened` / `run.needs_input`). |
+| `domain_events` | `CHECK` | `kind` | Code-owned taxonomy in `web/lib/domain-events/taxonomy.ts`, mirrored by the generated schema CHECK. |
+| `domain_events` | `CHECK` | `project_id`, `company_id` | Exactly one owner. Company metadata facts have no task/run; company terminal/cleanup/wait/attention facts require a run and no task (`0242_company_run_terminal_events`, `0246_company_hitl_wait_events`, `0247_company_operational_attention`). |
+| `domain_events` | Trigger (`0242_company_run_terminal_events`/`0251_company_flow_runtime`) | Company run/owner/kind | A run fact must reference an existing company operational agent or exact v2 result-only company Flow with the same owner. Company event ownership, run/task identity and kind cannot be retargeted. |
 | `domain_events` | `CHECK` | `actor_type` | `user \| system \| agent` (NULL allowed). |
 | `domain_event_consumers` | `PK` | `consumer_id` | One cursor row per registered consumer. |
 
@@ -114,3 +118,5 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: ADR-086 in [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0046_domain_events.sql`).
+
+Company Run facts use an explicit retained company owner. Main `0251_company_flow_runtime` extends the existing reference guard from finite operational agents to exact v2 workspace-none Flow captures with a pinned required export and no project/Task/project-Flow. It also admits the existing `run.escalated` kind for company work. The guard preserves immutable event ownership and rejects cross-owner Run references. Project webhook subscriptions do not receive company work; assignment result delivery has its own destination contract.

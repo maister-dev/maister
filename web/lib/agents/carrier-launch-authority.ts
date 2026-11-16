@@ -9,6 +9,8 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { retryDigest } from "./retry-guards";
 
+import { assertNativeAgentInputBinding } from "@/lib/orchestrator/native-input";
+import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import {
   tasks,
   projects,
@@ -65,6 +67,7 @@ function carrierTaskDigest(task: typeof tasks.$inferSelect): string {
     queuePaused: task.queuePaused,
     triageStatus: task.triageStatus,
     triageFlagOrigin: task.triageFlagOrigin,
+    delegationSpec: task.delegationSpec,
   });
 }
 
@@ -107,6 +110,28 @@ export async function createTasklessAgentFlowCarrier(
     admission: TasklessAgentFlowCarrierAdmission | null;
   }>
 > {
+  return db.transaction((tx) =>
+    createTasklessAgentFlowCarrierInTransaction(
+      tx as unknown as Db,
+      context,
+      input,
+      flowId,
+    ),
+  );
+}
+
+async function createTasklessAgentFlowCarrierInTransaction(
+  db: Db,
+  context: LoadedAgentContext,
+  input: LaunchAgentRunInput,
+  flowId: string,
+): Promise<
+  Readonly<{
+    taskId: string;
+    deduped: boolean;
+    admission: TasklessAgentFlowCarrierAdmission | null;
+  }>
+> {
   if (
     input.taskId != null ||
     context.effective.parsed.kind !== "code_delivery" ||
@@ -129,10 +154,30 @@ export async function createTasklessAgentFlowCarrier(
     );
 
   if (!flow) throw carrierRefusal();
+  const nativeInput = assertNativeAgentInputBinding({
+    taskId: null,
+    taskInput: undefined,
+    launchInput: input.nativeInput,
+    parentRunId: input.parentRunId ?? null,
+    agentId: input.agentId,
+  });
+
+  if (nativeInput)
+    await authorizeSourceRestrictions(
+      db,
+      {
+        kind: "execution",
+        runId: nativeInput.sourceRunId,
+        nodeAttemptId: nativeInput.sourceActor.attemptId,
+      },
+      nativeInput.sourceRestrictions,
+    );
   const created = await createTask(
     {
-      title: `${context.effective.parsed.name} (${input.trigger.source})`,
-      prompt: context.effective.parsed.prompt,
+      title: nativeInput
+        ? input.agentId
+        : `${context.effective.parsed.name} (${input.trigger.source})`,
+      prompt: nativeInput ? input.agentId : context.effective.parsed.prompt,
       flowId,
       agentId: input.agentId,
       triggerEventId: input.trigger.eventId ?? null,
@@ -143,6 +188,14 @@ export async function createTasklessAgentFlowCarrier(
 
   if (created.deduped)
     return { taskId: created.taskId, deduped: true, admission: null };
+  if (nativeInput)
+    await db
+      .update(tasks)
+      .set({
+        delegationSpec: { kind: "agent", agentId: input.agentId, nativeInput },
+        updatedAt: new Date(),
+      })
+      .where(eq(tasks.id, created.taskId));
   const [task] = await db
     .select()
     .from(tasks)

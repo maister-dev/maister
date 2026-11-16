@@ -2,7 +2,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type {
   CapabilityMaterial,
   CapabilityProfileEntry,
-  ResolvedCapabilityProfile,
+  MaterializableCapabilityProfile,
 } from "@/lib/capabilities/types";
 
 import pino from "pino";
@@ -23,6 +23,7 @@ const log = pino({
 // ephemeral agent token on the MCP facade entry).
 export type AgentMcpServer = {
   name: string;
+  platformOrigin?: "maister_facade";
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -69,7 +70,7 @@ export type AgentMaterialization = {
 };
 
 export type MapProfileToAgentArtifactsArgs = {
-  profile: ResolvedCapabilityProfile;
+  profile: MaterializableCapabilityProfile;
   agent: CapabilityAgent;
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";
@@ -90,7 +91,9 @@ const PERMISSION_MODE_TO_DEFAULT_MODE: Record<
   deny: "plan",
 };
 
-function claudeSettingsModel(model: string | undefined): string | undefined {
+export function claudeSettingsModel(
+  model: string | undefined,
+): string | undefined {
   const trimmed = model?.trim();
 
   if (!trimmed || trimmed === "default") return undefined;

@@ -181,10 +181,14 @@ export async function readTranscriptPage(
     projection,
   };
 
-  return db.transaction(
+  const page = await db.transaction(
     (tx) => readWindow(tx, { runId, node, query, limit, empty }),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
+
+  await authorizePeekRun(userId, runId);
+
+  return page;
 }
 
 type ReadDb = Pick<ReturnType<typeof getDb>, "execute">;

@@ -1,7 +1,9 @@
 import "server-only";
 
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { FormSchema } from "@/lib/config.schema";
 import type { NodeAttemptOutputContract } from "@/lib/db/schema";
+import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { StepResult } from "../types";
 import type { CompiledNode } from "./compile";
@@ -19,7 +21,12 @@ import { resolveOutputResultSchemaWithIdentity } from "@/lib/config";
 import { MaisterError } from "@/lib/errors";
 import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { nodeOutputMaxBytes } from "@/lib/instance-config";
-import { isResultProducerNode } from "@/lib/run-results/contract";
+import {
+  isResultProducerNode,
+  usesStructuredKnowledgeContext,
+} from "@/lib/run-results/contract";
+import { validateParsedResultValue } from "@/lib/run-results/validate";
+import { validateFindingsReferences } from "@/lib/run-results/findings-references";
 
 // M26 P1 (ADR-063): structured node output — transport extraction + the
 // post-action validate seam. Frozen SSOT:
@@ -269,6 +276,7 @@ export type ValidateNodeStructuredOutputArgs = {
   // than re-reading the pinned revision — re-pointing the flow mid-run must not
   // change which schema an in-flight attempt is held to.
   resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   db: Db;
 };
 
@@ -408,7 +416,17 @@ export async function validateNodeStructuredOutput(
     "structured output: contract resolved",
   );
 
-  const verdict = validateStructuredOutput(payload.value, resolved.schema);
+  const frozen = args.resultContract;
+  const verdict =
+    isProducer && frozen?.kind === "flow_export" && frozen.nativeContract
+      ? validateParsedResultValue({
+          value: payload.value,
+          schema: resolved.schema,
+          nativeContract: frozen.nativeContract,
+          maxBytes,
+          label: "public result",
+        })
+      : validateStructuredOutput(payload.value, resolved.schema);
 
   if (!verdict.ok) {
     return failAttempt(
@@ -419,6 +437,25 @@ export async function validateNodeStructuredOutput(
   }
 
   const value = payload.value as Record<string, unknown>;
+
+  if (isProducer && frozen && usesStructuredKnowledgeContext(args)) {
+    const references = await args.db.transaction((tx: SqlTransaction) =>
+      validateFindingsReferences(
+        tx,
+        args.runId,
+        frozen,
+        {
+          kind: "valid",
+          value,
+          valueBytes: Buffer.byteLength(JSON.stringify(value), "utf8"),
+        },
+        args.nodeAttemptId,
+      ),
+    );
+
+    if (references.kind === "invalid")
+      return failAttempt(args, references.message, contract);
+  }
 
   // ADR-162 (C-2): the engine produced these vars — validation is all the seam
   // does. Folding a validated copy back over them would be a no-op at best and

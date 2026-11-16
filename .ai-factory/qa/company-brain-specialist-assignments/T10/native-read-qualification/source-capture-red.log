@@ -1,0 +1,72 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793662946699,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":24,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793662946699,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793662946719,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":20,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793662946720,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":45,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793662948071,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":1350,"containerId":"d4b091723965536b67cbf99065e5d8f7bea3a3c796555e0ef18c9f2d7b8cfc41","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793662948078,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":1403,"containerId":"d4b091723965536b67cbf99065e5d8f7bea3a3c796555e0ef18c9f2d7b8cfc41","endpoint":"postgres://localhost:63322/company_records","msg":"started bare test database"}
+{"level":30,"time":1793662948624,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":213,"querySubmissions":6,"durationMs":546,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793662948700,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":10,"querySubmissions":6,"durationMs":76,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793662948700,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:63322/company_records","msg":"applied Brain test database migrations"}
+{"level":40,"time":1793662948815,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","status":"disabled","msg":"denied: inactive account"}
+{"level":40,"time":1793662948817,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","msg":"denied: password change required"}
+{"level":40,"time":1793662948818,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"missing-user","msg":"denied: missing user"}
+{"level":30,"time":1793662949175,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"agent-tokens","runId":"80817b69-9446-4f4b-a00c-7fbb180ab30d","tokenId":"18477bb5-eff8-43ed-9126-83e295f3f621","msg":"ephemeral orchestrator token issued"}
+{"level":30,"time":1793662949285,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"f3a2d2f3-ec7b-4b9d-a228-332bc0c7fcdb","sourceId":"6a78608a-e3a2-40c6-a846-9618847444a7","witnessId":"72c1cabd-35d5-4711-a96a-cf5d0395ab3a","bytes":21700,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793662949316,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"f3a2d2f3-ec7b-4b9d-a228-332bc0c7fcdb","sourceId":"6a78608a-e3a2-40c6-a846-9618847444a7","witnessId":"72c1cabd-35d5-4711-a96a-cf5d0395ab3a","bytes":21700,"duplicate":true,"msg":"source capture retained"}
+{"level":30,"time":1793662949332,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"project","ownerId":"bf163ad8-6013-40fe-b979-21bb66f3c6a4","sourceId":"99f90cfb-e144-4450-b3d1-7ee8d650efc5","witnessId":"4882eec0-d9f5-457c-af77-6a1dc3d59ace","bytes":31,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793662949571,"pid":54029,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":233,"containerId":"d4b091723965536b67cbf99065e5d8f7bea3a3c796555e0ef18c9f2d7b8cfc41","endpoint":"postgres://localhost:63322/company_records","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/company-records.integration.test.ts (8 tests | 1 failed) 2899ms
+   × IT-CBE-01 repository-free source capture retains exact bounded evidence and content-guarded receipts across project deletion 79ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/company-records.integration.test.ts > IT-CBE-01 repository-free source capture retains exact bounded evidence and content-guarded receipts across project deletion
+AssertionError: expected [ { …(12) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "chunkCount": 0,
++     "chunkerId": "native_submission",
++     "chunkerVersion": "1",
++     "enabled": false,
++     "id": "99f90cfb-e144-4450-b3d1-7ee8d650efc5",
++     "indexedFileCount": 0,
++     "indexedFilePaths": [],
++     "kind": "text",
++     "lastError": null,
++     "lastIndexedAt": null,
++     "path": "submitted:0abac9132f330526fe05e0cd838e2ac3265efa26c62a0d5ff53aa6fa2cb92e7c",
++     "sourceHash": "418cfe302ec4eb26b53a6b13e39a90ed40ff1338418e1019fa1e1b77df894bb7",
++   },
++ ]
+
+ ❯ lib/brain/__tests__/company-records.integration.test.ts:590:59
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+   Start at  02:42:25
+   Duration  4.48s (tests 66%, import 21%, transform 13%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/company-records.integration.test.ts

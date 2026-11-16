@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-09T21:16:56.759735+00:00",
+  "baseline": "1640fbd70a86dccaa72c92847ae777044207f363",
+  "status": "local recovery fixes verified; renewed frozen full regression pending",
+  "failedFullReceipt": "../../review-fixes/qualification/full-regression-1640fbd70/evidence.json",
+  "fixes": [
+    {
+      "id": "company-test-budgets",
+      "red": "The full run exhausted a 15-second prompt wait and a 90-second multi-origin budget; an isolated run without CBC01 reached input 32 before its 300-second case budget expired.",
+      "change": "Local waits are now 30 seconds per ordinal, 600 seconds for all 32 real clarification rounds, and 240 seconds for multi-origin intake. All assertions and production timeouts remain unchanged.",
+      "green": "Budget-only probe 2/2, then complete company suite 50/50."
+    },
+    {
+      "id": "launch-stage-diagnostics",
+      "change": "Controlled stages identify execution binding, turn admission, dispatch admission, session creation and prompt dispatch. Authority and settlement branches are unchanged."
+    },
+    {
+      "id": "natural-process-retirement",
+      "red": "A real gated ACP operation completes and its whole native group is positively absent, but its durable obligation remains registered with no retirement timestamp.",
+      "change": "After output drains and before terminal publication, exact child/command/session/assignment/epoch and captured/current boot/namespace must match. Only kernel ESRCH releases the existing obligation. No new signals, schema changes or invented historical retirement.",
+      "green": "Real native owning suite passes positive natural exit, live-descendant retention, DELETE grace and preload barrier controls."
+    },
+    {
+      "id": "safe-gate-cause-diagnostics",
+      "red": "A real child registration refusal with a known SQLite error code has no retained gate diagnostic.",
+      "change": "The gate catch records original bounded safe cause identities and codes with controlled stage and server IDs. Messages, stack, paths, arguments, environment and stderr are excluded. Public HTTP refusal and termination behavior are unchanged.",
+      "green": "Real-child privacy regression proves the exact safe chain, generic HTTP 500/SPAWN, terminated process witness, no invented obligation and private-marker absence."
+    }
+  ],
+  "gates": {
+    "companyIntegrated": {
+      "exitCode": 0,
+      "passed": 50,
+      "files": 1,
+      "seconds": 352.97,
+      "sourceBoundary": "All functional retirement/budget/stage changes integrated; before the later safe gate-cause log only."
+    },
+    "nativeOwningFinal": {
+      "exitCode": 0,
+      "passed": 6,
+      "files": 1,
+      "seconds": 6.66
+    },
+    "supervisorIntegrationFinal": {
+      "exitCode": 0,
+      "passed": 390,
+      "files": 40,
+      "seconds": 28.88,
+      "cleanup": "Owned lane completed passed with cleanup."
+    },
+    "supervisorUnitFinal": {
+      "exitCode": 0,
+      "passed": 523,
+      "files": 51,
+      "seconds": 15.8
+    },
+    "webUnit": {
+      "exitCode": 0,
+      "passed": 9312,
+      "files": 891,
+      "seconds": 34.88
+    },
+    "webTypes": "passed",
+    "supervisorTypes": "passed",
+    "mcpTypes": "passed",
+    "mcpBuild": "passed",
+    "webLint": "passed",
+    "supervisorLint": "passed",
+    "runtimeLint": "passed",
+    "docs": "passed;177 tables",
+    "contracts": "passed;84 requirements/45 tasks",
+    "localStateInventory": {
+      "exitCode": 0,
+      "passed": 6
+    },
+    "independentReview": "No remaining findings in the budget/stage, natural retirement and safe gate-cause fix passes."
+  },
+  "provenanceLimits": [
+    "The original large-output failure was a definitive pre-ACP gate refusal in eight milliseconds, not observed output truncation. Its inner registration cause was discarded; OS resource failure and PGID collision are not established original causes.",
+    "Numeric PGID reuse can collide with a stale registered obligation in current storage. The new regression proves the separate natural-exit retention gap; it does not recreate the original failing process incarnation.",
+    "The budget-only probe imported code before the diagnostic-stage patch; fresh complete company and native suites qualify the later changes separately.",
+    "Prior actual installed-package and full-regression receipts retain their original immutable sources. These focused results do not close the new full regression or CB1 pilot."
+  ],
+  "cleanup": {
+    "failedFull": "Zero owned processes, containers, roots and errors; retained in failed full receipt.",
+    "isolatedAndIntegratedWeb": "Exact completed invocations released; zero owned processes, containers, roots and errors.",
+    "native": "Owned native fixtures and full supervisor lane report clean teardown."
+  },
+  "remaining": [
+    "Renew complete frozen Web integration after committing these fixes.",
+    "Continue T27 native work intake/dispatch, then T28-T43 acceptance, owner recovery, connector, UX and actual-package stand qualification."
+  ],
+  "sources": [
+    {
+      "path": "runtime/process-group.ts",
+      "sha256": "13dfb14da355f50cd33e86fd8de68a13555c4bce25cdc232b4b57b6d4458b08b"
+    },
+    {
+      "path": "runtime/safe-error-cause.ts",
+      "sha256": "e47c070a9043100f0e6aba65bc89fc167c22e8eed9a344db212c70dead02e8e4"
+    },
+    {
+      "path": "supervisor/src/heartbeat.ts",
+      "sha256": "27e5e319934286198efbff86170f9df3a7f70b9a51ee0f61be1340a916d0fc1d"
+    },
+    {
+      "path": "supervisor/src/session-process-ownership.ts",
+      "sha256": "28cbf09abaa9fea278f3471e4257dd59f35ff930aa6b560a0a60e8c32f64c035"
+    },
+    {
+      "path": "supervisor/src/spawn.ts",
+      "sha256": "bb007548402e39cc609bb09c12d08e68c7f8e6c1639b1dabd254592792af507e"
+    },
+    {
+      "path": "supervisor/src/__tests__/session-process-ownership.integration.test.ts",
+      "sha256": "dea423ef89f41d917aff4f7e93289670c9366006dca4da6ad75f564dacf097c0"
+    },
+    {
+      "path": "web/lib/agents/launch.ts",
+      "sha256": "a29f86d085e24fbaa6a5e69e1ed36ae70fd6d2fc18f4d9c56e7032b2266f23d8"
+    },
+    {
+      "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "sha256": "526ca15af8f5cb959e6340cb03bc641db73ae1f98c1cd9c5027a5d18f544ff82"
+    },
+    {
+      "path": "docs/supervisor.md",
+      "sha256": "64931509fe5f75d8abab3417a8250e747e77a4da32aea141a6d9552bf116c18e"
+    },
+    {
+      "path": "docs/system-analytics/execution-hosts.md",
+      "sha256": "5e0b195b50d29f97d6257618e368447986bac28c19fd692110374ebaecb3822b"
+    },
+    {
+      "path": ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+      "sha256": "66c2a89ea239255f2bc5632db7ff7823220e25984d3e227941bc37ad3dd1a61a"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "company-isolated-red.log.gz",
+      "sha256": "41c2b50586910fe61d596dd2792e01d7bef49aad385a6442d7b797d988524a89"
+    },
+    {
+      "path": "company-budget-green.log.gz",
+      "sha256": "be59f152b6edb359ce15fe19218d9d4e9c67043ba9a464dea0f30486d88232ef"
+    },
+    {
+      "path": "company-candidate-green.log.gz",
+      "sha256": "a6120cfd39b56f9f80ef9400cfb9e1bd4846369358a13fa032ec781e60b4ceb0"
+    },
+    {
+      "path": "company-integrated-green.log.gz",
+      "sha256": "ed7af068d1b9615abacaf019e3210c7cb9f857b60f96539a96900de69c163733"
+    },
+    {
+      "path": "preview-reprobe-green.log.gz",
+      "sha256": "5b469c2073847227dd78a3663dde247c25be01d2fc93a8689741a0c12a623c41"
+    },
+    {
+      "path": "natural-retirement-red.log.gz",
+      "sha256": "199bee025527a0098a24668e4ab4adf117f1a92986a72f9218305db585965544"
+    },
+    {
+      "path": "natural-retirement-green.log.gz",
+      "sha256": "0842b19d722f6b5aecd8c4572ce331cfa04af657bcfe0b561018aec06562a58c"
+    },
+    {
+      "path": "gate-diagnostics-red.log.gz",
+      "sha256": "67489744ffc06cb3599e85a7cec9129d4621ff5a65c937e96827616875e0f1e7"
+    },
+    {
+      "path": "gate-diagnostics-green.log.gz",
+      "sha256": "009e87b58b46051756d607f1fd5789721393982339ca787acea6faa50c7d672f"
+    },
+    {
+      "path": "supervisor-integration-green.log.gz",
+      "sha256": "342e4ae2901cfc170e7cb2543f46ff9b54d4b524ff52eb1c2f0790fb0c1c647b"
+    },
+    {
+      "path": "supervisor-unit-green.log.gz",
+      "sha256": "b6965c96c6b32a8923741c029885c8cb7775b053b3ecdf760432b7b37ec7e3e5"
+    },
+    {
+      "path": "supervisor-types-green.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    {
+      "path": "supervisor-lint-green.log.gz",
+      "sha256": "917ad2eee3beecd3945b45083a6f049021ccae521c7807374c539e4c6c1ceb94"
+    },
+    {
+      "path": "web-unit-green.log.gz",
+      "sha256": "462cf3fe2fb626cb4ae08cc5359cae024abc2c1682ac3947e4ff5176676ddac5"
+    },
+    {
+      "path": "web-types-green.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    {
+      "path": "web-lint-green.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "runtime-lint-green.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "mcp-types-green.log.gz",
+      "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+    },
+    {
+      "path": "mcp-build-green.log.gz",
+      "sha256": "b42f21b817b3d76e6c54dbb053097093cb4eaf686f0a07aa6989497de89e0faa"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "sha256": "ebc7a621d7764564074240ea331668943b37ef2f915d2c841504fc2577a9c6c4"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "sha256": "496490a50a3b9a7daa51e428379ddebd85215a0043a1599d68b7840447fedffd"
+    },
+    {
+      "path": "local-state-inventory-green.log.gz",
+      "sha256": "511dfc077d791097513fbf62b08374878720462ae9866eb3d7ad339299b1b6d5"
+    },
+    {
+      "path": "isolated-red-cleanup.log.gz",
+      "sha256": "820a69da57b1a22a63b6787c7549dac276f639f5fa4966f0697d9b4c1f4f2043"
+    },
+    {
+      "path": "candidate-cleanup.log.gz",
+      "sha256": "b3913bb432cd3496e6ec764430a845287eabc8f9fd5a65214c769235dc23d676"
+    },
+    {
+      "path": "integrated-company-cleanup.log.gz",
+      "sha256": "c3c703bc3bb58f9b9ca5964dc5186340c8b0061fd49949c9102b72b3172b4c00"
+    },
+    {
+      "path": "docs-commit-green.log.gz",
+      "sha256": "5dd3f9ac7f0766a40e93d77195e20b09a317aa3b7bb59195ddc9a3daaf20249e"
+    },
+    {
+      "path": "contracts-commit-green.log.gz",
+      "sha256": "a3ee218d57f6523400c756a4520d606f6495c2d2402310d61f5d71bec332e5dd"
+    }
+  ],
+  "effects": "Owned disposable local fixtures only. No push, publication, deployment, production stand mutation or external messages."
+}

@@ -21,6 +21,12 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: (...a: unknown[]) => requireProjectActionSpy(...a),
 }));
 
+// This lane pins transport envelopes. Native source policy is exercised against
+// PostgreSQL by findings-gate-chat.integration.test.ts.
+vi.mock("@/lib/brain/knowledge-run-disclosure", () => ({
+  assertRunKnowledgeDisclosure: vi.fn(async () => {}),
+}));
+
 const dbRows: {
   run: Record<string, unknown> | null;
   hitl: Record<string, unknown> | null;

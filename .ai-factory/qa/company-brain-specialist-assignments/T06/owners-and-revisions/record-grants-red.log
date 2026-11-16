@@ -1,0 +1,50 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793655457172,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":16,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793655457172,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793655457181,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793655457182,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":26,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793655458055,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":871,"containerId":"8f1cd54b5302a2a1fd9ad8f321e03375b505def2d99957b983a44798dccd1d9b","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793655458065,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":909,"containerId":"8f1cd54b5302a2a1fd9ad8f321e03375b505def2d99957b983a44798dccd1d9b","endpoint":"postgres://localhost:62006/company_records","msg":"started bare test database"}
+{"level":30,"time":1793655458350,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":285,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655458378,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":28,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655458378,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62006/company_records","msg":"applied Brain test database migrations"}
+{"level":40,"time":1793655458407,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","status":"disabled","msg":"denied: inactive account"}
+{"level":40,"time":1793655458408,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"reader","msg":"denied: password change required"}
+{"level":40,"time":1793655458408,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"authz","userId":"missing-user","msg":"denied: missing user"}
+{"level":30,"time":1793655458614,"pid":30808,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":165,"containerId":"8f1cd54b5302a2a1fd9ad8f321e03375b505def2d99957b983a44798dccd1d9b","endpoint":"postgres://localhost:62006/company_records","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/company-records.integration.test.ts (5 tests | 1 failed) 1463ms
+   × IT-CBK-01 narrower grants cannot leave or restore a broadly readable projection 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 narrower grants cannot leave or restore a broadly readable projection
+AssertionError: expected 'owner_grants' to be 'restricted' // Object.is equality
+
+Expected: "restricted"
+Received: "owner_grants"
+
+ ❯ lib/brain/__tests__/company-records.integration.test.ts:240:152
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  00:37:36
+   Duration  1.86s (tests 81%, import 16%, transform 2%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/company-records.integration.test.ts

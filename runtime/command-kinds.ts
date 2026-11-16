@@ -11,6 +11,7 @@ export const COMMAND_KINDS = [
   "runtime_object.reserve",
   "runtime_object.upload",
   "runtime_object.delete",
+  "stand.dispatch",
 ] as const;
 
 export type CommandKind = (typeof COMMAND_KINDS)[number];

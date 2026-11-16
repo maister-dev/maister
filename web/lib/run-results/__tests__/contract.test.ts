@@ -6,13 +6,50 @@ import {
   isResultProducerNode,
   schemaRefFor,
   schemaStemFromPath,
+  usesStructuredKnowledgeContext,
 } from "@/lib/run-results/contract";
+import { declaredResultExport } from "@/lib/run-results/flow-export";
 
 // ADR-165 AC-10 / spec C-1.3. `schemaRef` is derived from server state alone —
 // it is the string a coordinator sees beside every result, and the only place
 // the pinned revision surfaces to it.
 
 const SCHEMA = { schemaVersion: 2, fields: [] };
+
+it("selects the operational evidence grammar only for a required compatible Flow export", () => {
+  const exportDeclaration = {
+    schema: "./schemas/operational-evidence.v2.json",
+    native_contract: "operational_evidence_v2",
+    from: ["coordinator"],
+  };
+  const flow = (engine_min: string, required: boolean) => ({
+    compat: { engine_min },
+    result: { export: { ...exportDeclaration, required } },
+  });
+
+  expect(() => declaredResultExport(flow("3.11.1", true))).toThrow(/3\.12\.0/);
+  expect(() => declaredResultExport(flow("3.12.0", false))).toThrow(
+    /required/i,
+  );
+  const selected = declaredResultExport(flow("3.12.0", true));
+
+  expect(selected?.nativeContract).toBe("operational_evidence_v2");
+  expect(
+    usesStructuredKnowledgeContext({
+      resultContract: buildFlowExportContract({
+        flowRefId: "stand",
+        resolvedRevision: "abcdef123456",
+        flowRevisionId: "flow",
+        schemaPath: exportDeclaration.schema,
+        schema: SCHEMA,
+        sha256: "a".repeat(64),
+        required: true,
+        producerNodeIds: exportDeclaration.from,
+        nativeContract: selected?.nativeContract,
+      }),
+    }),
+  ).toBe(true);
+});
 
 describe("schemaRefFor", () => {
   it("is <flowRefId>@<rev12>:<stem>", () => {
@@ -156,4 +193,37 @@ describe("isResultProducerNode", () => {
       ),
     ).toBe(false);
   });
+});
+
+it("freezes an explicit native findings selector in both producer contracts without changing their pinned schema identity", () => {
+  const flow = buildFlowExportContract({
+    flowRefId: "rah",
+    resolvedRevision: "a".repeat(40),
+    flowRevisionId: "revision",
+    schemaPath: "./schemas/findings.v1.json",
+    schema: SCHEMA,
+    sha256: "b".repeat(64),
+    required: true,
+    producerNodeIds: ["reduce"],
+    nativeContract: "evidence_findings_v1",
+  });
+  const agent = buildAgentProfileContract({
+    profileName: "findings",
+    flowRefId: "rah",
+    resolvedRevision: "a".repeat(40),
+    sourceFlowRevisionId: "revision",
+    schemaStem: "findings.v1",
+    schemaVersion: 2,
+    schema: SCHEMA,
+    sha256: "b".repeat(64),
+    nativeContract: "evidence_findings_v1",
+  });
+
+  for (const contract of [flow, agent])
+    expect(contract).toMatchObject({
+      nativeContract: "evidence_findings_v1",
+      sha256: "b".repeat(64),
+      schema: SCHEMA,
+      schemaRef: "rah@aaaaaaaaaaaa:findings.v1",
+    });
 });

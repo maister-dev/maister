@@ -1,11 +1,21 @@
 import "server-only";
 
+import type { SQL } from "drizzle-orm";
+
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { platformRuntimeSettings } from "@/lib/db/schema";
-import { isMaisterError } from "@/lib/errors";
+import { assignmentDestinationSchema } from "@/lib/specialist-assignments/types";
+import { assignmentResultWitnessSchema } from "@/lib/specialist-assignments/delivery-types";
+import {
+  authorizePendingAssignmentDelivery,
+  applyInternalAssignmentDelivery,
+  isQuietScheduledStandDelivery,
+} from "@/lib/specialist-assignments/delivery";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   classifyResult,
   DEFAULT_MAX_ATTEMPTS,
@@ -13,6 +23,7 @@ import {
   type WebhookErrorKind,
 } from "@/lib/webhooks/backoff";
 import { matchSubscriptions } from "@/lib/webhooks/match";
+import { projectWebhookDataSql } from "@/lib/webhooks/knowledge-policy";
 import { pushPayloadFor } from "@/lib/notifications/payload";
 import { sendPush, type PushTarget } from "@/lib/notifications/push-sender";
 import {
@@ -81,27 +92,6 @@ export async function runWebhookDeliveryJob(
 
   const batch = positiveEnvInt("MAISTER_WEBHOOK_DELIVERY_BATCH", DEFAULT_BATCH);
 
-  if (!webhooksEnabled) {
-    // Skip, not buffer: disabled-window events are stamped consumed-and-dropped
-    // so a re-enable never delivers the backlog. Drain (pending deliveries
-    // pause until re-enable) and prune stay skipped.
-    const skippedEvents = await runSkipPass(db, batch);
-
-    const summary: WebhookDeliverySummary = {
-      skipped: "disabled",
-      skippedEvents,
-      fanout: 0,
-      delivered: 0,
-      failed: 0,
-      dead: 0,
-      pruned: 0,
-    };
-
-    log.info(summary, "[scheduler.webhook_delivery] summary");
-
-    return summary;
-  }
-
   const timeoutMs = positiveEnvInt(
     "MAISTER_WEBHOOK_TIMEOUT_MS",
     DEFAULT_TIMEOUT_MS,
@@ -111,8 +101,47 @@ export async function runWebhookDeliveryJob(
     DEFAULT_MAX_ATTEMPTS,
   );
 
-  const fanout = await runFanoutPass(db, batch);
-  const drain = await runDrainPass(db, batch, timeoutMs, maxAttempts);
+  if (!webhooksEnabled) {
+    // Skip, not buffer: disabled-window events are stamped consumed-and-dropped
+    // so a re-enable never delivers the backlog. Drain (pending deliveries
+    // pause until re-enable) and prune stay skipped.
+    const skippedEvents = await runSkipPass(db, batch);
+
+    const fanout = await runFanoutPass(
+      db,
+      batch,
+      sql`EXISTS(SELECT 1 FROM specialist_delivery_receipts receipt WHERE receipt.outbox_event_id=webhook_events.id AND receipt.snapshot->'destination'->>'kind' IN ('inbox','task_comment'))`,
+    );
+    const drain = await runDrainPass(
+      db,
+      batch,
+      timeoutMs,
+      maxAttempts,
+      sql`EXISTS(SELECT 1 FROM specialist_delivery_receipts receipt WHERE receipt.id=webhook_deliveries.specialist_delivery_id AND receipt.snapshot->'destination'->>'kind' IN ('inbox','task_comment'))`,
+    );
+    const summary: WebhookDeliverySummary = {
+      skipped: "disabled",
+      skippedEvents,
+      fanout,
+      delivered: drain.delivered,
+      failed: drain.failed,
+      dead: drain.dead,
+      pruned: 0,
+    };
+
+    log.info(summary, "[scheduler.webhook_delivery] summary");
+
+    return summary;
+  }
+
+  const fanout = await runFanoutPass(db, batch, sql`true`);
+  const drain = await runDrainPass(
+    db,
+    batch,
+    timeoutMs,
+    maxAttempts,
+    sql`true`,
+  );
   const pruned = await runPrunePass(db);
 
   const summary: WebhookDeliverySummary = {
@@ -141,7 +170,7 @@ async function runSkipPass(db: Db, batch: number): Promise<number> {
       WITH claimed_events AS (
         SELECT id
         FROM webhook_events
-        WHERE fanout_at IS NULL
+        WHERE fanout_at IS NULL AND type <> 'assignment.result_available'
         ORDER BY created_at
         LIMIT ${batch}
         FOR UPDATE SKIP LOCKED
@@ -160,9 +189,9 @@ async function runSkipPass(db: Db, batch: number): Promise<number> {
 // PRUNE — outbox retention tail-pass. The outbox grows on EVERY taxonomy
 // transition; events that matched no subscription spawn zero deliveries and
 // would otherwise accumulate forever. Delete fanned-out events older than the
-// retention window that NO delivery references. The NOT EXISTS guard keeps
-// every delivery-referenced event forever (replay/audit). fanout_at IS NOT NULL
-// guards un-fanned events from being deleted out from under the fanout pass.
+// retention window that no transport or native result receipt references.
+// Quiet native Inbox decisions have no transport and rely on the outbox
+// fanout witness. Un-fanned events remain available to the fanout pass.
 // ---------------------------------------------------------------------------
 
 async function runPrunePass(db: Db): Promise<number> {
@@ -172,6 +201,10 @@ async function runPrunePass(db: Db): Promise<number> {
       AND fanout_at < now() - ${`${RETENTION_DAYS} days`}::interval
       AND NOT EXISTS (
         SELECT 1 FROM webhook_deliveries d WHERE d.event_id = webhook_events.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM specialist_delivery_receipts receipt
+        WHERE receipt.outbox_event_id = webhook_events.id
       )
   `);
 
@@ -233,7 +266,11 @@ export function ownerUserIdOf(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-async function runFanoutPass(db: Db, batch: number): Promise<number> {
+async function runFanoutPass(
+  db: Db,
+  batch: number,
+  predicate: SQL,
+): Promise<number> {
   return db.transaction(async (tx: Db) => {
     // FOR UPDATE SKIP LOCKED can only lock the base relation, never the nullable
     // side of an outer join, so the lock claim is isolated to webhook_events in a
@@ -244,7 +281,7 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
       WITH claimed_events AS (
         SELECT id
         FROM webhook_events
-        WHERE fanout_at IS NULL
+        WHERE fanout_at IS NULL AND ${predicate}
         ORDER BY created_at
         LIMIT ${batch}
         FOR UPDATE SKIP LOCKED
@@ -253,7 +290,7 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
         e.id,
         e.project_id,
         e.type,
-        e.data,
+        ${projectWebhookDataSql(sql`e.run_id`, sql`e.data`)} AS data,
         e.occurred_at,
         e.run_id,
         r.status AS run_status,
@@ -288,6 +325,75 @@ async function runFanoutPass(db: Db, batch: number): Promise<number> {
 
     for (const event of events) {
       const type = event.type;
+
+      if (type === "assignment.result_available") {
+        const [receipt] = (
+          await tx.execute(
+            sql`SELECT id,snapshot FROM specialist_delivery_receipts WHERE outbox_event_id=${event.id} AND id=${event.data.assignmentDeliveryId}`,
+          )
+        ).rows;
+
+        if (!receipt)
+          throw new MaisterError(
+            "CONFIG",
+            "Native delivery event has no matching retained receipt",
+          );
+        const witness = assignmentResultWitnessSchema.parse(receipt.snapshot);
+        const payload = buildEnvelopePayload({
+          eventId: event.id,
+          type,
+          occurredAt: event.occurred_at,
+          project: null,
+          run: null,
+          data: {
+            ownerUserId: witness.requesterUserId,
+            assignmentDeliveryId: receipt.id,
+            assignmentId: witness.assignmentId,
+            inputRevision: witness.inputRevision,
+            correlationId:
+              witness.destination.kind === "outbound_subscription"
+                ? witness.destination.correlationId
+                : null,
+            result: {
+              runId: witness.runId,
+              revision: witness.resultRevision,
+              sha256: witness.resultSha256,
+              witnessAlgorithm: witness.witnessAlgorithm,
+              schemaRef: witness.schemaRef,
+              schemaVersion: witness.resultSchemaVersion,
+              schemaSha256: witness.schemaSha256,
+            },
+            href: `/runs/${witness.runId}`,
+          },
+        });
+
+        await tx.execute(
+          sql`UPDATE webhook_events SET payload=${JSON.stringify(payload)}::jsonb,fanout_at=now() WHERE id=${event.id}`,
+        );
+        if (
+          witness.destination.kind === "inbox" &&
+          (await isQuietScheduledStandDelivery(tx, String(receipt.id)))
+        ) {
+          log.info(
+            {
+              eventId: event.id,
+              deliveryId: receipt.id,
+              assignmentId: witness.assignmentId,
+            },
+            "quiet scheduled stand result retained without notification",
+          );
+          continue;
+        }
+        const target =
+          witness.destination.kind === "outbound_subscription"
+            ? witness.destination.subscriptionId
+            : String(receipt.id);
+
+        await tx.execute(sql`INSERT INTO webhook_deliveries(id,event_id,specialist_delivery_id,status,attempt_count,next_attempt_at,idempotency_key)
+          VALUES(gen_random_uuid()::text,${event.id},${receipt.id},'pending',0,now(),${idempotencyKey(target, event.id)})
+          ON CONFLICT(specialist_delivery_id) DO NOTHING`);
+        continue;
+      }
       const payload: WebhookEnvelopePayload = buildEnvelopePayload({
         eventId: event.id,
         type: isWebhookEventType(type) ? type : (type as WebhookEventType),
@@ -435,6 +541,7 @@ type ClaimedDeliveryRow = {
   /** NULL for a `web_push` delivery — see `push_subscription_id`. */
   subscription_id: string | null;
   push_subscription_id: string | null;
+  specialist_delivery_id: string | null;
   event_id: string;
   attempt_count: number;
 };
@@ -454,12 +561,13 @@ async function runDrainPass(
   batch: number,
   timeoutMs: number,
   maxAttempts: number,
+  predicate: SQL,
 ): Promise<DrainCounts> {
   const claimed: ClaimedDeliveryRow[] = await db.transaction(async (tx: Db) => {
     const due = await tx.execute(sql`
-        SELECT id, event_id, subscription_id, push_subscription_id, attempt_count
+        SELECT id, event_id, subscription_id, push_subscription_id, specialist_delivery_id, attempt_count
         FROM webhook_deliveries
-        WHERE status = 'pending'
+        WHERE status = 'pending' AND ${predicate}
           AND next_attempt_at <= now()
           AND (lease_expires_at IS NULL OR lease_expires_at < now())
         ORDER BY next_attempt_at
@@ -519,7 +627,7 @@ async function runDrainPass(
             log.warn(
               {
                 deliveryId: next.id,
-                error: err instanceof Error ? err.message : String(err),
+                ...queryErrorDiagnostics(err),
               },
               "[scheduler.webhook_delivery] delivery aborted unexpectedly",
             );
@@ -543,6 +651,8 @@ async function processDelivery(
   // ADR-173: one drain pass, two transports. The push branch is a different
   // WIRE, not a different engine — it shares the claim, the lease, the retry
   // curve, the attempt ledger and this function's return contract.
+  if (claimed.specialist_delivery_id != null)
+    return processSpecialistDelivery(db, claimed, timeoutMs, maxAttempts);
   if (claimed.push_subscription_id !== null) {
     return processPushDelivery(db, claimed, maxAttempts);
   }
@@ -566,6 +676,97 @@ async function processDelivery(
  * subscription is deleted, which cascades its delivery rows away, so no further
  * notification re-fails on it forever.
  */
+/** Native routing reuses the existing transport lease and attempt writer. */
+async function processSpecialistDelivery(
+  db: Db,
+  claimed: ClaimedDeliveryRow,
+  timeoutMs: number,
+  maxAttempts: number,
+): Promise<"delivered" | "dead" | "retry"> {
+  const deliveryId = claimed.specialist_delivery_id;
+
+  if (deliveryId === null)
+    throw new MaisterError("CONFIG", "Native transport target is missing");
+  try {
+    const [row] = (
+      await db.execute(
+        sql`SELECT snapshot->'destination' AS destination FROM specialist_delivery_receipts WHERE id=${deliveryId}`,
+      )
+    ).rows;
+
+    if (!row)
+      throw new MaisterError("PRECONDITION", "Native delivery is unavailable", {
+        details: { reason: "assignment_delivery_unavailable" },
+      });
+    const destination = assignmentDestinationSchema.parse(row.destination);
+
+    if (destination.kind === "outbound_subscription") {
+      const authorize = async (): Promise<void> => {
+        await db.transaction(async (tx: Db) => {
+          await authorizePendingAssignmentDelivery(tx, deliveryId);
+        });
+      };
+
+      await authorize();
+
+      return await processWebhookDelivery(
+        db,
+        { ...claimed, subscription_id: destination.subscriptionId },
+        timeoutMs,
+        maxAttempts,
+        authorize,
+      );
+    }
+
+    return await db.transaction(async (tx: Db) => {
+      const [transport] = (
+        await tx.execute(
+          sql`SELECT status FROM webhook_deliveries WHERE id=${claimed.id} FOR UPDATE`,
+        )
+      ).rows;
+
+      if (!transport)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Native transport receipt is unavailable",
+        );
+      if (transport.status === "delivered") return "delivered";
+      if (transport.status === "dead") return "dead";
+      const delivery = await authorizePendingAssignmentDelivery(tx, deliveryId);
+
+      await applyInternalAssignmentDelivery(tx, delivery);
+
+      return finishDelivery(tx, {
+        claimed,
+        attemptCount: claimed.attempt_count + 1,
+        maxAttempts,
+        httpStatus: 200,
+        durationMs: 0,
+        errorDetail: null,
+        responseSnippet: null,
+      });
+    });
+  } catch (error) {
+    if (!isMaisterError(error)) throw error;
+    if (!["UNAUTHORIZED", "PRECONDITION", "CONFLICT"].includes(error.code))
+      throw error;
+
+    return finishDelivery(db, {
+      claimed,
+      attemptCount: claimed.attempt_count + 1,
+      maxAttempts,
+      errorKind: "config",
+      durationMs: 0,
+      errorDetail:
+        typeof error.details?.reason === "string"
+          ? error.details.reason
+          : "assignment_delivery_authority_unavailable",
+      responseSnippet: null,
+      terminal: true,
+    });
+  }
+}
+
 async function processPushDelivery(
   db: Db,
   claimed: ClaimedDeliveryRow,
@@ -660,6 +861,7 @@ async function processWebhookDelivery(
   claimed: ClaimedDeliveryRow & { subscription_id: string },
   timeoutMs: number,
   maxAttempts: number,
+  authorize?: () => Promise<void>,
 ): Promise<"delivered" | "dead" | "retry"> {
   // Retry-curve position: drives classifyResult's max-attempts decision and the
   // written webhook_deliveries.attempt_count. A replay resets attempt_count to 0
@@ -675,7 +877,8 @@ async function processWebhookDelivery(
   const sub = (subResult.rows ?? [])[0] as DrainSubRow | undefined;
 
   const evResult = await db.execute(sql`
-    SELECT payload, type FROM webhook_events WHERE id = ${claimed.event_id}
+    SELECT jsonb_set(e.payload,'{data}',${projectWebhookDataSql(sql`e.run_id`, sql`e.payload->'data'`)}) AS payload, e.type
+    FROM webhook_events e WHERE e.id = ${claimed.event_id}
   `);
   const eventRow = (evResult.rows ?? [])[0] as
     { payload: WebhookEnvelopePayload | null; type: string } | undefined;
@@ -746,6 +949,7 @@ async function processWebhookDelivery(
     secondarySecret,
     extraHeaders: resolvedHeaders,
     timeoutMs,
+    authorize,
   });
 
   return finishDelivery(db, {

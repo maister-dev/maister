@@ -1,0 +1,70 @@
+{
+  "task": "T20",
+  "slice": "Real supervisor and ACP process company session qualification with native canonical projection worker",
+  "date": "2026-11-06",
+  "baseCommit": "a36a1a49a1befb29a5c58a36518e943c5375c293",
+  "status": "Native company process slice qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "log": "red.log.gz",
+    "failure": "A company binding with an explicit Ready runner was refused before dispatch because company admission unconditionally required a platform default row."
+  },
+  "intermediateFailures": [
+    "The expanded real-process fixture omitted the application canonical projection worker. Prompt settlement correctly retained application_state pending with cause terminal_event_unconfirmed; the unreleased Run then occupied the following pool fixture. Reproduced alone, diagnosed through read-only owned PostgreSQL state, and fixed by starting the actual canonical projectors/worker rather than manually projecting or weakening evidence.",
+    "Type checking rejected a fixture owner typed as the company/project union at the company-only binding boundary. The fixture now supplies an explicit company owner."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 4,
+      "tests": 52,
+      "durationSeconds": 21.09,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "A real Git-installed/trusted pinned operational fixture role uses native company Run/session/placement with no project or carrier task.",
+    "A configured binding runner works without platform-default configuration; when every runner tier is absent, Run/session/link counts remain unchanged on refusal. Existing selected-runner kill-switch refusal remains covered.",
+    "Production web driver -> real supervisor -> actual controlled ACP child -> canonical projection worker -> typed operational result -> physical quiescence -> token revocation and placement release completes.",
+    "Repeated driver invocation after terminal completion creates no second session/create/prompt/result.",
+    "Retained source-authorized transcript remains readable after completion and materialization cleanup.",
+    "Business assignment remains active at its retained revision; execution success does not accept the assignment or confirm knowledge.",
+    "Existing project execution-policy, workspace and qualification launch regressions pass."
+  ],
+  "notYetQualified": [
+    "Actual paid model/companion specialist package invocation and stand pilot",
+    "Company HITL/idle continuation and interruption/replacement recovery",
+    "Company full Run navigation and remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "docs/system-analytics/specialist-runtime.md": "cd2676a32c9d89c968657c508e831fee6abc7da41f7c6b9e733977a130f39440",
+    "web/lib/acp-runners/resolve.ts": "259fe8a23d4b04345c82d496050790d6b3754da64df03a699ed9155783cd6ebb",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "be187840e7bdb607d3a0edae3ab9a5f91c99f793eba596e1695e1e5702353f66",
+    "web/lib/agents/company-agent-launch.ts": "7243e40bef8b9f4ace1bd1429a58b7632767a396efe85b4270366d152196e407"
+  }
+}

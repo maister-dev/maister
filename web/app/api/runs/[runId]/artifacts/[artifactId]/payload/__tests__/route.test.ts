@@ -81,6 +81,22 @@ const selectChain = () => ({
 
 const fakeDb = { select: selectChain };
 
+// These route fixtures represent legacy runs; native source policy is exercised with real Postgres in findings-disclosure.integration.test.ts.
+vi.mock("@/lib/brain/knowledge-run-disclosure", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/brain/knowledge-run-disclosure")
+  >()),
+  assertRunKnowledgeDisclosure: vi.fn(async () => undefined),
+  protectRunKnowledgeStream: vi.fn(
+    async (
+      _db: unknown,
+      _recipient: unknown,
+      _runId: string,
+      body: ReadableStream<Uint8Array>,
+    ) => body,
+  ),
+}));
+
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));

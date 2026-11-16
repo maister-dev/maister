@@ -1,17 +1,29 @@
 import "server-only";
 
+import type { CompanyRunCredentialOwner } from "./company-run-credential-owner";
+import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import { COMPANY_FLOW_TOKEN_SCOPES } from "../../../runtime/company-flow-tools";
 
+import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import {
+  requireCompanyRunCredentialOwner,
+  requireCompanyFlowNodeKnowledgeOwner,
+} from "./company-run-credential-owner";
+
+import { assertNativeRunKnowledgeInputsInTransaction } from "@/lib/brain/knowledge-execution-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { generateToken } from "@/lib/tokens/secret";
+import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
+import { generateToken } from "@/lib/tokens/secret";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projectTokens, runs } = schemaModule as unknown as Record<string, any>;
@@ -21,7 +33,7 @@ type Db = any;
 export type RunTokenRow = typeof schemaModule.projectTokens.$inferSelect;
 type TokenParent = Pick<
   typeof schemaModule.runs.$inferSelect,
-  "projectId" | "agentId" | "runKind" | "status"
+  "projectId" | "companyId" | "agentId" | "runKind" | "status"
 >;
 type RunBinding = Readonly<{
   projectId: string;
@@ -53,6 +65,7 @@ async function lockMintingRun(db: Db, binding: RunBinding): Promise<void> {
   const rows: TokenParent[] = await db
     .select({
       projectId: runs.projectId,
+      companyId: runs.companyId,
       agentId: runs.agentId,
       runKind: runs.runKind,
       status: runs.status,
@@ -135,6 +148,50 @@ const log = pino({
 // on attachment detach, and by GC. Expiry is a backstop for runs that idle
 // past every sweep.
 const AGENT_TOKEN_TTL_HOURS = 48;
+const STAND_AGENT_SCOPES = [
+  "targets:read",
+  "targets:logs",
+  "targets:restart",
+] as const;
+
+/** Only an appointed project specialist with a stand target receives current stand scopes. */
+async function projectStandScopes(
+  tx: SqlTransaction,
+  runId: string,
+  nodeAttemptId: string | null,
+): Promise<(typeof STAND_AGENT_SCOPES)[number][]> {
+  const { rows } = await tx.execute(sql`
+    SELECT authority.action
+    FROM runs execution
+    JOIN specialist_run_links link ON link.run_id=execution.id
+    JOIN specialist_assignments subject ON subject.id=link.assignment_id
+      AND subject.project_id=execution.project_id
+    JOIN specialist_input_revisions input ON input.assignment_id=subject.id
+      AND input.revision=subject.input_revision
+    JOIN agents professional ON professional.id=CASE WHEN ${nodeAttemptId}::text IS NULL
+      THEN execution.source_agent_id ELSE (
+        SELECT attempt.knowledge_actor->>'agentId' FROM node_attempts attempt
+        WHERE attempt.id=${nodeAttemptId} AND attempt.run_id=execution.id
+      ) END AND professional.enabled AND professional.quarantined_at IS NULL
+    JOIN agent_project_links binding ON binding.agent_id=professional.id
+      AND binding.project_id=execution.project_id AND binding.enabled
+    JOIN stand_targets target ON target.enabled
+      AND input.objective_input->'targetIds' ? target.id
+    JOIN company_grants authority ON authority.company_id=target.company_id
+      AND authority.principal_type='agent' AND authority.principal_id=professional.id
+      AND authority.revoked_at IS NULL
+    WHERE execution.id=${runId}
+      AND professional.specialist->'targetClasses' ? 'stand'
+      AND specialist_run_has_input(execution.id,subject.id,input.revision,input.digest)
+      AND authority.action IN ('targets:read','targets:logs','targets:restart')
+  `);
+
+  return rows.some(({ action }) => action === "targets:read")
+    ? STAND_AGENT_SCOPES.filter((scope) =>
+        rows.some(({ action }) => action === scope),
+      )
+    : [];
+}
 
 // M37 (ADR-098, Phase 3): the orchestrator's run-bound token carries the agent
 // scope set PLUS the delegation toolset (run_delegate/run_collect/run_cancel
@@ -164,6 +221,81 @@ function legacyOrchestratorFamily(binding: RunBinding): SQL | undefined {
     sql`${projectTokens.scopes} @> ${JSON.stringify(ORCHESTRATOR_TOKEN_SCOPES)}::jsonb`,
     sql`${projectTokens.scopes} <@ ${JSON.stringify(ORCHESTRATOR_TOKEN_SCOPES)}::jsonb`,
   );
+}
+
+/** Rotate the existing hash-only credential without changing its execution or professional binding. */
+async function retainCompanyRunCredential(
+  tx: SqlTransaction,
+  owner: CompanyRunCredentialOwner,
+  nodeAttemptId: string | null,
+): Promise<IssuedAgentToken> {
+  await authorizeCompanyUserAction(
+    tx,
+    owner.userId,
+    owner.companyId,
+    "assignments:update",
+  );
+  const scopes = COMPANY_FLOW_TOKEN_SCOPES.filter((action) =>
+    owner.actionLimits.includes(action),
+  );
+  const { secret, prefix, hash } = generateToken();
+  const tokenId = randomUUID();
+  const name = `agent-run:${owner.runId}`;
+
+  await tx.execute(
+    sql`UPDATE project_tokens SET revoked_at=now() WHERE token_kind='agent' AND company_run_id=${owner.runId} AND revoked_at IS NULL`,
+  );
+  await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,name,token_kind,owner_user_id,agent_id,knowledge_node_attempt_id,prefix,token_hash,scopes,expires_at)
+    VALUES(${tokenId},${owner.companyId},${owner.runId},${name},'agent',${owner.userId},${owner.agentId},${nodeAttemptId},${prefix},${hash},${JSON.stringify(scopes)}::jsonb,${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
+  log.info(
+    {
+      runId: owner.runId,
+      companyId: owner.companyId,
+      agentId: owner.agentId,
+      nodeAttemptId,
+      tokenId,
+      scopeCount: scopes.length,
+    },
+    "ephemeral company execution token issued",
+  );
+
+  return { tokenId, secret };
+}
+
+/** Company graph authority must be bound to the exact current server-attested node. */
+export async function issueCompanyFlowNodeRunToken(
+  args: Readonly<{ runId: string; nodeAttemptId: string; db?: SqlDatabase }>,
+): Promise<IssuedAgentToken> {
+  const db: SqlDatabase = args.db ?? getDb();
+
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM runs WHERE id=${args.runId} FOR UPDATE`,
+      );
+      const rootOwner = await requireCompanyRunCredentialOwner(tx, args.runId);
+      const owner = await requireCompanyFlowNodeKnowledgeOwner(
+        tx,
+        rootOwner,
+        args.nodeAttemptId,
+      );
+
+      await assertNativeRunKnowledgeInputsInTransaction(tx, args.runId);
+
+      return retainCompanyRunCredential(tx, owner, args.nodeAttemptId);
+    });
+  } catch (error) {
+    log.warn(
+      {
+        runId: args.runId,
+        nodeAttemptId: args.nodeAttemptId,
+        code: error instanceof MaisterError ? error.code : undefined,
+        ...queryErrorDiagnostics(error),
+      },
+      "company Flow node credential refused",
+    );
+    throw redactQueryError(error);
+  }
 }
 
 // ADR-145 (Evaluation Lab) D10/D12: a judge attempt's ephemeral token carries
@@ -213,7 +345,10 @@ export async function issueAgentRunToken(args: {
       agent_id: args.agentId,
       prefix,
       token_hash: hash,
-      scopes: [...AGENT_TOKEN_SCOPES],
+      scopes: [
+        ...AGENT_TOKEN_SCOPES,
+        ...(await projectStandScopes(tx, args.runId, null)),
+      ],
       expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
     });
   });
@@ -224,6 +359,38 @@ export async function issueAgentRunToken(args: {
   );
 
   return { tokenId, secret };
+}
+
+/** Company tokens extend the existing hash-only run credential and terminal revocation lifecycle. */
+export async function issueCompanyAgentRunToken(
+  args: Readonly<{ runId: string; db?: SqlDatabase }>,
+): Promise<IssuedAgentToken> {
+  const db: SqlDatabase = args.db ?? getDb();
+
+  return db
+    .transaction((tx) => retainCompanyAgentSessionCredential(tx, args.runId))
+    .catch((error: unknown) => {
+      throw redactQueryError(error);
+    });
+}
+
+/** The create owner retains its credential in the same transaction as the command. */
+export async function retainCompanyAgentSessionCredential(
+  tx: SqlTransaction,
+  runId: string,
+): Promise<IssuedAgentToken> {
+  await tx.execute(
+    sql`SELECT id FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
+  );
+  const owner = await requireCompanyRunCredentialOwner(tx, runId);
+
+  if (owner.snapshot.schemaVersion !== 1)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company graph credentials require their exact current node; the standalone issuer cannot mint them",
+    );
+
+  return retainCompanyRunCredential(tx, owner, null);
 }
 
 // ADR-145 (Evaluation Lab) D12: a judge attempt runs as a dedicated agent Run
@@ -279,11 +446,51 @@ export async function issueJudgeAttemptToken(args: {
 // maister MCP facade via a PROJECT-kind, run-bound token (deterministic name →
 // terminal revoke matches on it) carrying ORCHESTRATOR_TOKEN_SCOPES (agent
 // scopes + the Phase-3 delegation toolset).
-export async function issueOrchestratorRunToken(args: {
+type NodeRunTokenInput = Readonly<{
   projectId: string;
   runId: string;
+  nodeAttemptId?: string;
   db?: Db;
-}): Promise<IssuedAgentToken> {
+}>;
+
+export async function issueOrchestratorRunToken(
+  args: NodeRunTokenInput,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, ORCHESTRATOR_TOKEN_SCOPES);
+}
+
+/** Native ordinary Flow nodes get knowledge tools without acquiring coordinator delegation authority. */
+export async function issueNativeNodeRunToken(
+  args: NodeRunTokenInput & Readonly<{ nodeAttemptId: string }>,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
+}
+
+/** Assign governed work decisions only to the appointed project's orchestrator node. */
+async function appointedProjectCoordinatorScope(
+  tx: SqlTransaction,
+  args: NodeRunTokenInput,
+): Promise<"assignments:accept"[]> {
+  if (!args.nodeAttemptId) return [];
+  const appoint = await tx.execute(sql`
+    SELECT 1 FROM runs execution
+    JOIN specialist_run_links link ON link.run_id=execution.id AND link.role IN ('coordinator','continuation','child')
+    JOIN specialist_assignments subject ON subject.id=link.assignment_id AND subject.project_id=execution.project_id
+    JOIN specialist_input_revisions input ON input.assignment_id=subject.id AND input.revision=subject.input_revision
+    JOIN node_attempts node ON node.run_id=execution.id AND node.id=${args.nodeAttemptId}
+      AND node.node_type='orchestrator' AND node.node_id=execution.current_step_id AND node.status='Running'
+    WHERE execution.id=${args.runId} AND execution.project_id=${args.projectId}
+      AND specialist_run_has_input(execution.id,subject.id,input.revision,input.digest)
+    LIMIT 1
+  `);
+
+  return appoint.rows.length ? ["assignments:accept"] : [];
+}
+
+async function issueNodeRunToken(
+  args: NodeRunTokenInput,
+  scopes: readonly (typeof TOKEN_SCOPES)[number][],
+): Promise<IssuedAgentToken> {
   const _db = args.db ?? getDb();
   const { secret, prefix, hash } = generateToken();
   const tokenId = randomUUID();
@@ -299,7 +506,11 @@ export async function issueOrchestratorRunToken(args: {
     await lockMintingRun(tx, binding);
     await tx
       .update(projectTokens)
-      .set({ revoked_at: new Date(), revocation_reason: "rotation" })
+      .set({
+        revoked_at: new Date(),
+        // Only an actual delegation credential can retain accepted child obligations.
+        revocation_reason: sql`CASE WHEN ${projectTokens.scopes} ? 'runs:delegate' OR ${projectTokens.scopes} ? '*' THEN 'rotation' ELSE 'revoked' END`,
+      })
       .where(and(runFamily(binding), isNull(projectTokens.revoked_at)));
     // Legacy names can identify a private credential for retirement, never for a grant.
     await tx
@@ -320,14 +531,28 @@ export async function issueOrchestratorRunToken(args: {
       token_kind: "project",
       prefix,
       token_hash: hash,
-      scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
+      knowledge_node_attempt_id: args.nodeAttemptId ?? null,
+      scopes: [
+        ...scopes,
+        ...(scopes.includes("runs:delegate")
+          ? await appointedProjectCoordinatorScope(tx, args)
+          : []),
+        ...(args.nodeAttemptId
+          ? await projectStandScopes(tx, args.runId, args.nodeAttemptId)
+          : []),
+      ],
       expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
     });
   });
 
   log.info(
-    { runId: args.runId, tokenId },
-    "ephemeral orchestrator token issued",
+    {
+      runId: args.runId,
+      tokenId,
+      nodeAttemptId: args.nodeAttemptId,
+      scopeCount: scopes.length,
+    },
+    "ephemeral Flow node token issued",
   );
 
   return { tokenId, secret };
@@ -380,6 +605,7 @@ async function currentRunForRevocation(
   const rows: TokenParent[] = await db
     .select({
       projectId: runs.projectId,
+      companyId: runs.companyId,
       agentId: runs.agentId,
       runKind: runs.runKind,
       status: runs.status,
@@ -401,6 +627,30 @@ export async function revokeAgentRunTokensForRun(
   await database.transaction(async (tx: Db) => {
     const parent = await currentRunForRevocation(tx, runId);
 
+    if (parent?.companyId) {
+      const revoked: Array<{ id: string }> = await tx
+        .update(projectTokens)
+        .set({
+          revoked_at: sql`coalesce(${projectTokens.revoked_at},clock_timestamp())`,
+          revocation_reason: "revoked",
+        })
+        .where(
+          and(
+            eq(projectTokens.token_kind, "agent"),
+            eq(projectTokens.company_id, parent.companyId),
+            eq(projectTokens.company_run_id, runId),
+            sql`${projectTokens.revocation_reason} IS DISTINCT FROM 'revoked'`,
+          ),
+        )
+        .returning({ id: projectTokens.id });
+
+      log.info(
+        { runId, companyId: parent.companyId, revoked: revoked.length },
+        "company execution credential family retired",
+      );
+
+      return;
+    }
     if (!parent?.projectId || !parent.agentId) return;
     const binding: RunBinding = {
       projectId: parent.projectId,

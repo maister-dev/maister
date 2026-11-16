@@ -1,0 +1,44 @@
+{
+  "task": "T09",
+  "baseRevision": "d10830e98e9e23b88ef5f18c18f58ad16ecd0bd2",
+  "specSha256": {
+    "docs/db/company-brain-domain.md": "08aabc3aea84d05a536993c0c5375bafe04ac264df2c967722975ef1ee5a0c25",
+    "docs/system-analytics/company-brain.md": "b981785704ba253e37b3426a9c95a435605ddd97161960679f39e382e284e9a8",
+    "docs/system-analytics/company-brain-evidence.md": "fed7fea608dc8907434986f96ae020935432a2078b58252d5168d04424142105"
+  },
+  "greenRefactor": {
+    "files": 29,
+    "passed": 225,
+    "failed": 0,
+    "skipped": 0,
+    "output": "close-green.log",
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__ lib/db/__tests__/migration-company-brain-specialists.integration.test.ts lib/domain-events/__tests__ lib/ext-activity/__tests__/pulse.db.integration.test.ts"
+  },
+  "existingConsumerRegressions": {
+    "files": 4,
+    "passed": 74,
+    "output": "consumer-regression.log"
+  },
+  "invariants": [
+    "Project deletion cascades local knowledge, revisions, accepted changes, proposals, submission aliases, confirmations and evidence; company records survive.",
+    "Cross-owner local history and submission/proposal FK links are rejected before they can block project deletion. Cross-owner evidence uses nonrestrictive logical witness snapshots.",
+    "Accepted record/change and owned content-free outbox event are atomic; outbox write failure leaves proposal pending.",
+    "Company events advance every registered consumer cursor without creating project runs, notifications, indexing or librarian updates. Project pulse remains quiet.",
+    "Legacy run and project event fields remain unchanged through main/Brain migration; new metadata is NULL/unknown. Strict versioned capture metadata rejects string generations.",
+    "Exact source reuse does not manufacture independent corroboration; canonical repeated submissions converge without changing authorship or confirmation."
+  ],
+  "limitations": [
+    "Native APIs, inherited source restrictions, package execution and the stand pilot are still later tasks; no end-to-end or real-package qualification claimed."
+  ],
+  "otherGates": {
+    "unitPassed": 125,
+    "contractTestsPassed": 10,
+    "explicitSchemaSurfaceExamples": 46,
+    "docsAll": "passed",
+    "typecheck": "passed",
+    "eslint": "zero warnings in changed files",
+    "generatedErdTables": 163,
+    "generatedSchemaAgreement": "No schema changes",
+    "requirementRows": 84
+  }
+}

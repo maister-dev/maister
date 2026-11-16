@@ -249,10 +249,19 @@ async function runClaimedJob(
           launcher: async () => {
             const { dispatchDueAgentSchedules } =
               await import("@/lib/agents/triggers");
+            const { dispatchCompanyCronSchedules } =
+              await import("@/lib/agents/company-cron-dispatch");
+            const project = await dispatchDueAgentSchedules();
+            const company = await dispatchCompanyCronSchedules();
 
-            return dispatchDueAgentSchedules() as Promise<
-              Record<string, unknown>
-            >;
+            return {
+              ...project,
+              due: project.due + company.due,
+              claimed: project.claimed + company.claimed,
+              launched: project.launched + company.launched,
+              queued: project.queued + company.queued,
+              refused: project.refused + company.refused,
+            };
           },
         });
 

@@ -102,7 +102,7 @@ describe("publishRunResult (ADR-165)", () => {
     expect(row.revision).toBe(1);
     expect(row.validity).toBe("valid");
     expect(row.value).toEqual({ summary: "one" });
-    expect(row.engineVersion).toBe("3.10.0");
+    expect(row.engineVersion).toBe("3.12.0");
     expect(row.supersededById).toBeNull();
     expect(row.firstCollectedAt).toBeNull();
   });
@@ -350,7 +350,7 @@ describe("markRunResultCollected", () => {
   // Keyed on the run alone it would stamp whatever is valid at WRITE time, so a
   // rework landing between the read and the write would credit a revision the
   // caller never received.
-  it("does NOT stamp a revision that superseded the one served", async () => {
+  it("IT-CBE-05 stamps the exact served revision after supersession without crediting its replacement", async () => {
     await publish({ summary: "one" });
     const servedFirst = (await currentRunResult(db, runId))!;
 
@@ -359,9 +359,36 @@ describe("markRunResultCollected", () => {
     const current = (await currentRunResult(db, runId))!;
 
     expect(current.id).not.toBe(servedFirst.id);
-    expect(await markRunResultCollected(db, runId, servedFirst.id)).toBe(false);
+    expect(await markRunResultCollected(db, runId, servedFirst.id)).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT first_collected_at FROM run_results WHERE id=$1",
+          [servedFirst.id],
+        )
+      ).rows[0]?.first_collected_at,
+    ).toBeInstanceOf(Date);
     expect(current.firstCollectedAt).toBeNull();
     expect((await currentRunResult(db, runId))?.firstCollectedAt).toBeNull();
+  });
+  it("IT-CBE-05 records a served revision that became stale before its collection marker committed", async () => {
+    const served = await publish({
+      summary: "A valid result selected before rework.",
+    });
+
+    await markRunResultStale(db, runId, ["orchestrate"]);
+    expect(await markRunResultCollected(db, runId, served.id)).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT validity,first_collected_at FROM run_results WHERE id=$1",
+          [served.id],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      validity: "stale",
+      first_collected_at: expect.any(Date),
+    });
   });
 });
 

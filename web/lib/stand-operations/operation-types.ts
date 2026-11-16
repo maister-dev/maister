@@ -1,0 +1,142 @@
+import { z } from "zod";
+
+import {
+  knowledgeDeliveryKeySchema,
+  knowledgeRevisionSchema,
+} from "@/lib/brain/knowledge-types";
+import { postgresTextSchema } from "@/lib/text-schema";
+
+export const STAND_OPERATION_BODY_MAX_BYTES = 65_536;
+export const STAND_PERMIT_PURPOSES = [
+  "dispatch",
+  "reconcile",
+  "logs",
+  "verify",
+] as const;
+export const STAND_ACTIONS = ["inspect", "logs", "restart", "verify"] as const;
+export const STAND_EFFECT_STATES = [
+  "not_dispatched",
+  "dispatching",
+  "confirmed_applied",
+  "confirmed_not_applied",
+  "unknown",
+] as const;
+export const STAND_VERIFICATION_STATES = [
+  "not_checked",
+  "healthy",
+  "unhealthy",
+  "inconclusive",
+] as const;
+export const STAND_DISPOSITIONS = [
+  "pending",
+  "proved_applied",
+  "proved_not_applied",
+  "unresolved_hold",
+  "authorized_successor",
+] as const;
+
+export const standOperationInputSchema = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    inputRevision: knowledgeRevisionSchema,
+    componentId: postgresTextSchema.min(1).max(128),
+    action: z.enum(STAND_ACTIONS),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
+export const standRestartApprovalSchema = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
+export const standPermitCheckSchema = z
+  .object({
+    targetIncarnation: z.uuid(),
+    resourceKey: z.string().regex(/^[a-f0-9]{64}$/),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    ownerEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    nonce: knowledgeDeliveryKeySchema,
+    purpose: z.enum(STAND_PERMIT_PURPOSES),
+  })
+  .strict();
+
+const recoveryDecision = z
+  .object({
+    expectedRevision: knowledgeRevisionSchema,
+    reason: postgresTextSchema.min(1).max(2000).regex(/\S/),
+    idempotencyKey: knowledgeDeliveryKeySchema,
+  })
+  .strict();
+
+export const standRecoveryDecisionSchema = z.discriminatedUnion("decision", [
+  recoveryDecision.extend({
+    decision: z.literal("hold"),
+    inspectionIds: z.tuple([]),
+  }),
+  recoveryDecision.extend({
+    decision: z.literal("authorize_successor"),
+    inspectionIds: z.tuple([z.uuid()]),
+    successor: z
+      .object({
+        assignmentId: z.uuid(),
+        expectedRevision: knowledgeRevisionSchema,
+        inputRevision: knowledgeRevisionSchema,
+      })
+      .strict(),
+  }),
+]);
+
+export type StandSuccessorDecision = Extract<
+  z.infer<typeof standRecoveryDecisionSchema>,
+  { decision: "authorize_successor" }
+>;
+
+const invocationIdSchema = z
+  .string()
+  .regex(/^[a-f0-9]{32}$/)
+  .nullable();
+
+export const standTargetReceiptSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    receiptRevision: z.number().int().positive(),
+    sequence: z.number().int().positive(),
+    effectState: z.enum(STAND_EFFECT_STATES),
+    permitId: z.uuid().nullable(),
+    beforeInvocation: invocationIdSchema,
+    afterInvocation: invocationIdSchema,
+    observedState: z.enum(["active", "inactive", "failed", "unknown"]),
+    capturedAt: z.iso.datetime(),
+    reason: z
+      .enum(["authority_refused", "before_state_changed", "effect_unknown"])
+      .nullable(),
+  })
+  .strict();
+
+export type StandTargetReceipt = z.infer<typeof standTargetReceiptSchema>;
+
+export type StandPermitCheck = z.infer<typeof standPermitCheckSchema>;
+
+export type StandAction = (typeof STAND_ACTIONS)[number];
+export type StandOperation = Readonly<{
+  id: string;
+  assignmentId: string;
+  componentId: string;
+  targetIncarnation: string;
+  requestDigest: string;
+  effectState: (typeof STAND_EFFECT_STATES)[number];
+  verificationState: (typeof STAND_VERIFICATION_STATES)[number];
+  disposition: (typeof STAND_DISPOSITIONS)[number];
+  receiptIds: readonly string[];
+  verificationIds: readonly string[];
+  predecessorId: string | null;
+  successorId: string | null;
+  revision: number;
+}>;

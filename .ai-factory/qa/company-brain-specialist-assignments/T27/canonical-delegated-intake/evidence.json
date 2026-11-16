@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "status": "passed_canonical_intake_checkpoint",
+  "sourceHead": "351795a66aba6c322cfcf3400c2df10f22139bc3",
+  "candidateSha256": "b35b82297a118337d87c89a2fbb29e7ab9e2dd70eee7c0189b159ef4479d323b",
+  "qualifier": "IT-CBC-01",
+  "integration": {
+    "files": 6,
+    "passed": 187,
+    "failed": 0
+  },
+  "webUnit": {
+    "passed": 9312,
+    "failed": 0
+  },
+  "coverage": [
+    "Exact concurrent project delivery and a rotated current credential adopt the same original work.",
+    "Changed content, stale first admission and revoked credentials are refused.",
+    "A company reservation requires current initiating and professional delegation grants and no project or carrier task.",
+    "The company authorization path returns a typed conflict before waiting behind the locked assignment row.",
+    "Original attribution, the work reservation and the intake receipt retain one business change."
+  ],
+  "remainingT27": [
+    "Native child launch and collection wiring",
+    "Source-bearing message and rework",
+    "Assignment-linked budget accounting"
+  ],
+  "providerSecretValueScan": {
+    "artifactsScanned": 9,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "candidate.patch",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b35b82297a118337d87c89a2fbb29e7ab9e2dd70eee7c0189b159ef4479d323b",
+      "rawBytes": 37086,
+      "compressedSha256": "0ca59d1116105099ee5587428f28a7b96a168e24c4d2b18406fca9884de42f86",
+      "parts": [
+        {
+          "path": "candidate.patch.gz",
+          "sha256": "0ca59d1116105099ee5587428f28a7b96a168e24c4d2b18406fca9884de42f86"
+        }
+      ]
+    },
+    {
+      "sourceName": "intake-red.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "209c722c9be60498305c608f6692818fb138d43969899773e4e4ed9c4783c5a7",
+      "rawBytes": 17904,
+      "compressedSha256": "39f0b865ede870d66ca6fb500a1805b3b17563ec4e0e32ef3df1ef7deea2e68e",
+      "parts": [
+        {
+          "path": "intake-red.log.gz",
+          "sha256": "39f0b865ede870d66ca6fb500a1805b3b17563ec4e0e32ef3df1ef7deea2e68e"
+        }
+      ]
+    },
+    {
+      "sourceName": "company-lock-order-red.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "004471b205aed86c7252930e59fe883c36a9ef67d818b10a809e4b4abac7d380",
+      "rawBytes": 30939,
+      "compressedSha256": "f74b0a736765632ee58874fd014b20b3a28716b6020cfbcff68efe958fd0061c",
+      "parts": [
+        {
+          "path": "company-lock-order-red.log.gz",
+          "sha256": "f74b0a736765632ee58874fd014b20b3a28716b6020cfbcff68efe958fd0061c"
+        }
+      ]
+    },
+    {
+      "sourceName": "owning-integration.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "10f67aab460ba423f8ec2521cf1505132cb510f7beca52fcc9ee70e8bb5a6612",
+      "rawBytes": 1978466,
+      "compressedSha256": "7ae6e5796f11b26b32b6177667e2d9508f950b47b607fb6ce365edae2d6b47b6",
+      "parts": [
+        {
+          "path": "owning-integration.log.gz",
+          "sha256": "7ae6e5796f11b26b32b6177667e2d9508f950b47b607fb6ce365edae2d6b47b6"
+        }
+      ]
+    },
+    {
+      "sourceName": "web-unit.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "f32ef602ca087d05bedb88956e1f807ee9ff9e097ed2aae5a3642e259c06b1be",
+      "rawBytes": 498249,
+      "compressedSha256": "64ff08fde0b7068df56cb6c74e42f8581141ffce09db99725fb51992ebc5c69a",
+      "parts": [
+        {
+          "path": "web-unit.log.gz",
+          "sha256": "64ff08fde0b7068df56cb6c74e42f8581141ffce09db99725fb51992ebc5c69a"
+        }
+      ]
+    },
+    {
+      "sourceName": "web-types.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "rawBytes": 15,
+      "compressedSha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+      "parts": [
+        {
+          "path": "web-types.log.gz",
+          "sha256": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237"
+        }
+      ]
+    },
+    {
+      "sourceName": "changed-file-lint.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawBytes": 0,
+      "compressedSha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "parts": [
+        {
+          "path": "changed-file-lint.log.gz",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "sourceName": "contracts.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "09b9e083d2e69fcd10eba380ccbce68fc34fda0cbb630f9d238042a6c32fa367",
+      "rawBytes": 3070,
+      "compressedSha256": "662c82e711109a4c7efd2bf3c45e8bb4971ea3957fa150db0d3b4f2cbb58039a",
+      "parts": [
+        {
+          "path": "contracts.log.gz",
+          "sha256": "662c82e711109a4c7efd2bf3c45e8bb4971ea3957fa150db0d3b4f2cbb58039a"
+        }
+      ]
+    },
+    {
+      "sourceName": "docs.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "35db57b7febbfb02748dd49911e34eb72b247a8f63989c562315c24428027146",
+      "rawBytes": 4988,
+      "compressedSha256": "fc4e746b83cbffe3459f0e5d17b630d47891593fb4e35ea4778bd309c270d83d",
+      "parts": [
+        {
+          "path": "docs.log.gz",
+          "sha256": "fc4e746b83cbffe3459f0e5d17b630d47891593fb4e35ea4778bd309c270d83d"
+        }
+      ]
+    }
+  ]
+}

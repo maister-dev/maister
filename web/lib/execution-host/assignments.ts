@@ -8,7 +8,7 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import {
@@ -213,6 +213,31 @@ export async function mintAssignment(
       flowDriverLeaseExpiresAt: null,
     })
     .where(eq(runs.id, input.runId));
+
+  if (previous) {
+    const { rows } = await tx.execute(sql`
+      UPDATE project_tokens token SET revoked_at=clock_timestamp(),revocation_reason='revoked'
+      WHERE (token.company_run_id=${input.runId} OR token.bound_run_id=${input.runId})
+        AND token.revoked_at IS NULL
+        AND token.scopes ?| ARRAY['assignments:update','assignments:accept']
+        AND EXISTS (
+          SELECT 1 FROM specialist_run_links link WHERE link.run_id=${input.runId}
+            AND (link.work_id IS NOT NULL OR link.role IN ('specialist','coordinator','continuation'))
+        )
+      RETURNING token.id
+    `);
+
+    if (rows.length)
+      logger.info(
+        {
+          runId: input.runId,
+          assignmentId: id,
+          assignmentEpoch: epoch,
+          revoked: rows.length,
+        },
+        "native mutation credentials retired at execution ownership change",
+      );
+  }
 
   logger.info(
     {

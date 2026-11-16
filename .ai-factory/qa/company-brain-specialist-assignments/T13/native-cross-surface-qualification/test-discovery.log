@@ -1,0 +1,153 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > returns top-K and writes an ambient snapshot when brain_context = true
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > returns undefined and writes NO snapshot when brain_context = false
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > treats null brain_context as opt-in OFF (no ambient)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > honors the project kill switch: disabled project → no recall, no snapshot even with brain_context = true (F1)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > floors ambient injection at ambientMinConfidence: a fresh (never-reinforced) item is NOT injected
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > keeps ambient owned-first when five owned memories are relevant
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > fills ambient leftovers with at most two indexed chunks
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > NEVER throws: a failing db (even on the enablement check) degrades to undefined and negative-caches
+[integration] lib/brain/__tests__/ambient.integration.test.ts > getAmbientBrainProjection (T4.3) > memoizes the query embedding across repeated calls (no re-embed)
+[integration] lib/brain/__tests__/ambient.integration.test.ts > writeRunContext brain injection (T4.3) > writes the brain projection into .maister/run.json
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 installation company exists without a repository or implicit grants
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 explicit action grants are isolated from ownership, global admin and revocation
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-05 company records keep explicit ownership and unknown legacy metadata
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-02 native record head cannot diverge from its immutable assertion revision
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-01 narrower grants cannot leave or restore a broadly readable projection
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBE-06 inherited source restrictions are immutable, partition deduplication and never block project deletion
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBE-06 run-bound disclosure captures are durable, serialized and refuse unknown historical input
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBE-01 repository-free source capture retains exact bounded evidence and content-guarded receipts across project deletion
+[integration] lib/brain/__tests__/company-records.integration.test.ts > IT-CBK-05 native reads keep oversized legacy assertions usable without inventing authorship or confirmation
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > expires active items past expires_at, keeps fresh + non-decayed items
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > an expired item drops out of REAL recall (the ranker's own predicates, not a re-implemented count)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > self-throttles: a second call within the hour is a no-op
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > is idempotent — re-running (forced) never double-expires
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > is a QUIET no-op on Postgres without the brain lineage applied (upgrade forgot db:migrate:brain)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > swallows a DB error into the summary (never throws)
+[integration] lib/brain/__tests__/decay.integration.test.ts > runBrainDecaySweep (T3.3) > prunes brain_snapshots older than snapshotTtlDays, keeps fresh ones
+[integration] lib/brain/__tests__/edges.integration.test.ts > brain edges and source re-anchor (T7.1) > IT-CBE-01 retains immutable witnesses independently of navigational source anchors
+[integration] lib/brain/__tests__/edges.integration.test.ts > brain edges and source re-anchor (T7.1) > remaps chunk edges by symbol/path and degrades removed chunk targets without dropping edges
+[integration] lib/brain/__tests__/edges.integration.test.ts > IT-CBE-01 unresolved and foreign source references refuse without partial knowledge writes
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > 0088 shared-table columns exist with the right defaults/nullability
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > creates the static indexes + the per-generation expression HNSW index
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > a second ensureEmbeddingIndex call is idempotent (IF NOT EXISTS)
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > inserts an item + embedding and answers a cosine query through the cast
+[integration] lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > IT-CBK-05 project deletion cascades project-owned Brain records
+[integration] lib/brain/__tests__/improver-agent.integration.test.ts > core Brain Improver package path (T10.2) > registers the improver as a flow-less core package agent with ADR-111 config
+[integration] lib/brain/__tests__/improver-agent.integration.test.ts > core Brain Improver package path (T10.2) > runs the scripted cluster-to-proposal path idempotently by clusterHash
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > creates source, chunk, edge, config tables and indexed-tier columns
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > enforces exactly one embedding target and unique chunk generations
+[integration] lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > project deletion cascades indexed evidence and local record history
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > indexes tracked sources into chunks and chunk embeddings, then skips unchanged source_hash
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > re-embeds changed chunks for the same source generation
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > indexes glob sources as separate tracked-file chunks
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > keeps broad glob source jobs running across bounded batches
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > excludes exact peer sources from glob chunks for the same project and kind
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records a bounded source error when chunk production exceeds the job budget
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records parser errors per source and continues other source jobs
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > records vanished tracked files and retires old chunks
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > leaves source jobs retryable when the embedding provider is unavailable
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > enqueues source jobs idempotently from run-terminal domain events
+[integration] lib/brain/__tests__/indexer.integration.test.ts > Project Brain source indexer (ADR-127) > does not enqueue reindex jobs for graph-only cut-over failures
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > creates pending proposals and preserves evidence ids after evidence expires
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > allows pending -> accepted -> applied
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > allows pending -> rejected and rejects invalid transitions
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposals schema and FSM (T9.1) > cascades proposals on project delete
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > accepts rule/skill/flow proposals into unpublished M25 authored drafts
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > rejects proposals with a human reason
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal conclusion and authored draft bridge (T11.1) > refuses machine actors and stale proposal conclusions
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal autonomy (T12.1) > auto-drafts an allowed low-radius catalog proposal without publishing it
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain proposal autonomy (T12.1) > keeps high-radius proposals human-gated even when low-radius auto_draft exists
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain docs-as-code projection tasks (T12.2) > accepts state proposals into a Backlog task with drafted path/content
+[integration] lib/brain/__tests__/proposals.integration.test.ts > brain docs-as-code projection tasks (T12.2) > stamps projection flow triage and is eligible for auto-launch
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-03 company knowledge publication is attributable, idempotent and separate from confirmation
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-05 deleting a project removes native proposals, revisions, confirmations and evidence without touching company knowledge
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-02 concurrent corrections preserve one exact revision winner and require current review authority
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-02 dependent native writers serialize before record locks while unrelated reads remain concurrent
+[integration] lib/brain/__tests__/proposals.integration.test.ts > IT-CBK-03 exhausted native write admission returns an actionable conflict without consuming the delivery
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — cross-tier indexed chunks (ADR-127) > returns owned and indexed hits through a shared union shape with pointers
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — cross-tier indexed chunks (ADR-127) > uses an indexed chunk vector plan under enable_seqscan=off
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > returns the project's active items ranked by similarity, and makes NO completion call
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > never returns another project's items (cross-project isolation, E-1)
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > ignores stale-generation embeddings in the vector leg
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > uses the per-generation expression HNSW index for the vector leg
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — hybrid ranking (T4.1) > respects the kinds filter and minConfidence
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > returns a lexical-only item that has NO active-generation embedding (mid-reindex fallback)
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > KNN candidate pool is project-scoped: a flood of near vectors in ANOTHER project cannot starve this one
+[integration] lib/brain/__tests__/recall.integration.test.ts > recall — review-fix hardening (lexical fallback, KNN scoping, kill switch) > refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)
+[integration] lib/brain/__tests__/recall.integration.test.ts > legacy project recall does not disclose a record with narrower grants
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > model switch (same N): re-embeds every active item into the new generation, old rows intact (E-2)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > recall then uses only the new generation (vector leg follows active settings)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > dimension switch (1536 -> 768): new expression index + generation, old rows untouched, recall works
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > resumes from resumable_cursor after an interrupt (bounded per-tick work)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > concurrent double-fire does not create duplicate embeddings (F3)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex worker (T5.5) > no pending jobs → a no-op tick
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > is a QUIET no-op on Postgres without the brain lineage applied
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > a deterministic CONFIG rejection marks the job FAILED with the item recorded — no permanent stall
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > a transient failure leaves the job RUNNING for retry (unchanged contract)
+[integration] lib/brain/__tests__/reindex.integration.test.ts > reindex — review-fix hardening (poison item, kill switch) > skips jobs of brain-DISABLED projects (kill switch on the write side)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > IT-CBE-02 preserves distinct near assertions without manufacturing corroboration
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > is idempotent on identical content (no duplicate, no reinforce)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > two concurrent retains of the same content produce exactly one active row
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > keeps non-near content as a separate item
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > near assertions keep original embeddings immutable (E-2)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — dedup-or-reinforce (T2.2) > stores provenance FKs and a per-segment embedding for an oversize item
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > near-dup match is KIND-scoped: a state_fact never reinforces a near lesson
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > a near match that is no longer active is NOT reinforced — a fresh item is inserted (decay-race guard)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > near assertions cannot refresh the applicability of an older assertion
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — review-fix hardening (kind scope, decay race, kill switch, TTL) > refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > allows owned decision and direction retain when the project has no covering canonical source
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > refuses decision retain before embedding when docs/decisions.md is the canonical home
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — decision/direction home resolution (T6.1) > refuses direction retain when a roadmap source is the canonical home
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > keeps identical state_fact content idempotent without reinforcement
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > IT-CBE-03 changed near state facts remain distinct unresolved claims
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > retains every repeated state change until explicit review
+[integration] lib/brain/__tests__/retain.integration.test.ts > retain — state_fact supersede-on-change (T6.2) > near lesson assertions remain separately reviewable
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > SET / CLEAR / re-SET round-trips each field
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > stores API keys as env:NAME references, never secrets
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a raw (non-env:) embedding API key with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a raw (non-env:) distillation API key with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects a non-positive dimension with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > on a model change: creates the new expression index and enqueues a reindex job per enabled project with a coverage gap
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > does NOT double-enqueue while a job is already queued/running
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > a FAILED job is recoverable: the next settings save re-enqueues the project
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > rejects dimensions above the pgvector HNSW cap (2000) with CONFIG
+[integration] lib/brain/__tests__/settings.integration.test.ts > updateBrainSettings (T5.1) > a dimension change is also a reindex generation (no schema migration)
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > seeds the docs indexing profile once as metadata-only source rows
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > skips suggested defaults after the project already has curated sources
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > registers an exact tracked source with autodetected kind and chunker metadata
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > expands glob sources only to tracked matching files
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > allows broad glob sources because source jobs process them in batches
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > fails closed for traversal, .git, ignored, and untracked source paths
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > updates, deletes, and enqueues source-scoped manual reindex jobs
+[integration] lib/brain/__tests__/sources.integration.test.ts > Project Brain sources (ADR-127) > disables a source whose tracked file was removed after registration
+[integration] lib/brain/__tests__/ui-queries.integration.test.ts > Project Brain UI queries > ranks exact indexed OpenAPI operation matches above newer markdown references
+[integration] lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 company migration preserves existing project data and identity across repeated boot
+[integration] lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 populated Brain upgrade preserves honest legacy provenance and pending proposals
+[integration] lib/db/__tests__/migration-company-brain-specialists.integration.test.ts > IT-CBX-01 company grant receipt migration preserves existing policy without inventing historical delivery or revocation authority
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 session HTTP capture/get preserve native evidence, honest confirmation and current owner visibility
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 native writes reject model attribution and bound streamed JSON independently of content-length
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 search applies current source access before keyset limits and binds visible cursors to credential and filters
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-01 evidence pagination retains captured Unicode bytes, enforces response bounds and pins the exact accepted revision
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-03 accessible conflicts remain discoverable beyond inaccessible edges and the detail display bound
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 owner-aware bearer requests use real token verification and audit company operations without a fabricated project
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBX-02 the built MCP publishes nested native schemas and calls the real HTTP and PostgreSQL services
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-06 run-bound native reads bind current grants to the immutable role/package identity and retain disclosure restrictions
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBE-06 cross-owner proposal evidence inherits current source access and never obstructs source-project deletion
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-03 stale source support cannot establish a new factual confirmation
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-03 native HTTP publication and evidence-bound confirmation are separate current-authority decisions
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 review pagination applies source authority before LIMIT, bounds summaries and rechecks authority after continuation
+[integration] app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBX-02 native external validation keeps the established 422 contract and concealed references remain 404
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 an installation administrator grants explicit company access without a repository or implicit content access
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 company policy uses current administrator state and rejects fabricated principals, actors and unsupported confirmation policy
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-06 company policy pages keep exact large revocation reasons within a bounded response and credential-scoped continuation
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-03 concurrent administrators serialize conflicting grants before publication and retain one actionable policy winner
+[integration] app/api/company/grants/__tests__/grants.integration.test.ts > IT-CBK-01 native UI owner choices and recipient search use current authority without widening a narrow record

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "fields": [
+    {
+      "name": "schemaVersion",
+      "type": "number",
+      "required": true
+    },
+    {
+      "name": "findings",
+      "type": "array",
+      "items": {
+        "type": "json"
+      },
+      "required": true
+    },
+    {
+      "name": "knowledgeProposals",
+      "type": "array",
+      "items": {
+        "type": "json"
+      },
+      "required": true
+    },
+    {
+      "name": "selection",
+      "type": "array",
+      "items": {
+        "type": "json"
+      },
+      "required": true
+    }
+  ]
+}

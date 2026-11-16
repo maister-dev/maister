@@ -1,0 +1,64 @@
+{
+  "task": "T12",
+  "status": "minimum native human interface qualified locally; full cross-surface and runtime qualification pending",
+  "browser": {
+    "runner": "repository-owned default E2E wrapper; real browser/session/native services/PostgreSQL; fixture supervisor only",
+    "scenarioTests": 1,
+    "setupTests": 1,
+    "passed": true,
+    "leaks": 0,
+    "locales": [
+      "en",
+      "ru"
+    ],
+    "journey": [
+      "explicit administrator grant bootstrap",
+      "source capture and proposal creation",
+      "witness inspection and browser Back",
+      "publication before separate confirmation",
+      "URL search refresh",
+      "exact-base correction and original publication revision link",
+      "old confirmation retained only on old revision",
+      "new revision initially unconfirmed",
+      "shared confirmation revocation dialog",
+      "company read revocation",
+      "fresh record inspection conceals unavailable content"
+    ]
+  },
+  "postgresUiPolicy": {
+    "tests": 5,
+    "passed": true,
+    "includes": "current project-role choices, narrow record controls, literal recipient search, current administrator role and malformed input refusal"
+  },
+  "existingUiRegression": {
+    "files": 13,
+    "tests": 55,
+    "passed": true
+  },
+  "checks": [
+    "web typecheck",
+    "affected lint",
+    "native schema/contract parity",
+    "all internal docs gates",
+    "public build validation",
+    "public broken links"
+  ],
+  "visual": "Reviewed the real Russian record screen. Final additions expose source identity/selector and knowledge kind; final broad cross-surface qualification is T13.",
+  "remaining": [
+    "T13 mixed reader/writer and cyclic-source concurrency, additional denied/stale/conflict cross-surface cases and broad suite/build checks",
+    "T14 launch/result inheritance and actual package execution",
+    "durable assignments, cooperation and real stand pilot"
+  ],
+  "logs": [
+    "browser-red.log",
+    "browser.log",
+    "ui-policy.log",
+    "existing-ui-regression.log",
+    "typecheck.log",
+    "lint.log",
+    "contracts.log",
+    "docs.log",
+    "public-docs.log",
+    "public-links.log"
+  ]
+}

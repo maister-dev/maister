@@ -1,0 +1,75 @@
+{
+  "task": "T25",
+  "date": "2026-11-07",
+  "baseCommit": "58fec3dd2",
+  "status": "Transport checkpoint only; T25 remains open",
+  "gates": {
+    "integration": {
+      "tests": 92,
+      "files": 7,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9323,
+      "files": 889,
+      "exitCode": 0
+    },
+    "typesLintContractsDocsSchemaDrift": {
+      "exitCode": 0,
+      "requirements": 84,
+      "tables": 174
+    }
+  },
+  "redToGreen": [
+    "Actual native terminal Flow completion had no retained delivery receipt",
+    "Native internal delivery was skipped while webhooks were disabled",
+    "Actual outbound payload failed the published JSON Schema because correlationId was absent; frozen correlation and result schema digest now survive delivery"
+  ],
+  "qualified": [
+    "Server-captured exact terminal result/input/source witness; old events remain unenrolled",
+    "Domain dispatcher replay retains one immutable receipt and private outbox intent",
+    "Concurrent internal workers retain one Inbox item or control-only task comment",
+    "Current project read revocation conceals native Inbox content and count; requester-owned read state survives replay",
+    "Actual local HTTP peer receives only its configured target and stable IDs after a lost ACK",
+    "Assignment remains active without fabricated business acceptance or repeated execution",
+    "Existing company Flow and user-scoped/legacy delivery compatibility"
+  ],
+  "limitations": [
+    "Native delivery inspection and authorized recovery API remain pending",
+    "Large Inbox source-closure authorization needs qualification; existing walk has a 256-source bound",
+    "Populated delivery migration upgrade, injected atomic rollback and changed-recipient retry cases remain pending",
+    "T28 owns accepted-outcome publication; T39 owns quiet/incident policy; T40 owns actual installed pilot qualification",
+    "No full Phase 5 integration/build or stand readiness claim"
+  ],
+  "sourceSha256": {
+    "docs/api/async/outbound-webhooks.asyncapi.yaml": "4197d3bb70bb959a2ef935951cd53a5fb611849efb7013251e61431eadda4c3c",
+    "docs/api/web.openapi.yaml": "2667264c829132b452f445dd7b45d118a431bfc67cd7f66b5e8cc0149ee33b23",
+    "docs/database-schema.md": "0ae43d6f03241f2e8882b91f5f623eed2da88a2b78e08420ae5b64b87ece3b2f",
+    "docs/db/erd.dbml": "bc4aff17096ba9ff805e76e4d804692889b606ca59bf00b2ca7d5b732e025991",
+    "docs/db/specialist-assignments-domain.md": "879439db2b6272b2a990749935be4367d9a8d99549a29202ee51f73c4b908ad5",
+    "docs/system-analytics/specialist-assignments.md": "c5f8a02fda1d7235f2afcd56f4da723beb2e04f0ea0cf4d7259c7273b9cff592",
+    "web/app/(app)/inbox/page.tsx": "11e1270db3b27aec06303bde0da99c135792b0c76777206b119aeefeacc2ee02",
+    "web/components/portfolio/__tests__/inbox-panel.test.ts": "9d894375018da148564776a9323ef587a82e2e6950633147f5f20b91ccde9e1e",
+    "web/components/portfolio/inbox-panel.tsx": "793664101053912ceffe5d67f0fe0fdcb9b12fb7d7d72bcea29bf42d8286bb38",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "217f344e018d198b53022eb89e342291f85b637822e4b48dfc2a804f2c3c2269",
+    "web/lib/db/migrations/0250_specialist_result_delivery.sql": "34f96e303bd95e88bcb86aca94f183b2150f7a4e148e17b44053d305f1c2f42a",
+    "web/lib/db/migrations/0251_specialist_delivery_targets.sql": "284ee53a25952b75d901ef3c83dd030e7fabe642cd054f1e660015a71fde2aa2",
+    "web/lib/db/migrations/meta/0250_snapshot.json": "f462c141bcc6d6f1362a090b65183b38e84adc4d374f88083ce3669768285975",
+    "web/lib/db/migrations/meta/0251_snapshot.json": "8c188518c6b9da0786ab2f34056a2649b3470a6bf4e77ea23b7a62b64d5efc29",
+    "web/lib/db/migrations/meta/_journal.json": "fa1cef5808315105693f9e914b52a8a3e5ead77c9d2859181f26ec62e6fc472f",
+    "web/lib/db/schema.ts": "cdb6f005793c674e8c9bddfb100abb679472d9cd06b6096a563794c050347a5e",
+    "web/lib/domain-events/consumers.ts": "b082bdc2f0a59b62e892db7140c7a02035978a83ae1d70f2b8023ece7526c7fc",
+    "web/lib/queries/assignment-inbox.ts": "19494b33b1a1c49df6ecdcafefe4fd53e6aabfa69d3e5d7789d3a7e5c80184de",
+    "web/lib/queries/inbox.ts": "c5484dd7b3c17100cb660ea241a0eb7751a1e463a42f523b79a79b1ccbdd90fa",
+    "web/lib/scheduler/handlers/webhook-delivery.ts": "9f18f230520afa69bbbef2a96796a2e36831eb2ef1973373c4033f44a6097232",
+    "web/lib/specialist-assignments/__tests__/delivery.integration.test.ts": "1b93aee5a94448c30d682f76732a6c6729ab638d75d989480f614fb62ce842ec",
+    "web/lib/specialist-assignments/delivery-capture.ts": "84657340549080c6c7d3eb8de19c8c2db89368df88e5bbc066c23e47d72c1094",
+    "web/lib/specialist-assignments/delivery-types.ts": "dae60a2ded5e99231fa40ad31049356d3aa42b3fdc83f0756c927285ca2505af",
+    "web/lib/specialist-assignments/delivery.ts": "0c0e1d15826e62dc87dcbd2a886db70f61737976615682069bfce69c8b5ec556",
+    "web/lib/webhooks/__tests__/taxonomy.test.ts": "06ea1d3cc409a2ef55796c69a8f87f0130c68fd4fc5f8f939e036e5037ee369e",
+    "web/lib/webhooks/send.ts": "e26a0df025978c555d7e292a4e164291b89aa39801acc69a791cb851d18e7c9a",
+    "web/lib/webhooks/taxonomy.ts": "3d2ba3d58122e6e62483bc23b50cbf0c5f01d213622f57957b3b01f5218d0ca9",
+    "web/messages/en.json": "0e3e33d89ce2655ebabc09a5db2fb991fc819f2f9a0be31c3e171f192958e4f2",
+    "web/messages/ru.json": "468fd10558c0864c79b2bf4fcbc82455a2621c19080e5a9b409c443ad5554a69"
+  }
+}

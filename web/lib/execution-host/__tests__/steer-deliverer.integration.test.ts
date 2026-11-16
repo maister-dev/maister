@@ -7,6 +7,7 @@ import type { BoundClient, ExecutionHosts } from "@/lib/execution-host/client";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 import type { SupervisorFaultProxy } from "@/test-support/supervisor-fault-proxy";
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -39,7 +40,7 @@ import {
 } from "@/test-support/execution-host-seed";
 import { addWorktree, initRepo } from "@/test-support/git-fixture";
 import {
-  startMainPostgresTestDb,
+  startMainAndBrainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import {
@@ -53,6 +54,8 @@ import {
   processIdentity,
   signalInvocationProcess,
 } from "@/test-support/process-invocation";
+import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
+import { buildAgentProfileContract } from "@/lib/run-results/contract";
 
 let testDatabase: StartedPostgresTestDb;
 let projectionWorker: ProjectionWorker;
@@ -125,8 +128,13 @@ type Held = {
 };
 
 // A run whose parent prompt the adapter holds open until SIGUSR1.
-async function heldPrompt(name: string): Promise<Held> {
+async function heldPrompt(
+  name: string,
+  configureRun?: (runId: string) => Promise<void>,
+): Promise<Held> {
   const runId = await seedFlowRun(name);
+
+  await configureRun?.(runId);
   const client = await hosts.forRun(runId, { reason: "launch" });
   const created = await client.createSession(CREATE_PAYLOAD);
   const handle = await client.prompt(
@@ -201,7 +209,7 @@ function steersFor(
 }
 
 beforeAll(async () => {
-  testDatabase = await startMainPostgresTestDb({
+  testDatabase = await startMainAndBrainPostgresTestDb({
     databaseName: "eh_steer_deliverer",
   });
   db = testDatabase.db as unknown as Db;
@@ -241,6 +249,187 @@ afterAll(async () => {
 });
 
 describe("session.steer through the bound client (ADR-182)", () => {
+  it.each(["before_wire", "after_lost_ack"] as const)(
+    "IT-CBE-06 native steering rechecks current recipient sources %s without inventing an external outcome",
+    async (window) => {
+      const contract = buildAgentProfileContract({
+        profileName: "findings",
+        flowRefId: "native-wire",
+        resolvedRevision: "a".repeat(40),
+        sourceFlowRevisionId: "retained-profile",
+        schemaStem: "findings.v1",
+        nativeContract: "evidence_findings_v1",
+        schemaVersion: 1,
+        sha256: "b".repeat(64),
+        schema: { schemaVersion: 1, fields: [] },
+      });
+      const source = await seedNativeFindingsExecution(testDatabase, contract);
+
+      await testDatabase.pool.query(
+        "INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name) SELECT $1,$2,package_install_id,package_name FROM project_package_attachments WHERE project_id=$3",
+        [randomUUID(), project.id, source.projectId],
+      );
+      await testDatabase.pool.query(
+        "INSERT INTO agent_project_links(id,project_id,agent_id,enabled,can_read_brain) VALUES($1,$2,$3,true,true)",
+        [randomUUID(), project.id, source.agentId],
+      );
+      const held = await heldPrompt(
+        `native-source-steer-${window}`,
+        async (runId) => {
+          const flowId = randomUUID();
+          const taskId = randomUUID();
+
+          await testDatabase.pool.query(
+            "INSERT INTO flows(id,project_id,flow_ref_id,source,version,installed_path,manifest,schema_version) VALUES($1,$2,$3,'github.com/fixture/native','v1.0.0','/tmp/native-wire',$4::jsonb,1)",
+            [
+              flowId,
+              project.id,
+              `native-wire-${window}`,
+              JSON.stringify({
+                schemaVersion: 1,
+                name: "Native wire",
+                nodes: [
+                  {
+                    id: "s1",
+                    type: "ai_coding",
+                    prompt: "Hold the current professional turn.",
+                  },
+                ],
+              }),
+            ],
+          );
+          await testDatabase.pool.query(
+            "INSERT INTO tasks(id,project_id,number,title,prompt,status,stage,flow_id) SELECT $1,$2,coalesce(max(number),0)+1,'Native wire','Hold the current professional turn.','InFlight','InFlight',$3 FROM tasks WHERE project_id=$2",
+            [taskId, project.id, flowId],
+          );
+          await testDatabase.pool.query(
+            "UPDATE runs SET run_kind='flow',flow_version='v1.0.0',task_id=$2,flow_id=$3 WHERE id=$1",
+            [runId, taskId, flowId],
+          );
+          await testDatabase.pool.query(
+            "UPDATE runs target SET source_agent_id=source.source_agent_id,agent_activity_snapshot=source.agent_activity_snapshot,launched_at=now(),activity_sort_at=now(),activity_timestamp_provenance='launch',current_step_id='s1',knowledge_access=$3::jsonb FROM runs source WHERE target.id=$1 AND source.id=$2",
+            [
+              runId,
+              source.runId,
+              JSON.stringify({
+                schemaVersion: 1,
+                state: "complete",
+                generation: 1,
+                restrictions: [
+                  { kind: "company", companyId: source.companyId },
+                ],
+              }),
+            ],
+          );
+        },
+      );
+
+      try {
+        const first = await db.transaction((tx) =>
+          held.client.prepareSteer(
+            tx,
+            held.hostSessionId,
+            steerPayload(held.parentCommandId, "Authorized native follow-up"),
+          ),
+        );
+
+        await expect(first.deliver()).resolves.toMatchObject({
+          outcome: "injected",
+        });
+        const second = await db.transaction((tx) =>
+          held.client.prepareSteer(
+            tx,
+            held.hostSessionId,
+            steerPayload(
+              held.parentCommandId,
+              "This private follow-up must not reach the revoked role",
+            ),
+          ),
+        );
+        const revoke = async (): Promise<void> => {
+          await testDatabase.pool.query(
+            "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_type='agent' AND principal_id=$2 AND action='knowledge:read'",
+            [source.companyId, source.agentId],
+          );
+        };
+
+        if (window === "before_wire") {
+          await revoke();
+          await expect(second.deliver()).rejects.toMatchObject({
+            code: "PRECONDITION",
+            details: { reason: "knowledge_reference_unavailable" },
+          });
+          expect(await ledgerState(second.commandId)).toBe("failed");
+          expect(
+            steersFor(await invocations(), held.acpSessionId),
+          ).toHaveLength(1);
+        } else {
+          const barrier = proxy.arm(
+            {
+              caseId: "native-steer-lost-ack",
+              method: "POST",
+              path: /^\/sessions\/[^/]+\/steer$/,
+              commandId: second.commandId,
+            },
+            "hold-response",
+          );
+          const delivered = second.deliver();
+
+          await barrier.awaitReached();
+          await revoke();
+          barrier.cut();
+          await expect(delivered).rejects.toMatchObject({
+            code: "EXECUTOR_UNAVAILABLE",
+            details: { reason: "native_steer_reconciliation_required" },
+          });
+          expect(await ledgerState(second.commandId)).toBe("delivering");
+          expect(
+            steersFor(await invocations(), held.acpSessionId),
+          ).toHaveLength(2);
+          await recoverExecutionCommands({
+            db,
+            transport: defaultTransport(),
+            graceMs: 0,
+          });
+          expect(await ledgerState(second.commandId)).toBe("succeeded");
+          expect(
+            steersFor(await invocations(), held.acpSessionId),
+          ).toHaveLength(2);
+        }
+        const before = (
+          await testDatabase.pool.query<{ count: number }>(
+            "SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind='session.steer'",
+            [held.runId],
+          )
+        ).rows[0]!.count;
+
+        await expect(
+          db.transaction((tx) =>
+            held.client.prepareSteer(
+              tx,
+              held.hostSessionId,
+              steerPayload(
+                held.parentCommandId,
+                "Rejected before another intent",
+              ),
+            ),
+          ),
+        ).rejects.toMatchObject({ code: "PRECONDITION" });
+        expect(
+          (
+            await testDatabase.pool.query<{ count: number }>(
+              "SELECT count(*)::int FROM execution_commands WHERE run_id=$1 AND kind='session.steer'",
+              [held.runId],
+            )
+          ).rows[0]!.count,
+        ).toBe(before);
+      } finally {
+        await held.release();
+      }
+    },
+    120000,
+  );
+
   it("records the adapter's steering advertisement on the incarnation at the create ACK", async () => {
     const runId = await seedFlowRun("steer-capability");
     const client = await hosts.forRun(runId, { reason: "launch" });

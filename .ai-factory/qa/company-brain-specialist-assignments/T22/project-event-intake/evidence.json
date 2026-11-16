@@ -1,0 +1,183 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Reviewed native project event assignments and revocable source-context sharing",
+  "baseCommit": "5541569632436cb7ea9ea6f0775c4c2670cdc13b",
+  "status": "Native project event platform contract qualified; project webhook routing and T22 remain open",
+  "red": [
+    {
+      "case": "An explicit event review retained only old review v1 rather than enrollment and separate sharing",
+      "expectedReviewVersion": 2,
+      "actualReviewVersion": 1,
+      "exitCode": 1
+    },
+    {
+      "case": "The registered consumer attempted a pre-enrollment event through legacy handling and failed its delivery window",
+      "expectedConsumerFailures": 0,
+      "actualConsumerFailures": 1,
+      "exitCode": 1
+    },
+    {
+      "case": "The actual event form had no separate context sharing control",
+      "failedCases": 2,
+      "exitCode": 1
+    },
+    {
+      "case": "Saving an unchanged event selector advanced enrollment past a queued event",
+      "expectedCursor": "0",
+      "actualCursor": "1",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 192,
+      "files": 9,
+      "durationSeconds": 80.94,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 31.47,
+      "exitCode": 0
+    },
+    "core": {
+      "tests": 102,
+      "files": 4,
+      "durationSeconds": 51.77,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "changes": 0,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual project settings PATCH records event review v2 with an observed signed-bigint cursor and separate sharing intent; cron remains review v1.",
+    "Unchanged selectors retain enrollment across rereview/sharing changes; changed selectors capture a new observed cursor.",
+    "Actual registered consumer excludes old events, retains exact event/claim/reserved Run identities, and completes standalone and coordinator work through the real supervisor and controlled ACP.",
+    "Event input contains only validated fact identities; inherited producing-run source restrictions survive independently of citations.",
+    "Exact producing assignment input is readable through the actual recipient execution identity; unrelated input is unavailable.",
+    "Actual settings sharing withdrawal refuses retained execution access; reapproval restores eligible access without rewriting frozen input.",
+    "Cursor rewind of the exact retained event adopts the original work; different professionals consume independent matching subscriptions.",
+    "A full page of 25 malformed sources retains safe refusal telemetry while healthy sources on later pages proceed.",
+    "Producing professional self-events are suppressed; system-authored coordinator facts retain chain depth; valid immutable fixtures cover unclassified and exhausted chains.",
+    "Missing sharing refuses a fresh run-derived event; actual user-authored comment facts without a producing Run admit a root without sharing raw comment text.",
+    "Populated main-only 0242-to-0243 upgrade preserves old review/claim bytes, refuses malformed cursors and old-event fresh claims, accepts exact v2 reviews and permits project deletion without Brain tables."
+  ],
+  "migration": {
+    "main": "0243_project_event_context",
+    "brain": "0011 unchanged",
+    "newTables": 0,
+    "newBrainForeignKeys": 0,
+    "newIndex": "domain_events_project_sequence_idx"
+  },
+  "corrections": [
+    "The source fixture initially sent eventMatch instead of the HTTP eventKinds contract; the corrected fixture reaches the genuine old-event delivery RED.",
+    "The first release fixture omitted the required occurred_at timestamp and misread a plain assignment response as an intake receipt. Both fixtures now use the actual contracts.",
+    "A cursor rewind to zero replayed unrelated company history and contaminated host ownership; qualification now rewinds exactly the project event under test and disables its own sources during teardown.",
+    "The chain fixture attempted a prohibited null depth. It now inserts valid immutable native Run fixtures inside an aborted transaction, retaining the NOT NULL contract and explicit missing-appointment refusal.",
+    "The fixture JSON object uses an explicit text cast for PostgreSQL parameter inference. The original CAS request/reviewer assertion is preserved before rereview, and literal input preservation is checked afterward.",
+    "A validation condition was initially applied to the company schema; typecheck identified it and the project-only condition is now placed in its owning schema."
+  ],
+  "limits": [
+    "These receipts qualify native platform behavior using local PostgreSQL and the real supervisor with controlled ACP, not an installed stand connector or real-model stand maintenance.",
+    "Project webhook routing, governed agent principals, durable shared context, clarification/delivery, assignment acceptance, operations and installable pilot qualification retain their later tasks.",
+    "Technical Done does not complete the business assignment or confirm a Company Brain fact.",
+    "No remote push, deployment, production stand action or master integration occurred."
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "14828d83f626b7fd40b401bd5a2ebd5c07e005dff1eeca7d77405b5d2c909c07",
+    "docs/database-schema.md": "1dd5fc678d6d0414c96f00106b009985b6e5b254ef827466e16c8bfb7a777bc3",
+    "docs/db/erd.dbml": "9e6e0acb852ddb2a975301ee05332ac06a59ba38ad9bbb287878c3e24c71f953",
+    "docs/screens/projects/project-settings-agents.md": "b3c55319f11153d383e1cda5bdd9c2c34f50ad93726bdab68e52249df6a5aea6",
+    "docs/system-analytics/specialist-assignments.md": "ff2bf839b299960acc0196a3e24489f2891af73ce0ca6a2639357c9c0e506605",
+    "site-docs/guides/operational-agents.md": "2e39076fc250771036d84f84f1ca394b49d1d10a0a059602e692eb1a3b58053a",
+    "site-docs/ru/guides/operational-agents.md": "66f20df74ecff348d5cf301d113b4d6d27aa93413f882a742f54697c4a2307e6",
+    "web/app/api/projects/[slug]/agents/[agentId]/route.ts": "5f72a94c73542d4001670a1f3185c2b0c0e8d63a15c2c9cd260aa9d1c094938f",
+    "web/components/agents/agent-incident-card.tsx": "25c90c2abe3a314a374189aed39bec5ec9f5fd54e0348d583e9a462d65c7056c",
+    "web/components/board/panels/__tests__/agents-attach-config.dom.test.ts": "38e230329dbb024f983071a9f30a952b029ab3a53301f7d8697e8274e703b373",
+    "web/components/board/panels/agents-attach-edit-modal.tsx": "5050f973b67dd1425f6f4940017ad95ea58b13331d34317cf9cfd0ae069339fe",
+    "web/components/board/panels/agents-attach-panel.tsx": "7627fdd2d00e326b3baa66a03cdc8ed3ab6560a3c51152798e151f36a474310d",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "a27f478f3fb6d60f739d57302b9132bbc601b3e1d085d51327df8611e0343796",
+    "web/lib/agents/__tests__/project-links.integration.test.ts": "6498062d4d7d662fe27164f24986437ea64f9a4a67883aa50eecf83a52c2fcfd",
+    "web/lib/agents/chain-depth.ts": "1422b8f9652b4445e536c2e4bd880a6ba4405095dc48655d4b6949e1e993708a",
+    "web/lib/agents/launch.ts": "154198575eb9b4d02d091117f4745e4506e4a23c78a140af7eb9838caa15b6c8",
+    "web/lib/agents/project-links.ts": "29ce3e44c588eb897e94eacc56e1d9668b192a94aeaa2b5cc1cefdc5d6f0db3e",
+    "web/lib/agents/project-source-review-schema.ts": "df884660edfbc02ed2e4381e38c700fc43644124dceeddf587fae88038c59445",
+    "web/lib/agents/project-source-review-types.ts": "6c47f11830870defddc17a304f1b63306009fb73d8e0e91b1325127f808e1cd8",
+    "web/lib/agents/project-source-review.ts": "993a25952a7c3a3a5272555ae8aa5156e6afb9b58d52359416e41d9995b0299e",
+    "web/lib/agents/trigger-attempt-types.ts": "cfca3bfd92de384ad3f133fc3fb4d22c81a4f308128b45f21d97892b7220d837",
+    "web/lib/agents/trigger-binding-snapshot.ts": "c553f0554f5157e98be5f721addb31e1902a880ebc6a83049d1d747b5179e921",
+    "web/lib/agents/triggers.ts": "ebb7e6eeb959cfcbd1a0e2ab8fc0b3cf64f28afa9590c8f7cb6eedfaae3f3984",
+    "web/lib/brain/knowledge-assignment-policy.ts": "2b06181cf229ede7707869bdbc0135e8ab24947317562221f6a52b6e0ea4aaf8",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "569df3dd258444c458fb1bd057cfe1ed2360f706359d4f76a1759a87fd33f3ac",
+    "web/lib/db/migrations/0243_project_event_context.sql": "2fd0642924135d03dc0960d845d77a22a3f680480abe98cbb9a14818ef291e9d",
+    "web/lib/db/migrations/meta/0243_snapshot.json": "86520f97c84afc3cdda55d2e27201560a4c3483a1796b7a495c9f30f100e860b",
+    "web/lib/db/migrations/meta/_journal.json": "864de04daf276fe36f31ddf258bb2b65ac60b1fa918848fd2e834c3ffc94878a",
+    "web/lib/db/schema.ts": "395c8f67bf655509c6c8a004a9733830c832fdd4de2ece94cb1fe0e832398cab",
+    "web/lib/services/runs.ts": "9970a074818caa8543ef98b61646bddb64be445f4b9c28b3b9e5c93a435c6674",
+    "web/lib/specialist-assignments/project-admission.ts": "2080626c17f788fd5975c2af38f80699945d7001cb8d5116fdeba2c3f4a053e6",
+    "web/lib/specialist-assignments/project-event-appointment.ts": "39dcd7a02073766ae64d938bc60e58b881178a75b88eb344b1e47ccb95dfc0c7",
+    "web/lib/specialist-assignments/project-event-intake.ts": "2029b10cb8b74b4a4b1d39a635008ae62e88eb9a3e39a8caf02229e0bc3ad42f",
+    "web/lib/specialist-assignments/project-request-intake.ts": "cf19085d36201b4b96ca2781660a2f9155d240ddc3dabba22726b7835baa73b1",
+    "web/lib/specialist-assignments/project-source-types.ts": "9cdbc3d52505cf9c3860cad7c6842e99d8cd31f0bb97f9a0a6996b64c94d4ec6",
+    "web/lib/specialist-assignments/project-specialist.ts": "91ac2847fb2e06928db8f928695793ff56e50cabcf6273da8f2b47584c23c829",
+    "web/messages/en.json": "951ffd60bc2be3f42363069b983c78824bed5b041e1827564390cefc4fa883c2",
+    "web/messages/ru.json": "0d6a326aa56ef00d10b070d0aedf771c57f1f52dc680910e9fb54b01484d053d"
+  },
+  "logs": [
+    "cb-project-event-core1.log.gz",
+    "cb-project-event-core2.log.gz",
+    "cb-project-event-core3.log.gz",
+    "cb-project-event-edges1.log.gz",
+    "cb-project-event-edges2.log.gz",
+    "cb-project-event-edges3.log.gz",
+    "cb-project-event-enrollment-red.log.gz",
+    "cb-project-event-erd.log.gz",
+    "cb-project-event-generate.log.gz",
+    "cb-project-event-intake-green1.log.gz",
+    "cb-project-event-intake-green2.log.gz",
+    "cb-project-event-intake-red.log.gz",
+    "cb-project-event-intake-red2.log.gz",
+    "cb-project-event-release-contracts.log.gz",
+    "cb-project-event-release-docs.log.gz",
+    "cb-project-event-release-integration.log.gz",
+    "cb-project-event-release-lint.log.gz",
+    "cb-project-event-release-public-build.log.gz",
+    "cb-project-event-release-public-links.log.gz",
+    "cb-project-event-release-types.log.gz",
+    "cb-project-event-release-unit.log.gz",
+    "cb-project-event-review-green.log.gz",
+    "cb-project-event-review-lint-fix.log.gz",
+    "cb-project-event-review-red.log.gz",
+    "cb-project-event-review-types.log.gz",
+    "cb-project-event-schema-drift.log.gz",
+    "cb-project-event-types1.log.gz",
+    "cb-project-event-types2.log.gz",
+    "cb-project-event-ui-green.log.gz",
+    "cb-project-event-ui-red.log.gz"
+  ]
+}

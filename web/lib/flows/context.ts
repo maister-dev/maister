@@ -8,7 +8,8 @@ import type {
 } from "@/lib/db/schema";
 import type { CapabilityAgent } from "@/lib/config.schema";
 import type { TaskClarificationContext } from "@/lib/tasks/clarifications";
-import type { FlowContext } from "./types";
+import type { CompanyFlowContext, FlowContext } from "./types";
+import type { AssignmentObjectiveInput } from "@/lib/specialist-assignments/types";
 
 import pino from "pino";
 
@@ -182,12 +183,28 @@ function reduceArtifacts(
   return out;
 }
 
-export function buildContext(args: BuildContextArgs): FlowContext {
-  const cap = args.outputTruncationBytes ?? DEFAULT_OUTPUT_TRUNCATION;
-  const envSource = args.envSource ?? process.env;
-  const envWhitelist = args.envWhitelist ?? [];
+type SharedContext = Pick<
+  FlowContext,
+  "executor" | "steps" | "env" | "artifacts"
+>;
+type SharedContextArgs = Omit<
+  BuildContextArgs,
+  "task" | "effectivePrompt" | "clarifications" | "projectSlug"
+>;
 
-  const env = buildEnv(envSource, envWhitelist);
+export type BuildCompanyContextArgs = SharedContextArgs & {
+  owner: { readonly kind: "company"; readonly companyId: string };
+  assignment: {
+    readonly id: string;
+    readonly inputRevision: number;
+    readonly inputSha256: string;
+    readonly objectiveInput: AssignmentObjectiveInput;
+  };
+};
+
+function buildSharedContext(args: SharedContextArgs): SharedContext {
+  const cap = args.outputTruncationBytes ?? DEFAULT_OUTPUT_TRUNCATION;
+  const env = buildEnv(args.envSource ?? process.env, args.envWhitelist ?? []);
 
   log.debug(
     {
@@ -203,7 +220,19 @@ export function buildContext(args: BuildContextArgs): FlowContext {
   );
 
   return {
-    // Extra vars first so the reserved keys below always win.
+    executor: {
+      id: args.executor.id,
+      agent: args.executor.agent,
+      model: args.executor.model,
+    },
+    steps: reduceLedger(args.nodeAttempts, cap),
+    env,
+    artifacts: reduceArtifacts(args.artifacts ?? [], args.artifactContents),
+  };
+}
+
+export function buildContext(args: BuildContextArgs): FlowContext {
+  return {
     ...(args.extraVars ?? {}),
     task: {
       id: args.task.id,
@@ -218,13 +247,27 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       attemptNumber: args.task.attemptNumber,
       projectSlug: args.projectSlug,
     },
-    executor: {
-      id: args.executor.id,
-      agent: args.executor.agent,
-      model: args.executor.model,
+    ...buildSharedContext(args),
+  };
+}
+
+/** Project-only namespaces stay absent even when untrusted rework variables name them. */
+export function buildCompanyContext(
+  args: BuildCompanyContextArgs,
+): CompanyFlowContext {
+  const extraVars = Object.fromEntries(
+    Object.entries(args.extraVars ?? {}).filter(([key]) => key !== "task"),
+  );
+
+  return {
+    ...extraVars,
+    assignment: {
+      ...structuredClone(args.assignment.objectiveInput),
+      id: args.assignment.id,
+      inputRevision: args.assignment.inputRevision,
+      inputSha256: args.assignment.inputSha256,
     },
-    steps: reduceLedger(args.nodeAttempts, cap),
-    env,
-    artifacts: reduceArtifacts(args.artifacts ?? [], args.artifactContents),
+    run: { id: args.run.id, owner: { ...args.owner } },
+    ...buildSharedContext(args),
   };
 }

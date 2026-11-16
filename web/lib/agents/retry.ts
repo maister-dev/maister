@@ -19,6 +19,13 @@ import {
   previewAgentTaskRetry,
   taskRetryDecisionRequired,
 } from "./task-retry-authority";
+import { assertProjectAgentRetryIntent } from "./retry-scope";
+import { authorizeProjectRetryReceipt } from "./project-specialist-retry";
+import {
+  acceptCompanyAgentRetry,
+  authorizeCompanyRetryReceipt,
+  companyAgentRetryOptions,
+} from "./company-retry";
 
 import { manualTriageHoldPredicate } from "@/lib/tasks/triage-flag-origin";
 import {
@@ -121,6 +128,10 @@ export async function getAgentRetryOptions(
   };
 
   try {
+    const [source] = await db.select().from(runs).where(eq(runs.id, runId));
+
+    if (source?.companyId)
+      return await companyAgentRetryOptions(db, source, userId);
     const prepared = await prepareAgentRetry(db, runId, userId);
     let options = prepared.options;
 
@@ -246,6 +257,13 @@ export async function getAgentRetryReceipt(
       ),
     );
 
+  if (intent?.companyId) {
+    await authorizeCompanyRetryReceipt(db, intent, userId);
+
+    return receiptFor(db, intent);
+  }
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (!intent) {
     const [canonical] = await db
       .select()
@@ -264,7 +282,7 @@ export async function getAgentRetryReceipt(
 
     return taskRetryReceipt(db, taskLaunchReceipt(canonical), runId);
   }
-  await assertRetryAuthority(db, intent.projectId, userId);
+  await authorizeProjectRetryReceipt(db, intent, userId);
 
   return receiptFor(db, intent);
 }
@@ -323,14 +341,37 @@ export async function acceptAgentRetry(
       ),
     );
 
+  if (replayed?.companyId) {
+    if (replayed.requestDigest !== requestDigest)
+      throw retryRefusal("retry_request_key_reused");
+    await authorizeCompanyRetryReceipt(db, replayed, userId);
+
+    return receiptFor(db, replayed);
+  }
+  if (replayed) assertProjectAgentRetryIntent(replayed);
+
   if (replayed) {
-    await assertRetryAuthority(db, replayed.projectId, userId);
+    await authorizeProjectRetryReceipt(db, replayed, userId);
     if (replayed.requestDigest !== requestDigest)
       throw retryRefusal("retry_request_key_reused");
 
     return receiptFor(db, replayed);
   }
   const [source] = await db.select().from(runs).where(eq(runs.id, runId));
+
+  if (source?.companyId) {
+    if (request.launchRequest || request.strategy === "fresh_qualification")
+      throw retryRefusal("retry_request_invalid");
+    const accepted = await acceptCompanyAgentRetry(
+      db,
+      source,
+      userId,
+      request,
+      requestDigest,
+    );
+
+    return receiptFor(db, accepted);
+  }
 
   if (source?.taskId && source.agentKind === "code_delivery") {
     if (
@@ -421,7 +462,7 @@ export async function acceptAgentRetry(
         .select({ id: runs.id })
         .from(runs)
         .where(eq(runs.id, runId))
-        .for("update");
+        .for("no key update");
       await assertRetryAuthority(tx, prepared.source.projectId, userId);
       if (recipe.version === 2 && recipe.strategy === "fresh_qualification") {
         await assertQualificationRetryAuthority(
@@ -508,6 +549,7 @@ export async function acceptAgentRetry(
 
       if (!inserted[0] || !accepted)
         throw retryRefusal("retry_acceptance_lost");
+      assertProjectAgentRetryIntent(accepted);
       await emitDomainEvent({
         db: tx,
         kind: "agent.activity_changed",
@@ -540,8 +582,12 @@ export async function acceptAgentRetry(
           ),
         );
 
-      if (winner?.requestDigest === requestDigest)
+      if (winner?.requestDigest === requestDigest) {
+        assertProjectAgentRetryIntent(winner);
+        await authorizeProjectRetryReceipt(db, winner, userId);
+
         return receiptFor(db, winner);
+      }
       throw retryRefusal("retry_successor_already_owned");
     }
     throw error;
@@ -556,7 +602,7 @@ async function claimDueIntent(
     const due = await tx.execute<{
       id: string;
     }>(sql`SELECT id FROM agent_retry_intents
-      WHERE ((state='accepted' AND attempts<3) OR (state='refused' AND allocation->>'disposition'='armed'))
+      WHERE project_id IS NOT NULL AND company_id IS NULL AND ((state='accepted' AND attempts<3) OR (state='refused' AND allocation->>'disposition'='armed'))
         AND due_at<=${now} AND (lease_expires_at IS NULL OR lease_expires_at<=${now})
       ORDER BY due_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`);
 
@@ -588,6 +634,8 @@ async function refuseClaim(
       .from(agentRetryIntents)
       .where(eq(agentRetryIntents.id, claim.intentId));
 
+    if (row) assertProjectAgentRetryIntent(row);
+
     if (!row) return;
     await tx
       .select({ id: runs.id })
@@ -613,6 +661,8 @@ async function refuseClaim(
         ),
       )
       .returning();
+
+    if (refused) assertProjectAgentRetryIntent(refused);
 
     if (!refused) return;
     await recordAgentIncident(tx, {
@@ -650,6 +700,8 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
 
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (!intent) throw retryRefusal("retry_intent_unavailable");
   if (intent.state === "refused") {
     await disposeClaim(db, claim);
@@ -675,6 +727,9 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
   )
     throw retryRefusal("retry_context_changed");
   await db.transaction((tx) => assertAgentRetryClaim(tx, claim));
+  const replacement =
+    intent.recipe.version === 2 ? intent.recipe.replacement : undefined;
+  const eventSource = replacement?.event ?? replacement?.comment;
   const outcome = await launchAgentRun({
     db,
     agentId: intent.sourceAgentId,
@@ -687,12 +742,14 @@ async function deliverClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? "manual"
           : intent.recipe.trigger.source,
+      ...(eventSource ? { eventId: eventSource.eventId } : {}),
       payload:
         retryRecipeStrategy(intent.recipe) === "fresh_qualification"
           ? null
           : intent.recipe.trigger.payload,
     },
     retryClaim: claim,
+    agentScheduleId: replacement?.cron?.scheduleId ?? eventSource?.scheduleId,
     scheduledRequestSnapshot: intent.recipe.scheduledRequestSnapshot ?? null,
   });
 
@@ -744,17 +801,19 @@ export async function runAgentRetryAdmissionSweep(
             ? "retry_authority_revoked"
             : "retry_admission_failed";
       const attempts = (receipt?.attempts ?? 0) + 1;
+      const yielded = reason === "retry_assignment_busy";
       const transient =
-        isMaisterError(error) &&
-        (error.code === "EXECUTOR_UNAVAILABLE" ||
-          error.details?.reason === "agent_materialization_lock_timeout") &&
-        attempts < 3;
+        yielded ||
+        (isMaisterError(error) &&
+          (error.code === "EXECUTOR_UNAVAILABLE" ||
+            error.details?.reason === "agent_materialization_lock_timeout") &&
+          attempts < 3);
 
       if (transient)
         await db
           .update(agentRetryIntents)
           .set({
-            attempts,
+            attempts: yielded ? (receipt?.attempts ?? 0) : attempts,
             dueAt: new Date(
               now.getTime() + reconciliationRetryDelayMs(attempts),
             ),
@@ -792,6 +851,8 @@ async function disposeClaim(db: Db, claim: AgentRetryClaim): Promise<void> {
     .select()
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
+
+  if (intent) assertProjectAgentRetryIntent(intent);
 
   if (
     !intent?.allocation ||
@@ -980,6 +1041,8 @@ async function failDisposal(
     .from(agentRetryIntents)
     .where(eq(agentRetryIntents.id, claim.intentId));
 
+  if (intent) assertProjectAgentRetryIntent(intent);
+
   if (
     !intent?.allocation ||
     intent.leaseOwner !== claim.owner ||
@@ -1082,6 +1145,8 @@ export async function rearmAgentRetryCleanup(
         ),
       )
       .for("update");
+
+    if (intent) assertProjectAgentRetryIntent(intent);
 
     if (!intent) throw retryRefusal("retry_intent_unavailable");
     await assertRetryAuthority(tx, intent.projectId, userId);

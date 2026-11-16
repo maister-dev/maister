@@ -1,0 +1,26 @@
+{
+  "sourceCommit": "6729ac891801fd33f66d5bdfefe024425e9953b4",
+  "command": "pnpm_config_verify_deps_before_run=warn caffeinate -i pnpm test:integration --maxWorkers=2 --reporter=verbose",
+  "checkout": "/private/tmp/cb-t17-regression-23562d82b",
+  "exitCode": 0,
+  "testFiles": {
+    "passed": 640,
+    "skipped": 2,
+    "total": 642
+  },
+  "tests": {
+    "passed": 5759,
+    "skipped": 2,
+    "total": 5761
+  },
+  "durationSeconds": 3398.75,
+  "dependencyLayout": "Owned copies inside isolated checkout; internal relative symlinks retained. Frozen source unchanged.",
+  "skips": [
+    "event-plane-load.integration.test.ts: opt-in throughput test",
+    "host-span-load.integration.test.ts: opt-in ingest-lag test"
+  ],
+  "priorFailure": "../isolated-layout-failure/evidence.json",
+  "livePackageProof": "../live-v104/evidence.json",
+  "scope": "CB0 source qualification only; later CB1 changes require their own qualification. No remote publication or deployment.",
+  "logSha256": "137d3220bb2573ab14fcb03081ca2e979ac30a8a0632c01c86f2919ebd5e8372"
+}

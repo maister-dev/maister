@@ -739,15 +739,11 @@ export async function processGroupRetired(
   return values[2] === 0;
 }
 
-/** Callers supply the full group from their immediately preceding ownership read. */
-export async function signalCheckedInvocationGroup(
-  invocation: Invocation,
+function unverifiedSignalMembers(
   pgid: number,
   members: readonly ProcessIdentity[],
-  signal: NodeJS.Signals,
-): Promise<void> {
-  if (!members.length) return;
-  const unverified = members.filter(
+): readonly ProcessIdentity[] {
+  return members.filter(
     (entry) =>
       !entry.owned ||
       !entry.inspected ||
@@ -757,6 +753,17 @@ export async function signalCheckedInvocationGroup(
       entry.pid <= 1 ||
       entry.pid === process.pid,
   );
+}
+
+/** Callers supply the full group from their immediately preceding ownership read. */
+export async function signalCheckedInvocationGroup(
+  invocation: Invocation,
+  pgid: number,
+  members: readonly ProcessIdentity[],
+  signal: NodeJS.Signals,
+): Promise<void> {
+  if (!members.length) return;
+  const unverified = unverifiedSignalMembers(pgid, members);
 
   if (pgid <= 1 || unverified.length) {
     logInvocation(invocation, "fixture-group-signal-refused", {
@@ -1258,11 +1265,50 @@ export async function signalInvocationGroup(
   pgid: number,
   signal: NodeJS.Signals,
 ): Promise<void> {
-  const members = (await readProcessSnapshot(invocation)).filter(
+  let members = (await readProcessSnapshot(invocation)).filter(
     (entry) => entry.pgid === pgid && !entry.zombie,
   );
 
   if (!members.length) return;
+  const leader = members.find(
+    (entry) =>
+      entry.pid === pgid && unverifiedSignalMembers(pgid, [entry]).length === 0,
+  );
+  const recheckDeadline = performance.now() + 100;
+
+  // A short-lived native helper can outlive the snapshot that observed it.
+  // Only fresh positive membership and the same tagged leader permit a signal.
+  // Rechecks share a 100ms scheduling window; each kernel read retains its
+  // existing transport timeout, and an unavailable read still throws.
+  for (
+    let attempt = 1;
+    leader &&
+    unverifiedSignalMembers(pgid, members).length > 0 &&
+    attempt < 3 &&
+    performance.now() < recheckDeadline;
+    attempt += 1
+  ) {
+    logInvocation(invocation, "fixture-group-ownership-recheck", {
+      pgid,
+      signal,
+      attempt,
+      maxAttempts: 3,
+      unverifiedCount: unverifiedSignalMembers(pgid, members).length,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (performance.now() >= recheckDeadline) break;
+    members = (await readProcessSnapshot(invocation)).filter(
+      (entry) => entry.pgid === pgid && !entry.zombie,
+    );
+    if (!members.length) return;
+    if (
+      !members.some((entry) => entry.pid === pgid && sameProcess(leader, entry))
+    )
+      throw new InvocationOwnershipError(
+        `fixture group ${pgid} leader identity changed during ownership recheck`,
+      );
+  }
+
   await signalCheckedInvocationGroup(invocation, pgid, members, signal);
 }
 

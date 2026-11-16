@@ -7,9 +7,11 @@ import type {
 
 import { randomUUID } from "node:crypto";
 
+import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { webhookEvents } from "@/lib/db/schema";
+import { projectWebhookDataSql } from "@/lib/webhooks/knowledge-policy";
 
 const log = pino({
   name: "webhooks-outbox",
@@ -71,7 +73,10 @@ export async function emitWebhookEvent(
     // extra column). Fan-out reads it back from here.
     data: userScoped
       ? { ...input.data, ownerUserId: input.ownerUserId }
-      : input.data,
+      : projectWebhookDataSql(
+          sql`${input.runId}`,
+          sql`${JSON.stringify(input.data)}::jsonb`,
+        ),
     payload: null,
     occurredAt: input.occurredAt ?? new Date(),
   });

@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
 import { readEvaluationEvents } from "@/lib/evaluations/dispatcher/events";
@@ -145,6 +153,8 @@ async function completeAttempts(executionId: string): Promise<void> {
     }
   }
 }
+
+afterEach(() => vi.unstubAllEnvs());
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -811,8 +821,21 @@ describe("dispatch liveness fixes", () => {
 
     const pendingRunId = randomUUID();
     const runningRunId = randomUUID();
+    const capacityHolderId = randomUUID();
 
+    // Pending means capacity-blocked here: finalizing the timed-out peer must
+    // not turn this reaper assertion into a launch of an uninstalled fake agent.
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_AGENTS", "1");
     await db.insert(schema.runs).values([
+      {
+        id: capacityHolderId,
+        runKind: "agent",
+        agentId: "core:sdd-judge",
+        agentWorkspace: "none",
+        projectId,
+        status: "Running",
+        flowVersion: "v0",
+      },
       {
         id: pendingRunId,
         runKind: "agent",

@@ -2,12 +2,16 @@ import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
 import type { ReactElement, ReactNode } from "react";
+import type { NativeInputInspection } from "@/lib/orchestrator/native-input-read";
 
 import Link from "next/link";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
+import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
+import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
 import { loadRunScheduledRequest } from "@/lib/agents/activity-queries";
 import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-evidence";
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
@@ -109,6 +113,11 @@ import {
   projectRolesForActions,
 } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+} from "@/lib/brain/knowledge-run-disclosure";
+import { RunSourceUnavailable } from "@/components/runs/run-source-unavailable";
 import { prepareDiff } from "@/lib/diff/prepare";
 import { reposRoot, worktreesRoot } from "@/lib/instance-config";
 import {
@@ -376,6 +385,16 @@ export default async function RunDetailLayout({
 
   // Hide existence from non-members (mirrors the project board page).
   if (!role) notFound();
+  try {
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: user.id },
+      runId,
+    );
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
+  }
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   // The consensus draft download serves agent output that can quote repository
@@ -384,6 +403,17 @@ export default async function RunDetailLayout({
     role,
   );
   const [t, locale] = await Promise.all([getTranslations("run"), getLocale()]);
+
+  let nativeInput: NativeInputInspection | null = null;
+
+  if (canReadRepoFiles) {
+    try {
+      nativeInput = await loadNativeInputForUser(getDb(), user.id, runId);
+    } catch (error) {
+      if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+      throw error;
+    }
+  }
 
   const scheduledRequest = canReadRepoFiles
     ? await loadRunScheduledRequest(getDb(), runId, detail.projectId)
@@ -420,12 +450,15 @@ export default async function RunDetailLayout({
   // ADR-165 (T8.1/T8.2): the run's own public result, and the labels the panel
   // and the child glyphs share. `null` means "render no panel".
   const tActivity = await getTranslations("agentActivity");
-  const publicResult = await loadRunPublicResult(getDb(), runId);
+  const publicResult = await loadRunPublicResult(getDb(), runId, {
+    kind: "user",
+    userId: user.id,
+  });
   const isOperational =
-    detail.runKind === "agent" && detail.agentKind === "operational";
+    detail.agentKind === "operational" || publicResult?.operationalOutcome != null;
   const operational = isOperational
     ? (publicResult?.operationalOutcome ??
-      (await loadOperationalOutcome(getDb(), runId)))
+      (await loadOperationalOutcome(getDb(), runId, { kind: "user", userId: user.id })))
     : null;
   const tOperational = await getTranslations("operationalAgents");
   const hasOperationalResult =
@@ -1594,6 +1627,17 @@ export default async function RunDetailLayout({
             : "outcomeNoStructuredResult",
         );
 
+  try {
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: user.id },
+      runId,
+    );
+  } catch (error) {
+    if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
+    throw error;
+  }
+
   return (
     <RunPeekController
       key={detail.runId}
@@ -1629,6 +1673,9 @@ export default async function RunDetailLayout({
         hideChangeSummary={isOperational}
         inspector={
           <>
+            {nativeInput ? (
+              <NativeInputInspectionPanel input={nativeInput} />
+            ) : null}
             {scheduledRequest ? (
               <ScheduledRequestEvidence
                 snapshot={scheduledRequest}
@@ -1637,6 +1684,12 @@ export default async function RunDetailLayout({
             ) : null}
             {/* ADR-165 (T8.1): renders nothing at all for a run with no public
                 result contract and no rows — most runs. */}
+            {publicResult?.findings ? (
+              <RunFindingsPanel
+                findings={publicResult.findings}
+                resultHref={`/knowledge/results/${encodeURIComponent(runId)}/${publicResult.revision}`}
+              />
+            ) : null}
             <RunPublicResultPanel
               labels={publicResultLabels}
               result={isOperational ? null : publicResult}

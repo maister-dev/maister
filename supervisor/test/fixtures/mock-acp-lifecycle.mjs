@@ -3,12 +3,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   appendFile,
+  mkdir,
   open,
   readFile,
   realpath,
+  rename,
   writeFile,
 } from "node:fs/promises";
-import path from "node:path";
+import path, { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
@@ -30,7 +32,9 @@ let hangPrompt = false;
 let hangPermission = false;
 let exitDelayMs = 0;
 let emitUsage = false;
+let contextUsage;
 let supportsResume = false;
+let sessionStateDir;
 let invocationLog;
 let controlledPrompt = false;
 let completionOnCheckpoint;
@@ -86,8 +90,14 @@ for (let i = 0; i < args.length; i += 1) {
     exitDelayMs = Number.parseInt(args[++i], 10);
   } else if (arg === "--emit-usage") {
     emitUsage = true;
+  } else if (arg === "--context-usage") {
+    contextUsage = JSON.parse(args[++i]);
   } else if (arg === "--supports-resume") {
     supportsResume = true;
+  } else if (arg === "--session-state-dir") {
+    sessionStateDir = args[++i];
+    if (!sessionStateDir)
+      throw new Error("--session-state-dir requires a path");
   } else if (arg === "--invocation-log") {
     invocationLog = args[++i];
     if (!invocationLog) throw new Error("--invocation-log requires a path");
@@ -173,10 +183,29 @@ function never() {
   return new Promise(() => {});
 }
 
-function fixtureOutputLine(params) {
+async function fixtureOutputLine(params) {
   const text = params.prompt.find((block) => block.type === "text")?.text;
+  const line = text
+    ?.split("\n")
+    .find((line) => line.startsWith("fixture-output:"));
 
-  return text?.split("\n").find((line) => line.startsWith("fixture-output:"));
+  if (!sessionStateDir) return line;
+  // A resumed ACP conversation retains its scenario even when the continuation
+  // prompt contains no original assignment text. Persist before permission awaits.
+  const identity = createHash("sha256").update(params.sessionId).digest("hex");
+  const target = join(sessionStateDir, `${identity}.json`);
+
+  if (line) {
+    await mkdir(sessionStateDir, { recursive: true });
+    const temporary = `${target}.${randomUUID()}.tmp`;
+
+    await writeFile(temporary, line, { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, target);
+
+    return line;
+  }
+
+  return readFile(target, "utf8");
 }
 
 async function consensusSynthesisSpec(params, declaredSpec) {
@@ -455,7 +484,7 @@ class LifecycleAgent {
 
   async runPrompt(params) {
     const terminalLine = controlledTerminal
-      ? fixtureOutputLine(params)
+      ? await fixtureOutputLine(params)
       : undefined;
     const terminalBarrier = terminalLine
       ? JSON.parse(terminalLine.slice("fixture-output:".length))
@@ -522,7 +551,7 @@ class LifecycleAgent {
     }
     await this.drainSteers(params.sessionId);
     // Exercise real ACP framing without putting megabyte arguments in argv.
-    const fixtureLine = fixtureOutputLine(params);
+    const fixtureLine = await fixtureOutputLine(params);
     if (fixtureLine) {
       // Flow nodes may surround the fixture line with resume and run context.
       const spec = await consensusSynthesisSpec(
@@ -558,7 +587,7 @@ class LifecycleAgent {
             (_, index) =>
               this.connection.requestPermission({
                 sessionId: params.sessionId,
-                toolCall: {
+                toolCall: spec.permissionToolCall ?? {
                   toolCallId: `owned-permission-${index}`,
                   title: "fixture write",
                   kind: "edit",
@@ -630,6 +659,23 @@ class LifecycleAgent {
         glyph.repeat(Math.floor(spec.bytes / Buffer.byteLength(glyph))) +
         "x".repeat(spec.bytes % Buffer.byteLength(glyph)) +
         responseText;
+      if (spec.previousAssistantMessage !== undefined)
+        for (
+          let remaining = spec.previousAssistantMessage;
+          remaining > 0;
+          remaining -= 250_000
+        )
+          await this.connection.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "previous-assistant-message",
+              content: {
+                type: "text",
+                text: "x".repeat(Math.min(remaining, 250_000)),
+              },
+            },
+          });
       const chunks =
         spec.chunkSize && !spec.tool
           ? Array.from(
@@ -657,6 +703,9 @@ class LifecycleAgent {
               }
             : {
                 sessionUpdate: "agent_message_chunk",
+                ...(spec.previousAssistantMessage !== undefined
+                  ? { messageId: "final-assistant-message" }
+                  : {}),
                 content: { type: "text", text: chunk },
               },
         });
@@ -748,6 +797,18 @@ class LifecycleAgent {
                 },
               }
             : {}),
+        },
+      });
+    }
+
+    if (contextUsage !== undefined) {
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "usage_update",
+          used: contextUsage,
+          size: 200000,
+          cost: { amount: 0.1, currency: "USD" },
         },
       });
     }

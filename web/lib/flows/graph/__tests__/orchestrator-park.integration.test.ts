@@ -48,6 +48,7 @@ import {
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { worktreesRoot } from "@/lib/instance-config";
 import { runtimeRoot } from "@/lib/runtime-root";
+import { verifyToken } from "@/lib/tokens/verify";
 import * as workspaceCheckpoint from "@/lib/flows/graph/workspace-checkpoint";
 import { extractSentinelBlock } from "@/lib/flows/graph/node-output";
 import * as agentTokens from "@/lib/agents/tokens";
@@ -82,16 +83,19 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => {
   return {
     ...actual,
     runAgentStep: vi.fn(
-      async (...args: Parameters<typeof actual.runAgentStep>) =>
-        actualAgent.enabled
-          ? actual.runAgentStep(...args)
-          : {
-              ok: true,
-              stdout: "",
-              vars: {},
-              durationMs: 1,
-              acpSessionId: "acp-coordinator-1",
-            },
+      async (...args: Parameters<typeof actual.runAgentStep>) => {
+        if (actualAgent.enabled) return actual.runAgentStep(...args);
+        // The scripted step represents a newly admitted owned session.
+        await args[1].prepareSessionCapabilities?.();
+
+        return {
+          ok: true,
+          stdout: "",
+          vars: {},
+          durationMs: 1,
+          acpSessionId: "acp-coordinator-1",
+        };
+      },
     ),
   };
 });
@@ -547,6 +551,13 @@ async function acceptQueuedChild(runId: string): Promise<{
     projectId,
     runId,
   });
+
+  return acceptQueuedChildWithCredential(secret);
+}
+
+async function acceptQueuedChildWithCredential(
+  secret: string,
+): ReturnType<typeof acceptQueuedChild> {
   const { POST } = await import("@/app/api/v1/ext/runs/delegate/route");
   const response = await POST(
     delegateRequest(secret, {
@@ -615,7 +626,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     let driverError: unknown;
 
     vi.mocked(runAgentStep)
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (_step, ctx) => {
+        await ctx.prepareSessionCapabilities?.();
         await writeFile(
           join(workspace.worktreePath, "base.txt"),
           "coordinator work before rewind\n",
@@ -628,7 +640,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           acpSessionId: "acp-coordinator-1",
         };
       })
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (_step, ctx) => {
+        await ctx.prepareSessionCapabilities?.();
         const stdout = '```json maister:output\n{"verdict":"ok"}\n```';
 
         return {
@@ -799,6 +812,19 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
                 ],
               };
       const { runId } = await seedOrchestratorRun(manifest);
+
+      await seedDelegationTarget();
+      const originalIssueToken = agentTokens.issueOrchestratorRunToken;
+      let issued: Awaited<ReturnType<typeof originalIssueToken>> | undefined;
+      const issuance = vi
+        .spyOn(agentTokens, "issueOrchestratorRunToken")
+        .mockImplementation(async (input) => {
+          const token = await originalIssueToken(input);
+
+          if (input.runId === runId) issued = token;
+
+          return token;
+        });
       const { hosts } = await bindCoordinatorHost(runId);
       const [workspace] = await db
         .select()
@@ -814,7 +840,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         await pinCheckpointFlow(runId);
         const { runAgentStep } = await import("@/lib/flows/runner-agent");
 
-        vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+        vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+          await ctx.prepareSessionCapabilities?.();
           await writeFile(
             join(workspace.worktreePath, "base.txt"),
             "committed coordinator work\n",
@@ -863,7 +890,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       let delegation: ReturnType<typeof acceptQueuedChild> | undefined;
       let parent: Promise<void> | undefined;
       let firstCount = true;
-      let delegationIsHeld = false;
+      let acceptancePid: number | undefined;
       const observed: number[] = [];
       const counts = vi
         .spyOn(childObligations, "childObligationCounts")
@@ -874,21 +901,25 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           observed.push(result.pending);
           if (firstCount) {
             firstCount = false;
-            delegation = acceptQueuedChild(runId);
+            if (!issued)
+              throw new Error(
+                "The scripted session has no admitted credential",
+              );
+            delegation = acceptQueuedChildWithCredential(issued.secret);
             await expect
-              .poll(
-                async () =>
-                  Number(
-                    (
-                      await pool.query(
-                        `SELECT count(*) FROM pg_stat_activity WHERE wait_event='advisory' AND query ILIKE '%INSERT INTO "task_launch_intents"%'`,
-                      )
-                    ).rows[0].count,
-                  ),
-                RE_ENTRY_POLL,
-              )
+              .poll(async () => {
+                const { rows } = await pool.query<{ pid: number }>(
+                  `SELECT pid FROM pg_locks WHERE locktype='advisory'
+                   AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+                   AND classid=261104 AND objid=$1 AND objsubid=2 AND NOT granted`,
+                  [lockKey],
+                );
+
+                if (rows.length === 1) acceptancePid = rows[0].pid;
+
+                return rows.length;
+              }, RE_ENTRY_POLL)
               .toBe(1);
-            delegationIsHeld = true;
           }
 
           return result;
@@ -907,19 +938,18 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           runtimeRoot: process.cwd(),
           executionHosts: hosts,
         });
-        // Other run writers may already be waiting. Only release our barrier
-        // after this delegation is actually waiting at it.
-        await expect.poll(() => delegationIsHeld, RE_ENTRY_POLL).toBe(true);
         await expect
-          .poll(
-            async () =>
-              (
-                await pool.query(
-                  `SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event<>'advisory' AND query LIKE '%runs%'`,
-                )
-              ).rows[0].n,
-            RE_ENTRY_POLL,
-          )
+          .poll(async () => {
+            if (acceptancePid === undefined) return 0;
+            const { rows } = await pool.query<{ pid: number }>(
+              `SELECT pid FROM pg_stat_activity WHERE datname=current_database()
+               AND wait_event_type='Lock' AND query ILIKE '%"runs"%'
+               AND $1=ANY(pg_blocking_pids(pid))`,
+              [acceptancePid],
+            );
+
+            return rows.length;
+          }, RE_ENTRY_POLL)
           .toBeGreaterThan(0);
         await lock.query("SELECT pg_advisory_unlock(261104,$1)", [lockKey]);
         const receipt = await delegation!;
@@ -928,6 +958,15 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
         expect(observed[0]).toBe(0);
         expect(observed).toContain(1);
         expect((await getRun(runId)).status).toBe("WaitingOnChildren");
+        const actor = await verifyToken(issued!.secret, db as never);
+
+        expect(actor.tokenId).toBe(issued!.tokenId);
+        expect(
+          await db
+            .select({ id: fullSchema.projectTokens.id })
+            .from(fullSchema.projectTokens)
+            .where(eq(fullSchema.projectTokens.bound_run_id, runId)),
+        ).toHaveLength(1);
         expect(
           (
             await pool.query(
@@ -971,6 +1010,7 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
           [parent, delegation].filter((value) => value !== undefined),
         );
         counts.mockRestore();
+        issuance.mockRestore();
         await pool.query(`DROP TRIGGER ${trigger} ON task_launch_intents`);
         await pool.query(`DROP FUNCTION ${trigger}()`);
       }
@@ -1387,7 +1427,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     const { runAgentStep } = await import("@/lib/flows/runner-agent");
     let duringHitl: Record<string, unknown> | undefined;
 
-    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
       // A permission request pauses the live turn; a child fails meanwhile.
       await db
         .update(schema.runs)
@@ -1430,6 +1471,32 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
       .toEqual(["WaitingOnChildren", null]);
     expect((await getRun(sibling.runId)).status).toBe("Running");
   }, 90_000);
+  it("lets the coordinator observe a last child that fails before the current turn parks", async () => {
+    const { runId } = await seedOrchestratorRun();
+    const child = await seedChild(runId, "Running");
+    const { hosts } = await bindCoordinatorHost(runId);
+    const { runAgentStep } = await import("@/lib/flows/runner-agent");
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
+      await failChild(runId, child);
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: 1,
+        acpSessionId: "acp-coordinator-1",
+      };
+    });
+    await runFlow(runId, {
+      db,
+      runtimeRoot: process.cwd(),
+      executionHosts: hosts,
+    });
+    await expect.poll(() => waitResumeCount(runId), RE_ENTRY_POLL).toBe(1);
+  }, 90_000);
   it("keeps a failed-child intent out of answered-idle C3 admission", async () => {
     const { runId } = await seedOrchestratorRun();
     const failed = await seedChild(runId, "Running");
@@ -1443,7 +1510,8 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
     const promoteRun = vi.fn(async () => {});
     let idle: Record<string, unknown> | undefined;
 
-    vi.mocked(runAgentStep).mockImplementationOnce(async () => {
+    vi.mocked(runAgentStep).mockImplementationOnce(async (_step, ctx) => {
+      await ctx.prepareSessionCapabilities?.();
       // An unanswered permission request idles past its keep-alive window.
       await db
         .update(schema.runs)

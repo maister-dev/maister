@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AgentKind } from "@/lib/agents/kind";
 import type { RunResultContract } from "@/lib/run-results/types";
+import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ZodType } from "zod";
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
@@ -18,6 +19,10 @@ import { and, eq, gt, inArray, isNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
+import {
+  assertNativeProjectPublication,
+  projectPublicationPolicy,
+} from "@/lib/brain/knowledge-project-publication";
 import {
   RELEASED_LIFECYCLE_CLAIM,
   canReclaimLifecycle,
@@ -144,6 +149,7 @@ export type LifecycleProject = {
 export type LifecycleRun = {
   agentKind?: AgentKind | null;
   resultContract?: RunResultContract | null;
+  knowledgeAccess?: KnowledgeAccessCapture | null;
   id: string;
   projectId: string;
   // M37 (ADR-098): the launching task (null for scratch / as-run children) —
@@ -653,6 +659,15 @@ async function preservePresentWorkspace(
   deps: WorkbenchLifecycleDeps,
 ): Promise<PreserveResult> {
   const workspace = requireWorkspace(ctx);
+  const sourcePolicy = projectPublicationPolicy(ctx.run, ctx.run.projectId);
+  const archivePush =
+    gcArchivePush() && ["legacy", "project_context"].includes(sourcePolicy);
+
+  if (gcArchivePush() && !archivePush)
+    log.info(
+      { runId, sourcePolicy, archivePush: false },
+      "native source policy keeps preservation local",
+    );
   const result = await deps.preserveWorktree({
     worktreePath: workspace.worktreePath,
     parentRepoPath: workspace.parentRepoPath,
@@ -661,7 +676,7 @@ async function preservePresentWorkspace(
     runId,
     // ADR-181 D17: operator archive/drop honour MAISTER_GC_ARCHIVE_PUSH exactly
     // like GC — the archive ref stays local unless the operator opted in.
-    archivePush: gcArchivePush(),
+    archivePush,
   });
 
   if (!result.ok) {
@@ -1206,6 +1221,7 @@ export async function createWorkbenchHandoffBranch(
   ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
+  await assertNativeProjectPublication(db, ctx.run);
   requireActionAllowed(ctx, "exportBranch", {
     allowPausedBudgetRun: args.allowPausedBudgetRun,
   });
@@ -1307,6 +1323,7 @@ export async function createWorkbenchHandoffBranch(
     }
 
     if (remoteHead === null) {
+      await assertNativeProjectPublication(db, ctx.run);
       await deps.pushBranch({
         projectRepoPath: workspace.parentRepoPath,
         remote,
@@ -1584,6 +1601,7 @@ export async function exportWorkbenchBranch(
   ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
+  await assertNativeProjectPublication(db, ctx.run);
   requireActionAllowed(ctx, "exportBranch");
 
   const workspace = requireWorkspace(ctx);
@@ -1694,6 +1712,7 @@ export async function exportWorkbenchBranch(
       attemptId: claim.attemptId,
     });
     try {
+      await assertNativeProjectPublication(db, ctx.run);
       await deps.pushBranch({
         projectRepoPath: workspace.parentRepoPath,
         remote,
@@ -2164,6 +2183,25 @@ export async function stopThenDrop(
   return { ...drop, supervisorStopped: stop.supervisorStopped };
 }
 
+/** Lifecycle deps bound to an already-authenticated principal (token clients, assignment cancel). */
+export function workbenchLifecycleDepsForUser(
+  userId: string,
+): WorkbenchLifecycleDeps {
+  return {
+    ...defaultWorkbenchLifecycleDeps(),
+    requireActiveSession: async () => {
+      const { requireActiveUserById } = await import("@/lib/authz");
+
+      return { id: (await requireActiveUserById(userId)).id };
+    },
+    authorize: async (projectId, action) => {
+      const { requireProjectActionForUser } = await import("@/lib/authz");
+
+      await requireProjectActionForUser(userId, projectId, action);
+    },
+  };
+}
+
 function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
   return {
     requireActiveSession: async () => {
@@ -2268,6 +2306,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
       runKind: runs.runKind,
       agentKind: runs.agentKind,
       resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
       status: runs.status,
       currentStepId: runs.currentStepId,
       workspaceMode: runs.workspaceMode,

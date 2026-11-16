@@ -25,6 +25,15 @@ import {
 
 import * as fullSchema from "@/lib/db/schema";
 import { applyCreateAck } from "@/lib/execution-host/create-ack";
+import { assertPackageOperationalContracts } from "@/lib/agents/package-contract";
+import { parseAgentDefinition } from "@/lib/agents/definition";
+import {
+  buildOperationalContract,
+  frozenOperationalDefinition,
+} from "@/lib/agents/launch-contract";
+import { maisterPackageManifestSchema } from "@/lib/config.schema";
+import { inspectOperationalOutcomes } from "@/lib/run-results/operational-projection";
+import { projectNativeFindings } from "@/lib/run-results/findings-projection";
 import { buildEnvelope } from "@/lib/execution-host/ledger";
 import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
@@ -314,7 +323,9 @@ afterEach(async () => {
   );
 });
 
-async function seedOperationalRun(): Promise<{ runId: string; cwd: string }> {
+async function seedOperationalRun(
+  contract = operationalContractFixture(),
+): Promise<{ runId: string; cwd: string }> {
   const root = await mkdtemp(join(tmpdir(), "operational-result-"));
 
   temporaryRoots.push(root);
@@ -340,7 +351,7 @@ async function seedOperationalRun(): Promise<{ runId: string; cwd: string }> {
     "initial",
   );
   const runId = await seedAgentRun({
-    contract: operationalContractFixture(),
+    contract,
     kind: "operational",
     workspace: "worktree",
   });
@@ -386,6 +397,185 @@ async function finishOperational(runId: string, text: string): Promise<void> {
 }
 
 describe("operational result contract", () => {
+  it("IT-CBO-08 publishes native observations and refuses unresolved operation or verification identities", async () => {
+    const root = await mkdtemp(join(tmpdir(), "operational-evidence-package-"));
+
+    temporaryRoots.push(root);
+    await mkdir(join(root, "maister-agents"));
+    const path = join(root, "maister-agents", "observe.md");
+    const source = `---
+name: Observe
+description: Observe a configured component
+kind: operational
+completion: {contract: operational_evidence_v2}
+workspace: worktree
+mode: session
+triggers: [manual]
+risk_tier: read_only
+---
+Report evidence from the configured component.`;
+
+    await writeFile(path, source);
+    const manifest = maisterPackageManifestSchema.parse({
+      schemaVersion: 1,
+      name: "evidence-fixture",
+      compat: { engine_min: "3.12.0" },
+    });
+
+    await expect(
+      assertPackageOperationalContracts(root, {
+        ...manifest,
+        compat: { engine_min: "3.11.0" },
+      }),
+    ).rejects.toThrow(
+      /operational_evidence_v2 requires package compat.engine_min >= 3\.12\.0/,
+    );
+    await assertPackageOperationalContracts(root, manifest);
+    const contract = buildOperationalContract({
+      parsed: parseAgentDefinition("evidence-fixture:observe", source),
+      sourcePath: path,
+      packageName: manifest.name,
+      packageInstallId: "test-evidence-install",
+      installedPath: root,
+      manifest: {
+        spec: manifest,
+        inventory: { platformAgents: ["observe"], agents: [], skills: [] },
+      },
+      versionLabel: "v2-test",
+      resolvedRevision: "b".repeat(40),
+      execTrust: "trusted",
+    });
+
+    expect(
+      frozenOperationalDefinition({
+        agentKind: "operational",
+        resultContract: contract,
+      })?.parsed.completion,
+    ).toEqual({ contract: "operational_evidence_v2" });
+    expect(() =>
+      frozenOperationalDefinition({
+        agentKind: "operational",
+        resultContract: { ...contract, promptAppendix: "Changed instructions" },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        details: { reason: "operational_snapshot_invalid" },
+      }),
+    );
+    const observation = {
+      ...operationalSuccessFixture(),
+      schemaVersion: 2,
+      findings: {
+        schemaVersion: 1,
+        findings: [
+          {
+            id: "component-uncertain",
+            assertion:
+              "The available evidence is insufficient to infer component health.",
+            basis: "inferred",
+            supporting: [],
+            contradicting: [],
+            missingEvidence: [
+              {
+                state: "absent",
+                reason: "No health observation was requested.",
+              },
+            ],
+            limitations: ["Health is unknown."],
+            openQuestions: [],
+            sourceFindings: [],
+          },
+        ],
+        knowledgeProposals: [],
+        selection: [],
+      },
+      operationIds: [],
+      verificationIds: [],
+    };
+    const complete = async (report: unknown): Promise<string> => {
+      const { runId } = await seedOperationalRun(contract);
+
+      await pool.query(
+        "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+        [
+          runId,
+          JSON.stringify({
+            schemaVersion: 1,
+            state: "complete",
+            generation: 1,
+            restrictions: [],
+          }),
+        ],
+      );
+      await finishOperational(
+        runId,
+        `${OPEN}\n${JSON.stringify(report)}\n${CLOSE}`,
+      );
+
+      return runId;
+    };
+    const observedRun = await complete(observation);
+    const [observedResult] = await getResults(observedRun);
+
+    expect(observedResult).toMatchObject({
+      schemaVersion: 2,
+      validity: "valid",
+      revision: 1,
+    });
+    expect(projectNativeFindings(contract, observedResult.value)).toEqual(
+      observation.findings,
+    );
+    expect(
+      (await inspectOperationalOutcomes(db, [observedRun])).get(observedRun),
+    ).toMatchObject({
+      successful: true,
+      resultRevision: 1,
+      reportedResult: observation,
+    });
+    for (const field of ["operationIds", "verificationIds"] as const) {
+      const runId = await complete({ ...observation, [field]: [randomUUID()] });
+
+      expect(await getStatus(runId)).toBe("Failed");
+      expect(await getResults(runId)).toMatchObject([
+        {
+          validity: "invalid",
+          invalidReason: "reference_invalid",
+          schemaVersion: 2,
+        },
+      ]);
+      expect(
+        (await inspectOperationalOutcomes(db, [runId])).get(runId),
+      ).toMatchObject({
+        successful: false,
+        reportedResult: null,
+        validationDiagnostics: [
+          { code: "evidence_reference_unavailable", path: field },
+        ],
+      });
+    }
+    const claimedReceipt = await complete({
+      ...observation,
+      references: [
+        { kind: "operation_receipt", id: randomUUID(), state: "confirmed" },
+      ],
+    });
+
+    expect(
+      (await inspectOperationalOutcomes(db, [claimedReceipt])).get(
+        claimedReceipt,
+      ),
+    ).toMatchObject({
+      successful: false,
+      reportedResult: null,
+      validationDiagnostics: [
+        {
+          code: "operation_receipt_requires_server_reference",
+          path: "references[0].kind",
+        },
+      ],
+    });
+  });
+
   it.each([0, 1])(
     "IT-OPR-01 completes a worktree operation with %i created tasks as Done without delivery",
     async (created) => {

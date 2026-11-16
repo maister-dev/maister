@@ -40,6 +40,7 @@ export async function GET(
         ? await loadAgentAttemptEvidence(access.db, page, {
             projectId: access.projectId,
             agentId: access.agentId,
+            recipient: { kind: "user", userId: access.actor.id },
           })
         : page,
     );

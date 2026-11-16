@@ -58,6 +58,18 @@ import {
   type CommandOutcome,
 } from "./command-receipts";
 import { takeContextMountPreamble } from "./context-mounts";
+import {
+  StandDispatchPayloadSchema,
+  StandLogsSelectorSchema,
+  StandObservationSelectorSchema,
+  StandReceiptSelectorSchema,
+  StandVerifySelectorSchema,
+  type DispatchStandRestart,
+  type ObserveStandOperation,
+  type ReadStandLogs,
+  type ReadStandReceipt,
+  type VerifyStandOperation,
+} from "./stand-operations/contracts";
 import { attachCost } from "./cost";
 import {
   applyFence,
@@ -239,6 +251,11 @@ export type RegisterRoutesOptions = {
   // ADR-167 amendment 2026-09-25: the per-boot `/runtime-events` subscriber
   // registry. Injected only so a suite can read what a subscriber buffers.
   runtimeEventSubscribers?: RuntimeEventSubscribers;
+  dispatchStandRestart?: DispatchStandRestart;
+  readStandReceipt?: ReadStandReceipt;
+  observeStandOperation?: ObserveStandOperation;
+  readStandLogs?: ReadStandLogs;
+  verifyStandOperation?: VerifyStandOperation;
 };
 
 type SessionIdParams = { Params: { id: string } };
@@ -314,6 +331,7 @@ function receiptAdmission(
     case "workspace.adopt":
     case "runtime_object.reserve":
     case "runtime_object.upload":
+    case "stand.dispatch":
       return { kind: "new_work" };
     case "session.input":
     case "session.steer":
@@ -2456,6 +2474,83 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     });
   });
 
+  app.post("/stand-operations/dispatch", async (req, reply) => {
+    const parsed = parseCommandBody(
+      req.body,
+      "stand.dispatch",
+      StandDispatchPayloadSchema,
+      { route: "POST /stand-operations/dispatch" },
+    );
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "stand.dispatch",
+      execute: async () => {
+        if (!opts.dispatchStandRestart)
+          throw new SupervisorError(
+            "PRECONDITION",
+            "No stand transport is configured",
+          );
+
+        return {
+          status: 200,
+          body: await opts.dispatchStandRestart(parsed.payload),
+        };
+      },
+    });
+  });
+
+  app.post("/stand-operations/receipt", async (req, reply) => {
+    const selector = StandReceiptSelectorSchema.parse(req.body);
+
+    if (!opts.readStandReceipt)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand receipt transport is configured",
+      );
+
+    const receipt = await opts.readStandReceipt(selector);
+
+    reply.status(200).send({ receipt });
+  });
+
+  app.post("/stand-operations/observe", async (req, reply) => {
+    const selector = StandObservationSelectorSchema.parse(req.body);
+
+    if (!opts.observeStandOperation)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand observation transport is configured",
+      );
+
+    reply.status(200).send(await opts.observeStandOperation(selector));
+  });
+
+  app.post("/stand-operations/verify", async (req, reply) => {
+    const selector = StandVerifySelectorSchema.parse(req.body);
+
+    if (!opts.verifyStandOperation)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand verification transport is configured",
+      );
+
+    reply.status(200).send(await opts.verifyStandOperation(selector));
+  });
+
+  app.post("/stand-operations/logs", async (req, reply) => {
+    const selector = StandLogsSelectorSchema.parse(req.body);
+
+    if (!opts.readStandLogs)
+      throw new SupervisorError(
+        "PRECONDITION",
+        "No stand logs transport is configured",
+      );
+
+    reply.status(200).send(await opts.readStandLogs(selector));
+  });
+
   // ADR-166 D7: the ONLY path-bearing route. Registers a host-local path for a
   // run as an opaque handle; every later route derives its paths from it.
   app.post("/workspaces/adopt", async (req, reply) => {
@@ -2509,6 +2604,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     const body: WorkspaceRecordResponse = {
+      ...(handle.companyId
+        ? { owner: { kind: "company" as const, companyId: handle.companyId } }
+        : {}),
       executionWorkspaceId: handle.id,
       runId: handle.runId,
       projectSlug: handle.projectSlug,
@@ -2839,6 +2937,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               emitter,
               logger,
               adapter: request.runner?.adapter ?? request.executor.agent,
+              model: request.runner?.model ?? request.executor.model,
               mcpServers: request.mcpServers,
               resumeSessionId: request.resumeSessionId,
               runner: request.runner,

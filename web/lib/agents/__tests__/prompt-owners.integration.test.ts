@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { RUN_SETTLED_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
@@ -38,7 +38,16 @@ import {
 } from "@/lib/execution-host/agent-permission-handoff";
 import { readPromptRequest } from "@/lib/execution-host/command-request";
 import { agentPromptOwner, agentPromptOwners } from "@/lib/agents/prompt-owner";
-import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
+import {
+  applyPromptOwner,
+  claimPromptOwner,
+  releasePromptOwnerClaim,
+} from "@/lib/execution-host/prompt-owner-application";
+import { PromptOwnerDeferred } from "@/lib/execution-host/prompt-owner-errors";
+import { runReconcileSweep } from "@/lib/reconcile";
+import { reconcileGraceSeconds } from "@/lib/instance-config";
+import { isTurnLostError } from "@/lib/reconcile-evidence";
+import { poll } from "@/test-support/durable-workers-ledger";
 import { createPromptOwnerRegistry } from "@/lib/execution-host/prompt-owners";
 import { MaisterError } from "@/lib/errors";
 import { reworkChildRun } from "@/lib/agents/launch";
@@ -50,7 +59,13 @@ import { queryRunTokens } from "@/lib/runs/cost-rollups";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
 import { createExecutionHosts } from "@/lib/execution-host/client";
-import { mintAssignment } from "@/lib/execution-host/assignments";
+import { createLocalDirectTransport } from "@/lib/execution-host/transports/local-direct";
+import {
+  mintAssignment,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host/assignments";
+import { quarantinePromptProtocol } from "@/lib/execution-host/prompt-evidence";
+import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import {
   localHost,
   resetResolverForTests,
@@ -545,6 +560,472 @@ async function assertPauseGrantRefusals(hitlId: string): Promise<void> {
 }
 
 describe("Agent owned prompts through the production launcher", () => {
+  it.each([
+    { variant: "initial", application: "applying" },
+    { variant: "initial", application: "deferred" },
+    { variant: "rework", application: "pending" },
+  ] as const)(
+    "owner-agent-reconcile preserves witnessed $variant completion while $application until its real owner publishes",
+    async ({ variant, application }) => {
+      const runId = await seedAgent({
+        bytes: 0,
+        operational: application === "deferred",
+        workspace:
+          variant === "rework" || application === "deferred"
+            ? "worktree"
+            : "none",
+      });
+      const summary =
+        variant === "rework" ? "recovered rework answer" : "original answer";
+
+      if (variant === "rework") {
+        const first = startDriver(runId);
+
+        await expect
+          .poll(
+            async () => {
+              if (first.child.exitCode !== null)
+                throw new Error(first.output());
+
+              return (
+                await db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, runId))
+              )[0]?.status;
+            },
+            { timeout: 30000, interval: 25 },
+          )
+          .toBe("Review");
+        await interruptAgentStatusWrite(runId, AGENT_FINAL_STATUSES, () =>
+          startDriver(
+            runId,
+            `fixture-output:${JSON.stringify({ bytes: 0, text: "```json maister:output\n" + JSON.stringify({ summary }) + "\n```" })}`,
+            undefined,
+            "rework",
+          ),
+        );
+      } else await killAtTerminalWrite(runId);
+      const [prompt] = await db
+        .select()
+        .from(executionCommands)
+        .where(
+          and(
+            eq(executionCommands.runId, runId),
+            eq(executionCommands.kind, "session.prompt"),
+          ),
+        )
+        .orderBy(desc(executionCommands.createdAt), desc(executionCommands.id))
+        .limit(1);
+
+      expect(prompt).toMatchObject({
+        state: "succeeded",
+        applicationState: "applying",
+        completionAppliedAt: null,
+      });
+      expect(prompt.terminalEvidenceSha256).toEqual(
+        expect.stringMatching(/^[a-f0-9]{64}$/),
+      );
+      expect(prompt.ownerRef?.variant).toBe(variant);
+      // The real application process died at its terminal status write. Expire its lease so recovery can claim it.
+      await db
+        .update(executionCommands)
+        .set({
+          applicationClaimExpiresAt: new Date(0),
+          applicationNextRetryAt: null,
+        })
+        .where(eq(executionCommands.id, prompt.id));
+      if (application === "pending") {
+        const claim = await claimPromptOwner({
+          db,
+          owners: agentPromptOwners,
+          commandId: prompt.id,
+        });
+
+        expect(claim).not.toBeNull();
+        await releasePromptOwnerClaim(db, claim!);
+      }
+      if (application === "deferred") {
+        const held = createPromptOwnerRegistry([
+          {
+            ...agentPromptOwner,
+            prepare: async () => {
+              throw new PromptOwnerDeferred("agent_session_teardown_pending");
+            },
+          },
+        ]);
+
+        expect(
+          await applyPromptOwner({
+            db,
+            owners: held,
+            commandId: prompt.id,
+            signal: AbortSignal.timeout(10000),
+          }),
+        ).toBe("deferred");
+        const [deferred] = await db
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, prompt.id));
+
+        expect(deferred).toMatchObject({
+          applicationState: "pending",
+          applicationError: {
+            reason: "prompt_owner_deferred",
+            classification: "deferred",
+          },
+          completionAppliedAt: null,
+        });
+      }
+      const hosts = createExecutionHosts({ db });
+
+      expect(
+        (await hosts.local().listSessionsForRun(runId)).some(
+          (session) => session.status === "live",
+        ),
+      ).toBe(false);
+      const before = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId));
+
+      expect(before).toHaveLength(variant === "initial" ? 0 : 1);
+      const sweep = await runReconcileSweep({
+        db,
+        executionHosts: hosts,
+        now: () => new Date(Date.now() + (reconcileGraceSeconds() + 1) * 1000),
+      });
+
+      expect(sweep.crashed).toBe(0);
+      expect(
+        await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId)),
+      ).toEqual([{ status: "Running" }]);
+      expect(
+        await db
+          .select({ state: executionAssignments.state })
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, prompt.executionAssignmentId)),
+      ).toEqual([{ state: "active" }]);
+      const recovering = startPromptOwnerWorker({
+        db,
+        owners: agentPromptOwners,
+      });
+
+      try {
+        await expect
+          .poll(
+            async () =>
+              (
+                await db
+                  .select({ status: runs.status })
+                  .from(runs)
+                  .where(eq(runs.id, runId))
+              )[0]?.status,
+            { timeout: 30000, interval: 25 },
+          )
+          .toBe(variant === "rework" ? "Review" : "Done");
+      } finally {
+        await recovering.stop();
+      }
+      const results = await db
+        .select()
+        .from(runResults)
+        .where(eq(runResults.runId, runId))
+        .orderBy(desc(runResults.revision));
+      const [applied] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, prompt.id));
+
+      expect(results).toHaveLength(variant === "initial" ? 1 : 2);
+      expect(results[0]).toMatchObject({
+        validity: "valid",
+        value:
+          application === "deferred"
+            ? operationalSuccessFixture()
+            : { summary },
+      });
+      expect(applied).toMatchObject({
+        state: "succeeded",
+        applicationState: "applied",
+        applicationAttempts: 0,
+      });
+      expect(applied.completionAppliedAt).not.toBeNull();
+      if (application === "deferred")
+        expect(applied.applicationError?.reason).toBe("prompt_owner_recovered");
+      expect(
+        await db
+          .select({ state: executionAssignments.state })
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, prompt.executionAssignmentId)),
+      ).toEqual([{ state: "released" }]);
+    },
+    90000,
+  );
+  it("owner-agent-reconcile cannot overwrite a real Review completion after its candidate snapshot", async () => {
+    const runId = await seedAgent({ bytes: 0, workspace: "worktree" });
+
+    await killAtTerminalWrite(runId);
+    const [prompt] = await db
+      .select()
+      .from(executionCommands)
+      .where(
+        and(
+          eq(executionCommands.runId, runId),
+          eq(executionCommands.kind, "session.prompt"),
+        ),
+      );
+
+    await db
+      .update(executionCommands)
+      .set({
+        applicationClaimExpiresAt: new Date(0),
+        applicationNextRetryAt: null,
+      })
+      .where(eq(executionCommands.id, prompt.id));
+    const transport = createLocalDirectTransport();
+    let ownerCompleted = false;
+    const hosts = createExecutionHosts({
+      db,
+      transport: {
+        ...transport,
+        async listSessionsForRun(id) {
+          const records = await transport.listSessionsForRun(id);
+
+          if (id === runId && !ownerCompleted) {
+            ownerCompleted = true;
+            expect(
+              await applyPromptOwner({
+                db,
+                owners: agentPromptOwners,
+                commandId: prompt.id,
+                signal: AbortSignal.timeout(30000),
+              }),
+            ).toBe("applied");
+          }
+
+          return records;
+        },
+      },
+    });
+    const swept = await runReconcileSweep({
+      db,
+      executionHosts: hosts,
+      now: () => new Date(Date.now() + (reconcileGraceSeconds() + 1) * 1000),
+    });
+
+    expect(ownerCompleted).toBe(true);
+    expect(swept.crashed).toBe(0);
+    expect(
+      await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId)),
+    ).toEqual([{ status: "Review" }]);
+    expect(
+      await db.select().from(runResults).where(eq(runResults.runId, runId)),
+    ).toMatchObject([
+      { validity: "valid", value: { summary: "original answer" } },
+    ]);
+    expect(
+      await db
+        .select({ kind: domainEvents.kind })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, runId),
+            eq(domainEvents.kind, "run.crashed"),
+          ),
+        ),
+    ).toEqual([]);
+  }, 90000);
+
+  it.each([
+    "missing",
+    "poisoned",
+    "superseded_generation",
+    "wrong_session",
+  ] as const)(
+    "owner-agent-reconcile refuses a healthy completion hold for $0 evidence",
+    async (condition) => {
+      const runId = await seedAgent({ bytes: 0 });
+      const hosts = createExecutionHosts({ db });
+
+      if (condition !== "missing") {
+        await killAtTerminalWrite(runId);
+        const [prompt] = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        expect(prompt.state).toBe("succeeded");
+        await db
+          .update(executionCommands)
+          .set({
+            applicationClaimExpiresAt: new Date(0),
+            applicationNextRetryAt: null,
+          })
+          .where(eq(executionCommands.id, prompt.id));
+        if (condition === "poisoned") {
+          await quarantinePromptProtocol(db, prompt.id, "receipt");
+        } else if (condition === "superseded_generation") {
+          await db.transaction(async (tx) => {
+            await releaseAssignmentForRun(
+              tx,
+              runId,
+              "fixture_generation_replaced",
+            );
+            await mintAssignment(tx, {
+              runId,
+              hostId: prompt.executionHostId,
+              reason: "resume",
+            });
+          });
+          expect(
+            await applyPromptOwner({
+              db,
+              owners: agentPromptOwners,
+              commandId: prompt.id,
+              signal: AbortSignal.timeout(30000),
+            }),
+          ).toBe("superseded");
+        } else {
+          const otherRunId = await seedAgent({ bytes: 0 });
+
+          await expectCompleted(otherRunId, startDriver(otherRunId));
+          const [other] = await db
+            .select()
+            .from(runSessions)
+            .where(eq(runSessions.runId, otherRunId));
+
+          expect(other.hostSessionId).not.toBeNull();
+          // A genuinely retained foreign session must never authorize this command's old owner.
+          await db
+            .update(runSessions)
+            .set({ hostSessionId: other.hostSessionId })
+            .where(eq(runSessions.runId, runId));
+        }
+      }
+      const swept = await runReconcileSweep({
+        db,
+        executionHosts: hosts,
+        now: () => new Date(Date.now() + (reconcileGraceSeconds() + 1) * 1000),
+      });
+
+      expect(swept.crashed).toBe(1);
+      expect(
+        await db
+          .select({ status: runs.status })
+          .from(runs)
+          .where(eq(runs.id, runId)),
+      ).toEqual([{ status: "Crashed" }]);
+      expect(
+        await db.select().from(runResults).where(eq(runResults.runId, runId)),
+      ).toEqual([]);
+      const [cause] = await db
+        .select({ value: sql`${domainEvents.payload}->'cause'` })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, runId),
+            eq(domainEvents.kind, "run.crashed"),
+          ),
+        );
+
+      expect(cause.value).toMatchObject({
+        reason:
+          condition === "poisoned" ? "owner_poisoned" : "agent_session_gone",
+      });
+    },
+    90000,
+  );
+
+  it("owner-agent-reconcile retains the actual lost-turn diagnosis instead of a healthy application hold", async () => {
+    const runId = await seedAgent({ bytes: 0, terminalDelayMs: 60000 });
+    const driver = startDriver(runId);
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await db
+              .select()
+              .from(executionCommands)
+              .where(
+                and(
+                  eq(executionCommands.runId, runId),
+                  eq(executionCommands.kind, "session.prompt"),
+                ),
+              )
+          )[0]?.state,
+        { timeout: 30000, interval: 25 },
+      )
+      .toBe("accepted");
+    driver.child.kill("SIGKILL");
+    await driver.exited;
+    supervisor = await supervisor.restart();
+    resetResolverForTests();
+    resetRegistrarStateForTests();
+    const lost = await poll(
+      async () => {
+        await recoverExecutionCommands({ db, graceMs: 0 });
+        const [current] = await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.runId, runId),
+              eq(executionCommands.kind, "session.prompt"),
+            ),
+          );
+
+        return current?.state === "failed" && isTurnLostError(current.lastError)
+          ? current
+          : null;
+      },
+      45000,
+      "native host restart lost-turn terminal evidence",
+      25,
+    );
+
+    expect(lost.applicationState).toBe("pending");
+    const swept = await runReconcileSweep({
+      db,
+      executionHosts: createExecutionHosts({ db }),
+      now: () => new Date(Date.now() + (reconcileGraceSeconds() + 1) * 1000),
+    });
+
+    expect(swept.crashed).toBe(1);
+    expect(
+      await db
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId)),
+    ).toEqual([{ status: "Crashed" }]);
+    expect(
+      await db.select().from(runResults).where(eq(runResults.runId, runId)),
+    ).toEqual([]);
+    const [cause] = await db
+      .select({ value: sql`${domainEvents.payload}->'cause'` })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, runId),
+          eq(domainEvents.kind, "run.crashed"),
+        ),
+      );
+
+    expect(cause.value).toMatchObject({ reason: "turn_lost" });
+  }, 90000);
+
   it.each(
     (["escalate", "terminate_restorable"] as const).flatMap((mode) =>
       (
@@ -3627,16 +4108,19 @@ describe("Agent owned prompts through the production launcher", () => {
       applicationState: "applied",
       applicationAttempts: 0,
     });
-    // Terminal evidence may arrive after the first preparation. A recovered
-    // deferral is retained by the application contract, never a poisoned retry.
+    // Teardown or canonical exit projection may defer the first preparation.
+    // Both retain recovery history without consuming a failure attempt.
     if (applied.applicationError !== null) {
       expect(applied.applicationError).toMatchObject({
         reason: "prompt_owner_recovered",
         classification: "deferred",
         phase: "prepare",
         causeReason: "prompt_owner_deferred",
-        causeDetails: { causeCode: "terminal_event_unconfirmed" },
       });
+      expect([
+        "terminal_event_unconfirmed",
+        "agent_session_teardown_pending",
+      ]).toContain(applied.applicationError.causeDetails?.causeCode);
       expect(applied.applicationError.deferredSince).toEqual(
         expect.any(String),
       );

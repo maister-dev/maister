@@ -660,3 +660,7 @@ mAIster/
 - [Architecture](architecture.md) — folder structure,
   dependency rules, code examples
 - [Agent Map](../AGENTS.md) — structural map for AI agents
+
+## Specialist stand pilot availability (Designed)
+
+The [specialist runtime](system-analytics/specialist-runtime.md) uses installed packages, native graph execution and ACP for durable assignments. The stand helper runs as a separate Linux systemd service. Before enabling a stand, use the host preflight and qualify a disposable unit with mutual TLS, the durable journal, current-authority callback, a pinned runbook and an independent health probe. The [stand configuration](configuration.md#company-specialist-and-stand-configuration) lists the environment settings and their consuming services.

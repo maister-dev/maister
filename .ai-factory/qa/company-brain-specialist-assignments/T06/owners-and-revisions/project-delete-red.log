@@ -1,0 +1,76 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793655663338,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793655663338,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":15,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793655663338,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793655663338,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793655663347,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793655663347,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793655663348,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793655663348,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":25,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793655664069,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":720,"containerId":"746d346794d09f8d5327784796221f5de301c52e58f60773c506f4f8d5f83ab8","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793655664081,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":758,"containerId":"746d346794d09f8d5327784796221f5de301c52e58f60773c506f4f8d5f83ab8","endpoint":"postgres://localhost:62039/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793655664368,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":287,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655664395,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":27,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655664395,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62039/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793655664549,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":1200,"containerId":"b4b5e16425193485bf854a46a644a4894b5907d90aa80327c84c3fbcbd3e0c9e","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793655664553,"pid":39024,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":129,"containerId":"746d346794d09f8d5327784796221f5de301c52e58f60773c506f4f8d5f83ab8","endpoint":"postgres://localhost:62039/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/foundation.integration.test.ts (5 tests | 1 failed) 1233ms
+   ❯ brain foundation — two lineages + pgvector (T1.3) (5)
+     × IT-CBK-05 project deletion cascades project-owned Brain records 10ms
+{"level":30,"time":1793655664560,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":1237,"containerId":"b4b5e16425193485bf854a46a644a4894b5907d90aa80327c84c3fbcbd3e0c9e","endpoint":"postgres://localhost:62040/maister_brain_test","msg":"started bare test database"}
+{"level":30,"time":1793655664838,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":212,"querySubmissions":6,"durationMs":277,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655664865,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":7,"querySubmissions":6,"durationMs":26,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793655664865,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:62040/maister_brain_test","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793655665094,"pid":39025,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":172,"containerId":"b4b5e16425193485bf854a46a644a4894b5907d90aa80327c84c3fbcbd3e0c9e","endpoint":"postgres://localhost:62040/maister_brain_test","msg":"stopped test database"}
+ ❯ |integration| lib/brain/__tests__/indexed-schema.integration.test.ts (3 tests | 1 failed) 1775ms
+   ❯ brain indexed-tier schema (ADR-127, migration 0003) (3)
+     × project deletion cascades indexed evidence and local record history 15ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| lib/brain/__tests__/foundation.integration.test.ts > brain foundation — two lineages + pgvector (T1.3) > IT-CBK-05 project deletion cascades project-owned Brain records
+error: update or delete on table "brain_items" violates foreign key constraint "brain_record_revisions_record_id_fkey" on table "brain_record_revisions"
+ ❯ ../node_modules/.pnpm/pg-pool@3.14.0_pg@8.23.1/node_modules/pg-pool/index.js:45:11
+ ❯ lib/brain/__tests__/foundation.integration.test.ts:169:5
+    167|     const itemId = await insertItemWithEmbedding(projectId, 7);
+    168|
+    169|     await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectI…
+       |     ^
+    170|
+    171|     const items = await ctx.db.execute(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |integration| lib/brain/__tests__/indexed-schema.integration.test.ts > brain indexed-tier schema (ADR-127, migration 0003) > project deletion cascades indexed evidence and local record history
+error: update or delete on table "brain_items" violates foreign key constraint "brain_record_revisions_record_id_fkey" on table "brain_record_revisions"
+ ❯ ../node_modules/.pnpm/pg-pool@3.14.0_pg@8.23.1/node_modules/pg-pool/index.js:45:11
+ ❯ lib/brain/__tests__/indexed-schema.integration.test.ts:278:5
+    276|     `);
+    277|
+    278|     await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectI…
+       |     ^
+    279|
+    280|     await expect(countRows("brain_sources", projectId)).resolves.toBe(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 6 passed (8)
+   Start at  00:41:02
+   Duration  2.19s (tests 80%, import 16%, transform 3%, setup 1%)
+
+undefined
+/Users/kaa/.codex/worktrees/2599/mAIster/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run --project integration lib/brain/__tests__/foundation.integration.test.ts lib/brain/__tests__/indexed-schema.integration.test.ts

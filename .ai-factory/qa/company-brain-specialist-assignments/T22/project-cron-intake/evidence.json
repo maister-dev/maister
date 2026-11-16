@@ -1,0 +1,189 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Reviewed native project cron assignments, source recovery and explicit approval intent",
+  "baseCommit": "7d290f8071a5e2241fcc7355b89f482add34b0bf",
+  "status": "Native project cron qualified; native project events/webhooks and T22 remain open",
+  "red": [
+    {
+      "case": "Actual registered tick produced no native assignment",
+      "expected": 1,
+      "actual": 0,
+      "exitCode": 1
+    },
+    {
+      "case": "A malformed full due page retained no refusals and starved healthy work",
+      "expectedRefusals": 25,
+      "actualRefusals": 0,
+      "exitCode": 1
+    },
+    {
+      "case": "Automatic review prevented documented repair/clearing when the pin was broken",
+      "exitCode": 1
+    },
+    {
+      "case": "Exact committed React UI baseline had no approval SET/CLEAR control",
+      "failedCases": 2,
+      "exitCode": 1
+    },
+    {
+      "case": "A reviewed source accepted and committed an older v1 claim with a fresh valid source fence",
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 191,
+      "files": 9,
+      "durationSeconds": 73.94,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9320,
+      "files": 889,
+      "durationSeconds": 28.59,
+      "exitCode": 0
+    },
+    "core": {
+      "tests": 76,
+      "files": 2,
+      "durationSeconds": 42.48,
+      "exitCode": 0
+    },
+    "sourceRecoveryAndAuthority": {
+      "tests": 77,
+      "files": 2,
+      "durationSeconds": 46.87,
+      "exitCode": 0
+    },
+    "explicitApprovalAndRepair": {
+      "tests": 97,
+      "files": 3,
+      "durationSeconds": 47.2,
+      "exitCode": 0
+    },
+    "approvalForm": {
+      "tests": 6,
+      "files": 1,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "format": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "schemaDrift": {
+      "changes": 0,
+      "exitCode": 0
+    },
+    "publicEnRuBuild": {
+      "exitCode": 0
+    },
+    "publicLinks": {
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Explicit review intent is separate from mutable source input. The actual current operator and installed professional pin authorize approval; ordinary editing and clearing do not acquire an accidental pin prerequisite.",
+    "Actual React form interaction qualifies approval SET/CLEAR without submitting model-controlled reviewer metadata. Current server HTTP accepts the flag and refuses forged review objects.",
+    "The existing project tick creates canonical assignments and preserves its real claim, reserved Run, actual reviewer, Inbox destination, required result and original v1 scheduled request.",
+    "Default standalone and coordinator drivers, real supervisor and controlled ACP processes reach valid required results. Business assignments remain active pending explicit acceptance.",
+    "A real open-claim probe refuses wrong reserved identity and source mutation. A forged database review and an older v1 claim from a reviewed source are rejected by the exact reference constraint.",
+    "Concurrent native intake retains one assignment and Run. Real interruption between Run commit and trigger settlement is adopted by the existing reconciler with one create/prompt pair.",
+    "Current reviewer revocation, unreviewed native history and missing recurring request retain explicit safe refusal evidence without new unauthorized assignments or Runs.",
+    "The existing bounded due scan uses explicit source ordering and a protected five-minute capture deferral. A full page of 25 malformed sources cannot indefinitely starve healthy work.",
+    "Existing v1 project and v2 company snapshots remain unchanged. Populated main-only upgrade and actual reviewed v3 claim capture permit project deletion without Brain.",
+    "The source review visibility boundary, company cron/event/webhook and legacy project admission regression remain green."
+  ],
+  "corrections": [
+    "The first native RED left its legacy Pending Run behind after the failed expectation, producing downstream host/pool fixture failures; these disappear with canonical intake.",
+    "The first source revision scalar subquery lost outer qualification in a multi-attachment layout. An explicit left join fixes the actual query mechanism.",
+    "Source approval was changed from implicit save behavior to explicit per-source intent to preserve the documented broken-pin repair contract, without fallback pin resolution.",
+    "The downgrade regression uses a fresh actual source fence; the original duplicate-fence fixture collision was corrected before establishing the successful-downgrade RED.",
+    "The PostgreSQL downgrade rejection is wrapped by Drizzle; the assertion checks its actual nested PG cause. Final owning migration coverage passes."
+  ],
+  "limits": [
+    "Native project event and webhook assignment adapters remain T22 work.",
+    "Native fresh admission intentionally requires an unchanged live source review; ordinary legacy cron source-deletion semantics remain unchanged. Captured input and admitted Run input are never rewritten.",
+    "Assignment context/correlation, governed agent-principal delegation, result delivery and business acceptance remain their owning later tasks.",
+    "No browser progress/recovery E2E, stand connector, real-model stand package qualification, pilot readiness or remote mutation is claimed."
+  ],
+  "sourceSha256": {
+    ".ai-factory/ARCHITECTURE.md": "c1e629f0f91d937dce80797cb74a2e0acd20a6530b4511f6300921e195bafed8",
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "27834e61779195a95a99e8d0b85ce70b36ed3d0c79b88a968a8487dc0aead71e",
+    "AGENTS.md": "613c688a8edddf64a93de281b0117da15b23dbf70ca875b4422e0842420d7827",
+    "docs/api/web.openapi.yaml": "d48f4fad6ef8bbdf95ecf12398f7be6782c414ee97c742a9cb60df13503b3f3e",
+    "docs/database-schema.md": "46b7a6c274115fad15f8ee6be295201a2edb9304cd9f8f335612092a17c5e7d7",
+    "docs/db/agents-domain.md": "0c9ca637d40a5f214d222e24dade73035a63ffcd510007710512aa1d6d16c15e",
+    "docs/screens/projects/project-settings-agents.md": "48f0b5712ed3295e30da17ceca81ca4f37364c0b6244ea9aee469d18b2307f84",
+    "docs/system-analytics/scheduled-agent-requests.md": "93641f7b40315505e2274cf8dce9c714e0335aa375bbf446edd85129b2f52c30",
+    "docs/system-analytics/specialist-assignments.md": "6c80988a611c3c24fc377e62ed44f4db138a3ef6eb0f326f9c61b0f3ffe2b352",
+    "site-docs/guides/operational-agents.md": "734e91d4985b8c1f9992ea1a6ac4ab1ae29f704279e4e21da54b584ba9e85501",
+    "site-docs/ru/guides/operational-agents.md": "9f266bd9ce04ff6803f444da13a23e99072782d6f90100c48f44716fb43864ac",
+    "web/app/api/projects/[slug]/agents/[agentId]/route.ts": "2bd6e60bcd893869c8bbdeb3770a3f7601957c08eead5f812fd13689f34941d8",
+    "web/components/agents/agent-incident-card.tsx": "293ae88f8d7a5021666c618a6187adaecb3938212090f3c4f6baf35c001dacba",
+    "web/components/board/panels/__tests__/agents-attach-config.dom.test.ts": "08b7c99f57ac2c78b0e92574b89c25feed42f6522add7ed37892d89e7cd9af3d",
+    "web/components/board/panels/agents-attach-edit-modal.tsx": "6910a11af998e6fd23a783bb69b8987d41dbf5c87ab7d440f49018a62c47e4ae",
+    "web/components/board/panels/agents-attach-panel.tsx": "e65c706038a8af9480917b4caea1c9e25f9165acbaad8d5ce3b33dfcab1a93cd",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "7e3f18de00cae035c7248e2ac27564c50727b72a69e3b10f916609f905f690fe",
+    "web/lib/agents/__tests__/project-links.integration.test.ts": "1f33ce6aea1ac1115195e28ff35073513ee39a2f0cec7036c92db3c4fe5aac68",
+    "web/lib/agents/__tests__/triggers.integration.test.ts": "9d03e9782b3d597a51eedc9f3a7eb5787d4152e86f5233194720791b5b2210d1",
+    "web/lib/agents/launch.ts": "92d033535d185badd3fed5c70c9bee7e355e47ecf4d002c7fb7c499774b3ee84",
+    "web/lib/agents/project-links.ts": "7dad1ff90bb64bc446a2029a3b31991ddd8ae6ed6aacdf5b5f70b386bb48ccf7",
+    "web/lib/agents/trigger-attempt-types.ts": "24d3af96d1fe7499eebbadb4063bef66dd62a5319e3c1f6a58280a2eca5da062",
+    "web/lib/agents/trigger-attempts.ts": "e14403a1dbc7528b4f984682df7de1a2a83f68f72b824c3db3d3b5af43d43b59",
+    "web/lib/agents/trigger-binding-snapshot.ts": "1936bb3b1b75a59760e7b14cdd19026258596c6717343cd89e00b0ec0d6fe42d",
+    "web/lib/agents/trigger-scope-schema.ts": "fefc455ff4abf21913db9a5f8972473879f80cfb5513f8ada18e7597795c63a6",
+    "web/lib/agents/triggers.ts": "972f94f5d0036be74bdfc0f9423f7b1687d252ff1065efb803ff87c508bef504",
+    "web/lib/db/__tests__/migration-company-brain-specialists.integration.test.ts": "057bf0d6b7db8431f044af56c380aad5e93377ee455e6d9eda4b3ddce2375713",
+    "web/lib/db/migrations/0242_project_trigger_review.sql": "c2cb56a682cf243dd2236d4ad3c2a802e95f71d7726a2f6a044849298e9f4ca0",
+    "web/lib/db/migrations/meta/0242_snapshot.json": "6a41758ba418fb101643e816a9e0367312948868a5231c6f3cc2bbad78f75a73",
+    "web/lib/db/migrations/meta/_journal.json": "deebe49c2c957a89ab083c0842b2d1876517089d3d9a13b2504cb944ab381b24",
+    "web/lib/services/runs.ts": "80d04a40e318f4e92162864415cae10baa13b198a494fb571575b5b749933169",
+    "web/lib/specialist-assignments/project-admission.ts": "14bf1c4b04a714d380d3591d23061bb3a80dd1f59d4aebad1e5ca2790761405b",
+    "web/lib/specialist-assignments/project-comment-intake.ts": "3b13d72f7df754c5dcf0c666e306051edfcf53610222d21a0fe0cd1310f64013",
+    "web/lib/specialist-assignments/project-cron-appointment.ts": "f2d4b6a84f95a9f4549a3fb7243103723ff5f85dde6b0bb6f952be6ec8829766",
+    "web/lib/specialist-assignments/project-cron-intake.ts": "882973614cf82ffdb3078cbd10bc470ce52ad0a56baa729b7c922fc4edd6264f",
+    "web/lib/specialist-assignments/project-request-intake.ts": "aea08479f4fe252ec013621b4a6cfe11c707a5a30e10ceb78e0bf12b605c94ba",
+    "web/lib/specialist-assignments/project-source-types.ts": "a3dc28d49ec2519d5144e92f738ba6632c713885d0bfb234b544db739457ecca",
+    "web/lib/specialist-assignments/project-specialist.ts": "70b358bcb4d24d300fa9940d4281c162a250a25ebb0df9793f0f414eac01a415",
+    "web/messages/en.json": "f98141c5f99feafffe8686299b4f4f52452c01b1c2468976b42b3089390c68de",
+    "web/messages/ru.json": "396a15d321e80edd77e0318ad2bcb0e56e99a4e7b2c5d5810c8a7fbee8cab855"
+  },
+  "logs": [
+    "cb-project-cron-red.log.gz",
+    "cb-project-cron-poison-red.log.gz",
+    "cb-project-cron-source-query-red.log.gz",
+    "cb-project-cron-clear-compat-red.log.gz",
+    "cb-project-cron-review-ui-red.log.gz",
+    "cb-project-cron-downgrade-red.log.gz",
+    "cb-project-cron-core-green.log.gz",
+    "cb-project-cron-edge-green.log.gz",
+    "cb-project-cron-intent-green.log.gz",
+    "cb-project-cron-review-ui-green.log.gz",
+    "cb-project-cron-generate.log.gz",
+    "cb-project-cron-drift.log.gz",
+    "cb-project-cron-downgrade-assertion.log.gz",
+    "cb-project-cron-release-integration.log.gz",
+    "cb-project-cron-release-unit.log.gz",
+    "cb-project-cron-release-types.log.gz",
+    "cb-project-cron-release-lint.log.gz",
+    "cb-project-cron-release-format.log.gz",
+    "cb-project-cron-release-contracts.log.gz",
+    "cb-project-cron-release-docs.log.gz",
+    "cb-project-cron-release-public.log.gz",
+    "cb-project-cron-release-public-links.log.gz"
+  ]
+}

@@ -15,6 +15,7 @@ import type {
   PromptEvidenceClass,
 } from "@/lib/reconcile-evidence";
 import type { WorktreeInfo } from "@/lib/worktree";
+import type { RunFlowOptions } from "@/lib/flows/graph/runner-core";
 
 import { randomUUID } from "node:crypto";
 
@@ -46,6 +47,7 @@ import { resolveCurrentNodeContext } from "@/lib/flows/graph/current-node-kind";
 import {
   NO_PROMPT_EVIDENCE,
   resolveConsensusPoisonEvidence,
+  resolveAgentPromptEvidence,
   resolvePoisonedPromptEvidence,
   resolvePromptEvidence,
 } from "@/lib/reconcile-evidence-db";
@@ -62,6 +64,10 @@ import {
   TERMINAL_RUN_STATUSES,
 } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
+import {
+  currentCoordinator,
+  wakeParkedCoordinator,
+} from "@/lib/flows/graph/coordinator-wake";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { hasSyncDriver } from "@/lib/runs/sync-driver-registry";
 import {
@@ -120,6 +126,7 @@ export type ReconcileAction =
   // outcome still belongs to the run's own prompt owner.
   | "reobserve"
   | "redispatch"
+  | "wake-coordinator"
   // ADR-175: a COMMITTED crash-recover intent whose dispatcher died. Re-entered
   // through the recover driver itself — one owner for the whole evidence →
   // close → dispatch sequence, instead of a second copy of that ordering here.
@@ -184,6 +191,7 @@ export type ReconcileReason =
   // M36 (ADR-095) T7.1: a parked orchestrator that is still waiting on
   // non-terminal children (or whose session is live) → leave it parked.
   | "orchestrator-waiting"
+  | "company-coordinator-wake-ready"
   // ADR-177: the current attempt's owned prompt reached the ledger — the flow
   // continuation worker drives the next node, so age proves nothing.
   | "evidence-applied"
@@ -248,6 +256,7 @@ export interface ReconcileInput {
   // when the parked orchestrator still has at least one non-terminal child, so
   // it must stay parked (a later child-terminal event wakes it). Default false.
   hasPendingChildren?: boolean;
+  nativeCoordinator?: boolean;
   // ADR-141: true when this run has a non-terminal `run_sync_attempts`
   // row (an in-flight branch sync). Routes the run to branch-sync recovery BEFORE
   // the flow reattach/redispatch arms so a sync row is never mis-driven as a
@@ -266,6 +275,7 @@ export interface ReconcileInput {
   // Default false — a fresh process has no observers, which is exactly the
   // state that needs recovery.
   agentObserverActive?: boolean;
+  retainedSpecialistWait?: boolean;
   // ADR-177: the classification of the current attempt's newest owned
   // `session.prompt` command. Resolved by the caller (cheap SQL, plus ONE
   // `GET /commands/{id}` receipt probe for an `accepted` row with no terminal
@@ -393,6 +403,11 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     if (input.hasPendingChildren) {
       return { action: "skip", reason: "orchestrator-waiting" };
     }
+    if (input.nativeCoordinator)
+      return {
+        action: "wake-coordinator",
+        reason: "company-coordinator-wake-ready",
+      };
 
     const anchorMs = mostRecentMs(
       input.resumeStartedAt,
@@ -427,7 +442,19 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
     }
   }
 
-  // 1. allow-list: reconcile only owns `Running` rows.
+  // A retained permission wait can adopt its observer without applying the answer or issuing a prompt.
+  if (
+    input.retainedSpecialistWait &&
+    input.runStatus === "NeedsInput" &&
+    input.runKind === "agent" &&
+    input.liveSession &&
+    input.worktreeExists
+  )
+    return input.agentObserverActive
+      ? { action: "skip", reason: "agent-observer-live" }
+      : { action: "reobserve", reason: "agent-observer-gone" };
+
+  // 1. allow-list: reconcile only owns `Running` rows outside retained waits.
   if (input.runStatus !== "Running") {
     return { action: "skip", reason: "not-running" };
   }
@@ -632,11 +659,20 @@ const EVIDENCE_DECISIONS = {
 } as const satisfies Record<PromptEvidenceClass, ReconcileDecision | null>;
 
 function evidenceClassification(
-  input: ReconcileInput,
+  input: Pick<
+    ReconcileInput,
+    "runKind" | "promptEvidence" | "promptEvidenceStreamLost"
+  >,
 ): ReconcileDecision | null {
-  // Scope guard: the flow agent-node arm only. `agent` and `scratch` runs reach
-  // this branch through their own kind mapping and keep their own owners.
-  if (input.runKind !== "flow") return null;
+  if (input.runKind !== "flow" && input.runKind !== "agent") return null;
+  // A finished old agent turn cannot hold a current Run merely by existing.
+  if (
+    input.runKind === "agent" &&
+    ["none", "applied", "pending_ingest", "inflight"].includes(
+      input.promptEvidence ?? "none",
+    )
+  )
+    return null;
   const decision = EVIDENCE_DECISIONS[input.promptEvidence ?? "none"];
 
   if (!decision) return null;
@@ -684,7 +720,10 @@ export interface RunReconcileSweepOptions {
   // signal, so the injection point carries the runner's options.
   runFlow?: (
     runId: string,
-    opts?: { crashResume?: { targetStepId: string } },
+    opts?: Pick<
+      RunFlowOptions,
+      "crashResume" | "orchestratorResume" | "consensusResume"
+    >,
   ) => Promise<void> | void;
   now?: () => Date;
 }
@@ -821,6 +860,9 @@ type CandidateRow = {
   runId: string;
   runKind: RunKind;
   status: string;
+  retainedSpecialistWait?: boolean;
+  companyId?: string | null;
+  assignmentId: string | null;
   acpSessionId: string | null;
   currentStepId: string | null;
   resumeStartedAt: Date | null;
@@ -1273,6 +1315,20 @@ async function crashUnownedCli(
 }
 
 async function loadCandidates(db: Db): Promise<CandidateRow[]> {
+  const retainedSpecialistWait = sql<boolean>`(${runs.status}='NeedsInput' AND ${runs.runKind}='agent'
+    AND ${runs.executionAssignmentId} IS NOT NULL
+    AND EXISTS(SELECT 1 FROM specialist_run_links link WHERE link.run_id=${runs.id}
+      AND (link.work_witness IS NOT NULL OR (link.work_id IS NULL AND link.role IN ('specialist','continuation'))))
+    AND EXISTS(SELECT 1 FROM run_session_incarnations incarnation WHERE incarnation.run_id=${runs.id}
+      AND incarnation.execution_assignment_id=${runs.executionAssignmentId} AND incarnation.state IN ('created','active')))`;
+  const orphanedParent = sql<boolean>`(${runs.parentRunId} IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM runs AS parent
+    WHERE parent.id=${runs.parentRunId}
+      AND parent.status NOT IN (${sql.join(
+        TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
+        sql`, `,
+      )})
+  ))`;
   const projectRows: Array<{ id: string; repoPath: string }> = await db
     .select({ id: projects.id, repoPath: projects.repoPath })
     .from(projects);
@@ -1284,6 +1340,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: string;
       runKind: RunKind;
       status: string;
+      retainedSpecialistWait: boolean;
+      assignmentId: string | null;
       acpSessionId: string | null;
       currentStepId: string | null;
       resumeStartedAt: Date | null;
@@ -1298,6 +1356,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        retainedSpecialistWait,
+        assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
         runStartedAt: runs.startedAt,
@@ -1316,7 +1376,10 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       .where(
         and(
           eq(runs.projectId, project.id),
-          inArray(runs.status, ["Running", "WaitingOnChildren"]),
+          or(
+            inArray(runs.status, ["Running", "WaitingOnChildren"]),
+            retainedSpecialistWait,
+          ),
         ),
       )
       .orderBy(asc(runs.startedAt))
@@ -1334,6 +1397,8 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
+        retainedSpecialistWait: sql<boolean>`false`,
+        assignmentId: runs.executionAssignmentId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
         runStartedAt: runs.startedAt,
@@ -1355,17 +1420,10 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
             "Review",
             "HumanWorking",
           ]),
-          isNotNull(runs.parentRunId),
+          sql`NOT ${retainedSpecialistWait}`,
           // The SQL twin of `coordinatorGone`: derived from the same set so the
           // loader can never hide an orphan the classifier would recover.
-          sql`NOT EXISTS (
-            SELECT 1 FROM runs AS parent
-            WHERE parent.id = ${runs.parentRunId}
-              AND parent.status NOT IN (${sql.join(
-                TERMINAL_RUN_STATUSES.map((status) => sql`${status}`),
-                sql`, `,
-              )})
-          )`,
+          orphanedParent,
         ),
       )
       .orderBy(asc(runs.startedAt))
@@ -1404,6 +1462,9 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     runId: string;
     runKind: RunKind;
     status: string;
+    retainedSpecialistWait: boolean;
+    companyId: string | null;
+    assignmentId: string | null;
     acpSessionId: string | null;
     currentStepId: string | null;
     resumeStartedAt: Date | null;
@@ -1418,6 +1479,9 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       runId: runs.id,
       runKind: runs.runKind,
       status: runs.status,
+      retainedSpecialistWait,
+      companyId: runs.companyId,
+      assignmentId: runs.executionAssignmentId,
       currentStepId: runs.currentStepId,
       resumeStartedAt: runs.resumeStartedAt,
       runStartedAt: runs.startedAt,
@@ -1432,7 +1496,15 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
     .where(
       and(
         isNull(runs.projectId),
-        inArray(runs.status, ["Running", "WaitingOnChildren"]),
+        or(
+          inArray(runs.status, ["Running", "WaitingOnChildren"]),
+          retainedSpecialistWait,
+          and(
+            isNotNull(runs.companyId),
+            eq(runs.status, "Pending"),
+            orphanedParent,
+          ),
+        ),
       ),
     )
     .orderBy(asc(runs.startedAt))
@@ -1687,7 +1759,7 @@ export async function runReconcileSweep(
     opts.runFlow ??
     (async (
       runId: string,
-      runOpts?: { crashResume?: { targetStepId: string } },
+      runOpts?: Parameters<NonNullable<RunReconcileSweepOptions["runFlow"]>>[1],
     ) => {
       const mod = await import("@/lib/flows/runner");
 
@@ -1998,28 +2070,30 @@ export async function runReconcileSweep(
     const wantsDbPoisonCheck =
       cand.runKind === "flow" && currentNodeKind !== null && !wantsEvidence;
     const promptEvidence =
-      cand.runKind === "flow" &&
-      currentNodeKind === "consensus" &&
-      cand.currentStepId
-        ? await resolveConsensusPoisonEvidence(db, {
-            runId: cand.runId,
-            nodeId: cand.currentStepId,
-          })
-        : wantsDbPoisonCheck && cand.currentStepId
-          ? await resolvePoisonedPromptEvidence(db, {
+      cand.runKind === "agent" && !live && !liveRunStep
+        ? await resolveAgentPromptEvidence(db, { runId: cand.runId })
+        : cand.runKind === "flow" &&
+            currentNodeKind === "consensus" &&
+            cand.currentStepId
+          ? await resolveConsensusPoisonEvidence(db, {
               runId: cand.runId,
               nodeId: cand.currentStepId,
             })
-          : wantsEvidence && cand.currentStepId
-            ? await resolvePromptEvidence(db, hosts.transport, {
+          : wantsDbPoisonCheck && cand.currentStepId
+            ? await resolvePoisonedPromptEvidence(db, {
                 runId: cand.runId,
-                // The CURRENT NODE's open attempt, which is what the boundary will
-                // act on. Deliberately not `latestAttempt` (the run-scoped grace
-                // anchor): classifying from one attempt and writing to another is
-                // how a run ends up crashed for evidence that was never its own.
                 nodeId: cand.currentStepId,
               })
-            : NO_PROMPT_EVIDENCE;
+            : wantsEvidence && cand.currentStepId
+              ? await resolvePromptEvidence(db, hosts.transport, {
+                  runId: cand.runId,
+                  // The CURRENT NODE's open attempt, which is what the boundary will
+                  // act on. Deliberately not `latestAttempt` (the run-scoped grace
+                  // anchor): classifying from one attempt and writing to another is
+                  // how a run ends up crashed for evidence that was never its own.
+                  nodeId: cand.currentStepId,
+                })
+              : NO_PROMPT_EVIDENCE;
 
     // M36 (ADR-095) T7.1: orphan detection needs the parent's status; the
     // parked-orchestrator pass needs to know if any child is still pending.
@@ -2031,6 +2105,13 @@ export async function runReconcileSweep(
       cand.status === "WaitingOnChildren"
         ? await hasPendingChildren(db, cand.runId)
         : false;
+    const nativeCoordinator =
+      cand.status === "WaitingOnChildren" &&
+      cand.companyId &&
+      !live &&
+      !pendingChildren
+        ? await currentCoordinator(db as ExecutionDb, cand.runId)
+        : null;
 
     const cliDriver =
       currentNodeKind === "cli" ? await observeCliDriver(db, cand.runId) : null;
@@ -2038,6 +2119,7 @@ export async function runReconcileSweep(
     const { action, reason } = classifyRunReconcile(
       {
         runStatus: cand.status,
+        retainedSpecialistWait: cand.retainedSpecialistWait,
         runKind: cand.runKind,
         acpSessionId: cand.acpSessionId,
         currentStepId: cand.currentStepId,
@@ -2066,6 +2148,7 @@ export async function runReconcileSweep(
         parentRunId: cand.parentRunId,
         parentStatus,
         hasPendingChildren: pendingChildren,
+        nativeCoordinator: nativeCoordinator?.status === "WaitingOnChildren",
         activeSyncAttempt: cand.activeSyncAttempt,
         syncDriverActive: cand.activeSyncAttempt
           ? hasSyncDriver(cand.runId)
@@ -2084,6 +2167,21 @@ export async function runReconcileSweep(
     );
 
     switch (action) {
+      case "wake-coordinator": {
+        const result = await wakeParkedCoordinator({
+          db: db as ExecutionDb,
+          parentRunId: cand.runId,
+          cause: "reconcile",
+          expectedAttemptId: nativeCoordinator?.nodeAttemptId,
+          resumeFlow: opts.runFlow,
+          resumeOptions: { executionHosts: hosts },
+        });
+
+        if (result.kind === "woken") reattached += 1;
+        else skipped += 1;
+
+        return;
+      }
       case "crash": {
         if (
           reason === "orchestrator-stuck" ||
@@ -2158,13 +2256,42 @@ export async function runReconcileSweep(
               logLabel: "[reconcile] orchestrator-stuck",
             },
           );
-          const crashResult = await crashWaitingOnChildren(
-            cand.runId,
-            mapReasonToCrashReason(reason),
-            { db },
-          );
+          let finalized: boolean;
 
-          if (!crashResult.ok) {
+          if (
+            cand.companyId &&
+            cand.runKind === "flow" &&
+            cand.parentRunId &&
+            reason === "orphaned-orchestrator"
+          ) {
+            const { finalizeCompanyFlowRun } =
+              await import("@/lib/run-results/company-flow-terminal");
+
+            finalized = await finalizeCompanyFlowRun({
+              db,
+              rootDb: db,
+              hosts,
+              runId: cand.runId,
+              requested: "Crashed",
+              errorCode: "CRASH",
+              reason: "orphaned_child",
+              orphan: {
+                parentRunId: cand.parentRunId,
+                status: "WaitingOnChildren",
+                nodeId: cand.currentStepId,
+              },
+            });
+          } else {
+            finalized = (
+              await crashWaitingOnChildren(
+                cand.runId,
+                mapReasonToCrashReason(reason),
+                { db },
+              )
+            ).ok;
+          }
+
+          if (!finalized) {
             // A concurrent wake won the CAS — the run is Running again; nothing
             // to crash. Count as skipped, not crashed.
             //
@@ -2228,14 +2355,83 @@ export async function runReconcileSweep(
           // transition won the CAS, or the finalize is deferred to a pending
           // human-ask activation): nothing was crashed, so nothing downstream
           // may pretend it was.
-          const result = await finalizeAgentRun(cand.runId, "Crashed", {
+          const crashOptions = {
             db,
             causeReason: causeReason(reason),
             reason: observerFailure
               ? `reconcile: ${reason} (observer gave up after ${observerFailure.attempts} attempts: ${observerFailure.code} ${observerFailure.message})`
               : `reconcile: ${reason}`,
             closeOpenHitl: true,
-          });
+          };
+          let result: { finalized: boolean };
+
+          if (reason === "agent-session-gone") {
+            const { prepareAgentRunFinalization } =
+              await import("@/lib/agents/finalization");
+            const prepared = await prepareAgentRunFinalization(
+              cand.runId,
+              "Crashed",
+              crashOptions,
+            );
+            const application = await db.transaction(
+              async (tx: ExecutionDb) => {
+                // Canonical settlement also locks the Run before its command.
+                const [locked] = await tx
+                  .select({
+                    id: schemaModule.runs.id,
+                    status: schemaModule.runs.status,
+                    assignmentId: schemaModule.runs.executionAssignmentId,
+                    resumeStartedAt: schemaModule.runs.resumeStartedAt,
+                  })
+                  .from(schemaModule.runs)
+                  .where(eq(schemaModule.runs.id, cand.runId))
+                  .for("update");
+
+                if (
+                  !locked ||
+                  locked.status !== cand.status ||
+                  locked.assignmentId !== cand.assignmentId ||
+                  locked.resumeStartedAt?.getTime() !==
+                    cand.resumeStartedAt?.getTime()
+                )
+                  return { finalized: false };
+                const current = await resolveAgentPromptEvidence(tx, {
+                  runId: cand.runId,
+                });
+
+                if (current.commandId !== promptEvidence.commandId)
+                  return { finalized: false };
+                const disposition = evidenceClassification({
+                  runKind: "agent",
+                  promptEvidence: current.evidence,
+                });
+
+                if (disposition !== null) {
+                  log.info(
+                    {
+                      runId: cand.runId,
+                      commandId: current.commandId,
+                      evidence: current.evidence,
+                      disposition: disposition.action,
+                    },
+                    "reconcile: current prompt evidence superseded the generic missing-session diagnosis",
+                  );
+
+                  return { finalized: false };
+                }
+
+                return prepared.apply(tx);
+              },
+            );
+
+            await prepared.afterCommit(application);
+            result = application;
+          } else
+            result = await finalizeAgentRun(
+              cand.runId,
+              "Crashed",
+              crashOptions,
+            );
 
           if (!result.finalized) {
             // Nothing was crashed, so the evidence this arm consumed was not
@@ -2246,7 +2442,7 @@ export async function runReconcileSweep(
             skipped += 1;
             log.warn(
               { runId: cand.runId, reason },
-              "reconcile: agent crash not finalized — a concurrent transition or a pending human-ask activation owns the run; left alone",
+              "reconcile: agent crash not finalized — current ownership, prompt application or a concurrent transition retained the Run",
             );
 
             return;
@@ -2427,10 +2623,26 @@ export async function runReconcileSweep(
             : [];
         let finalized: boolean;
 
-        if (agent?.kind === "operational") {
+        if (cand.companyId && cand.runKind === "flow" && cand.parentRunId) {
+          const { finalizeCompanyFlowRun } =
+            await import("@/lib/run-results/company-flow-terminal");
+
+          finalized = await finalizeCompanyFlowRun({
+            db,
+            rootDb: db,
+            hosts,
+            runId: cand.runId,
+            requested: "Abandoned",
+            cascadeParentRunId: cand.parentRunId,
+            orphan: { status: "Pending", nodeId: null },
+            errorCode: null,
+            reason: "orphaned_child",
+          });
+        } else if (agent?.kind === "operational") {
           const { finalizeAgentRun } = await import("@/lib/agents/launch");
           const result = await finalizeAgentRun(cand.runId, "Abandoned", {
             db,
+            executionHosts: hosts,
             reason: `reconcile: ${reason}`,
             closeOpenHitl: true,
           });

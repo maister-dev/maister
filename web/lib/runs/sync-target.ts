@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
@@ -881,6 +882,9 @@ export async function syncRunTarget(
     publishedBranch: workspace.publishedBranch as string | null,
     publishedRemote: workspace.publishedRemote as string | null,
   });
+
+  if (input.push ?? published)
+    await assertNativeProjectPublication(() => db, run);
   let remoteShaBefore: string | null = null;
   let remoteShaIndeterminate = false;
 
@@ -1303,6 +1307,7 @@ export async function syncRunTarget(
       // The LAST cancellation checkpoint before the only irreversible act in the
       // whole sync.
       await advancePhaseOrCancel(db, claim, runId, "pushing");
+      await assertNativeProjectPublication(() => db, await loadRun(db, runId));
       const push = await pushWithLease(
         worktree,
         branch,
@@ -1850,6 +1855,7 @@ async function driveSyncResolver(
 
       // The last cancellation checkpoint before the irreversible push.
       await advancePhaseOrCancel(db, claim, runId, "pushing");
+      await assertNativeProjectPublication(() => db, await loadRun(db, runId));
       const push = await pushWithLease(
         worktree,
         branch,

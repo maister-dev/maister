@@ -1,0 +1,104 @@
+{
+  "task": "T20",
+  "slice": "Company ownership and current human authority in the existing actor/human-assignment/event ledgers",
+  "date": "2026-11-06",
+  "baseCommit": "65d209d69a9004f92e906adf52640543b66b6fae",
+  "status": "Company human-work foundation qualified; native HITL delivery and T20 remain open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0229_company_human_work_ownership",
+    "0230_human_work_owner_guards"
+  ],
+  "red": {
+    "ownership": {
+      "log": "ownership-red.log.gz",
+      "failure": "A genuine company Run could not create human work because assignments.project_id was NOT NULL."
+    },
+    "attribution": {
+      "log": "missing-actor-red.log.gz",
+      "failure": "Company human completion accepted an open wait with no retained responding actor."
+    },
+    "diagnostics": {
+      "log": "query-diagnostics-red.log.gz",
+      "failure": "A real failed PostgreSQL claim leaked the Drizzle SQL query/parameters through the shared route logger."
+    }
+  },
+  "intermediateFailures": [
+    "The first populated-upgrade fixture ordered a UNION by a JSON expression without wrapping the union; corrected the fixture query.",
+    "The first type check identified three project-only action DTO/controller assumptions; explicit server-derived owner branches preserve the existing project JSON shape.",
+    "One automatic approval review timed out before starting the broader integration command. The permitted one-time retry succeeded; no approval or environment blocker remains."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 8,
+      "tests": 79,
+      "durationSeconds": 43.58,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "drift.log.gz"
+    }
+  },
+  "qualified": [
+    "Company human work extends existing tables rather than creating another human queue, scheduler or attempt ledger.",
+    "Populated 0228 -> 0229 -> 0230 preserves project actor/claim/event bytes, with no invented company owner.",
+    "Stable company user identities are attribution only; current read/answer/source authority is rechecked for human work actions.",
+    "Current revocation between claim and completion refuses completion without creating additional events; re-grant permits the same retained actor to act.",
+    "Foreign project actors, owner retargeting, event reparenting and company principal substitution refuse at service/DB boundaries.",
+    "A company wait cannot complete without a retained responding actor; server lifecycle cancellation records a scoped company system actor.",
+    "Actual company claim HTTP DTO validates against the additive owner-union OpenAPI schema; legacy project claim/release behavior remains green.",
+    "A real PostgreSQL claim error rolls back; shared route diagnostics retain SQLSTATE while removing raw query, parameters and private error text. Retry after the known DB rollback claims the same work once.",
+    "User deletion retains an orphan historical company actor, which cannot be rebound; project deletion still cascades its project work while retaining company work."
+  ],
+  "notYetQualified": [
+    "Native company permission/HITL row production, current response authorization and delivery/recovery",
+    "Company Inbox/full Run UI and actual real-model/companion package pilot",
+    "Company result-only Flow and remaining T20.1-T43 acceptance"
+  ],
+  "sourceSha256": {
+    "AGENTS.md": "30e4e459082f9bffeab8c41d35c7eb7ba7967ccbddfe39b3d7d1b52a2c988be2",
+    "docs/api/web.openapi.yaml": "f91c5c52fe3381f0aa515fea56d57fffb762d17baa2e8c208ffbfd90d3dd81ee",
+    "docs/database-schema.md": "05c7ee5fa1113c6fe4e7b695b7ce5d99bc199ca38764730cff1026dbee49b5e4",
+    "docs/db/assignments-domain.md": "b9efceb0d669f9875f7cf708a62c7be23fc89315c91cd95447a8e92e2f59b1ef",
+    "docs/db/erd.dbml": "03f9a95dedf011c03ead2f5c200f4e43304d88ef1c4c65eb0bc47cc10647ff98",
+    "docs/db/specialist-assignments-domain.md": "b3fcd26472f290105ad294b14b7f042271f17ecbc683866330ba5fa98162b57f",
+    "web/app/api/assignments/[assignmentId]/_shared.ts": "fb3cc80c085ce40b67e960903537d3c3290499cc26611b70c8a518a8a963d232",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "4a430c665925d13a080d42d0b0157c4efa18a45e6983e546e2c2481d2085adf7",
+    "web/lib/assignments/company-ownership.ts": "042630bfbf3ad93c5d3a5990914d5593f6991b65fdf369dd372dc1f048a94463",
+    "web/lib/assignments/service.ts": "67611f49c6dd7eac3eab74379d865300312b9f3a87de2b3589475e19c63aa468",
+    "web/lib/db/__tests__/migration-company-human-work.integration.test.ts": "26bd093a684b6fd3669cb9ad54fe06fddebdec0ae5e547071c045a1c8a8d02eb",
+    "web/lib/db/migrations/0229_company_human_work_ownership.sql": "979a6f39cea5377ac127e49781c863be30b426f38f86f02e98a0337a96da2c0a",
+    "web/lib/db/migrations/0230_human_work_owner_guards.sql": "cd539ec425516e3642177bb83d788a9bcde5c5a024da195b2fa3201de166f49b",
+    "web/lib/db/migrations/meta/0229_snapshot.json": "91f0201269a10d43ae95d126925a5b3d0833d57c07eefd169bab0ed6bb7a4634",
+    "web/lib/db/migrations/meta/0230_snapshot.json": "acbb7799b0491f534353596b9804db2ec8ab6f0a46d3bd92feb9899d47b9d8c2",
+    "web/lib/db/migrations/meta/_journal.json": "165d571e5812dc586fd9dfe0e95aa5cb47d1f79c3b6c6abe25cea4cd198b7bc3",
+    "web/lib/db/schema.ts": "32d18b1db59c3e852b0d66c5212d1d83393645597463e555182b17240a952b97"
+  }
+}

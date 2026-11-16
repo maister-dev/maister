@@ -23,6 +23,7 @@ import {
 import * as schemaModule from "@/lib/db/schema";
 import { type DelegationSnapshot } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
 import { tryStartRun } from "@/lib/scheduler";
 
@@ -180,10 +181,21 @@ async function executionDataPlaneModeForParent(
   input: ConsensusDraftLaunchInput,
 ): Promise<"canonical_events_v1"> {
   const rows = await input.db
-    .select({ executionDataPlaneMode: runs.executionDataPlaneMode })
+    .select({
+      executionDataPlaneMode: runs.executionDataPlaneMode,
+      resultContract: runs.resultContract,
+      knowledgeAccess: runs.knowledgeAccess,
+    })
     .from(runs)
     .where(eq(runs.id, input.parentRunId));
   const mode = rows[0]?.executionDataPlaneMode;
+
+  if (rows[0] && usesStructuredKnowledgeContext(rows[0]))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Native knowledge cooperation requires a declared professional agent or Flow target; a runner-only consensus participant has no receiving role authority",
+      { details: { reason: "native_professional_role_required" } },
+    );
 
   if (mode === "canonical_events_v1") {
     return mode;
@@ -376,6 +388,14 @@ export async function launchConsensusDraftRuns(
       `consensus draft prompt map has ${promptByParticipant.size} prompts for ${input.participants.length} participants`,
       { details: { reason: "consensus_draft_prompt_map_invalid" } },
     );
+
+  // Replayed runner drafts must pass the same source boundary as new children.
+  if (
+    input.participants.some(
+      (participant) => participantKind(participant) === "runner",
+    )
+  )
+    await executionDataPlaneModeForParent(input);
 
   for (const participant of input.participants) {
     const existing = await existingDraftRun(input, participant.id);

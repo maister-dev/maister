@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "3.11.1",
+  "results": [
+    {
+      "tag": "rah/v1.0.4",
+      "resolvedCommit": "a1ddf140369bbae7fe7efc9db88ff82b0a2289e6",
+      "state": "passed"
+    }
+  ]
+}

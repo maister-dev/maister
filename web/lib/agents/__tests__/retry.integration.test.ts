@@ -13,6 +13,7 @@ import {
   runAgentRetryAdmissionSweep,
   getAgentRetryReceipt,
 } from "@/lib/agents/retry";
+import { parseAgentRetryRecipe } from "@/lib/agents/retry-snapshot";
 import { prepareUndispatchedAgentFailure } from "@/lib/agents/finalization";
 import { getAgentRetryBatchOptions } from "@/lib/agents/retry-batch";
 import { runs, runSessions, platformAcpRunners } from "@/lib/db/schema";
@@ -135,6 +136,58 @@ async function finishedFixture(runId: string): Promise<{
     runnerId: session.runnerId!,
   };
 }
+
+it.each(["pre_work_retry", "fresh_qualification"] as const)(
+  "IT-CBE-06 legacy %s retry admission cannot downgrade a native source through a previously issued preview",
+  async (strategy) => {
+    const source =
+      strategy === "fresh_qualification"
+        ? await failedQualificationFixture()
+        : await fixture();
+    const preview = await getAgentRetryOptions(
+      database.db,
+      source.runId,
+      source.userId,
+    );
+
+    expect(preview.eligible).toBe(true);
+    await database.pool.query(
+      "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+      [
+        source.runId,
+        JSON.stringify({
+          schemaVersion: 1,
+          state: "complete",
+          generation: 1,
+          restrictions: [
+            { kind: "project_context", projectId: source.projectId },
+          ],
+        }),
+      ],
+    );
+    expect(
+      await getAgentRetryOptions(database.db, source.runId, source.userId),
+    ).toMatchObject({ eligible: false, reason: "retry_source_unsupported" });
+    await expect(
+      acceptAgentRetry(database.db, source.runId, source.userId, {
+        requestKey: randomUUID(),
+        previewFingerprint: preview.previewFingerprint,
+        runnerId: source.runnerId,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "retry_source_unsupported" },
+    });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM agent_retry_intents WHERE source_run_id=$1",
+          [source.runId],
+        )
+      ).rows,
+    ).toEqual([]);
+  },
+);
 
 it("accepts a positively proven operational pre-dispatch failure even when its outcome cause is operational_execution_failed", async () => {
   const runId = await seedAgentRun(database.db, {
@@ -917,6 +970,12 @@ it("IT-UX-15 refuses unknown work and stale previews, and revokes delayed execut
   await database.pool.query("DELETE FROM project_members WHERE user_id=$1", [
     source.userId,
   ]);
+  // Authority revocation is the subject; make this receipt unambiguously due
+  // across PostgreSQL microseconds and the sweep's millisecond clock boundary.
+  await database.pool.query(
+    "UPDATE agent_retry_intents SET due_at=clock_timestamp()-interval '1 second' WHERE id=$1",
+    [receipt.retryIntentId],
+  );
   await runAgentRetryAdmissionSweep(database.db);
   expect(
     (
@@ -1279,4 +1338,74 @@ it("IT-UX-14 enforces the actual retry HTTP boundary, excludes protected recipes
       )
     ).rows[0].total,
   ).toBe(0);
+});
+
+it("version-dispatches retained recipes without defaults and rejects company ownership, definition and reference laundering", async () => {
+  const source = await fixture();
+  const prepared = await prepareAgentRetry(
+    database.db,
+    source.runId,
+    source.userId,
+  );
+  const project = await retryRecipeFor(database.db, prepared, source.runnerId);
+  const reference = {
+    id: randomUUID(),
+    revision: 1,
+    snapshotSha256: "a".repeat(64),
+  };
+
+  if (project.version !== 2)
+    throw new Error("Expected version-two project recipe");
+  const { qualificationSha: _qualificationSha, ...base } = project;
+  const company = {
+    ...base,
+    definition: {
+      ...base.definition,
+      manifest: {
+        spec: {
+          schemaVersion: 1,
+          name: base.definition.packageName,
+          flows: [],
+          capabilities: [],
+        },
+        inventory: { skills: [], agents: [], platformAgents: [] },
+      },
+    },
+    version: 3,
+    strategy: "pre_work_retry",
+    owner: { kind: "company", companyId: randomUUID() },
+    projectId: null,
+    project: null,
+    taskId: null,
+    taskRevision: null,
+    specialistBinding: reference,
+    coordinatorFlowBinding: null,
+    assignment: {
+      id: randomUUID(),
+      inputRevision: 1,
+      inputSha256: "b".repeat(64),
+    },
+  };
+
+  expect(parseAgentRetryRecipe(project)).toEqual(project);
+  expect(parseAgentRetryRecipe(company)).toEqual(company);
+  for (const change of [
+    { version: 4 },
+    { projectId: source.projectId },
+    { taskId: randomUUID() },
+    { strategy: "fresh_qualification" },
+    { specialistBinding: { ...reference, revision: 0 } },
+    { coordinatorFlowBinding: { ...reference, snapshotSha256: "forged" } },
+    { assignment: { ...company.assignment, inputRevision: 2147483648 } },
+    { agentId: "other:role" },
+    { owner: { kind: "project", projectId: source.projectId } },
+    { confirmation: "model-supplied" },
+  ]) {
+    expect(() => parseAgentRetryRecipe({ ...company, ...change })).toThrowError(
+      expect.objectContaining({
+        code: "CONFIG",
+        details: { reason: "retry_recipe_invalid" },
+      }),
+    );
+  }
 });

@@ -1,0 +1,45 @@
+{
+  "task": "T07",
+  "baseRevision": "d10830e98e9e23b88ef5f18c18f58ad16ecd0bd2",
+  "specSha256": {
+    "docs/system-analytics/company-brain-evidence.md": "fed7fea608dc8907434986f96ae020935432a2078b58252d5168d04424142105",
+    "docs/db/company-brain-domain.md": "6d0062bad28c46758c0819b17dc9189fbaa7bd5359b0c252d7f0077406772690"
+  },
+  "red": [
+    {
+      "case": "near claims reinforced or superseded automatically",
+      "failed": 5,
+      "output": "claims-red.log"
+    },
+    {
+      "case": "immutable witness missing",
+      "failed": 1,
+      "output": "witness-red.log"
+    },
+    {
+      "case": "proposal evidence role cannot be expressed",
+      "output": "evidence-contract-red.log"
+    }
+  ],
+  "greenRefactor": {
+    "command": "pnpm --filter maister-web exec vitest run --project integration lib/brain/__tests__ lib/db/__tests__/migration-company-brain-specialists.integration.test.ts",
+    "files": 16,
+    "passed": 116,
+    "failed": 0,
+    "skipped": 0,
+    "output": "close-green.log",
+    "refactor": "Capture indexed bytes separately from mutable navigation; pin candidate claim revisions, keep unknown independence explicit, and share immutable evidence identities across quotations. Project-owned captures cascade on project deletion; company cross-owner links remain unavailable snapshots."
+  },
+  "otherGates": {
+    "brainUnitPassed": 84,
+    "contractTestsPassed": 10,
+    "explicitSchemaSurfaceExamples": 46,
+    "docsAll": "passed",
+    "typecheck": "passed",
+    "eslint": "zero warnings",
+    "generatedErdTables": 161
+  },
+  "limitations": [
+    "Potential similarity conflicts are review candidates, never declared contradictions. Native retrieval/HTTP/MCP/confirmation and actual-package qualification remain in their later owning tasks."
+  ]
+}

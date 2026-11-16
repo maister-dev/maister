@@ -8,7 +8,7 @@ import type {
 } from "@/lib/agents/activity-types";
 import type {
   OperationalCleanup,
-  OperationalResultV1,
+  OperationalResult,
 } from "@/lib/run-results/operational-types";
 
 import { createHash } from "node:crypto";
@@ -300,7 +300,7 @@ export type AgentTerminalIncidentInput = {
   transitionId: string;
   reason: string | undefined;
   terminal: Run["operationalTerminal"];
-  reported: OperationalResultV1 | null;
+  reported: OperationalResult | null;
 };
 
 export async function applyAgentTerminalIncidents(

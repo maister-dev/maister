@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "task": "T18",
+  "status": "designed_expected_result_descriptor_qualified_storage_pending",
+  "red": "Assignment read fixture with required exact result descriptor fails the old closed DTO.",
+  "green": "Both public schemas expose required schemaRef/schemaVersion/sha256/required=true; missing exact digest is rejected. Existing RunResultContract builders remain the execution contract authority.",
+  "diagnostic": "An intermediate partial YAML-block serialization lost anchors shared with origin/destination schemas. Rebuilt only the owning assignment schema block with explicit scalars and aliasDuplicateObjects=false; full public parity and examples pass.",
+  "checks": {
+    "fullContracts": {
+      "exitCode": 0,
+      "surfaceExamples": 79
+    },
+    "docsAndErd": {
+      "exitCode": 0,
+      "tables": 164
+    }
+  },
+  "scope": "SDD read contract only. Assignment persistence is in its separate meaningful RED state and is not claimed complete."
+}

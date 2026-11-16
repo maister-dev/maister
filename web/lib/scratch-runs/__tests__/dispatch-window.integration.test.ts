@@ -6,7 +6,10 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
-import { invocationFromEnvironment } from "@/test-support/process-invocation";
+import {
+  invocationFromEnvironment,
+  signalInvocationProcess,
+} from "@/test-support/process-invocation";
 import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
 import {
   readScratchPromptIntent,
@@ -302,8 +305,11 @@ async function signalAdapter(
 
   expect(rows).toHaveLength(1);
   const owner = rows[0]!;
+  const invocation = invocationFromEnvironment();
+
+  if (!invocation) throw new Error("Scratch fixture requires its invocation");
   const { adapter } = await captureOwnedAdapterProcess({
-    invocation: invocationFromEnvironment()!,
+    invocation,
     supervisor: fixture!.supervisor,
     sessionId: owner.host_session_id,
     expected: {
@@ -315,7 +321,7 @@ async function signalAdapter(
   });
 
   expect(adapter.pid).toBe(row.pid);
-  process.kill(adapter.pid, signal);
+  await signalInvocationProcess(invocation, adapter, signal);
 }
 
 it("S1 launch: a web death after Running commits and before prompt admission re-drives the original turn once", async () => {
@@ -806,6 +812,7 @@ it("S1 package message: restart retains request-only follow-up context and its o
 
 it("S3 transport: a held parked exit is fenced before the canonical scratch consumer", async () => {
   fixture = await suite.startFixture({
+    fixtureArgs: ["--controlled-prompt"],
     fixtureEnv: { MAISTER_PERMISSION_MAX_HOURS: "0.00222" },
   });
   const oldExit = fixture.proxy.arm(
@@ -818,29 +825,9 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     },
     "hold-events",
   );
-  const nextPrompt = fixture.proxy.arm(
-    {
-      caseId: "s3-successor-prompt",
-      method: "POST",
-      path: /^\/sessions\/[^/]+\/prompts$/,
-      assignmentEpoch: 2,
-    },
-    "hold-request",
-  );
   let oldReleased = false;
   let terminalReleased = false;
   let oldTerminal: FaultBarrier | undefined;
-  let nextReleased = false;
-  const initialPrompt = fixture.proxy.arm(
-    {
-      caseId: "s3-initial-prompt",
-      method: "POST",
-      path: /^\/sessions\/[^/]+\/prompts$/,
-      assignmentEpoch: 1,
-    },
-    "hold-request",
-  );
-  let initialReleased = false;
   const launching = fixture
     .launchScratch(
       'fixture-output:{"bytes":0,"text":"successor result","permission":true}',
@@ -849,25 +836,30 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
 
   try {
     const initialDeadline = Date.now() + 60_000;
-    const initial = await initialPrompt.awaitReached(60_000);
+    const initialAdapter = await adapterPrompt(0);
 
-    // Start the short permission lifetime only after session creation is
-    // durably projected. This scenario tests the stale exit, not create lag.
-    await poll(
+    // The adapter has received the prompt and waits before requesting
+    // permission. Activation can finish without a held socket or command lock.
+    const initial = await poll(
       async () => {
-        const result = await fixture!.database.pool.query<{ active: boolean }>(
-          `SELECT i.state = 'active' AS active
+        const result = await fixture!.database.pool.query<{ id: string }>(
+          `SELECT c.id
            FROM execution_commands c
            JOIN run_session_incarnations i ON i.id = c.owner_ref->>'incarnationId'
-           WHERE c.id = $1`,
-          [initial.commandId],
+           WHERE c.kind = 'session.prompt' AND c.owner_kind = 'scratch_message'
+             AND c.assignment_epoch = 1 AND i.acp_session_id = $1
+             AND i.state = 'active'`,
+          [initialAdapter.sessionId],
         );
 
-        return result.rows[0]?.active ? true : null;
+        expect(result.rows.length).toBeLessThanOrEqual(1);
+
+        return result.rows[0] ?? null;
       },
       initialDeadline - Date.now(),
       "canonical session creation before the permission lifetime starts",
     );
+
     // Install the terminal barrier before the host starts its permission
     // deadline. Persistence of the request can lag that deadline on CI.
     oldTerminal = fixture.proxy.arm(
@@ -877,12 +869,11 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
         path: /^\/runtime-events$/,
         eventType: "session.command",
         commandPhases: ["completed", "rejected"],
-        commandId: initial.commandId!,
+        commandId: initial.id,
       },
       "hold-events",
     );
-    initialPrompt.release();
-    initialReleased = true;
+    await signalAdapter(0, "SIGUSR1");
     const request = await poll(
       async () => {
         const result = await fixture!.database.pool.query<{
@@ -890,7 +881,7 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
           id: string;
         }>(
           "SELECT h.run_id,h.id FROM hitl_requests h WHERE h.run_id=(SELECT run_id FROM execution_commands WHERE id=$1) AND h.kind='permission' AND h.responded_at IS NULL AND h.superseded_at IS NULL",
-          [initial.commandId],
+          [initial.id],
         );
 
         return result.rows[0] ?? null;
@@ -912,19 +903,20 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     );
 
     expect((await responding).status).toBe(202);
-    await nextPrompt.awaitReached(20_000);
+    const successorAdapter = await adapterPrompt(1);
     const before = await fixture.database.pool.query(
-      `SELECT r.status,s.dialog_status,i.id AS incarnation FROM runs r
+      `SELECT r.status,s.dialog_status,i.assignment_epoch FROM runs r
        JOIN scratch_runs s ON s.run_id=r.id
        JOIN run_sessions rs ON rs.run_id=r.id AND rs.execution_assignment_id=r.execution_assignment_id
        JOIN run_session_incarnations i ON i.run_session_id=rs.id AND i.host_session_id=rs.host_session_id
-       WHERE r.id=$1`,
-      [request.run_id],
+       WHERE r.id=$1 AND i.acp_session_id=$2`,
+      [request.run_id, successorAdapter.sessionId],
     );
 
     expect(before.rows[0]).toMatchObject({
       status: "Running",
       dialog_status: "Running",
+      assignment_epoch: 2,
     });
     oldExit.release();
     oldReleased = true;
@@ -956,8 +948,7 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
       dialog_status: "Running",
     });
 
-    nextPrompt.release();
-    nextReleased = true;
+    await signalAdapter(1, "SIGUSR1");
     await poll(
       async () => {
         const state = await fixture!.database.pool.query(
@@ -972,14 +963,10 @@ it("S3 transport: a held parked exit is fenced before the canonical scratch cons
     );
   } finally {
     await fixture.web.kill("SIGKILL");
-    if (!initialReleased && initialPrompt.observations.length)
-      initialPrompt.ownedProcessKilled();
     if (!oldReleased && oldExit.observations.length)
       oldExit.ownedProcessKilled();
     if (!terminalReleased && oldTerminal?.observations.length)
       oldTerminal.ownedProcessKilled();
-    if (!nextReleased && nextPrompt.observations.length)
-      nextPrompt.ownedProcessKilled();
     await launching;
   }
 }, 240_000);

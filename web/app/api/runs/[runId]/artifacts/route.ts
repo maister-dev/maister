@@ -6,6 +6,10 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import {
+  assertRunKnowledgeDisclosure,
+  isRunKnowledgeUnavailable,
+} from "@/lib/brain/knowledge-run-disclosure";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -67,6 +71,11 @@ function httpStatusForAuthz(code: string): number | null {
 }
 
 function errorResponse(err: unknown, runId: string): NextResponse {
+  if (isRunKnowledgeUnavailable(err))
+    return NextResponse.json(
+      { code: err.code, message: err.message },
+      { status: 409 },
+    );
   if (isMaisterError(err)) {
     const status = httpStatusForAuthz(err.code);
 
@@ -94,7 +103,7 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const runRows = await db.select().from(runs).where(eq(runs.id, runId));
@@ -108,6 +117,11 @@ export async function GET(
     }
 
     await requireProjectAction(run.projectId, "readBoard");
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: sessionUser.id },
+      runId,
+    );
 
     const all = await getArtifactsForRun(runId);
 
@@ -121,6 +135,12 @@ export async function GET(
         (node === null || a.nodeId === node) &&
         (kind === null || a.kind === kind) &&
         (validity === null || a.validity === validity),
+    );
+
+    await assertRunKnowledgeDisclosure(
+      getDb(),
+      { kind: "user", userId: sessionUser.id },
+      runId,
     );
 
     return NextResponse.json({ artifacts: filtered.map(toArtifactDto) });

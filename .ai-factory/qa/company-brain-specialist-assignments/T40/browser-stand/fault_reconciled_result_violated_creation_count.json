@@ -1,0 +1,121 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "ab42773debea5d4101146936dc50db9cde3d9884315d8ed4f97f75e6aa3866b4",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "9c3996d16514392b9094a35c0e6370b4198479fb",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T14:05:18.572657+00:00",
+  "exitCode": 1,
+  "candidateUnchanged": true,
+  "finishedAt": "2026-11-14T14:09:04.871221+00:00",
+  "invocationId": "a42bbb6a-d62a-41cc-88c3-802b640458e2",
+  "status": "fault_reconciled_result_violated_creation_count",
+  "providerSessionModels": [
+    {
+      "sessionId": "012c529f-50ca-42f6-9c31-58d58e5607e5",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "sessionId": "048784e8-7856-4adb-9a43-35818fd69a51",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    },
+    {
+      "sessionId": "81de246f-c06e-4dba-a7c9-f1a478fce62a",
+      "reportedModels": [
+        "glm-5.3"
+      ]
+    }
+  ],
+  "observations": {
+    "stand-clarification-proof": {
+      "assignmentId": "e21a261d-28ce-4358-a81e-9dc698392a8b",
+      "runId": "9ff84f72-e2a9-4ec2-b41f-e3a2dadbfde1",
+      "questionId": "fec1486d-17a3-4ea5-b81a-185ee3ee3140",
+      "source": 1,
+      "answer": 2,
+      "response": {
+        "componentId": "fixture"
+      }
+    },
+    "stand-coordinator-interruption-proof": {
+      "assignmentId": "e21a261d-28ce-4358-a81e-9dc698392a8b",
+      "runId": "9ff84f72-e2a9-4ec2-b41f-e3a2dadbfde1",
+      "operationId": "c2d556b1-b131-4b25-ac85-4365b4d30189",
+      "oldWebPid": 72788,
+      "newWebPid": 81008,
+      "acceptedDiagnostic": {
+        "id": "a113a1b2-ce64-4d24-8962-5a676ce4e63a",
+        "childRunId": "ad8575e7-f7f5-4496-b3d9-e312bec8c9ad",
+        "inputRevision": 2,
+        "workRevision": 1,
+        "resultRevision": 1
+      }
+    },
+    "stand-conflict-proof": {
+      "contenderId": "0f82c937-d71b-49e7-8c04-d1cc996c3eb0",
+      "operationId": "c2d556b1-b131-4b25-ac85-4365b4d30189",
+      "aliasId": "fixture-alias",
+      "status": 409
+    },
+    "stand-reconciliation-proof": {
+      "operationId": "c2d556b1-b131-4b25-ac85-4365b4d30189",
+      "runId": "9ff84f72-e2a9-4ec2-b41f-e3a2dadbfde1",
+      "unknown": {
+        "id": "c2d556b1-b131-4b25-ac85-4365b4d30189",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "c2d556b1-b131-4b25-ac85-4365b4d30189",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "cc794924-948d-4cea-8c08-3a9fb6aa0e11"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    },
+    "pilot-settlement-diagnostics": {
+      "execution": {
+        "status": "Failed",
+        "current_step_id": null,
+        "cause": null,
+        "reasons": null
+      },
+      "results": [],
+      "nodes": [
+        {
+          "node_id": "coordinate",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "authorize",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "execute",
+          "status": "Failed"
+        }
+      ]
+    }
+  },
+  "cleanup": {
+    "outcome": "clean",
+    "leaks": 0
+  },
+  "refusal": {
+    "path": "references",
+    "rule": "creation_reference_missing",
+    "reportedCreated": 1,
+    "confirmedCreationReferences": 0
+  }
+}

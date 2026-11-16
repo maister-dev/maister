@@ -7,6 +7,7 @@ import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
+import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -585,6 +586,7 @@ export async function openPullRequest(
   ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
+  await assertNativeProjectPublication(git.db, ctx.run);
   requireActionAllowed(ctx, "openPr");
 
   const workspace = requireWorkspace(ctx);
@@ -777,6 +779,7 @@ export async function finalizePullRequestRun(
   ctx.viewerUserId = sessionUser.id;
 
   await deps.authorize(ctx.run.projectId, "promoteRun");
+  await assertNativeProjectPublication(gitDepsFromOptions(options).db, ctx.run);
   requireActionAllowed(ctx, "finalizePr");
 
   const promoteCtx: PromoteRunContext = {

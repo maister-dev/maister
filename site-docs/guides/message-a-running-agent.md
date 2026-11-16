@@ -70,6 +70,33 @@ Flow children do not expose an addressable agent session for this operation.
 For result collection, `run_collect` accepts exactly one of `childRunId` or
 `all: true`; collection itself does not send a message.
 
+## Clarify work with an active specialist
+
+The professional who delegated a specialist assignment can use
+`run_message` with the exact `childRunId`, `mode: "steer"`, and a
+`requestKey`. The child needs an active turn on a session that supports
+steering. `messageState: "applied"` confirms delivery. A refused message
+creates no new turn. If delivery is uncertain, use the same key and prompt
+to check its outcome.
+
+## Request rework on a completed specialist result
+
+Collect the result with `run_collect`. For result-only specialist work, use the
+returned work and result revisions in `run_rework`. Supply the exact child
+Run, your rework instructions, and a stable request key. The specialist receives
+a new Run under the same logical work, and you can still inspect the original
+result. Reuse the same request key and instructions to check an uncertain
+request.
+
+An authorized reviewer can accept or reject a collected child result through
+the assignment API. Acceptance links to the original result and findings in
+the working context. Rejection records the reviewer’s reason and keeps the
+original result available. The assignment stays open for its final decision.
+
+For result-only assignments, a valid result from the completed root Run
+makes the assignment ready for acceptance. An authorized reviewer can accept
+that exact root result through the assignment API to complete the assignment.
+
 ## Related guides
 
 - [Human-in-the-loop requests](/guides/human-in-the-loop)

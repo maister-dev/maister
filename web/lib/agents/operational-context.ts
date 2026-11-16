@@ -17,6 +17,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-types";
 import { frozenOperationalDefinition } from "@/lib/agents/launch-contract";
 import {
   captureOperationalBaseline,
@@ -26,11 +27,17 @@ import {
 import {
   agentWorkdirPath,
   agentReadOnlyWorkdirPath,
+  companyAgentWorkdirPath,
+  companyAgentRuntimePath,
+  operationalAgentRuntimePath,
 } from "@/lib/agents/workspace-paths";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
-const log = pino({ name: "operational-integrity" });
+const log = pino({
+  name: "operational-integrity",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export function operationalResourceKind(
   run: Pick<Run, "agentWorkspace" | "resultContract">,
@@ -49,9 +56,10 @@ export function operationalResourceKind(
 }
 
 export async function operationalReferenceEvidence(
-  db: Db,
+  db: Pick<Db, "select">,
   run: Pick<Run, "id" | "projectId">,
 ): Promise<OperationalRefEvidence[]> {
+  if (run.projectId === null) return [];
   const rows = await db
     .select({
       branch: workspaces.branch,
@@ -65,7 +73,7 @@ export async function operationalReferenceEvidence(
     .innerJoin(runs, eq(runs.id, workspaces.runId))
     .where(
       and(
-        eq(workspaces.projectId, run.projectId ?? ""),
+        eq(workspaces.projectId, run.projectId),
         eq(runs.agentKind, "operational"),
         ne(runs.id, run.id),
       ),
@@ -102,23 +110,176 @@ export async function operationalReferenceEvidence(
   ]);
 }
 
+type OperationalWorkspaceRun = Pick<
+  Run,
+  "id" | "projectId" | "agentWorkspace" | "resultContract"
+> &
+  Partial<
+    Pick<
+      Run,
+      | "operationalIntegrityBaseline"
+      | "companyId"
+      | "companyExecutionSnapshot"
+      | "runKind"
+    >
+  >;
+
+export type OperationalWorkspaceContext =
+  | {
+      ownerKind: "project";
+      cwd: string;
+      runtimePath: string;
+      resourceKind: OperationalResourceKind;
+      projectSlug: string;
+      repoPath: string;
+    }
+  | {
+      ownerKind: "company";
+      companyId: string;
+      cwd: string;
+      runtimePath: string;
+      resourceKind: "plain_directory";
+      projectSlug: null;
+      repoPath: null;
+    };
+
+/** Retained company graph ownership admits the same resource lifecycle without impersonating an operational-agent result. */
+export function isCompanyFlowResource(
+  run: OperationalWorkspaceRun,
+): run is OperationalWorkspaceRun & {
+  companyId: string;
+  runKind: "flow";
+  resultContract: Extract<
+    NonNullable<Run["resultContract"]>,
+    { kind: "flow_export" }
+  > & { required: true };
+} {
+  const capture = companyExecutionSnapshotSchema.safeParse(
+    run.companyExecutionSnapshot,
+  );
+
+  return (
+    run.runKind === "flow" &&
+    run.projectId === null &&
+    run.companyId != null &&
+    run.agentWorkspace === "none" &&
+    run.resultContract?.kind === "flow_export" &&
+    run.resultContract.required &&
+    capture.success &&
+    capture.data.schemaVersion === 2 &&
+    capture.data.owner.companyId === run.companyId
+  );
+}
+
+function companyOperationalWorkspace(
+  run: OperationalWorkspaceRun,
+): OperationalWorkspaceContext {
+  const capture = companyExecutionSnapshotSchema.safeParse(
+    run.companyExecutionSnapshot,
+  );
+
+  if (
+    !capture.success ||
+    capture.data.owner.companyId !== run.companyId ||
+    run.projectId !== null
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company workspace requires its exact retained execution owner",
+      {
+        details: { reason: "company_workspace_owner_missing" },
+      },
+    );
+  if (
+    run.agentWorkspace !== "none" ||
+    (capture.data.schemaVersion === 2
+      ? run.runKind !== "flow" ||
+        run.resultContract?.kind !== "flow_export" ||
+        !run.resultContract.required
+      : (run.runKind !== undefined && run.runKind !== "agent") ||
+        run.resultContract?.kind !== "agent_operational")
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Company operational work requires a plain run directory",
+      {
+        details: { reason: "company_workspace_unsupported" },
+      },
+    );
+  const companyId = capture.data.owner.companyId;
+  const cwd = companyAgentWorkdirPath(companyId, run.id);
+  const runtimePath = companyAgentRuntimePath(companyId, run.id);
+  const baseline = run.operationalIntegrityBaseline;
+  const owner = baseline?.owner;
+
+  if (
+    baseline &&
+    (baseline.resourceKind !== "plain_directory" ||
+      !owner ||
+      !("kind" in owner) ||
+      owner.kind !== "company" ||
+      owner.companyId !== companyId ||
+      owner.runId !== run.id ||
+      owner.cwd !== cwd ||
+      owner.runtimePath !== runtimePath)
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Company workspace baseline does not match its retained owner and managed paths",
+      {
+        details: { reason: "company_workspace_owner_mismatch" },
+      },
+    );
+
+  log.debug(
+    {
+      runId: run.id,
+      companyId,
+      resourceKind: "plain_directory",
+      baselineGeneration: baseline?.generation ?? null,
+    },
+    "company operational workspace owner resolved",
+  );
+
+  return {
+    ownerKind: "company",
+    companyId,
+    cwd,
+    runtimePath,
+    resourceKind: "plain_directory",
+    projectSlug: null,
+    repoPath: null,
+  };
+}
+
 export async function operationalWorkspace(
-  db: Db,
-  run: Pick<Run, "id" | "projectId" | "agentWorkspace" | "resultContract"> &
-    Partial<Pick<Run, "operationalIntegrityBaseline">>,
-): Promise<{
-  cwd: string;
-  resourceKind: OperationalResourceKind;
-  projectSlug: string;
-  repoPath: string;
-}> {
+  db: Pick<Db, "select">,
+  run: OperationalWorkspaceRun,
+): Promise<OperationalWorkspaceContext> {
+  if (run.companyId != null) return companyOperationalWorkspace(run);
   const owner = run.operationalIntegrityBaseline?.owner;
 
-  if (owner) return { ...owner, resourceKind: operationalResourceKind(run) };
+  if (owner && "kind" in owner)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Project workspace cannot use a company baseline owner",
+    );
+  if (owner)
+    return {
+      ...owner,
+      ownerKind: "project",
+      runtimePath: operationalAgentRuntimePath(owner.projectSlug, run.id),
+      resourceKind: operationalResourceKind(run),
+    };
+  if (run.projectId === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Operational workspace requires an explicit project or company execution owner",
+    );
   const [project] = await db
     .select({ slug: projects.slug, repoPath: projects.repoPath })
     .from(projects)
-    .where(eq(projects.id, run.projectId ?? ""));
+    .where(eq(projects.id, run.projectId));
 
   if (!project)
     throw new MaisterError(
@@ -144,7 +305,9 @@ export async function operationalWorkspace(
         : (workspace?.path ?? agentWorkdirPath(project.slug, run.id));
 
   return {
+    ownerKind: "project",
     cwd,
+    runtimePath: operationalAgentRuntimePath(project.slug, run.id),
     resourceKind,
     projectSlug: project.slug,
     repoPath: workspace?.parentRepoPath ?? project.repoPath,
@@ -152,7 +315,7 @@ export async function operationalWorkspace(
 }
 
 export async function inspectOperationalWorkspace(
-  db: Db,
+  db: Pick<Db, "select">,
   run: Pick<
     Run,
     | "id"
@@ -161,7 +324,8 @@ export async function inspectOperationalWorkspace(
     | "agentWorkspace"
     | "resultContract"
     | "operationalIntegrityBaseline"
-  >,
+  > &
+    Partial<Pick<Run, "companyId" | "companyExecutionSnapshot" | "runKind">>,
 ): Promise<OperationalIntegrityResult> {
   frozenOperationalDefinition(run);
   const context = await operationalWorkspace(db, run);
@@ -352,7 +516,8 @@ export async function assertOperationalDispatchIntegrity(
 ): Promise<void> {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
 
-  if (run?.agentKind !== "operational") return;
+  if (!run || (run.agentKind !== "operational" && !isCompanyFlowResource(run)))
+    return;
   const result = await inspectOperationalRun(db, run);
 
   if (result.verdict !== "clean")

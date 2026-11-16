@@ -1,8 +1,13 @@
 import "server-only";
 
 import type { GlobalRole } from "@/lib/db/schema";
+import type { AssignmentInboxItemView } from "./assignment-inbox";
+import type { StandIncidentInboxItemView } from "./stand-incident-inbox";
 
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+
+import { readAssignmentInboxItems } from "./assignment-inbox";
+import { readStandIncidentInboxItems } from "./stand-incident-inbox";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -11,7 +16,11 @@ import * as schemaModule from "@/lib/db/schema";
 const { inboxItems, projectMembers, projects, tasks } =
   schemaModule as unknown as Record<string, any>;
 
-export type InboxItemView = {
+export type InboxItemView =
+  LegacyInboxItemView | AssignmentInboxItemView | StandIncidentInboxItemView;
+
+export type LegacyInboxItemView = {
+  assignmentId?: never;
   id: string;
   projectSlug: string;
   projectName: string;
@@ -36,6 +45,8 @@ export async function getUnreadInboxCount(
 ): Promise<number> {
   const db = getDb() as unknown as { select: any };
   const conditions = [
+    isNull(inboxItems.assignmentDeliveryId),
+    isNull(inboxItems.standIncidentId),
     eq(inboxItems.recipientType, "user"),
     eq(inboxItems.recipientId, userId),
     isNull(inboxItems.readAt),
@@ -62,7 +73,16 @@ export async function getUnreadInboxCount(
     count: number;
   }>;
 
-  return Number(rows[0]?.count ?? 0);
+  const predicate = and(
+    isNull(inboxItems.readAt),
+    projectId ? eq(inboxItems.projectId, projectId) : sql`true`,
+  )!;
+  const [native, incidents] = await Promise.all([
+    readAssignmentInboxItems(getDb(), userId, predicate),
+    readStandIncidentInboxItems(getDb(), userId, predicate),
+  ]);
+
+  return Number(rows[0]?.count ?? 0) + native.length + incidents.length;
 }
 
 export async function getInboxItems(
@@ -73,6 +93,8 @@ export async function getInboxItems(
   const db = getDb() as unknown as { select: any };
   const limit = Math.min(Math.max(opts?.limit ?? 30, 1), 100);
   const conditions = [
+    isNull(inboxItems.assignmentDeliveryId),
+    isNull(inboxItems.standIncidentId),
     eq(inboxItems.recipientType, "user"),
     eq(inboxItems.recipientId, userId),
     isNull(projects.archivedAt),
@@ -121,7 +143,7 @@ export async function getInboxItems(
     taskTitle: string;
   }>;
 
-  return rows.map((row) => ({
+  const legacy: LegacyInboxItemView[] = rows.map((row) => ({
     id: row.id,
     projectSlug: row.projectSlug,
     projectName: row.projectName,
@@ -132,6 +154,18 @@ export async function getInboxItems(
     read: row.readAt !== null,
     createdAt: row.createdAt,
   }));
+  const predicate = and(
+    opts?.includeRead ? sql`true` : isNull(inboxItems.readAt),
+    opts?.projectId ? eq(inboxItems.projectId, opts.projectId) : sql`true`,
+  )!;
+  const [native, incidents] = await Promise.all([
+    readAssignmentInboxItems(getDb(), userId, predicate),
+    readStandIncidentInboxItems(getDb(), userId, predicate),
+  ]);
+
+  return [...legacy, ...native, ...incidents]
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+    .slice(0, limit);
 }
 
 export async function getUnreadInboxCountsByProject(
@@ -164,6 +198,8 @@ export async function getUnreadInboxCountsByProject(
   const rows = (await query
     .where(
       and(
+        isNull(inboxItems.assignmentDeliveryId),
+        isNull(inboxItems.standIncidentId),
         eq(inboxItems.recipientType, "user"),
         eq(inboxItems.recipientId, userId),
         isNull(inboxItems.readAt),
@@ -176,5 +212,19 @@ export async function getUnreadInboxCountsByProject(
     count: number;
   }>;
 
-  return new Map(rows.map((r) => [r.projectId, Number(r.count)]));
+  const counts = new Map(rows.map((r) => [r.projectId, Number(r.count)]));
+  const predicate = and(
+    isNull(inboxItems.readAt),
+    inArray(inboxItems.projectId, projectIds),
+  )!;
+  const [native, incidents] = await Promise.all([
+    readAssignmentInboxItems(getDb(), userId, predicate),
+    readStandIncidentInboxItems(getDb(), userId, predicate),
+  ]);
+
+  for (const item of [...native, ...incidents])
+    if (item.projectId !== null)
+      counts.set(item.projectId, (counts.get(item.projectId) ?? 0) + 1);
+
+  return counts;
 }

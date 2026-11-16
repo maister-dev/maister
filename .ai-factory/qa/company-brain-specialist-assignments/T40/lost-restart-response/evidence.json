@@ -1,0 +1,84 @@
+{
+  "sourceHead": "3cb2b2ff7b78cc20738d49f3cf945dd767a1bacd",
+  "candidateSha256": "0dd9048989ca12789eaf9ac973243bc5fd893ff991d465b861cb149c3f9f8058",
+  "mcpBundleSha256": "34110420fedf1681685c92c79262c3932d8428e32ea50d81abf741a029cc6e80",
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "59cd220dfd9689fa7c9479383c1ef543f79b62b7",
+  "model": "glm-5.3",
+  "startedAt": "2026-11-14T13:09:54.917224+00:00",
+  "invocationId": "9591d95f-41cd-435d-a664-2c10a3510be4",
+  "buildId": "smECMTp02ySQ6NTAXn5Im",
+  "status": "effect_reconciled_and_healthy_assignment_not_accepted",
+  "beforeReceipt": {
+    "event": "qualification_restart_ack_dropped",
+    "operationId": "6db657f8-0178-46b9-9caa-49a14f7114a9",
+    "sequence": 5,
+    "beforeInvocation": "539a4ee9713c4f4187dc084ef7d05b7a",
+    "afterInvocation": "94a98313b67c457b860a367f95ebfc21"
+  },
+  "persistedProof": {
+    "operationId": "6db657f8-0178-46b9-9caa-49a14f7114a9",
+    "effectState": "confirmed_applied",
+    "receiptId": "3117f418-8cbd-47fa-903b-6d34ad8c51d2",
+    "verificationId": "712a430b-3221-4970-8556-1689268fc0b9",
+    "verificationState": "healthy",
+    "verificationSequence": 6,
+    "receiptSequence": 5,
+    "dispatchCount": 1,
+    "permitCount": 1,
+    "assignmentState": "active"
+  },
+  "scope": "The disposable helper committed the restart receipt and dropped the HTTP response once. Browser reconciliation recovered that original receipt. A later independent probe was healthy. The final Flow result was refused because it changed a retained child finding and dropped a missing-evidence entry.",
+  "browserObservations": {
+    "stand-reconciliation-proof": {
+      "operationId": "6db657f8-0178-46b9-9caa-49a14f7114a9",
+      "runId": "f242bd63-cf70-4eba-9963-b094668947f6",
+      "unknown": {
+        "id": "6db657f8-0178-46b9-9caa-49a14f7114a9",
+        "effectState": "unknown",
+        "revision": 3,
+        "receiptIds": []
+      },
+      "reconciled": {
+        "id": "6db657f8-0178-46b9-9caa-49a14f7114a9",
+        "effectState": "confirmed_applied",
+        "receiptIds": [
+          "3117f418-8cbd-47fa-903b-6d34ad8c51d2"
+        ]
+      },
+      "dispatch": {
+        "permits": 1,
+        "commands": 1,
+        "distinctInvocations": true
+      }
+    },
+    "pilot-settlement-diagnostics": {
+      "execution": {
+        "status": "Failed",
+        "current_step_id": null,
+        "cause": null,
+        "reasons": null
+      },
+      "results": [],
+      "nodes": [
+        {
+          "node_id": "coordinate",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "authorize",
+          "status": "Succeeded"
+        },
+        {
+          "node_id": "execute",
+          "status": "Failed"
+        }
+      ]
+    }
+  },
+  "exitCode": 1,
+  "cleanup": {
+    "leaks": 0
+  },
+  "sourceComparison": "Only the qualification spec was prepared for the next run after the production build and operation; the initial candidate patch hash identifies the tested build."
+}

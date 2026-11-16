@@ -1,0 +1,77 @@
+$ node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all && node scripts/validate-docs-links.mjs --all && node scripts/validate-docs-indexes.mjs && node --test scripts/validate-docs-indexes.test.mjs && node --test scripts/validate-requirement-coverage.test.mjs && node --test scripts/validate-docs-adr-anchors.test.mjs && pnpm validate:cb-coverage && pnpm validate:operational-coverage && pnpm --filter maister-web db:erd --check
+validate-docs-mermaid: 581/581 mermaid block(s) passed across 443 file(s)
+validate-docs-adr-anchors: 1113 ADR anchor link(s) resolved across 443 file(s); 202 hub stub(s) ↔ body files in sync
+validate-docs-links: 4842 relative link(s) resolved across 443 file(s)
+validate-docs-indexes: 186 file(s) indexed across 4 canonical README(s)
+✔ accepts a complete, indexed Stage B specification fixture (14.113958ms)
+✔ accepts a complete, indexed M51 specification fixture (5.825792ms)
+✔ accepts a complete, indexed Run trace specification fixture (5.569958ms)
+✔ accepts a complete, indexed Librarian specification fixture (7.096708ms)
+✔ rejects a missing Librarian document and an LMM id with no matrix row (6.052708ms)
+✔ rejects a TRC requirement with no row in the run-trace matrix (6.233916ms)
+✔ rejects a TRC traceability row whose primary test cell is blank (6.1675ms)
+✔ accepts aligned Markdown traceability tables (5.142625ms)
+✔ rejects missing R5 sections and excess expectation bullets (6.453167ms)
+✔ rejects duplicate requirements, a missing primary test, and broken artifacts (7.83175ms)
+✔ rejects a missing M51 analytics document, naming the M51 group (6.311833ms)
+✔ rejects an M51 requirement with no row in m51-traceability.md (5.940667ms)
+✔ rejects an M51 traceability row whose primary test cell is blank (6.217959ms)
+✔ labels duplicate ids with their own group (5.737291ms)
+✔ validateAnalyticsGroup reports a group with no documents on disk (5.83825ms)
+✔ rejects an unindexed analytics document (7.528167ms)
+✔ company specifications are enforced by the registered documentation command (7.000625ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 149.151667
+✔ holds when every id and every implementation task is covered (1.158042ms)
+✔ a Planned row's primary test need not exist yet; an Implemented one must (0.215167ms)
+✔ rejects an implementation task no row names, and a row naming an undefined task (0.095917ms)
+✔ rejects a declared id absent from the matrix and a matrix row no document declares (0.069583ms)
+✔ only describe/it/test titles count as resolvable test ids (0.202917ms)
+✔ resolves literal table-driven test titles without counting data as tests (0.076292ms)
+✔ M51 group has complete task and test coverage (80.30875ms)
+✔ flat task headers are non-vacuous and missing enforcement fails (0.170084ms)
+✔ operational group covers all 34 contracts and all 15 implementation tasks (72.140625ms)
+✔ agent activity task namespace is non-vacuous and rejects an orphan (0.343916ms)
+✔ agent activity group names all planned obligations and implementation tasks (73.059958ms)
+✔ const-asserted parameter tables do not swallow following requirement-bearing tests (0.056ms)
+✔ CT-CBX-05 refuses empty discovery, duplicate identities and unresolvable status claims (0.288958ms)
+✔ CT-CBX-05 company group discovers all 84 contracts and 45 enforcing tasks (73.947417ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 338.994709
+✔ splitTableRow keeps an ESCAPED pipe inside a cell (0.810667ms)
+✔ parseAdrIndexRows reads anchor, title, status and date (0.371708ms)
+✔ parseAdrStubs reads the stub title, status and date (0.121667ms)
+✔ a well-formed hub produces no failures (0.142667ms)
+✔ a stub with NO index row fails — the ADR-177 renumber defect (0.088958ms)
+✔ an index row with NO stub fails (0.053042ms)
+✔ a row TITLE that differs from the stub fails (0.074ms)
+✔ a row DATE that differs from the stub fails (0.063792ms)
+✔ a row ANCHOR that does not slugify from the stub heading fails (0.071375ms)
+✔ a row STATUS that differs from the stub does NOT fail (0.088875ms)
+✔ a stub with no **Date:** line is accepted, and its date is not compared (0.057458ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 36.689542
+$ node scripts/validate-requirement-coverage.mjs --group company-brain-specialists
+validate-requirement-coverage [Company Brain and specialists]: 84 requirement id(s) across 8 document(s); 84 matrix row(s); 45 implementation task(s); 12 test id(s) in the suite — bidirectional coverage holds and every implemented primary test resolves
+$ node scripts/validate-requirement-coverage.mjs --group operational-agents
+validate-requirement-coverage [Operational agents]: 34 requirement id(s) across 3 document(s); 34 matrix row(s); 15 implementation task(s); 34 test id(s) in the suite — bidirectional coverage holds and every implemented primary test resolves
+$ tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts --check
+generate-erd-dbml --check: docs/db/erd.dbml is current (164 tables)

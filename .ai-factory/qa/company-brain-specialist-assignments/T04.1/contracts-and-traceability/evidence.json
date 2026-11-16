@@ -1,0 +1,68 @@
+{
+  "task": "T04.1",
+  "baseRevision": "cb183968df5bac9b9ce652a6bdb6aa2bb79b45ff",
+  "implementationRevision": "containing phase commit; worktree content digests below",
+  "specSha256": {
+    "docs/system-analytics/company-brain-evidence.md": "005a38e2971a04d64e0b1fa9236511dbdd5bac7b8ef4e1db00505908df4473d9",
+    "docs/system-analytics/company-brain-specialists-qualification.md": "ec4da7088f75906f64a8e348bc0005141f2ea51dee0d2436713d5ac2429bc252",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "8abba34541e78b66bfad632707fd0887b7ea6eaca4ab320f63122679fa8d5f5a",
+    "docs/system-analytics/company-brain.md": "eb2662ab27f35165db35f82e22c0b5dda34833456c51a0aa12de7adaf03e74cf",
+    "docs/system-analytics/evidence-findings.md": "a75247a217a7a740476f4a1b4f2473a907099ae82dc64b264eb4a133e75074a7",
+    "docs/system-analytics/specialist-assignments.md": "f6738cd3ba6edddc6ce10ba8f3bcbf64ec989114e52302034db7ddbe94040eec",
+    "docs/system-analytics/specialist-cooperation.md": "1cdab7d7d495257cf9ff6681ed12627baaec34a883cc2f3d74618896b0d523fa",
+    "docs/system-analytics/specialist-runtime.md": "500b67dad2229dace6ef24f85d8f46425fa27ce3c31b54d908b12f655be65a06",
+    "docs/system-analytics/stand-maintenance.md": "17e35cba1dd73368749192f8d4fffe1c98686e73174b1f40656bcfae91b6bd3a"
+  },
+  "red": [
+    {
+      "command": "node --test scripts/validate-requirement-coverage.test.mjs",
+      "passed": 12,
+      "failed": 2,
+      "output": "coverage-red.log"
+    },
+    {
+      "command": "node --test scripts/validate-contracts.test.mjs",
+      "passed": 9,
+      "failed": 1,
+      "output": "contracts-red.log"
+    },
+    {
+      "command": "node --test scripts/validate-docs-indexes.test.mjs",
+      "passed": 16,
+      "failed": 1,
+      "output": "indexes-red.log"
+    }
+  ],
+  "greenRefactor": {
+    "command": "node --test scripts/validate-contracts.test.mjs scripts/validate-docs-indexes.test.mjs scripts/validate-requirement-coverage.test.mjs",
+    "discovered": 41,
+    "passed": 41,
+    "failed": 0,
+    "skipped": 0,
+    "output": "green-refactor.log",
+    "refactor": "Reuse coverage group metadata in the docs index gate; keep nested examples validation in the existing public contract command."
+  },
+  "phaseGates": [
+    {
+      "command": "pnpm validate:contracts",
+      "exitCode": 0,
+      "schemaSurfaceExamples": 42,
+      "adapterMirrors": 5,
+      "humanSchemaCurrent": true
+    },
+    {
+      "command": "pnpm validate:docs:all",
+      "exitCode": 0,
+      "mermaidPassed": 581,
+      "adrLinksResolved": 1113,
+      "relativeLinksResolved": 4840,
+      "indexedFiles": 186,
+      "generatedErdTables": 153,
+      "requirementRows": 84,
+      "enforcingTasks": 44
+    }
+  ],
+  "limitations": [
+    "All feature requirements remain Planned; no platform feature or actual package/pilot qualification is claimed."
+  ]
+}

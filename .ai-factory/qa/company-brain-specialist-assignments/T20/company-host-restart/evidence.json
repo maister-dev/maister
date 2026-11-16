@@ -1,0 +1,49 @@
+{
+  "task": "T20",
+  "slice": "Retained actual supervisor restart through native company permission recovery",
+  "date": "2026-11-06",
+  "baseCommit": "750f95e1da54e6d56edf05888d21bcfbc7499e34",
+  "status": "Parked host restart qualified; T20 remains open",
+  "engineVersion": "3.11.1",
+  "productionChanges": false,
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 33,
+      "durationSeconds": 18.08,
+      "log": "integration-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Native company permission checkpoint retains the same assignment, frozen input and result contract across an actual supervisor process restart on retained SQLite/runtime state.",
+    "Host key is unchanged and boot ID changes; the canonical run_sessions ACP handle remains inspectable and nonempty.",
+    "Existing continuation and projection workers resume the owned company turn; current responder revocation prevents input and re-grant completes both linked human waits with one input.",
+    "No new engine, ledger, recovery scheduler, production branch or migration was required."
+  ],
+  "fixtureCorrection": "The first strengthened witness selected the retired runs.acpSessionId field. Final verification joins canonical run_sessions; production code was unchanged.",
+  "limits": [
+    "Controlled ACP fixture, not real-model/package qualification",
+    "Parked supervisor host restart, not arbitrary control-plane crash or unknown stand-operation recovery",
+    "Company Flow, full Run/Inbox UI and remaining T20/T21-T43 acceptance remain open"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "cd80730897129f5295fb8ad35bba1f26f4b82091c837efd0b04a6338a9558fac",
+    "docs/system-analytics/specialist-runtime.md": "6fa3a352894aa5bbc94dd8d96b97f8dcb96f7a7e1164268e0d9ffc4f0755aef4",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "7780dc07a82a87e7480dd4970187ca9d73b4fc7575db179e0a4d8b8a1f8e11ff"
+  }
+}

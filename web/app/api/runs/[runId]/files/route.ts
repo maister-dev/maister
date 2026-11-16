@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
+import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getRunDetail } from "@/lib/queries/run";
 import { listTree, repoRelPathSchema } from "@/lib/worktree";
@@ -57,7 +59,7 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const detail = await getRunDetail(runId);
 
@@ -66,6 +68,9 @@ export async function GET(
     }
 
     await requireProjectAction(detail.projectId, "readRepoFiles");
+    const recipient = { kind: "user" as const, userId: user.id };
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     const path = new URL(req.url).searchParams.get("path") ?? "";
 
@@ -78,6 +83,8 @@ export async function GET(
       ref: detail.branch,
       dir: path,
     });
+
+    await assertRunKnowledgeDisclosure(getDb(), recipient, runId);
 
     if (tree === null) {
       return NextResponse.json({ message: "not found" }, { status: 404 });

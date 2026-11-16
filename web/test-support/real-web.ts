@@ -5,29 +5,19 @@ import type { LinuxApplicationOutcome } from "./linux-isolation-protocol";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
-import {
-  readdir,
-  readFile,
-  readlink,
-  rm,
-  symlink,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { freePort } from "./real-supervisor";
+import { acquireProductionBuildLock } from "./production-build-lock";
 import {
   FIXTURE_WATCHDOG,
   fixtureProcessEnvironment,
   invocationFromEnvironment,
   registerProcess,
-  findProcessIdentity,
-  processIdentity,
-  sameProcess,
   readLogTail,
   preserveFixtureLog,
   logInvocation,
@@ -101,7 +91,6 @@ export type RealWeb = {
 // An atomic symlink to a complete owner identity serializes builds. Only a
 // proved dead owner can be reclaimed; elapsed age never grants that authority.
 const BUILD_LOCK_DIR = path.join(WEB_DIR, ".next.build-lock");
-const BUILD_LOCK_POLL_MS = 500;
 const execFileAsync = promisify(execFile);
 
 export type ProductionWebBuild = Readonly<{
@@ -115,96 +104,6 @@ async function currentRevision(): Promise<string> {
   return (
     await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: WEB_DIR })
   ).stdout.trim();
-}
-
-async function acquireBuildLock(): Promise<() => Promise<void>> {
-  const invocation = invocationFromEnvironment();
-
-  if (!invocation)
-    throw new Error("production build requires a test invocation");
-  const identity = await processIdentity(invocation, process.pid);
-  const ownerFile = path.join(
-    invocation.directory,
-    `build-lock-${randomUUID()}.json`,
-  );
-
-  // Publish the complete identity before atomically installing its symlink.
-  // A death between allocation and publication cannot create an ownerless lock.
-  await writeFile(ownerFile, JSON.stringify(identity), {
-    flag: "wx",
-    mode: 0o600,
-  });
-  const deadline = Date.now() + 20 * 60 * 1000;
-
-  while (Date.now() < deadline) {
-    try {
-      await symlink(ownerFile, BUILD_LOCK_DIR);
-
-      return async () => {
-        if ((await readlink(BUILD_LOCK_DIR)) !== ownerFile)
-          throw new Error("build lock owner changed before release");
-        await unlink(BUILD_LOCK_DIR);
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let target: string | undefined;
-
-      try {
-        target = await readlink(BUILD_LOCK_DIR);
-        const owner = JSON.parse(
-          await readFile(BUILD_LOCK_DIR, "utf8"),
-        ) as typeof identity;
-        const current = await findProcessIdentity(invocation, owner.pid);
-
-        if (!current || !sameProcess(owner, current)) {
-          if ((await readlink(BUILD_LOCK_DIR)) === target)
-            await unlink(BUILD_LOCK_DIR);
-        } else {
-          await new Promise((resolve) =>
-            setTimeout(resolve, BUILD_LOCK_POLL_MS),
-          );
-        }
-      } catch (inspectionError) {
-        const code = (inspectionError as NodeJS.ErrnoException).code;
-
-        // The retired lock was an EMPTY directory at this same path, reclaimed
-        // by elapsed age. A checkout that ran it and crashed leaves one behind,
-        // and `readlink` answers EINVAL on a directory — not ENOENT — so
-        // without this arm every acquisition rethrows a bare EINVAL until
-        // someone deletes the path by hand. An empty directory carries no owner
-        // identity to prove alive, which is why the format was retired; a
-        // non-empty one is not ours to remove.
-        if (code === "EINVAL") {
-          if ((await readdir(BUILD_LOCK_DIR)).length)
-            throw new Error(
-              `unrecognized build lock at ${BUILD_LOCK_DIR}; remove it to proceed`,
-            );
-          await rm(BUILD_LOCK_DIR, { recursive: true, force: true });
-          continue;
-        }
-        if (code !== "ENOENT") throw inspectionError;
-        if (target !== undefined) {
-          const currentTarget = await readlink(BUILD_LOCK_DIR).catch(
-            (readError: NodeJS.ErrnoException) => {
-              if (readError.code !== "ENOENT") throw readError;
-
-              return null;
-            },
-          );
-
-          if (currentTarget === target)
-            throw new Error(
-              `production build lock owner identity is missing at ${target}; preserve the lock and reconcile its owner explicitly`,
-              { cause: inspectionError },
-            );
-        }
-        // Another contender released the same lock. Retry acquisition.
-      }
-    }
-  }
-  throw new Error(
-    "production build lock did not become available within 20 minutes",
-  );
 }
 
 // Exactly ONE build per test-runner invocation, recorded inside the output tree
@@ -233,7 +132,7 @@ export async function buildProductionWeb(logFile: string): Promise<string> {
 
   if (!invocation)
     throw new Error("production build requires a test invocation");
-  const releaseBuildLock = await acquireBuildLock();
+  const releaseBuildLock = await acquireProductionBuildLock(BUILD_LOCK_DIR);
 
   try {
     const stamp = await readFile(BUILD_STAMP_FILE, "utf8").catch(

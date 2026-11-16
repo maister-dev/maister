@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "status": "failed",
+  "exitCode": 1,
+  "sourceHead": "3242043831f1f134241eb0bec9fd3c533e12f6f2",
+  "package": {
+    "tag": "rah/v1.0.5",
+    "commit": "1fd4b30aa37f861b22e139d0a8e910be1f319873",
+    "loaderUrl": "https://cb-native-qualification.invalid/maister-plugins",
+    "localMirror": "/Users/kaa/Work/dev/github/maister-plugins"
+  },
+  "runner": {
+    "id": "cb-live-claude",
+    "adapter": "claude",
+    "model": "glm-5.3",
+    "permissionPolicy": "default"
+  },
+  "adapterManifest": {
+    "manifestVersion": "0.95.0",
+    "binaryPath": "/private/tmp/maister-cb-live-b081-approved/node_modules/.pnpm/@agentclientprotocol+claude-agent-acp@0.95.0_@anthropic-ai+sdk@1.3.0_zod@4.6.7__@modelc_f288ee759dee483b17a7ca2b5e7630c3/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "binarySha256": "dac87af861bedf6ee1444e99832274d6f517f5e83006f3905094cfc4479b3b00",
+    "adapterReportedVersion": "observed separately by runtime diagnostics"
+  },
+  "adapterBinaryUnchanged": true,
+  "adapterReportedVersion": null,
+  "invocationId": "eac91184-9cd0-44a8-b0b1-016349f85d6b",
+  "startedAt": "2026-11-10T08:55:11.330Z",
+  "finishedAt": "2026-11-10T09:01:28.768Z",
+  "playwrightStats": {
+    "startTime": "2026-11-10T08:55:17.102Z",
+    "duration": 371264.05600000004,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "completedQualificationTrees": 0,
+  "runStates": [
+    {
+      "runId": "3fa1e744-4808-4a81-8147-43652c4b8535",
+      "parentRunId": null,
+      "status": "Failed",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "12a38fe8-f1cc-4bc7-b20c-acb82086c9d3",
+      "parentRunId": "3fa1e744-4808-4a81-8147-43652c4b8535",
+      "status": "Done",
+      "validity": "valid",
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    },
+    {
+      "runId": "7ffdbf1a-a2d5-407d-b65d-32861730f945",
+      "parentRunId": "3fa1e744-4808-4a81-8147-43652c4b8535",
+      "status": "Abandoned",
+      "validity": null,
+      "invalidReason": null,
+      "promptHasNativeGrammar": true
+    }
+  ],
+  "observations": [
+    "One child returned two native findings with no schema issues. Root failed ACP_PROTOCOL; second child was abandoned after the root failure.",
+    "Retained SDK usage before termination: 614050 tokens including cache reads; 102050 excluding caches. The package declared a100000-token tree ceiling.",
+    "The original command message and canonical budget verdict were omitted from this historical receipt. Budget termination is strongly supported; exact initiating cause remains inferred.",
+    "Delete failure session_process_owner_unconfirmed occurred after root prompt failure; it is not established as the initiating cause."
+  ],
+  "followUp": {
+    "companionTag": "rah/v1.0.6",
+    "companionCommit": "2e513d737502f23332de98d4b79a979cfe8f5b87",
+    "changes": "Finite token ceilings account for cached context; time/concurrency/recursion/child/failure bounds unchanged. New actual qualification required.",
+    "platform": "Bounded sanitized command-message capture and budget-stop ownership race require independent regression fixes."
+  },
+  "cleanup": {
+    "wrapperLeaks": 0,
+    "independentOwnedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "errors": []
+  },
+  "readiness": "CB0 renewed live qualification and CB1 pilot remain open. No production or remote release claimed.",
+  "artifacts": [
+    {
+      "path": "cb-live-324204383-glm53-qualified.log.gz",
+      "sha256": "21aad89d73df6fb7802536b0c54e3ecf83cb76134c82a79a33277dfaf0451245",
+      "rawSha256": "577b79bc2c7e99cf78efcd4e3c8804f7be9736bbe5856ee35499d71c58819e33"
+    },
+    {
+      "path": "cb-live-324204383-glm53-qualified-launch-metadata.json.gz",
+      "sha256": "cff4873ee6d48ae243029abcf5fa80e7ed0fb3c64e3ecf9565556de556106aee",
+      "rawSha256": "22ad75f110a1858bfbc971cd99576bf8df3f35d26bb4433f34487781794d9898"
+    },
+    {
+      "path": "cb-live-324204383-glm53-qualified-report.json.gz",
+      "sha256": "13e460f6d2facbc75288d6e2ae5f373e7aa8bdf213eb2870d36a7201f84253f3",
+      "rawSha256": "4164f30f267f4c686edc77ddd138aad110e65ef4abe170d01b261ba01f59e7ab"
+    },
+    {
+      "path": "native-package-qualification.json.gz",
+      "sha256": "89ef3ec2fc3c7159f03c541bb25e081759e98fffd5808d313e60459baa72f760",
+      "rawSha256": "eb26f8482dc2f5eb467e7a3579a779fb2647872a9d23232309d090b1fd775834"
+    },
+    {
+      "path": "cb-glm53-324-budget-diagnosis.json.gz",
+      "sha256": "e044fc65f5c7270c8882eb5d57490d4161c26660e9806d7471bf2176afae77a8",
+      "rawSha256": "98b5c190d884741e85d9e8d078d479b1b245363a0774126757deaa94e2577310"
+    },
+    {
+      "path": "cb-glm53-324-live-cleanup.log.gz",
+      "sha256": "856efc2363465da201d386051cf7f7e27f50484286f8cc2d199590349b57538f",
+      "rawSha256": "2a112a9530bf8a4a865f28a4bb3d462bca6b3aedb5a708264f36337cce6fd8d2"
+    }
+  ]
+}

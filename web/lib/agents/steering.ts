@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient, PreparedSteer } from "@/lib/execution-host/client";
 import type { AgentTurn } from "@/lib/db/schema";
+import type { ChildInputOrigin } from "@/lib/orchestrator/native-child-input";
 
 import { randomUUID } from "node:crypto";
 
@@ -23,10 +24,19 @@ import {
   executionAssignments,
   executionCommands,
   runSessionIncarnations,
+  runs,
 } from "@/lib/db/schema";
 import { appendRunMessage } from "@/lib/execution-host/events/run-message-store";
-import { steerRequeueKey } from "@/lib/execution-host/steer-settlement";
-import { boundPromptBody, eventHorizon } from "@/lib/flows/graph/prompt-record";
+import {
+  steerRequeueKey,
+  steerTranscriptKey,
+} from "@/lib/execution-host/steer-settlement";
+import {
+  boundPromptBody,
+  eventHorizon,
+} from "@/lib/execution-host/events/prompt-transcript";
+import { MaisterError } from "@/lib/errors";
+import { requireDelegatedChildInput } from "@/lib/orchestrator/native-child-input";
 
 const log = pino({
   name: "agent-steering",
@@ -48,8 +58,25 @@ export type AgentSteerAcceptance =
   // A same-key retry: the row that key already identifies, untouched.
   | Readonly<{ kind: "existing"; turn: AgentTurn }>;
 
-export function steerTranscriptKey(commandId: string): string {
-  return `steer:${commandId}`;
+async function lockDelegatedAgent(
+  tx: Db,
+  runId: string,
+  origin: ChildInputOrigin,
+) {
+  await requireDelegatedChildInput(tx, origin, runId);
+  const [run] = await tx
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for("no key update");
+
+  if (!run || run.runKind !== "agent" || run.persistent)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Delegated steering requires a finite agent child",
+    );
+
+  return run;
 }
 
 /**
@@ -66,13 +93,15 @@ export async function acceptAgentSteer(
   client: BoundClient | null,
   runId: string,
   prompt: string,
-  options: Readonly<{ requestKey?: string }> = {},
+  options: Readonly<{ requestKey?: string; origin?: ChildInputOrigin }> = {},
 ): Promise<AgentSteerAcceptance> {
   const logicalKey = messageLogicalKey(options.requestKey);
 
   return db.transaction(async (tx): Promise<AgentSteerAcceptance> => {
     const txDb = tx as unknown as Db;
-    const run = await lockPersistentAgentRun(txDb, runId);
+    const run = options.origin
+      ? await lockDelegatedAgent(txDb, runId, options.origin)
+      : await lockPersistentAgentRun(txDb, runId);
     const existing = await sameKeyMessage(txDb, run.id, logicalKey, prompt);
 
     if (existing) return { kind: "existing", turn: existing };
@@ -80,6 +109,12 @@ export async function acceptAgentSteer(
     const queue = async (
       reason: "no_active_turn" | "unsupported" | "unbound",
     ): Promise<AgentSteerAcceptance> => {
+      if (!run.persistent)
+        throw new MaisterError(
+          "PRECONDITION",
+          "The delegated child has no active turn that can receive steering",
+          { details: { reason, runId } },
+        );
       const turn = await insertAgentMessageTurn(txDb, run, prompt, logicalKey);
 
       log.info(
@@ -162,15 +197,16 @@ export async function acceptAgentSteer(
       })
       .returning();
 
-    await appendRunMessage(txDb, {
-      runId: run.id,
-      nodeAttemptId: null,
-      role: "user",
-      content: boundPromptBody(prompt).content,
-      promptDispatchKey: steerTranscriptKey(prepared.commandId),
-      supervisorEventId: await eventHorizon(txDb, run.id),
-      delivery: "steered",
-    });
+    if (run.persistent)
+      await appendRunMessage(txDb, {
+        runId: run.id,
+        nodeAttemptId: null,
+        role: "user",
+        content: boundPromptBody(prompt).content,
+        promptDispatchKey: steerTranscriptKey(prepared.commandId),
+        supervisorEventId: await eventHorizon(txDb, run.id),
+        delivery: "steered",
+      });
     log.info(
       {
         runId: run.id,

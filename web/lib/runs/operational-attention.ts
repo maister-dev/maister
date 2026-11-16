@@ -17,7 +17,11 @@ import {
   agentIncidentReaderStates,
 } from "@/lib/db/schema";
 import { mirrorLegacyAgentAcknowledgement } from "@/lib/runs/agent-activity-backfill";
-import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import {
+  emitDomainEvent,
+  runDomainEventScope,
+} from "@/lib/domain-events/outbox";
+import { authorizeCompanyRunUserAction } from "@/lib/agents/company-run-read-access";
 import { MaisterError } from "@/lib/errors";
 
 export type OperationalAttention = {
@@ -263,6 +267,14 @@ export async function acknowledgeOperationalAttention(
       .where(eq(runs.id, args.runId))
       .for("update");
 
+    if (run?.companyId)
+      await authorizeCompanyRunUserAction(
+        tx,
+        args.userId,
+        run.id,
+        "assignments:answer",
+      );
+
     if (
       run?.agentKind !== "operational" ||
       !operationalAttentionReasons(
@@ -297,7 +309,7 @@ export async function acknowledgeOperationalAttention(
       await emitDomainEvent({
         db: tx,
         kind: "run.operational_attention_acknowledged",
-        projectId: run.projectId!,
+        ...runDomainEventScope(run),
         taskId: run.taskId,
         runId: run.id,
         actor: { type: "user", id: args.userId },
@@ -323,6 +335,14 @@ export async function retryOperationalCleanup(
       .from(runs)
       .where(eq(runs.id, args.runId))
       .for("update");
+
+    if (run?.companyId)
+      await authorizeCompanyRunUserAction(
+        tx,
+        args.userId,
+        run.id,
+        "assignments:recover",
+      );
     const cleanup = run?.operationalCleanup;
 
     if (run?.agentKind !== "operational" || !cleanup)
@@ -359,7 +379,7 @@ export async function retryOperationalCleanup(
     await emitDomainEvent({
       db: tx,
       kind: "run.operational_cleanup_changed",
-      projectId: run.projectId!,
+      ...runDomainEventScope(run),
       taskId: run.taskId,
       runId: run.id,
       actor: { type: "user", id: args.userId },

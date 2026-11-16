@@ -1,0 +1,50 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793665995922,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793665995960,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-daemon-contact","outcome":"passed","durationMs":14,"serverVersion":"29.4.2","strategy":"ConfigurationStrategy","msg":"test container daemon contacted"}
+{"level":30,"time":1793665995960,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"started","msg":"constructing test container runtime client"}
+{"level":30,"time":1793665995969,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"docker-client-construction","outcome":"passed","durationMs":9,"serverVersion":"29.4.2","msg":"test container runtime client ready"}
+{"level":30,"time":1793665995969,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-create-start","preparationDurationMs":23,"storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"starting owned PostgreSQL container"}
+{"level":30,"time":1793665996849,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"container-start","outcome":"passed","durationMs":878,"containerId":"d4c08e0e2f348284032b5c3d6457db984aac9eb0b97c9715861f3fa42d32077a","storageKind":"tmpfs","storagePath":"/var/lib/postgresql/data","storageLimitBytes":536870912,"maxWalSizeMb":64,"minWalSizeMb":32,"autovacuumNaptimeSeconds":1,"msg":"started owned PostgreSQL container"}
+{"level":30,"time":1793665996863,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"bare","phase":"ready","durationMs":917,"containerId":"d4c08e0e2f348284032b5c3d6457db984aac9eb0b97c9715861f3fa42d32077a","endpoint":"postgres://localhost:63828/native_knowledge_http","msg":"started bare test database"}
+{"level":30,"time":1793665997146,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/migrations","migrationsTable":"__drizzle_migrations","migrationCount":213,"querySubmissions":6,"durationMs":283,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793665997181,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database-migrations","migrationsFolder":"./lib/db/brain-migrations","migrationsTable":"__drizzle_brain_migrations","migrationCount":10,"querySubmissions":6,"durationMs":35,"msg":"applied test database migration lineage"}
+{"level":30,"time":1793665997181,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","lineage":"main+brain","phase":"migrate","endpoint":"postgres://localhost:63828/native_knowledge_http","msg":"applied Brain test database migrations"}
+{"level":30,"time":1793665997469,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"brain:source-capture","ownerKind":"company","ownerId":"380d4e01-7aca-4277-9065-5e777374bb76","sourceId":"ee4492f7-b4e4-4e68-a0fa-0431b6985b08","witnessId":"cf26ea35-afa6-423c-9016-58e8a7d0704c","bytes":67,"duplicate":false,"msg":"source capture retained"}
+{"level":30,"time":1793665997482,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"2a69137d-5ef9-4053-bf36-88cb8016d9b0","ownerKind":"company","ownerId":"380d4e01-7aca-4277-9065-5e777374bb76","actorId":"4460f912-cc05-4711-a58b-70cd5c3c2637","msg":"knowledge proposed"}
+{"level":30,"time":1793665997489,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","recordId":"6bcc8e1c-fb02-4d5f-93e2-f4b543c6cf8b","revision":1,"priorRevision":null,"proposalId":"2a69137d-5ef9-4053-bf36-88cb8016d9b0","actorId":"4460f912-cc05-4711-a58b-70cd5c3c2637","msg":"knowledge revision published"}
+{"level":30,"time":1793665997490,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"brain:knowledge","proposalId":"2a69137d-5ef9-4053-bf36-88cb8016d9b0","decision":"accept","expectedRevision":1,"policyId":"ab4a513a-ca12-4597-820a-d5880af84223","recordId":"6bcc8e1c-fb02-4d5f-93e2-f4b543c6cf8b","msg":"knowledge proposal reviewed"}
+{"level":30,"time":1793665997712,"pid":44108,"hostname":"MacBook-Pro-2.local","name":"test-database","lane":"integration","phase":"stop","durationMs":194,"containerId":"d4c08e0e2f348284032b5c3d6457db984aac9eb0b97c9715861f3fa42d32077a","endpoint":"postgres://localhost:63828/native_knowledge_http","msg":"stopped test database"}
+ ❯ |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts (3 tests | 1 failed) 1769ms
+   × IT-CBK-06 search applies current source access before keyset limits and binds visible cursors to credential and filters 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |integration| app/api/knowledge/__tests__/knowledge.integration.test.ts > IT-CBK-06 search applies current source access before keyset limits and binds visible cursors to credential and filters
+MaisterError: Structured search is not available
+ ❯ Module.searchKnowledge lib/brain/knowledge-search.ts:12:9
+     10|
+     11| export async function searchKnowledge(_db: KnowledgeDatabase, _princip…
+     12|   throw new MaisterError("EXECUTOR_UNAVAILABLE", "Structured search is…
+       |         ^
+     13| }
+     14|
+ ❯ app/api/knowledge/__tests__/knowledge.integration.test.ts:308:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  03:33:15
+   Duration  2.26s (tests 80%, import 16%, transform 3%)

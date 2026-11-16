@@ -46,6 +46,11 @@ async function readPoolWork(db: Db, pool: LaunchPool): Promise<PoolWork> {
           OR ${taskLaunchIntents.state}='preparing'
             AND ${taskLaunchIntents.leaseExpiresAt}<=clock_timestamp()
         ) LIMIT 1
+      ), company_work AS (
+        SELECT 1 FROM ${runs}
+        WHERE ${runs.companyId} IS NOT NULL AND ${runs.status}='Pending'
+          AND ${runs.runKind}=${pool}
+        LIMIT 1
       ), future AS (
         (SELECT ${taskLaunchIntents.dueAt} AS deadline
           FROM ${taskLaunchIntents} WHERE ${pending}
@@ -65,7 +70,7 @@ async function readPoolWork(db: Db, pool: LaunchPool): Promise<PoolWork> {
           AND ${taskLaunchIntents.leaseExpiresAt}>clock_timestamp()
           ORDER BY ${taskLaunchIntents.leaseExpiresAt},${taskLaunchIntents.id} LIMIT 1)
       )
-      SELECT exists(SELECT 1 FROM due) AS due,
+      SELECT (exists(SELECT 1 FROM due) OR exists(SELECT 1 FROM company_work)) AS due,
         coalesce(least(${MAX_RECONCILE_WAIT_MS},greatest(1,
           ceil(extract(epoch FROM (min(deadline)-clock_timestamp()))*1000)
         )),${MAX_RECONCILE_WAIT_MS})::int AS "waitMs"

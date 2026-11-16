@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "status": "failed_depth_two_rework_deadline",
+  "sourceHead": "ef98fba38e2d3079b78e6eb9503e305a5c391cad",
+  "candidateSha256": "e78f13b0636e52d0dcc0f7c96277241cde20da48ec7e5726e9b8d0f6f1e7fd57",
+  "package": {
+    "tag": "rah/v1.0.7",
+    "commit": "2f1474bc295ec9522a83fc7e80719be14a42f626"
+  },
+  "hostGlm53Sessions": 10,
+  "validTypedResultsAtDeadline": 9,
+  "failure": "Depth one passed. Depth-two coordinator attached eight origins to an additional synthesis finding while their selection entries retained each source for a different output. The platform refused publication. The existing bounded rework was still running at the test deadline.",
+  "cleanup": {
+    "id": "b732455c-82bf-412b-9a5a-3b89c02e2f02",
+    "errors": [],
+    "containers": [],
+    "containerRemoved": true,
+    "volumeRemoved": true,
+    "adapterBinaryUnchanged": true
+  },
+  "providerSecretValueScan": {
+    "artifactsScanned": 8,
+    "matches": 0
+  },
+  "artifacts": [
+    {
+      "sourceName": "launch-metadata.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "d47ebf4e3b5583e363c063d5ef67b69e4bbdf3be73326ca19a13a219a187dd8d",
+      "rawBytes": 544,
+      "compressedSha256": "36d6632db171b1e75dd987bc4af9ac6b2f46468fd2fa0ff1842eb1259f1d88e0",
+      "parts": [
+        {
+          "path": "launch-metadata.json.gz",
+          "sha256": "36d6632db171b1e75dd987bc4af9ac6b2f46468fd2fa0ff1842eb1259f1d88e0"
+        }
+      ]
+    },
+    {
+      "sourceName": "playwright.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "45d1871d9f9d6fd909f7099cfdefc34c9b11c5792d9c89a21ccaf8c086e0c102",
+      "rawBytes": 10602,
+      "compressedSha256": "fbed848590148d03ed0cbdbbc6117d2e68967513ddd9b0a355765756d4873536",
+      "parts": [
+        {
+          "path": "playwright.json.gz",
+          "sha256": "fbed848590148d03ed0cbdbbc6117d2e68967513ddd9b0a355765756d4873536"
+        }
+      ]
+    },
+    {
+      "sourceName": "native-package-qualification.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "81f1b255c3fa182507b5dfdffafb3a4f8e136724dd7cc085d73acfb3e67bde9d",
+      "rawBytes": 170375,
+      "compressedSha256": "7ec4949276be9cccc40a83fdb838401064e4b7b52ba12d5bc42fb91aad682ad5",
+      "parts": [
+        {
+          "path": "native-package-qualification.json.gz",
+          "sha256": "7ec4949276be9cccc40a83fdb838401064e4b7b52ba12d5bc42fb91aad682ad5"
+        }
+      ]
+    },
+    {
+      "sourceName": "live.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "c5c377d99dcda4bafb66daa48e339297660a3e4ad5c02202ea674125e1b2c1fa",
+      "rawBytes": 35160,
+      "compressedSha256": "1db17b2bb03e29bec7601195e2ef7d73a76477f976fd1b68b3f0a580d5213dbe",
+      "parts": [
+        {
+          "path": "live.log.gz",
+          "sha256": "1db17b2bb03e29bec7601195e2ef7d73a76477f976fd1b68b3f0a580d5213dbe"
+        }
+      ]
+    },
+    {
+      "sourceName": "reduction-mismatch.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "1459fc442a2897039bf99ea62201ae9b0e87054b031770c8a338ae5a3c5c19b6",
+      "rawBytes": 1150,
+      "compressedSha256": "85c6039e93909152cebff82d2f70ed2669e345c9ea611aa04dd622ac684b694d",
+      "parts": [
+        {
+          "path": "reduction-mismatch.json.gz",
+          "sha256": "85c6039e93909152cebff82d2f70ed2669e345c9ea611aa04dd622ac684b694d"
+        }
+      ]
+    },
+    {
+      "sourceName": "volume-start.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "b867e2e90aad95df7502fca558cde820697483197acbcf93e75deeffe4172649",
+      "rawBytes": 788,
+      "compressedSha256": "3a2ecd4a5be5487e32d355502f44eca15d35e0d0ff225792d2c87678e148f952",
+      "parts": [
+        {
+          "path": "volume-start.json.gz",
+          "sha256": "3a2ecd4a5be5487e32d355502f44eca15d35e0d0ff225792d2c87678e148f952"
+        }
+      ]
+    },
+    {
+      "sourceName": "volume-cleanup.json",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "a0b11ed58cd52a134ec92a8a3250906746ee99d172dc8f327de5e29a91e8b590",
+      "rawBytes": 90,
+      "compressedSha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8",
+      "parts": [
+        {
+          "path": "volume-cleanup.json.gz",
+          "sha256": "427180a8c026aadb6cf7c26cf1a04bf82b160fec578194f1bf4f6236dfc115c8"
+        }
+      ]
+    },
+    {
+      "sourceName": "independent-cleanup.log",
+      "encoding": "Concatenate parts in order, then gzip decompress.",
+      "rawSha256": "8ff64c1fb4afb7c9f4271252d97f7cf67bfc4004d407a9691801f5238d6cde43",
+      "rawBytes": 392,
+      "compressedSha256": "ec06871b3f5d363d72702c362d279891776846206d9d9ca892a896fc66ee0ca1",
+      "parts": [
+        {
+          "path": "independent-cleanup.log.gz",
+          "sha256": "ec06871b3f5d363d72702c362d279891776846206d9d9ca892a896fc66ee0ca1"
+        }
+      ]
+    }
+  ]
+}

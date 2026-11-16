@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "492ef242f",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Only a frozen native discriminator projects typed findings; a matching generic payload remains untyped.",
+    "The EN/RU findings panel preserves basis, support/contradiction, explicit missing proof, limitations, questions, exact original findings and coordinator selection/omission. Proposed knowledge remains a separate reviewed draft.",
+    "Session-only exact result inspection returns the requested retained ledger row, its schema/producer/time metadata and current validity; superseded history remains readable, invalid attempts retain reason/no value/no findings, and inspection cannot mark collection or authorize MCP grandchild access.",
+    "Actual PostgreSQL/API checks cover revision supersession, invalid publication attempts, noncanonical/bounded selectors, paired missing/foreign responses, current source revocation and unchanged collection markers.",
+    "One actual browser/session scenario navigates retained witness and child-result links in English/Russian, verifies disabling source access hides content, and leaves first-collected markers unchanged. The Russian screenshot was visually inspected."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 43,
+      "files": 3
+    },
+    "browser": {
+      "productScenarios": 1,
+      "setupTests": 1,
+      "passed": 2,
+      "runner": "existing Playwright authed lane",
+      "processLeaks": 0,
+      "screenshotCaret": "initial; no test-driver DOM edits during hydration",
+      "hydrationWarnings": 0
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed",
+    "requirementCoverage": "passed"
+  },
+  "qualificationLimits": [
+    "Browser result/parent metadata are retained fixtures, not actual installed-package/ACP execution.",
+    "The browser initially exposed an older fixture type lacking projectId; the qualified scenario resolves its actual persisted project. That construction failure is not behavior RED.",
+    "CBU-02 remains reserved for specialist assignment UX and is not qualified by this CBU-01 scenario."
+  ],
+  "pending": [
+    "Carrier task title/prompt source boundary and remaining portfolio/activity/export/notification projections.",
+    "Additional reduction/source-budget/concurrency/recovery cases and full integration checkpoint.",
+    "Native capability activation, installable companion/live ACP and actual stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "typed-findings-red.log.gz",
+      "uncompressedSha256": "7393ae225ffeb84db05ec8927d0b8cfacf62cb5854b3ece5efb67662b74fe117"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "1d50b13bfe47a2bdfe2fa660cb768fbb648b9c9240d3266e57cd6db245a124ef"
+    },
+    {
+      "path": "legacy-result-panel-unit-green.log.gz",
+      "uncompressedSha256": "a728effc6c11396d898a9a25cf7b9e68ee4518093bdc790ebbed8c3dbdc816aa"
+    },
+    {
+      "path": "browser-green.log.gz",
+      "uncompressedSha256": "3b9377985deb67cec7a9137d8ab89d836c9b96e9a8c29c5c7e86764a96b81fb6"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "4bb0f61eaa22fd3d2e4f48eddfe9de67f090e1872beaa8ad7c4606da42205adc"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "5817e1ad3c985e5edc66addd37b775ca53b2670bfebc815d54ec6408853a61ac"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "d642839ba2dbd3ff43e313a173c07892b5f1743edf985b531cd32eac789300c3"
+    },
+    {
+      "path": "coverage-green.log.gz",
+      "uncompressedSha256": "8e25876bba564c649a74a39f693601987b5a6471bd7b4a079ddbbc509b04ba08"
+    }
+  ],
+  "screenshots": [
+    "native-findings-ru.png"
+  ]
+}

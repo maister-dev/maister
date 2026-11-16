@@ -34,6 +34,15 @@ column-level narrative.
 > pre-migration-honest seeds (no reach / no mounts), so neither needs a backfill.
 > The matching Run-side launch snapshots `runs.agent_chain_depth` and
 > `runs.context_mounts` are drawn in [`runs-domain.md`](runs-domain.md).
+>
+> Main `0254` adds nullable `agent_schedules.project_source_review` for a
+> server-recorded native cron/event review. Legacy rows remain unknown, and no
+> Brain/user FK is added. The [review contract](../system-analytics/specialist-assignments.md#project-automation-review)
+> defines authority and digest semantics; native dispatch qualification is defined in that contract.
+> Main `0255` adds reviewed project binding snapshot v3 to the existing claim
+> contract. Its reference guard refuses v1 capture from a currently reviewed
+> source, keeping old workers from bypassing native review. Existing v1/v2
+> history stays unchanged; the separate scheduled input remains v1.
 
 ```mermaid
 erDiagram
@@ -179,7 +188,7 @@ not trust a request body for an agent identifier.
 | ----- | ---------- | ------- | ------- |
 | `agent_project_links` | `UNIQUE` | `(agent_id, project_id)` | One attachment per pair. |
 | `agent_schedules` | `CHECK` | cron rows: `cron_expr/timezone/next_fire_at NOT NULL`; event rows: `event_match NOT NULL` | Row shape per `trigger_type`. Both CHECKs are `<>`-guarded, so **(ADR-151 — Implemented)** `trigger_type='mention'` rows (all-null cron/event columns) pass unchanged and need NO migration; `trigger_type` itself carries no value CHECK. At most one ENABLED mention row per `(agent_id, project_id)` is enforced in `updateAgentLink`, not by a constraint. |
-| `runs` | partial `UNIQUE` | `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | Outbox→spawn no-dup claim (at-least-once redelivery converges to one run). |
+| `runs` | partial `UNIQUE` | `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL AND company_id IS NULL` | Existing project outbox→spawn claim. Company event claims use company/professional/subscription/event under [native source guards](specialist-assignments-domain.md#canonical-intake-receipts). |
 | `project_tokens` | `CHECK` | `(token_kind='agent') = (agent_id IS NOT NULL)` | Agent tokens always carry the agent identity. |
 
 ## Indexes
@@ -246,7 +255,7 @@ The [owning input contract](../system-analytics/scheduled-agent-requests.md) def
 | agent_trigger_attempts.scheduled_request_snapshot | Nullable jsonb; null default; strict version-1 envelope; IDs match the claim; immutable under the existing identity guard. Protected separately from safe binding metadata. |
 | runs.scheduled_request_snapshot | Nullable jsonb; null default; exact immutable copy, including authorized successors with a different current trigger source. |
 
-No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution makes deletion after claim harmless to launch. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
+No historical input is inferred. Snapshot origin IDs are non-FK retained audit values. Existing schedule navigation FK remains SET NULL; key-share existence resolution preserves legacy cron launch after source deletion. Native reviewed admission additionally validates its current source appointment. Guards permit unrelated settlement/lifecycle updates. CHECKs distinguish SQL NULL, JSON null and missing keys; schema, generated SQL, journal and matching snapshot must agree. No new table/index is introduced.
 
 The additive input fields have no independent lifecycle or cascade.
 

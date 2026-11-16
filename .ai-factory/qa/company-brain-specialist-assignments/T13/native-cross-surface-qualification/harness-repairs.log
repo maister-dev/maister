@@ -1,0 +1,25 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.workspace" without a file extension (vitest.config.ts:6:22). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.5 /Users/kaa/.codex/worktrees/2599/mAIster/web
+
+{"level":30,"time":1793677061112,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793677061416,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793677061441,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"scratch-service","runId":"11111111-1111-4111-8111-111111111111","messageId":"88e70e48-75d1-4876-9fd4-48f896e17b29","fileName":"notes.txt","byteSize":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","objectId":"67641a2c-08e2-5313-9d38-4e6275c03894","msg":"scratch upload published"}
+{"level":30,"time":1793677061457,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793677061473,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"scratch-service","runId":"11111111-1111-4111-8111-111111111111","messageId":"d47ec7c4-ba44-4603-a7ff-25b3c6a20fc9","reason":"unsupported","msg":"scratch-message-queued"}
+{"level":30,"time":1793677061491,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":30,"time":1793677061517,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"flow-engine-version","engineVersion":"3.10.0","supportedFlowSchemaVersions":[1],"msg":"flow engine version resolved"}
+{"level":40,"time":1793677061534,"pid":97428,"hostname":"MacBook-Pro-2.local","name":"scratch-service","runId":"11111111-1111-4111-8111-111111111111","errorCode":"EXECUTOR_UNAVAILABLE","errorMessage":"supervisor unavailable","messageId":"6ffbb4c2-eff8-43bc-9be0-0571efb0ad15","requeued":false,"hostPressured":false,"msg":"scratch prompt failed after message persistence; dialog left retryable"}
+
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+   Start at  06:37:40
+   Duration  884ms (tests 61%, import 28%, transform 7%, setup 3%)

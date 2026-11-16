@@ -1,0 +1,216 @@
+import "server-only";
+
+import type { Db } from "@/lib/execution-host/db";
+
+import { and, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+
+import {
+  authorizeStandReadOwner,
+  claimStandReadAuthority,
+} from "./read-authority";
+
+import {
+  standOperationObservations,
+  standOperations,
+  standTargets,
+} from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
+import { defaultTransport } from "@/lib/execution-host/default-transport";
+import { redactQueryError } from "@/lib/db/pg-error";
+
+const observationSchema = z
+  .object({
+    operationId: z.uuid(),
+    targetIncarnation: z.uuid(),
+    requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    resourceKey: z.string().regex(/^[a-f0-9]{64}$/),
+    sequence: z.number().int().positive(),
+    invocationId: z
+      .string()
+      .regex(/^[a-f0-9]{32}$/)
+      .nullable(),
+    state: z.enum(["active", "inactive", "failed", "unknown"]),
+    capturedAt: z.iso.datetime(),
+  })
+  .strict();
+
+type Observation = typeof standOperationObservations.$inferSelect;
+type Operation = typeof standOperations.$inferSelect;
+
+async function fetchObservation(
+  operation: Operation,
+  ownerEpoch: number,
+): Promise<z.infer<typeof observationSchema>> {
+  const operationId = operation.id;
+  const raw = await defaultTransport().observeStandOperation({
+    operationId,
+    targetIncarnation: operation.targetIncarnation,
+    requestDigest: operation.requestDigest,
+    resourceKey: operation.resourceKey,
+    componentId: operation.componentId,
+    ownerEpoch,
+  });
+  const parsed = observationSchema.safeParse(raw);
+
+  if (
+    !parsed.success ||
+    parsed.data.operationId !== operationId ||
+    parsed.data.targetIncarnation !== operation.targetIncarnation ||
+    parsed.data.requestDigest !== operation.requestDigest ||
+    parsed.data.resourceKey !== operation.resourceKey
+  )
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "The target observation does not match the retained restart",
+    );
+
+  return parsed.data;
+}
+
+async function retainObservation(
+  db: Db,
+  operation: Operation,
+  ownerEpoch: number,
+  observed: z.infer<typeof observationSchema>,
+  expectedTokenId?: string,
+): Promise<Observation> {
+  const operationId = operation.id;
+
+  try {
+    return await db.transaction(async (tx) => {
+      const [stored] = await tx
+        .select({ operation: standOperations, target: standTargets })
+        .from(standOperations)
+        .innerJoin(
+          standTargets,
+          and(
+            eq(standTargets.id, standOperations.targetId),
+            eq(standTargets.enabled, true),
+            eq(standTargets.configRevision, standOperations.configRevision),
+          ),
+        )
+        .where(eq(standOperations.id, operationId))
+        .for("no key update", { of: [standTargets, standOperations] });
+
+      if (
+        !stored ||
+        stored.operation.effectState !== operation.effectState ||
+        stored.operation.revision !== operation.revision
+      )
+        throw new MaisterError(
+          "CONFLICT",
+          "The restart changed before retaining its observation",
+        );
+      await authorizeStandReadOwner(
+        tx,
+        stored.operation,
+        stored.target.companyId,
+        "reconcile",
+        ownerEpoch,
+        expectedTokenId,
+      );
+      const [latest] = await tx
+        .select({ sequence: standOperationObservations.targetSequence })
+        .from(standOperationObservations)
+        .where(eq(standOperationObservations.operationId, operationId))
+        .orderBy(desc(standOperationObservations.targetSequence))
+        .limit(1);
+
+      if (latest && latest.sequence >= observed.sequence)
+        throw new MaisterError("CONFLICT", "The target observation is stale");
+      const recovery = operation.effectState === "unknown";
+      const [retained] = await tx
+        .insert(standOperationObservations)
+        .values({
+          operationId,
+          targetIncarnation: observed.targetIncarnation,
+          resourceKey: observed.resourceKey,
+          requestDigest: observed.requestDigest,
+          targetSequence: observed.sequence,
+          invocationId: observed.invocationId,
+          observedState: observed.state,
+          recoveryRevision: recovery ? operation.revision : null,
+          recoveryReadEpoch: recovery ? ownerEpoch : null,
+          capturedAt: new Date(observed.capturedAt),
+        })
+        .returning();
+
+      if (!retained)
+        throw new MaisterError(
+          "CRASH",
+          "The target observation was not retained",
+        );
+
+      return retained;
+    });
+  } catch (error) {
+    throw redactQueryError(error);
+  }
+}
+
+/** Record a live authenticated observation before admitting a restart command. */
+export async function observeBeforeStandRestart(
+  db: Db,
+  principal: string | Readonly<{ tokenId: string }>,
+  operationId: string,
+  expectedRevision: number,
+): Promise<Observation> {
+  const { operation, ownerEpoch } = await claimStandReadAuthority(
+    db,
+    principal,
+    operationId,
+    "reconcile",
+    expectedRevision,
+  );
+
+  if (
+    operation.action !== "restart" ||
+    operation.effectState !== "not_dispatched"
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "A pending restart is required for before-effect observation",
+    );
+
+  return retainObservation(
+    db,
+    operation,
+    ownerEpoch,
+    await fetchObservation(operation, ownerEpoch),
+    typeof principal === "string" ? undefined : principal.tokenId,
+  );
+}
+
+/** Observe current service state without making any claim about the original effect. */
+export async function inspectStandRecovery(
+  db: Db,
+  userId: string,
+  operationId: string,
+  expectedRevision: number,
+): Promise<Observation> {
+  const { operation, ownerEpoch } = await claimStandReadAuthority(
+    db,
+    userId,
+    operationId,
+    "reconcile",
+    expectedRevision,
+  );
+
+  if (
+    operation.action !== "restart" ||
+    operation.effectState !== "unknown" ||
+    operation.disposition === "authorized_successor"
+  )
+    throw new MaisterError(
+      "CONFLICT",
+      "Recovery inspection requires the current unknown restart",
+    );
+
+  return retainObservation(
+    db,
+    operation,
+    ownerEpoch,
+    await fetchObservation(operation, ownerEpoch),
+  );
+}

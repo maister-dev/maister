@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import { renderAgentDefinition } from "@/lib/agents/definition";
+import { ProjectAgentsPanel } from "@/components/agents/project-agents-panel";
 import {
   attachAgent,
   detachAgent,
@@ -181,6 +182,339 @@ afterAll(async () => {
   await testDatabase?.stop();
 });
 
+it("retains server-reviewed native automation authority with atomic CAS and explicit clearing", async () => {
+  const [install] = await db
+    .select()
+    .from(schema.packageInstalls)
+    .where(eq(schema.packageInstalls.name, "test-pkg"));
+  const sourcePath = path.join(
+    install.installedPath,
+    "maister-agents",
+    "platform-helper.md",
+  );
+  const original = await readFile(sourcePath, "utf8");
+  const reviewer = randomUUID();
+  const secondReviewer = randomUUID();
+  const member = randomUUID();
+
+  await pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active'),($3,$4,'member','active'),($5,$6,'admin','active')",
+    [
+      reviewer,
+      `${reviewer}@example.test`,
+      member,
+      `${member}@example.test`,
+      secondReviewer,
+      `${secondReviewer}@example.test`,
+    ],
+  );
+  await pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), fx.projectId, member],
+  );
+
+  // This case owns its attachment; subsequent legacy cases attach theirs independently.
+  await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+  const current = async () =>
+    (await getProjectAgentsView(fx.projectId, db)).attached[0];
+  const schedules = [
+    {
+      triggerType: "cron" as const,
+      cronExpr: "* * * * *",
+      timezone: "UTC",
+      requestAtLaunch: "Inspect the authorized component",
+      reviewForAssignments: true,
+    },
+    {
+      triggerType: "event" as const,
+      eventKinds: ["run.done"],
+      reviewForAssignments: true,
+      shareEventContext: true,
+    },
+    { triggerType: "mention" as const },
+  ];
+
+  try {
+    await writeFile(
+      sourcePath,
+      original.replace(
+        "---\n",
+        "---\nspecialist: {responsibilities: [Inspect authorized state], targetClasses: [stand]}\n",
+      ),
+    );
+    const before = await current();
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: reviewer,
+        patch: { schedulesRevision: before.schedulesRevision, schedules },
+      },
+      db,
+    );
+    const reviewed = await current();
+
+    expect(reviewed.schedules[0]).toMatchObject({
+      assignmentReview: {
+        schemaVersion: 1,
+        reviewerUserId: reviewer,
+        reviewedAt: expect.any(String),
+        sourceRevision: reviewed.schedulesRevision,
+        sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(reviewed.schedules[1]).toMatchObject({
+      assignmentReview: {
+        schemaVersion: 2,
+        reviewerUserId: reviewer,
+        sourceSharing: "producing_run",
+        eventCursor: expect.stringMatching(/^(0|[1-9][0-9]*)$/),
+      },
+    });
+    expect(reviewed.schedules[2]).toMatchObject({ assignmentReview: null });
+    const stored = (
+      await pool.query(
+        "SELECT project_source_review,created_by FROM agent_schedules WHERE id=$1",
+        [reviewed.schedules[0].id],
+      )
+    ).rows[0];
+
+    expect(stored.created_by).toBeNull();
+
+    const panelInput = {
+      slug: "agent-links",
+      projectId: fx.projectId,
+      canManage: false,
+      runners: [],
+      mcpRequirements: [],
+    };
+    const privatePanel = await ProjectAgentsPanel({
+      ...panelInput,
+      canReadRepoFiles: true,
+    });
+    const viewerPanel = await ProjectAgentsPanel({
+      ...panelInput,
+      canReadRepoFiles: false,
+    });
+
+    expect(JSON.stringify(privatePanel.props)).toContain(
+      stored.project_source_review.sourceSha256,
+    );
+    expect(JSON.stringify(viewerPanel.props)).not.toContain(
+      stored.project_source_review.sourceSha256,
+    );
+    expect(JSON.stringify(viewerPanel.props)).not.toContain(
+      "Inspect the authorized component",
+    );
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { canReadBrain: true },
+      },
+      db,
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT project_source_review FROM agent_schedules WHERE id=$1",
+          [reviewed.schedules[0].id],
+        )
+      ).rows[0].project_source_review,
+    ).toEqual(stored.project_source_review);
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          actorUserId: member,
+          patch: {
+            schedulesRevision: reviewed.schedulesRevision,
+            schedules: reviewed.schedules.map((source) => ({
+              ...source,
+              reviewForAssignments: source.triggerType !== "mention",
+            })),
+          },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect((await current()).schedulesRevision).toBe(
+      reviewed.schedulesRevision,
+    );
+
+    const competing = await Promise.allSettled(
+      [reviewer, secondReviewer].map((actorUserId) =>
+        updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            actorUserId,
+            patch: {
+              schedulesRevision: reviewed.schedulesRevision,
+              schedules: reviewed.schedules.map((source) =>
+                source.triggerType === "cron"
+                  ? {
+                      ...source,
+                      reviewForAssignments: true,
+                      requestAtLaunch: `Request reviewed by ${actorUserId}`,
+                    }
+                  : {
+                      ...source,
+                      reviewForAssignments: source.triggerType !== "mention",
+                    },
+              ),
+            },
+          },
+          db,
+        ),
+      ),
+    );
+
+    expect(
+      competing.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      competing.find((result) => result.status === "rejected"),
+    ).toMatchObject({ reason: { code: "CONFLICT" } });
+    const beforeResave = await current();
+    const originalCron = beforeResave.schedules.find(
+      (source) => source.triggerType === "cron",
+    )!;
+
+    expect(originalCron.requestAtLaunch).toBe(
+      `Request reviewed by ${originalCron.assignmentReview?.reviewerUserId}`,
+    );
+    const priorEvent = beforeResave.schedules.find(
+      (source) => source.triggerType === "event",
+    )!;
+    const observed = (
+      await pool.query<{ id: string }>(
+        "INSERT INTO domain_events(kind,project_id,actor_type,actor_id,payload,occurred_at) VALUES('task.created',$1,'user',$2,'{}'::jsonb,clock_timestamp()) RETURNING id",
+        [fx.projectId, reviewer],
+      )
+    ).rows[0]!;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: secondReviewer,
+        patch: {
+          schedulesRevision: beforeResave.schedulesRevision,
+          schedules: beforeResave.schedules.map((source) => ({
+            ...source,
+            reviewForAssignments: source.triggerType !== "mention",
+          })),
+        },
+      },
+      db,
+    );
+    const resaved = await current();
+    const resavedEvent = resaved.schedules.find(
+      (source) => source.triggerType === "event",
+    )!;
+
+    expect(resavedEvent.assignmentReview).toMatchObject({
+      schemaVersion: 2,
+      eventCursor:
+        priorEvent.assignmentReview?.schemaVersion === 2
+          ? priorEvent.assignmentReview.eventCursor
+          : undefined,
+    });
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: secondReviewer,
+        patch: {
+          schedulesRevision: resaved.schedulesRevision,
+          schedules: resaved.schedules.map((source) => ({
+            ...source,
+            ...(source.triggerType === "event"
+              ? { eventKinds: ["run.failed"] }
+              : {}),
+            reviewForAssignments: source.triggerType !== "mention",
+          })),
+        },
+      },
+      db,
+    );
+    expect(
+      (await current()).schedules.find(
+        (source) => source.triggerType === "event",
+      )!.assignmentReview,
+    ).toMatchObject({ schemaVersion: 2, eventCursor: String(observed.id) });
+    const retained = await current();
+    const retainedCron = retained.schedules.find(
+      (source) => source.triggerType === "cron",
+    )!;
+
+    expect(retainedCron.requestAtLaunch).toBe(originalCron.requestAtLaunch);
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedulesRevision: retained.schedulesRevision,
+          schedules: retained.schedules,
+        },
+      },
+      db,
+    );
+    expect(
+      (await current()).schedules.map((source) => source.assignmentReview),
+    ).toEqual([null, null, null]);
+    await writeFile(
+      sourcePath,
+      "---\nname: Broken pin\nmode: unsupported\n---\nRepair must remain available.\n",
+    );
+    const repairRevision = (await current()).schedulesRevision;
+
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        actorUserId: reviewer,
+        patch: {
+          schedulesRevision: repairRevision,
+          schedules: [
+            {
+              triggerType: "cron",
+              cronExpr: "* * * * *",
+              timezone: "UTC",
+              requestAtLaunch: null,
+              enabled: false,
+            },
+            { triggerType: "event", eventKinds: ["run.done"], enabled: false },
+          ],
+        },
+      },
+      db,
+    );
+    expect(
+      (await current()).schedules.map((source) => source.assignmentReview),
+    ).toEqual([null, null]);
+    await expect(
+      pool.query(
+        "UPDATE agent_schedules SET project_source_review=$2::jsonb WHERE id=$1",
+        [
+          (await current()).schedules[0].id,
+          JSON.stringify({
+            ...stored.project_source_review,
+            reviewerUserId: "",
+          }),
+        ],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+  } finally {
+    await writeFile(sourcePath, original);
+    await detachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+  }
+});
+
 describe("project agent links (attach panel service)", () => {
   it("attaches once, then refuses the duplicate with CONFLICT", async () => {
     const { linkId } = await attachAgent(
@@ -328,6 +662,7 @@ describe("project agent links (attach panel service)", () => {
       {
         id: expect.any(String),
         requestAtLaunch: null,
+        assignmentReview: null,
         triggerType: "mention",
         enabled: true,
       },

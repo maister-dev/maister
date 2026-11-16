@@ -1,0 +1,71 @@
+{
+  "sourceHead": "1d03dfc056138d7eb6793d11f7d2ea8e8ab2031a",
+  "candidateSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mcpBundleSha256": "977542eeec787b25654cd23f49f4273572468420ff9c14971452ddae45536354",
+  "modes": [
+    "E2E_STAND_CLARIFICATION",
+    "E2E_STAND_KILL_DIAGNOSTIC"
+  ],
+  "startedAt": "2026-11-15T22:26:28.774789+00:00",
+  "finishedAt": "2026-11-15T22:33:53.798975+00:00",
+  "exitCode": 0,
+  "candidateUnchanged": true,
+  "packageTag": "stand-operations/v0.1.0",
+  "packageCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+  "model": "glm-5.3",
+  "browser": {
+    "startTime": "2026-11-15T22:26:35.509Z",
+    "duration": 437914.15599999996,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cleanup": {
+    "processLeaks": 0,
+    "invocationId": "70d502d5-c3a0-40dd-a97d-2a5fea83a2e8"
+  },
+  "providerEndpoint": "https://api.z.ai/api/anthropic",
+  "tests": [
+    "QL-CBX-04"
+  ],
+  "confirmations": {
+    "stand-diagnostic-interruption": {
+      "assignmentId": "246e37a7-d30c-484a-8523-142c15bef3a0",
+      "coordinatorRunId": "36ab15f1-ef9e-41e3-a801-65a18c2e015e",
+      "runId": "55193a0a-a747-4dc0-aa9e-e7f017171d41",
+      "sessionId": "cf28d229-8bd9-41b8-9e4e-1d48509fb7c4",
+      "commandId": "d914b560-6cc8-47c5-b91f-740273fa62b4",
+      "placementId": "017278f3-f8d3-4dde-9449-48eb1fd9ccc7",
+      "placementEpoch": 1,
+      "adapterPid": 503
+    },
+    "stand-diagnostic-recovery": {
+      "assignmentId": "246e37a7-d30c-484a-8523-142c15bef3a0",
+      "runId": "36ab15f1-ef9e-41e3-a801-65a18c2e015e",
+      "operationId": "1c76d5a7-6b5a-4dd9-b183-c416ea76050d",
+      "original_run_id": "55193a0a-a747-4dc0-aa9e-e7f017171d41",
+      "recovered_run_id": "3bafc9ce-91a4-415b-bc52-d2629712fe95",
+      "original_revision": 1,
+      "recovered_revision": 2,
+      "interruption_command_id": "d914b560-6cc8-47c5-b91f-740273fa62b4",
+      "result_revision": 1
+    }
+  },
+  "result": {
+    "assignmentId": "246e37a7-d30c-484a-8523-142c15bef3a0",
+    "runId": "36ab15f1-ef9e-41e3-a801-65a18c2e015e",
+    "operationId": "1c76d5a7-6b5a-4dd9-b183-c416ea76050d",
+    "resultRevision": 1,
+    "deliveryId": "60d456d7-3337-40a6-93bd-a68da0c89413",
+    "verificationIds": [
+      "682b9f5c-2b8a-4c5d-941d-941861666e7f"
+    ],
+    "knowledgeProposalId": "4f973f61-75bb-48d4-896b-229077b292f9",
+    "knowledgeRecordId": "e6994fcd-b46a-4d53-9074-852a67c04fd6",
+    "knowledgeRecordRevision": 1,
+    "knowledgeConfirmation": "unconfirmed"
+  },
+  "runtimeModelWitnesses": 3,
+  "quietInspection": true
+}

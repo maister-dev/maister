@@ -1,8 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import type { Logger } from "pino";
 import type { SessionRegistry } from "./registry";
+import type { HostState } from "./host-state";
 
 import { SupervisorError, type SessionEvent } from "./types";
+import { retireExitedSessionProcess } from "./session-process-ownership";
 
 const DEFAULT_REMOVE_GRACE_MS = 30_000;
 
@@ -11,6 +13,7 @@ export type AttachHeartbeatOptions = {
   child: ChildProcess;
   registry: SessionRegistry;
   logger: Logger;
+  hostState?: HostState;
   removeGraceMs?: number;
 };
 
@@ -41,6 +44,15 @@ export function attachHeartbeat(opts: AttachHeartbeatOptions): void {
     // captured lines and their semantic updates precede this terminal event.
     await entry.record.outputDrained;
     if (entry.record.terminalPublished) return;
+    if (opts.hostState && retireExitedSessionProcess(opts.hostState, entry))
+      logger.debug(
+        {
+          sessionId,
+          runId: entry.record.runId,
+          commandId: entry.record.createdByCommandId,
+        },
+        "session-process-natural-retirement-confirmed",
+      );
     const intentional = entry.intentionalShutdown;
     const cleanExit = code === 0 && signal === null;
     const treatAsExited = cleanExit || intentional;

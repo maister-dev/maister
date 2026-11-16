@@ -1,0 +1,70 @@
+[
+  {
+    "path": "isolation-red.log.gz",
+    "uncompressedSha256": "db1975971e709930052fa349cb5a4835e4697ab20c8a29a8afdfb9f5bd3d84e1"
+  },
+  {
+    "path": "isolation-green.log.gz",
+    "uncompressedSha256": "a05fafbad450d81ba48d9bfad778a3f43584fd03b16442549c17d4c33bf397ba"
+  },
+  {
+    "path": "interrupted-unisolated-live.log.gz",
+    "uncompressedSha256": "ea4a18ab6efa51cf703c7aa6ae33aaedfa1921bcf186993cf97122926b3b6d6d"
+  },
+  {
+    "path": "isolated-live-schema-failure.log.gz",
+    "uncompressedSha256": "4541f7f0b02f48ae414667a99f3e57c50f8f55420a7b7cdb36661b2ed84c222b"
+  },
+  {
+    "path": "synthetic-output-diagnostics.jsonl.gz",
+    "uncompressedSha256": "71bf19effce83a90b19961369cc4a7b24e72ae3fcba20c823e3488d550d45d2a"
+  },
+  {
+    "path": "grammar-red.log.gz",
+    "uncompressedSha256": "1ef3de9d4aec068616e7cf11eaf758ba27b8e909527a512112a1fb36015b7fb7"
+  },
+  {
+    "path": "grammar-test-shape-correction.log.gz",
+    "uncompressedSha256": "489213aa7fc279ac789b8f28b482d5b3ad9385645ca4fbcc9253865fcfb1e276"
+  },
+  {
+    "path": "grammar-owning-green.log.gz",
+    "uncompressedSha256": "c10e788354393707ae1f4f940542fbe10e059a53131e6ad71b24b69ff4abc45c"
+  },
+  {
+    "path": "full-unit-green.log.gz",
+    "uncompressedSha256": "9bf92f78457e4bf0c493af43b181d74017aecdcea44c0b77651d50e87afb154b"
+  },
+  {
+    "path": "public-docs-sandbox.log.gz",
+    "uncompressedSha256": "375b6247b15a7c4a16fec346b9135cb4fe76be57ee7096969231e66d0ad2b8d4"
+  },
+  {
+    "path": "public-docs-green.log.gz",
+    "uncompressedSha256": "8d1ba319eaa2bfe199dec8a06a8525b4b9928a5e717ecc8ab52372eecc0181f1"
+  },
+  {
+    "path": "public-links-green.log.gz",
+    "uncompressedSha256": "6330f1e1ee60ad30cd2e5582b6d5b27faa859a523cedd35cd4f5fc8acfc9f04c"
+  },
+  {
+    "path": "owning-integration-green.log.gz",
+    "uncompressedSha256": "9787095dc7edab0108ea289c2ac5b70237ca01f6e27578a595fe7f6b6ee1c0ba"
+  },
+  {
+    "path": "typecheck-green.log.gz",
+    "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+  },
+  {
+    "path": "lint-green.log.gz",
+    "uncompressedSha256": "42cd985a4ce532de2d868665d70a2064b81b59b21b5dbf33c1339e3c3d226908"
+  },
+  {
+    "path": "contracts-green.log.gz",
+    "uncompressedSha256": "45fa2bd33cd97ebbc131b8ccd77ce8a615a4261070a9bb3145cad3ae3b40122e"
+  },
+  {
+    "path": "docs-green.log.gz",
+    "uncompressedSha256": "fd3c1d69bc30353d453f394f872bd9319b7aea3d76f220ae20fa2cef081e1aa9"
+  }
+]

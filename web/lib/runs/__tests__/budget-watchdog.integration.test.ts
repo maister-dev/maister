@@ -13,6 +13,7 @@
 // before enforcing a budget, so the fixture seeds the event authority rather
 // than writing projection rows directly.
 
+import type { DeleteSessionOutcome } from "@/lib/execution-host/contracts";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type {
   BudgetAxis,
@@ -22,6 +23,8 @@ import type {
 } from "@/lib/runs/execution-policy";
 
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 
 import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -38,7 +41,10 @@ import {
 // Supervisor seam: ESCALATE halts the live session via checkpointSession;
 // TERMINATE tears it down via deleteSession. listSessions is how a run is
 // matched to a live supervisor session (mirrors the time-limit pass).
-const deleteSessionSpy = vi.fn(async (_id: string) => undefined);
+const deleteSessionSpy = vi.fn(
+  async (_id: string): Promise<{ outcome: DeleteSessionOutcome } | undefined> =>
+    undefined,
+);
 const listSessionsSpy = vi.fn(async () => [] as unknown[]);
 const checkpointSessionSpy = vi.fn(async (_id: string) => ({}) as unknown);
 
@@ -58,9 +64,11 @@ function spyBackedTransport(fake: FakeExecutionHost): void {
   Object.assign(fake.transport, {
     listSessions: () => listSessionsSpy(),
     deleteSession: async (sessionId: string) => {
-      await deleteSessionSpy(sessionId);
-
-      return { outcome: "terminated" as const };
+      return (
+        (await deleteSessionSpy(sessionId)) ?? {
+          outcome: "terminated" as const,
+        }
+      );
     },
     checkpointSession: async (sessionId: string) => {
       const result = await checkpointSessionSpy(sessionId);
@@ -98,6 +106,7 @@ vi.mock("@/lib/authz", () => ({
 // real canonical-event projection so both reconciliation and enforcement remain
 // observable in the same integration test.
 const reconcileRollupsSpy = vi.fn((_runId: string) => undefined);
+const budgetReadBarrier = vi.fn(async (_runId: string) => {});
 
 vi.mock("@/lib/runs/cost-rollups", async (importOriginal) => {
   const actual =
@@ -105,6 +114,15 @@ vi.mock("@/lib/runs/cost-rollups", async (importOriginal) => {
 
   return {
     ...actual,
+    queryRunTokens: async (
+      ...args: Parameters<typeof actual.queryRunTokens>
+    ) => {
+      const result = await actual.queryRunTokens(...args);
+
+      await budgetReadBarrier(args[0]);
+
+      return result;
+    },
     reconcileRunCostRollups: (
       runId: string,
       opts?: Parameters<typeof actual.reconcileRunCostRollups>[1],
@@ -129,6 +147,8 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import { runDirPath } from "@/lib/flows/graph/mutation-check";
+import { mkdtempReal } from "@/test-support/worktree-test-root";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -231,6 +251,8 @@ beforeEach(async () => {
   checkpointSessionSpy.mockResolvedValue({});
   runFlowSpy.mockClear();
   reconcileRollupsSpy.mockClear();
+  budgetReadBarrier.mockReset();
+  budgetReadBarrier.mockResolvedValue(undefined);
   canonicalSequenceByRun.clear();
 });
 
@@ -1077,7 +1099,7 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
     expect(attempt[0].status).toBe("Running");
   }, 60_000);
 
-  it("TERMINATE on a terminal (non-5xx) deleteSession failure still flips the run Failed (E5 — 404 proceeds)", async () => {
+  it("TERMINATE settles after the host positively confirms the session is gone", async () => {
     const taskId = await seedTask();
     const sup = `sup-${randomUUID().slice(0, 8)}`;
     const runId = await seedRun({
@@ -1094,12 +1116,8 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
     listSessionsSpy.mockResolvedValue([
       liveSessionRecord(runId, sup, "implement"),
     ]);
-    // A terminal (non-EXECUTOR_UNAVAILABLE) failure means the session is already
-    // gone (e.g. supervisor 404 unknown session). Unlike the 5xx case (which
-    // leaves the run Running), the watchdog MUST proceed to the terminal flip.
-    deleteSessionSpy.mockRejectedValueOnce(
-      new MaisterError("ACP_PROTOCOL", "supervisor 404 unknown session"),
-    );
+    // The real transport represents HTTP404 as a positive gone outcome.
+    deleteSessionSpy.mockResolvedValueOnce({ outcome: "gone" });
 
     await runSweepTick({ db, executionHosts: hosts });
 
@@ -1234,6 +1252,8 @@ describe("budget watchdog — TREE scope (E6)", () => {
   async function seedTreeRoot(args: {
     treeMaxTokens?: number;
     nodeBudget?: Record<string, number> | null;
+    executionPolicy?: ExecutionPolicy;
+    startedAt?: Date;
   }): Promise<string> {
     const rootId = randomUUID();
 
@@ -1241,13 +1261,15 @@ describe("budget watchdog — TREE scope (E6)", () => {
       id: rootId,
       runKind: "flow",
       projectId,
-      rootRunId: rootId,
+      rootRunId: null,
       status: "WaitingOnChildren",
       currentStepId: null,
       flowVersion: "v1.0.0",
-      executionPolicy: policyWithBudget({
-        tree: { maxTokens: args.treeMaxTokens ?? 1000 },
-      }),
+      executionPolicy:
+        args.executionPolicy ??
+        policyWithBudget({
+          tree: { maxTokens: args.treeMaxTokens ?? 1000 },
+        }),
       delegationBounds: args.nodeBudget
         ? {
             nodeId: "orchestrate",
@@ -1267,7 +1289,7 @@ describe("budget watchdog — TREE scope (E6)", () => {
             },
           }
         : null,
-      startedAt: new Date(Date.now() - 60_000),
+      startedAt: args.startedAt ?? new Date(Date.now() - 60_000),
     });
     await db.insert(schema.runSessions).values({
       id: randomUUID(),
@@ -1280,6 +1302,66 @@ describe("budget watchdog — TREE scope (E6)", () => {
 
     return rootId;
   }
+
+  it("(ADR-165) a root node-only token budget reconciles canonical descendant usage with empty policy and override meters", async () => {
+    const rootId = await seedTreeRoot({
+      executionPolicy: policyWithBudget({}),
+      nodeBudget: {
+        maxTokens: 500,
+        wallClockMinutes: 10_000,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+
+    await db
+      .update(schema.runs)
+      .set({ budgetState: { ceilingOverride: {} } })
+      .where(eq(schema.runs.id, rootId));
+    const childId = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+    });
+
+    await seedRollup(rootId, null, 100);
+    await seedRollup(childId, null, 500);
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(reconcileRollupsSpy).toHaveBeenCalledWith(rootId);
+    expect(reconcileRollupsSpy).toHaveBeenCalledWith(childId);
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect((await getRun(childId)).status).toBe("Abandoned");
+    expect(await assignmentStates(rootId)).toMatchObject([
+      { state: "released", releasedReason: "failed" },
+    ]);
+    expect(await getHitl(rootId)).toHaveLength(0);
+  }, 60_000);
+
+  it("(ADR-165) a parked root node-only wall-clock budget terminates without policy or override meters", async () => {
+    const rootId = await seedTreeRoot({
+      executionPolicy: { preset: "supervised" },
+      startedAt: new Date(Date.now() - 2 * 60_000),
+      nodeBudget: {
+        maxTokens: 100_000,
+        wallClockMinutes: 1,
+        maxChildRuns: 50,
+        consecutiveFailures: 50,
+      },
+    });
+
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(await getRun(rootId)).toMatchObject({
+      status: "Failed",
+      endedAt: expect.any(Date),
+      budgetState: { notified: { tree: "terminate" } },
+    });
+    expect(await assignmentStates(rootId)).toMatchObject([
+      { state: "released", releasedReason: "failed" },
+    ]);
+    expect(await getHitl(rootId)).toHaveLength(0);
+  }, 60_000);
 
   it("(ADR-165) a node max_tokens BELOW the policy limit becomes the effective ceiling", async () => {
     // Policy tree limit 1000; the node declares 500. Spend of 600 is under the
@@ -2433,4 +2515,704 @@ describe("budget watchdog — raise re-derives the hard ceiling (M2)", () => {
     expect((await getRun(runId)).status).toBe("Running");
     expect(deleteSessionSpy).not.toHaveBeenCalled();
   }, 60_000);
+});
+
+describe("budget stop terminal ownership", () => {
+  it("a stale warning cannot erase an accepted stop while teardown is pending", async () => {
+    const runId = await seedRun({
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 100, hardMaxTokens: 120 },
+      }),
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, null, 90);
+    let releaseRead: () => void = () => {};
+    let releaseStop: () => void = () => {};
+    let readReached = false;
+    let stopReached = false;
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const stopHeld = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const errors: unknown[] = [];
+    let terminatingTick: Promise<unknown> | undefined;
+
+    budgetReadBarrier.mockImplementationOnce(async () => {
+      readReached = true;
+      await readHeld;
+    });
+    const warningTick = runSweepTick({ db, executionHosts: hosts });
+
+    void warningTick.catch((error: unknown) => {
+      errors.push(error);
+    });
+    try {
+      await expect
+        .poll(() => {
+          if (errors.length) throw errors[0];
+
+          return readReached;
+        })
+        .toBe(true);
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "held-stop", "implement"),
+      ]);
+      deleteSessionSpy.mockImplementation(async () => {
+        stopReached = true;
+        await stopHeld;
+      });
+      terminatingTick = runSweepTick({ db, executionHosts: hosts });
+      void terminatingTick.catch((error: unknown) => {
+        errors.push(error);
+      });
+      await expect
+        .poll(() => {
+          if (errors.length) throw errors[0];
+
+          return stopReached;
+        })
+        .toBe(true);
+      const intent = (await getRun(runId)).budgetState.termination;
+
+      releaseRead();
+      await warningTick;
+      expect((await getRun(runId)).budgetState.termination).toEqual(intent);
+      expect((await getRun(runId)).status).toBe("Running");
+      const { crashRunningRun } = await import("@/lib/runs/state-transitions");
+
+      expect(
+        (await crashRunningRun(runId, "agent-session-gone", { db })).ok,
+      ).toBe(false);
+      expect((await getRun(runId)).status).toBe("Running");
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      releaseRead();
+      releaseStop();
+      const outcomes = await Promise.allSettled([
+        warningTick,
+        ...(terminatingTick ? [terminatingTick] : []),
+      ]);
+
+      for (const outcome of outcomes)
+        if (outcome.status === "rejected" && !errors.includes(outcome.reason))
+          errors.push(outcome.reason);
+    }
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Concurrent budget stop qualification failed",
+      );
+    expect((await getRun(runId)).status).toBe("Failed");
+  });
+
+  it.each(["run", "tree"] as const)(
+    "%s stop cannot fail a newer attempt on the same node",
+    async (scope) => {
+      const runId = await seedRun({
+        executionPolicy: policyWithBudget({
+          [scope]: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+
+      await seedAttempt({ runId, attempt: 1, status: "Running" });
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "same-node-original", "implement"),
+      ]);
+      deleteSessionSpy.mockImplementation(async () => {
+        await db
+          .update(schema.nodeAttempts)
+          .set({ status: "Succeeded" })
+          .where(eq(schema.nodeAttempts.runId, runId));
+        await seedAttempt({ runId, attempt: 2, status: "Running" });
+      });
+      await runSweepTick({ db, executionHosts: hosts });
+      const run = await getRun(runId);
+      const attempts = await db
+        .select()
+        .from(schema.nodeAttempts)
+        .where(eq(schema.nodeAttempts.runId, runId));
+
+      expect(run.status).toBe("Running");
+      expect(run.budgetState?.termination).toBeUndefined();
+      expect(run.budgetState?.notified?.[scope]).toBeUndefined();
+      expect(attempts.find((attempt) => attempt.attempt === 2)?.status).toBe(
+        "Running",
+      );
+      expect((await assignmentStates(runId))[0].state).toBe("active");
+    },
+  );
+
+  it.each(["run", "tree"] as const)(
+    "%s stop does not inherit a replacement canonical session on the same assignment",
+    async (scope) => {
+      const runId = await seedRun({
+        executionPolicy: policyWithBudget({
+          [scope]: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+      const client = await hosts.forRun(runId);
+      const session = await getRunSession(runId);
+      const firstIncarnationId = randomUUID();
+      const originalSessionId = randomUUID();
+
+      await db.insert(schema.runSessionIncarnations).values({
+        id: firstIncarnationId,
+        runSessionId: session.id,
+        runId,
+        executionAssignmentId: client.assignment.id,
+        assignmentEpoch: client.assignment.epoch,
+        executionHostId: client.assignment.executionHostId,
+        hostSessionId: originalSessionId,
+        state: "active",
+        origin: "native",
+      });
+      await db
+        .update(schema.runSessions)
+        .set({
+          executionAssignmentId: client.assignment.id,
+          hostSessionId: originalSessionId,
+        })
+        .where(eq(schema.runSessions.id, session.id));
+      await seedAttempt({ runId, attempt: 1, status: "Running" });
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, originalSessionId, "implement"),
+      ]);
+      deleteSessionSpy.mockImplementation(async () => {
+        const replacementSessionId = randomUUID();
+
+        await db.transaction(async (tx) => {
+          await tx
+            .select()
+            .from(schema.runs)
+            .where(eq(schema.runs.id, runId))
+            .for("update");
+          await tx
+            .update(schema.runSessionIncarnations)
+            .set({ state: "lost" })
+            .where(eq(schema.runSessionIncarnations.id, firstIncarnationId));
+          await tx.insert(schema.runSessionIncarnations).values({
+            id: randomUUID(),
+            runSessionId: session.id,
+            runId,
+            executionAssignmentId: client.assignment.id,
+            assignmentEpoch: client.assignment.epoch,
+            executionHostId: client.assignment.executionHostId,
+            hostSessionId: replacementSessionId,
+            state: "active",
+            origin: "native",
+          });
+          await tx
+            .update(schema.runSessions)
+            .set({ hostSessionId: replacementSessionId })
+            .where(eq(schema.runSessions.id, session.id));
+        });
+      });
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect((await getRun(runId)).status).toBe("Running");
+      expect((await getRun(runId)).budgetState?.termination).toBeUndefined();
+      expect((await assignmentStates(runId))[0].state).toBe("active");
+    },
+  );
+
+  it.each(["run", "tree"] as const)(
+    "%s stop preserves a prior failed prompt pending application after its host session exits",
+    async (scope) => {
+      const runId = await seedRun({
+        executionPolicy: policyWithBudget({
+          [scope]: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+      const client = await hosts.forRun(runId);
+      const session = await getRunSession(runId);
+      const incarnationId = randomUUID();
+      const sessionId = randomUUID();
+
+      await db.insert(schema.runSessionIncarnations).values({
+        id: incarnationId,
+        runSessionId: session.id,
+        runId,
+        executionAssignmentId: client.assignment.id,
+        assignmentEpoch: client.assignment.epoch,
+        executionHostId: client.assignment.executionHostId,
+        hostSessionId: sessionId,
+        state: "crashed",
+        origin: "native",
+        endedAt: new Date(),
+      });
+      await db
+        .update(schema.runSessions)
+        .set({
+          executionAssignmentId: client.assignment.id,
+          hostSessionId: sessionId,
+        })
+        .where(eq(schema.runSessions.id, session.id));
+      await seedAttempt({ runId, attempt: 1, status: "Running" });
+      const [attempt] = await db
+        .select()
+        .from(schema.nodeAttempts)
+        .where(eq(schema.nodeAttempts.runId, runId));
+      const commandId = randomUUID();
+
+      await db.insert(schema.executionCommands).values({
+        id: commandId,
+        runId,
+        executionAssignmentId: client.assignment.id,
+        executionHostId: client.assignment.executionHostId,
+        assignmentEpoch: client.assignment.epoch,
+        kind: "session.prompt",
+        targetSessionId: sessionId,
+        maxAttempts: 3,
+        ownerKind: "flow_node_attempt",
+        ownerRef: {
+          version: 1,
+          variant: "node",
+          nodeAttemptId: attempt.id,
+          promptOrdinal: 0,
+          runId,
+          runSessionId: session.id,
+          incarnationId,
+          assignmentId: client.assignment.id,
+          assignmentEpoch: client.assignment.epoch,
+        },
+        logicalOperationKey: `flow_node_attempt:node:${commandId}`,
+        requestSchema: "maister.command.request.v1",
+        requestSha256: "a".repeat(64),
+        state: "failed",
+        applicationState: "pending",
+        acceptedAt: new Date(),
+        completedAt: new Date(),
+        lastError: {
+          code: "ACP_PROTOCOL",
+          message: "independent failure before budget observation",
+        },
+      });
+      await seedRollup(runId, null, 200);
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect(deleteSessionSpy).not.toHaveBeenCalled();
+      expect((await getRun(runId)).status).toBe("Running");
+      expect((await getRun(runId)).budgetState?.termination).toBeUndefined();
+      const [retained] = await db
+        .select()
+        .from(schema.executionCommands)
+        .where(eq(schema.executionCommands.id, commandId));
+
+      expect(retained).toMatchObject({
+        state: "failed",
+        applicationState: "pending",
+        completionAppliedAt: null,
+        lastError: { code: "ACP_PROTOCOL" },
+      });
+      const { crashRunningRun } = await import("@/lib/runs/state-transitions");
+
+      expect(
+        (await crashRunningRun(runId, "agent-session-gone", { db })).ok,
+      ).toBe(true);
+    },
+  );
+
+  it("preserves a failure recorded before the budget stop request", async () => {
+    const runId = await seedRun({
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 100, hardMaxTokens: 120 },
+      }),
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Failed" });
+    await seedRollup(runId, null, 200);
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "already-failed", "implement"),
+    ]);
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect((await getRun(runId)).budgetState).toBeNull();
+    expect((await getRun(runId)).status).toBe("Running");
+  });
+
+  it("a late legacy agent permission cannot strand an uncertain budget stop", async () => {
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 100, hardMaxTokens: 120 },
+      }),
+    });
+
+    await seedRollup(runId, null, 200);
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "agent-permission-stop", "agent"),
+    ]);
+    deleteSessionSpy.mockImplementationOnce(async () => {
+      const { consumeAgentSession } = await import("@/lib/agents/launch");
+      const execution = await hosts.executionFor(runId);
+
+      await consumeAgentSession({
+        db,
+        runId,
+        sessionId: "agent-permission-stop",
+        execution: {
+          client: execution.client,
+          admin: {
+            ...execution.admin,
+            streamSession: async function* () {
+              yield {
+                type: "session.permission_request",
+                sessionId: "agent-permission-stop",
+                monotonicId: 1,
+                requestId: "late-stop-permission",
+                options: [
+                  { optionId: "allow", name: "Allow", kind: "allow_once" },
+                ],
+                toolCall: {
+                  toolCallId: "late-tool",
+                  title: "Read",
+                  kind: "read",
+                },
+              };
+            },
+          },
+        },
+      });
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "unconfirmed stop after late permission",
+      );
+    });
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(await getHitl(runId)).toHaveLength(0);
+    expect((await assignmentStates(runId))[0].state).toBe("active");
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect((await getRun(runId)).status).toBe("Failed");
+    expect(deleteSessionSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a late guardrail pause rolls back its HITL and artifact while a budget stop remains unconfirmed", async () => {
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 100, hardMaxTokens: 120 },
+      }),
+    });
+    const runtimeRoot = await mkdtempReal("budget-stop-hook-");
+    const priorRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
+    let pauseError: unknown;
+    let statusDuringStop: string | undefined;
+
+    process.env.MAISTER_RUNTIME_ROOT = runtimeRoot;
+    try {
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "hook-budget-stop", "agent"),
+      ]);
+      deleteSessionSpy.mockImplementationOnce(async () => {
+        const { escalateHookTrip } = await import("@/lib/runs/hook-trip");
+
+        try {
+          await escalateHookTrip({
+            db,
+            runId,
+            stepId: "agent",
+            supervisorSessionId: "hook-budget-stop",
+            rule: "repetition",
+            runKind: "agent",
+            checkpointSession: async () => undefined,
+          });
+        } catch (error) {
+          pauseError = error;
+        }
+        statusDuringStop = (await getRun(runId)).status;
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "unconfirmed stop after guardrail event",
+        );
+      });
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect(pauseError).toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "budget_termination_pending" },
+      });
+      expect(statusDuringStop).toBe("Running");
+      expect((await getRun(runId)).status).toBe("Running");
+      expect(await getHitl(runId)).toHaveLength(0);
+      expect((await assignmentStates(runId))[0].state).toBe("active");
+      await expect(
+        stat(
+          join(runDirPath(runtimeRoot, "budget-wd", runId), "needs-input.json"),
+        ),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect((await getRun(runId)).status).toBe("Failed");
+    } finally {
+      if (priorRuntimeRoot === undefined)
+        delete process.env.MAISTER_RUNTIME_ROOT;
+      else process.env.MAISTER_RUNTIME_ROOT = priorRuntimeRoot;
+    }
+  });
+
+  it("a budget claim between the legacy permission probe and fallback keeps the Run retryable", async () => {
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 100, hardMaxTokens: 120 },
+      }),
+    });
+    const execution = await hosts.executionFor(runId);
+    const permission = await import("@/lib/agents/permission");
+    const original = permission.recordOwnedAgentPermission;
+    const releaseLegacy = Promise.withResolvers<void>();
+    const errors: unknown[] = [];
+    let probed = false;
+    let consuming: Promise<void> | undefined;
+    let sweeping: Promise<unknown> | undefined;
+    const probe = vi
+      .spyOn(permission, "recordOwnedAgentPermission")
+      .mockImplementationOnce(async (...args) => {
+        const owned = await original(...args);
+
+        if (owned)
+          throw new Error("fixture requires an unowned legacy permission");
+        probed = true;
+        await releaseLegacy.promise;
+
+        return false;
+      });
+
+    try {
+      const { consumeAgentSession } = await import("@/lib/agents/launch");
+
+      consuming = consumeAgentSession({
+        db,
+        runId,
+        sessionId: "legacy-probe-stop",
+        execution: {
+          client: execution.client,
+          admin: {
+            ...execution.admin,
+            streamSession: async function* () {
+              yield {
+                type: "session.permission_request",
+                sessionId: "legacy-probe-stop",
+                monotonicId: 1,
+                requestId: "legacy-fallback-permission",
+                options: [
+                  { optionId: "allow", name: "Allow", kind: "allow_once" },
+                ],
+                toolCall: {
+                  toolCallId: "legacy-tool",
+                  title: "Read",
+                  kind: "read",
+                },
+              };
+            },
+          },
+        },
+      });
+      void consuming.catch((error: unknown) => {
+        errors.push(error);
+      });
+      await expect
+        .poll(
+          () => {
+            if (errors.length) throw errors[0];
+
+            return probed;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "legacy-probe-stop", "agent"),
+      ]);
+      deleteSessionSpy.mockImplementationOnce(async () => {
+        releaseLegacy.resolve();
+        await consuming;
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "controlled unconfirmed stop",
+        );
+      });
+      sweeping = runSweepTick({ db, executionHosts: hosts });
+      void sweeping.catch((error: unknown) => {
+        errors.push(error);
+      });
+      await sweeping;
+
+      expect((await getRun(runId)).status).toBe("Running");
+      expect(await getHitl(runId)).toHaveLength(0);
+      expect((await assignmentStates(runId))[0].state).toBe("active");
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      releaseLegacy.resolve();
+      const outcomes = await Promise.allSettled([
+        ...(consuming ? [consuming] : []),
+        ...(sweeping ? [sweeping] : []),
+      ]);
+
+      for (const outcome of outcomes)
+        if (outcome.status === "rejected" && !errors.includes(outcome.reason))
+          errors.push(outcome.reason);
+      probe.mockRestore();
+    }
+    if (errors.length)
+      throw new AggregateError(
+        errors,
+        "Legacy budget permission ordering failed",
+      );
+    await runSweepTick({ db, executionHosts: hosts });
+
+    expect((await getRun(runId)).status).toBe("Failed");
+  });
+
+  it.each(["run", "tree"] as const)(
+    "%s stop does not infer quiescence from a definitive DELETE refusal",
+    async (scope) => {
+      const runId = await seedRun({
+        executionPolicy: policyWithBudget({
+          [scope]: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+
+      await seedAttempt({ runId, attempt: 1, status: "Running" });
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "refused-stop", "implement"),
+      ]);
+      deleteSessionSpy.mockRejectedValueOnce(
+        new MaisterError("PRECONDITION", "supervisor refused shutdown"),
+      );
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect((await getRun(runId)).status).toBe("Running");
+      expect((await getRun(runId)).budgetState?.termination?.id).toBeDefined();
+      expect(
+        (await getRun(runId)).budgetState?.notified?.[scope],
+      ).toBeUndefined();
+      expect((await assignmentStates(runId))[0].state).toBe("active");
+    },
+  );
+
+  it.each(["persistent", "host_pressure"] as const)(
+    "budget stop retains ownership over a concurrent %s agent park",
+    async (mode) => {
+      const runId = await seedRun({
+        runKind: "agent",
+        executionPolicy: policyWithBudget({
+          run: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+
+      await db
+        .update(schema.runs)
+        .set({ persistent: mode === "persistent" })
+        .where(eq(schema.runs.id, runId));
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(runId, "park-race", "agent"),
+      ]);
+      let parkedDuringStop: boolean | undefined;
+      let statusDuringStop: string | undefined;
+      let assignmentDuringStop: string | undefined;
+
+      deleteSessionSpy.mockImplementation(async () => {
+        const { applyAgentPark } = await import("@/lib/agents/park");
+
+        parkedDuringStop = (
+          await db.transaction((tx) =>
+            applyAgentPark(
+              tx as never,
+              runId,
+              mode === "host_pressure" ? { cause: "host_pressure" } : {},
+            ),
+          )
+        ).parked;
+        statusDuringStop = (await getRun(runId)).status;
+        assignmentDuringStop = (await assignmentStates(runId))[0].state;
+      });
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect(parkedDuringStop).toBe(false);
+      expect(statusDuringStop).toBe("Running");
+      expect(assignmentDuringStop).toBe("active");
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect((await assignmentStates(runId))[0].state).toBe("released");
+    },
+  );
+
+  it.each([
+    ["run", "agent"],
+    ["tree", "agent"],
+    ["run", "scratch"],
+    ["tree", "scratch"],
+  ] as const)(
+    "%s %s stop defers an interrupted owner's terminal result",
+    async (scope, runKind) => {
+      const runId = await seedRun({
+        runKind,
+        executionPolicy: policyWithBudget({
+          [scope]: { maxTokens: 100, hardMaxTokens: 120 },
+        }),
+      });
+
+      if (runKind === "scratch") await seedScratch(runId, null);
+      await seedRollup(runId, null, 200);
+      listSessionsSpy.mockResolvedValue([
+        liveSessionRecord(
+          runId,
+          "interrupted-owner",
+          runKind === "agent" ? "agent" : "dialog",
+        ),
+      ]);
+      let finalizedDuringStop: boolean | undefined;
+      let statusDuringStop: string | undefined;
+      let assignmentDuringStop: string | undefined;
+
+      deleteSessionSpy.mockImplementation(async () => {
+        if (runKind === "agent") {
+          const { finalizeAgentRun } = await import("@/lib/agents/launch");
+
+          finalizedDuringStop = (
+            await finalizeAgentRun(runId, "Failed", {
+              db,
+              reason: "ACP_PROTOCOL",
+            })
+          ).finalized;
+        } else {
+          const { markScratchCrashed } =
+            await import("@/lib/scratch-runs/service");
+
+          finalizedDuringStop = (
+            await markScratchCrashed({
+              db,
+              runId,
+              err: new MaisterError("ACP_PROTOCOL", "interrupted by stop"),
+            })
+          ).applied;
+        }
+        statusDuringStop = (await getRun(runId)).status;
+        assignmentDuringStop = (await assignmentStates(runId))[0].state;
+      });
+      await runSweepTick({ db, executionHosts: hosts });
+
+      expect(finalizedDuringStop).toBe(false);
+      expect(statusDuringStop).toBe("Running");
+      expect(assignmentDuringStop).toBe("active");
+      expect((await getRun(runId)).status).toBe("Failed");
+      expect((await assignmentStates(runId))[0].state).toBe("released");
+    },
+  );
 });

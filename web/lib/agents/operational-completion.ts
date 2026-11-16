@@ -2,6 +2,7 @@ import type { AgentTerminalOutcome } from "@/lib/agents/finalization";
 import type { AgentResultDecision } from "@/lib/run-results/agent-result";
 import type { OperationalIntegrityResult } from "@/lib/agents/operational-integrity";
 import type { OperationalTerminal } from "@/lib/run-results/operational-types";
+import type { OperationalCompletion } from "./kind";
 
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 
@@ -9,13 +10,14 @@ export function operationalTerminalDecision(input: {
   requested: AgentTerminalOutcome;
   result: AgentResultDecision;
   integrity: OperationalIntegrityResult;
+  contract?: OperationalCompletion["contract"];
 }): Omit<
   OperationalTerminal,
   "resultRevision" | "baselineGeneration" | "evidenceIds"
 > {
   const reported =
     input.result.kind === "valid"
-      ? parseOperationalResult(input.result.value)
+      ? parseOperationalResult(input.result.value, input.contract)
       : null;
   const validation =
     input.result.kind === "valid" && reported

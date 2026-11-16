@@ -1,0 +1,2 @@
+ALTER TABLE "stand_read_claims" ADD COLUMN "token_id" text;--> statement-breakpoint
+ALTER TABLE "stand_read_claims" ADD CONSTRAINT "stand_read_claims_token_id_project_tokens_id_fk" FOREIGN KEY ("token_id") REFERENCES "public"."project_tokens"("id") ON DELETE cascade ON UPDATE no action;

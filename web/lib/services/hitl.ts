@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type {
   BudgetAxis,
   BudgetScope,
@@ -26,15 +27,24 @@ import {
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { answerAssignmentQuestion } from "./assignment-question-response";
+
+import { decodeAssignmentQuestionSubject } from "@/lib/specialist-assignments/question-authority";
+import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
   completeAssignment,
   ensureApiTokenActor,
   ensureUserActor,
+  ensureCompanyUserActor,
   systemCloseActiveAssignmentsForRun,
   systemCloseActiveAssignmentsForHitlRequest,
 } from "@/lib/assignments/service";
+import { humanWorkOwner } from "@/lib/assignments/company-ownership";
+import { assertCompanyRunReadAccess } from "@/lib/agents/company-run-read-access";
+import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { atomicWriteJson } from "@/lib/atomic";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -79,6 +89,8 @@ import {
   assertReviewFeedbackPresent,
   buildReviewFeedbackPreview,
 } from "@/lib/review-comments/feedback-packet";
+import { COMPANY_RUNTIME_NAMESPACE } from "@/lib/flow-paths";
+import { isCompanyFlowResource } from "@/lib/agents/operational-context";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { assertAgentQuestionResponse } from "@/lib/services/agent-question-response";
 import { assertParkedAssistantAnswerable } from "@/lib/scratch-runs/authorization";
@@ -740,10 +752,24 @@ type ResponseAssignmentClaim = {
   actorId: string;
 } | null;
 
+function retainCompanyPermissionConsent(
+  actor: HitlActor,
+  claim: ResponseAssignmentClaim,
+): Readonly<{ version: 1; userId: string; actorId: string }> {
+  if (actor.kind !== "user" || claim === null)
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Company permission requires its retained responding human assignment",
+      { details: { reason: "company_permission_consent_missing" } },
+    );
+
+  return { version: 1, userId: actor.userId, actorId: claim.actorId };
+}
+
 async function claimAssignmentForResponse(args: {
   db: any;
   hitlRequestId: string;
-  projectId: string;
+  projectId: string | null;
   actor: HitlActor;
 }): Promise<ResponseAssignmentClaim> {
   const [assignment] = await args.db
@@ -753,21 +779,38 @@ async function claimAssignmentForResponse(args: {
 
   if (!assignment) return null;
 
-  const actor =
-    args.actor.kind === "user"
-      ? await ensureUserActor({
-          db: args.db,
-          projectId: args.projectId,
-          userId: args.actor.userId,
-          label: args.actor.label,
-        })
-      : await ensureApiTokenActor({
-          db: args.db,
-          projectId: args.projectId,
-          tokenId: args.actor.tokenId,
-          ownerUserId: args.actor.ownerUserId ?? null,
-          label: args.actor.label,
-        });
+  const owner = humanWorkOwner(assignment);
+  let actor: Awaited<ReturnType<typeof ensureUserActor>>;
+
+  if (owner.projectId === null) {
+    if (args.actor.kind !== "user")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Company human work requires a current human responder",
+      );
+    actor = await ensureCompanyUserActor({
+      db: args.db,
+      companyId: owner.companyId,
+      userId: args.actor.userId,
+      label: args.actor.label,
+    });
+  } else {
+    actor =
+      args.actor.kind === "user"
+        ? await ensureUserActor({
+            db: args.db,
+            projectId: owner.projectId,
+            userId: args.actor.userId,
+            label: args.actor.label,
+          })
+        : await ensureApiTokenActor({
+            db: args.db,
+            projectId: owner.projectId,
+            tokenId: args.actor.tokenId,
+            ownerUserId: args.actor.ownerUserId ?? null,
+            label: args.actor.label,
+          });
+  }
 
   if (
     assignment.status === "claimed" &&
@@ -1144,6 +1187,19 @@ async function handlePermissionResponse(
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
     }
+    if (typeof lockedRun.companyId === "string") {
+      if (args.actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Company human consent requires a current human responder",
+        );
+      await authorizeCompanyHitlResponder(
+        tx,
+        args.actor.userId,
+        runId,
+        lockedRun.companyId,
+      );
+    }
     if (lockedHitl.supersededAt)
       throw new MaisterError(
         "CONFLICT",
@@ -1251,9 +1307,18 @@ async function handlePermissionResponse(
       );
     }
 
+    const companyConsent = isCompanyFlowResource(lockedRun)
+      ? retainCompanyPermissionConsent(args.actor, assignmentClaim)
+      : null;
+
     await tx
       .update(hitlRequests)
-      .set({ response: { optionId } })
+      .set({
+        response: {
+          optionId,
+          ...(companyConsent ? { _audit: { companyConsent } } : {}),
+        },
+      })
       .where(
         and(
           eq(hitlRequests.id, hitlRequestId),
@@ -3529,14 +3594,24 @@ async function handleFormHumanResponse(
       ? { ...(rawResponse as Record<string, unknown>), confidence }
       : rawResponse;
 
-  const projectRows = await db
-    .select({ slug: projects.slug })
-    .from(projects)
-    .where(eq(projects.id, runRow.projectId));
-  const projectSlug = projectRows[0]?.slug;
+  let projectSlug: string;
 
-  if (!projectSlug) {
-    throw new MaisterError("PRECONDITION", "project slug not found");
+  if (typeof runRow.companyId === "string") {
+    if (!isCompanyFlowResource(runRow))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Company form or review delivery requires its retained native Flow owner",
+      );
+    projectSlug = COMPANY_RUNTIME_NAMESPACE;
+  } else {
+    const projectRows = await db
+      .select({ slug: projects.slug })
+      .from(projects)
+      .where(eq(projects.id, runRow.projectId));
+    const slug = projectRows[0]?.slug;
+
+    if (!slug) throw new MaisterError("PRECONDITION", "project slug not found");
+    projectSlug = slug;
   }
 
   // Phase 1: claim the row before touching the filesystem. Concurrent
@@ -3555,6 +3630,25 @@ async function handleFormHumanResponse(
 
     if (!lockedHitl || !lockedRun) {
       throw new MaisterError("PRECONDITION", "row vanished mid-transaction");
+    }
+    if (typeof lockedRun.companyId === "string") {
+      if (args.actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Company form and review require a current human responder",
+        );
+      await authorizeCompanyHitlResponder(
+        tx,
+        args.actor.userId,
+        runId,
+        lockedRun.companyId,
+      );
+      if (lockedRun.companyCancellationIntent)
+        throw new MaisterError(
+          "CONFLICT",
+          "Company Run cancellation is pending; reconcile the retained stop intent",
+          { details: { reason: "company_cancellation_pending" } },
+        );
     }
     if (TERMINAL_RUN_STATUS.has(lockedRun.status)) {
       throw new MaisterError(
@@ -3816,7 +3910,7 @@ async function handleFormHumanResponse(
     );
     await args.recordSuccessAudit?.(tx, 200);
 
-    if (stamped.length > 0) {
+    if (stamped.length > 0 && runRow.projectId) {
       await emitWebhookEvent({
         db: tx,
         type: "hitl.responded",
@@ -6889,6 +6983,24 @@ async function handleAgentQuestionResponse(
   );
 }
 
+/** Company human consent never inherits project or administrator authority. */
+async function authorizeCompanyHitlResponder(
+  db: Db,
+  userId: string,
+  runId: string,
+  companyId: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await authorizeCompanyUserAction(
+      tx,
+      userId,
+      companyId,
+      "assignments:answer",
+    );
+    await assertCompanyRunReadAccess(tx, userId, runId);
+  });
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -6942,7 +7054,17 @@ export async function respondToHitl(
     // carries member-level RBAC (any active user, per ADR-096); a project run
     // keeps its project-scoped answerHitl gate. requireActiveSession is already
     // enforced by the calling route, so this branch only needs the project gate.
-    if (runRow.projectId && actor.preauthorizedProjectId !== runRow.projectId) {
+    if (typeof runRow.companyId === "string") {
+      await authorizeCompanyHitlResponder(
+        db,
+        actor.userId,
+        runId,
+        runRow.companyId,
+      );
+    } else if (
+      runRow.projectId &&
+      actor.preauthorizedProjectId !== runRow.projectId
+    ) {
       await requireProjectAction(runRow.projectId, "answerHitl");
     }
   } else {
@@ -6998,6 +7120,43 @@ export async function respondToHitl(
   }
 
   if (hitlRow.kind === "agent_question") {
+    if (typeof hitlRow.specialistAssignmentId === "string") {
+      if (actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Assignment clarification requires its actual human responder",
+        );
+      if (bodyKeys.length !== 1 || bodyKeys[0] !== "response")
+        throw new MaisterError(
+          "CONFIG",
+          "Assignment Inbox clarification accepts only its exact response field",
+        );
+      const subject = decodeAssignmentQuestionSubject(hitlRow.schema);
+      const result = await answerAssignmentQuestion(
+        db,
+        actor.userId,
+        hitlRow.specialistAssignmentId,
+        hitlRequestId,
+        {
+          expectedRevision: subject.expectedRevision + 1,
+          inputRevision: subject.inputRevision,
+          response: body.response,
+          idempotencyKey: `hitl:${hitlRequestId}`,
+        },
+        recordSuccessAudit,
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: runRow.status,
+          state: "resume-queued",
+          idempotent: result.idempotent,
+          inputRevision: result.inputRevision,
+        },
+        { status: result.idempotent ? 200 : 202 },
+      );
+    }
     log.debug({ runId, hitlRequestId, branch: "agent_question" }, "dispatch");
 
     return await handleAgentQuestionResponse({

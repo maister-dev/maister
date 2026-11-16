@@ -5,6 +5,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { buildAgentProfileContract } from "@/lib/run-results/contract";
 // FIXME(any): drizzle-orm dual peer-dep variants — runtime works, cast silences
 // the type-only clash (matches webhooks-schema.integration.test.ts).
 import * as fullSchema from "@/lib/db/schema";
@@ -144,6 +145,52 @@ async function countEvents(eventId: string): Promise<number> {
 }
 
 describe("emitWebhookEvent — plain db handle", () => {
+  it.each(["inherited_capture", "missing_capture_profile"] as const)(
+    "IT-CBE-06 native %s withholds free-form failure data without a Brain dependency",
+    async (enrollment) => {
+      const { projectId, runId } = await seedRun();
+
+      if (enrollment === "inherited_capture")
+        await db.execute(
+          sql`UPDATE runs SET knowledge_access='{"schemaVersion":1,"state":"unknown","generation":1,"restrictions":[]}'::jsonb WHERE id=${runId}`,
+        );
+      else {
+        const contract = buildAgentProfileContract({
+          profileName: "findings",
+          flowRefId: "native-webhook",
+          resolvedRevision: "a".repeat(40),
+          sourceFlowRevisionId: "retained-profile",
+          schemaStem: "findings.v1",
+          nativeContract: "evidence_findings_v1",
+          schemaVersion: 1,
+          sha256: "b".repeat(64),
+          schema: { schemaVersion: 1, fields: [] },
+        });
+
+        await db.execute(
+          sql`UPDATE runs SET result_contract=${JSON.stringify(contract)}::jsonb WHERE id=${runId}`,
+        );
+      }
+      const privateText = `Restricted diagnostic ${randomUUID()}`;
+      const eventId = await emitWebhookEvent({
+        db,
+        type: "run.failed",
+        projectId,
+        runId,
+        data: { errorCode: privateText, arbitrary: { detail: privateText } },
+      });
+      const row = await fetchEvent(eventId);
+
+      expect(row?.data).toEqual({ contentState: "source_restricted" });
+      expect(JSON.stringify(row)).not.toContain(privateText);
+      await db.execute(sql`DELETE FROM projects WHERE id=${projectId}`);
+      expect(
+        (await db.execute(sql`SELECT id FROM projects WHERE id=${projectId}`))
+          .rows,
+      ).toEqual([]);
+    },
+  );
+
   it("inserts exactly one minimal row with payload/fanout_at NULL and returns its id", async () => {
     const { projectId, runId } = await seedRun();
     const data = { runId, foo: "bar" };

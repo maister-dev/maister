@@ -1,7 +1,7 @@
 import type { DomainEventRow } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { eq } from "drizzle-orm";
 
 import { awaitTokenAuditWrites } from "@/test-support/token-audit-quiescence";
 import {
@@ -27,6 +28,7 @@ import {
 import {
   countRows,
   delegateRequest,
+  enrollNativeDelegationParent,
   type DelegationSeedCtx,
   resetDelegationFixture,
   seedAgent,
@@ -44,6 +46,9 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { runs } from "@/lib/db/schema";
+import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { buildAgentPrompt, launchAgentRun } from "@/lib/agents/launch";
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;
@@ -200,6 +205,514 @@ async function childRun(runId: string) {
     )
   ).rows[0];
 }
+
+it.each(["message", "rework"] as const)(
+  "IT-CBE-06 native %s admits newly consumed sources only to a currently authorized child role",
+  async (action) => {
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
+    const agentId = await seedAgent(ctx, { id: `input-${action}` });
+    const delegated = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId },
+        mode: "run",
+        prompt: "Original bounded objective",
+        ...(action === "message"
+          ? { persistent: true, addressableKey: `native-${action}` }
+          : { workspace: "worktree" }),
+      }),
+      {},
+    );
+
+    expect(delegated.status).toBe(202);
+    const { childRunId } = await delegated.json();
+    const launch = await import("@/lib/agents/launch");
+
+    if (action === "rework") {
+      await pool.query(
+        "UPDATE runs SET status='Running',started_at=now() WHERE id=$1",
+        [childRunId],
+      );
+      expect(
+        await launch.finalizeAgentRun(childRunId, "Done", { db }),
+      ).toMatchObject({ finalized: true, status: "Review" });
+    }
+    const companyId = (
+      await pool.query<{ id: string }>("SELECT id FROM companies")
+    ).rows[0]!.id;
+    const submittingUser = randomUUID();
+    const parentAgent = (
+      await pool.query<{ source_agent_id: string }>(
+        "SELECT source_agent_id FROM runs WHERE id=$1",
+        [parentRunId],
+      )
+    ).rows[0]!.source_agent_id;
+
+    await pool.query(
+      "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+      [submittingUser, `${submittingUser}@example.test`],
+    );
+    await pool.query(
+      "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3) ON CONFLICT DO NOTHING",
+      [companyId, parentAgent, submittingUser],
+    );
+    await pool.query(
+      "UPDATE agent_project_links SET can_read_brain=true WHERE project_id=$1 AND agent_id=$2",
+      [ctx.projectId, agentId],
+    );
+    await pool.query(
+      "UPDATE runs SET knowledge_access=jsonb_set(jsonb_set(knowledge_access,'{restrictions}',(knowledge_access->'restrictions') || $2::jsonb),'{generation}','2') WHERE id=$1",
+      [parentRunId, JSON.stringify([{ kind: "company", companyId }])],
+    );
+    const captures: unknown[] = [];
+    const observe = async (): Promise<void> => {
+      captures.push(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      );
+    };
+    const message = vi
+      .spyOn(launch, "sendAgentMessage")
+      .mockImplementation(async () => {
+        await observe();
+
+        return {
+          childRunId,
+          messageId: randomUUID(),
+          status: "Pending",
+          messageState: "queued",
+          delivery: "queued",
+        };
+      });
+    const rework = vi
+      .spyOn(launch, "reworkChildRun")
+      .mockImplementation(async () => {
+        await observe();
+
+        return { childRunId, status: "Running" };
+      });
+    const route = action === "message" ? messagePost : reworkPost;
+    const request = (): NextRequest =>
+      new NextRequest(`http://localhost/api/v1/ext/runs/${action}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          childRunId,
+          prompt: "Private input based on the newly consumed company source.",
+        }),
+      });
+
+    try {
+      const before = (
+        await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+          childRunId,
+        ])
+      ).rows[0]!.knowledge_access;
+      const denied = await route(request(), {});
+
+      expect(denied.status).toBe(409);
+      expect(captures).toHaveLength(0);
+      expect(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      ).toEqual(before);
+      await pool.query(
+        "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3)",
+        [companyId, agentId, submittingUser],
+      );
+      expect((await route(request(), {})).status).toBe(200);
+      expect(captures).toEqual([
+        expect.objectContaining({
+          state: "complete",
+          restrictions: expect.arrayContaining([
+            { kind: "company", companyId },
+          ]),
+        }),
+      ]);
+      await pool.query(
+        "UPDATE company_grants SET revoked_at=now() WHERE company_id=$1 AND principal_type='agent' AND principal_id=$2 AND action='knowledge:read'",
+        [companyId, agentId],
+      );
+      expect((await route(request(), {})).status).toBe(409);
+      expect(captures).toHaveLength(1);
+      await pool.query(
+        "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) VALUES($1,'agent',$2,'knowledge:read',$3)",
+        [companyId, agentId, submittingUser],
+      );
+      await pool.query("UPDATE runs SET knowledge_access=NULL WHERE id=$1", [
+        childRunId,
+      ]);
+      const historical = await route(request(), {});
+
+      expect(historical.status).toBe(409);
+      expect(await historical.json()).toMatchObject({
+        details: { reason: "knowledge_capture_profile_required" },
+      });
+      expect(
+        (
+          await pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
+            childRunId,
+          ])
+        ).rows[0]!.knowledge_access,
+      ).toBeNull();
+      await pool.query(
+        "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+        [
+          childRunId,
+          JSON.stringify({
+            schemaVersion: 1,
+            state: "unknown",
+            generation: 1,
+            restrictions: [],
+          }),
+        ],
+      );
+      const unknown = await route(request(), {});
+
+      expect(unknown.status).toBe(409);
+      expect(await unknown.json()).toMatchObject({
+        details: { reason: "knowledge_capture_profile_required" },
+      });
+      expect(captures).toHaveLength(1);
+    } finally {
+      message.mockRestore();
+      rework.mockRestore();
+    }
+  },
+);
+
+it.each(["task", "run"] as const)(
+  "IT-CBE-06 native agent mode:%s preserves its private objective through canonical prompt composition",
+  async (mode) => {
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
+    const agentId = await seedAgent(ctx, { id: "diagnostic" });
+    const privatePrompt = `Inspect a restricted source ${randomUUID()}`;
+    const response = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId },
+        mode,
+        prompt: privatePrompt,
+        ...(mode === "task" ? { title: "Private objective" } : {}),
+      }),
+      {},
+    );
+
+    expect(response.status).toBe(202);
+    const result = await response.json();
+    const [run] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, result.childRunId));
+
+    expect(run!.delegationSnapshot).toMatchObject({
+      nativeInput: { sourceRunId: parentRunId, prompt: privatePrompt },
+    });
+    const effective = await resolveEffectiveAgentDefinition(
+      { agentId, projectId: ctx.projectId },
+      db,
+    );
+
+    expect(await buildAgentPrompt(db, effective.parsed, run!)).toContain(
+      privatePrompt,
+    );
+    if (result.childTaskId) {
+      const task = (
+        await pool.query("SELECT title,prompt FROM tasks WHERE id=$1", [
+          result.childTaskId,
+        ])
+      ).rows[0]!;
+
+      expect(JSON.stringify(task)).not.toContain(privatePrompt);
+      await expect(
+        launchAgentRun({
+          agentId,
+          projectId: ctx.projectId,
+          taskId: result.childTaskId,
+          trigger: { source: "manual" },
+          db,
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "native_delegation_input_binding_required" },
+      });
+    }
+  },
+);
+
+it.each(["task", "run"] as const)(
+  "IT-CBE-06 a native Flow-driving specialist mode:%s retains its delegated input and actual parent binding",
+  async (mode) => {
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
+    const agentId = await seedAgent(ctx, { id: "driver" });
+
+    await seedFlow(ctx, {
+      flowRefId: "native-driver-flow",
+      installedPath: agentsRoot,
+      resolvedRevision: "rev-pkg-1",
+    });
+    const sourcePath = path.join(agentsRoot, "maister-agents", "driver.md");
+
+    await writeFile(
+      sourcePath,
+      (await readFile(sourcePath, "utf8")).replace(
+        "risk_tier:",
+        "flow: native-driver-flow\nrisk_tier:",
+      ),
+      "utf8",
+    );
+    const prompt = "Private diagnostic request for a Flow-driving role";
+    const response = await delegatePost(
+      delegateRequest(secret, { target: { agentId }, mode, prompt }),
+      {},
+    );
+
+    if (mode === "run") {
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        code: "CONFIG",
+        details: { reason: "delegation_facade_requires_task" },
+      });
+      expect(
+        (
+          await pool.query("SELECT id FROM runs WHERE parent_run_id=$1", [
+            parentRunId,
+          ])
+        ).rows,
+      ).toHaveLength(0);
+      expect(
+        (
+          await pool.query("SELECT id FROM tasks WHERE id<>$1", [
+            orchestratorTaskId,
+          ])
+        ).rows,
+      ).toHaveLength(0);
+
+      return;
+    }
+    expect(response.status).toBe(202);
+    const result = await response.json();
+    const child = await childRun(result.childRunId);
+
+    expect(child.run_kind).toBe("flow");
+    expect(child.parent_run_id).toBe(parentRunId);
+    expect(child.delegation_snapshot.nativeInput.target).toEqual({
+      kind: "agent",
+      id: agentId,
+    });
+    const { loadProjectRun: loadRun } =
+      await import("@/lib/flows/graph/runner-core");
+
+    expect((await loadRun(db, result.childRunId)).task.prompt).toBe(prompt);
+  },
+);
+
+it("IT-CBE-06 native shared-workspace delegation refuses before creating a carrier or child", async () => {
+  await enrollNativeDelegationParent(ctx, parentRunId, "test-pkg:orchestrator");
+  const agentId = await seedAgent(ctx, { id: "shared-diagnostic" });
+  const response = await delegatePost(
+    delegateRequest(secret, {
+      target: { agentId },
+      mode: "task",
+      prompt: "Private diagnostic request",
+      workspaceMode: "shared",
+    }),
+    {},
+  );
+
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "native_shared_workspace_unsupported" },
+  });
+  expect(
+    (
+      await pool.query("SELECT id FROM tasks WHERE project_id=$1", [
+        ctx.projectId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+  expect(
+    (
+      await pool.query("SELECT id FROM runs WHERE project_id=$1", [
+        ctx.projectId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+});
+
+it.each(["unknown_capture", "oversized_input", "revoked_origin"] as const)(
+  "IT-CBE-06 native delegation refuses %s before creating a shared carrier",
+  async (failure) => {
+    await enrollNativeDelegationParent(
+      ctx,
+      parentRunId,
+      "test-pkg:orchestrator",
+    );
+    if (failure === "unknown_capture")
+      await pool.query(
+        "UPDATE runs SET knowledge_access=jsonb_set(knowledge_access,'{state}','\"unknown\"') WHERE id=$1",
+        [parentRunId],
+      );
+    if (failure === "revoked_origin")
+      await pool.query(
+        "UPDATE agents SET enabled=false WHERE id=(SELECT source_agent_id FROM runs WHERE id=$1)",
+        [parentRunId],
+      );
+    const response = await delegatePost(
+      delegateRequest(
+        secret,
+        flowDelegation({
+          prompt:
+            failure === "oversized_input"
+              ? "x".repeat(32001)
+              : "Restricted diagnostic request",
+        }),
+      ),
+      {},
+    );
+
+    const expected = {
+      unknown_capture: { status: 409, code: "PRECONDITION" },
+      oversized_input: { status: 422, code: "CONFIG" },
+      revoked_origin: { status: 403, code: "UNAUTHORIZED" },
+    }[failure];
+
+    expect(response.status).toBe(expected.status);
+    expect(await response.json()).toMatchObject({ code: expected.code });
+    expect(
+      (
+        await pool.query("SELECT id FROM tasks WHERE project_id=$1", [
+          ctx.projectId,
+        ])
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await pool.query("SELECT id FROM runs WHERE project_id=$1", [
+          ctx.projectId,
+        ])
+      ).rows,
+    ).toHaveLength(1);
+  },
+);
+
+it("IT-CBE-06 native Flow delegation keeps original input out of shared carrier text and preserves its private launch snapshot", async () => {
+  await enrollNativeDelegationParent(ctx, parentRunId, "test-pkg:orchestrator");
+  const privatePrompt = `Source-controlled diagnostic request ${randomUUID()}`;
+  const privateTitle = `Private finding ${randomUUID()}`;
+  const response = await delegatePost(
+    delegateRequest(
+      secret,
+      flowDelegation({ prompt: privatePrompt, title: privateTitle }),
+    ),
+    {},
+  );
+
+  expect(response.status).toBe(202);
+  const result = await response.json();
+  const carrier = (
+    await pool.query(
+      "SELECT title,prompt,delegation_spec FROM tasks WHERE id=$1",
+      [result.childTaskId],
+    )
+  ).rows[0]!;
+
+  expect(carrier.title).not.toContain(privateTitle);
+  expect(carrier.prompt).not.toContain(privatePrompt);
+  const { getTaskDTO } = await import("@/lib/services/tasks");
+  const publicTask = await getTaskDTO(result.childTaskId, ctx.projectId, db);
+
+  expect(JSON.stringify(publicTask)).not.toContain(privatePrompt);
+  expect(JSON.stringify(publicTask)).not.toContain(privateTitle);
+  expect(carrier.delegation_spec).toMatchObject({
+    nativeInput: {
+      schemaVersion: 1,
+      sourceRunId: parentRunId,
+      prompt: privatePrompt,
+      title: privateTitle,
+    },
+  });
+  const child = await childRun(result.childRunId);
+
+  expect(child.delegation_snapshot).toMatchObject({
+    nativeInput: { prompt: privatePrompt, title: privateTitle },
+  });
+  const { loadProjectRun: loadRun } =
+    await import("@/lib/flows/graph/runner-core");
+  const loaded = await loadRun(db, result.childRunId);
+
+  expect(loaded.task.prompt).toBe(privatePrompt);
+  expect(loaded.task.title).toBe(privateTitle);
+  await pool.query(
+    "UPDATE runs SET status='Failed',ended_at=now() WHERE id=$1",
+    [result.childRunId],
+  );
+  await pool.query(
+    "UPDATE tasks SET status='Backlog',stage='Backlog' WHERE id=$1",
+    [result.childTaskId],
+  );
+  const { launchRun } = await import("@/lib/services/runs");
+
+  await expect(
+    launchRun(
+      {
+        taskId: result.childTaskId,
+        flowId,
+        parentRunId,
+        delegationSnapshot: {
+          ...child.delegation_snapshot,
+          nativeInput: {
+            ...child.delegation_snapshot.nativeInput,
+            prompt: "Changed private objective",
+          },
+        },
+      },
+      { actorUserId: null, authorize: async () => {} },
+      db,
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "task_launch_intent_required" },
+  });
+
+  await expect(
+    launchRun(
+      { taskId: result.childTaskId, flowId },
+      { actorUserId: null, authorize: async () => {} },
+      db,
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "task_launch_intent_required" },
+  });
+  expect(
+    (
+      await pool.query("SELECT id FROM runs WHERE task_id=$1", [
+        result.childTaskId,
+      ])
+    ).rows,
+  ).toHaveLength(1);
+});
 
 describe("run_delegate flow arm (ADR-163 REQ-07..REQ-13)", () => {
   it("refuses agent session options for a Flow facade and preserves its governed source on ordinary launch", async () => {

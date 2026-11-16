@@ -1,0 +1,99 @@
+{
+  "task": "T20.1",
+  "slice": "Native permission checkpoint, capacity claim and retained-host restart",
+  "date": "2026-11-07",
+  "baseCommit": "df88bdcfe1077d166390af9819eec591df470788",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "status": "Checkpoint qualified; task remains open",
+  "red": "After actual native permission checkpoint and SIGKILL/restart, the response endpoint required a project workspace instead of queuing resume (1/44)",
+  "gates": {
+    "owning-integration": {
+      "exitCode": 0,
+      "log": "owning-integration.log.gz",
+      "files": 1,
+      "tests": 44,
+      "durationSeconds": 25.47
+    },
+    "integration": {
+      "exitCode": 0,
+      "log": "integration.log.gz",
+      "files": 5,
+      "tests": 112,
+      "durationSeconds": 175.8
+    },
+    "project-recovery": {
+      "exitCode": 0,
+      "log": "project-recovery.log.gz",
+      "files": 1,
+      "tests": 11,
+      "durationSeconds": 65.67
+    },
+    "unit": {
+      "exitCode": 0,
+      "log": "unit.log.gz",
+      "files": 889,
+      "tests": 9318,
+      "durationSeconds": 23.95
+    },
+    "supervisor-unit": {
+      "exitCode": 0,
+      "log": "supervisor-unit.log.gz",
+      "files": 50,
+      "tests": 500,
+      "durationSeconds": 14.26
+    },
+    "supervisor-integration": {
+      "exitCode": 0,
+      "log": "supervisor-integration.log.gz",
+      "files": 38,
+      "tests": 350,
+      "durationSeconds": 15.22
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "format": {
+      "exitCode": 0,
+      "log": "format.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Native resume restores exact company session/input/result context and current initiating/source authority before the existing capacity claim",
+    "No fabricated Project, Task, repository workspace or parallel execution ledger",
+    "Current retained human consent is checked inside receiving placement/attempt transaction; revoked consent rolls back every claim change and retains idle work",
+    "Actual supervisor SIGKILL/restart retains host key with a new boot identity and unchanged frozen input/result/ACP identity",
+    "Capacity defers the answer; authority restoration completes the same Run with two prompts, one input, valid required result and released resource",
+    "Project handoff receipt checks remain separate; company handoff does not emit project webhooks"
+  ],
+  "fixtureCorrections": [
+    "The first post-fix runtime attempt omitted the existing Flow continuation worker; the final fixture runs the production worker",
+    "The lifecycle fixture advertised resume but discarded its scripted conversation, so a continuation-only prompt produced no permission. Opt-in atomic scenario state now restores the same script by ACP session identity without changing production prompt bytes.",
+    "Shared handoff context types now retain the nullable project owner while each caller validates its exact admitted owner."
+  ],
+  "qualificationBoundary": "Real PostgreSQL, pinned fixture Git package, owned real supervisor and controlled ACP. Real adapter/model, installable companion and stand pilot remain unqualified. No engine activation or invented historical consent. Completion recovery and required-result negative qualification remain open.",
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "5a2a4e9279486fbdca96fc9453d1493b31c8b687a6d18261c0cb73136331b926",
+    "docs/system-analytics/specialist-runtime.md": "39ad70930b606333449ba2cee77e499805f709a8c7dd12f5c1e4a10fd8a777a2",
+    "supervisor/test/fixtures/mock-acp-lifecycle.mjs": "bee195e5cb14c46f4d1840f7346b8e152a2e0e7376f51598da5f492a2f66ae8a",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "0f5f02854cb05402e62ccb367598de758578866eb9875bc25c34505d3f7bc377",
+    "web/lib/assignments/company-ownership.ts": "5816b44e4275a30e45abf44404070792e6d34bbb6134a97d97ce8c911a9f8fa1",
+    "web/lib/flows/graph/permission-result-evidence.ts": "86451f90b4fe18c37d541a2afc10a1c5bb76b0b2db85e8da96de084f539d950a",
+    "web/lib/flows/graph/permission-resume.ts": "58a02c73ad01acd20ac2ae82d38e79f255dced6091501880d12f03906b3173d5",
+    "web/lib/flows/graph/prompt-permission.ts": "b51a913ac583af51156590e94dd0f64315ce07193e32e7432da35bba0d79e0a7",
+    "web/lib/runs/resume.ts": "7a5340fba8804dc2e0d6ea924d2ca801c2a68966cd6318f2dad48b27de4b67aa"
+  }
+}

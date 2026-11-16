@@ -28,6 +28,7 @@ import { failCheckpointedAgentPermission } from "./permission-rejection";
 
 import {
   agentTurns,
+  assignments,
   executionCommands,
   hitlRequests,
   runs,
@@ -47,6 +48,7 @@ import {
   readCheckpointSource,
   assertAgentResumeTurn,
 } from "@/lib/execution-host/agent-permission-handoff";
+import { claimAssignment } from "@/lib/assignments/service";
 import { operationalHumanAnswerPrompt } from "@/lib/agents/launch-contract";
 export { assertAgentResumeTurn } from "@/lib/execution-host/agent-permission-handoff";
 export { lockAgentPermissionResult } from "./permission-result";
@@ -497,6 +499,47 @@ export async function acknowledgeAgentPermissionResult(
   }
 }
 
+/** A resumed company permission retains the original human decision actor.
+ * Claiming the reissue rechecks current authority before preparing external input.
+ */
+async function retainCompanyPermissionResponder(
+  tx: Db,
+  parent: HitlRequest,
+  child: HitlRequest,
+): Promise<void> {
+  const [run] = await tx
+    .select({ companyId: runs.companyId })
+    .from(runs)
+    .where(eq(runs.id, parent.runId));
+
+  if (run?.companyId == null) return;
+  const [original] = await tx
+    .select()
+    .from(assignments)
+    .where(eq(assignments.hitlRequestId, parent.id));
+  const [reissued] = await tx
+    .select()
+    .from(assignments)
+    .where(eq(assignments.hitlRequestId, child.id));
+
+  if (
+    !original ||
+    !reissued ||
+    original.runId !== parent.runId ||
+    reissued.runId !== parent.runId ||
+    original.companyId !== run.companyId ||
+    reissued.companyId !== run.companyId ||
+    original.status !== "claimed" ||
+    original.assigneeActorId === null
+  )
+    throw new PromptOwnerInvariantError("company_permission_responder_missing");
+  await claimAssignment({
+    db: tx,
+    assignmentId: reissued.id,
+    actorId: original.assigneeActorId,
+  });
+}
+
 /** Only the current granted turn may carry the accepted choice to one
  * reissued request. The reissue owns a current source for another checkpoint.
  */
@@ -623,6 +666,7 @@ export async function deliverResumedAgentPermission(
         },
       })
       .where(eq(hitlRequests.id, child.id));
+    await retainCompanyPermissionResponder(tx, parent, child);
     const prepared = await prepareAgentPermissionResponse(tx, client, child.id);
 
     return prepared ? { prepared, hitlRequestId: child.id } : null;

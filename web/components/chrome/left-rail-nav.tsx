@@ -5,6 +5,7 @@ import type { ComponentType, ReactElement, SVGProps } from "react";
 
 import {
   ChartBarIcon,
+  BookOpenIcon,
   ClockIcon,
   Cog6ToothIcon,
   CpuChipIcon,
@@ -68,6 +69,7 @@ const sectionIcons: Record<RailSectionId, HeroIcon> = {
   projects: Squares2X2Icon,
   work: TableCellsIcon,
   inbox: InboxIcon,
+  knowledge: BookOpenIcon,
   activity: SignalIcon,
   studio: WrenchScrewdriverIcon,
   observatory: ChartBarIcon,

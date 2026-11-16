@@ -29,6 +29,19 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "company-brain-specialists": {
+    label: "Company Brain and specialists",
+    planPath: ".ai-factory/plans/codex-company-brain-specialist-assignments.md",
+    documents: [
+      "company-brain.md", "company-brain-evidence.md", "evidence-findings.md",
+      "specialist-runtime.md", "specialist-assignments.md", "specialist-cooperation.md",
+      "stand-maintenance.md", "company-brain-specialists-qualification.md",
+    ],
+    prefixes: ["CBK", "CBE", "CBS", "CBA", "CBC", "CBO", "CBU", "CBX"],
+    matrixPath: "docs/system-analytics/company-brain-specialists-traceability.md",
+    implementationPhases: /^T(?:04\.1|(?:0[5-9]|[1-3]\d|4[0-3])(?:\.\d+)?)$/,
+    testRoots: ["web", "supervisor", "mcp", "scripts", "stand-connector/test"],
+  },
   "run-peek": {
     label: "Child Run peek",
     planPath: ".ai-factory/plans/child-run-peek-navigation.md",
@@ -138,6 +151,7 @@ export function matrixRows(src, prefixes) {
   );
 
   for (const m of src.matchAll(rowRe)) {
+    if (rows.has(m[1])) throw new Error(`duplicate matrix row ${m[1]}`);
     rows.set(m[1], {
       contract: m[2].trim(),
       tasks: [...m[3].matchAll(/\b(?:UX-)?T\d+(?:\.\d+)?\b/g)].map((t) => t[0]),
@@ -220,6 +234,16 @@ export function evaluateCoverage({
   const failures = [];
   const idRe = testIdPattern(prefixes);
 
+  if (ids.length === 0) failures.push("no requirement ids discovered");
+  if (tasks.length === 0) failures.push("no plan tasks discovered");
+  for (const [name, values] of [["requirement", ids], ["task", tasks]]) {
+    const seen = new Set();
+    for (const value of values) {
+      if (seen.has(value)) failures.push(`duplicate ${name} ${value}`);
+      seen.add(value);
+    }
+  }
+
   for (const id of ids) {
     const row = rows.get(id);
     if (!row) {
@@ -233,6 +257,12 @@ export function evaluateCoverage({
     }
     if (row.primaryTest.length === 0) {
       failures.push(`${id}: matrix row names no primary test`);
+    }
+    if ((row.primaryTest.match(idRe) ?? []).length === 0) {
+      failures.push(`${id}: no recognizable primary test id`);
+    }
+    if (!["Planned", "Implemented", "Implemented for Claude; Codex ineligible"].includes(row.status)) {
+      failures.push(`${id}: unsupported status ${row.status}`);
     }
     if (row.status === "Implemented") {
       for (const cited of row.primaryTest.match(idRe) ?? []) {

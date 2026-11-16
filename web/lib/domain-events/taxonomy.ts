@@ -5,6 +5,8 @@ import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
 // via migration. `task.triage_requeued` is registered with NO emitter — it
 // lands with the Stage-3 triager.
 export const DOMAIN_EVENT_KINDS = [
+  "knowledge.record_changed",
+  "specialist.assignment_changed",
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",
@@ -59,12 +61,31 @@ export const DOMAIN_EVENT_KINDS = [
 
 export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
 
+/** Native company subscriptions accept only Run facts supported by the company event owner CHECK. */
+export const COMPANY_AGENT_EVENT_KINDS = [
+  "run.done",
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+  "run.needs_input",
+  "run.escalated",
+  "run.operational_attention_acknowledged",
+  "run.operational_cleanup_changed",
+] as const satisfies readonly DomainEventKind[];
+
 export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
 }
 
+/** Native content invalidation has its own access policy, separate from general project notifications. */
+export const NON_ATTENTION_EVENT_KINDS = [
+  "knowledge.record_changed",
+  "specialist.assignment_changed",
+] as const satisfies readonly DomainEventKind[];
+
 /** Internal projection facts invalidate read models and never trigger another agent. */
 export const INTERNAL_PROJECTION_EVENT_KINDS = [
+  ...NON_ATTENTION_EVENT_KINDS,
   "agent.activity_changed",
   "agent.incident_changed",
   "task.qualification_changed",

@@ -1,3 +1,4 @@
+import type { ComponentType, ComponentProps, ReactNode } from "react";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type {
   RunCostSummary,
@@ -8,8 +9,8 @@ import type { RunNodeStatuses } from "@/lib/queries/run-node-status";
 import type { BuildFlowRunResultDtoInput } from "@/lib/runs/flow-result-dto";
 
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,6 +20,12 @@ import {
 } from "@/components/runs/flow-run-center";
 import { buildFlowRunResultDto } from "@/lib/runs/flow-result-dto";
 import messages from "@/messages/en.json";
+
+const TestIntlProvider = NextIntlClientProvider as ComponentType<
+  Omit<ComponentProps<typeof NextIntlClientProvider>, "children"> & {
+    children?: ReactNode;
+  }
+>;
 
 let query = new URLSearchParams();
 
@@ -247,12 +254,10 @@ function render(
   locale = "en-US",
 ): string {
   return renderToStaticMarkup(
-    createElement(NextIntlClientProvider, {
-      locale: "en",
-      messages,
-      timeZone: "UTC",
-      // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
-      children: createElement(FlowRunCenter, {
+    createElement(
+      TestIntlProvider,
+      { locale, messages, timeZone: "UTC" },
+      createElement(FlowRunCenter, {
         result: buildFlowRunResultDto(input(over)),
         labels: LABELS,
         locale,
@@ -262,7 +267,7 @@ function render(
           "Graph",
         ),
       }),
-    }),
+    ),
   );
 }
 

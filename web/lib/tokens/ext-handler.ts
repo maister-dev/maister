@@ -13,6 +13,7 @@ import { ZodError } from "zod";
 import { canAgentReachProject } from "@/lib/agents/cross-project-reach";
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
+import { assertNativeProjectStoreWrite } from "@/lib/brain/knowledge-project-sinks";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { queryErrorDiagnostics } from "@/lib/db/pg-error";
@@ -48,10 +49,11 @@ type Db = any;
 export type ExtCtx = {
   actor: TokenActor;
   projectId: string;
+  scopeLabel: string;
   operationId?: string;
 };
 type ResolveProjectCtx = { actor: TokenActor; db: Db };
-type ResolveScopeCtx = ExtCtx & { db: Db };
+type ResolveScopeCtx = ResolveProjectCtx & { projectId: string };
 
 export type ExtOperationContinuation = Readonly<{
   replay: (
@@ -174,6 +176,10 @@ function bumpTokenLastUsedAsync(actor: TokenActor, db: Db): void {
 
 export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "tasks:create": "createTask",
+  "assignments:read": "readBoard",
+  "assignments:submit": "launchRun",
+  "assignments:update": "launchRun",
+  "assignments:recover": "recoverRun",
   "tasks:read": "readBoard",
   "tasks:update": "editTask",
   "tasks:complete": "editTask",
@@ -246,6 +252,10 @@ async function agentMayReach(
 // 409 (docs/error-taxonomy.md); a missing executor/supervisor is 503.
 export function httpStatusForExtCode(code: string): number {
   switch (code) {
+    case "UNAUTHENTICATED":
+      return 401;
+    case "UNAUTHORIZED":
+      return 403;
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
@@ -360,50 +370,12 @@ async function refuseGlobalOwnerAction(
       );
 }
 
-export async function handleExt(
+/** Shared bearer verification and identified-failure audit for project and owner-aware entry points. */
+export async function authenticateExtRequest(
   req: Request,
-  opts: {
-    slug?: string;
-    scopeLabel: string;
-    endpoint: string;
-    method: string;
-    db?: Db;
-    // M16 §D: when set, `work` owns the success token_audit_log INSERT inside its
-    // own db.transaction (so a rollback discards the audit too). handleExt then
-    // SKIPS its success after-audit on a <400 response, but STILL writes the
-    // failure audit on >=400 (work never reaches its in-tx audit on failure).
-    successAuditInWork?: boolean;
-    // Scope enforcement is default-on. A route can explicitly pass
-    // requireScope:false only while preserving an older compatibility contract.
-    // The 403 body never reveals which scopes the token holds.
-    requireScope?: boolean;
-    allowGlobalActorWithoutProject?: boolean;
-    auditProjectId?: string | null;
-    resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
-    resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
-    // ADR-186: a librarian token is refused unless the route opts in. Opting in
-    // is a statement that the route is part of the owner's business-work
-    // surface; human-only and coordinator routes never set it.
-    admitLibrarian?: boolean;
-    // ADR-186: how a project-less librarian token finds the project a
-    // resource-addressed route acts in (the run's project, for example). Other
-    // kinds keep their existing admission, so a global personal token's answer
-    // on these routes does not change.
-    resolveLibrarianProjectId?: (
-      ctx: ResolveProjectCtx,
-    ) => Promise<string | null>;
-    idempotency?: {
-      kind: string;
-      target: Record<string, string>;
-      parseBody: (req: Request) => Promise<unknown>;
-      keyMaxLength?: 128 | 256;
-      continuation?: ExtOperationContinuation;
-    };
-  },
-  work: (ctx: ExtCtx) => Promise<NextResponse>,
-): Promise<NextResponse> {
-  const d = opts.db ?? getDb();
-
+  opts: Readonly<{ scopeLabel: string; endpoint: string; method: string }>,
+  d: ReturnType<typeof getDb>,
+): Promise<TokenActor | NextResponse> {
   // 1. Extract bearer token.
   const authHeader = req.headers.get("authorization") ?? "";
   const match = /^Bearer (.+)$/i.exec(authHeader);
@@ -454,6 +426,59 @@ export async function handleExt(
 
     throw err;
   }
+
+  return actor;
+}
+
+export async function handleExt(
+  req: Request,
+  opts: {
+    slug?: string;
+    scopeLabel: string;
+    endpoint: string;
+    method: string;
+    db?: Db;
+    // M16 §D: when set, `work` owns the success token_audit_log INSERT inside its
+    // own db.transaction (so a rollback discards the audit too). handleExt then
+    // SKIPS its success after-audit on a <400 response, but STILL writes the
+    // failure audit on >=400 (work never reaches its in-tx audit on failure).
+    successAuditInWork?: boolean;
+    // Scope enforcement is default-on. A route can explicitly pass
+    // requireScope:false only while preserving an older compatibility contract.
+    // The 403 body never reveals which scopes the token holds.
+    requireScope?: boolean;
+    allowGlobalActorWithoutProject?: boolean;
+    allowCompanyActorWithoutProject?: boolean;
+    auditProjectId?: string | null;
+    resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
+    resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
+    // ADR-186: a librarian token is refused unless the route opts in. Opting in
+    // is a statement that the route is part of the owner's business-work
+    // surface; human-only and coordinator routes never set it.
+    admitLibrarian?: boolean;
+    // ADR-186: how a project-less librarian token finds the project a
+    // resource-addressed route acts in (the run's project, for example). Other
+    // kinds keep their existing admission, so a global personal token's answer
+    // on these routes does not change.
+    resolveLibrarianProjectId?: (
+      ctx: ResolveProjectCtx,
+    ) => Promise<string | null>;
+    idempotency?: {
+      kind: string;
+      target: Record<string, string>;
+      parseBody: (req: Request) => Promise<unknown>;
+      keyMaxLength?: 128 | 256;
+      continuation?: ExtOperationContinuation;
+    };
+  },
+  work: (ctx: ExtCtx) => Promise<NextResponse>,
+): Promise<NextResponse> {
+  const d = opts.db ?? getDb();
+
+  const authenticated = await authenticateExtRequest(req, opts, d);
+
+  if (authenticated instanceof NextResponse) return authenticated;
+  const actor = authenticated;
 
   let targetProjectId: string | null = actor.projectId;
   let auditProjectId: string | null =
@@ -654,7 +679,11 @@ export async function handleExt(
     }
   }
 
-  if (targetProjectId === null && !opts.allowGlobalActorWithoutProject) {
+  if (
+    targetProjectId === null &&
+    !opts.allowGlobalActorWithoutProject &&
+    !(opts.allowCompanyActorWithoutProject && actor.companyId !== undefined)
+  ) {
     await recordRequiredTokenAudit(
       {
         ...tokenAuditIdentity(actor),
@@ -893,10 +922,52 @@ export async function handleExt(
   // 4. Run work().
   let response: NextResponse;
 
+  if (actor.boundRunId && opts.method !== "GET" && opts.method !== "HEAD") {
+    try {
+      await assertNativeProjectStoreWrite(d, actor.boundRunId, scopeLabel);
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        ![
+          "native_unclassified_sink",
+          "knowledge_reference_unavailable",
+        ].includes(String(error.details?.reason))
+      )
+        throw error;
+      await recordRequiredTokenAudit(
+        {
+          ...tokenAuditIdentity(actor),
+          projectId: auditProjectId,
+          scopeUsed: scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 409,
+        },
+        d,
+      );
+      log.warn(
+        {
+          runId: actor.boundRunId,
+          tokenId: actor.tokenId,
+          scope: scopeLabel,
+          reason: error.details?.reason,
+        },
+        "native unclassified project write refused before effects",
+      );
+
+      return NextResponse.json(
+        { code: error.code, message: error.message, details: error.details },
+        { status: 409 },
+      );
+    }
+  }
+
   try {
     const context: ExtCtx = {
       actor,
       projectId: targetProjectId ?? "",
+      scopeLabel,
       operationId,
     };
 

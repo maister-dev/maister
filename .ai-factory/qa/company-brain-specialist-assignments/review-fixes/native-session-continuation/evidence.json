@@ -1,0 +1,150 @@
+{
+  "baseline": "853ca6fa142be4187e3a3f43cf4b527c1c517c25",
+  "candidateCheckout": "/private/tmp/maister-token-continuation-853ca6fa1",
+  "patchSha256": "a36d2e35c69503741b510a24adca35141028b4af8933907c16bc25d4be791f12",
+  "files": [
+    {
+      "path": "web/lib/flows/graph/__tests__/orchestrator-node.integration.test.ts",
+      "baselineSha256": "7cca50f3b22b10104c6c6cccc8ef4a1cbee63e327838135d3fd2d56f3157aa29",
+      "candidateSha256": "acf5a6def2f7ff41a41f8abb07db7168a459848a1b0b3298193c59a9cf2d8234"
+    },
+    {
+      "path": "web/lib/flows/graph/__tests__/orchestrator-park.integration.test.ts",
+      "baselineSha256": "c12a2835c79a169e8141df56a26215f49c389a6cb8aca0bed7dba0a7abe03e57",
+      "candidateSha256": "799932b42f42a088f551c0bb60f572fc60bd9832ee1739d34fde4f6081f4da84"
+    },
+    {
+      "path": "web/lib/flows/graph/__tests__/prompt-admission-yield.integration.test.ts",
+      "baselineSha256": "027501a404c78484c1d547e7474ee0a729a885d21c0e91df0d0343aefa5d71e9",
+      "candidateSha256": "617878ddfdec93def9a688d62f7ecb70346f7daaf59b12f2fa97a5d58935cef3"
+    },
+    {
+      "path": "web/lib/flows/graph/runner-graph.ts",
+      "baselineSha256": "5c1a78ef62c2640f1f8c2865e27346eff0fbb3585d561ab9b67881ad448d5c42",
+      "candidateSha256": "2c247c62f21e4dd4d1fbaf5cb26673852b38aa6ebe563f2a397a89aa3ffb673b"
+    },
+    {
+      "path": "web/lib/flows/runner-agent.ts",
+      "baselineSha256": "dd628f1a8e5cc54cd6dd20f95adb1c6fe84f7ec762f2a6d29b91f58fcb770bd6",
+      "candidateSha256": "6012641215b0ee92ceeecba85305d103430321be6f56c8e5592704cf04aa0e0c"
+    },
+    {
+      "path": "web/lib/orchestrator/__tests__/e2e-loop.integration.test.ts",
+      "baselineSha256": "9b0993927948b8af2bbb724f2a8c3e262d1a8df1ab4a8e27f045ca3350d8c560",
+      "candidateSha256": "1114d66a5933aa754355aaf857e398b026d849fe430936c5b9b914549cae9749"
+    }
+  ],
+  "regression": {
+    "red": {
+      "log": "/private/tmp/maister-token-continuation-red.log",
+      "outcome": "TokenAuthError revoked on original canonical create credential after actual admission replay",
+      "runtime": "real supervisor, controlled ACP adapter, owned PostgreSQL"
+    },
+    "green": {
+      "log": "/private/tmp/maister-token-continuation-green.log",
+      "passed": 2,
+      "durationSeconds": 138.83
+    },
+    "distinctOwnedSession": {
+      "log": "/private/tmp/maister-token-continuation-new-session-green.log",
+      "passed": 1,
+      "durationSeconds": 48.12
+    }
+  },
+  "fixtureRepair": {
+    "baselineFailureLog": "/private/tmp/maister-token-baseline-loop.log",
+    "baselineFailure": "explicit no-effect delegation_execution_busy propagated by one-shot direct launch fixture as ACP_PROTOCOL",
+    "greenLog": "/private/tmp/maister-token-continuation-fixture-green.log",
+    "passed": 27,
+    "durationSeconds": 97.9,
+    "retryPolicy": "identical input; existing contention classifier AND exact delegation_execution_busy; 100 attempts, 100ms; safe warning; all other errors and exhausted final error propagate",
+    "repeatedGreen": {
+      "log": "/private/tmp/maister-token-continuation-loop-repeat.log",
+      "passed": 1,
+      "durationSeconds": 31.66
+    }
+  },
+  "validation": {
+    "typecheck": "/private/tmp/maister-token-continuation-typecheck-final.log",
+    "lint": "/private/tmp/maister-token-continuation-lint-final.log",
+    "unitEnvironmentRecheck": {
+      "log": "/private/tmp/maister-token-continuation-unit-recheck.log",
+      "passed": 31
+    },
+    "fullUnitReceipts": [
+      {
+        "log": "/private/tmp/maister-token-continuation-unit.log",
+        "filesPassed": 887,
+        "filesFailed": 4,
+        "testsPassed": 9304,
+        "testsFailed": 8,
+        "verdict": "incomplete: load timeouts with follow-on call leakage; child CLI pnpm symlinked dependencies auto-install refused"
+      },
+      {
+        "log": "/private/tmp/maister-token-continuation-unit-green.log",
+        "filesPassed": 888,
+        "filesFailed": 2,
+        "testsPassed": 9306,
+        "testsFailed": 2,
+        "workerErrors": 1,
+        "missingWorker": "components/flows/node-form/__tests__/flow-metadata-form.dom.test.ts",
+        "verdict": "incomplete: host stall/suspension timeouts, no test assertions changed"
+      },
+      {
+        "log": "/private/tmp/maister-token-continuation-unit-full-final.log",
+        "exitCode": 130,
+        "verdict": "cancelled on parent request: primary final HEAD owns coherent full-suite qualification"
+      }
+    ],
+    "remainingUnitRecheck": {
+      "log": "/private/tmp/maister-token-continuation-unit-final-recheck.log",
+      "filesPassed": 3,
+      "testsPassed": 35,
+      "durationSeconds": 1.02,
+      "changedTests": false
+    },
+    "coherentFullUnitPass": false,
+    "typecheckExitCode": 0,
+    "lintExitCode": 0,
+    "diffCheckExitCode": 0
+  },
+  "audits": {
+    "dispatch_fix_audit": "No actionable findings; canonical create replacement retains admitted credential; fresh logical owner prepares new payload; current authority checks preserved; cleanup independent of fresh issuance",
+    "knowledge_fix_audit": "Requested final verdict; initial bounded audit no actionable product finding"
+  },
+  "cleanup": {
+    "receipt": "/private/tmp/maister-token-continuation-cleanup.json",
+    "log": "/private/tmp/maister-token-continuation-cleanup-final.log",
+    "invocationId": "ffab0671-8e5f-46a2-93cf-24fc72b6a178",
+    "launcherPid": 29529,
+    "launcherExitCode": 130,
+    "remainingOwnedProcesses": 0,
+    "remainingOwnedContainers": 0,
+    "remainingOwnedRoots": 0,
+    "ledgerAndLogsPreserved": true
+  },
+  "primaryQualification": {
+    "head": "adf22d076",
+    "workingTreeIncludesNativeTokenLockFix": true,
+    "passed": 31,
+    "files": 4,
+    "maxWorkers": 1,
+    "log": "primary-green.log.gz"
+  },
+  "driverRenewalDiagnostics": {
+    "file": "web/lib/flows/graph/driver-lifetime.ts",
+    "sha256": "6969b4f96d383a2ce4f1b7a51b67e722f1be9c5119e91591398eb6e19716c517",
+    "behaviorChange": false,
+    "fields": "typed code/reason and existing safe queryErrorDiagnostics; no SQL/parameters/raw exception body"
+  },
+  "retainedLogSha256": {
+    "candidate-full-unit-incomplete.log.gz": "8e190c7300280c62c357ddebb3795c17fe23e617c15226f44cac5720ec16642e",
+    "primary-green.log.gz": "d078d9cc47c2d06be5796c08e5dff045c8a35071366f6255e01a40e53b219c1e",
+    "loop-repeat-green.log.gz": "0e43c0892122052369311a2118c86855e2344989034e65e8a3874d0b54a83a3e",
+    "replay-green.log.gz": "07f8ea0f101bc10de10a619dd816aa31e07edf45593019e6690aef661ae24e76",
+    "new-session-green.log.gz": "28f221b20440657d67b647e324f9239c32cc45654750c53f9df1421fbac66d49",
+    "loop-park-green.log.gz": "fab2aa0496d8d856cd940bf217a31090f241dc6961ecfea1fc2af29088e54e5f",
+    "red.log.gz": "cbf3dd649ea4968447202f6a2201199c57bfb5e711ba0593f47a612b663a4d06",
+    "candidate-unit-recheck.log.gz": "c0b41c09595d9b1439938a41c87ab89c9e10bbca12e2e22e66253707d4fe6793"
+  }
+}

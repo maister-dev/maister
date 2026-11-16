@@ -1,5 +1,9 @@
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
-import type { PlatformRunnerProvider, RunnerSnapshot } from "@/lib/db/schema";
+import type {
+  PlatformRunnerProvider,
+  RunnerSnapshot,
+  platformAcpRunners,
+} from "@/lib/db/schema";
 
 export type TestRunnerAgent = AdapterId;
 
@@ -54,16 +58,14 @@ export function testRunnerSnapshot(
 export function testPlatformRunnerRow(
   id: string,
   agent: TestRunnerAgent = "claude",
-): Record<string, unknown> {
-  const snapshot = testRunnerSnapshot(id, agent);
-
+): typeof platformAcpRunners.$inferInsert {
   return {
     id,
-    adapter: snapshot.adapter,
-    capabilityAgent: snapshot.capabilityAgent,
-    model: snapshot.model,
-    provider: snapshot.provider,
-    permissionPolicy: snapshot.permissionPolicy,
+    adapter: agent,
+    capabilityAgent: agent,
+    model: testRunnerModel(agent),
+    provider: testRunnerProvider(agent),
+    permissionPolicy: "default",
     readinessStatus: "Ready",
     readinessReasons: [],
     enabled: true,

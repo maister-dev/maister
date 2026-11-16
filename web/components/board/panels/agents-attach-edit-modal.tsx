@@ -69,6 +69,8 @@ type EditableSchedule = {
   timezone: string;
   eventKinds: string[];
   requestAtLaunch: string;
+  reviewForAssignments: boolean;
+  shareEventContext: boolean;
   enabled: boolean;
 };
 
@@ -80,6 +82,10 @@ function toEditable(s: AttachScheduleView): EditableSchedule {
     timezone: s.timezone ?? "UTC",
     eventKinds: s.eventKinds ?? [],
     requestAtLaunch: s.requestAtLaunch ?? "",
+    reviewForAssignments: s.assignmentReview != null,
+    shareEventContext:
+      s.assignmentReview?.schemaVersion === 2 &&
+      s.assignmentReview.sourceSharing === "producing_run",
     enabled: s.enabled,
   };
 }
@@ -317,6 +323,9 @@ export function AttachEditModal({
                 cronExpr: s.cronExpr.trim(),
                 timezone: s.timezone.trim(),
                 requestAtLaunch: normalizeScheduledRequest(s.requestAtLaunch),
+                ...(s.reviewForAssignments
+                  ? { reviewForAssignments: true }
+                  : {}),
                 enabled: s.enabled,
               }
             : {
@@ -324,6 +333,14 @@ export function AttachEditModal({
                 triggerType: "event",
                 eventKinds: s.eventKinds,
                 requestAtLaunch: null,
+                ...(s.reviewForAssignments
+                  ? {
+                      reviewForAssignments: true,
+                      ...(s.shareEventContext
+                        ? { shareEventContext: true }
+                        : {}),
+                    }
+                  : {}),
                 enabled: s.enabled,
               };
         }),
@@ -581,6 +598,8 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
+                      shareEventContext: false,
                       enabled: true,
                     },
                   ])
@@ -600,6 +619,8 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
+                      shareEventContext: false,
                       enabled: true,
                     },
                   ])
@@ -619,6 +640,8 @@ export function AttachEditModal({
                       timezone: "UTC",
                       eventKinds: [],
                       requestAtLaunch: "",
+                      reviewForAssignments: false,
+                      shareEventContext: false,
                       enabled: true,
                     },
                   ])
@@ -670,6 +693,57 @@ export function AttachEditModal({
                   </button>
                 </div>
               </div>
+              {schedule.triggerType !== "mention" ? (
+                <div className="mb-3 text-xs text-ink">
+                  <label className="flex items-start gap-2">
+                    <input
+                      aria-describedby={`schedule-review-help-${index}`}
+                      checked={schedule.reviewForAssignments}
+                      type="checkbox"
+                      onChange={(event) =>
+                        patchSchedule(index, {
+                          reviewForAssignments: event.target.checked,
+                        })
+                      }
+                    />
+                    {t("reviewForAssignments")}
+                  </label>
+                  <p
+                    className="mt-1 text-mute"
+                    id={`schedule-review-help-${index}`}
+                  >
+                    {t(
+                      schedule.triggerType === "event"
+                        ? "reviewEventForAssignmentsHint"
+                        : "reviewForAssignmentsHint",
+                    )}
+                  </p>
+                  {schedule.triggerType === "event" ? (
+                    <>
+                      <label className="mt-2 flex items-start gap-2">
+                        <input
+                          aria-describedby={`schedule-sharing-help-${index}`}
+                          checked={schedule.shareEventContext}
+                          disabled={!schedule.reviewForAssignments}
+                          type="checkbox"
+                          onChange={(event) =>
+                            patchSchedule(index, {
+                              shareEventContext: event.target.checked,
+                            })
+                          }
+                        />
+                        {t("shareEventContext")}
+                      </label>
+                      <p
+                        className="mt-1 text-mute"
+                        id={`schedule-sharing-help-${index}`}
+                      >
+                        {t("shareEventContextHint")}
+                      </p>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
               {schedule.triggerType === "mention" ? (
                 <p className="m-0 text-[12px] leading-[1.45] text-mute">
                   {t("mentionHint")}

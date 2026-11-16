@@ -142,6 +142,12 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: true,
     timeoutMs: 30_000,
   },
+  "stand.dispatch": {
+    maxAttempts: 1,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 55_000,
+  },
 };
 
 export function isUnknownOutcome(err: unknown): boolean {
@@ -405,6 +411,23 @@ export async function deliverCommand<TResult>(
             readiness,
           },
           "session-create-readiness-deferred-before-post",
+        );
+        throw err;
+      }
+
+      if (
+        kind === "session.steer" &&
+        isMaisterError(err) &&
+        err.details?.reason === "native_steer_reconciliation_required"
+      ) {
+        logger.warn(
+          {
+            commandId: opts.command.id,
+            runId: opts.command.runId,
+            attempt: attempts,
+            outcome: "left_for_recovery",
+          },
+          "steer-source-withheld-pending-reconciliation",
         );
         throw err;
       }

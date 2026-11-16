@@ -59,6 +59,27 @@ describe("buildChildEnv — env layering precedence", () => {
     expect(env.SHARED_KEY).toBe("from-adapter");
   });
 
+  it.each([
+    { allow: ["mcp__maister__stand_operation_observe"], expected: "false" },
+    { allow: ["ToolSearch"], expected: "true" },
+  ])(
+    "uses direct Claude tools when the strict profile excludes discovery: $allow",
+    ({ allow, expected }) => {
+      const env = buildChildEnv(
+        makeRequest({
+          adapterLaunch: { env: { ENABLE_TOOL_SEARCH: "true" } },
+          enforcementProfile: {
+            tools: { allow },
+            enforcedClasses: ["tools"],
+            escalationThreshold: 3,
+          },
+        }),
+      );
+
+      expect(env.ENABLE_TOOL_SEARCH).toBe(expected);
+    },
+  );
+
   it("sets MAISTER_CAPABILITY_PROFILE_PATH from the server-derived runtime object path", () => {
     const profilePath = `${process.cwd()}/profile.json`;
     const instructionsPath = `${process.cwd()}/instructions.md`;
@@ -125,6 +146,7 @@ describe("buildChildEnv — env layering precedence", () => {
       A: "1",
       MAISTER_CAPABILITY_PROFILE_PATH: profilePath,
       B: "2",
+      ANTHROPIC_MODEL: "claude-sonnet-4-6",
     };
 
     expect(withEmpty).toEqual(expected);

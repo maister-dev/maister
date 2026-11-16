@@ -14,6 +14,20 @@ predicate, and the per-agent summon decision. It does NOT own comment
 plumbing (social-board), agent launch mechanics (agents), or `@user`
 notification — see Non-goals. (Implemented — ADR-151)
 
+## Native professional assignments
+
+A pinned role declaring specialist metadata enters native assignment intake after
+its existing mention claim and event-chain bound, before the ordinary busy check.
+The effective project pin is authoritative; a different catalog revision cannot
+choose the path. Each human comment/recipient is independent durable work and can
+queue behind active work. Its original task/comment remains the delivery origin;
+a coordinator uses the existing Flow carrier policy.
+
+[Native task-comment intake](specialist-assignments.md#native-task-comment-intake)
+owns source appointments, immutable input/attribution, current authority, bounded
+input refusal and standalone/coordinator admission. The frozen ordinary-agent
+decision table below remains its legacy policy; no scheduler or ledger is added.
+
 ## Domain entities
 
 - **Agent handle** — the literal token in a comment body: canonical
@@ -36,13 +50,13 @@ notification — see Non-goals. (Implemented — ADR-151)
   `runs.run_kind = 'agent'` with `trigger_source = 'domain_event'`,
   `trigger_event_id` = the `task.comment_added` event id, and
   `task_id` = the commented task.
-- **Suppressed summon** — a mention that resolved and was summonable but did
+- **Suppressed summon** — an ordinary-agent mention that resolved and was summonable but did
   not launch because that agent already holds an active run on that task;
   recorded as a `task_activity` row of kind `agent_summon_suppressed`.
 
 ## State machine
 
-Per mentioned agent id, evaluated in this order by the consumer. The frozen
+For ordinary agents, per mentioned id, evaluated in this order by the consumer. The frozen
 decision table below is the contract; every terminal state is observable
 either as a `runs` row, a `task_activity` row, or an `agent_schedules`
 outcome. (Implemented)

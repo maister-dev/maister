@@ -88,7 +88,11 @@ export async function ProjectAgentsPanel({
           schedules: canReadRepoFiles
             ? row.schedules
             : row.schedules.map(
-                ({ requestAtLaunch: _request, ...schedule }) => schedule,
+                ({
+                  requestAtLaunch: _request,
+                  assignmentReview: _review,
+                  ...schedule
+                }) => schedule,
               ),
           agent: {
             id: row.agent.id as string,

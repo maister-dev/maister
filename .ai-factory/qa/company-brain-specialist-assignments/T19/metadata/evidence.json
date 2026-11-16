@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "task": "T19",
+  "status": "metadata_slice_green_binding_implementation_pending",
+  "qualificationBaseHead": "f6860af76",
+  "red": {
+    "metadata": "Real project effective-definition resolution rejects the new specialist declaration as an unknown strict frontmatter key; one failed and six passed tests.",
+    "migration": "First generated metadata CHECK used an unsupported regex repetition bound and fails on actual PostgreSQL. Only fresh disposable test databases were involved; no durable schema was changed."
+  },
+  "green": {
+    "metadataAndMigration": {
+      "exitCode": 0,
+      "files": 3,
+      "tests": 27
+    },
+    "owningCompatibility": {
+      "exitCode": 0,
+      "files": 5,
+      "tests": 36
+    },
+    "existingDefinitionUnit": {
+      "exitCode": 0,
+      "files": 5,
+      "tests": 54
+    },
+    "unicodeBoundary": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 7
+    },
+    "typecheck": {
+      "exitCode": 0
+    },
+    "lint": {
+      "exitCode": 0
+    },
+    "contracts": {
+      "exitCode": 0
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 167
+    }
+  },
+  "qualified": [
+    "Common parser and renderer retain bounded descriptive responsibilities and target classes without granting authority.",
+    "Catalog metadata SET/CLEAR/re-SET follows package registration, while an older project attachment retains its own definition and hash.",
+    "Legacy parsed definitions omit the new optional field, and legacy rows retain NULL. Existing frozen assignment inputs and native package installation remain compatible.",
+    "Real PostgreSQL accepts 256 ASCII characters and 256 supplementary Unicode characters, rejects overflow and blank declarations. Installed Zod 4.6.7 source confirms string length checks count Unicode code points."
+  ],
+  "migrationApplicationPremise": "Uncommitted 0220 was regenerated only after the failed owned-test application. It was never applied to a durable database, published or deployed.",
+  "limits": [
+    "Company binding storage, immutable binding configuration receipts, current-policy resolution, management routes and company execution are still pending; T19 is not complete.",
+    "This platform metadata slice does not establish stand pilot readiness.",
+    "New specialist-bearing package installation receives its real Git-loader behavioral qualification with the company binding tests; current installation compatibility proof uses the existing native package."
+  ],
+  "artifactsSha256": {
+    "metadata-red.log.gz": "d0396e9d9bb2273761c542f7db98b7c99579adeb2f8698cef16d9d6c6a245c6d",
+    "migration-red.log.gz": "8a8d3369a0572a5ae8eaf27b2d6b73e3c0fafc41f4b6a62ddd16b1a26aad3716",
+    "metadata-green.log.gz": "74a64da882a8f07f5b065bbdddc5b1b8021a3a5ebf5d4f45713ebe1db144acb2",
+    "owning-green.log.gz": "490cc1922e6b85c8222182c30f1baa837a52765f78bc13157e5063d57ed27de9",
+    "unicode-boundary-green.log.gz": "25c228f909dddc032f6fc78b97d7393c3b97326dadea3e531fefe92cd41ed355",
+    "unit-green.log.gz": "175364d8331ac18bfe7366b01a2e89a6b4289ed68234a820e0ab5850d250a437",
+    "types-green.log.gz": "48a7429244207d660fd9089d8481ec3cbc9c491aac93b801256ceab700c17237",
+    "lint-green.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "contracts-green.log.gz": "4d94b66785b9772fa9fdce54424e4023802208a01e292a7456c0081832d54e7c",
+    "docs-green.log.gz": "2cb9a47b283555a31e2c07ec2b1abdd11323392a286e3b642e103984961df55b",
+    "migration-generation.log.gz": "adc1e0033d32419020812569f8a90dfdfe6a5667bc3f6e10bb811cb81f7e0623"
+  },
+  "implementationNote": "Explicit specialist declarations are parsed by the existing fail-fast package validator rather than treated as report-only legacy metadata."
+}

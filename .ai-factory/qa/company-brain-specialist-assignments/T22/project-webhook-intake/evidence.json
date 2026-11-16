@@ -1,0 +1,131 @@
+{
+  "task": "T22",
+  "date": "2026-11-07",
+  "slice": "Explicit native project webhook intake and shared bounded native transport",
+  "baseCommit": "bbc2299ba32f3706aec31dab526da0c815ee30b8",
+  "status": "T22 canonical persistence and human/source adapters complete; CBA-02 delegation and correlated continuation remain T24/T26/T27",
+  "red": [
+    {
+      "case": "Actual native project webhook delivery through rotated personal user tokens returned legacy project-binding refusal",
+      "expectedStatuses": [
+        200,
+        201
+      ],
+      "actualStatuses": [
+        403,
+        403
+      ],
+      "exitCode": 1
+    }
+  ],
+  "gates": {
+    "integration": {
+      "tests": 192,
+      "files": 9,
+      "durationSeconds": 80.11,
+      "exitCode": 0
+    },
+    "webUnit": {
+      "tests": 9322,
+      "files": 889,
+      "durationSeconds": 27.89,
+      "exitCode": 0
+    },
+    "nativeProjectEdge": {
+      "tests": 1,
+      "files": 1,
+      "durationSeconds": 29.94,
+      "exitCode": 0
+    },
+    "types": {
+      "exitCode": 0
+    },
+    "lintAndFormat": {
+      "exitCode": 0
+    },
+    "contractsAndCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    },
+    "docsAndErd": {
+      "tables": 172,
+      "exitCode": 0
+    },
+    "bilingualPublicBuild": {
+      "exitCode": 0
+    },
+    "bilingualPublicLinks": {
+      "brokenLinks": 0,
+      "exitCode": 0
+    },
+    "completedTaskCoverage": {
+      "requirements": 84,
+      "exitCode": 0
+    }
+  },
+  "qualified": [
+    "Actual route selects X-Maister-Owner-Kind:project and requires verified global personal user plus both token scopes; project tokens cannot impersonate their creator.",
+    "The real OpenAPI envelope validates the actual request and refuses forged attribution; runtime rejects unsupported version, missing delivery identity, company owner and numeric domain-event identity.",
+    "Concurrent rotated-token deliveries retain one assignment/Run; independent delivery queues another work item under real host pressure with no ACP commands.",
+    "Current project membership revocation refuses replay, exact fresh endpoint/binding mismatch refuses before dependent work, and current requester attribution includes explicit null originating execution fields.",
+    "After release, actual default scheduler/supervisor/ACP execution completes standalone work; one create/prompt pair remains after replay.",
+    "Completed replay succeeds with the professional attachment disabled, without resolving a new provider; original input and business acceptance remain separate.",
+    "The actual project coordinator webhook completes its required result-only Flow through the existing project carrier/admission and default driver.",
+    "Existing company and legacy project webhook suites pass after native transport extraction; there is no new execution or request ledger."
+  ],
+  "contracts": {
+    "header": "X-Maister-Owner-Kind: project",
+    "schema": "CBProjectWebhookEnvelope",
+    "bodyVersion": 1,
+    "deliveryHeader": "Idempotency-Key",
+    "newMigration": false,
+    "mainMigrationHead": "0243 unchanged",
+    "newTables": 0,
+    "newSchedulers": 0
+  },
+  "corrections": [
+    "The extended fixture expected a two-field requester instead of the required four-field server actor. It now asserts actual user ID and explicit null run/attempt attribution; the resulting failed-case teardown contamination is retained in the log.",
+    "The disabled-provider replay probe initially lacked its settings-service import; the corrected edge case and final full owning gate pass.",
+    "The existing controlled package fixture now explicitly declares webhook on its project coordinator; no undeclared trigger or runtime permission gate was relaxed."
+  ],
+  "dependencyClarification": "T22 had named delegation while T27 depends on T26/context, which depends on T22. T22 now explicitly owns canonical persistence and five source origins. T27 retains verified-execution delegated-origin intake; T24-T26 retain correlated clarification and updates. Both CBA-02 matrices retain all six origins and list their actual task owners.",
+  "limits": [
+    "Local real PostgreSQL/supervisor with controlled ACP qualifies platform behavior, not installable stand-pilot readiness.",
+    "Origin destination is retained; actual durable result delivery remains T25 and public docs say it is in progress.",
+    "Context, governed agent principals/delegation, acceptance, resource/operation safety, recovery and installable stand qualification remain their later tasks.",
+    "No remote push, deployment, production stand action or master integration occurred."
+  ],
+  "sourceSha256": {
+    "docs/api/web.openapi.yaml": "398611f92cd78f4741ce7bdcc8e0d63a2fb048c3bade5b8659294d1c3f7e9b9d",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "722e654493a56bd6d1c7160d3966c12455d4cc713c1a6d1fe1c58649c11a7876",
+    "docs/system-analytics/specialist-assignments.md": "94bbd92984d9803a3987907d84fd75b64f02240b14e9b8b41dba26dae772b2d4",
+    "site-docs/guides/company-specialist-webhooks.md": "922ca06f08cc88c3cef7d7e29d1269b1c0f2bbd86a2f5046a6464407cb1ab863",
+    "site-docs/ru/guides/company-specialist-webhooks.md": "53a723a16061c75b4c55ed180a45169fe59cbe1e624f6d9e42646b7f4dad85aa",
+    "web/app/api/agents/[agentId]/event/route.ts": "4e1a42eade85102b86062a6dd84479baa1a1ff0999fd030469bec79fd24698b2",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "cffff2b890e1eb8a95149b023e3a52ab6e4a76b8a21c5b94ddc63b1d65ff15c4",
+    "web/lib/agents/company-webhook-http.ts": "82da62c5e0d335749cfc6a351f21531a7926faec31efa52f6a802cfdcace5de9",
+    "web/lib/agents/owned-webhook-http.ts": "97d30dbf7dd03eb55db8fd38abef760613ad68edff92fb9af5e21af79621b6c6",
+    "web/lib/agents/project-webhook-http.ts": "bd35afbd5ef895b0d0e8d8d6250b00e8d265bdf772be45a440e1b33170055904",
+    "web/lib/specialist-assignments/project-request-intake.ts": "2e9743e968d619541646453b0344dc35f8e533f04237b6502c436fa254b4dafd",
+    "web/lib/specialist-assignments/project-webhook-intake.ts": "0dc1e896833eb0db9c06ee0b47c15c71cd25d91160eca2e139e80c718d9717cb",
+    "web/lib/specialist-assignments/project-webhook-types.ts": "25cc9c7843e371c033f8955f0cc12776694a7c90792c9c95dac810b58c359e42"
+  },
+  "logs": [
+    "cb-project-webhook-completed-coverage.log.gz",
+    "cb-project-webhook-core1.log.gz",
+    "cb-project-webhook-core2.log.gz",
+    "cb-project-webhook-edge-green.log.gz",
+    "cb-project-webhook-green1.log.gz",
+    "cb-project-webhook-red.log.gz",
+    "cb-project-webhook-release-contracts.log.gz",
+    "cb-project-webhook-release-docs.log.gz",
+    "cb-project-webhook-release-integration.log.gz",
+    "cb-project-webhook-release-lint.log.gz",
+    "cb-project-webhook-release-public-build.log.gz",
+    "cb-project-webhook-release-public-links.log.gz",
+    "cb-project-webhook-release-types.log.gz",
+    "cb-project-webhook-release-unit.log.gz",
+    "cb-project-webhook-types1.log.gz",
+    "cb-project-webhook-types2.log.gz"
+  ]
+}

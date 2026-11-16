@@ -1,0 +1,1161 @@
+# Durable specialist assignments
+
+## Purpose
+
+**ADR-203.** A specialist assignment preserves requested work, responsibility, input and verified outcome across runs. It reuses the native company and project intake, execution and delivery paths. [Human work assignments](assignments.md), execution-host placement, private memory and long-term [Company Brain](company-brain.md) retain their own lifecycles. Installed stand acceptance is tracked in the [qualification contract](company-brain-specialists-qualification.md).
+
+## Domain entities
+
+The base store supports company-only assignments without a repository or run,
+current user authority, pinned standing definitions, immutable input inspection
+and append, exact business CAS, existing-run links, cancellation and reopening.
+Current source access also gates historical input bytes; a content-free cancel
+receipt requires cancellation authority without redisclosing inaccessible input.
+Input append preserves standing instructions, recurring request and result
+requirements, and refuses overflow rather than truncating. Recurring snapshots
+must identify the exact scheduled origin. Linking a successful run never
+completes its assignment. Company execution admission, intake deduplication, context and HITL, executor
+fencing and verified acceptance use the native services and retained receipts
+described below. Full installed-package qualification has its own gate.
+
+- Specialist assignment: objective, expected outcome, requester, responsible specialist/coordinator, company/project owner, targets, references, constraints, result/verification requirements and origin/destination.
+- Input/authority revision: immutable standing-definition, recurring-request, current assignment input, retrieved references and historical grants in separate fields.
+- Intake receipt: trusted source delivery identity and canonical payload digest mapped to a disposition/assignment.
+- Working context revision: objective/constraints, sources, hypotheses/findings, questions, decisions/authors, accepted work and blockers.
+- Question: exact assignment/input/owner/turn and existing HITL/human assignment reference.
+- Acceptance: actor, expected input/context, exact result revision, required verification receipts and decision.
+- Delivery receipt: server-bound destination and idempotent outbox intent. See [ERD](../db/specialist-assignments-domain.md).
+
+## State machine
+
+Assignment transitions are business state, not additional `runs.status` values.
+The database head guard admits every transition below; transitions tagged
+`(Designed)` have no application writer yet, so their target states are not
+reached in practice.
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> active: existing run admitted
+    queued --> waiting_input: durable pre-admission question (Designed)
+    active --> waiting_input: durable question
+    active --> waiting_children: governed child work (Designed)
+    active --> waiting_resource: conflicting resource claim (Designed)
+    active --> reconciling: uncertain external effect (Designed)
+    active --> awaiting_acceptance: expected result available
+    waiting_input --> active: answer appended as the next input revision
+    waiting_input --> queued: answer appended and continuation requested (Designed)
+    waiting_children --> queued: child settled wakes coordinator (Designed)
+    waiting_resource --> queued: evidenced release (Designed)
+    reconciling --> queued: evidence or authorized successor ready (Designed)
+    awaiting_acceptance --> completed: exact result and obligations accepted
+    awaiting_acceptance --> queued: bounded rework (Designed)
+    active --> failed: stopped execution and unrecoverable refusal (Designed)
+    queued --> cancelled: authorized cancel
+    active --> cancelled: stopped agent and retained effects
+```
+
+Until the `failed` classifier exists, an assignment whose root Run ends stays
+`active` (Implemented). That is the state the pre-dispatch replacement retry
+requires (`company-retry`, `project-specialist-retry`). Once terminal, a further independent request
+creates a new assignment. Retained stand operations and Review Runs have their own recovery controls.
+
+## Process flows
+
+Every existing intake entry resolves meaning before reserving work.
+
+```mermaid
+sequenceDiagram
+    actor U as Requester or source
+    participant I as Existing intake adapter
+    participant DB as PostgreSQL
+    participant C as Coordinator
+    participant O as Existing outbox
+    U->>I: source delivery, request and trusted correlation
+    I->>DB: lock receipt key, compare canonical digest
+    alt Exact repeated delivery
+        DB-->>I: original safe disposition/receipt
+    else New or correlated input
+        I->>DB: assignment or input revision plus receipt atomically
+        I->>C: existing cap-governed run/continuation
+        C->>DB: context and exact accepted result/evidence
+        DB->>O: transactionally committed delivery intent
+        O-->>U: current-access-filtered result in frozen origin
+    end
+```
+
+### Input/transition contract
+
+The assignment read model exposes a positive business `revision`. Assignment
+state/input mutations compare the caller's `expectedRevision` against it in the
+same transaction. It is separate from `inputRevision` (frozen inputs) and
+`contextRevision` (working context). Context patches compare their
+`expectedRevision` against the context revision, work decisions against the work
+revision, and answers against the question revision. Each accepted change to the
+assignment advances its business revision under the stable parent lock. A client
+reads the exact subject revision rather than substituting another counter.
+
+Assignment reads also return the exact specialist binding, current input
+references and constraints, and server-recorded origin and frozen destination.
+Origin variants carry the identity of the actual manual interaction, task
+comment, scheduled trigger, event subscription, webhook delivery or delegated
+work. Destination variants identify a user Inbox, task thread or configured
+outbound subscription; they never contain a caller-supplied endpoint URL.
+An accepted result is an exact `{id, revision}` reference, not a floating result
+identity. Its assignment/run membership and verification obligations are
+validated before acceptance. Historical input/authority revision contents remain
+separate immutable snapshots; the current read projection must not replace them.
+The assignment's expected result exposes the server-selected schema reference,
+version and digest with `required: true`. Launch must match that descriptor using
+the existing `RunResultContract` builder and immutable binding. This is a business
+requirement pointing to the existing result contract, not another output grammar.
+
+All assignments require nonblank objective (<=8000 characters), expected outcome (<=4000), explicit requester/responsible principal, owner, <=32 canonical targets, <=64 input/knowledge refs, <=16 typed verification obligations and one server-validated origin/destination. Pure research may declare zero operation obligations; configured restart policy always injects required effect and independent-health obligations. A model cannot clear them. Context <=128 KiB, update <=32 KiB/64 entries, per-entry text <=8000; no silent truncation.
+
+| Incoming meaning | Correlation/admission | Durable result |
+| --- | --- | --- |
+| Duplicate delivery | Owner/source/stable delivery ID and same canonical digest | Return original safe receipt; no run, input, alert or operation repeated |
+| Same ID/different body | Existing key with changed canonical payload | `CONFLICT` before dependent writes |
+| Clarification/update | Trusted assignment/question/work/thread reference plus current grant and expected revision | Append input/context revision; preserve attempts and previous evidence |
+| Independent request | New delivery/logical request, even if role is busy | Separate queued assignment under existing capacity |
+| Missing/ambiguous input | Durable assignment/receipt, no guessed target/correlation | Existing human question; wait with exact owner/input revision |
+| Conflicting mutation | Canonical resource claim conflicts | Wait or actionable conflict, never simultaneous mutation |
+| Unknown external outcome | Existing operation identity/receipt uncertain | Reconcile before any original mutation retry |
+
+| Transition group | Allowed source and current authority | Commit and wake |
+| --- | --- | --- |
+| Admit | queued, active company/project binding and expected input | Existing run reservation/claim linked atomically; active only after actual admission |
+| Park for input (Implemented); children/resource/reconcile (Designed) | active with current coordinator epoch | Persist question/work/blocker/operation pointer and state/CAS/outbox together; release slot only by owning run contract |
+| Continue parked work (input: Implemented as `waiting_input` → `active`; other waits Designed) | corresponding wait state, expected input and evidence/reply, current authority | Append input or accepted evidence; queue existing governed continuation; cap-gated activation |
+| Result ready | active or reconciling after coordinator evaluation | Exact valid result revision and obligation set; awaiting_acceptance, never completed automatically |
+| Accept | awaiting_acceptance, responsible/current acceptance authority, exact input/context/result and satisfied policy obligations | Acceptance/state/completion timestamp/delivery outbox in one transaction |
+| Request rework (settled work item: Implemented; `awaiting_acceptance`: Designed) | awaiting_acceptance or settled work item, current responsible actor, remaining budget | New work/input revision; old result immutable; governed continuation |
+| Cancel | Current cancel and native Run stop authority, exact revision, nonterminal assignment and stoppable linked work | Retain cancellation first, stop owned runs, then mark cancelled when statuses and placements prove teardown. Preserve external effects for independent reconciliation |
+| Fail (Designed) | Nonterminal state, stopped execution and classified unrecoverable error | Preserve diagnostic/effect history; failed reason/time, never infer not-applied |
+| Recover retained work | Current authority and the exact Run, input or operation required by its native owner | Use same-Run recovery, an eligible replacement retry, Run Review, or stand effect reconciliation. Terminal assignments without an owner retain their history and require a fresh request for further work |
+| Completed replay | completed and exact original request/decision | Safe existing receipt only; independent new objective is new assignment |
+
+The assignment store requires linked Runs to be terminal and their placements
+to be released before standalone input changes or reopening. Cancellation needs
+only stopped execution: a linked Run an operator stop parked in `Review` keeps
+its diff for a human promote-or-drop decision and does not block it, while an
+active placement still does.
+An active placement on a crashed Run still blocks these changes. An authorized
+answer to a retained clarification uses its own checkpoint and input-lineage
+contract.
+
+For result-only assignments, the existing result consumer moves the current
+assignment to `awaiting_acceptance` when the appointed root Run is Done and
+its valid result matches the frozen contract. Required external effects and
+open child work prevent readiness. The session and personal bearer APIs
+verify the exact input, context, result and current reviewer authority.
+Main `0277_specialist_assignment_acceptance` commits the acceptance receipt, completed state and state event
+together. Origin delivery of the accepted outcome and independent effect
+verification remain separate implementation slices.
+
+Business transitions append the existing transactional `specialist.assignment_changed`
+outbox fact with business revision, previous/current state, safe cause and server
+actor in the same transaction as the assignment head. Agent-authored context facts also retain the actual Run/node in an optional content-free `originExecution` payload pointer; lifecycle ownership metadata remains unchanged and no model-provided origin is accepted. Historical facts acquire no invented origin. Reopening cannot erase a
+prior failed/cancelled fact. Facts contain no objective, input, source excerpt or
+free-text terminal reason and are not agent triggers. Input/context/result
+contents remain in their current-access-controlled owning stores; this is not an
+additional execution or attempt ledger.
+
+### Canonical intake receipt boundary
+
+The intake service receives a validated request containing owner, specialist binding,
+objective, expected outcome, literal input, targets, references, constraints and
+verification requirements. The authenticated source adapter supplies the canonical
+origin; no caller-supplied origin, requester, standing definition, permissions or
+content digest enters the public create contract. Manual input defaults to an
+explicit empty string when omitted. Provider pins, expected result schema and
+historical authority are prepared by the server and frozen separately.
+
+One immutable `specialist_intake_receipts` row binds the source kind/key, original
+request digest, server actor and exact assignment/input revision. The key hashes
+the owner and canonical origin; manual interactions additionally include the
+current user identity. Task-comment delivery additionally includes the addressed
+specialist binding, allowing one comment to request independent work from
+multiple specialists. Other adapters retain their existing canonical delivery,
+trigger, event/subscription or parent/work identities. Payload hashing
+uses the original normalized request, excluding mutable standing/authority data.
+The transaction serializes the key before lookup. Concurrent identical requests
+produce one assignment; changed payload conflicts without dependent writes.
+Replay checks current assignment/source and submission authority and returns the
+original input receipt without resolving a changed or disabled provider again.
+
+Adapters prepare new work only after the receipt lookup and persist any Run
+reservation in the same outer transaction. There is no external mutation inside
+that transaction and no additional execution scheduler or attempt ledger. Receipt
+storage and manual admission are qualified independently of source dispatch.
+Native company cron/event creation and registered dispatch plus authenticated
+company/project webhook intake are qualified. Correlated clarification and updates
+retain their context/HITL tasks (T23–T26); native agent delegation retains T27. A matching source identity alone never authorizes an
+adapter to act as another principal.
+
+### Company manual reservation
+
+The server accepts the original bounded request and manual idempotency key. It
+derives the interaction identity and requester from the authenticated user,
+resolves the exact current owned specialist binding and its declared coordinator,
+and builds the expected result from the actual pinned provider. Caller-supplied
+actors, grants, result schemas, package pins and origin/destination are refused.
+New reservations require current company read, submit and update authority;
+exact duplicate inspection requires current read/submit and source access and
+performs no new reservation. A changed/disabled provider is not re-resolved for
+duplicate work.
+
+Receipt creation, the assignment/input and the existing agent or Flow reservation
+share one outer database transaction, reusing the existing launchers' transaction
+helpers. Host/event-consumer activation uses a stable pooled database before that
+transaction; a background consumer must never retain a transaction handle after
+commit. Exact replay is inspected before any host/provider preflight. Reconnect
+diagnostics retain sanitized error type, SQLSTATE and constraint, without query
+parameters, raw database causes or input content. Failure rolls back Run/session/placement/link/state/receipt
+data together. The returned assignment includes the actual retained Run links.
+Business responsibility becomes active at reservation; the existing Run remains
+Pending until its existing scheduler pool grants capacity. This does not grant
+an execution slot or start an agent process inside the intake transaction.
+Actual source/API adapters wake existing dispatch after commit and never repeat
+reservation for an exact duplicate. Project repository admission remains its own
+existing project boundary.
+
+### Native recurring intake checkpoint
+
+The registered company cron path uses the same canonical receipt and native
+reservation as manual work, with its existing source claim/fence and reserved Run
+identity. Its complete scheduled request stays in the existing v1 input plane.
+Current source/configuration/creator authority is checked before reservation;
+replay preserves the original assignment/input. Shared recovery adopts a committed
+exact Run or records unknown without blind redispatch. Native source creation can
+enable qualified cron work only with current creator authority, declared cron
+trigger, enabled reviewed bindings and a nonempty recurring request. Native event
+source creation and registered standalone/coordinator dispatch are also qualified,
+with explicit current recipient sharing authority. Company webhook input is
+server-attributed and content-guarded across personal token rotation through the
+existing agent-event entry point. Legacy invocation adapters and assignment
+clarification remain open. See the [runtime contract](specialist-runtime.md#native-company-cron-intake-checkpoint).
+
+### Native project webhook intake
+
+**Implemented native platform intake; installable stand qualification remains separate.**
+
+`POST /api/agents/{agentId}/event` negotiates native project assignments with
+`X-Maister-Owner-Kind:project`. The branch requires a verified global personal user
+and both `agents:trigger` and `assignments:submit` token scopes. Project/agent/
+librarian credentials cannot impersonate a human requester. The closed version-one
+body is `{schemaVersion:1,assignment:<project specialist request>}`; ownership and
+binding remain explicit validated references. The current user's project authority
+and exact addressed attachment must agree before new work. The server supplies
+attribution, expected result, Inbox destination, standing/policy snapshots and
+native invocation origin. Raw body and caller-declared actors are not launch authority.
+
+`Idempotency-Key` identifies the delivery. Endpoint identity includes the actual
+user, project and addressed specialist, independent of personal token rotation.
+Exact replay checks current read/submit/source access before adopting the retained
+receipt; it does not resolve a disabled or changed provider again. Changed content
+under a used delivery conflicts. Different deliveries queue separate assignments.
+The existing project request intake retains original input before repository/Run
+admission and rechecks current permissions, pin, configuration and result contract.
+An unavailable runner preserves queued input for exact retry after repair.
+
+Native transport requires JSON, bounded to 32 KiB while reading, and rejects invalid
+UTF-8/JSON, unsupported versions, extra fields, missing delivery identity and
+`X-Maister-Trigger-Event-Id`. Domain-event identity is never accepted as webhook
+delivery authority. The source payload retains validated delivery metadata only;
+private objective/input remains in the original assignment input. A valid request
+returns the assignment with 201, exact replay 200; safe refusal uses existing
+no-store error/audit behavior. The branch shares bounded transport and verified
+personal identity with the company webhook path. Omitting owner negotiation retains
+the existing project-token legacy payload/202 contract. No scheduler, migration or
+execution ledger is added. Technical completion remains separate from acceptance
+and result delivery.
+
+### Existing project launch entry — Implemented (T22)
+
+`POST /api/projects/{slug}/agents/{agentId}/launch` additionally accepts a closed
+version-one envelope `{schemaVersion:1, assignment, idempotencyKey}`. The assignment
+contains the bounded canonical objective, expected outcome, literal input, targets,
+references, constraints and verification requirements; owner and attachment are
+resolved from the authenticated route, not accepted from the body. The new branch
+has no runner/workspace override, requester, authority or expected-result override.
+It returns the canonical private/no-store assignment receipt (201 or replay 200).
+The existing task/runner/workspace launch body and its 202 response remain compatible.
+
+Both manual entry points use the same authenticated user/idempotency identity and
+canonical digest. Concurrent browser, bearer and routed deliveries therefore adopt
+one original assignment/input/Run. Exact completed replay does not require current
+execution enablement or provider readiness; current project/source authority still
+applies. New standalone and coordinator work uses the already qualified project
+native admission, repository rules, exact provider witnesses and existing carrier
+Task policy. Source identity lookup does not preflight mutable execution settings.
+
+Three concurrent browser/bearer/routed deliveries qualify one assignment and Run
+for standalone work; routed/native coordinator deliveries likewise share one
+carrier and required result. The atomic intake result is inspected again for an
+existing Run: a caller that missed its initial receipt lookup can adopt work
+created before its later transaction, without re-entering queued-only admission.
+Configuration, provider, payload and authority conflicts remain explicit failures.
+Current project permission loss refuses routed replay, while an encoded role ID
+and disabled current attachment preserve authorized completed-history replay.
+Existing legacy workspace/runner launch overrides retain their original contract.
+
+### Project automation review
+
+**Implemented source review and native cron/event admission; installable stand qualification remains separate.**
+
+Historical project schedules have no recorded human authority. Migration leaves
+their new `assignmentReview` null, without changing `createdBy`, original request
+bytes or prior invocation snapshots. An explicit schedule-collection save by an
+authenticated operator records a review only for cron/event sources carrying
+explicit `reviewForAssignments:true` whose
+effective installed project definition declares a specialist. The server checks
+the current active operator's project settings authority inside the save
+transaction. Ordinary sources and mentions retain null review metadata.
+
+The read-only base review contains `reviewerUserId`, UTC `reviewedAt`, the
+accepted collection `sourceRevision` and `sourceSha256`. The digest covers the
+normalized selector and literal recurring request, with sorted event kinds;
+enabled state, runtime counters and next-fire time are separate eligibility data.
+Review records authorization now, not original authorship, a permission grant,
+or knowledge confirmation. Request bodies cannot supply review metadata.
+An explicit review request without an identified operator is refused. Replacing
+a source with false/omitted review intent clears the witness;
+unrelated attachment changes preserve it. Schedule revision CAS still governs
+the complete save, including review SET/CLEAR, so concurrent editors cannot
+combine one user's authority with another user's request.
+Ordinary source edits and clearing without approval preserve the existing broken-pin
+repair path. Approval requires the actual current pin; no catalog substitute or
+inferred historical approver is used. The cron/event editor's review checkbox sends only
+intent. It never submits reviewer identity, permission or confirmation metadata.
+The existing API requires repository-input visibility for this projection. The
+project server component withholds both literal request and review metadata from
+readers without that visibility; a content digest cannot bypass that boundary.
+
+Native project cron dispatch validates the reviewed source and current initiating
+authority, captures the review in a versioned invocation snapshot and preserves
+the existing version-one recurring request in its separate input plane. The next
+section defines its canonical claim/Run admission. Native event review additionally
+captures enrollment and separate sharing approval under the event contract below;
+source review alone is not a general knowledge or execution grant.
+
+### Reviewed project cron invocation
+
+**Implemented native platform cron intake; installable stand-pilot qualification remains separate.**
+
+A newly claimed reviewed project source uses binding snapshot version 3: the
+existing selector fields, explicit project owner and exact version-one `review`.
+Company version 2 and historical project version 1 remain byte-compatible. The
+existing version-one scheduled request remains a separate immutable input plane.
+Claim insertion matches the actual source owner, selector, review, fence and recurring
+request; current content must match the reviewed digest. Review is not inferred
+for old claims. A native professional without review receives a named refusal,
+and a reviewed source cannot silently fall through ordinary-agent execution if
+the professional declaration becomes unavailable.
+
+Native cron work uses origin `{kind:schedule,scheduleId,triggerAttemptId}`, the
+actual reviewing user as requester, an invocation objective label, literal input
+in the scheduled-request plane and server-required result verification. The
+original destination is that user's Inbox. Current read/submit/update authority
+is checked before intake and again at existing Run admission; historical approval
+never restores a revoked permission. A server-only appointment binds the real
+open claim, review, source and reserved Run, with matching cron trigger fields in
+standalone and coordinator insertion. Repository work retains project admission.
+
+Independent fires retain independent assignments; duplicate delivery adopts the
+existing receipt/Run. The original claim and Run ledgers handle uncertain launch
+responses and interruption: reconciliation inspects the exact reserved Run, never
+blindly relaunches. The existing scheduler/pool performs deferred dispatch.
+Malformed source capture records safe source telemetry and a bounded retry under
+a configuration witness so a poison due row cannot indefinitely starve healthy
+work. Actual registered ticks, default drivers, immutable input, current reviewer
+revocation, changed-source refusal, reserved identity and lost-settlement recovery
+are qualified through the actual registered scheduler, default standalone and
+coordinator drivers, real supervisor and controlled ACP processes. These platform
+checks do not establish real-model or installable stand-pilot readiness.
+
+### Reviewed project event invocation
+
+**Implemented native platform contract; installable stand qualification remains separate.**
+
+New native project event reviews use review version 2, retaining the existing
+reviewer/time/collection revision/content digest and adding `eventCursor` and
+`sourceSharing`. The cursor is the server-observed maximum event ID for this
+project at review, represented as a canonical decimal string (zero means an
+observed empty outbox). Native subscriptions consume only greater event IDs.
+Rereview of an unchanged selector retains its observed enrollment cursor, including
+sharing changes and ordinary attachment saves; queued matching events are not
+silently skipped. A new, previously unreviewed or changed selector captures a new
+cursor. Review timestamps do not invent a temporal validity interval. Existing event
+review v1 remains inspectable and requires an explicit new review before native
+event admission. Cron reviews remain v1, and no old attribution is backfilled.
+
+`reviewForAssignments:true` approves source selection. The separate event-only
+`shareEventContext:true` approves `sourceSharing:producing_run`; omission/false
+records `sourceSharing:none`. Sharing cannot be requested without review intent
+or through a cron/mention source. The server records both under the existing
+collection CAS and actual operator authority. This authorizes only the matching
+producing Run's classified context for the appointed professional/Flow roles.
+Each recipient still needs current access to underlying records, company sources
+and private memory. It does not create general assignment or Brain read access.
+
+The common version-3 project binding snapshot captures this review. Native event
+origin is `{kind:event,eventId,subscriptionId}` and the requester/destination come
+from the actual review operator. Input and stored trigger payload contain only
+validated event/kind/project/task/Run identifiers, never an unvalidated payload
+body. Server-recorded source restrictions survive into the assignment and Run
+independently of model citations. A user-authored project fact without a producing
+Run has its project context; an agent/system fact with missing or unclassified
+provenance refuses explicitly. A foreign/missing producing Run is never treated
+as a public project event.
+
+The source appointment validates the actual open claim, current source/review,
+watermark, event, producing Run and exact reserved identity at fresh admission.
+The registered consumer retains existing claim/replay ledgers, with independent
+native subscriptions, bounded source pages, explicit malformed-source handling,
+self-exclusion using the producing professional and current chain caps. Native
+project coordinators record their actual chain depth. A historical default zero
+without a classified native appointment does not prove a chain root; system-authored
+terminal facts inherit their producing chain. Existing per-professional event-kind
+exclusivity remains; distinct professionals consume their own subscription independently.
+
+Permission to inspect a producing assignment input is constrained by the real
+event appointment, exact source closure, current receiving appointment/provider,
+initiating authority and live sharing approval. Unrelated inputs remain denied.
+Withdrawing sharing also governs already admitted event work before disclosure or
+effects; reapproval can restore access without rewriting its original input or
+executing a duplicate delivery. Selector/enrollment changes govern fresh intake.
+Real registered-consumer qualification covers standalone and coordinator completion,
+cursor rewind, old-event exclusion, sharing revocation/reapproval, unrelated input
+refusal, missing sharing, direct user facts, unknown provenance, self/depth bounds,
+25 malformed sources before healthy work and preserved evidence. These checks use
+local PostgreSQL and the real supervisor with controlled ACP; they do not establish
+installable stand-pilot readiness.
+
+### Native task-comment intake
+
+**Implemented native platform intake; correlated clarification and result delivery remain their explicit later contracts.**
+
+A user-authored stored task comment addressing a pinned professional is an
+independent source `{kind:task_comment,projectId,taskId,commentId}` for each
+addressed attachment. The registered consumer retains its existing mention
+configuration, actual event claim/fence and reserved Run; canonical source identity
+additionally includes the addressed binding. A native professional receives an
+assignment before execution. Ordinary agents retain their legacy summon behavior.
+An active native assignment never silently suppresses independent comment work.
+
+The server validates the actual event, stored comment/author/task, current project
+membership, enabled mention source, exact claim selector and installed professional.
+A human comment cannot be supplied by claiming another actor in event payload.
+Agent-authored native requests require governed principal admission (T27); they
+cannot impersonate the human requester. Input retains the canonical stored comment
+text without truncation, with a stable original source identity and immutable
+input digest. An oversized native objective is refused explicitly. The expected
+result is the reviewed specialist's mandatory contract; required-result verification
+is server-injected. Destination is the originating task comment, frozen separately
+from the work input. Actual durable result delivery remains T25.
+
+New work uses the common project request transaction and existing native launch,
+repository admission and pool. A server-only source appointment binds existing
+attempt/event/source/reserved Run identities to the actual comment origin during
+Run insertion; current source selectors and authority are rechecked. Redelivery
+adopts the original receipt and never creates a second Run. Source/configuration
+conflict is explicit, not resolved by selecting another provider or caller. Manual
+source identities and legacy project v1 trigger snapshots remain unchanged.
+Clarification and updates use explicit assignment correlation (T23–T26); the
+adapter does not guess another assignment from prose or current busy status.
+
+Actual settings/comment HTTP routes and the registered consumer qualify independent
+queued work, default standalone/coordinator execution and same-comment replay.
+A source probe uses the real existing claim in a rolled-back transaction: forged
+reserved Run identity and selector changes explicitly refuse. Current author
+permission loss creates no unauthorized assignment or ACP work. Native input over
+8,000 stored characters keeps its posted source and records the safe reason token
+`project_comment_input_too_large`, with localized incident remediation. The
+ordinary 38-case trigger suite retains its existing summon semantics. No new
+migration, scheduler or attempt ledger is introduced.
+
+### Project manual admission
+
+Project manual work resolves `specialistBindingId` through the current project
+agent attachment, with current read/launch authority and the actual trusted
+project package pin. The original receipt, assignment and input commit together
+before the existing launcher performs repository/workspace admission. An unavailable
+selected runner or refused repository admission leaves one queued assignment;
+retrying the same request can admit that retained work after the precondition is
+repaired. No fallback runner or fabricated project is selected.
+
+Inside the existing Run transaction, the service locks the assignment revision,
+rechecks current attachment/package/configuration/policy and compares its frozen
+expected result. Run, session, placement and initial assignment link/state commit
+atomically. Concurrent admission adopts the winner; the losing allocator follows
+the launcher's existing owned-worktree cleanup. Original assignment input is a
+separate prompt section and exact input inspection, alongside standing configuration,
+recurring request and permissions. Current source policy shares only the exact
+server-appointed input with the active role and initiating user; it grants no
+general Brain read access or confirmation authority. Later input heads cannot
+rewrite the retained prompt. Technical Done leaves business acceptance separate.
+
+A declared project coordinator additionally retains standing snapshot v2 with the
+exact project Flow ID/ref, installed revision ID, resolved revision and manifest
+witness. Existing v1 snapshots remain byte-for-byte unchanged. The current trusted,
+enabled provider and mandatory public-result contract are checked separately from
+physical runner availability. A provider change refuses admission instead of
+silently selecting a different graph.
+
+New carriers set the existing `qualification_source_version` to `specialist-assignment:v1:<assignmentId>:<inputRevision>:<inputSha256>` in the same transaction. The source digest seals the private immutable input in the ordinary task qualification and launch snapshots without copying its prose to the shared task. Historical carriers and accepted snapshots are not rewritten. Automatic admission must obtain a current assessment for that exact source version.
+
+The assignment retains its initial existing Task identity once. Task creation and
+that link commit under the assignment lock; retries reuse it. Its shared title is
+the role name and its stored prompt is only the role identity. The runtime overlays
+the private original assignment input without copying it to the task board. The
+existing Flow reservation transaction binds the exact task/provider/input, source
+role/configuration and result contract, then links and activates the assignment.
+The carrier enters the canonical task-launch intent before any repository or session allocation. An actual same-origin session action may carry the opaque interactive principal, whose user must equal the retained requester. Personal bearer calls, mentions, schedules, events and webhooks do not acquire manual authority from their trigger label or frozen requester: a project coordinator root requires the existing current accepted positive task qualification. A missing or stale assessment refuses admission while preserving the queued assignment and its original carrier. No assessment, human attestation or manual launch basis is fabricated. Current membership, source authority and provider witnesses are checked again when the intent binds its Run. Launch options and receipts expose control metadata only; they never serialize the private assignment or server execution snapshot.
+
+An accepted intent may remain queued before its Run exists; intake returns the retained assignment without inventing a Run link. Existing task-launch wake, claim, recovery and preparation workers own allocation. A duplicate arriving between task retention and Run reservation can observe the
+same queued assignment; it cannot mint a second task. Later continuations retain
+separate work/Run links rather than replacing this initial identity.
+
+The session `POST /api/specialist-assignments` exposes company-owned and project operational-specialist/coordinator manual
+submission with the bounded original request and idempotency key. It returns the
+existing assignment DTO (201 for new work, 200 for exact replay), then uses the
+existing pool scheduler after the reservation commits. Host pressure/capacity can
+leave execution Pending. A replay can signal interrupted pending admission without
+allocating another execution. `GET /api/specialist-assignments/{id}` supports
+currently authorized company/project inspection; both responses are private and
+no-store. Personal user-token `POST /api/v1/ext/specialist-assignments` and exact GET reuse the same intake/reader and immutable manual identity, so switching between browser and API does not repeat work. Both require the corresponding token scope and current owner/source authority; project/agent/librarian tokens cannot impersonate the user. The existing token audit records authenticated success/refusal, CONFIG/JSON validation uses external 422, and responses remain private/no-store. Source-specific adapters use the existing trigger and appointment ledgers. Governed delegation uses the scoped execution principal and an exact work appointment. Fresh company standalone submission is qualified through the actual
+session route, default scheduler dispatch, real supervisor/ACP process, validated
+operational result and physical cleanup. Completed HTTP replay issues no second
+create/prompt command. Coordinator intake is qualified through queued HTTP
+admission and its existing driver. Project coordinator intake uses the actual attached Flow, repository admission and native result-only terminal path. The installed stand package passed the company pilot on the native coordinator path.
+
+
+### Clarification and context
+
+Existing agent-question/HITL services gain an assignment subject without a task requirement. Human `assignments` retains claim/answer ownership; company actor scope and role mapping come from the company Flow binding. A question stores assignment, expected input revision, coordinator epoch, prompt/turn and source principal. Same answer replay is inert; changed/late/wrong-assignment/terminal answer returns 409. Persist answer intent before delivery and mark delivered only after ACK. Failed DB/delivery handling explicitly cancels/releases the supervisor's owned permission deferred; no hidden promise waits.
+
+The assignment subject extends the existing `hitl_requests` row with nullable
+`specialistAssignmentId`, `specialistInputRevision` and `specialistAnswerInputRevision`.
+Existing task questions keep their exact data and NULL native fields. New native
+questions retain a closed server `assignmentQuestion` snapshot beside the existing
+FormSchema and exact `agentPrompt` or `flowQuestion` checkpoint proof: exact input ID/revision/SHA, context
+revision, requesting business revision, actual user/Run author, stable principal
+and delivery digests, and complete consumed source restrictions. Native subject,
+form, prompt, authorship and committed answer cannot be overwritten or deleted.
+Question creation uses the current root appointment; multiple unsettled roots
+refuse explicitly until the governed business-owner claim exists (T29).
+
+Checkpoint ACK is followed by the existing canonical quiescence wait before
+releasing the execution assignment, so late exit evidence is not discarded as a
+stale epoch. If activation persistence fails, the question remains pending, its
+process is already stopped, and recovery adopts the exact successful checkpoint
+receipt instead of issuing another checkpoint. An answer requires its exact new
+input revision; terminal lifecycle closure with NULL response is a distinct
+unanswered closure and creates no invented answer or input revision. Native session and bearer question/answer routes use the same closed contracts,
+32 KiB transport and private/no-store responses. New active questions return 201,
+exact replay 200 and pending activation 202. Session CONFIG errors use 400; bearer
+CONFIG errors and invalid answers use 422. Asking requires current read/update
+and the exact appointment; personal-token answers recheck their current credential
+inside the answer transaction. Machine credentials cannot answer human work.
+The company MCP toolset gains only `assignment_question_ask`; the general facade
+also exposes `assignment_question_respond` for actual human user credentials.
+Native standalone company/project Inbox answer and same-Run continuation
+are implemented through the existing human-work, immutable-input and continuation
+services. The answer transaction retains exact user authority and response/input
+witnesses, completes the human work item, advances the assignment input and queues
+resume before delivery. Raw structural validation precedes Zod record parsing,
+which otherwise strips `__proto__`; the shared unsafe-key/depth/collection checks
+remain authoritative. Blank required text, stale CAS, changed answer, current
+revocation, oversized combined input and terminal/cancelled sources refuse without
+partial writes. Exact concurrent replay retains one answer/input. Audit failure
+rolls the whole transaction back.
+
+Resume uses the ordinary pool/host gate, new execution epoch and retained prompt
+owner. Host pressure leaves a durable resume request without a prompt. The old
+Run snapshot and root link keep their original input; current read policy follows
+at most 32 guarded answer receipts, always with current source and professional
+access. A historical context/input witness is preserved independently of the new
+question input, including through repeated clarification on the same Run. Project
+appointments retain actual repository admission, current attachment/initiating
+membership and the original root input. Human project answer authority is checked
+at acceptance and replay; a formerly authorized responder cannot replay after
+membership revocation. A resumed specialist reads the exact answered input under
+its own current credential even with general Brain permissions disabled.
+
+Question creation validates raw structural bounds before recursive form parsing,
+then checks field names through the same unsafe-key machinery used for answers.
+Each object has at most 64 distinct fields, including nested array/object forms.
+A minimal retained question/answer envelope must fit the immutable 8,000-character
+assignment input before the source is paused; actual larger answers still receive
+an explicit bound refusal. Business revision space reserves both pause and answer
+transitions, and exhausted input revisions refuse before checkpointing. The same
+Run may retain at most 32 native answers, matching its existing bounded lineage
+resolver. The next new question refuses before pausing; exact accepted-answer and
+question replays remain authorized independently. A legacy pending question beyond
+that bound cannot append another unusable input. Forms also refuse the reserved
+server question/prompt/session envelope keys instead of accepting caller provenance.
+
+The response body carries `response` as a bounded object validated against the exact stored native question FormSchema, not a replacement free-text-only grammar or caller-supplied schema. Required string answers are nonblank; human question suggestions permit custom text as the existing contract specifies, while permission/transition enums stay closed. Work `clarify` decisions may omit resultRevision when no result exists; accept/reject/rework of a result require the exact ready result revision at the service boundary. Context entry IDs are assignment/revision-local logical keys, not caller-authoritative global database row IDs.
+
+Context changes lock the stable assignment, check expected context revision/epoch and current source grants, then append one immutable revision and attributed decision. A losing patch returns 409 and must be explicitly rebased; no automatic last-writer merge. Accepted findings refer to exact child result revisions. Server-derived source restrictions propagate through summaries and context even if a model omits citations. Current permission is rechecked at read/share/accept/action; snapshots are history, not grants.
+
+### Global Inbox projection for company clarification
+
+The canonical decision queue and its count include company-owned native assignment
+questions and other native company HITL without project membership or repository rows.
+Pending or superseded questions remain absent until activation. The shared HITL query
+requires a retained native company Run/input binding, current explicit human
+`assignments:read` and `assignments:answer` grants, and access to every retained
+source. Read-only recipients and administrators without explicit grants do not
+receive actionable cards. Revocation removes the card and its count together.
+An explicit project scope never includes company work. Existing external HITL
+and decisions DTOs retain their project-only populations; native question APIs
+provide company interaction. Private assistant and librarian questions remain
+outside this population.
+
+Company cards use the localized Company/Компания group and ordinary Run links.
+Only the actual form schema reaches the browser: server question, prompt,
+checkpoint and supervisor metadata are excluded for native project and company
+questions. Expanded context uses current company Run read/source authority both
+before and after assembly, returns private/no-store data, and has no repository
+diff. Unavailable company ownership or read authority is concealed as 404.
+
+### Flow-node clarification contract (native platform checkpoint — T24)
+
+A native graph question uses the same assignment subject and HITL row, with
+an immutable `flowQuestion` source envelope: exact node attempt, owned prompt
+command/ordinal, execution assignment, incarnation and host session. The current
+node is selected from server state; caller node/owner/author fields are refused.
+The common assignment subject keeps its independently witnessed current input and
+historical context revision. Human callers retain their own authority; a node
+caller must retain its current professional read/update authority and source access.
+
+Persistence pauses that existing node attempt while retaining its original prompt
+ordinal. Only after the existing checkpoint acknowledgement and canonical
+quiescence does activation park a typed `clarification` action resume with the next
+prompt ordinal. Advancing earlier would misclassify late source lifecycle evidence
+as a superseded prompt. Activation and Inbox recovery reuse the existing path. It does not create another
+execution/attempt ledger or relabel clarification as operator permission. The
+answer receipt and next input remain the existing native answer transaction.
+The ordinary Flow idle claim must verify the exact answered question, retained
+input, checkpoint/source prompt, current appointment and host before rebinding
+the parked node to its newly minted epoch. The resumed prompt includes the exact
+human answer with its question/input witnesses through that existing prompt owner.
+Completed nodes, original root input/link and earlier evidence remain intact.
+Capacity deferral and interruption retain this same durable handoff. The company
+Flow scenario qualifies real controlled ACP checkpointing, duplicate question
+adoption, native Inbox answer, registered scheduler dispatch, same-node continuation
+and exact wire answer delivery. Injected post-checkpoint activation failure recovers
+without another checkpoint. Existing permission, interrupt and crash resumes remain
+compatible. The current Flow node credential also qualifies through the native bearer route:
+missing explicit professional update authority refuses before creating a question;
+a current grant permits exact node authorship, and rotated credentials adopt the
+retained question. Host pressure retains the answered idle Run without another
+prompt; normal C3 admission resumes it after pressure clears. Built facade
+questions use the same closed form grammar; human answer tools remain outside the
+company agent toolset. This checkpoint is not package or pilot readiness.
+
+### Versioned context persistence and attribution
+
+**Implemented:** retained history, session-user and scoped execution read/update, authorized runtime projection, and governed child-result acceptance. Assignment completion requires its separate verified acceptance decision.
+
+Context has its own CAS revision and an exact assignment input revision. An update
+must name both the expected context revision and expected input revision; an
+unrelated business-head change is not permission to overwrite newer context.
+Revision zero means no recorded context, including migrated assignments, and projects
+the current input without inventing historical findings, an author, timestamp or
+context digest. Positive history retains its exact input revision;
+`currentInputRevision` exposes the latest input head independently for update CAS. Positive revisions retain a closed
+version-one snapshot, exact base/input references, server actor/time, source
+restrictions, request key/digest and content digest. A deferred database invariant
+requires each positive context head to have its exact immutable history row;
+advancing the head alone is invalid. Existing input/history and execution ledgers
+remain unchanged. The migration adds no Brain foreign key or execution attempt.
+
+The current snapshot includes objective/constraints through its exact frozen input
+reference and bounded entries for sources, findings/hypotheses, questions,
+decisions, work and blockers. Finding entries carry the common
+`evidence_findings_v1` structure; ordinary text cannot declare confirmation or a
+verified work acceptance. Accepted-work entries require the work-decision owner's
+exact result/acceptance receipt (T28), separate from an author's working note.
+Input and standing instructions remain separate planes. A replacement explicitly
+names the current entry it supersedes; old revisions remain inspectable. Duplicate
+entry IDs or two replacements of the same entry refuse instead of choosing a winner.
+
+Public updates contain no actor, grants, timestamps, source restrictions or owner
+epoch. A human edit is attributed to its current user and records no execution
+ownership epoch. Executing-agent attribution comes from the actual current bound
+Run/node appointment and credentials, with source closure inherited independently
+of citations. Assignment owner fencing belongs to T29; a host assignment epoch is
+not silently relabeled as a business ownership epoch, and earlier revisions never
+receive a fabricated epoch. The remaining ownership/agent integration stays
+explicitly unqualified until its owning checks pass.
+
+An update is at most 32 KiB/64 entries; a retained context is at most 128 KiB of
+PostgreSQL `jsonb::text`/256 entries, with per-entry text at most 8,000 characters. Unsupported versions, empty
+updates, malformed/superseded identities and missing/stale/unauthorized evidence
+refuse without partial history. Missing evidence can be expressed as an explicit
+finding limitation or question without inventing a reference. Current source
+access gates the whole context response and retained replay before any text is
+returned; previews do not bypass that policy. Removing or superseding an entry
+cannot erase inherited restrictions. Same actor/key/payload returns its original
+currently accessible revision; changed payload conflicts. Concurrent distinct
+patches against one base have one winner and one actionable conflict.
+
+The native facade exposes `assignment_context_get` with the same closed assignment/revision selector as HTTP. The external route authenticates and audits the real token, then resolves its current native principal without requiring a knowledge token scope. Company credentials include `assignments:read` only when the reviewed role permits it. A machine reads through its exact Run/node appointment and frozen input, never through the initiating user's identity; arbitrary foreign assignment selectors are withheld. Context source closure is recorded on the existing Run capture before returning content, so omitted citations do not remove downstream restrictions. Human authorization preserves its existing current company/project policy. Agent writes use the current professional authority described below. Governed child/result lineage remains unqualified until T27/T28.
+
+The implemented `assignment_get` facade and existing external assignment GET also
+accept a current executing principal with `assignments:read`. Inspection retains
+the actual Run/node identity, exact root appointment and all current input/context
+source dependencies; an event's input sharing does not authorize producer
+assignment inspection. Source disclosure commits before the DTO leaves the
+transaction. The DTO's `revision` is the business CAS coordinate, while
+`inputRevision` and `contextRevision` identify independent retained histories.
+Reading these values grants neither human answer authority nor work acceptance.
+
+
+Executing-agent context updates require a current credential carrying both context read and update scopes, an active Run (queued/reviewed executions refuse), exact assignment/input appointment and current source access. A company role additionally needs its reviewed `assignments:update` limit, an explicit current professional update grant and current initiating-user update authority. Project appointments retain current initiating membership/launch authority independently from Brain flags. The author is always the server-resolved Run/node role. Every new snapshot inherits the consuming Run's complete source closure, including sources omitted from submitted citations. Replay and response disclosure retain current access checks. Ownership epoch remains NULL until the business owner-claim writer is introduced in T29; a host epoch is not substituted. T29 must add current business-fence checks at this same persistence boundary before owner recovery is qualified.
+
+### Runtime projection and cooperation boundary
+
+**Implemented: authorized context projection through the existing agent and Flow prompt paths.**
+
+A native execution resolves its own immutable assignment link from server state.
+Every execution context read/update requires that same root appointment; an event's
+authorized producer-input reference does not grant the producer's later working context.
+No link means no assignment context is injected or fabricated. A company role
+without its reviewed context-read limit retains the existing assigned-input
+prompt and receives no additional context bytes. This is an explicit enrollment
+state, not a fallback after a source refusal. An enrolled projection requires the
+exact current Run/node professional, current appointment/input and every inherited
+source permission; an unavailable source refuses dispatch rather than returning a
+partial summary. The complete source union commits to the existing Run capture
+before context enters a newly assembled standalone-generation or Flow-node prompt.
+This includes newly assembled override and resume prompts. Reattachment of an
+existing owner request preserves its original immutable prompt bytes; ongoing
+executions can retrieve current context through the authorized native tool. The
+version-one DTO preserves evidence references and original authors. Standing
+instructions, current input, working context and permissions remain separate.
+
+The T23 foundation does not manufacture bounded child work or acceptance records.
+T27 supplies authorized child appointments and context sharing; T28 enables exact
+collected/sourceFinding and accepted-work references through those real records,
+using the existing result ledger and reduction validator. Until then the context
+writer explicitly refuses result-lineage and accepted entries. CBA-04 spans these
+writers; finishing the foundation alone does not qualify accepted cooperation.
+This ordering removes the T23-to-T28 dependency cycle without removing any result,
+evidence-preservation or acceptance requirement.
+
+### Durable origin-delivery contract (Implemented platform — locally qualified)
+
+**Destination admission, exact-result capture, channel transport and native inspection/recovery are locally qualified. Installed-package delivery and product controls remain separate qualification gates.**
+The shared assignment store validates the destination under the same transaction
+as current requester/owner authority and before creating any assignment, input or
+event. Inbox delivery is private to the actual requester. Task/thread selectors
+must identify that assignment's current unarchived project and actual task/comment.
+Company assignments cannot target a task. Outbound selectors require an enabled,
+requester-owned user subscription (no project/platform recipient), subscribed to
+`assignment.result_available` or `*`. The endpoint and credentials remain server
+configuration. Missing, foreign, disabled or unsupported targets refuse with safe
+`PRECONDITION` reason `assignment_destination_unavailable`; no fallback target is
+chosen. Native store integration proves refusal/rollback and valid targets. Dispatch repeats validation rather than treating this snapshot as authority.
+
+
+Result availability and accepted completion are distinct signals. T25 may notify
+that an exact validated result is available from a settled root appointment; it
+cannot create an acceptance or complete an assignment. T28 adds accepted-outcome
+capture in the actual acceptance transaction and reuses these adapters with a
+distinct signal identity. A child ending or an agent's prose cannot trigger either.
+
+| Boundary | Required observable behavior |
+| --- | --- |
+| Destination admission | Server-prepared typed target; Inbox recipient is the actual requester, task/thread belongs to the assignment's project, outbound subscription is enabled and currently owned by that requester. Missing/foreign/disabled targets refuse before assignment/input/event persistence. Company work cannot reply into an unrelated project. |
+| Signal identity | Assignment, exact effective input revision, root Run, exact validated result revision/schema digest, signal kind and frozen destination identify one business delivery receipt. Repeated domain-event dispatch adopts it. No model-provided result or acceptance identity. |
+| Internal delivery | Existing Inbox item or fixed control-only task comment and its delivered receipt commit together. Retrying after a lost response returns that receipt, never another comment/item or Run. Source-derived findings remain behind an authorized Run link. |
+| Inbox authorization | Native Inbox rows retain assignment/result/source linkage. Current recipient ownership, assignment read and full source access filter both content and count before pagination; project-only queries exclude company rows. Source revocation hides existing retained rows without deleting evidence. |
+| Outbound reply | Exactly one configured requester-owned subscription receives a stable event/delivery identity using existing signing, egress, lease, attempts and backoff. Platform or sibling subscriptions cannot broaden the destination. Every send/retry rechecks current recipient/source authority; lost ACK repeats only delivery and retains at-least-once semantics. |
+| Failure/recovery | Persist pending intent before dispatch. All channels reuse the existing delivery lease, bounded attempt budget/backoff and append-only attempt history (default eight attempts). Source/destination denial creates an inspectable blocked outcome. Authorized replay preserves attempt history and rechecks the exact frozen target; it cannot choose a fallback destination or rerun work. No second delivery-attempt ledger is added. |
+| Quiet checks | T39 applies the configured quiet/incident policy before routine result publication. Unchanged checks do not manufacture repeated alerts; required action and requested delivery remain durable. |
+
+Terminal events gain a nullable server-owned `assignment_result` witness captured
+in their insertion transaction from the actual native root appointment, effective
+input lineage, current validated result and complete Run source capture. Existing
+events remain NULL; migration cannot invent historical witnesses. A versioned
+`postgres_jsonb_sha256_v1` witness hashes the UTF-8 PostgreSQL JSONB representation
+of schemaRef, schemaVersion, schemaSha256 and value with SHA-256. It is a content
+witness, not confirmation. The existing domain dispatcher adopts an immutable
+business receipt from that exact event witness, even when dispatch is delayed;
+it never selects whichever result became current later. Receipt identities and
+frozen source/target snapshots cannot be overwritten. Transport state and attempt
+history remain solely in the existing delivery engine.
+
+The owning migration extends `inbox_items` with an exclusive company/project
+native-assignment branch while preserving every legacy project/task row and
+recipient-owned read mutation. A delivery-receipt table records business routing
+and idempotency, not execution or transport attempts. The existing webhook
+delivery engine gains an internal assignment target for Inbox/task adapters;
+its current HTTP sender serves a configured outbound reply. Internal delivery
+remains available when external webhooks are disabled; configured outbound
+replies pause under that setting without losing their native intent.
+Immutable receipt identity includes the
+retained result witness; mutable delivery status cannot rewrite the target or
+source. Existing main/Brain lineage boundaries remain separate. No Brain FK is
+introduced, and logical evidence references do not block project deletion.
+
+Qualification starts at destination admission (real Postgres creation/rollback),
+then exact-result event capture, internal duplicate/concurrent dispatch, current
+read revocation, native Inbox count/list/read, real local HTTP lost-ACK retry,
+changed recipient and bounded failure/recovery. These platform scenarios are
+locally qualified, including actual effect/ack rollback, expired leases, explicit
+replay and source/input/result supersession. The installed stand pilot also
+qualified delivery of the accepted outcome to the originating context.
+
+### Delivery and cancellation windows
+
+Destinations are a task/comment thread, current user Inbox, or existing configured outbound subscription/event reply. Endpoint/credentials come from server configuration, not model-supplied URL. Internal comment/Inbox delivery has a unique receipt key and is idempotent. External delivery carries a stable ID and is at-least-once unless the peer proves stronger semantics. Lost delivery ACK retries delivery only; never reruns the assignment/effect. Current access gates content before delivery, including changed recipients.
+
+Crash before intake commit leaves no assignment orphan; after commit reuses source receipt/reserved run. Crash after answer intent but before ACK leaves delivery retryable under its exact binding. Crash after acceptance but before message delivery is owned by the existing outbox. Cancelling the assignment never deletes its operation/accepted evidence; reconciliation can continue under a dedicated current recovery grant without reviving the cancelled agent. Missing access results in a safe blocker and actionable authorized-owner incident.
+
+### Native delivery inspection and replay (Implemented — locally qualified)
+
+The native surface selects delivery for a known assignment Run, rather than
+adding another unbounded history feed. Session and global personal-token clients
+use `GET /api/specialist-assignments/{assignmentId}/delivery` and its
+`/api/v1/ext` counterpart. Required query `runId` is a nonblank PostgreSQL-safe
+identity of at most 128 characters. Optional `resultRevision` is a positive signed
+32-bit integer; omission selects the latest retained result-availability receipt
+for that Run. Unknown or duplicate query keys refuse. A foreign/missing selector
+has one safe `assignment_delivery_reference_unavailable`/404 response. Current
+`assignments:read` and complete current caller access to the assignment and the
+receipt's frozen sources apply before metadata leaves the service. This is a
+control/evidence view; it never returns result bodies, endpoints, credentials,
+raw HTTP response bodies or unrestricted error messages.
+
+The closed v1 view contains assignment/delivery identity, original input revision
+and SHA256, signal `result_available`, exact Run/result/schema revision and digest
+witnesses, frozen typed destination, receipt creation time, and existing transport
+state. Before fanout it is `awaiting_dispatch`. A complete scheduled stand
+check with no action, findings or diagnostics can leave a retained
+`suppressed` Inbox decision without creating a transport or attempt. Other
+deliveries use the existing `pending|delivered|dead`. Transport inspection exposes only its ID,
+attempt count, append-only last attempt ordinal, last status/error class,
+next-attempt/delivered/update timestamps, and a nullable server-computed
+`stateSha256`. The hash covers the actual transport identity/state and append-only
+attempt ordinal, including exact, time-zone-independent database epoch timestamps. It is an optimistic state
+witness, never authority. History inspection does not require pending-delivery
+eligibility: cancellation, superseded input/result, disabled recipients or changed
+target configuration cannot erase otherwise currently accessible historical
+metadata. In particular, a control-plane reader may inspect a blocked delivery
+without reviving its recipient's permissions.
+
+`POST /api/specialist-assignments/{assignmentId}/delivery/{deliveryId}/replay`
+and the external counterpart take only
+`{schemaVersion:1,expectedStateSha256:<lowercase 64-hex>}` (4-KiB body limit).
+Session writes require the existing canonical same-origin check; external writes
+require a verified global personal token with `assignments:recover`, required
+token audit, and its actual user identity. Project, agent and
+librarian credentials cannot impersonate a human recovery operator. All selectors
+are resolved through the assignment; caller-supplied authors, targets, policies,
+Run identities and payloads are refused.
+
+Replay atomically checks current caller read/recover and source authority, the
+original recipient's current source/destination authority, exact current input
+and settled valid result, and the existing terminal transport state. It locks the
+actual transport and compares `expectedStateSha256` before invoking the existing
+`replayDelivery` in the same transaction. A changed state or an already queued
+transport returns 409 without a second cycle. The append-only attempt ordinal
+prevents a delayed duplicate from matching again after a later cycle finishes.
+The existing replay resets only its bounded transport retry cycle and preserves
+attempt history, business receipt, frozen destination and stable peer idempotency
+identity. No assignment, Run, operation, result publication or knowledge
+confirmation is repeated. Queueing returns the updated private/no-store view;
+the existing delivery worker owns subsequent effects and rechecks current
+recipient/source access. No new execution, scheduler or attempt ledger is added.
+
+An unexpected storage failure between an internal Inbox/task-comment effect and
+transport acknowledgement rolls back the effect and attempt together. The prior
+committed transport lease remains pending; expiry permits the existing worker to
+reclaim it under fresh recipient/source checks. Database warnings expose delivery
+identity, error type, SQLSTATE and constraint only, excluding query text,
+parameters, driver messages and raw causes. A revoked recipient cannot receive a
+reclaimed effect; an authorized operator can inspect the resulting dead cycle and
+explicitly replay it after authority is restored.
+
+Qualification uses actual stored receipts and real internal/loopback delivery:
+missing/foreign references and actor/target forgery; current caller recovery
+authority; original-recipient/source revocation after inspection; stale state
+witness and concurrent/delayed duplicate replay; preserved Inbox read state and
+one control-only task reply; cancellation and superseded result/input refusing
+replay while authorized history remains visible; unchanged Run/assignment counts;
+required personal-token audit and session origin refusal. Public API status
+mapping remains 400 for session schema failures, 422 for external schema failures,
+401/403 for current authentication/authority, 404 for unavailable references,
+409 for stale/busy/superseded recovery and 413 for body size. No fixture-only result
+establishes installed stand-pilot readiness.
+
+### Read-only assignment admission inspection (Implemented — locally qualified)
+
+`GET /api/specialist-assignments/{assignmentId}/admission` and the external
+`/api/v1/ext` counterpart expose a closed v1 control view under current human
+`assignments:read` and complete current assignment/source authority. The external
+surface requires a global personal token and its existing required audit; it
+never impersonates a human through a project, execution or librarian token.
+There are no query parameters. Invalid selectors return 400 for sessions or 422
+externally, current authentication/authority returns 401/403, and unavailable
+assignments return 404. Responses remain private/no-store.
+
+The view distinguishes `company`, `project_agent` and `project_flow` admission
+without requiring a repository for company work. It includes assignment identity,
+business revision, current input revision and status. Only an actual project
+coordinator can expose its retained carrier. Before that retention commits,
+`project_flow` with null carrier explicitly means intake still needs recovery.
+A retained carrier includes its actual task identity/number and project task URL,
+the original exact assignment input revision/SHA if its stored source-version
+witness still resolves, and the existing qualification/active-launch projections.
+Current head input and original carrier input remain separate after clarification
+or correction. Historical carrier input receives its own current source check.
+Missing or changed source-version linkage is explicit through null input and
+`carrier_input_unavailable`, never a fabricated replacement witness.
+
+Qualification reuses `getTaskQualificationSummaries`; active launch reuses
+`taskLaunchPreviewState`. No assessment, input, source reservation, launch intent,
+Run, event or permission is written by inspection. Carrier/qualification metadata
+uses non-locking reads beneath existing assignment/source authority locks, so an
+inspection cannot invert canonical task-before-assignment mutation ordering.
+Returned revisions describe an observation; subsequent actions still require
+current authority and their exact CAS coordinates. The view explicitly reports
+`repository_evidence_not_checked` for a retained project carrier: an accepted
+ready assessment is not a claim that live repository evidence, provider/host,
+current permissions and original trigger are admitted for execution. Canonical
+launch remains the only authority and may require requalification. Actual task
+controls supply assessment/review; this surface makes the retained carrier
+reachable without creating a second qualification mechanism or exposing private
+input/authority snapshots. Inspection remains available when a provider is
+disabled, provided current reader/source permissions remain valid.
+
+Qualification covers actual queued comment/cron/event/webhook coordinator work,
+carrier absence after an interrupted intake, original input and direct task link,
+assessment change and current canonical intent after launch, source-version
+mismatch without mutation, current access revocation, personal bearer audit and
+company/standalone work with no carrier. Reads must leave all business and
+execution allocation counts unchanged. Ordering/cancellation qualification and
+full Phase 5 exit remain separate gates.
+
+### Qualification/source ordering parity (Implemented — locally qualified)
+
+The native project coordinator must preserve one original assignment/input,
+carrier, source reservation and reserved Run identity across these finite orders.
+Canonical task qualification remains independent of assignment cancellation.
+
+| Order/window | Required observation |
+| --- | --- |
+| Intake and source handoff before assessment | Queued assignment, no Run; a current accepted ready assessment later resumes the original source once. |
+| Assessment before interrupted source handoff commits | The actual carrier can be assessed while its original pointer is unavailable; a qualification event cannot synthesize source authority. Recovery first captures the exact unused original source, then canonical admission may resume it once. |
+| Repository evidence advances after assessment but before handoff/admission | Current master refuses stale evidence, retaining original work and input. A fresh human assessment resumes the same reserved identity without a replacement assignment or fabricated approval. |
+| Duplicate qualification/intake before or after admission | Existing source/intent ownership deduplicates; completed prompt/create commands are never repeated by replayed source events. |
+| Cancel before assessment or after ready assessment but before source admission | Later assessment, duplicate intake, qualification event and scheduler reconciliation cannot revive the cancelled assignment or allocate a Run/intent. Original cancellation, input and producer acknowledgement remain inspectable. |
+| Source/current-user permission changes before admission | Current policy defers/refuses; retained historical authority is not a grant and restoration cannot change the original source/input identities. |
+
+When canonical launch observes stale repository evidence, native intake uses the
+same guarded requalification write as ordinary automatic enqueue. It compares
+the exact prior assessment identity and task input revision under the existing
+task reservation/row locks before requesting requalification. Repeated or delayed
+refusals cannot invalidate a newer human assessment or advance the same input
+revision twice. Original assignment input, source pointer and accepted historical
+assessment remain unchanged. Inspection itself still writes nothing.
+
+Cancellation does not reject or erase a valid assessment: the task assessment and
+cancelled business request remain separate durable facts. A replay of the
+cancelled source receives its existing explicit appointment refusal, and the
+shared scheduler must not interpret that private carrier as independent ordinary
+work. A fresh independent request remains separately admissible. Qualification
+covers the actual registered event consumer and existing automatic-launch job,
+not a model label or manually inserted successful Run.
+
+### Qualified project coordinator source handoff (Implemented — locally qualified)
+
+An automatic project coordinator request first retains its original assignment,
+private input and carrier task. A missing or stale positive qualification returns
+that queued business work without manufacturing a task-launch receipt or Run.
+The existing task qualification service remains the only assessment writer. Its
+input includes the carrier's exact `qualification_source_version` witness; a
+label-only or earlier-input assessment cannot authorize this work. A real
+same-origin session can instead create its one-shot manual launch intent.
+
+For comment, cron and event origins, additive main `0267_specialist_source_handoff`
+adds nullable `agent_trigger_attempts.specialist_assignment`. Its closed v1
+value is `{schemaVersion:1, assignment:{id,inputRevision,inputSha256}, source}`.
+`id` and every source identity are nonblank PostgreSQL-safe strings of at most
+128 characters; `inputRevision` is a positive signed 32-bit integer and
+`inputSha256` is lowercase 64-hex SHA-256. `source` is the existing closed
+`ProjectSourceAppointment`: kind `task_comment`, `cron` or `event`, original
+attempt/schedule/reserved-Run identities, and a positive safe event ID only for
+comment/event work. The complete JSON value is bounded to 2048 UTF-8 bytes.
+Legacy and company rows remain NULL. No historical attribution is inferred.
+
+The source appointment and actual queued project assignment/input must agree on
+owner, responsible role, source kind and immutable source identity. The existing
+attempt captures this pointer once, before any Run or launch intent owns its
+reserved identity. Existing non-NULL pointers are immutable. The capture and a
+queued source acknowledgement commit together; the original reserved Run identity
+and scheduler fence do not change. This is an extension of the existing source
+attempt, not another execution or retry ledger. Company invocations retain their
+existing admission. Project deletion and ordinary source cleanup remain possible;
+this pointer introduces no Brain FK or deletion guard.
+
+A queued source without a Run is explicitly awaiting qualification. Its current
+assignment/input pointer supplies the finite source-ownership proof needed to
+construct an automatic task-launch source later. It supplies neither a positive
+assessment nor manual authority. Existing intent acceptance still validates the
+current exact assessment, evidence SHA, owner/source access, provider, role,
+configuration and constraints. The original source resolver recognizes an open
+claim or that exact retained queued pointer; a generic queued attempt, changed
+input, foreign owner or changed source cannot acquire this privilege. Existing
+queued-intent-to-Run binding then adopts the original reserved identity and keeps
+the source acknowledgement immutable.
+
+The existing `agent_triggers` consumer resumes matching work after
+`task.qualification_changed`. The existing automatic-launch job supplies bounded
+recovery of missed wakes and provider/authority restoration, using at most 100
+queued project carriers with a current accepted ready assessment per pass and the existing admission locks and
+intent worker. Global intake and qualified-resume scans have independent rotating
+`(created_at,id)` keysets in the existing automatic-launch job target. Each completed scan advances past every visited
+row, including current-authority/provider refusals; a completed tail wraps to the
+head. The cycle freezes its upper creation boundary so new arrivals cannot defer
+revisiting older restored work indefinitely. Unexpected decoder/storage failures
+retain the existing scheduler failure policy and do not publish scan progress. Exact timestamp text preserves PostgreSQL precision.
+Versioned compare-and-swap cursor writes preserve other lanes and reject stale
+scan progress. A targeted qualification wake neither reads nor changes a global
+cursor. No scheduler-row lock spans provider inspection or dispatch. No timer, scheduler, process or attempt ledger is added. Manual
+and webhook requests without source attempts resume from their original
+assignment/input/origin and current requester, never from an invented session.
+A non-ready, stale or revoked assessment keeps work queued. Current revocation,
+source disablement, changed review/provider/input and cancellation prevent effects;
+restoring a precondition does not rewrite frozen input or historical authority.
+
+Recovery covers each durable boundary: intake before carrier retention; carrier
+before source capture; source capture/acknowledgement before qualification;
+qualification before wake; accepted intent before Run binding; Run binding before
+producer acknowledgement. Replay adopts the same assignment, input, source fence,
+intent and reserved Run. A source that became `unknown` before capture may be
+reassociated only under its original source lock after exact intake/input matching
+and proof that no Run or intent used the reservation; uncertain execution is never
+reset or retried through this path. Cancellation and an unavailable original
+requester remain explicit durable blockers. Technical completion still does not
+accept the assignment or confirm a Brain assertion.
+
+Qualification must exercise real human assessment publication, registered event
+consumption and the existing worker/ACP path. It must cover waiting without model
+effects, same-key replay, changed input/source/role, both qualification/replay race
+orders, expired producer ownership, lost wake/restart, revoked current authority,
+cancelled work, immutable pointer tampering and project deletion without Brain
+access. The actual project intake composite qualifies comment, cron, event and webhook
+coordinators through human assessment, registered consumers and the real supervisor.
+Concurrent source deliveries adopt one queued admission, expired producer leases
+do not relabel retained work unknown, and a changed private-input witness refuses
+before allocation. Injected failures before carrier insertion and source capture preserve the original
+input/receipt through expired-claim reconciliation. Cancellation before or after
+assessment cannot revive work. Qualification before handoff, delayed assessment
+events and a real repository change preserve current canonical qualification and
+one reserved execution. T22's project-source admission is locally qualified;
+installed-package and stand-pilot readiness remain separate gates.
+
+Automatic project coordinator Runs retain system creation attribution
+(`created_by_user_id=NULL`). Original requester authority comes from the exact
+native assignment input and its bound canonical `agent_trigger` launch intent:
+assignment ID, input revision, requester ID, carrier task and the input SHA256
+source-version witness must all match. `projectAssignmentInitiatorPolicy`
+provides this shared predicate for current input disclosure and context updates.
+The initiating account, current project membership, attachment and package gates
+still apply. An arbitrary system Run, source selector or model-supplied user ID
+cannot satisfy this binding; no historical creator is invented.
+
+#### Interrupted intake recovery (Implemented — locally qualified)
+
+Main `0268_project_source_recovery` extends only the existing once-only
+handoff guard. An expired open claim or `unknown` invocation can acquire its
+original assignment pointer only while its reserved Run, original Run receipt,
+any canonical launch intent for the reservation/carrier, and assignment Run links
+are all absent. The exact immutable intake receipt, attributed original input,
+current queued head, source owner/kind/origin and private carrier witness must
+match. A settled known outcome or previously used reservation remains immutable.
+This proves unused execution identity; it is not an external-operation retry.
+
+The existing automatic-launch job first recovers a bounded page of at most 100
+queued native coordinator intakes missing a carrier or source pointer, rotating
+past refused rows under its independent persisted cursor. It reuses
+`reserveProjectAssignmentTask`, the original source attempt and the actual
+comment/cron/event intake adapters. Original source identity comes from the real
+stored invocation joined to the immutable assignment origin, never from a model.
+Company work is excluded. Current requester/update authority and the frozen
+provider are checked before retention; source/review/author checks run in the
+same pointer/queued-ack transaction. Their failure rolls back that transaction.
+A current ready assessment remains necessary before any automatic Run is bound.
+Manual/webhook work may retain its missing carrier without inventing a source
+attempt or interactive principal. Existing canonical intents keep ownership of
+their own recovery and are excluded from this intake pass.
+
+Recovery closes only the matching existing admission incident after unused
+reservation proof and a committed queued handoff; it emits existing activity
+facts. It never clears unrelated incidents or rewrites original input. Tests
+must inject actual transaction failures before carrier insertion and before
+pointer capture, retain the same input/receipt through both, expire/reconcile
+the source to `unknown`, and use the existing job to recover it without a Run or
+ACP command. Then actual human qualification must execute its original reserved
+Run exactly once. Foreign input, any used reservation, revocation and cancellation
+must still prevent effects.
+
+The real owning scenario injects both database transaction failures, recovers its
+missing carrier through the existing job under a second injected fault, then
+reconciles the same source to `unknown`. A later job retains its queued pointer
+without a Run, closes that exact admission incident and reuses the actual intake
+adapter. Concurrent replay and actual qualification then produce one original
+reserved Run and one create/prompt pair. The populated migration test separately
+preserves the unknown row and rejects both a forged assignment and an existing
+reserved Run. Cancellation and qualification ordering additionally pass through
+actual source delivery, human assessment, registered consumers and the existing
+worker. The full Phase 5 integration probe qualifies the surrounding intake,
+context, clarification, delivery and legacy behavior. No installed-package or
+stand-pilot readiness is implied.
+
+### Operator controls and listing (Implemented)
+
+Web session clients and global personal user tokens share one control surface
+(see [web OpenAPI](../api/web.openapi.yaml) and [external operations
+OpenAPI](../api/external/operations.openapi.yaml)):
+
+- `GET …/specialist-assignments` applies exact owner and inherited-source authorization before keyset pagination. Linked Run IDs and child work use the receiving reader's current source access.
+- `POST …/{assignmentId}/inputs` appends one correlated input revision.
+- `POST …/{assignmentId}/continue` replays historically retained receipts. New calls identify the next authorized action with a typed conflict. Unresolved restart effects go to the stand operation; a retained Review Run goes to Run review; active recoverable work uses its existing owner. A terminal assignment without a continuation owner requires a fresh request.
+- `POST …/{assignmentId}/cancel` validates the current assignment and linked Run stop eligibility before retaining a pending receipt. A Run the native stop refuses, such as `HumanWorking`, returns `409 assignment_run_unstoppable` during preflight. Live Runs stop through their existing owners. A released Run in `Review` counts as stopped and retains its diff. The existing system sweep resumes interruptions and returns a previously successful stop to the settlement check without repeating it. A pending receipt stays `202` on replay until teardown is verified. New business writes and dispatch commands are fenced while the receipt is pending.
+- `GET …/{assignmentId}/work` pages currently visible work. Only a Done Run's exact valid, collected result under the pinned schema is ready. Decision controls also require current work and input revisions, an open decision and an active decision state. Acceptance additionally requires satisfied verification.
+
+All controls lock the assignment head before inspecting a receipt or expected revision. Under that lock they recheck current visibility before comparing the payload digest. A different request under the same key returns `assignment_control_key_reused`. Missing and unreadable assignments return the same `404`. Migration `0339` extends the control receipt from `0338` with one pending cancellation per assignment. Token clients require the corresponding human control scope.
+
+## Expectations
+
+- **CBA-01:** Assignment responsibility and all required request/result/origin fields survive retries/cancellation with existing run links, enforced by the assignment store and versioned input rows (`IT-CBA-01`).
+- **CBA-02:** All six origins classify duplicate/update/clarification/independent/missing/conflicting/unknown requests without losing work, enforced by canonical intake receipts and adapters (`IT-CBA-02`).
+- **CBA-03:** Standing, recurring, assignment, knowledge and authority inputs remain separately frozen and inspectable, enforced by launch/input snapshots (`IT-CBA-03`).
+- **CBA-04:** Context preserves attributed structured work and rejects conflicting updates, enforced by assignment-row lock and revision/epoch CAS (`IT-CBA-04`).
+- **CBA-05:** Clarification resumes the exact assignment/question/input and releases failed owned deferreds, enforced by existing human-ask/HITL delivery with assignment subjects (`IT-CBA-05`).
+- **CBA-06:** Origin delivery is current-access-filtered, durable and cannot repeat business effects, enforced by typed destinations/outbox receipts (`IT-CBA-06`).
+- **CBA-07:** Completion requires exact expected result and verification acceptance, enforced by transactional acceptance and terminal CHECKs (`IT-CBA-07`).
+- **CBA-08:** A preflight refusal stops no Run. Pending intent survives lost responses and can be recovered by one processor. A settled cancel leaves no live linked execution (`IT-CBA-01`).
+- **CBU-02:** EN/RU assignment UX exposes responsibility, questions, children, accepted evidence and authorized recovery, enforced by existing agent/history/Inbox extensions (`E2E-CBU-02`).
+
+## Edge cases
+
+- **EDGE-CBA-01:** Identical and changed-payload retries are distinct; changed payload rolls back dependent writes (`IT-CBA-02`).
+- **EDGE-CBA-02:** Out-of-order/late answers cannot resume a newer input or different assignment (`IT-CBA-05`).
+- **EDGE-CBA-03:** Two context writers cannot silently lose a decision; loser sees `CONFLICT` with safe current revision (`IT-CBA-04`).
+- **EDGE-CBA-04:** Child Done, stale result or missing independent verification cannot satisfy completion (`IT-CBA-07`).
+- **EDGE-CBA-05:** Lost origin ACK repeats only delivery, not accepted work or external mutation (`IT-CBA-06`).
+- **EDGE-CBA-06:** A linked Run the operator stop refuses (`HumanWorking`) makes cancel answer `CONFLICT` `assignment_run_unstoppable` instead of an endless `202` (`IT-CBA-01`).
+
+## Linked artifacts
+
+- [ADR-203](../decisions.md#adr-203-durable-specialist-assignments-and-company-coordinator-flows), [persistence](../db/specialist-assignments-domain.md), [runtime](specialist-runtime.md), [cooperation](specialist-cooperation.md).
+- [Human assignments](assignments.md), [HITL](hitl.md), [scheduled requests](scheduled-agent-requests.md), [web API](../api/web.openapi.yaml), [error taxonomy](../error-taxonomy.md).
+- Implementation: `web/lib/specialist-assignments/` and the existing agent-question, prompt-owner, result and outbox services own native intake, governed cooperation and verified acceptance. The [qualification contract](company-brain-specialists-qualification.md) defines the local qualification gates for the installed pilot and platform.

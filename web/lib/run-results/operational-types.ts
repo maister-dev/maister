@@ -2,6 +2,7 @@ import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { AgentFinalStatus } from "@/lib/agents/finalization";
 import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
 import type { AgentWorkspace } from "@/lib/db/schema";
+import type { EvidenceFindingsV1 } from "./findings-types";
 
 export type OperationalReference = {
   kind: "task" | "external_issue" | "operation_receipt" | "other";
@@ -42,6 +43,18 @@ export type OperationalResultV1 = {
   diagnostics: OperationalDiagnostic[];
 };
 
+export type OperationalEvidenceV2 = Omit<
+  OperationalResultV1,
+  "schemaVersion"
+> & {
+  schemaVersion: 2;
+  findings: EvidenceFindingsV1;
+  operationIds: string[];
+  verificationIds: string[];
+};
+
+export type OperationalResult = OperationalResultV1 | OperationalEvidenceV2;
+
 export type OperationalValidationCode =
   | "result_missing"
   | "malformed_json"
@@ -58,6 +71,8 @@ export type OperationalValidationCode =
   | "complete_coverage_remaining"
   | "not_started_has_scanned"
   | "duplicate_reference"
+  | "operation_receipt_requires_server_reference"
+  | "evidence_reference_unavailable"
   | "undeclared_diagnostic_reference"
   | "success_inconsistent"
   | "partial_requires_progress"
@@ -105,7 +120,15 @@ export type OperationalIntegrityBaseline = {
     mount: ContextMountSnapshot;
     baseline: Omit<OperationalIntegrityBaseline, "contextMounts">;
   }>;
-  owner?: { cwd: string; repoPath: string; projectSlug: string };
+  owner?:
+    | { cwd: string; repoPath: string; projectSlug: string }
+    | {
+        kind: "company";
+        companyId: string;
+        runId: string;
+        cwd: string;
+        runtimePath: string;
+      };
 };
 
 export type OperationalTerminal = {
@@ -164,7 +187,7 @@ export type OperationalOutcome = {
   infrastructureFailure?: OperationalFailureDiagnostic;
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
-  reportedResult: OperationalResultV1 | null;
+  reportedResult: OperationalResult | null;
   referenceLinks: Array<{
     kind: OperationalReference["kind"];
     id: string;

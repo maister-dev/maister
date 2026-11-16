@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "gitHeadAtReceipt": "7a1be5b392aa6fed660c45cadbf923a988d7a0c1",
+  "sourceSha256": {
+    "web/lib/flows/graph/__tests__/dirty-protocol.integration.test.ts": "35a6450a80527cad314760f27634b88a653f620e1403e91c26d80a0e89757d6f"
+  },
+  "status": "owning_regression_fixed_frozen_full_run_remains_failed",
+  "red": {
+    "passed": 10,
+    "failed": 1,
+    "seconds": 5.64,
+    "error": "TypeError: tx.select(...).from(...).where(...).for is not a function",
+    "mechanism": "The real Git review-tip case uses a fake database query builder; shared HITL admission now locks the Run. The fixture lacked that method before any HITL insert or SHA assertion."
+  },
+  "green": {
+    "passed": 11,
+    "files": 1,
+    "seconds": 5.47,
+    "outerExit": 0,
+    "eslintExit": 0,
+    "typescriptExit": 0,
+    "diffCheckExit": 0
+  },
+  "change": "Add only the locking chain method to the existing fake, preserving returned Run/project rows, real Git HEAD and every assertion. No production change or new tests.",
+  "review": "Two independent read-only mechanism/provenance reviews confirm fixture regression. Integration sibling sweep found no second reachable fake missing the lock method; unrelated read-only diff fake is left unchanged.",
+  "fullRun": "The still-running exact a08ef0d08 full probe retains its original failure. Focused GREEN is not a replacement full-suite pass.",
+  "artifacts": [
+    {
+      "path": "cb-dirty-review-owning-red.log.gz",
+      "sha256": "a492a1aaaf27ab34657f9ef5b2ead6029501bb1e39b74f70be3a52d4441e6a46",
+      "rawSha256": "07eccab36b7237c7ac6ab52d68d623568d1aa7cdeb66ae94328739e781a1274b"
+    },
+    {
+      "path": "cb-dirty-review-owning-red.json.gz",
+      "sha256": "7345f0ae9b3cef4cd1a4906ae5e8c16e77e625bcc0e65771982b653cdc6630da",
+      "rawSha256": "caf6229cd2755267f30a1debd1f1c79e928f4f99134158aa52bda96d26fae136"
+    },
+    {
+      "path": "cb-dirty-review-owning-green.log.gz",
+      "sha256": "13f2c43f81aa0cdf70b823e2875e389fcc4375134b41e8371a85c76d2238921e",
+      "rawSha256": "e803a2c8ce18f4360dcb6131028e9df489cc624f725cb75198e14b3baa0c5eaf"
+    },
+    {
+      "path": "cb-dirty-review-owning-green.json.gz",
+      "sha256": "d0bdd2031ab7ae8339919ac9bee25ac9f89b026a7d0a0f3695fd73bde81cbfc2",
+      "rawSha256": "83eaf881750ac030f52ecdd38b1cea0ab5c2724a1ddf36c267d9958c29d2039f"
+    },
+    {
+      "path": "cb-dirty-review-owning-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-dirty-review-owning-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "cb-dirty-hilt-fake-scan.txt.gz",
+      "sha256": "262ed336ac16ff77114f6600148d536a53bcc567f05ea018ae458aa71592eb9b",
+      "rawSha256": "52112bfb5102e7e3551ad7e321a76db08e90284f458a70bb6fd3a6f0214857b4"
+    },
+    {
+      "path": "cb-dirty-hitl-builder-scan.txt.gz",
+      "sha256": "9e8d8beb49ab8d8f4861f0b55c13d8946e0864a36588a8560d0b636af1bac9fa",
+      "rawSha256": "bd5d015012371a19467818328d9d8b0a44f67ff4645720a08abef331c0cb1ae0"
+    }
+  ]
+}

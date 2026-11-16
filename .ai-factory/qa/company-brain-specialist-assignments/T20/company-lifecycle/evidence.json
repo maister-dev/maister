@@ -1,0 +1,135 @@
+{
+  "task": "T20",
+  "slice": "Native company Run cancellation, operational acknowledgement and governed cleanup recovery",
+  "date": "2026-11-06",
+  "baseCommit": "11c2751ac1522e7e60075ca83fa068f182be69cb",
+  "status": "Native standalone lifecycle foundation qualified; T20 implementation complete, T20.1/T21 phase gates remain open",
+  "engineVersion": "3.11.1",
+  "migrations": [
+    "0232_company_operational_attention"
+  ],
+  "red": {
+    "projectBoundary": {
+      "log": "legacy-stop-red.log.gz",
+      "failure": "The original company stop request was rejected by project-only workbench admission (400) rather than enforcing current company cancellation authority (403)."
+    },
+    "concurrentCancellation": {
+      "log": "competing-stop-red.log.gz",
+      "failure": "A competing cancellation failed quiescence preparation after the winner had already committed Abandoned and released the generation."
+    },
+    "humanAttribution": {
+      "log": "human-attribution-red.log.gz",
+      "failure": "The company run.abandoned fact named the stopped specialist rather than the actual human operator."
+    },
+    "attentionOwner": {
+      "log": "attention-red.log.gz",
+      "failure": "The existing operational acknowledgement route returned 404 for a retained, source-readable company Run rather than enforcing company answer authority."
+    }
+  },
+  "qualified": [
+    "The existing Run stop endpoint dispatches on retained ownership, preserving project/private lifecycle owners and using the native operational finalizer for company Runs.",
+    "Current explicit company read/cancel plus exact source access govern cancellation; administrator status is not authority. Authority is rechecked before deletion and terminal application, including replay.",
+    "Concurrent Pending cancellation retains one canonical terminal fact and no session create/delete command; revoked authority denies even a completed-action replay.",
+    "Actual live company permission cancellation deletes the owned ACP session once, waits for canonical quiescence through explicit safe retry, closes human work under its actual actor, publishes no result and leaves business assignment acceptance separate.",
+    "The shared finalizer reconciles only an exact competing Abandoned outcome; other unconfirmed/interrupted generations retain their refusal.",
+    "Company acknowledgement/rearm extend existing per-user/revision receipts, transactional outbox and cleanup worker. Five real failed cleanup attempts exhaust the bounded budget; rearm resets it once and revoked recovery authority denies replay.",
+    "Actual HTTP stop/acknowledgement/cleanup-rearm bodies validate against their OpenAPI response schemas.",
+    "Populated 0230 -> 0231 -> 0232 preserves existing wait/metadata facts and rejects a foreign-project company acknowledgement.",
+    "Company terminal cancellation attribution is resolved from the retained company human identity; the stopped professional remains execution provenance, not the decision author."
+  ],
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 7,
+      "tests": 78,
+      "durationSeconds": 51.76,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 886,
+      "tests": 9263,
+      "durationSeconds": 28.04,
+      "log": "unit-green.log.gz"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lintChangedFiles": {
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "lint.log.gz"
+    },
+    "promptOwnerRecovery": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 62,
+      "durationSeconds": 887.41,
+      "log": "prompt-owner-recovery.log.gz",
+      "sourceBoundary": "Full recovery regression before final narrowing to exact duplicate Abandoned and company-only human terminal attribution; final mixed project/private cancellation and quiescence set reruns against final source."
+    },
+    "httpContracts": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 2,
+      "otherCasesSkipped": 34,
+      "log": "http-contracts.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "schemaDrift": {
+      "exitCode": 0,
+      "result": "No schema changes",
+      "log": "drift.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "tables": 171,
+      "log": "docs.log.gz"
+    },
+    "attribution": {
+      "exitCode": 0,
+      "files": 1,
+      "tests": 2,
+      "otherCasesSkipped": 34,
+      "log": "attribution-green.log.gz"
+    }
+  },
+  "intermediateFailures": [
+    "Initial denial setup reused the initiating user, who already had cancel authority. The final case creates its own read-only responder.",
+    "An early live-stop expectation assumed canonical exit ingestion was synchronous with the supervisor delete receipt. The safe 503 gate remains; the test reconciles current evidence and verifies exactly one deletion.",
+    "The broader attention test initially reused answer authority granted by an earlier scenario. The final test has an isolated read-only user, then grants exact action authority.",
+    "The final type check rejected a SqlTransaction being treated as a transaction factory. The existing source guard now has one typed transaction body reused by read and action entry points, without a cast or additional nested transaction requirement."
+  ],
+  "notYetQualified": [
+    "Company result-only Flow runtime and engine floor 3.12.0 (T20.1)",
+    "Complete phase regression/compatibility (T21), durable assignment intake/context/cooperation/retry/delivery",
+    "Company full Run/Inbox UI and real companion-package/stand pilot qualification",
+    "Remaining T22-T43 acceptance"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "1dbea941d024c60a58fec1df5e7759d1e5519775dff1fd98854def8ad9536fa9",
+    "AGENTS.md": "5e41ba1c2ad3ebf1173316ddfdaa208e9be31bd700bbc16ed6006f941da2a16f",
+    "docs/api/async/operational-lifecycle.asyncapi.yaml": "b0748d9afd5629016c8783c28c89cef75d84613075bc9138badfe08e01e5e285",
+    "docs/api/web.openapi.yaml": "8a2ee9ed033780f0c68d07d2752b8c92be6b6a28dea06e8a9ffaaf892091b0ad",
+    "docs/database-schema.md": "4e7e031d61256fcd184eab26753a55ef004312ecc06b100818dc530799736468",
+    "docs/db/domain-events.md": "09250053b235e46c57a931138a977900bb33e08629c3f11af20b7dfd4bc1cbbc",
+    "docs/system-analytics/specialist-runtime.md": "4217617c2c98aea7d47f81405bef034db0039d4ea408b2f1ba88ae19229398c7",
+    "web/app/api/runs/[runId]/stop/route.ts": "a22ea1dadcefb201f62be2740f14b2272aa9a21f63f919c82b6bb38d21a12da6",
+    "web/app/api/runs/[runId]/workbench-lifecycle/__tests__/routes.test.ts": "d2013eb36a9bc022e9a239b929196c4d1f163d6e317f274c0a449a3878bd02fc",
+    "web/lib/agents/__tests__/company-agent-context.integration.test.ts": "94e04ed66f3918e4ee491d847cb98fdabd7c0a39e7d77f9a3635b7294fd15ff9",
+    "web/lib/agents/company-run-read-access.ts": "04ffcf6f8a52d97bd4a2a5c6608183168da42d17f917bb01058ef27ccfb634f3",
+    "web/lib/agents/finalization.ts": "2e2ccfee6960ac07a91559965cc7b480e0ab36a391cb579354234beb9f04a9a7",
+    "web/lib/db/__tests__/migration-company-hitl-events.integration.test.ts": "556af11de5e866ea40bdaf8f2cea43b607718627cc3cb732aef59d97068957d1",
+    "web/lib/db/migrations/0232_company_operational_attention.sql": "74b9e8b3868175b17ead71a3786c7673e5a2bcedee34ffa4480be9d77a2249c2",
+    "web/lib/db/migrations/meta/0232_snapshot.json": "cf67f7d995670329e834a4a496563601ebb5c54b04123f340baa6aee050b371e",
+    "web/lib/db/migrations/meta/_journal.json": "fa2e7665545a16b8998059a5abf8beda77f211ab5bf4902665eda38073aba86f",
+    "web/lib/db/schema.ts": "05bfa220f0b9fa009af095f0464581019ccbd46035eb422ed38748a0619fe56a",
+    "web/lib/runs/operational-attention.ts": "7a39521132efea0c3f4b4af6526372173600dad0b3003157112ada24e650cb13",
+    "web/lib/runs/operational-route.ts": "2f49495d9b074c731d866adb5e5b318f342e363a5564546a419b8d7f822670a6",
+    "web/lib/runs/stop.ts": "6e9b4fd13574520c2109c086f5783584dce94b939bfe5093ea254f6b2c981dd1"
+  }
+}

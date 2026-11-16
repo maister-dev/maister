@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "task": "T17",
+  "checkpoint": "proposal-inspection-checkpoint",
+  "platformBase": "63abe585a12bb3082926a519f83bb3046fb506d9",
+  "status": "owning-platform-qualified; actual package runtime gate remains open",
+  "red": [
+    "The real pinned package live lane published record evidence, then proposal GET refused native_reference_kind_unavailable.",
+    "The owning native HTTP regression reproduced 409 on the same record-evidence proposal."
+  ],
+  "fixtureCorrection": "The first broader rerun passed 39 checks and failed the new review-list case because its cursor-signing AUTH_SECRET fixture was missing when earlier cases populated more than one page. The case now explicitly supplies its isolated synthetic signing secret.",
+  "green": {
+    "owningIntegration": {
+      "tests": 40,
+      "files": 3,
+      "exitCode": 0
+    },
+    "focusedIntegration": {
+      "tests": 2,
+      "overlapsOwning": true,
+      "exitCode": 0
+    },
+    "typecheck": 0,
+    "lint": 0,
+    "docsAnd164TableErd": 0
+  },
+  "qualified": [
+    "Submission and inspection share exact revision/version/digest validation and historical/current source access.",
+    "Inspection finds retained captures without writes; native HTTP proposal contract and pending review-list inclusion are exercised.",
+    "Revoked source record visibility conceals dependent proposal detail and review-list entries.",
+    "Existing publication, confirmation, current owner grants and explicit project deletion regressions remain green."
+  ],
+  "limits": [
+    "This does not close T16/T17 or establish model depth-2 readiness.",
+    "The live fixture uses a fresh disposable database and synthetic corpus; a later actual agent run is separate.",
+    "Contract schema is unchanged; the existing contract gate passed in the preceding record-reference checkpoint."
+  ],
+  "sourceSha256": {
+    "web/lib/brain/knowledge-record-capture.ts": "e26a738fc368aa81be3a78e46c99003e0fb2c6cae0bd26b3c751ad033644e793",
+    "web/lib/brain/knowledge-proposal-read.ts": "1c35fda858f32129ce1a40f63e479e88795294c7469ba391f3606ddfbd5a40c1",
+    "web/app/api/knowledge/__tests__/knowledge.integration.test.ts": "9e12b08896f045ad35f80faa821795ff29bad320ab4659fb32479d90f7af4ec6",
+    "docs/system-analytics/company-brain-evidence.md": "8412a78a122196bf0bf7676efec9b18337e0f01f84240770e1ed47a8539590bd"
+  },
+  "logs": [
+    {
+      "path": "live-corpus-inspection-red.log",
+      "bytes": 15381,
+      "sha256": "a76e1833ff1d15e4514886575abb542d0d28d15f083e078ffd7498f119c04295"
+    },
+    {
+      "path": "http-inspection-red.log",
+      "bytes": 7192,
+      "sha256": "e14a01bc2874b9d539c86e5fa8c411a5769fd8e39b13548b27b219a4b32dc524"
+    },
+    {
+      "path": "focused-green.log",
+      "bytes": 11546,
+      "sha256": "31ede13298faba752278d4f98a08f8f4010b417c8f9ad5d9413e28c3ea155438"
+    },
+    {
+      "path": "fixture-cursor-secret-failure.log",
+      "bytes": 70429,
+      "sha256": "022b4f0c7897791c76e1f912b5fce8dda7f799c4abcaa8c91b802979d75e6401"
+    },
+    {
+      "path": "owning-green.log",
+      "bytes": 68948,
+      "sha256": "4cbd11c04405706949ab7202d6a06ae1d0c08e3f5c3f03795d4b6074ab886361"
+    },
+    {
+      "path": "typecheck.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs.log",
+      "bytes": 682,
+      "sha256": "5058181f239a25d11e46a8db67b451f5cf6f8c807bd85697cf7b9509ccd4513e"
+    }
+  ]
+}

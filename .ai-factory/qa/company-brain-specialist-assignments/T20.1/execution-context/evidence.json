@@ -1,0 +1,75 @@
+{
+  "task": "T20.1",
+  "slice": "Current exact company graph execution context restoration",
+  "date": "2026-11-06",
+  "baseCommit": "1833674c78017d9773d72e6a9381488ca378917d",
+  "status": "Loader qualified; common graph persona/materialization/traversal pending",
+  "engineVersion": "3.11.1",
+  "migrations": [],
+  "red": {
+    "loader": {
+      "tests": 34,
+      "failed": 1,
+      "log": "loader-red.log.gz",
+      "failure": "Native execution context restoration was unavailable and could not enforce the actual executable-host contract."
+    }
+  },
+  "gates": {
+    "integration": {
+      "exitCode": 0,
+      "files": 6,
+      "tests": 101,
+      "durationSeconds": 111.91,
+      "log": "integration-green.log.gz"
+    },
+    "unit": {
+      "exitCode": 0,
+      "files": 889,
+      "tests": 9304,
+      "durationSeconds": 25.24,
+      "log": "unit-green.log.gz"
+    },
+    "types": {
+      "exitCode": 0,
+      "log": "types.log.gz"
+    },
+    "lint": {
+      "exitCode": 0,
+      "log": "lint.log.gz"
+    },
+    "contracts": {
+      "exitCode": 0,
+      "log": "contracts.log.gz"
+    },
+    "docs": {
+      "exitCode": 0,
+      "log": "docs.log.gz"
+    }
+  },
+  "qualified": [
+    "Exact retained assignment input, source closure and current initiating read/update/runtime authority are restored without queued re-admission.",
+    "Retained standing definition/provider/activity, configuration, scheduled request and policy witnesses agree with actual installed bytes.",
+    "The existing coordinator capturer/parser/compiler and installed export resolver enforce current exact trusted source, actual engine bounds and frozen required-result identity/content witness.",
+    "Frozen exact session/runners are restored without selecting mutable defaults; absent rows, disabled runners and incompatible read-only adapters refuse.",
+    "Actual 3.11.1 host refusal, controlled supported-version restoration, changed schema bytes and rolled-back missing session cases leave allocations unchanged.",
+    "Existing standalone company and project graph driver/context/result-only behavior remain green."
+  ],
+  "qualificationBoundary": "Real trusted package/PostgreSQL/native reservation fixtures use a controlled compatibility predicate only for prospective 3.12.0 positive metadata. This is server-only context restoration, not company graph persona resolution, ACP materialization/dispatch or actual installable pilot qualification. Engine remains 3.11.1.",
+  "intermediateFailures": [
+    "The first strict helper type required the full schema-bearing Db even though test Drizzle transactions have an empty relation schema. TypeScript identified the mismatch; the helper now requires only select/execute, without casting transactions."
+  ],
+  "notYetQualified": [
+    "Actual company Flow persona resolution and per-node capability admission",
+    "Company branch in existing graph loader/traversal and plain workspace dispatch",
+    "Human/form/child waits and graph terminal credential revocation/cleanup/restart",
+    "Engine 3.12.0 activation, T21 full phase regression and real companion/stand pilot"
+  ],
+  "sourceSha256": {
+    ".ai-factory/plans/codex-company-brain-specialist-assignments.md": "94ce7add5792d9c61ecc2f71f76014fe0e4f90603a40ad29a4f17b7e74a56c98",
+    "AGENTS.md": "804e61500f7b90e1119d50321aaf92dd16f28c00fdda3c7951447733e5586cc6",
+    "docs/system-analytics/specialist-runtime.md": "f33779ccaacd3b9ec7f9dcb173e5e44de1aa3438bcaa4dd0914212066583c8d9",
+    "web/lib/agents/company-flow-session-context.ts": "4902a1f5fb3c5c94ef93008ebe81d3310658387f8586bdecaab7a18fd7b8b4cc",
+    "web/lib/agents/company-run-read-access.ts": "1147f77ec6720dbb44b07cf296a84f98a0f03fcf64164b43969ca1bef60558e5",
+    "web/lib/agents/__tests__/company-flow-context.integration.test.ts": "1a03796cf56baa94f35b3c633594416fa3262ecceb8ac5097844d3cc200b22de"
+  }
+}

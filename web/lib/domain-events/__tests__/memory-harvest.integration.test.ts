@@ -166,11 +166,8 @@ describe("memory_harvest consumer (T3.2)", () => {
     expect(await activeCount(projectId)).toBe(1);
   });
 
-  it("re-delivery of a REINFORCE event does not double-count confidence/TTL (F4)", async () => {
+  it("IT-CBE-02 near harvest claims stay distinct and event replay changes neither claim nor confidence", async () => {
     const runId = await seedRun(projectId);
-    // Distinct content per distill call (distinct content_hash → the near-dup
-    // REINFORCE path, not exact-dup) but every lesson embeds to the same vector
-    // (cosine 1 > τ), so the 2nd event reinforces the 1st item.
     let n = 0;
     const client = makeClient({
       async complete(): Promise<string> {
@@ -195,30 +192,44 @@ describe("memory_harvest consumer (T3.2)", () => {
       payload: { runId },
     });
 
-    await harvestEvents([e1], opts); // insert item A
-    await harvestEvents([e2], opts); // near-dup → reinforce A (count 1)
-
+    await harvestEvents([e1], opts);
+    await harvestEvents([e2], opts);
     const read = async () =>
       ctx.db.execute(
-        sql`SELECT confidence::float8 AS c, reinforcement_count AS rc
-            FROM brain_items WHERE project_id = ${projectId}`,
+        sql`SELECT id,content,confidence::float8 AS c,reinforcement_count AS rc,expires_at,current_revision FROM brain_items WHERE project_id=${projectId} ORDER BY content`,
       );
-    const afterReinforce = await read();
+    const beforeReplay = await read();
 
-    expect(afterReinforce.rows).toHaveLength(1);
-    expect(Number(afterReinforce.rows[0]?.rc)).toBe(1);
-    const confAfterReinforce = Number(afterReinforce.rows[0]?.c);
-
-    // Redeliver e2 (at-least-once). WITHOUT the ledger this would reinforce again
-    // (count 2, confidence bumped, TTL pushed) because reinforce leaves no
-    // source_domain_event_id row. The harvested-events ledger makes it a no-op.
+    expect(beforeReplay.rows).toEqual([
+      expect.objectContaining({
+        content: "lesson 0",
+        c: 0.3,
+        rc: 0,
+        current_revision: 1,
+      }),
+      expect.objectContaining({
+        content: "lesson 1",
+        c: 0.3,
+        rc: 0,
+        current_revision: 1,
+      }),
+    ]);
     await harvestEvents([e2], opts);
-
-    const afterRedeliver = await read();
-
-    expect(afterRedeliver.rows).toHaveLength(1);
-    expect(Number(afterRedeliver.rows[0]?.rc)).toBe(1); // still 1, not 2
-    expect(Number(afterRedeliver.rows[0]?.c)).toBe(confAfterReinforce); // unchanged
+    expect((await read()).rows).toEqual(beforeReplay.rows);
+    expect(
+      (
+        await ctx.db.execute(
+          sql`SELECT count(*)::int AS n FROM brain_harvested_events WHERE project_id=${projectId}`,
+        )
+      ).rows,
+    ).toEqual([{ n: 2 }]);
+    expect(
+      (
+        await ctx.db.execute(
+          sql`SELECT count(*)::int AS n FROM brain_edges WHERE project_id=${projectId} AND claim_state='potential_conflict'`,
+        )
+      ).rows,
+    ).toEqual([{ n: 1 }]);
   });
 
   it("does NOT harvest run.review (excluded from the predicate)", async () => {

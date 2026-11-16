@@ -9,6 +9,9 @@ import pino from "pino";
 
 import { renewFlowDriverClaim, releaseFlowDriverClaim } from "./driver-claim";
 
+import { queryErrorDiagnostics } from "@/lib/db/pg-error";
+import { isMaisterError } from "@/lib/errors";
+
 const log = pino({
   name: "flow-driver",
   level: process.env.LOG_LEVEL ?? "info",
@@ -42,7 +45,13 @@ export async function withFlowDriver<T>(
         await renewFlowDriverClaim(db, claim);
       } catch (error) {
         log.warn(
-          { runId: claim.runId, assignmentId: claim.assignmentId },
+          {
+            runId: claim.runId,
+            assignmentId: claim.assignmentId,
+            code: isMaisterError(error) ? error.code : undefined,
+            reason: isMaisterError(error) ? error.details?.reason : undefined,
+            ...queryErrorDiagnostics(error),
+          },
           "flow-driver-renewal-lost",
         );
         lifetime.abort(error);

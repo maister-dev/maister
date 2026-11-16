@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "status": "locally_qualified",
+  "specs": {
+    "docs/system-analytics/company-brain-specialists-qualification.md": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
+    "docs/system-analytics/company-brain-specialists-traceability.md": "eb7a8356e494d3637b8ad2b4e6621a88b7181dffbb35601657c02584285bd805",
+    "docs/system-analytics/specialist-cooperation.md": "cfc467bfb9ad4c6813473f88efb555ce68206cca887e890c9054e0e4d50778dc",
+    "docs/system-analytics/stand-maintenance.md": "3269ae4543bb7577f809dfdeec21c84be04b397a9ebf64b23e1aec5ee87f8ac3",
+    "docs/system-analytics/specialist-assignments.md": "e05f1920b4660670329fa5c2edc7958ba83fbcaf7a92e22097d2e50fa9494ce8"
+  },
+  "receipts": {
+    "CB0": {
+      "path": "review-fixes/qualification/installed-package-glm53-duration-owner/evidence.json",
+      "sha256": "328d405b3d80c8e1ee69078319cf2a012cd11ba58890c1be627f2c4cc2c48373",
+      "exitCode": 0
+    },
+    "CB1_combined": {
+      "path": "T40/browser-stand/verified-glm53-084f68a.json",
+      "sha256": "5e858e7b034bcb7e7448983d1e226f7b04377b9928226418ea4d918484603d06",
+      "exitCode": 0
+    },
+    "CB1_coordinator": {
+      "path": "T40/coordinator-acp-interruption/verified-glm53.json",
+      "sha256": "da8e76ea85b8086fb2ad38a610cbf4cf82239551f390855757afff348e7f9461",
+      "exitCode": 0
+    },
+    "CB1_diagnostic": {
+      "path": "T40/diagnostic-interruption/verified-glm53.json",
+      "sha256": "bef47a69b35d8a04c0ffc53bb1f21a8a1ce71bbe2795ae0dc696b82a8f772350",
+      "exitCode": 0
+    },
+    "earlier_web_green": {
+      "path": "T41/web-integration-a1f07b100/evidence.json",
+      "sha256": "162bf19ed1ed1a6f633ca648de1b3e73df39e631f07d1f0abcd63e3f3b3aa090",
+      "exitCode": 0
+    },
+    "later_web_failed": {
+      "path": "T41/web-integration-8159583e7/evidence.json",
+      "sha256": "6c0e17bacca24742dced0c78f05dae7d30b4297fa8a8f464fe74adca7924d34b",
+      "exitCode": 1
+    },
+    "CB1_successor": {
+      "path": "T40/unknown-successor/verified-glm53.json",
+      "sha256": "4d0c74b09ecbf878284498f237e4bc2755d6d107c74afd149ce62fa775a03fea",
+      "exitCode": 0
+    },
+    "CB1_successor_fixture_failed": {
+      "path": "T40/unknown-successor/initial-evidence.json",
+      "sha256": "f2ce379ffd511443d21ad2d23e8a2306f250b72151a380d966df56297ee510cf",
+      "exitCode": 1
+    },
+    "current_master_web": {
+      "path": "T41/web-integration-current-master/evidence.json",
+      "sha256": "bd5b2fdbaa55963e43c59b7f4d70adf0b24fd0e123921ee083165bcc3146de4b",
+      "exitCode": 0
+    },
+    "review_full_web_first_attempt": {
+      "path": "review-fixes/qualification/5faf2b58c/full-web-first-attempt.json",
+      "sha256": "10a9a147ac3daddeddbcca8dd62d64f52c762a4059a65aba8f96f01d5dc53233",
+      "exitCode": 1
+    },
+    "review_browser": {
+      "path": "review-fixes/qualification/5faf2b58c/browser.json",
+      "sha256": "da3e3e05ed5b59d4621cf1e85382db81de406310fb906f35ba65c1aa6c842f84",
+      "exitCode": 0
+    },
+    "review_live_cb0": {
+      "path": "review-fixes/qualification/5faf2b58c/live-cb0.json",
+      "sha256": "83e9d3459ded4511f97ae8c5e621d9f38b8ccf79aca48f098c136c336be38532",
+      "exitCode": 0
+    },
+    "review_live_combined": {
+      "path": "review-fixes/qualification/5faf2b58c/live-combined.json",
+      "sha256": "ad1b2d6883a5db74c1609ced715f5cba7f6e859fccc21e8de7f6f8545963c10f",
+      "exitCode": 0
+    },
+    "review_live_coordinator": {
+      "path": "review-fixes/qualification/5faf2b58c/live-coordinator.json",
+      "sha256": "3cee8d68d4d90888dd849d6da62e68563d6dbe72ad4e76d689d864551dd33aa6",
+      "exitCode": 0
+    },
+    "review_live_diagnostic": {
+      "path": "review-fixes/qualification/5faf2b58c/live-diagnostic.json",
+      "sha256": "5a1d1ea4b5fcf5f1fa829dc38db0e07e0a9285521db9e9498035cc5bf55edd5b",
+      "exitCode": 0
+    },
+    "review_live_successor": {
+      "path": "review-fixes/qualification/5faf2b58c/live-successor.json",
+      "sha256": "2431ec3c5a30ce0945d02aab2564b24a328cd8e116a47c37c0a5fa3b0159b9fa",
+      "exitCode": 0
+    },
+    "review_full_web": {
+      "path": "review-fixes/qualification/5faf2b58c/full-web.json",
+      "sha256": "d7aaaeb4d114d8488184be2a176c71d2f752aca99c7d3f5a62fa0e170f8f5397",
+      "exitCode": 0
+    }
+  },
+  "currentMaster": {
+    "commit": "b84f47eef9b66e02e60d4fd41fe8843e3838708e",
+    "candidate": "f58859771a471ff2ce364784ae089fd128e74d49",
+    "existingMigrationsPreserved": 226,
+    "nativeSuccessiveMigrations": 107,
+    "lastMigration": "0336_specialist_interrupted_work",
+    "drizzleCheck": "passed",
+    "postgresMigrationCasesPassed": 7,
+    "fullWeb": "passed",
+    "candidatePatchSha256": "631386ce6ab8502f5b8c387655b6d32779c69ac5f0098627b90d5194825e8e0a",
+    "testedRevision": "a632bdee6e5f03cbb068a910cc291313dac92137"
+  },
+  "implementation": {
+    "platform": "c47924dc3f280ce16bb24f03c5d1e8c927a4aae2",
+    "companionCommit": "084f68a587a91befd31f94c1ce7759e6b31d265a",
+    "companionTag": "stand-operations/v0.1.0",
+    "packageInstallChecksPassed": 2,
+    "webRecoveryAndProjectChecksPassed": 18,
+    "orchestratorChecksPassed": 27,
+    "supervisorOwnershipAndCausalityChecksPassed": 43,
+    "coverageRules": 84,
+    "erdTables": 193,
+    "fullWeb": "passed_on_current_master_candidate",
+    "webUnitPassed": 9057,
+    "mcpUnitAndIntegrationPassed": 489
+  },
+  "releasePublished": false,
+  "finalContractAudit": {
+    "testOnlyChangesAfterFullWeb": false,
+    "standPostgresTestsPassed": 5,
+    "connectorTestsPassed": 9,
+    "healthDeadline": "A stalled real HTTP peer returns inconclusive after the configured deadline. The owning PostgreSQL scenario retains the existing applied effect and sends no second restart."
+  },
+  "postQualificationAmendments": [
+    {
+      "path": "docs/system-analytics/company-brain-specialists-traceability.md",
+      "qualifiedSha256": "eb7a8356e494d3637b8ad2b4e6621a88b7181dffbb35601657c02584285bd805",
+      "currentSha256": "7cabc2a459e8dee2424a73b7e64c0e33b0d297e83b4c298316ff0d9e9ed0b9da",
+      "reason": "Review fix: added CBA-08 and EDGE-CBA-06 rows (86 coverage rules; the qualification recorded 84)."
+    },
+    {
+      "path": "docs/system-analytics/stand-maintenance.md",
+      "qualifiedSha256": "3269ae4543bb7577f809dfdeec21c84be04b397a9ebf64b23e1aec5ee87f8ac3",
+      "currentSha256": "a1f94f235fdec3d7409aff2d62942efc4e055159f5ac7fc9190664c740597ea6",
+      "reason": "Review fix: the recovery sweep stamps stand_recovery_attempts and backs off 30 s doubling to 30 min (migration 0337). The CB1 live qualification ran before this sweep change; it is covered by IT-CBO intent integration tests only."
+    },
+    {
+      "path": "docs/system-analytics/specialist-assignments.md",
+      "qualifiedSha256": "e05f1920b4660670329fa5c2edc7958ba83fbcaf7a92e22097d2e50fa9494ce8",
+      "currentSha256": "529e2191cf41fcffde61593043e829d0cfe9e9a81fb1b1f38b54a7c1b2cbcb64",
+      "reason": "Review fix: readable keysets and results, exact decision availability, durable cancellation intent and explicit native recovery routing. Historical qualification receipts retain their original source."
+    },
+    {
+      "path": "docs/system-analytics/company-brain-specialists-qualification.md",
+      "qualifiedSha256": "003d79c910fd5e6f87eaf663d5cdafcb46e4fa12c782c481b745c82f120603c3",
+      "currentSha256": "3424e8553d37ee96ed6d44b2ba68a019550cbc9b3523b02015ddae589dd64bb8",
+      "reason": "Review fix: add main migrations 0337–0339 and the authenticated browser CI job. Historical qualification receipts retain their original source."
+    }
+  ],
+  "reviewCandidate": {
+    "parent": "345237cf6ca16a798936d71d0f13d74a5e37bdb7",
+    "lastMigration": "0339_specialist_assignment_cancellation_intent",
+    "fullWeb": "passed",
+    "browserCI": "passed_locally",
+    "liveGLM53": "passed",
+    "revision": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+    "tree": "1307ac5587cd14e7b2a97d6172fbebe08d7abc46",
+    "mainMigrationCount": 336,
+    "browserTests": {
+      "passed": 10,
+      "failed": 0
+    },
+    "liveSourceRevisions": {
+      "review_live_cb0": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+      "review_live_combined": "5faf2b58c466d226314bc0eb9d9e9b72a8deaeca",
+      "review_live_coordinator": "f4d3d5c0402dfe1288bf86b490b580a74913b996",
+      "review_live_diagnostic": "1d03dfc056138d7eb6793d11f7d2ea8e8ab2031a",
+      "review_live_successor": "1d03dfc056138d7eb6793d11f7d2ea8e8ab2031a"
+    },
+    "packagePins": {
+      "rah": {
+        "tag": "rah/v1.0.9",
+        "commit": "88b38dc3080b1b2ab4c060e364a2199dd02bf393"
+      },
+      "stand": {
+        "tag": "stand-operations/v0.1.0",
+        "commit": "084f68a587a91befd31f94c1ce7759e6b31d265a"
+      }
+    },
+    "fullWebTests": {
+      "passed": 6400,
+      "failed": 0,
+      "skipped": 2,
+      "files": 697,
+      "passedFiles": 695,
+      "skippedFiles": 2
+    },
+    "fullWebLogLevel": "info"
+  }
+}

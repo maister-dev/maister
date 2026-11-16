@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-10",
+  "scope": "Primary company-agent integration fixture only; no production scheduler, permission, event-horizon or runtime changes.",
+  "source": {
+    "path": "web/lib/agents/__tests__/company-agent-context.integration.test.ts",
+    "sha256": "2c031fe475631b994485c35c6bfa103e3b8e8452259500679762ef5fad291c22",
+    "baseCommit": "a73b1ff89a8f67b637e7b0af7530226f65be58f2",
+    "qualifiedFileNotFrozenWholeCheckout": true,
+    "unrelatedConcurrentPrimaryWorkPreserved": true,
+    "patch": {
+      "file": "fixture.patch.gz",
+      "sha256": "14dd14839c3a771b3fc1373122bd567dad2f7f6b9d7b7ab22bd8525fd887255b",
+      "uncompressedSha256": "6cabee81f4efd76f04f7a30195a18820f7663d1296e818cf03dfeb25b52ed532"
+    }
+  },
+  "environment": {
+    "node": "24.15.0",
+    "pnpm_config_verify_deps_before_run": "false",
+    "PATH": "/Users/kaa/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+    "CI": "true",
+    "database": "owned real PostgreSQL",
+    "agent": "actual local supervisor with controlled ACP fixture",
+    "providerCalls": false
+  },
+  "originalFailure": {
+    "fullSource": "a73b1ff89a8f67b637e7b0af7530226f65be58f2",
+    "failedReceipt": "../full-regression-a73b1ff89/evidence.json",
+    "firstFailure": "coordinatorCommentWork was empty immediately after qualification and one successful dispatch pass",
+    "notAWaitTimeout": true,
+    "laterCascade": "Two promoted company executions retained active assignments, causing three host_identity_mismatch refusals and a liveCount2/cap1 pool refusal.",
+    "processIdentityErrorWasAfterTeardownStarted": true,
+    "originalHoldingTransactionIdentity": "not retained; not inferred from the controlled reproduction"
+  },
+  "red": {
+    "file": "cb-a73-company-agent-horizon-RED.log.gz",
+    "command": "CI=true pnpm_config_verify_deps_before_run=false pnpm --filter maister-web test:integration lib/agents/__tests__/company-agent-context.integration.test.ts --maxWorkers=1 -t 'IT-CBA-02 submits project specialist work'",
+    "outerExitCode": 1,
+    "durationSeconds": 15.1,
+    "testsFailed": 1,
+    "testsSkipped": 49,
+    "actualFailure": "expected [] to have a length of1 at coordinatorCommentWork assertion",
+    "mechanism": "A real older PG transaction allocates pg_current_xact_id before the human qualification commits. One real dispatcher pass reports failures0 while agent_triggers remains behind the exact qualification event and no execution link exists. Holder rollback/release is unconditional."
+  },
+  "green": {
+    "file": "cb-a73-company-agent-horizon-owning.log.gz",
+    "command": "CI=true pnpm_config_verify_deps_before_run=false pnpm --filter maister-web test:integration lib/agents/__tests__/company-agent-context.integration.test.ts --maxWorkers=1",
+    "outerExitCode": 0,
+    "durationSeconds": 341.24,
+    "filesPassed": 1,
+    "testsPassed": 50,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "unhandledErrors": 0,
+    "includes": [
+      "held-xid negative and exact consumer-cursor/run/result positive",
+      "all former project and permission/capacity cascade cases",
+      "existing clarification and authority controls"
+    ]
+  },
+  "checks": {
+    "lint": {
+      "file": "cb-a73-company-agent-horizon-final-lint.log.gz",
+      "command": "pnpm --filter maister-web exec eslint lib/agents/__tests__/company-agent-context.integration.test.ts",
+      "exitCode": 0,
+      "warnings": 0
+    },
+    "types": {
+      "file": "cb-a73-company-agent-horizon-final-types.log.gz",
+      "command": "pnpm --filter maister-web exec tsc --noEmit --incremental false",
+      "exitCode": 0
+    },
+    "diffCheck": {
+      "exitCode": 0
+    }
+  },
+  "fixtureContract": [
+    "Existing failfast poll helper retries only a cursor behind a fixed watermark; dispatcher and SQL failures propagate.",
+    "All sibling project event-effect assertions wait for agent_triggers; the held-xid negative intentionally uses one pass.",
+    "Actual agent/Flow dispatch promises are observed immediately and original caller rejection semantics remain intact.",
+    "New and promoted Run ownership is captured; cleanup uses current authorized native stop rather than terminal SQL.",
+    "Added setup lies inside try/finally; partial spy setup is restorable.",
+    "Driver joins are bounded10s before and30s after supervisor termination; every cleanup stage is attempted and failures preserved.",
+    "Temporary cancellation grants are revoked only by exact owned revision; final query rejects surviving owned active assignments."
+  ],
+  "independentAudit": {
+    "agent": "knowledge_fix_audit",
+    "result": "no remaining findings after3 fixes",
+    "readOnly": true,
+    "reviewed": [
+      "failfast cursor waiting",
+      "partial setup",
+      "bounded joins and independent cleanup",
+      "per-Run cancellation authority",
+      "held-xid exact negative/positive",
+      "promise ownership"
+    ]
+  },
+  "cleanup": {
+    "file": "cb-a73-company-agent-horizon-cleanup.log.gz",
+    "outerExitCode": 0,
+    "invocationCount": 3,
+    "ids": [
+      "7c53d8a0-050d-4200-a978-3448321d068e",
+      "703accc4-0ac1-496d-8757-dd251b592cf2",
+      "8401b0a5-c7fa-43b5-af72-83a2c2cf8459"
+    ],
+    "ownedProcesses": 0,
+    "containers": 0,
+    "roots": 0,
+    "cleanupErrors": [],
+    "scope": "Only IDs discovered in this agent horizon logs; unrelated provider and final-full invocations excluded; logs preserved."
+  },
+  "readiness": {
+    "T27Complete": false,
+    "T27ToT43RemainOpen": true,
+    "newFrozenFullRegressionRequired": true,
+    "actualInstalledPackageAndStandPilotNotEstablishedByThisFixture": true
+  },
+  "artifacts": [
+    {
+      "file": "cb-a73-company-agent-horizon-RED.log.gz",
+      "sha256": "1eb6a343b77a20d00dea3841cc280c52167c7fbcb1daa242740fb2ace939153a",
+      "uncompressedSha256": "284ffdc8845f197ce989424994c4c98253e76eb39e22001838ebe981d4f6d3d3"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-GREEN.log.gz",
+      "sha256": "bb021d81bccfa37e21bb87bbf4b820e74f6a0f530bc89d0281df855762e5347f",
+      "uncompressedSha256": "c45ad9813a3925f5818170c50d4f723ea1a1d4cb0695db90ae5e1167da221c63"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-owning.log.gz",
+      "sha256": "19e074f0e9c7636679f90e9713d1cde16cd2e1b015f19458a0c40d521e42c438",
+      "uncompressedSha256": "1ef6c98d113d89677eab228b74e4c941df95b40cbe4f35906169a6f15b0165e2"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-final-lint.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-final-types.log.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-cleanup.log.gz",
+      "sha256": "9101231a4c64c043f88d96b49a17a200a81d8f917e2c5e944b1554015a0456a7",
+      "uncompressedSha256": "a55da77c6427976bdfb8300be14e800aa4ba97af374d95acce34d027541536ab"
+    },
+    {
+      "file": "cb-a73-company-agent-horizon-cleanup-invocations.json.gz",
+      "sha256": "5a6ac61fe17bbf04d2ab72df44b96b428546c3681d5bdf09a4e83be69e1cad29",
+      "uncompressedSha256": "7002398f10c31f49129c124c083228952be9fbe2a5f356e997e224199fdb57e1"
+    }
+  ]
+}

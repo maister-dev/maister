@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "aaf11d60c",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Native direct-child message/rework transfers the current originating source union under source-before-child locks before turn admission; both actual roles and current receiving grants are required. Missing or unknown receiving capture is never upgraded.",
+    "Native steering checks source authority at command admission and before every actual transport attempt. Revocation before first wire refuses without injection. Revocation after an injected steer loses its acknowledgement leaves the existing command delivering for read-only receipt reconciliation, without blind resend or false not-applied settlement.",
+    "Existing legacy tree-wide addressing, rework, source-aware collection/reduction and command recovery remain qualified. No new scheduler, attempt ledger or external-effect ledger is introduced.",
+    "Budget export inspection uses the existing guarded project-publication/handoff path. Source guards do not add a Brain dependency to teardown or project deletion."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 117,
+      "files": 9,
+      "batches": [
+        {
+          "passed": 63,
+          "files": 5
+        },
+        {
+          "passed": 85,
+          "files": 5
+        }
+      ],
+      "overlap": {
+        "passed": 31,
+        "files": 1
+      }
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "The actual supervisor/transport fault tests use fixture ACP; they are not actual installed-package or stand readiness.",
+    "Rework fixture now uses a legitimate Running-to-Done worktree lifecycle. Native steer fixtures now freeze a real Flow/current-node professional snapshot before first session input; earlier fixture errors are not product RED.",
+    "Current source transfer and original-input inspection are project-bound; T21/T27 explicitly extend these existing seams to authorized company assignments without dummy repositories."
+  ],
+  "pending": [
+    "Reduction source-byte/count bounds and concurrent source capture qualification, full integration and native capability activation.",
+    "Actual installed companion/live ACP and stand-maintenance pilot, followed by all remaining CB1 tasks."
+  ],
+  "logs": [
+    {
+      "path": "input-source-red.log.gz",
+      "uncompressedSha256": "5118679cd9e5189aed96aacce69175487f8c3d734f833cbf3ebedd9fe81126e7"
+    },
+    {
+      "path": "steer-source-red.log.gz",
+      "uncompressedSha256": "d7fa89b3e6d70975c4424cbb6a0867641e196fc7c4d8b6a2ac156a479646765f"
+    },
+    {
+      "path": "steer-unknown-red.log.gz",
+      "uncompressedSha256": "45e0079957982269574e5e1515702f0579d39eb0a9650bcd3bcc70f522e040df"
+    },
+    {
+      "path": "wire-integration-green.log.gz",
+      "uncompressedSha256": "51920bf99829846be71e45d5205fc457c54af73d1abb32137d8eb076bfcbdb43"
+    },
+    {
+      "path": "source-integration-green.log.gz",
+      "uncompressedSha256": "b190561242704645303f2462c3452279eace2d54274d7ecb86e01c10ca92e5eb"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "c15dd5e37ca6b89d270464aa115eff068201d93bd1546e22e2d4c6b8a6386537"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "3292dc9941fdc966cf02baf27c5b1d8d4a24a852a09a682dacb4e569f637b827"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "e0f5365e82151b8009705de77b9fdc5a35056ed6cec5d8e80297749eacf86eda"
+    }
+  ]
+}

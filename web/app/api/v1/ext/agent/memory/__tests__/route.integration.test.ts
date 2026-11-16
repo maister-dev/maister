@@ -47,6 +47,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => testDatabase.db }));
 import { agentMemoryPath, hashAgentMemory } from "@/lib/agents/memory-store";
 import * as schemaModule from "@/lib/db/schema";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { seedRun } from "@/test-support/execution-host-seed";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const schema = schemaModule as unknown as Record<string, any>;
@@ -58,6 +59,7 @@ let GET: typeof import("@/app/api/v1/ext/agent/memory/route").GET;
 let POST: typeof import("@/app/api/v1/ext/agent/memory/route").POST;
 let root: string;
 let projectId: string;
+let runId: string;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
@@ -107,6 +109,11 @@ beforeEach(async () => {
     riskTier: "read_only",
     sourcePath: "/tmp/keeper.md",
   });
+  runId = await seedRun(testDatabase.db, {
+    projectId,
+    runKind: "agent",
+    agentWorkspace: "none",
+  });
 });
 
 async function attach(memoryEnabled: boolean): Promise<void> {
@@ -128,7 +135,7 @@ function agentActor(over: Record<string, unknown> = {}) {
     scopes: ["agent_memory:write"],
     ownerUserId: null,
     agentId: AGENT_ID,
-    boundRunId: "run-1",
+    boundRunId: runId,
     ...over,
   };
 }

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "task": "T15",
+  "baselineCommit": "a5bae5e8d",
+  "status": "partial_checkpoint_qualified",
+  "engineVersion": "3.10.0",
+  "qualified": [
+    "Native physical shared allocation refuses before a carrier, run or Git worktree exists, including inherited enrollment with a generic child contract. Legacy shared allocation remains compatible.",
+    "Retained native shared runs refuse knowledge consumption, source capture, dispatch and outward derived disclosure; native Git publication is withheld while local teardown remains independent.",
+    "Actual PostgreSQL project deletion removes the unsupported run without a Brain read prerequisite and preserves company ownership. Own/depth-2 findings, real Git publication and cleanup regressions remain green."
+  ],
+  "tests": {
+    "owningIntegration": {
+      "passed": 110,
+      "files": 6
+    },
+    "fullWebUnit": {
+      "passed": 9261,
+      "files": 886
+    },
+    "typecheck": "passed",
+    "lint": "passed",
+    "contracts": "passed",
+    "docsAnd164TableErd": "passed"
+  },
+  "qualificationLimits": [
+    "Native physical shared directories are explicitly unsupported; assignment-scoped versioned working context remains a separate later task.",
+    "The first HTTP assertion exposed omitted safe reason details; delegation now returns the documented reason. No package/live ACP or pilot readiness is implied."
+  ],
+  "pending": [
+    "Authorized original-input inspection, remaining outbound payloads, recovery/bounds and full integration.",
+    "Native capability activation, installed companion/live ACP and stand-maintenance pilot."
+  ],
+  "logs": [
+    {
+      "path": "shared-allocation-red.log.gz",
+      "uncompressedSha256": "65ce5e9acc2931223ed5a3e1b725cf05932a7918efbc2502bde31d33eb756a72"
+    },
+    {
+      "path": "owning-integration-green.log.gz",
+      "uncompressedSha256": "742c7997a80f7ff877b2b7cc8d399dd827a4957a2eddb23badd5fd862c1a7248"
+    },
+    {
+      "path": "full-web-unit-green.log.gz",
+      "uncompressedSha256": "e03d3d07fdd2c4781de2abc9b8585a4b5c6bbbf0c6144fa99e757f3d7e7c0527"
+    },
+    {
+      "path": "typecheck-green.log.gz",
+      "uncompressedSha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "path": "lint-green.log.gz",
+      "uncompressedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "contracts-green.log.gz",
+      "uncompressedSha256": "1e19b0b18f06354765b9c9428214860de6d3cac52dda7c74170a6d24750b6045"
+    },
+    {
+      "path": "docs-green.log.gz",
+      "uncompressedSha256": "5058181f239a25d11e46a8db67b451f5cf6f8c807bd85697cf7b9509ccd4513e"
+    }
+  ]
+}

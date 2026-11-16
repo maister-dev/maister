@@ -162,11 +162,38 @@ describe("brain foundation — two lineages + pgvector (T1.3)", () => {
     expect(Number(hits.rows[0]?.dist)).toBeLessThan(1e-6);
   });
 
-  it("deleting a projects row cascades brain_items + brain_embeddings", async () => {
+  it("IT-CBK-05 project deletion cascades project-owned Brain records", async () => {
     const projectId = await seedBrainProject(ctx.db);
     const itemId = await insertItemWithEmbedding(projectId, 7);
+    const proposalId = randomUUID();
 
-    await ctx.db.execute(sql`DELETE FROM projects WHERE id = ${projectId}`);
+    await ctx.pool.query(
+      'INSERT INTO brain_proposals(id,project_id,kind,actor) VALUES($1,$2,\'state\',\'{"type":"system","id":"test-reviewer"}\')',
+      [proposalId, projectId],
+    );
+    await ctx.pool.query(
+      'INSERT INTO brain_record_changes(record_id,accepted_revision,proposal_id,actor) VALUES($1,1,$2,\'{"kind":"system","id":"test-reviewer","runId":null,"attemptId":null}\')',
+      [itemId, proposalId],
+    );
+    await ctx.pool.query(
+      'INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by) VALUES($1,\'user\',\'test-reader\',\'knowledge:read\',\'{"kind":"system","id":"test-reviewer","runId":null,"attemptId":null}\')',
+      [itemId],
+    );
+    await expect(
+      ctx.pool.query("DELETE FROM brain_items WHERE id=$1", [itemId]),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "brain_record_delete_requires_project_cascade",
+    });
+    await expect(
+      ctx.pool.query("DELETE FROM brain_record_revisions WHERE record_id=$1", [
+        itemId,
+      ]),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "brain_record_revision_immutable",
+    });
+    await ctx.pool.query("DELETE FROM projects WHERE id=$1", [projectId]);
 
     const items = await ctx.db.execute(
       sql`SELECT count(*)::int AS n FROM brain_items WHERE project_id = ${projectId}`,
@@ -177,5 +204,16 @@ describe("brain foundation — two lineages + pgvector (T1.3)", () => {
 
     expect(Number(items.rows[0]?.n)).toBe(0);
     expect(Number(embs.rows[0]?.n)).toBe(0);
+    for (const table of [
+      "brain_record_revisions",
+      "brain_record_grants",
+      "brain_record_changes",
+    ]) {
+      const retained = await ctx.db.execute(
+        sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE record_id=${itemId}`,
+      );
+
+      expect(Number(retained.rows[0]?.n), table).toBe(0);
+    }
   });
 });

@@ -1,6 +1,12 @@
+import type { FlowNativeContract } from "./flow-native-contract";
 import type { FormSchema } from "@/lib/config.schema";
 import type { RunResultInvalidReason } from "@/lib/run-results/types";
 
+import { evidenceFindingsV1Schema } from "./findings-types";
+import { FINDINGS_CONTRACT } from "./findings-contract";
+import { operationalEvidenceV2Schema } from "./operational-schema";
+
+import { OPERATIONAL_EVIDENCE_CONTRACT } from "@/lib/agents/kind";
 import { validateStructuredOutput } from "@/lib/flows/output-schema";
 
 // ADR-165 (C-7): the result value reuses the ADR-162 limits through ONE
@@ -32,6 +38,7 @@ function stripBom(s: string): string {
 export function validateResultValue(args: {
   raw: string;
   schema: FormSchema;
+  nativeContract?: FlowNativeContract;
   maxBytes: number;
   /** Prefixes messages so a caller can tell WHICH payload failed. */
   label?: string;
@@ -81,6 +88,7 @@ export function validateResultValue(args: {
 export function validateParsedResultValue(args: {
   value: unknown;
   schema: FormSchema;
+  nativeContract?: FlowNativeContract;
   maxBytes: number;
   label?: string;
   valueBytes?: number;
@@ -108,6 +116,35 @@ export function validateParsedResultValue(args: {
       reason: verdict.reason ?? "schema_mismatch",
       message: `${label}: ${verdict.message}`,
     };
+  }
+
+  if (args.nativeContract !== undefined) {
+    const schema =
+      args.nativeContract === FINDINGS_CONTRACT
+        ? evidenceFindingsV1Schema
+        : args.nativeContract === OPERATIONAL_EVIDENCE_CONTRACT
+          ? operationalEvidenceV2Schema
+          : null;
+
+    if (!schema)
+      return {
+        ok: false,
+        reason: "schema_mismatch",
+        message: `${label}: unsupported native result contract`,
+      };
+    const native = schema.safeParse(args.value);
+
+    if (!native.success)
+      return {
+        ok: false,
+        reason: "schema_mismatch",
+        message: `${label}: native result validation failed at ${native.error.issues
+          .slice(0, 8)
+          .map((issue) => `${JSON.stringify(issue.path)} (${issue.code})`)
+          .join(", ")}`,
+      };
+
+    return { ok: true, value: native.data, valueBytes };
   }
 
   return {
