@@ -971,6 +971,16 @@
       "busy": "Saving…",
       "cancel": "Cancel",
       "error": "Rename failed"
+    },
+    "attentionReason": {
+      "executing": "Executing",
+      "needs_input": "Needs input",
+      "being_edited": "Being edited",
+      "waiting_on_children": "Waiting on child Runs",
+      "awaiting_review": "Awaiting review",
+      "unpromoted_closed_task": "Unpromoted work on a closed task",
+      "recover_or_discard": "Recover or discard",
+      "failed": "Failed — retry or inspect"
     }
   },
   "runsList": {
@@ -1010,7 +1020,7 @@
       "state": "State",
       "source": "Source",
       "started": "Started",
-      "duration": "Duration",
+      "taskCompleted": "Task completed",
       "runner": "Runner",
       "cost": "Tokens",
       "empty": "No runs match the current filters."
@@ -2619,6 +2629,7 @@
     "inspectorActionHandoffBranch": "Handoff branch",
     "inspectorActionPromote": "Promote",
     "inspectorActionPromotePullRequest": "Open PR",
+    "promotePartialWork": "Partial work — keep the task open",
     "inspectorActionArchive": "Archive",
     "inspectorActionDrop": "Discard workspace",
     "inspectorActionViewUncommittedDiff": "Open uncommitted diff",
@@ -2715,7 +2726,6 @@
     "cacheReadTokens": "Cache-read tokens",
     "cacheCreationTokens": "Cache-creation tokens",
     "resumeTax": "Resume tax",
-    "activeTime": "Active time",
     "wallClock": "Wall-clock",
     "duration": "Duration",
     "tokenTotal": "Token total",
@@ -4630,6 +4640,7 @@
       "target": "Target branch",
       "targetLocked": "Locked: a scratch run's pull request targets this branch.",
       "draft": "Open as a draft",
+      "partial": "Partial work — keep the task open",
       "reused": "An open pull request already existed — it was left as it is: the title, description and draft were not applied.",
       "publishFirst": "Publish the branch to open a pull request.",
       "finalizeAnyway": "Finalize anyway",
@@ -5292,7 +5303,19 @@
       "runLaunched": "launched run attempt %attempt%",
       "experimentConcluded": "concluded an experiment",
       "agentSummonSuppressed": "skipped summoning %agent% — it is already working on this task",
-      "taskCompleted": "completed this task after delivery"
+      "taskCompleted": "completed this task after delivery",
+      "commentAdded": "commented",
+      "triageSet": "set the triage verdict",
+      "triageRequeued": "sent the task back to triage",
+      "agentQuarantined": "quarantined an agent run that changed a read-only checkout",
+      "runPrMerged": "saw the pull request #%pr% merged",
+      "evaluationDecided": "recorded an evaluation decision",
+      "statementAccepted": "accepted the task statement",
+      "clarificationRequested": "asked for a clarification",
+      "clarificationAnswered": "answered a clarification",
+      "clarificationCancelled": "cancelled a clarification",
+      "deliveryCompletionNotApplied": "did not complete the task after the merge: %reason%",
+      "sourceDetached": "detached the external source"
     },
     "composerPlaceholder": "Write a comment… KEY-N references become links, @agent summons an agent.",
     "composerSubmit": "Comment",
@@ -5358,7 +5381,6 @@
     "runsRunnerModel": "Runner / Model",
     "runsStatus": "Status",
     "runsDelivery": "Delivery",
-    "runsDuration": "Duration",
     "runsTokenTotal": "Token total",
     "runsStarted": "Started",
     "runsEnded": "Ended",
@@ -5372,7 +5394,44 @@
     "sendToTriage": "Send to triage",
     "agentActionBusy": "Working…",
     "agentActionFailed": "Action failed. Try again.",
-    "agentPickerLabel": "Agent to run"
+    "agentPickerLabel": "Agent to run",
+    "moreActions": "More",
+    "action": {
+      "qualify": "Qualify the task",
+      "openRun": "Open run",
+      "respond": "Respond",
+      "openReview": "Open review",
+      "openPr": "Open PR #{number}",
+      "viewResult": "View result"
+    },
+    "startNewAttempt": "Start a new attempt",
+    "startNewAttemptHint": "Launching again returns the task to In flight.",
+    "resultTitle": "Result",
+    "resolvingRun": "Resolving run",
+    "resolvingUnknown": "Resolving run unknown",
+    "openChanges": "Open changes",
+    "completionRefused": "PR merged — completion needs a decision ({reason}).",
+    "refusalReason": {
+      "task_not_in_flight": "the task is not in flight",
+      "superseded_by_newer_attempt": "a newer attempt exists",
+      "partial_resolution": "the run was marked as partial work"
+    },
+    "statementShowFull": "Show full statement",
+    "relationsOpenForm": "Add relation",
+    "qualificationTitle": "Qualification",
+    "nextLaunchSettings": "Next launch settings",
+    "nextLaunchSettingsHint": "Defaults for the next attempt; each past run keeps the settings it used.",
+    "runsTokensLine": "Tokens {total} · input {input} · output {output} · cache {cache}",
+    "resolvingBadge": "Resolved the task",
+    "notDelivered": "Not delivered",
+    "mergedLocally": "Merged",
+    "runDiffTitle": "Changes of the latest run",
+    "sourceKind": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "jira": "Jira",
+      "gitverse": "GitVerse"
+    }
   },
   "projectLog": {
     "title": "Task log",
@@ -5999,6 +6058,8 @@
     "kinds": {
       "task_created": "task created",
       "task_completed": "task completed",
+      "delivery_completion_not_applied": "PR merged — completion needs a decision",
+      "source_detached": "External source detached",
       "comment_added": "comment",
       "task_mentioned": "mentioned",
       "relation_added": "relation added",
@@ -7387,5 +7448,24 @@
     "notCollected": "Never collected",
     "value": "Recorded value",
     "noValue": "No retained value for this publication attempt."
+  },
+  "runTiming": {
+    "duration": "Duration",
+    "durationLive": "Duration (live)",
+    "execution": "Execution",
+    "breakdownOpen": "Show the timing breakdown",
+    "breakdownTitle": "Timing breakdown",
+    "admission": "Queue / admission",
+    "humanInput": "Human input",
+    "idle": "Idle / checkpoint",
+    "childExecution": "Of which child Runs",
+    "other": "Other non-execution",
+    "unavailable": "Execution time is unavailable for this Run (no execution evidence).",
+    "partial": "≈ An interval was still open when the Run ended; the value is clipped to its end.",
+    "units": {
+      "h": "h",
+      "min": "min",
+      "s": "s"
+    }
   }
 }

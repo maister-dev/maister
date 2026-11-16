@@ -259,6 +259,14 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     path: "/api/v1/ext/knowledge/sources",
   },
   task_create: { method: "post", path: "/api/v1/ext/projects/{slug}/tasks" },
+  task_find_by_source: {
+    method: "get",
+    path: "/api/v1/ext/projects/{slug}/tasks/by-source",
+  },
+  task_source_bind: {
+    method: "put",
+    path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/source",
+  },
   task_list: { method: "get", path: "/api/v1/ext/projects/{slug}/tasks" },
   task_get: {
     method: "get",

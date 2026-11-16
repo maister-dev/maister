@@ -2,8 +2,8 @@
 // "Run agent" POSTs /api/projects/{slug}/agents/{id}/launch → an agent-kind
 // run spins up against the stub supervisor (a real /sessions round-trip:
 // createSession → prompt → SSE), the project page shows the run in the active
-// grid with the agent + trigger chip, and after the spec releases the held
-// stub stream the run finalizes Done at the terminal choke point.
+// project workspace panel, and after the spec releases the held prompt
+// the run finalizes Done at the terminal choke point.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -53,6 +53,12 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
   const fx = loadFixtures().byKey.platformAgents;
 
   await page.goto(`/projects/${fx.projectSlug}/tasks/${fx.manualTaskNumber}`);
+  // D10: "Run agent" is a secondary action under "More".
+  await page
+    .getByRole("main")
+    .getByTestId("task-more-actions")
+    .locator("> summary")
+    .click();
   await expect(
     page.getByRole("combobox", { name: "Agent to run" }),
   ).toBeVisible();
@@ -83,19 +89,29 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
   // The stub recorded the spawn: a read-only session (workspace=none ⇒ L1)
   // whose prompt carries the agent.md body marker.
   const session = await waitForSession(
-    (record) => record.request.runId === runId,
+    (record) => record.request.runId === runId && record.prompts.length > 0,
   );
 
-  expect(session.request.readOnlySession).toBe(true);
+  try {
+    expect(session.request.readOnlySession).toBe(true);
+    expect(session.prompts[0].prompt).toContain(fx.agentBodyMarker);
 
-  // While the stub holds the stream open the run is live — the project page
-  // shows it in the active grid with the agent kind + trigger chip.
-  await page.goto(`/projects/${fx.projectSlug}`);
-  await expect(
-    page.locator(`[data-agent-run-id="${runId}"]`).filter({ visible: true }),
-  ).toHaveCount(2);
+    await page.goto(`/projects/${fx.projectSlug}?workspaces=open`);
+    const panel = page.getByRole("main").getByTestId("project-workspaces");
+    const activeRun = panel.locator(`[data-agent-run-id="${runId}"]`);
 
-  releaseSession(session.sessionId);
+    await expect(activeRun.getByRole("link")).toHaveAttribute(
+      "href",
+      `/runs/${runId}`,
+    );
+  } finally {
+    writeFileSync(
+      path.join(STUB_SESSIONS_DIR, `${session.sessionId}.turn-release`),
+      "go",
+      "utf8",
+    );
+    releaseSession(session.sessionId);
+  }
 
   await expect
     .poll(

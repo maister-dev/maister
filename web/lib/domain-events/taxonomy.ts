@@ -57,6 +57,10 @@ export const DOMAIN_EVENT_KINDS = [
   "gate.failed",
   "run.operational_attention_acknowledged",
   "run.operational_cleanup_changed",
+  // ADR-207: a task-bound Run's PR was observed merged by pr_state_scan, in the
+  // same transaction as the merged edge. Drives platform-owned task completion;
+  // its counted fact is the `run_pr_merged` task_activity twin.
+  "run.pr_merged",
 ] as const;
 
 export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
@@ -91,13 +95,23 @@ export const INTERNAL_PROJECTION_EVENT_KINDS = [
   "task.qualification_changed",
   "task.launch_changed",
 ] as const satisfies readonly DomainEventKind[];
+/** ADR-207: facts only the platform reacts to — never an agent trigger. */
+export const PLATFORM_ONLY_EVENT_KINDS = [
+  "run.pr_merged",
+] as const satisfies readonly DomainEventKind[];
+const NON_TRIGGER_EVENT_KINDS: readonly string[] = [
+  ...INTERNAL_PROJECTION_EVENT_KINDS,
+  ...PLATFORM_ONLY_EVENT_KINDS,
+];
+
 export const AGENT_TRIGGER_EVENT_KINDS = DOMAIN_EVENT_KINDS.filter(
   (
     kind,
   ): kind is Exclude<
     DomainEventKind,
-    (typeof INTERNAL_PROJECTION_EVENT_KINDS)[number]
-  > => !(INTERNAL_PROJECTION_EVENT_KINDS as readonly string[]).includes(kind),
+    | (typeof INTERNAL_PROJECTION_EVENT_KINDS)[number]
+    | (typeof PLATFORM_ONLY_EVENT_KINDS)[number]
+  > => !NON_TRIGGER_EVENT_KINDS.includes(kind),
 );
 export function isAgentTriggerEventKind(value: string): boolean {
   return (AGENT_TRIGGER_EVENT_KINDS as readonly string[]).includes(value);
@@ -420,6 +434,9 @@ export const OPERATIONAL_ATTENTION_EVENT_KINDS = [
   "task.launch_changed",
   "run.operational_attention_acknowledged",
   "run.operational_cleanup_changed",
+  // ADR-207: invalidates the board, never counted — its `run_pr_merged`
+  // task_activity twin is the counted fact.
+  "run.pr_merged",
 ] as const satisfies readonly DomainEventKind[];
 
 export const ATTENTION_PLANE_EVENT_KINDS = [

@@ -3714,6 +3714,7 @@ table task_activity {
     (project_id, created_at) [name: 'task_activity_project_created_idx']
 
     (task_id, payload) [name: 'task_activity_agent_summon_uq', unique]
+    (task_id, payload) [name: 'task_activity_delivery_refusal_uq', unique]
 
 
   }
@@ -3779,6 +3780,29 @@ table task_comments {
     (task_id, created_at) [name: 'task_comments_task_created_idx']
     via_operation_id [name: 'task_comments_via_operation_uq', unique]
 
+
+  }
+}
+
+table task_external_sources {
+  id text [pk, not null]
+  project_id text [not null]
+  task_id text [not null]
+  source_kind text [not null]
+  source_instance text [not null]
+  scope_key text [not null]
+  external_id text [not null]
+  external_key text
+  external_url text
+  origin text [not null]
+  created_by_actor_type text [not null]
+  created_by_actor_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (project_id, source_kind, source_instance, external_id) [name: 'task_external_sources_identity_uq', unique]
+    task_id [name: 'task_external_sources_task_uq', unique]
 
   }
 }
@@ -5338,6 +5362,10 @@ ref task_clarifications_source_message_id_librarian_messages_id_fk: task_clarifi
 ref task_comments_task_id_tasks_id_fk: task_comments.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_comments_project_id_projects_id_fk: task_comments.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_external_sources_project_id_projects_id_fk: task_external_sources.project_id > projects.id [delete: cascade, update: no action]
+
+ref task_external_sources_task_id_tasks_id_fk: task_external_sources.task_id > tasks.id [delete: cascade, update: no action]
 
 ref task_launch_intents_project_id_projects_id_fk: task_launch_intents.project_id > projects.id [delete: restrict, update: no action]
 

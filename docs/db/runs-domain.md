@@ -115,6 +115,8 @@ erDiagram
     TASKS ||--o{ TASK_ACTIVITY : "event log (ADR-078)"
     TASKS ||--o{ TASK_SUBSCRIBERS : "subscriber set (ADR-078)"
     TASKS ||--o{ INBOX_ITEMS : "inbox fanout (ADR-078)"
+    TASKS ||--o| TASK_EXTERNAL_SOURCES : "external source binding (ADR-206 Implemented, 0340)"
+    PROJECTS ||--o{ TASK_EXTERNAL_SOURCES : "identity namespace (ADR-206)"
 
     PROJECTS {
         text sync_strategy_default "rebase|merge, default rebase (ADR-141, 0106)"
@@ -522,9 +524,26 @@ erDiagram
         text project_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
-        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|triage_set|triage_requeued|agent_quarantined|experiment_concluded|run_pr_merged|evaluation_decided|agent_summon_suppressed (run_pr_merged: ADR-140, 0105, expands both task_activity_event_kind_check and inbox_items_event_kind_check; agent_summon_suppressed: ADR-151, 0121, task_activity only)"
+        text event_kind "task_created|comment_added|task_mentioned|relation_added|relation_removed|run_launched|triage_set|triage_requeued|agent_quarantined|experiment_concluded|run_pr_merged|evaluation_decided|agent_summon_suppressed|delivery_completion_not_applied|source_detached (run_pr_merged: ADR-140, 0105, expands both task_activity_event_kind_check and inbox_items_event_kind_check; agent_summon_suppressed: ADR-151, 0121, task_activity only; delivery_completion_not_applied: ADR-207, 0341, both CHECKs; source_detached: ADR-206, 0341, task_activity only)"
         jsonb payload "DEFAULT {}"
         timestamp created_at
+    }
+
+    TASK_EXTERNAL_SOURCES {
+        text id PK
+        text project_id FK "cascade"
+        text task_id FK "cascade, UNIQUE"
+        text source_kind "open slug; identity"
+        text source_instance "normalized host; identity"
+        text scope_key "display only"
+        text external_id "identity; UNIQUE (project_id, source_kind, source_instance, external_id)"
+        text external_key "nullable, display"
+        text external_url "nullable, https only"
+        text origin "import|backfill|manual"
+        text created_by_actor_type "user|agent|system"
+        text created_by_actor_id "nullable"
+        timestamp created_at
+        timestamp updated_at
     }
 
     TASK_SUBSCRIBERS {
@@ -542,7 +561,7 @@ erDiagram
         text recipient_id
         text project_id FK
         text task_id FK
-        text event_kind "comment_added|task_mentioned in Stage 1"
+        text event_kind "comment_added|task_mentioned in Stage 1; + delivery_completion_not_applied (ADR-207, 0341)"
         jsonb source_ref "kind, taskId, commentId, activityId"
         timestamp read_at "NULL = unread"
         timestamp created_at
@@ -782,6 +801,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   (payload->>'triggerEventId')) WHERE event_kind = 'agent_summon_suppressed'`
   — the structural backstop that keeps one mention-summon suppression note
   per `(task, agent, event)` under at-least-once event redelivery.
+- **(ADR-207, Implemented — migration `0341`)** `task_activity_delivery_refusal_uq`
+  partial UNIQUE on `(task_id, (payload->>'runId'), (payload->>'reason'))
+  WHERE event_kind = 'delivery_completion_not_applied'` — one completion
+  refusal note per `(task, run, reason)` under at-least-once redelivery.
+- **(ADR-206, Implemented — migration `0340`)** `task_external_sources_identity_uq`
+  UNIQUE `(project_id, source_kind, source_instance, external_id)` and
+  `task_external_sources_task_uq` UNIQUE `(task_id)`; generated CHECK
+  `task_external_sources_shape_check`.
 - **(ADR-078, Implemented)** `task_subscribers_task_pair_uq` on
   `(task_id, subscriber_type, subscriber_id)` UNIQUE — first subscription
   reason wins.

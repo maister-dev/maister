@@ -35,6 +35,7 @@ import { createE2EDbPool } from "./db";
 import { DELEGATED_FLOW_RELEASE } from "./delegated-release";
 import { resetFakeGhState } from "./fake-gh";
 import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+import { E2E_HOLD_TURN_MARKER } from "./stub-supervisor";
 
 import { resolveTestWorktreesRoot } from "@/test-support/worktree-test-root";
 import { LEGACY_STEPS_REFUSAL_MESSAGE } from "@/lib/flows/manifest-shape";
@@ -7360,7 +7361,7 @@ async function seedPlatformAgentsFixture(
     repoPath: path.join(RUNTIME_ROOT, "repos", AGENTS_SLUG),
     task: {
       title: "Manual agent launch target",
-      prompt: "Target task for the standalone agent runs.",
+      prompt: `Target task for the standalone agent run. ${E2E_HOLD_TURN_MARKER}`,
       status: "Backlog",
       stage: "Backlog",
     },

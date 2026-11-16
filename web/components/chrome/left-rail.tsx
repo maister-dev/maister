@@ -222,6 +222,7 @@ export async function LeftRail({
 
     return {
       statusWord: tPortfolio(`railStatus.${ws.statusLabel}`),
+      reasonLabel: tPortfolio(`attentionReason.${ws.attentionReason}`),
       attention: ATTENTION_LABELS.has(ws.statusLabel),
       flowLabel: ws.flowRefLabel,
       flowTooltip: ws.flowRefLabel

@@ -971,6 +971,16 @@
       "busy": "Сохранение…",
       "cancel": "Отмена",
       "error": "Не удалось переименовать"
+    },
+    "attentionReason": {
+      "executing": "Выполняется",
+      "needs_input": "Нужен ответ",
+      "being_edited": "Редактируется",
+      "waiting_on_children": "Ждёт дочерние запуски",
+      "awaiting_review": "Ждёт ревью",
+      "unpromoted_closed_task": "Непродвинутая работа по закрытой задаче",
+      "recover_or_discard": "Восстановить или удалить",
+      "failed": "Ошибка — повторить или посмотреть"
     }
   },
   "runsList": {
@@ -1010,7 +1020,7 @@
       "state": "Состояние",
       "source": "Источник",
       "started": "Старт",
-      "duration": "Длительность",
+      "taskCompleted": "Задача завершена",
       "runner": "Раннер",
       "cost": "Токены",
       "empty": "По текущим фильтрам run-ов нет."
@@ -2619,6 +2629,7 @@
     "inspectorActionHandoffBranch": "Handoff-ветка",
     "inspectorActionPromote": "Промоут",
     "inspectorActionPromotePullRequest": "Открыть PR",
+    "promotePartialWork": "Частичная работа — задача остаётся открытой",
     "inspectorActionArchive": "Архивировать",
     "inspectorActionDrop": "Удалить worktree",
     "inspectorActionViewUncommittedDiff": "Открыть незакоммиченный диф",
@@ -2715,7 +2726,6 @@
     "cacheReadTokens": "Токены чтения кэша",
     "cacheCreationTokens": "Токены создания кэша",
     "resumeTax": "Токены возобновления",
-    "activeTime": "Активное время",
     "wallClock": "Общее время",
     "duration": "Длительность",
     "tokenTotal": "Всего токенов",
@@ -4630,6 +4640,7 @@
       "target": "Целевая ветка",
       "targetLocked": "Закреплена: pull request scratch-прогона направляется в эту ветку.",
       "draft": "Открыть как черновик",
+      "partial": "Частичная работа — задача остаётся открытой",
       "reused": "Открытый pull request уже был — он оставлен как есть: заголовок, описание и черновик не применены.",
       "publishFirst": "Опубликуйте ветку, чтобы открыть pull request.",
       "finalizeAnyway": "Завершить всё равно",
@@ -5292,7 +5303,19 @@
       "runLaunched": "запустил(а) попытку %attempt%",
       "experimentConcluded": "завершил(а) эксперимент",
       "agentSummonSuppressed": "не стал(а) вызывать %agent% — он уже работает над этой задачей",
-      "taskCompleted": "завершил(а) задачу после доставки результата"
+      "taskCompleted": "завершил(а) задачу после доставки результата",
+      "commentAdded": "оставил(а) комментарий",
+      "triageSet": "задал(а) вердикт триажа",
+      "triageRequeued": "вернул(а) задачу в триаж",
+      "agentQuarantined": "изолировал(а) запуск агента, изменивший read-only копию",
+      "runPrMerged": "увидел(а) слияние pull request #%pr%",
+      "evaluationDecided": "записал(а) решение оценки",
+      "statementAccepted": "принял(а) постановку задачи",
+      "clarificationRequested": "запросил(а) уточнение",
+      "clarificationAnswered": "ответил(а) на уточнение",
+      "clarificationCancelled": "отменил(а) уточнение",
+      "deliveryCompletionNotApplied": "не завершил(а) задачу после слияния: %reason%",
+      "sourceDetached": "отвязал(а) внешний источник"
     },
     "composerPlaceholder": "Напишите комментарий… KEY-N станет ссылкой, @agent вызовет агента.",
     "composerSubmit": "Комментировать",
@@ -5358,7 +5381,6 @@
     "runsRunnerModel": "Раннер / модель",
     "runsStatus": "Статус",
     "runsDelivery": "Доставка",
-    "runsDuration": "Длительность",
     "runsTokenTotal": "Token total",
     "runsStarted": "Начат",
     "runsEnded": "Завершён",
@@ -5372,7 +5394,44 @@
     "sendToTriage": "Отправить на триаж",
     "agentActionBusy": "Выполняется…",
     "agentActionFailed": "Не удалось выполнить действие. Повторите.",
-    "agentPickerLabel": "Агент для запуска"
+    "agentPickerLabel": "Агент для запуска",
+    "moreActions": "Ещё",
+    "action": {
+      "qualify": "Квалифицировать задачу",
+      "openRun": "Открыть запуск",
+      "respond": "Ответить",
+      "openReview": "Открыть ревью",
+      "openPr": "Открыть PR #{number}",
+      "viewResult": "Посмотреть результат"
+    },
+    "startNewAttempt": "Начать новую попытку",
+    "startNewAttemptHint": "Повторный запуск вернёт задачу в работу.",
+    "resultTitle": "Результат",
+    "resolvingRun": "Решивший запуск",
+    "resolvingUnknown": "Решивший запуск неизвестен",
+    "openChanges": "Открыть изменения",
+    "completionRefused": "PR слит — завершение требует решения ({reason}).",
+    "refusalReason": {
+      "task_not_in_flight": "задача не в работе",
+      "superseded_by_newer_attempt": "есть более новая попытка",
+      "partial_resolution": "запуск отмечен как частичная работа"
+    },
+    "statementShowFull": "Показать постановку полностью",
+    "relationsOpenForm": "Добавить связь",
+    "qualificationTitle": "Квалификация",
+    "nextLaunchSettings": "Настройки следующего запуска",
+    "nextLaunchSettingsHint": "Значения для следующей попытки; прошлые запуски сохраняют свои настройки.",
+    "runsTokensLine": "Токены {total} · вход {input} · выход {output} · кэш {cache}",
+    "resolvingBadge": "Решил задачу",
+    "notDelivered": "Не доставлено",
+    "mergedLocally": "Слито",
+    "runDiffTitle": "Изменения последнего запуска",
+    "sourceKind": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "jira": "Jira",
+      "gitverse": "GitVerse"
+    }
   },
   "projectLog": {
     "title": "Журнал задач",
@@ -5999,6 +6058,8 @@
     "kinds": {
       "task_created": "задача создана",
       "task_completed": "задача завершена",
+      "delivery_completion_not_applied": "PR слит — завершение требует решения",
+      "source_detached": "Внешний источник отвязан",
       "comment_added": "комментарий",
       "task_mentioned": "упоминание",
       "relation_added": "связь добавлена",
@@ -7387,5 +7448,24 @@
     "notCollected": "Не получен координатором",
     "value": "Записанное значение",
     "noValue": "Для этой попытки публикации значение не сохранено."
+  },
+  "runTiming": {
+    "duration": "Длительность",
+    "durationLive": "Длительность (идёт)",
+    "execution": "Исполнение",
+    "breakdownOpen": "Показать разбивку времени",
+    "breakdownTitle": "Разбивка времени",
+    "admission": "Очередь / допуск",
+    "humanInput": "Ответ человека",
+    "idle": "Простой / чекпоинт",
+    "childExecution": "Из них дочерние запуски",
+    "other": "Прочее без исполнения",
+    "unavailable": "Время исполнения недоступно для этого запуска (нет данных об исполнении).",
+    "partial": "≈ Интервал был открыт на момент завершения запуска; значение обрезано по его концу.",
+    "units": {
+      "h": "ч",
+      "min": "мин",
+      "s": "с"
+    }
   }
 }

@@ -526,6 +526,163 @@ describe("portfolio queries (integration)", () => {
     ).toBe(0);
   });
 
+  // R-1/R-2/R-3 (ADR-209): rail rows AND counter follow one attention predicate.
+  it("keeps only runs that need attention in the rail, with their reason, and leaves the rest reachable", async () => {
+    const user = await createUser(
+      `attention-${randomUUID().slice(0, 8)}@test.com`,
+    );
+    const project = await createProject("Attention Project");
+    const flow = await createFlow(project);
+
+    await addProjectMember(user, project, "member");
+
+    let minute = 0;
+    const seedRun = async (opts: {
+      taskStatus?: "Backlog" | "InFlight" | "Done" | "Abandoned" | null;
+      taskId?: string;
+      status: string;
+      runKind?: "flow" | "scratch";
+      ttl?: boolean;
+    }): Promise<{ runId: string; taskId: string | null }> => {
+      let taskId = opts.taskId ?? null;
+
+      if (!taskId && opts.taskStatus) {
+        taskId = await createTask(project, flow, `Task ${minute}`);
+        await db
+          .update(schema.tasks)
+          .set({ status: opts.taskStatus })
+          .where(eq(schema.tasks.id, taskId));
+      }
+      const runId = randomUUID();
+
+      minute += 1;
+      await db.insert(schema.runs).values({
+        id: runId,
+        taskId,
+        projectId: project,
+        flowId: opts.runKind === "scratch" ? null : flow,
+        runKind: opts.runKind ?? "flow",
+        status: opts.status,
+        flowVersion: "v1.0.0",
+        startedAt: new Date(Date.UTC(2026, 10, 15, 10, minute)),
+        endedAt: ["Done", "Failed", "Crashed", "Abandoned"].includes(
+          opts.status,
+        )
+          ? new Date(Date.UTC(2026, 10, 15, 11, minute))
+          : null,
+      });
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project,
+        branch: `maister/attention-${runId.slice(0, 8)}`,
+        worktreePath: `/wt/${runId}`,
+        parentRepoPath: "/repos/attention",
+        scheduledRemovalAt: opts.ttl ? new Date(Date.UTC(2026, 11, 1)) : null,
+      });
+
+      return { runId, taskId };
+    };
+
+    const runningOfDoneTask = await seedRun({
+      taskStatus: "Done",
+      status: "Running",
+    });
+    const needsInput = await seedRun({
+      taskStatus: "InFlight",
+      status: "NeedsInput",
+    });
+    const review = await seedRun({ taskStatus: "InFlight", status: "Review" });
+    const reviewOfDoneTask = await seedRun({
+      taskStatus: "Done",
+      status: "Review",
+    });
+    const newestFailed = await seedRun({
+      taskStatus: "InFlight",
+      status: "Failed",
+    });
+    const supersededFailed = await seedRun({
+      taskStatus: "InFlight",
+      status: "Failed",
+    });
+    const newerAttempt = await seedRun({
+      taskId: supersededFailed.taskId!,
+      status: "Running",
+    });
+    const crashedOfDoneTask = await seedRun({
+      taskStatus: "Done",
+      status: "Crashed",
+    });
+    const doneWithTtl = await seedRun({
+      taskStatus: "Done",
+      status: "Done",
+      ttl: true,
+    });
+    const abandonedWithTtl = await seedRun({
+      taskStatus: "Abandoned",
+      status: "Abandoned",
+      ttl: true,
+    });
+    const tasklessFailedScratch = await seedRun({
+      taskStatus: null,
+      status: "Failed",
+      runKind: "scratch",
+    });
+    // MAI-27: a Done task whose successful attempt follows a Failed one.
+    const mai27Failed = await seedRun({ taskStatus: "Done", status: "Failed" });
+    const mai27Done = await seedRun({
+      taskId: mai27Failed.taskId!,
+      status: "Done",
+      ttl: true,
+    });
+
+    const group = (await getRailWorkspaceGroups(user, "member")).find(
+      (g) => g.projectId === project,
+    );
+    const reasons = Object.fromEntries(
+      (group?.workspaces ?? []).map((w) => [w.runId, w.attentionReason]),
+    );
+
+    expect(reasons).toEqual({
+      [runningOfDoneTask.runId]: "executing",
+      [needsInput.runId]: "needs_input",
+      [review.runId]: "awaiting_review",
+      [reviewOfDoneTask.runId]: "unpromoted_closed_task",
+      [newestFailed.runId]: "failed",
+      [newerAttempt.runId]: "executing",
+      [tasklessFailedScratch.runId]: "failed",
+    });
+    expect(group?.activeCount).toBe(7);
+    for (const excluded of [
+      supersededFailed,
+      crashedOfDoneTask,
+      doneWithTtl,
+      abandonedWithTtl,
+      mai27Failed,
+      mai27Done,
+    ]) {
+      expect(reasons).not.toHaveProperty(excluded.runId);
+    }
+
+    // R-3: work that left the rail stays on the project's retained surface.
+    const { getProjectBySlug, getProjectPageData } =
+      await import("@/lib/queries/project");
+    const page = await getProjectPageData(
+      (await getProjectBySlug(`proj-${project.slice(0, 8)}`))!,
+    );
+    const retained = new Set(page.activeWorkspaces.map((w) => w.runId));
+
+    for (const kept of [
+      doneWithTtl,
+      abandonedWithTtl,
+      mai27Done,
+      supersededFailed,
+      crashedOfDoneTask,
+    ]) {
+      expect(retained.has(kept.runId)).toBe(true);
+    }
+  });
+
   it("shows scratch runs as active workspaces linked to the scratch dialog", async () => {
     const user = await createUser("scratch@test.com");
     const project = await createProject("Scratch Project");

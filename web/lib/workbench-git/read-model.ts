@@ -13,6 +13,8 @@ import {
 } from "@/lib/workbench-git/policy";
 import { resolvePublishName } from "@/lib/workbench-git/publication";
 import { pullRequestDefaults } from "@/lib/workbench-git/pull-request";
+import { snapshotResolvesTask } from "@/lib/runs/delivery-policy";
+import { closingReferenceForRun } from "@/lib/tasks/external-source/service";
 import { resolveSyncRef, type SyncOnto } from "@/lib/runs/sync-ref";
 import {
   aheadBehindCounts,
@@ -104,6 +106,8 @@ export type GitStateResponse = {
   rescueRefs: RescueRef[];
   actions: WorkbenchGitAction[];
   prDefaults: { title: string; body: string; targetBranch: string } | null;
+  // ADR-207: null for a task-less Run; frozen once delivery started.
+  taskResolution: { resolvesTask: boolean; frozen: boolean } | null;
   commands: { checkout: string[]; restoreRescue: string | null };
   warnings: GitStateWarning[];
 };
@@ -458,8 +462,20 @@ export async function loadGitState(args: {
             taskKey,
             taskTitle: task?.title ?? null,
             origin: args.origin,
+            closingReference: project
+              ? await closingReferenceForRun(db, run, project)
+              : null,
           }),
           targetBranch,
+        }
+      : null,
+    taskResolution: run.taskId
+      ? {
+          resolvesTask: snapshotResolvesTask(run.deliveryPolicySnapshot),
+          frozen:
+            workspace?.promotionState === "claiming" ||
+            workspace?.promotionState === "done" ||
+            (workspace?.prNumber ?? null) !== null,
         }
       : null,
     commands: {

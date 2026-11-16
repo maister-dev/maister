@@ -73,7 +73,6 @@ export type RunsListProjectOption = {
 
 export type RunsListRow = {
   branch: string | null;
-  durationMs: number | null;
   endedAt: Date | null;
   flowLabel: string | null;
   href: string;
@@ -88,6 +87,7 @@ export type RunsListRow = {
   startedAt: Date;
   status: RunStatus;
   taskLabel: string;
+  taskCompletedAt: Date | null;
   tokensTotal: number | null;
   cutoverFailedAt: Date | null;
 };
@@ -140,6 +140,7 @@ type RawRunsListRow = {
   started_at: Date | string;
   status: RunStatus;
   task_key: string | null;
+  task_completed_at: Date | string | null;
   task_number: number | null;
   task_title: string | null;
   trigger_source:
@@ -334,6 +335,16 @@ function runsListQuery(args: {
       r.trigger_source,
       r.started_at,
       r.ended_at,
+      (
+        SELECT ta.created_at
+        FROM task_activity ta
+        WHERE ta.task_id = r.task_id
+          AND ta.project_id = r.project_id
+          AND ta.event_kind = 'task_completed'
+          AND ta.payload->>'runId' = r.id
+        ORDER BY ta.created_at DESC, ta.id DESC
+        LIMIT 1
+      ) AS task_completed_at,
       ${activeRunSessionField(sql`sess.capability_agent`)} AS capability_agent,
       ${activeRunSessionField(sql`sess.runner_snapshot`)} AS runner_snapshot,
       p.id AS project_id,
@@ -510,7 +521,6 @@ function toRunsListRow(row: RawRunsListRow): RunsListRow {
 
   return {
     branch: row.branch,
-    durationMs: endedAt ? endedAt.getTime() - startedAt.getTime() : null,
     endedAt,
     flowLabel: flowLabel(row),
     href: hrefFor(row),
@@ -525,6 +535,7 @@ function toRunsListRow(row: RawRunsListRow): RunsListRow {
     startedAt,
     status: row.status,
     taskLabel: taskLabel(row),
+    taskCompletedAt: coerceNullableDate(row.task_completed_at),
     tokensTotal: tokensTotal(row),
     cutoverFailedAt: coerceNullableDate(row.cutover_failed_at ?? null),
   };

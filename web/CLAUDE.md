@@ -190,6 +190,8 @@ pnpm test:integration:ab        # in-process A/B acceptance, real supervisor/Pos
 pnpm test:integration:ab --shard 1/2 # first explicit web half; 2/2 runs the complement
 pnpm test:integration:isolation # serial production boot, real sandbox driver, invocation cleanup
 pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
+pnpm tasks:backfill-sources   # ADR-206: bind legacy GitHub intake markers (dry-run; --apply)
+pnpm tasks:reconcile-merged   # ADR-207: complete tasks whose PR merged before run.pr_merged (dry-run; --apply)
 pnpm validate-authored-flow   # validate a portable authored Flow package dir
 pnpm import-flow-package-draft # import a package as an inert authored draft
 pnpm export-authored-flow     # export an authored Flow to a portable dir

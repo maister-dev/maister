@@ -13,9 +13,15 @@ export type DeliveryPolicy = {
   push: DeliveryPolicyPush;
   trigger: DeliveryPolicyTrigger;
   targetBranch: string;
+  // ADR-207: run-snapshot only (never project/flow config) — whether a
+  // confirmed merge of this Run's PR may complete its task.
+  resolvesTask?: boolean;
 };
 
-export type StoredDeliveryPolicy = Omit<DeliveryPolicy, "targetBranch"> & {
+export type StoredDeliveryPolicy = Omit<
+  DeliveryPolicy,
+  "targetBranch" | "resolvesTask"
+> & {
   targetBranch: string | null;
 };
 
@@ -50,6 +56,15 @@ export const storedDeliveryPolicySchema = z
 export const deliveryPolicyOverrideSchema = storedDeliveryPolicySchema
   .partial()
   .strict();
+
+/** Absent on legacy snapshots: every PR delivery before ADR-207 resolved its task. */
+export function snapshotResolvesTask(snapshot: unknown): boolean {
+  if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+    return (snapshot as { resolvesTask?: unknown }).resolvesTask !== false;
+  }
+
+  return true;
+}
 
 export function defaultDeliveryPolicy(
   projectMainBranch: string,

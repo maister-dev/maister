@@ -17,6 +17,7 @@ import {
   prStateScanJobId,
   schedulerAttemptTimeoutSeconds,
 } from "@/lib/scheduler/jobs";
+import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { recordTaskActivity } from "@/lib/social/activity";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -77,6 +78,8 @@ type CandidateRow = {
   pr_url: string | null;
   run_id: string;
   task_id: string | null;
+  run_kind: string;
+  parent_run_id: string | null;
 };
 
 type PrState = Extract<PrStateReadResult, { kind: "state" }>;
@@ -284,7 +287,9 @@ async function loadCandidates(
         w.pr_number AS pr_number,
         w.pr_url AS pr_url,
         r.id AS run_id,
-        r.task_id AS task_id
+        r.task_id AS task_id,
+        r.run_kind AS run_kind,
+        r.parent_run_id AS parent_run_id
       FROM workspaces w
       INNER JOIN runs r ON r.id = w.run_id
       WHERE w.project_id = ${projectId}
@@ -472,6 +477,31 @@ async function mergedEdge(args: {
           eventKind: "run_pr_merged",
           payload: { prNumber: candidate.pr_number },
         });
+        // ADR-207: the platform-owned completion trigger, in the edge's tx so
+        // a crash can neither lose nor duplicate it. Task-less Runs have
+        // nothing to complete, so they emit nothing.
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.pr_merged",
+          projectId,
+          taskId: candidate.task_id,
+          runId: candidate.run_id,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: candidate.run_id,
+            taskId: candidate.task_id,
+            workspaceId: candidate.id,
+            prNumber: candidate.pr_number,
+            mergeCommitSha: state.mergeCommitSha,
+            mergedAt: state.mergedAt,
+            runKind: candidate.run_kind,
+            parentRunId: candidate.parent_run_id,
+          },
+        });
+        log.info(
+          { runId: candidate.run_id, workspaceId: candidate.id },
+          "[prStateScan] merge event emitted",
+        );
       }
     }
 

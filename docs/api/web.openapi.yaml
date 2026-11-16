@@ -3842,6 +3842,49 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks/{number}/source:
+    delete:
+      tags: [tasks]
+      summary: (ADR-206) Detach a task's external source binding
+      description: |
+        (Implemented — ADR-206) Session users only (no project, agent or librarian
+        token), with the `editTask` project action. Deletes the binding and
+        records `task_activity` `source_detached` in the same transaction; the
+        identity is then free for a later import. A task without a binding is
+        refused `409 PRECONDITION {details.reason:"source_not_bound"}`.
+      operationId: deleteTaskSource
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Binding removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Project or task not visible to the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: The task has no binding.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/tasks/{number}/send-to-triage:
     post:
       tags: [projects]
@@ -8504,8 +8547,14 @@ paths:
   /api/runs/{runId}/delivery-policy:
     patch:
       tags: [runs]
-      summary: Switch an auto delivery policy to manual
+      summary: Switch an auto delivery policy to manual, or set task resolution
       description: |
+        (Implemented — ADR-207) `{action:"set_task_resolution", resolvesTask}`
+        records whether the Run's delivery resolves its task; it is refused
+        `409 CONFLICT {details.reason:"delivery_already_started"}` once the
+        workspace `promotion_state` is `claiming|done` or a PR is recorded, and
+        `409 PRECONDITION {details.reason:"run_has_no_task"}` for a task-less Run.
+
         Requires project membership at `member` or above. Used by the run-detail
         auto-delivery banner. No body-controlled project/workspace ids are
         accepted; the route CAS-updates only a run in `Review` whose current
@@ -8539,7 +8588,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Run is not in Review, has no auto trigger, or was updated concurrently.
+          description: Run is not in Review, has no auto trigger, was updated concurrently, or its delivery already started (`details.reason`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -11883,6 +11932,9 @@ paths:
 
                     Published feature/ABC-12-fix-login-redirect → main (run 7c9e6679-7425-40de-944b-e07fc1f90ae7).
                   targetBranch: main
+                taskResolution:
+                  resolvesTask: true
+                  frozen: false
                 commands:
                   checkout:
                     - git -C /srv/repos/app fetch origin feature/ABC-12-fix-login-redirect
@@ -26883,6 +26935,11 @@ components:
           description: |
             Null means the project default branch at resolution time. Non-null
             values are server-validated against the project branch allow-list.
+        resolvesTask:
+          type: boolean
+          description: |
+            (Implemented — ADR-207) Whether a confirmed merge of this Run's PR may
+            complete its task. Absent on legacy Runs, read as `true`.
     DeliveryPolicyOverride:
       type: object
       additionalProperties: false
@@ -30326,6 +30383,7 @@ components:
         - rescueRefs
         - actions
         - prDefaults
+        - taskResolution
         - commands
         - warnings
       properties:
@@ -30513,12 +30571,28 @@ components:
             The server's defaults for `POST /api/runs/{runId}/pr` — the panel
             pre-fills its dialog from exactly these. The body's run link is
             built from the request's origin. Null without a workspace row.
+            (Implemented — ADR-207) The body ends with `Closes <owner>/<repo>#<n>`
+            when the task's binding is `github` on the project's own GitHub
+            host with a numeric key and the Run resolves its task.
           required: [title, body, targetBranch]
           additionalProperties: false
           properties:
             title: { type: string }
             body: { type: string }
             targetBranch: { type: string }
+        taskResolution:
+          type: object
+          nullable: true
+          description: |
+            (Implemented — ADR-207) Null for a task-less Run. `resolvesTask` is the
+            Run's snapshot flag (absent ⇒ true); `frozen` is true once a PR is
+            recorded or promotion is claiming/done, after which
+            `PATCH …/delivery-policy` refuses `delivery_already_started`.
+          required: [resolvesTask, frozen]
+          additionalProperties: false
+          properties:
+            resolvesTask: { type: boolean }
+            frozen: { type: boolean }
         commands:
           type: object
           required: [checkout, restoreRescue]
@@ -30706,13 +30780,27 @@ components:
           type: boolean
           description: True when a GC'd worktree was re-attached from the existing branch.
     PatchRunDeliveryPolicyBody:
-      type: object
-      required: [action]
-      additionalProperties: false
-      properties:
-        action:
-          type: string
-          enum: [switch_to_manual]
+      oneOf:
+        - type: object
+          required: [action]
+          additionalProperties: false
+          properties:
+            action:
+              type: string
+              enum: [switch_to_manual]
+        - type: object
+          description: |
+            (Implemented — ADR-207) Mark whether this Run's delivery resolves its
+            task. Refused `409 CONFLICT {reason:"delivery_already_started"}`
+            once `promotion_state` is `claiming|done` or a PR is recorded.
+          required: [action, resolvesTask]
+          additionalProperties: false
+          properties:
+            action:
+              type: string
+              enum: [set_task_resolution]
+            resolvesTask:
+              type: boolean
     ReviewFeedbackPreviewBody:
       type: object
       required: [response]

@@ -156,6 +156,8 @@ export function pullRequestDefaults(args: {
   taskKey: string | null;
   taskTitle: string | null;
   origin: string;
+  // ADR-207: `Closes owner/repo#N` for a resolving GitHub binding, or null.
+  closingReference: string | null;
 }): { title: string; body: string } {
   const runPath =
     args.run.runKind === "scratch"
@@ -167,6 +169,10 @@ export function pullRequestDefaults(args: {
       args.taskKey !== null && args.taskTitle !== null
         ? `${args.taskKey}: ${args.taskTitle}`
         : args.internalBranch,
-    body: `${args.origin}${runPath}\n\nPublished ${args.sourceBranch} → ${args.targetBranch} (run ${args.run.id}).`,
+    body: [
+      `${args.origin}${runPath}`,
+      `Published ${args.sourceBranch} → ${args.targetBranch} (run ${args.run.id}).`,
+      ...(args.closingReference ? [args.closingReference] : []),
+    ].join("\n\n"),
   };
 }

@@ -241,11 +241,27 @@ export function WorkbenchGitPanel({
     return t("errors.generic");
   }
 
-  const mutate: GitMutate = async (id, path, body, onOk) => {
+  const mutate: GitMutate = async (id, path, body, onOk, before) => {
     setBusy(id);
     setError(null);
 
     try {
+      if (before) {
+        const prior = await fetch(`/api/runs/${runId}/${before.path}`, {
+          method: before.method,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(before.body),
+        });
+
+        if (!prior.ok) {
+          const failure = (await readJson<ErrorBody>(prior)) ?? {};
+
+          setError(errorText(failure));
+
+          return failure;
+        }
+      }
+
       const res = await fetch(`/api/runs/${runId}/${path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },

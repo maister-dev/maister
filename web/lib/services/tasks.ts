@@ -4,6 +4,7 @@ import type { Db as QualificationDb } from "@/lib/execution-host/db";
 import type { Task } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskPriority } from "@/lib/tasks/criticality";
+import type { TaskSource } from "@/lib/tasks/external-source/model";
 
 import { randomUUID } from "node:crypto";
 
@@ -37,6 +38,11 @@ import {
 import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
 import { cancelClarificationsForAbandonedTasks } from "@/lib/tasks/clarification-requests";
 import {
+  insertTaskSourceInTx,
+  loadTaskSources,
+  requireTaskSource,
+} from "@/lib/tasks/external-source/service";
+import {
   getTaskQualificationSummaries,
   type TaskQualificationSummary,
 } from "@/lib/tasks/qualification-queries";
@@ -67,6 +73,9 @@ export type CreateTaskInput = {
   // task (which carries no trigger claim).
   agentId?: string | null;
   triggerEventId?: number | null;
+  // ADR-206: optional structured external source, bound in the create tx.
+  // Raw input — validated at the service seam (CONFIG on invalid).
+  source?: unknown;
 };
 
 export type CreateTaskContext = {
@@ -100,6 +109,8 @@ export async function createTask(
   // (no new row/event). Always false for a board task. Callers that launch a run
   // off the auto-task use this to converge to the winner instead of double-launching.
   deduped: boolean;
+  // ADR-206: the normalized binding created with the task, or null.
+  source: TaskSource | null;
 }> {
   const _db = (db ?? getDb()) as unknown as {
     select: any;
@@ -108,6 +119,8 @@ export async function createTask(
   };
 
   let flowId = input.flowId ?? null;
+  const source =
+    input.source === undefined ? null : requireTaskSource(input.source);
 
   // Resolve the body-controlled flowId against server state — accepts the
   // `flows.id` UUID or the project's `flows.flow_ref_id`, and it is the resolved
@@ -268,6 +281,16 @@ export async function createTask(
 
     const actor = ctx.actor ?? actorForUserId(ctx.actorUserId);
 
+    if (source) {
+      await insertTaskSourceInTx(tx, {
+        projectId: ctx.projectId,
+        taskId,
+        source,
+        origin: "import",
+        actor,
+      });
+    }
+
     await recordTaskActivity(tx, {
       taskId,
       projectId: ctx.projectId,
@@ -322,11 +345,14 @@ export async function createTask(
     number: created.number,
     taskKey: created.taskKey,
     deduped: created.deduped,
+    source: created.deduped ? null : source,
   };
 }
 
 export type TaskDTO = {
   qualification: TaskQualificationSummary;
+  // ADR-206: structured external source binding, or null.
+  source: TaskSource | null;
   id: string;
   number: number;
   taskKey: string;
@@ -357,7 +383,9 @@ async function taskToDTO(
   row: any,
   db: { select: any },
   qualification?: TaskQualificationSummary,
+  prefetchedSources?: Map<string, TaskSource>,
 ): Promise<TaskDTO> {
+  const sources = prefetchedSources ?? (await loadTaskSources(db, [row.id]));
   const summary =
     qualification ??
     (await getTaskQualificationSummaries(db as QualificationDb, [row.id])).get(
@@ -385,6 +413,7 @@ async function taskToDTO(
 
   return {
     qualification: summary,
+    source: sources.get(row.id) ?? null,
     id: row.id,
     number: row.number,
     taskKey: keyRows[0]?.taskKey ?? "",
@@ -439,8 +468,13 @@ export async function listTaskDTOs(
     rows.map((row: { id: string }) => row.id),
   );
 
+  const sources = await loadTaskSources(
+    _db,
+    rows.map((row: { id: string }) => row.id),
+  );
+
   return Promise.all(
-    rows.map((r: any) => taskToDTO(r, _db, summaries.get(r.id))),
+    rows.map((r: any) => taskToDTO(r, _db, summaries.get(r.id), sources)),
   );
 }
 

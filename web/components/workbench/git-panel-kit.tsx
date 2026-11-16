@@ -52,6 +52,7 @@ export type GitState = {
   rescueRefs: { ref: string; sha: string; createdAt: string }[];
   actions: WorkbenchGitAction[];
   prDefaults: { title: string; body: string; targetBranch: string } | null;
+  taskResolution: { resolvesTask: boolean; frozen: boolean } | null;
   commands: { checkout: string[]; restoreRescue: string | null };
   warnings: string[];
 };
@@ -75,11 +76,20 @@ export type ErrorBody = {
 // success; the typed refusal resolves to copy. `onOk` returning false marks
 // an answered-but-unsuccessful outcome (an update's conflict): no success
 // toast, the section renders it instead.
+// A write that must land first under the same busy/error handling; its
+// refusal stops the action before the main request.
+export type GitPrerequisite = {
+  path: string;
+  method: "PATCH";
+  body: Record<string, unknown>;
+};
+
 export type GitMutate = <T>(
   id: WorkbenchGitActionId,
   path: string,
   body: Record<string, unknown>,
   onOk: (result: T | null) => boolean | void,
+  before?: GitPrerequisite,
 ) => Promise<ErrorBody | null>;
 
 // An action button enabled by the server's policy plus the section's own local

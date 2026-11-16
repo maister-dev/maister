@@ -8883,6 +8883,11 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "clarification_answered",
   "clarification_cancelled",
   "task_completed",
+  // ADR-207: automatic completion after a confirmed PR merge was refused;
+  // deduplicated per (task, run, reason) by task_activity_delivery_refusal_uq.
+  "delivery_completion_not_applied",
+  // ADR-206: an audited human detach of the task's external source binding.
+  "source_detached",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -8925,7 +8930,7 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled', 'task_completed')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled', 'task_completed', 'delivery_completion_not_applied', 'source_detached')`,
     ),
     // ADR-151: the structural backstop for at-least-once event redelivery —
     // the consumer inserts with onConflictDoNothing instead of reading first,
@@ -8937,6 +8942,15 @@ export const taskActivity = pgTable(
         sql`(${t.payload}->>'triggerEventId')`,
       )
       .where(sql`${t.eventKind} = 'agent_summon_suppressed'`),
+    // ADR-207: one refusal record per (task, run, reason) under at-least-once
+    // redelivery of run.pr_merged / run.done.
+    uniqDeliveryRefusal: uniqueIndex("task_activity_delivery_refusal_uq")
+      .on(
+        t.taskId,
+        sql`(${t.payload}->>'runId')`,
+        sql`(${t.payload}->>'reason')`,
+      )
+      .where(sql`${t.eventKind} = 'delivery_completion_not_applied'`),
     actorTypeCheck: check(
       "task_activity_actor_type_check",
       sql`${t.actorType} in ('user', 'agent', 'system')`,
@@ -9009,6 +9023,13 @@ export type InboxSourceRef =
       kind: "clarification";
       taskId: string;
       clarificationId: string;
+      activityId: string;
+    }
+  // ADR-207: a confirmed merge whose automatic completion was refused.
+  | {
+      kind: "delivery_refusal";
+      taskId: string;
+      runId: string;
       activityId: string;
     };
 
@@ -9085,7 +9106,7 @@ export const inboxItems = pgTable(
     ),
     eventKindCheck: check(
       "inbox_items_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available', 'stand_incident_opened', 'stand_incident_resolved')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'clarification_requested', 'assignment_result_available', 'stand_incident_opened', 'stand_incident_resolved', 'delivery_completion_not_applied')`,
     ),
   }),
 );
@@ -9151,7 +9172,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed')`,
+      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed', 'run.pr_merged')`,
     ),
     ownerCheck: check(
       "domain_events_owner_check",
@@ -9809,6 +9830,56 @@ export const taskStatementRevisions = pgTable(
 );
 export type TaskStatementRevisionRow =
   typeof taskStatementRevisions.$inferSelect;
+
+// ADR-206: provider-neutral external source identity of a task. Identity is
+// (project, kind, instance, external_id); key/scope/url are display inputs only.
+export const taskExternalSources = pgTable(
+  "task_external_sources",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind").notNull(),
+    sourceInstance: text("source_instance").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    externalId: text("external_id").notNull(),
+    externalKey: text("external_key"),
+    externalUrl: text("external_url"),
+    origin: text("origin", {
+      enum: ["import", "backfill", "manual"],
+    }).notNull(),
+    createdByActorType: text("created_by_actor_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    createdByActorId: text("created_by_actor_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identityUnique: unique("task_external_sources_identity_uq").on(
+      t.projectId,
+      t.sourceKind,
+      t.sourceInstance,
+      t.externalId,
+    ),
+    taskUnique: unique("task_external_sources_task_uq").on(t.taskId),
+    shapeCheck: check(
+      "task_external_sources_shape_check",
+      sql`(${t.sourceKind} ~ '^[a-z][a-z0-9_-]{1,31}$' AND length(${t.sourceInstance}) BETWEEN 1 AND 253 AND ${t.sourceInstance} ~ '^[a-z0-9][a-z0-9._-]*$' AND length(${t.scopeKey}) BETWEEN 1 AND 256 AND length(${t.externalId}) BETWEEN 1 AND 256 AND (${t.externalKey} IS NULL OR length(${t.externalKey}) BETWEEN 1 AND 64) AND (${t.externalUrl} IS NULL OR (length(${t.externalUrl}) <= 2048 AND ${t.externalUrl} ~ '^https://[^/@[:space:]]+(/|$)')) AND ${t.origin} IN ('import','backfill','manual') AND ${t.createdByActorType} IN ('user','agent','system')) IS TRUE`,
+    ),
+  }),
+);
+export type TaskExternalSourceRow = typeof taskExternalSources.$inferSelect;
 
 export const librarianTaskLinks = pgTable(
   "librarian_task_links",

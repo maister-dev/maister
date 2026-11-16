@@ -14,6 +14,7 @@ import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-res
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 import { librarianFollowupConsumer } from "@/lib/librarian/followup";
 import { specialistAssignmentDeliveryConsumer } from "@/lib/specialist-assignments/delivery-capture";
+import { taskDeliveryCompletionConsumer } from "@/lib/domain-events/task-delivery-completion";
 
 const log = pino({
   name: "domain-events-noop",
@@ -91,4 +92,7 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   sourceReindexConsumer,
   librarianFollowupConsumer,
   specialistAssignmentDeliveryConsumer,
+  // ADR-207: platform-owned task completion after a confirmed PR merge, on
+  // run.pr_merged and on the finalize's run.done (merged-before-finalize).
+  taskDeliveryCompletionConsumer,
 ];

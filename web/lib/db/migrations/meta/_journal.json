@@ -2353,6 +2353,27 @@
       "when": 1794776732397,
       "tag": "0339_specialist_assignment_cancellation_intent",
       "breakpoints": true
+    },
+    {
+      "idx": 340,
+      "version": "7",
+      "when": 1794838769652,
+      "tag": "0340_task_external_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 341,
+      "version": "7",
+      "when": 1794838779481,
+      "tag": "0341_task_activity_source_completion_kinds",
+      "breakpoints": true
+    },
+    {
+      "idx": 342,
+      "version": "7",
+      "when": 1794838876078,
+      "tag": "0342_domain_event_run_pr_merged",
+      "breakpoints": true
     }
   ]
 }

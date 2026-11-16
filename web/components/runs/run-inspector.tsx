@@ -1,5 +1,6 @@
 "use client";
 
+import type { RunTiming } from "@/lib/runs/run-timing";
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { createElement, useState } from "react";
@@ -20,6 +21,7 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
+import { RunTimingFacts } from "@/components/runs/run-timing-detail";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { Tabs } from "@/components/navigation/tabs";
 import {
@@ -136,6 +138,8 @@ export interface RunInspectorProps {
   runId: string;
   labels: RunInspectorLabels;
   facts: RunInspectorFact[];
+  // ADR-208: Execution with its breakdown button, rendered after the facts.
+  timing?: { label: string; value: RunTiming } | null;
   changeSummary: RunInspectorChangeSummary | null;
   flowSummary?: RunInspectorFlowSummary | null;
   // Run-detail transparency (T-C1): capability/settings blocks relocated out of
@@ -231,6 +235,7 @@ export function RunInspector({
   runId,
   labels,
   facts,
+  timing = null,
   changeSummary,
   flowSummary,
   flowExtras,
@@ -292,6 +297,22 @@ export function RunInspector({
               </dd>
             </div>
           ))}
+          {timing ? (
+            <div
+              className="rounded-[6px] border border-line bg-paper p-2"
+              data-testid="run-inspector-fact"
+            >
+              <dt className="font-mono text-[10px] uppercase text-mute">
+                {timing.label}
+              </dt>
+              <dd className="m-0 text-[13px] text-ink">
+                <RunTimingFacts
+                  testId="run-header-timing"
+                  timing={timing.value}
+                />
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
 

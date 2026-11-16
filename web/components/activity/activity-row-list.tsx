@@ -16,6 +16,7 @@ import clsx from "clsx";
 
 // The feed and the work table print the same "how long ago" string; a second
 // copy of the unit thresholds is how the two surfaces start disagreeing.
+import { LocalTime } from "@/components/ui/local-time";
 import { workAge } from "@/lib/work/work-table-view";
 
 /**
@@ -60,10 +61,6 @@ export function ActivityRowList({
   now,
 }: ActivityRowListProps): ReactElement {
   const numberFormat = new Intl.NumberFormat(locale);
-  const dateFormat = new Intl.DateTimeFormat(locale, {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
 
   return (
     <ul className="m-0 list-none rounded-[14px] border border-line bg-paper p-0">
@@ -71,7 +68,6 @@ export function ActivityRowList({
         <ActivityRow
           key={row.id}
           isUnread
-          dateFormat={dateFormat}
           labels={labels}
           now={now}
           numberFormat={numberFormat}
@@ -93,7 +89,6 @@ export function ActivityRowList({
       {seen.map((row) => (
         <ActivityRow
           key={row.id}
-          dateFormat={dateFormat}
           isUnread={false}
           labels={labels}
           now={now}
@@ -110,14 +105,12 @@ function ActivityRow({
   isUnread,
   labels,
   numberFormat,
-  dateFormat,
   now,
 }: {
   row: ActivityFeedRow;
   isUnread: boolean;
   labels: ActivityRowLabels;
   numberFormat: Intl.NumberFormat;
-  dateFormat: Intl.DateTimeFormat;
   now: Date;
 }): ReactElement {
   // Mirrors the task link's OWN render condition below, not just `taskKey`: a
@@ -135,14 +128,11 @@ function ActivityRow({
       data-activity-unread={isUnread ? "true" : "false"}
       data-testid="activity-row"
     >
-      <time
-        suppressHydrationWarning
+      <LocalTime
         className="w-[112px] shrink-0 font-mono text-[11px] text-mute"
-        dateTime={row.occurredAt.toISOString()}
-        title={dateFormat.format(row.occurredAt)}
-      >
-        {workAge(row.occurredAt, now)}
-      </time>
+        displayText={workAge(row.occurredAt, now)}
+        iso={row.occurredAt}
+      />
       <span className="text-[12.5px] font-semibold text-ink">
         {labels.kinds[row.kind] ?? row.kind}
       </span>

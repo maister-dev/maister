@@ -18,6 +18,7 @@ import clsx from "clsx";
 import { useState } from "react";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 
+import { LocalTime } from "@/components/ui/local-time";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
 import { workAge, workNextAction } from "@/lib/work/work-table-view";
 
@@ -143,10 +144,6 @@ export function WorkRowsTable({
   panels,
 }: WorkRowsTableProps): ReactElement {
   const numberFormat = new Intl.NumberFormat(locale);
-  const dateFormat = new Intl.DateTimeFormat(locale, {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
 
   // `REQ-D7` — grouping-derived, not surface-derived: under project grouping the
   // group header already names the project, so the cell is a second copy of a
@@ -192,7 +189,6 @@ export function WorkRowsTable({
               <WorkTableRowView
                 key={row.taskId}
                 columnCount={showProject ? TOTAL_COLUMNS : TOTAL_COLUMNS - 1}
-                dateFormat={dateFormat}
                 expandable={expandable}
                 labels={labels}
                 now={now}
@@ -223,7 +219,6 @@ function WorkTableRowView({
   row,
   labels,
   numberFormat,
-  dateFormat,
   now,
   showProject,
   expandable,
@@ -233,7 +228,6 @@ function WorkTableRowView({
   row: WorkTableRow;
   labels: WorkRowsLabels;
   numberFormat: Intl.NumberFormat;
-  dateFormat: Intl.DateTimeFormat;
   now: Date;
   showProject: boolean;
   expandable: boolean;
@@ -378,15 +372,13 @@ function WorkTableRowView({
           className={clsx(
             CELL,
             DROP_SM,
-            "text-right font-mono text-[11.5px] text-ink-2",
+            "text-right font-mono text-[11.5px] tabular-nums text-ink-2",
           )}
         >
           {numberFormat.format(row.tokens)}
         </td>
         <td className={clsx(CELL, DROP_MD, "whitespace-nowrap text-mute")}>
-          <span suppressHydrationWarning>
-            {dateFormat.format(row.lastActivityAt)}
-          </span>
+          <LocalTime iso={row.lastActivityAt} />
         </td>
         {/* The trailing action cluster: the next action, then the run. Reads
           left-to-right primary -> secondary, per web/CLAUDE.md. */}

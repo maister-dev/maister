@@ -12,6 +12,8 @@ import { useMemo, useState } from "react";
 
 export interface RelationsEditorLabels {
   title: string;
+  // D10: the create form opens on demand (with `collapsedForm`).
+  openForm?: string;
   empty: string;
   add: string;
   adding: string;
@@ -99,6 +101,7 @@ export function RelationsEditor({
   relations,
   relationCandidates,
   canEdit,
+  collapsedForm = false,
   labels,
 }: {
   slug: string;
@@ -106,6 +109,8 @@ export function RelationsEditor({
   relations: TaskRelationView[];
   relationCandidates: RelationCandidate[];
   canEdit: boolean;
+  // D10 (task page): open the create form only on "Add relation".
+  collapsedForm?: boolean;
   labels: RelationsEditorLabels;
 }): ReactElement {
   const router = useRouter();
@@ -114,6 +119,7 @@ export function RelationsEditor({
   const [taskSearch, setTaskSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(!collapsedForm);
   const indexedCandidates = useMemo(
     () =>
       indexRelationCandidates(
@@ -241,7 +247,17 @@ export function RelationsEditor({
           })}
         </ul>
       )}
-      {canEdit ? (
+      {canEdit && !formOpen ? (
+        <button
+          className="self-start rounded-lg border border-line bg-paper px-2 py-1 text-[12px] font-semibold text-ink transition hover:border-amber hover:text-amber"
+          data-testid="relations-open-form"
+          type="button"
+          onClick={() => setFormOpen(true)}
+        >
+          {labels.openForm}
+        </button>
+      ) : null}
+      {canEdit && formOpen ? (
         <div className="grid grid-cols-1 items-start gap-1.5 sm:grid-cols-[8.75rem_minmax(0,1fr)_auto]">
           <select
             aria-label={labels.title}

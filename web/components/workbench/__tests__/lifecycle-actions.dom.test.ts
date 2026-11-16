@@ -263,6 +263,7 @@ function usableGitState(): Record<string, unknown> {
       { id: "snapshotCommit", enabled: true, disabledReason: null },
     ],
     prDefaults: null,
+    taskResolution: null,
     commands: { checkout: [], restoreRescue: null },
     warnings: [],
   };
@@ -658,6 +659,7 @@ describe("ADR-181 — git panel hosting and rail deep links", () => {
       rescueRefs: [],
       actions: [],
       prDefaults: null,
+      taskResolution: null,
       commands: { checkout: [], restoreRescue: null },
       warnings: [],
     });
@@ -814,6 +816,7 @@ describe("ADR-181 — unpushed-work guard on archive", () => {
       rescueRefs: [],
       actions: [],
       prDefaults: null,
+      taskResolution: null,
       commands: { checkout: [], restoreRescue: null },
       warnings: [],
     });

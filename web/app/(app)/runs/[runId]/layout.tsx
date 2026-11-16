@@ -23,6 +23,7 @@ import {
   TURN_LOST_DECISION,
 } from "@/lib/flows/graph/attempt-decisions";
 import { getDb } from "@/lib/db/client";
+import { loadRunTimings } from "@/lib/queries/run-timing";
 import { loadRunPublicResult } from "@/lib/runs/run-result-dto";
 import {
   RunPublicResultPanel,
@@ -1000,10 +1001,11 @@ export default async function RunDetailLayout({
       toolCount: "{name} ×{count}",
     },
   };
-  const activeDurationMs = timeline.entries.reduce<number>(
-    (sum, entry) => sum + (entry.durationMs ?? 0),
-    0,
-  );
+  // ADR-208: union-based execution replaces the summed attempt durations.
+  const [runTiming, tTiming] = await Promise.all([
+    loadRunTimings(getDb(), [detail.runId]).then((m) => m.get(detail.runId)),
+    getTranslations("runTiming"),
+  ]);
 
   const flowResultDto = buildFlowRunResultReadModel({
     run: {
@@ -1151,7 +1153,7 @@ export default async function RunDetailLayout({
     resumeTax: t("resumeTax"),
   };
   const costFacts = buildCostSummaryFacts(costSummary, costLabels, locale);
-  const wallClockLabel = t("wallClock");
+  const wallClockLabel = tTiming("duration");
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
     ...(detail.cutoverFailure
@@ -1193,7 +1195,6 @@ export default async function RunDetailLayout({
         ]
       : []),
     ...costFacts,
-    { label: t("activeTime"), value: formatDuration(activeDurationMs) },
     { label: wallClockLabel, value: formatDuration(wallDurationMs) },
     {
       label: t("deliveryPolicyTitle"),
@@ -1713,6 +1714,11 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               runStatus={detail.status}
               search={changeSummary?.dirty ? "scope=uncommitted" : ""}
+              timing={
+                runTiming
+                  ? { label: tTiming("execution"), value: runTiming }
+                  : null
+              }
             />
           </>
         }
@@ -2368,6 +2374,11 @@ export default async function RunDetailLayout({
               runId={detail.runId}
               sync={syncPanel?.sync ?? null}
               targetBranch={reviewData.targetBranch}
+              taskResolutionEditable={
+                detail.taskNumber !== null &&
+                detail.prNumber === null &&
+                !detail.prUrl
+              }
               updateHref={gitPanelHref({
                 runId: detail.runId,
                 runKind: detail.runKind,

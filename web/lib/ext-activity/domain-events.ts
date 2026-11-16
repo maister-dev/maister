@@ -160,6 +160,12 @@ function mapDomainEvent(row: DomainEventActivityRow): DomainEventMapping {
         action: { verb: "finish", object: "run", outcome: "done" },
         summary: `run ${row.runId ?? ""} completed`.trim(),
       };
+    case "run.pr_merged":
+      return {
+        salience: "high",
+        action: { verb: "merge", object: "pull request", outcome: "merged" },
+        summary: `run ${row.runId ?? ""} pull request merged`.trim(),
+      };
     case "run.failed":
       return {
         salience: "high",

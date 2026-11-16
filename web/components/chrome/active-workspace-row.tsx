@@ -44,6 +44,8 @@ const chipClass =
 // presentational view stays hook-free (unit-testable via renderToStaticMarkup).
 export interface ActiveWorkspaceRowLabels {
   statusWord: string;
+  // ADR-209: why the Run is in the rail.
+  reasonLabel: string;
   attention: boolean;
   flowLabel: string | null;
   flowTooltip: string | null;
@@ -146,6 +148,9 @@ export function ActiveWorkspaceRowView({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1 pl-4">
+        <span className={chipClass} data-testid="active-workspace-reason">
+          <span className="truncate">{labels.reasonLabel}</span>
+        </span>
         {labels.flowLabel ? (
           <span
             aria-label={labels.flowAria ?? undefined}

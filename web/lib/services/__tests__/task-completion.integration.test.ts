@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as fullSchema from "@/lib/db/schema";
-import { completeTask } from "@/lib/services/task-completion";
+import {
+  completeTask,
+  completeTaskFromConfirmedMerge,
+} from "@/lib/services/task-completion";
+import { updateTask } from "@/lib/services/tasks";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -255,3 +259,255 @@ describe("completeTask", () => {
     });
   });
 });
+
+// ADR-207: automatic completion after a confirmed PR merge. Decision branches
+// are owned by the evaluator unit table; this suite owns persistence, dedup,
+// inbox fan-out and the lock.
+describe("completeTaskFromConfirmedMerge", () => {
+  async function seedMerged(
+    opts: { resolvesTask?: boolean } = {},
+  ): Promise<{ projectId: string; taskId: string; runId: string }> {
+    const seeded = await seedTaskRun({
+      promotionMode: "pull_request",
+      prState: "merged",
+    });
+
+    await db
+      .update(schema.runs)
+      .set({
+        deliveryPolicySnapshot: {
+          strategy: "pull_request",
+          push: "on_success",
+          trigger: "manual",
+          targetBranch: "main",
+          ...(opts.resolvesTask === undefined
+            ? {}
+            : { resolvesTask: opts.resolvesTask }),
+        },
+      })
+      .where(eq(schema.runs.id, seeded.runId));
+    await db
+      .update(schema.workspaces)
+      .set({ prNumber: 42, prUrl: "https://github.com/a/b/pull/42" })
+      .where(eq(schema.workspaces.runId, seeded.runId));
+
+    return seeded;
+  }
+
+  async function activityOf(taskId: string, kind: string) {
+    return db
+      .select({
+        payload: schema.taskActivity.payload,
+        actorType: schema.taskActivity.actorType,
+      })
+      .from(schema.taskActivity)
+      .where(
+        and(
+          eq(schema.taskActivity.taskId, taskId),
+          eq(schema.taskActivity.eventKind, kind),
+        ),
+      );
+  }
+
+  async function complete(seeded: { taskId: string; runId: string }) {
+    return db.transaction((tx) =>
+      completeTaskFromConfirmedMerge(seeded.taskId, seeded.runId, tx),
+    );
+  }
+
+  it("C2: completes the task once with cause pr_merged; redelivery is a no-op", async () => {
+    const seeded = await seedMerged();
+
+    expect(await complete(seeded)).toEqual({
+      kind: "apply",
+      runId: seeded.runId,
+    });
+    expect(await complete(seeded)).toEqual({
+      kind: "skip",
+      reason: "already_done",
+    });
+
+    const [task] = await db
+      .select({ status: schema.tasks.status, revision: schema.tasks.revision })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, seeded.taskId));
+
+    expect(task).toEqual({ status: "Done", revision: 5 });
+    expect(await activityOf(seeded.taskId, "task_completed")).toEqual([
+      {
+        actorType: "system",
+        payload: { runId: seeded.runId, cause: "pr_merged", prNumber: 42 },
+      },
+    ]);
+  });
+
+  it("C3: a refusal is recorded once per (run, reason) and reaches subscribers' inbox", async () => {
+    const seeded = await seedMerged({ resolvesTask: false });
+
+    await db.insert(schema.taskSubscribers).values({
+      taskId: seeded.taskId,
+      subscriberType: "user",
+      subscriberId: "watcher-1",
+      reason: "manual",
+    });
+
+    expect(await complete(seeded)).toEqual({
+      kind: "refuse",
+      reason: "partial_resolution",
+    });
+    await complete(seeded);
+
+    expect(
+      await activityOf(seeded.taskId, "delivery_completion_not_applied"),
+    ).toEqual([
+      {
+        actorType: "system",
+        payload: { runId: seeded.runId, reason: "partial_resolution" },
+      },
+    ]);
+
+    const inbox = await db
+      .select({
+        recipientId: schema.inboxItems.recipientId,
+        eventKind: schema.inboxItems.eventKind,
+      })
+      .from(schema.inboxItems)
+      .where(eq(schema.inboxItems.taskId, seeded.taskId));
+
+    expect(inbox).toEqual([
+      {
+        recipientId: "watcher-1",
+        eventKind: "delivery_completion_not_applied",
+      },
+    ]);
+
+    const [task] = await db
+      .select({ status: schema.tasks.status })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, seeded.taskId));
+
+    expect(task.status).toBe("InFlight");
+  });
+
+  it("C3: a statement edit is refused while InFlight, so completion still applies", async () => {
+    const seeded = await seedMerged();
+
+    await expect(
+      updateTask(seeded.taskId, seeded.projectId, { prompt: "changed" }, db),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(await complete(seeded)).toEqual({
+      kind: "apply",
+      runId: seeded.runId,
+    });
+  });
+
+  it("C4: completion and a concurrent relaunch serialize on the task lock — never Done with a newer attempt", async () => {
+    for (const order of ["completion-first", "relaunch-first"] as const) {
+      const seeded = await seedMerged();
+      const flowId = (
+        await db
+          .select({ flowId: schema.runs.flowId })
+          .from(schema.runs)
+          .where(eq(schema.runs.id, seeded.runId))
+      )[0].flowId;
+      const newerRunId = randomUUID();
+      // The launch claim's critical section (claimTaskLaunchIntent): lock the
+      // task row, admit only Backlog/InFlight, insert the newer attempt.
+      const relaunch = (holder: { release?: () => void }) =>
+        testDatabase.db.transaction(async (tx) => {
+          const [task] = await tx
+            .select({ status: schema.tasks.status })
+            .from(schema.tasks)
+            .where(eq(schema.tasks.id, seeded.taskId))
+            .for("update");
+
+          if (task.status !== "Backlog" && task.status !== "InFlight") {
+            return "refused";
+          }
+          await tx.insert(schema.runs).values({
+            id: newerRunId,
+            taskId: seeded.taskId,
+            projectId: seeded.projectId,
+            flowId,
+            status: "Pending",
+            flowVersion: "v1.0.0",
+            startedAt: new Date("2026-10-17T12:00:00Z"),
+          });
+          await new Promise<void>((resolve) => (holder.release = resolve));
+
+          return "launched";
+        });
+      const holder: { release?: () => void } = {};
+      let first: Promise<unknown>;
+      let second: Promise<unknown>;
+
+      if (order === "relaunch-first") {
+        first = relaunch(holder);
+        await until(() => holder.release !== undefined);
+        second = complete(seeded);
+      } else {
+        first = db.transaction(async (tx) => {
+          const decision = await completeTaskFromConfirmedMerge(
+            seeded.taskId,
+            seeded.runId,
+            tx,
+          );
+
+          await new Promise<void>((resolve) => (holder.release = resolve));
+
+          return decision;
+        });
+        await until(() => holder.release !== undefined);
+        second = relaunch({});
+      }
+
+      await until(async () => (await lockWaiters()) > 0);
+      holder.release!();
+      const results = await Promise.all([first, second]);
+
+      const [task] = await db
+        .select({ status: schema.tasks.status })
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, seeded.taskId));
+      const newer = await db
+        .select({ id: schema.runs.id })
+        .from(schema.runs)
+        .where(eq(schema.runs.id, newerRunId));
+
+      if (order === "completion-first") {
+        expect(results).toEqual([
+          { kind: "apply", runId: seeded.runId },
+          "refused",
+        ]);
+        expect(task.status).toBe("Done");
+        expect(newer).toHaveLength(0);
+      } else {
+        expect(results).toEqual([
+          "launched",
+          { kind: "refuse", reason: "superseded_by_newer_attempt" },
+        ]);
+        expect(task.status).toBe("InFlight");
+        expect(newer).toHaveLength(1);
+      }
+    }
+  });
+});
+
+async function until(check: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("condition not reached");
+}
+
+// The loser is PARKED on the row lock, proving the two critical sections were
+// really concurrent rather than sequential by accident.
+async function lockWaiters(): Promise<number> {
+  const result = await db.execute(sql`
+    SELECT count(*)::int AS n FROM pg_stat_activity
+    WHERE wait_event_type = 'Lock' AND datname = current_database()
+  `);
+
+  return (result.rows[0] as { n: number }).n;
+}

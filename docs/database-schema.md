@@ -1292,6 +1292,44 @@ plus `ON CONFLICT DO NOTHING`, so redelivery of the same
 `inbox_items_event_kind_check` is deliberately NOT widened — the kind never
 fans out.
 
+**(ADR-206/207 — Implemented, migration `0341`)** `delivery_completion_not_applied`
+(automatic completion after a confirmed PR merge was refused; payload
+`{runId, reason}`) and `source_detached` (audited human detach; payload
+`{kind, instance, externalId, externalKey}`) join the kind set.
+`delivery_completion_not_applied` is deduplicated by the partial UNIQUE
+`task_activity_delivery_refusal_uq` on `(task_id, (payload->>'runId'),
+(payload->>'reason')) WHERE event_kind = 'delivery_completion_not_applied'` plus
+`ON CONFLICT DO NOTHING`, and it IS admitted by `inbox_items_event_kind_check`
+(subscribers are told a merged PR needs a decision); `source_detached` is not.
+
+### `task_external_sources`
+
+**(ADR-206 — Implemented, migration `0340`)** At most one structured external
+source per task. See [`system-analytics/tasks.md`](system-analytics/tasks.md#external-source-binding).
+
+```ts
+{
+  id,                             // text PK, randomUUID
+  projectId,                      // FK -> projects.id (cascade)
+  taskId,                         // FK -> tasks.id (cascade), UNIQUE
+  sourceKind,                     // open slug ^[a-z][a-z0-9_-]{1,31}$
+  sourceInstance,                 // normalized lower-case host / connection id
+  scopeKey,                       // owner/repo, Jira key — display only
+  externalId,                     // stable provider id (GitHub issue node id)
+  externalKey?,                   // '#7', 'PROJ-12' — display only
+  externalUrl?,                   // https only, no userinfo, <= 2048
+  origin: 'import' | 'backfill' | 'manual',
+  createdByActorType: 'user' | 'agent' | 'system', createdByActorId?,
+  createdAt, updatedAt
+}
+```
+
+UNIQUE `task_external_sources_identity_uq (project_id, source_kind,
+source_instance, external_id)`; UNIQUE `task_external_sources_task_uq
+(task_id)`; generated CHECK `task_external_sources_shape_check` pins every bound
+above. Rows are immutable except a same-identity refresh of `scope_key`,
+`external_key`, `external_url` (`updated_at`). Detach deletes the row.
+
 ### `task_subscribers`
 
 ```ts

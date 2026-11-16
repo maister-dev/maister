@@ -1589,6 +1589,38 @@ it("TB03 plain preparation excludes ancestor aliases before creation across epoc
   }
 }, 60_000);
 
+it("acquires a plain preparation fence on a fresh runtime root and refuses a symlinked root", async () => {
+  const previousRuntime = process.env.MAISTER_RUNTIME_ROOT;
+  const runtime = path.join(root, "fresh-plain-runtime");
+  const alias = path.join(root, "plain-runtime-symlink");
+  const resource = {
+    repoPath: root,
+    cwd: path.join(runtime, "plain-resource"),
+    resourceKind: "plain_directory",
+  };
+
+  try {
+    process.env.MAISTER_RUNTIME_ROOT = runtime;
+    await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+    const fence = await acquirePreparationWorkspace(resource);
+
+    await fence.release();
+    await expect(
+      access(path.join(runtime, ".maister", "preparation-locks")),
+    ).resolves.toBeUndefined();
+
+    await symlink(runtime, alias, "dir");
+    process.env.MAISTER_RUNTIME_ROOT = alias;
+    await expect(acquirePreparationWorkspace(resource)).rejects.toMatchObject({
+      code: "CONFIG",
+      message: expect.stringContaining("agent materialization cwd is unsafe"),
+    });
+  } finally {
+    if (previousRuntime === undefined) delete process.env.MAISTER_RUNTIME_ROOT;
+    else process.env.MAISTER_RUNTIME_ROOT = previousRuntime;
+  }
+});
+
 it("TB02 holds an unprovable legacy alias identity without rewriting its receipt", async () => {
   const { hosts } = await fakeExecutionHosts(db);
   const fixture = await seedReadOnlyPreparation();

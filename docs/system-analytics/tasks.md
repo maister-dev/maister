@@ -405,6 +405,139 @@ accessible error. Success clears the draft and refreshes the board. A bounded
 scrollable body keeps both HeroUI actions reachable. The opener uses the shared
 Heroicons add affordance (UX-02A–B).
 
+## External source binding
+
+(Implemented — [ADR-206](../decisions.md#adr-206-provider-neutral-task-external-source-binding))
+
+A task may carry at most one structured external source binding
+(`task_external_sources`, ERD in [`../db/runs-domain.md`](../db/runs-domain.md)).
+The binding records **where a work item came from**; it is independent of the
+code host (`projects.provider`) — a Jira or GitVerse source on a GitHub-hosted
+project is valid.
+
+| Field | Meaning | Identity? |
+| --- | --- | --- |
+| `source_kind` | open bounded slug `^[a-z][a-z0-9_-]{1,31}$` (`github`, `gitlab`, `jira`, …) | yes |
+| `source_instance` | normalized lower-case host or connection id; no scheme, path, query, `@` or `:` | yes |
+| `external_id` | stable machine id unique within the instance (GitHub: issue node id `I_…`); providers with only scope-local ids compose `<scope-immutable-id>:<local-id>` | yes |
+| `scope_key` | namespace locator (`owner/repo`, Jira project key); display + closing reference | no |
+| `external_key` | human key (`#7`, `PROJ-12`), ≤ 64 | no |
+| `external_url` | optional `https://` URL, ≤ 2048, no userinfo | no |
+| `origin` | `import \| backfill \| manual` | no |
+
+Identity is UNIQUE `(project_id, source_kind, source_instance, external_id)`;
+a task has at most one binding (UNIQUE `task_id`, `ON DELETE CASCADE`). Display
+is `external_key ?? external_id`; a link renders only when `external_url` is set.
+
+```mermaid
+flowchart TD
+    A[task_create with source] --> B{identity bound in project?}
+    B -- no --> C[insert task + binding in one tx] --> D[201 receipt with source]
+    B -- yes --> E[roll back task insert] --> F["409 CONFLICT source_already_bound<br/>details.existingTaskId / existingTaskKey"]
+    G[task_source_bind] --> H{task already bound?}
+    H -- same identity --> I[200 no-op]
+    H -- other identity --> J["409 CONFLICT source_conflict"]
+    H -- unbound --> K{identity bound elsewhere?}
+    K -- yes --> L["409 CONFLICT source_already_bound"]
+    K -- no --> M[insert binding, 200]
+    N[human detach] --> O[delete binding + task_activity source_detached]
+```
+
+Refusals (exactly as `web/lib/tasks/external-source/service.ts` gates):
+
+| Operation | Condition | Response |
+| --- | --- | --- |
+| create / bind | body shape or bound violated | 422 `CONFIG` |
+| create | librarian token sends `source` | 422 `CONFIG {reason:"source_not_allowed_for_token"}` |
+| create / bind | identity bound to another task of the project | 409 `CONFLICT {reason:"source_already_bound", existingTaskId, existingTaskKey}` |
+| bind | task bound to a different identity | 409 `CONFLICT {reason:"source_conflict"}` |
+| bind | `expectedRevision` differs | 409 `CONFLICT {reason:"stale_revision"}` |
+| detach | caller is not a session user with `editTask` | 403 `UNAUTHORIZED` |
+| detach | task has no binding | 409 `PRECONDITION {reason:"source_not_bound"}` |
+
+Bindings are immutable after creation except a same-identity refresh of
+`external_key`, `external_url` and `scope_key`. Title, prompt and statement
+edits never read or write the binding.
+
+**Legacy backfill** (`pnpm --filter maister-web tasks:backfill-sources`,
+dry-run by default). Inputs are the task's current `prompt` and every
+`task_statement_revisions.statement` of that task. A candidate needs a
+`Source-GitHub-ID` node id (`^I_[A-Za-z0-9_-]+$`) and a
+`Source-GitHub-Issue` URL `https://<host>/<owner>/<repo>/issues/<n>`.
+Classes: `bindable`, `already_bound_same`, `incomplete`, `malformed`,
+`conflicting` (title number ≠ URL number, several distinct identities, or
+task bound to another identity), `duplicate` (one identity in several tasks —
+none bound). `--apply` binds only `bindable` rows, one transaction per task,
+`ON CONFLICT DO NOTHING`; it never edits titles/prompts or touches runs,
+relations or activity. The report lists task keys and classes, never prompt text.
+
+## Completion after a confirmed merge
+
+(Implemented — [ADR-207](../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge))
+
+Two triggers feed one consumer (`taskDeliveryCompletion`): `run.pr_merged`
+(emitted by `pr_state_scan` in the merged-edge transaction) and `run.done`
+(emitted by every promotion/finalize path). The pure evaluator
+`evaluateMergeCompletion` in `web/lib/tasks/completion-evidence.ts` decides;
+`completeTaskFromConfirmedMerge` loads, locks the task `FOR UPDATE` and writes.
+
+```mermaid
+flowchart TD
+    E["run.pr_merged | run.done"] --> S1{taskId present and run_kind = flow?}
+    S1 -- no --> SK[skip silently]
+    S1 -- yes --> S2{"merged Run's workspace pr_state = merged?"}
+    S2 -- no --> SK
+    S2 -- yes --> L[lock task FOR UPDATE]
+    L --> D1{task status}
+    D1 -- Done --> NO[idempotent no-op]
+    D1 -- Backlog / Abandoned --> R1[refuse task_not_in_flight]
+    D1 -- InFlight --> D2{merged Run is newest flow Run?}
+    D2 -- no --> R2[refuse superseded_by_newer_attempt]
+    D2 -- yes --> D3{"newest Run Done + promotion done?"}
+    D3 -- no --> SK
+    D3 -- yes --> D4{resolvesTask}
+    D4 -- false --> R3[refuse partial_resolution]
+    D4 -- true --> OK["Done + task_completed {runId, cause: pr_merged, prNumber}"]
+```
+
+Decision table (skip = no activity; refuse = one deduplicated
+`delivery_completion_not_applied {runId, reason}`):
+
+| Strategy × state | `run.pr_merged` | `run.done` |
+| --- | --- | --- |
+| `pull_request`, Run Done, PR not merged | — (not emitted) | skip |
+| `pull_request`, Run Done, PR merged, newest, resolves | complete | complete (or no-op if already Done) |
+| `pull_request`, merged before finalize (Run parked) | skip (`run_not_done`) | complete on finalize |
+| `pull_request`, merged, newer attempt exists | refuse `superseded_by_newer_attempt` | refuse |
+| `pull_request`, merged, `resolvesTask=false` | refuse `partial_resolution` | refuse |
+| `pull_request`, merged, task `Backlog`/`Abandoned` | refuse `task_not_in_flight` | refuse |
+| `local_merge` / `rebase_merge` / `ai_rebase_merge` / result-only / `publish_branch` | — | skip (manual completion as today) |
+| PR closed unmerged | — | skip |
+
+`resolvesTask` is snapshotted into `runs.delivery_policy_snapshot` at launch
+(`true`; absent on legacy Runs ⇒ `true`) and may be switched only through
+`PATCH /api/runs/{runId}/delivery-policy` before delivery starts (refused
+`409 CONFLICT {reason:"delivery_already_started"}` once
+`promotion_state ∈ {claiming, done}` or a PR is recorded).
+
+As-plan child tasks (`launch_mode='auto'`) delivered by pull request complete
+only through this path (dependents wait for the merge); other as-plan children
+keep the direct `Done` on `run.done`. The `auto_launch_run_plan` consumer also
+reacts to `run.pr_merged` of an as-plan child: it calls the same idempotent
+`completeTaskFromConfirmedMerge` **before** dependent discovery, so the merge
+itself releases the dependents (the two consumers have separate cursors, and
+discovery must not race the completion).
+
+A one-time reconciliation (`pnpm --filter maister-web tasks:reconcile-merged`,
+dry-run by default) applies the same entry point to InFlight tasks whose newest
+flow Run is already merged; existing `Done` tasks are untouched.
+
+Generated PR bodies (promotion and the Run Git panel prefill) append
+`Closes <scope_key>#<n>` only when the task's binding is `github`, its
+`source_instance` equals the project's GitHub host, `external_key` is `#<n>`
+and the Run resolves the task. GitHub closes the issue only on a merge into the
+default branch; MAIster never claims the issue is closed.
+
 ## Expectations
 
 - Task ↔ Run cardinality is 1:N; a task can spawn many runs over its
@@ -607,7 +740,12 @@ Task detail lists open, answered and cancelled requests — see
 - Librarian-side contracts (Designed): [`task-statements.md`](task-statements.md),
   [`task-clarifications.md`](task-clarifications.md),
   [`librarian-operations.md`](librarian-operations.md).
-- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables).
+- ERD: [`../db/runs-domain.md`](../db/runs-domain.md) (tasks + runs tables, `task_external_sources`).
+- (Implemented) [ADR-206 Provider-neutral task external source binding](../decisions.md#adr-206-provider-neutral-task-external-source-binding),
+  [ADR-207 Task completion after a confirmed pull-request merge](../decisions.md#adr-207-task-completion-after-a-confirmed-pull-request-merge).
+- Wire: [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
+  (`task_create.source`, `GET …/tasks/by-source`, `PUT …/tasks/{taskId}/source`),
+  [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (session detach, `delivery-policy` `resolvesTask`).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)
   (comments, activity, subscriptions, inbox),

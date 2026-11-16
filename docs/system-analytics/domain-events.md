@@ -463,6 +463,29 @@ detail, the external `RunDTO.terminalCause` and MCP `run_get`; the webhook
 
 The [operational lifecycle AsyncAPI](../api/async/operational-lifecycle.asyncapi.yaml) defines content-free owner-aware facts. Implemented `knowledge.record_changed` and `specialist.assignment_changed` emit in their owning transaction and advance existing durable consumer cursors; they are excluded from ordinary agent trigger selection. Native knowledge reads apply current service access rather than depending on a new projection consumer. The registered `specialist_assignment_delivery` consumer handles exact captured result availability through existing delivery transports. Assignment-owner continuation wakes and `stand.operation_changed` reconciliation remain Designed with their owning cooperation/stand writers; no such consumer is implied by taxonomy or schema presence. Current project events retain their owner and schema. Source/target bodies and credentials never enter metadata payloads.
 
+## Confirmed PR merge event (Implemented — ADR-207)
+
+`run.pr_merged` is emitted by `pr_state_scan` inside the merged-edge transaction
+(same transaction as `workspaces.pr_state='merged'` and the `run_pr_merged`
+task_activity twin), exactly once per workspace (column-guarded edge), and only
+for a task-bound Run — a task-less Run has nothing to complete. Payload:
+`{runId, taskId, workspaceId, prNumber, mergeCommitSha, mergedAt, runKind,
+parentRunId}`. It is distinct from the outbound webhook of the same
+name (ADR-140), which is unchanged.
+
+| Membership | Decision |
+| --- | --- |
+| `DOMAIN_EVENT_KINDS` + `domain_events_kind_check` | member (migration `0342`) |
+| Agent triggers (`AGENT_TRIGGER_EVENT_KINDS`) | **excluded** via `PLATFORM_ONLY_EVENT_KINDS` — completion is platform-owned |
+| `ATTENTION_PLANE_EVENT_KINDS` | member through `OPERATIONAL_ATTENTION_EVENT_KINDS` (invalidate-only, never counted — the `run_pr_merged` activity twin is the counted fact; `ATTENTION_EVENT_KINDS` would double-count it) |
+| `RUN_TERMINAL_EVENT_KINDS` / `RUN_SETTLED_EVENT_KINDS` | **not** a member (orchestrator resume, cost rollup, memory harvest and source reindex never see it) |
+| Ext activity pulse (`PulseEventKind`, `mapDomainEvent`) | member, mapped as a run update |
+
+Consumer `task_delivery_completion` handles exactly `run.pr_merged | run.done`;
+the decision table lives in [`tasks.md`](tasks.md#completion-after-a-confirmed-merge).
+Skips and deterministic refusals advance the cursor; only unexpected errors
+throw for dispatcher retry.
+
 ## Expectations
 
 - The `emitDomainEvent` INSERT MUST share the transaction of its domain write

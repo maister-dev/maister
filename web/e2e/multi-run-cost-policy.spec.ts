@@ -54,7 +54,7 @@ async function seedMultiRunTask(): Promise<SeededMultiRunTask> {
 }
 
 test.describe("multi-run cost and delivery policy UI", () => {
-  test("task page shows Run again, launch overrides, history, and totals", async ({
+  test("task page offers a new attempt, launch overrides, history, and totals", async ({
     page,
   }) => {
     const fx = loadFixtures().byKey.board;
@@ -62,9 +62,14 @@ test.describe("multi-run cost and delivery policy UI", () => {
 
     await page.goto(`/projects/${fx.projectSlug}/tasks/${seeded.number}`);
 
-    await expect(
-      page.getByRole("button", { name: /Run again/i }),
-    ).toBeVisible();
+    // D10: a Done task leads with its result; relaunching is the "More" menu's
+    // "Start a new attempt".
+    await page.getByTestId("task-more-actions").locator("> summary").click();
+    const newAttempt = page.getByRole("button", {
+      name: /Start a new attempt/i,
+    });
+
+    await expect(newAttempt).toBeVisible();
     await expect(page.getByRole("main").getByText("2 runs")).toBeVisible();
     await expect(
       page.getByRole("columnheader", { name: /Flow/i }),
@@ -86,7 +91,7 @@ test.describe("multi-run cost and delivery policy UI", () => {
       { timeout: 20_000 },
     );
 
-    await page.getByRole("button", { name: /Run again/i }).click();
+    await newAttempt.click();
     expect((await launchOptionsResponse).ok()).toBe(true);
 
     const dialog = page.getByRole("dialog", { name: /Run again/i });

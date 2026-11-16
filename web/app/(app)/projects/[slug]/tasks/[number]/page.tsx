@@ -1,5 +1,9 @@
-import type { ReactElement } from "react";
-import type { RunStatus, TaskStatus } from "@/lib/db/schema";
+import type { ReactElement, ReactNode } from "react";
+import type {
+  RunStatus,
+  TaskActivityEventKind,
+  TaskStatus,
+} from "@/lib/db/schema";
 import type { TaskEditableTarget } from "@/components/board/task-card-editing";
 import type {
   CheckStrictness,
@@ -36,6 +40,11 @@ import { RelationsEditor } from "@/components/social/relations-editor";
 import { TaskDetailPromptEditor } from "@/components/social/task-detail-prompt-editor";
 import { TaskTimeline } from "@/components/social/task-timeline";
 import RunDiff from "@/components/workbench/run-diff";
+import { LazyDisclosure } from "@/components/tasks/lazy-disclosure";
+import { TaskResultCard } from "@/components/tasks/task-result-card";
+import { TaskRunArtifactView } from "@/components/tasks/task-run-artifact";
+import { TaskSourceChip } from "@/components/tasks/task-source-chip";
+import { LocalTime } from "@/components/ui/local-time";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { projectMembers, users } from "@/lib/db/schema";
@@ -57,7 +66,13 @@ import {
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/execution-host";
 import { formatTokenCount } from "@/lib/runs/cost-summary-facts";
-import { isLiveRunStatus } from "@/lib/runs/live-inspector";
+import { formatDurationMs } from "@/lib/format/duration";
+import { RunTimingFacts } from "@/components/runs/run-timing-detail";
+import {
+  taskNextAction,
+  type TaskPrimaryAction,
+  type TaskSecondaryAction,
+} from "@/lib/tasks/task-next-action";
 
 const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
   merge: "strategyMerge",
@@ -128,29 +143,15 @@ function LaunchConfigLabel({
   );
 }
 
+// D10: a longer statement opens collapsed to a preview.
+const STATEMENT_PREVIEW_LINES = 8;
+
 function parseTaskNumber(raw: string): number | null {
   const parsed = Number.parseInt(raw, 10);
 
   return Number.isInteger(parsed) && parsed >= 1 && String(parsed) === raw
     ? parsed
     : null;
-}
-
-function formatAt(at: Date | null): string {
-  return at ? at.toISOString().slice(0, 16).replace("T", " ") : "—";
-}
-
-function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return "—";
-  const seconds = Math.round(durationMs / 1000);
-
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-
-  return `${hours}h`;
 }
 
 export default async function TaskDetailPage({
@@ -225,15 +226,27 @@ export default async function TaskDetailPage({
           person.projectRole === "owner"),
     ]),
   );
-  const [t, tLaunch, tBoard, locale, platformStatus, launchConfig] =
-    await Promise.all([
-      getTranslations("taskDetail"),
-      getTranslations("launch"),
-      getTranslations("board"),
-      getLocale(),
-      getPlatformStatus(),
-      resolveTaskLaunchConfig(detail.task.id),
-    ]);
+  const [
+    t,
+    tLaunch,
+    tBoard,
+    tTiming,
+    tRun,
+    tRunStatus,
+    locale,
+    platformStatus,
+    launchConfig,
+  ] = await Promise.all([
+    getTranslations("taskDetail"),
+    getTranslations("launch"),
+    getTranslations("board"),
+    getTranslations("runTiming"),
+    getTranslations("run"),
+    getTranslations("run.runStatus"),
+    getLocale(),
+    getPlatformStatus(),
+    resolveTaskLaunchConfig(detail.task.id),
+  ]);
   const openBlocking = await countOpenBlockingClarifications(detail.task.id);
   const manualLaunchability = classifyManualTaskLaunchability(
     {
@@ -414,15 +427,39 @@ export default async function TaskDetailPage({
     system: t("systemActor"),
     mentionNotSummonable: t("mentionNotSummonable"),
     viaLibrarian: t("viaLibrarian"),
+    // P-4: every activity kind has a label — compile-time exhaustive.
     event: {
       task_created: t("event.taskCreated"),
+      comment_added: t("event.commentAdded"),
       task_mentioned: t("event.taskMentioned"),
       relation_added: t("event.relationAdded"),
       relation_removed: t("event.relationRemoved"),
       run_launched: t("event.runLaunched"),
+      triage_set: t("event.triageSet"),
+      triage_requeued: t("event.triageRequeued"),
+      agent_quarantined: t("event.agentQuarantined"),
       experiment_concluded: t("event.experimentConcluded"),
+      run_pr_merged: t("event.runPrMerged"),
+      evaluation_decided: t("event.evaluationDecided"),
       agent_summon_suppressed: t("event.agentSummonSuppressed"),
+      statement_accepted: t("event.statementAccepted"),
+      clarification_requested: t("event.clarificationRequested"),
+      clarification_answered: t("event.clarificationAnswered"),
+      clarification_cancelled: t("event.clarificationCancelled"),
       task_completed: t("event.taskCompleted"),
+      delivery_completion_not_applied: t("event.deliveryCompletionNotApplied"),
+      source_detached: t("event.sourceDetached"),
+    } satisfies Record<TaskActivityEventKind, string>,
+  };
+  const artifactLabels = {
+    notDelivered: t("notDelivered"),
+    merged: t("mergedLocally"),
+    pr: {
+      open: tRun("prOpen"),
+      merged: tRun("prMerged"),
+      closed: tRun("prClosed"),
+      conflicts: tRun("prConflicts"),
+      reopen: tRun("prReopen"),
     },
   };
   const editableTask: TaskEditableTarget = {
@@ -509,6 +546,185 @@ export default async function TaskDetailPage({
       ]
     : [];
 
+  // A current, ready assessment is the only one that may stay collapsed.
+  const qualificationSettled =
+    qualification?.decision === "ready" &&
+    qualification.freshness === "current" &&
+    !qualification.blockedReason;
+  // D10: the page is organized around the task's state and its next action.
+  const latestRun = detail.runs[0] ?? null;
+  const latestPr =
+    latestRun?.delivery.artifact.kind === "pr"
+      ? latestRun.delivery.artifact
+      : null;
+  const resolvingRun =
+    detail.runs.find((run) => run.id === detail.resolvingRunId) ?? null;
+  const nextAction = taskNextAction({
+    taskStatus: detail.task.status as TaskStatus,
+    needsQualification:
+      Boolean(qualification?.required) && !qualificationSettled,
+    launchable: launchDisabledReason === undefined,
+    latestRun: latestRun
+      ? { status: latestRun.status as RunStatus, hasPr: latestPr !== null }
+      : null,
+    completionReady: detail.latestFlowRun?.completionReady ?? false,
+    canAct,
+  });
+  const actionLink =
+    "inline-flex h-8 items-center rounded-md border border-amber bg-amber px-3 font-mono text-[11px] font-semibold text-white hover:bg-amber-2";
+  const secondaryLink =
+    "inline-flex h-8 items-center rounded-md border border-line bg-paper px-3 font-mono text-[11px] font-semibold text-ink-2 hover:border-amber hover:text-amber";
+  const relaunch = (label: string, title?: string) =>
+    canAct ? (
+      <span title={title}>
+        <LaunchPopover
+          forceRelaunch
+          hasRuns
+          disabledLabel={t("runAgainUnavailable")}
+          disabledReason={forceLaunchDisabledReason}
+          label={label}
+          taskId={detail.task.id}
+        />
+      </span>
+    ) : null;
+  const renderAction = (
+    action: TaskPrimaryAction | TaskSecondaryAction,
+    primary: boolean,
+  ): ReactNode => {
+    const linkClass = primary ? actionLink : secondaryLink;
+
+    switch (action) {
+      case "qualify":
+        return (
+          <a className={linkClass} href="#task-qualification">
+            {t("action.qualify")}
+          </a>
+        );
+      case "launch":
+        return canAct ? (
+          <LaunchPopover
+            disabledLabel={t("runAgainUnavailable")}
+            disabledReason={launchDisabledReason}
+            hasRuns={false}
+            label={t("launchFirst")}
+            taskId={detail.task.id}
+          />
+        ) : (
+          <span className="font-mono text-[11px] text-mute">
+            {t("launchFirst")}
+          </span>
+        );
+      case "blocked":
+        return (
+          <span className="font-mono text-[11px] text-amber" role="status">
+            {launchDisabledReason ?? t("launchBlocked")}
+          </span>
+        );
+      case "open_run":
+        return latestRun ? (
+          <Link className={linkClass} href={`/runs/${latestRun.id}`}>
+            {t("action.openRun")}
+          </Link>
+        ) : null;
+      case "respond":
+        return latestRun ? (
+          <Link className={linkClass} href={`/runs/${latestRun.id}`}>
+            {t("action.respond")}
+          </Link>
+        ) : null;
+      case "open_review":
+        return latestRun ? (
+          <Link className={linkClass} href={`/runs/${latestRun.id}#review`}>
+            {t("action.openReview")}
+          </Link>
+        ) : null;
+      case "open_pr":
+        return latestPr ? (
+          <a
+            className={linkClass}
+            href={latestPr.url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {t("action.openPr", { number: latestPr.number ?? "?" })}
+          </a>
+        ) : null;
+      case "complete":
+        return canAct ? (
+          <TaskCompleteAction
+            expectedRevision={detail.task.revision}
+            labels={{
+              complete: t("completeTask"),
+              completing: t("completingTask"),
+              error: t("completeTaskFailed"),
+            }}
+            slug={slug}
+            taskNumber={detail.task.number}
+          />
+        ) : null;
+      case "run_again":
+        return relaunch(t("runAgain"));
+      case "new_attempt":
+        return relaunch(t("startNewAttempt"), t("startNewAttemptHint"));
+      case "result":
+        return (
+          <a className={linkClass} href="#task-result">
+            {t("action.viewResult")}
+          </a>
+        );
+      case "abandoned":
+        return (
+          <span className="font-mono text-[11px] text-mute">
+            {t("status.Abandoned")}
+          </span>
+        );
+      case "queue":
+        return (
+          <TaskQueueControls
+            canAct={canAct}
+            labels={{
+              priorityLow: tBoard("priorityLow"),
+              priorityNormal: tBoard("priorityNormal"),
+              priorityHigh: tBoard("priorityHigh"),
+              priorityUrgent: tBoard("priorityUrgent"),
+              pause: tBoard("queuePause"),
+              resume: tBoard("queueResume"),
+              paused: tBoard("queuePaused"),
+              error: tBoard("editErrorGeneric"),
+            }}
+            queuePaused={detail.task.queuePaused}
+            slug={slug}
+            taskNumber={detail.task.number}
+            taskPriority={detail.task.priority}
+          />
+        );
+      case "run_agent":
+      case "send_to_triage": {
+        const both = nextAction.secondary.includes("run_agent");
+
+        // One control renders both entries when both are offered.
+        if (action === "send_to_triage" && both) return null;
+
+        return canAct ? (
+          <TaskAgentActions
+            agents={action === "run_agent" ? manualAgents : []}
+            labels={{
+              runAgent: t("runAgent"),
+              sendToTriage: t("sendToTriage"),
+              busy: t("agentActionBusy"),
+              agentPickerLabel: t("agentPickerLabel"),
+              errorGeneric: t("agentActionFailed"),
+            }}
+            showSendToTriage={nextAction.secondary.includes("send_to_triage")}
+            slug={slug}
+            taskId={detail.task.id}
+            taskNumber={detail.task.number}
+          />
+        ) : null;
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3">
@@ -524,6 +740,16 @@ export default async function TaskDetailPage({
             <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
               {t(`status.${detail.task.status}`)}
             </span>
+            {detail.task.source ? (
+              <TaskSourceChip
+                kindLabel={
+                  t.has(`sourceKind.${detail.task.source.kind}`)
+                    ? t(`sourceKind.${detail.task.source.kind}`)
+                    : detail.task.source.kind
+                }
+                source={detail.task.source}
+              />
+            ) : null}
             {detail.task.triageStatus === "triaged" ? (
               <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
                 {t("triaged")}
@@ -543,66 +769,21 @@ export default async function TaskDetailPage({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            {canAct &&
-            detail.task.status === "InFlight" &&
-            detail.latestFlowRun?.completionReady ? (
-              <TaskCompleteAction
-                expectedRevision={detail.task.revision}
-                labels={{
-                  complete: t("completeTask"),
-                  completing: t("completingTask"),
-                  error: t("completeTaskFailed"),
-                }}
-                slug={slug}
-                taskNumber={detail.task.number}
-              />
-            ) : null}
-            <TaskQueueControls
-              canAct={canAct}
-              labels={{
-                priorityLow: tBoard("priorityLow"),
-                priorityNormal: tBoard("priorityNormal"),
-                priorityHigh: tBoard("priorityHigh"),
-                priorityUrgent: tBoard("priorityUrgent"),
-                pause: tBoard("queuePause"),
-                resume: tBoard("queueResume"),
-                paused: tBoard("queuePaused"),
-                error: tBoard("editErrorGeneric"),
-              }}
-              queuePaused={detail.task.queuePaused}
-              slug={slug}
-              taskNumber={detail.task.number}
-              taskPriority={detail.task.priority}
-            />
-            {canAct ? (
-              <TaskAgentActions
-                agents={manualAgents}
-                labels={{
-                  runAgent: t("runAgent"),
-                  sendToTriage: t("sendToTriage"),
-                  busy: t("agentActionBusy"),
-                  agentPickerLabel: t("agentPickerLabel"),
-                  errorGeneric: t("agentActionFailed"),
-                }}
-                showSendToTriage={
-                  !detail.latestFlowRun ||
-                  !isLiveRunStatus(detail.latestFlowRun.status)
-                }
-                slug={slug}
-                taskId={detail.task.id}
-                taskNumber={detail.task.number}
-              />
-            ) : null}
-            {canAct ? (
-              <LaunchPopover
-                disabledLabel={t("runAgainUnavailable")}
-                disabledReason={launchDisabledReason}
-                hasRuns={detail.totals.runCount > 0}
-                label={
-                  detail.totals.runCount > 0 ? t("runAgain") : t("launchFirst")
-                }
-                taskId={detail.task.id}
-              />
+            {/* D10: one primary next action; the rest live under "More". */}
+            <div data-testid="task-primary-action">
+              {renderAction(nextAction.primary, true)}
+            </div>
+            {nextAction.secondary.length > 0 ? (
+              <details className="relative" data-testid="task-more-actions">
+                <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-md border border-line bg-paper px-2.5 font-mono text-[11px] font-semibold text-ink-2 hover:border-amber hover:text-amber">
+                  {t("moreActions")}
+                </summary>
+                <div className="absolute right-0 z-20 mt-1 flex min-w-[220px] flex-col gap-2 rounded-lg border border-line bg-paper p-2 shadow-lg">
+                  {nextAction.secondary.map((action) => (
+                    <div key={action}>{renderAction(action, false)}</div>
+                  ))}
+                </div>
+              </details>
             ) : null}
             <FollowButton
               isFollowing={detail.isFollowing}
@@ -637,14 +818,54 @@ export default async function TaskDetailPage({
             value={detail.task.title}
           />
         </div>
-        <div className="rounded-lg border border-line-soft bg-paper p-3">
-          <TaskDetailPromptEditor
-            canEdit={canAct}
-            prompt={detail.task.prompt}
-            slug={slug}
-            taskNumber={detail.task.number}
+        {detail.task.status === "Done" ? (
+          <TaskResultCard
+            artifactLabels={artifactLabels}
+            labels={{
+              title: t("resultTitle"),
+              resolvingRun: t("resolvingRun"),
+              resolvingUnknown: t("resolvingUnknown"),
+              openChanges: t("openChanges"),
+            }}
+            resolvingRun={resolvingRun}
           />
-        </div>
+        ) : null}
+        {detail.completionRefusal ? (
+          <p
+            className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-amber"
+            data-testid="task-completion-refusal"
+            role="status"
+          >
+            {t("completionRefused", {
+              reason: t(`refusalReason.${detail.completionRefusal.reason}`),
+            })}
+          </p>
+        ) : null}
+        <details
+          className="rounded-lg border border-line-soft bg-paper p-3"
+          data-testid="task-statement"
+          open={
+            detail.task.status !== "Done" &&
+            detail.task.prompt.split("\n").length <= STATEMENT_PREVIEW_LINES
+          }
+        >
+          <summary className="cursor-pointer list-none">
+            <span className="line-clamp-3 whitespace-pre-line text-[13px] text-ink-2">
+              {detail.task.prompt}
+            </span>
+            <span className="mt-1 block font-mono text-[11px] text-amber">
+              {t("statementShowFull")}
+            </span>
+          </summary>
+          <div className="mt-2">
+            <TaskDetailPromptEditor
+              canEdit={canAct}
+              prompt={detail.task.prompt}
+              slug={slug}
+              taskNumber={detail.task.number}
+            />
+          </div>
+        </details>
         <TaskClarificationHistory
           awaitingClarification={detail.task.awaitingClarification}
           history={detail.task.clarifications}
@@ -683,9 +904,11 @@ export default async function TaskDetailPage({
           userId={user.id}
         />
         <RelationsEditor
+          collapsedForm
           canEdit={canAct}
           labels={{
             title: t("relationsTitle"),
+            openForm: t("relationsOpenForm"),
             empty: t("relationsEmpty"),
             add: t("relationsAdd"),
             adding: t("relationsAdding"),
@@ -730,19 +953,38 @@ export default async function TaskDetailPage({
         />
       ) : null}
       {qualification ? (
-        <TaskQualificationControl
-          canAct={canAct}
-          slug={slug}
-          summary={qualification}
-          taskId={detail.task.id}
-        />
+        <details
+          className="rounded-lg border border-line-soft bg-paper p-3"
+          data-testid="task-qualification-section"
+          id="task-qualification"
+          open={!qualificationSettled}
+        >
+          <summary className="cursor-pointer text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
+            {t("qualificationTitle")}
+            {qualification.decision ? ` · ${qualification.decision}` : ""}
+          </summary>
+          <div className="mt-2">
+            <TaskQualificationControl
+              canAct={canAct}
+              slug={slug}
+              summary={qualification}
+              taskId={detail.task.id}
+            />
+          </div>
+        </details>
       ) : null}
 
       {launchConfig ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
-            {t("launchConfigTitle")}
-          </h2>
+        <details
+          className="flex flex-col gap-2"
+          data-testid="task-next-launch-settings"
+        >
+          <summary className="cursor-pointer text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
+            {t("nextLaunchSettings")}
+            <span className="ml-2 font-normal normal-case tracking-normal">
+              {t("nextLaunchSettingsHint")}
+            </span>
+          </summary>
           <div
             className="grid gap-px rounded-lg border border-line bg-line sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
             data-testid="task-launch-config"
@@ -756,7 +998,7 @@ export default async function TaskDetailPage({
               </div>
             ))}
           </div>
-        </section>
+        </details>
       ) : null}
 
       <section className="flex flex-col gap-2">
@@ -769,56 +1011,26 @@ export default async function TaskDetailPage({
               <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2">
                 {t("runsCount", { count: detail.totals.runCount })}
               </span>
-              {canAct ? (
-                <LaunchPopover
-                  forceRelaunch
-                  hasRuns
-                  disabledLabel={t("runAgainUnavailable")}
-                  disabledReason={forceLaunchDisabledReason}
-                  label={t("runAgainConcurrent")}
-                  taskId={detail.task.id}
-                />
-              ) : null}
             </div>
           ) : null}
         </div>
-        <div
-          className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-5"
-          data-testid="task-run-aggregates"
-        >
-          {[
-            [t("aggregateRuns"), String(detail.totals.runCount)],
-            [
-              t("aggregateInput"),
-              formatTokenCount(locale, detail.totals.inputTokens),
-            ],
-            [
-              t("aggregateOutput"),
-              formatTokenCount(locale, detail.totals.outputTokens),
-            ],
-            [
-              t("aggregateCache"),
-              formatTokenCount(
+        {detail.totals.runCount > 0 ? (
+          <p
+            className="m-0 font-mono text-[11px] tabular-nums text-mute"
+            data-testid="task-run-aggregates"
+          >
+            {t("runsTokensLine", {
+              total: formatTokenCount(locale, detail.totals.tokenTotal),
+              input: formatTokenCount(locale, detail.totals.inputTokens),
+              output: formatTokenCount(locale, detail.totals.outputTokens),
+              cache: formatTokenCount(
                 locale,
                 detail.totals.cacheReadTokens +
                   detail.totals.cacheCreationTokens,
               ),
-            ],
-            [
-              t("aggregateTokenTotal"),
-              formatTokenCount(locale, detail.totals.tokenTotal),
-            ],
-          ].map(([label, value]) => (
-            <div key={label} className="bg-paper px-3 py-2">
-              <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
-                {label}
-              </div>
-              <div className="mt-1 font-mono text-[12px] font-semibold text-ink">
-                {value}
-              </div>
-            </div>
-          ))}
-        </div>
+            })}
+          </p>
+        ) : null}
         {detail.runs.length === 0 ? (
           <p className="text-[13px] text-mute">{t("runsEmpty")}</p>
         ) : (
@@ -837,10 +1049,13 @@ export default async function TaskDetailPage({
                   <th className="px-3 py-2 font-semibold">
                     {t("runsDelivery")}
                   </th>
-                  <th className="px-3 py-2 font-semibold">
-                    {t("runsDuration")}
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {tTiming("duration")}
                   </th>
-                  <th className="px-3 py-2 font-semibold">
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {tTiming("execution")}
+                  </th>
+                  <th className="px-3 py-2 text-right font-semibold tabular-nums">
                     {t("runsTokenTotal")}
                   </th>
                   <th className="px-3 py-2 font-semibold">
@@ -862,29 +1077,59 @@ export default async function TaskDetailPage({
                     <td className="px-3 py-2 font-mono">
                       {run.runnerModel ?? "—"}
                     </td>
-                    <td className="px-3 py-2 font-mono">{run.status}</td>
-                    <td className="px-3 py-2 font-mono">
-                      {run.deliveryStatus === "publish_branch"
-                        ? tLaunch("strategyPublishBranch")
-                        : (run.deliveryStatus ?? "—")}
+                    <td className="px-3 py-2">
+                      <span className="rounded-full border border-line bg-ivory px-2 py-0.5 font-mono text-[10.5px] font-semibold">
+                        {tRunStatus.has(run.status)
+                          ? tRunStatus(run.status)
+                          : run.status}
+                      </span>
+                      {run.resolving ? (
+                        <span
+                          className="ml-1.5 font-mono text-[10px] font-semibold text-good"
+                          data-testid="task-run-resolving"
+                        >
+                          {t("resolvingBadge")}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-mono text-[10.5px] text-mute">
+                        {run.delivery.strategy === "publish_branch"
+                          ? tLaunch("strategyPublishBranch")
+                          : (run.delivery.strategy ?? "—")}
+                      </div>
+                      <TaskRunArtifactView
+                        artifact={run.delivery.artifact}
+                        labels={artifactLabels}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      {formatDurationMs(run.timing?.durationMs ?? null, {
+                        h: tTiming("units.h"),
+                        min: tTiming("units.min"),
+                        s: tTiming("units.s"),
+                      })}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {run.timing ? (
+                        <RunTimingFacts
+                          testId={`task-run-timing-${run.id}`}
+                          timing={run.timing}
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums">
+                      {run.tokenTotal === null
+                        ? "—"
+                        : formatTokenCount(locale, run.tokenTotal)}
                     </td>
                     <td className="px-3 py-2 font-mono">
-                      {formatDuration(run.durationMs)}
+                      <LocalTime iso={run.startedAt} />
                     </td>
                     <td className="px-3 py-2 font-mono">
-                      {formatTokenCount(locale, run.tokenTotal)}
-                    </td>
-                    <td
-                      suppressHydrationWarning
-                      className="px-3 py-2 font-mono"
-                    >
-                      {formatAt(run.startedAt)}
-                    </td>
-                    <td
-                      suppressHydrationWarning
-                      className="px-3 py-2 font-mono"
-                    >
-                      {formatAt(run.endedAt)}
+                      <LocalTime iso={run.endedAt} />
                     </td>
                     <td className="px-3 py-2">
                       <Link
@@ -929,10 +1174,7 @@ export default async function TaskDetailPage({
       </section>
 
       {graph ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
-            {t("latestRunTitle")}
-          </h2>
+        <LazyDisclosure summary={t("latestRunTitle")} testId="task-run-graph">
           <FlowGraphViewSection
             labels={graph.labels}
             layout={graph.layout}
@@ -945,13 +1187,13 @@ export default async function TaskDetailPage({
             }}
             topology={graph.topology}
           />
-        </section>
+        </LazyDisclosure>
       ) : null}
 
       {detail.latestFlowRun ? (
-        <section className="flex flex-col gap-2">
+        <LazyDisclosure summary={t("runDiffTitle")} testId="task-run-diff">
           <RunDiff labels={diffLabels} runId={detail.latestFlowRun.id} />
-        </section>
+        </LazyDisclosure>
       ) : null}
     </div>
   );

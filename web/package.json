@@ -38,6 +38,8 @@
     "install-package": "tsx --import ./scripts/_register-shim.mjs scripts/install-package.ts",
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",
     "backfill-flow-revisions": "tsx --import ./scripts/_register-shim.mjs scripts/backfill-flow-revisions.ts",
+    "tasks:backfill-sources": "tsx --import ./scripts/_register-shim.mjs scripts/backfill-task-sources.ts",
+    "tasks:reconcile-merged": "tsx --import ./scripts/_register-shim.mjs scripts/reconcile-merged-task-completion.ts",
     "generate:qualification-schema": "tsx scripts/generate-task-qualification-json.ts",
     "validate:qualification-schema": "tsx scripts/generate-task-qualification-json.ts --check",
     "generate:task-launch-schema": "tsx scripts/generate-task-launch-json.ts",
