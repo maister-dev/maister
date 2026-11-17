@@ -325,6 +325,8 @@ describe("AT-16 isolated single-host lifecycle", () => {
     expect(((await health.json()) as { status: string }).status).toBe("ready");
   });
 
+  // The launch alone has taken ~60 s on the macOS Intel runner, so the budget
+  // covers it plus the 120 s turn and 60 s catalog waits inside the case.
   it("I2: a launch with an upload completes through HTTP and Postgres, and the object and history read back", async () => {
     cookie = await signInWithCredentials(web.url, ADMIN);
     const form = new FormData();
@@ -400,7 +402,7 @@ describe("AT-16 isolated single-host lifecycle", () => {
     committedCommandId = command!.id;
     expect(transcript.status).toBe(200);
     expect(detail.messages.length).toBeGreaterThan(0);
-  });
+  }, 240_000);
 
   it("I3: a SIGKILLed web restarts through production initialization under the same isolation and continues the run", async () => {
     const before = await scratchDetail();
@@ -434,7 +436,7 @@ describe("AT-16 isolated single-host lifecycle", () => {
     expect((await scratchDetail()).messages.length).toBeGreaterThan(
       before.messages.length,
     );
-  });
+  }, 240_000);
 
   it("I4: the supervisor and its private root are untouched by the web's death and restart", async () => {
     const health = await fetch(`${supervisor.url}/health`);
