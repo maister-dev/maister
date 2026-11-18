@@ -77,7 +77,9 @@ test("E2E-CBU-02 lists, filters and opens accessible specialist work", async ({
     new RegExp(`/specialist-assignments/${assignmentId}$`),
   );
   await expect(page.getByRole("heading", { name: objective })).toBeVisible();
-  await expect(page.locator('[data-status="queued"]')).toHaveText("Queued");
+  await expect(
+    page.getByRole("main").locator('[data-status="queued"]'),
+  ).toHaveText("Queued");
   await expect(page.getByText("No work has been delegated yet.")).toBeVisible();
   await expect(page.getByText("Authority at submission")).toBeAttached();
 });
@@ -108,9 +110,9 @@ test("E2E-CBU-02 cancels through confirmed controls and directs follow-up to the
 
   await cancelDialog.getByRole("button", { name: "Cancel assignment" }).click();
   expect((await cancelled).status()).toBe(200);
-  await expect(page.locator('[data-status="cancelled"]')).toHaveText(
-    "Cancelled",
-  );
+  await expect(
+    page.getByRole("main").locator('[data-status="cancelled"]'),
+  ).toHaveText("Cancelled");
   await expect(page.getByText("Assignment cancelled").first()).toBeVisible();
 
   await expect(
@@ -174,7 +176,11 @@ test("E2E-CBU-02 renders the assignment screens in Russian", async ({
     page.getByRole("heading", { name: "Поручения специалистам", exact: true }),
   ).toBeVisible();
   await page.goto(`/specialist-assignments/${otherAssignmentId}`);
-  await expect(page.locator('[data-status="queued"]')).toHaveText("В очереди");
+  // A freshly loaded page can briefly hold a hidden second copy outside
+  // <main> (web/CLAUDE.md), so read the status chip inside it.
+  await expect(
+    page.getByRole("main").locator('[data-status="queued"]'),
+  ).toHaveText("В очереди");
   await expect(
     page.getByRole("button", { name: "Отменить поручение", exact: true }),
   ).toBeVisible();
