@@ -375,13 +375,13 @@ describe("runCliStep", () => {
       expect(result.stdout).toContain("allow-ok");
     });
 
-    it("MAISTER_CLI_INHERIT_ENV=1 restores full env inheritance (compat)", async () => {
+    it("keeps a real command isolated from ambient secrets with the retired flag set", async () => {
       vi.stubEnv("MAISTER_CLI_INHERIT_ENV", "1");
 
       const result = await run('echo "s:${WEB_TIER_SENTINEL_SECRET:-absent}"');
 
       expect(result.ok).toBe(true);
-      expect(result.stdout).toContain("s:leak-me");
+      expect(result.stdout).toContain("s:absent");
     });
   });
 

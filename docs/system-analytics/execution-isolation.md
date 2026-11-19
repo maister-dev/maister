@@ -63,6 +63,25 @@ sequenceDiagram
 
 Manager credential files belong to the manager and trusted host principals only. The trusted host owns provider credentials, deployment configuration, app secrets and private runtime state. Workloads receive an explicit environment and opaque grants. Reserve the manager, supervisor, databases, local credential stores, runtime state and privileged sockets from workload mounts and general egress. The brokered façade authorizes a specific audience, operation and resource.
 
+### Local transport activation
+
+The proposed P1 direct transport uses a dedicated manager bearer credential
+on a loopback-only listener. Keep the manager and supervisor copies in
+service-owned files outside repos and runtime roots. Rotate by atomically
+replacing both copies and reopening manager connections. Refuse requests with
+missing, malformed or mismatched credentials before route handlers run,
+including SSE and byte-range reads. Disable redirects on manager requests.
+Readiness requires the expected host key from an authenticated peer. A
+single-user local install also needs its workload file boundary before this
+credential can be treated as confidential from a workload.
+
+The P1 Flow child policy uses the ADR-153 allow-list plus explicitly supplied
+execution plumbing. Exclude the SSH agent socket and remove full inheritance.
+Host-side ACP environment projection is a separate part of T07. The
+pre-confinement deployment may still resolve deliberately configured
+provider credentials and depends on OS identity and filesystem policy to
+protect host configuration.
+
 ### Settlement and recovery
 
 | Boundary | Durable action and owner | Observable outcome |

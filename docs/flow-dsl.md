@@ -1867,15 +1867,14 @@ Allow patterns: `LANG`, `LC_*`, `TZ`, `PATH`, `HOME`, `USER`, `SHELL`,
 Implemented).** The bash child a `cli`/`check` node command, a
 `command_check` gate, or a `requirements[]` probe runs in does NOT inherit
 the web process env. It receives only the allow patterns above, plus
-`TMPDIR`, `SSH_AUTH_SOCK`, `NODE_ENV`, and the per-step transport vars the
+`TMPDIR`, `NODE_ENV`, and the per-step transport vars the
 runner injects (`MAISTER_OUTPUT_FILE`). Web-tier secrets (`DB_URL`, provider
 keys) are never present in a flow command's environment — nor in anything it
 spawns. A command that needs an allow-listed host value can also read it
 directly (e.g. `$HOME`); values outside the allow-list can only arrive via
 `{{ env.* }}` interpolation, which the deny patterns above filter. The
-`MAISTER_CLI_INHERIT_ENV` host env var (see
-[configuration.md](configuration.md)) temporarily restores full inheritance
-for not-yet-migrated packages. **(Implemented — ADR-157)** `MAISTER_CONTEXT_REPOS`
+child environment excludes `SSH_AUTH_SOCK` and ignores the retired
+`MAISTER_CLI_INHERIT_ENV` setting. **(Implemented — ADR-157)** `MAISTER_CONTEXT_REPOS`
 is deliberately NOT on this allow-list: read-only sibling mounts are an
 ACP-session concept, so the var reaches the adapter child only — see
 [`settings.context_repos`](#settingscontext_repos--read-only-sibling-repo-mounts-designed--adr-157).

@@ -23,7 +23,7 @@ describe("childProcessEnv (ADR-153)", () => {
     expect(env.PATH).toBe(process.env.PATH);
     expect(env.LC_ALL).toBe("en_US.UTF-8");
     expect(env.TMPDIR).toBe("/tmp/maister-test");
-    expect(env.SSH_AUTH_SOCK).toBe("/tmp/maister-agent.sock");
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
   });
 
   it("injects caller extras on top of the filtered env", () => {
@@ -32,21 +32,15 @@ describe("childProcessEnv (ADR-153)", () => {
     expect(env.MAISTER_OUTPUT_FILE).toBe("/runs/r1/out.json");
   });
 
-  it("MAISTER_CLI_INHERIT_ENV truthy variants restore full inheritance", () => {
+  it("IT-ISO-05 keeps the allow-list when the retired inheritance flag is set", () => {
     vi.stubEnv("WEB_TIER_SENTINEL_SECRET", "leak-me");
-
     for (const raw of ["1", "true", "on", "yes", "TRUE", " on "]) {
-      vi.stubEnv("MAISTER_CLI_INHERIT_ENV", raw);
-      expect(childProcessEnv().WEB_TIER_SENTINEL_SECRET).toBe("leak-me");
-    }
-
-    for (const raw of ["0", "off", "false", "no", "", "anything"]) {
       vi.stubEnv("MAISTER_CLI_INHERIT_ENV", raw);
       expect(childProcessEnv().WEB_TIER_SENTINEL_SECRET).toBeUndefined();
     }
   });
 
-  it("extras still win in inherit mode", () => {
+  it("retains the explicit output path when the retired flag is present", () => {
     vi.stubEnv("MAISTER_CLI_INHERIT_ENV", "1");
     vi.stubEnv("MAISTER_OUTPUT_FILE", "/stale/from/parent.json");
 
