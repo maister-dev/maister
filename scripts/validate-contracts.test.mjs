@@ -57,6 +57,40 @@ function readContract(file) {
   return YAML.parse(readFileSync(new URL(file, import.meta.url), "utf8"));
 }
 
+test("CT-ISO-03 validates the operation contract alongside retained Run envelopes", () => {
+  const events = readContract("../docs/api/async/execution-host-events.asyncapi.yaml");
+  const supervisor = readContract("../docs/api/supervisor.openapi.yaml");
+  const validator = new Ajv({ strict: false, validateFormats: false, validateSchema: false });
+  validator.addSchema(events, "urn:maister:events");
+  validator.addSchema(supervisor, "urn:maister:supervisor");
+
+  const operation = events.components.schemas.OperationRuntimeEvent.examples[0];
+  const start = supervisor.components.schemas.WorkloadCommandStart.example;
+  const acceptsOperation = validator.getSchema(
+    "urn:maister:events#/components/schemas/OperationRuntimeEvent",
+  );
+  const acceptsStart = validator.getSchema(
+    "urn:maister:supervisor#/components/schemas/WorkloadCommandStart",
+  );
+  const acceptsRun = validator.getSchema(
+    "urn:maister:events#/components/schemas/RuntimeEventEnvelope",
+  );
+
+  assert.ok(acceptsOperation(operation), JSON.stringify(acceptsOperation.errors));
+  assert.ok(acceptsStart(start), JSON.stringify(acceptsStart.errors));
+  assert.ok(
+    acceptsRun(events.components.schemas.RuntimeEventEnvelope.example),
+    JSON.stringify(acceptsRun.errors),
+  );
+  assert.equal(operation.commandId, start.commandId);
+  assert.equal(operation.operationId, start.owner.operationId);
+  assert.equal(operation.assignmentId, start.owner.assignmentId);
+  assert.equal(acceptsStart({ ...start, cwd: "/example" }), false);
+  assert.equal(acceptsOperation({ ...operation, runId: "other-run" }), false);
+  assert.equal(acceptsOperation({ ...operation, envelopeVersion: 1 }), false);
+  assert.equal(acceptsOperation({ ...operation, eventType: "workload.output" }), false);
+});
+
 async function withBrokenLibrarianStream(mutate, callback) {
   const document = readContract(
     "../docs/api/async/librarian-stream.asyncapi.yaml",

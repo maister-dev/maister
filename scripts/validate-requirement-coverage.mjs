@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "execution-isolation": {
+    label: "Execution isolation",
+    planPath: ".ai-factory/plans/feature-isolated-execution-host.md",
+    documents: ["execution-isolation.md"],
+    prefixes: ["ISO"],
+    matrixPath: "docs/system-analytics/execution-isolation-traceability.md",
+    implementationPhases: /^T(?:0[5-9]|1\d|2[0-8])(?:\.\d+)?$/,
+    testRoots: ["web", "supervisor", "scripts"],
+  },
   "company-brain-specialists": {
     label: "Company Brain and specialists",
     planPath: ".ai-factory/plans/codex-company-brain-specialist-assignments.md",

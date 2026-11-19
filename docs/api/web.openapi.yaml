@@ -187,6 +187,38 @@ tags:
       one durable conversation, its turns and cards, personal memory, reset and
       history deletion, the conversation SSE stream, and the admin enablement.
 paths:
+  /api/admin/execution-access:
+    get:
+      operationId: getAdminExecutionAccess
+      x-implementation-status: Designed
+      summary: Read the platform execution ceiling and command default
+      responses:
+        "200":
+          description: Effective persisted policy with its CAS revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformExecutionAccess" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      operationId: patchAdminExecutionAccess
+      x-implementation-status: Designed
+      summary: Replace the ceiling and command default under the current revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlatformExecutionAccessEdit" }
+      responses:
+        "200":
+          description: Stored policy and new revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformExecutionAccess" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: The revision changed or the policy violates a platform constraint. }
+        "422": { description: Invalid execution access policy. }
   /api/projects/{slug}/agents/{agentId}/runs:
     get:
       operationId: getProjectAgentHistory
@@ -22866,6 +22898,70 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    ExecutionCommandAccess:
+      type: object
+      additionalProperties: false
+      required: [network, hostPortGrants, readOnlyPathGrants, writablePathGrants, limits]
+      properties:
+        network:
+          type: object
+          additionalProperties: false
+          required: [mode, allowedHosts]
+          properties:
+            mode: { type: string, enum: [none, allowlist, open] }
+            allowedHosts:
+              type: array
+              uniqueItems: true
+              items: { type: string, minLength: 1, maxLength: 253 }
+        hostPortGrants:
+          type: array
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        readOnlyPathGrants:
+          type: array
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        writablePathGrants:
+          type: array
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        limits:
+          type: object
+          additionalProperties: false
+          required: [timeoutMs, memoryBytes, processes, cpuMillicores]
+          properties:
+            timeoutMs: { type: integer, minimum: 1, maximum: 2147483647 }
+            memoryBytes: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            processes: { type: integer, minimum: 1, maximum: 2147483647 }
+            cpuMillicores: { type: integer, minimum: 1, maximum: 2147483647 }
+    PlatformExecutionCeiling:
+      type: object
+      additionalProperties: false
+      required: [commandAccess, allowYolo, allowSeamBypass, allowExposedCredentials, allowDocker, allowNestedUserNamespaces, allowUnisolated]
+      properties:
+        commandAccess: { $ref: "#/components/schemas/ExecutionCommandAccess" }
+        allowYolo: { type: boolean }
+        allowSeamBypass: { type: boolean }
+        allowExposedCredentials: { type: boolean }
+        allowDocker: { type: boolean }
+        allowNestedUserNamespaces: { type: boolean }
+        allowUnisolated: { type: boolean }
+    PlatformExecutionAccess:
+      type: object
+      additionalProperties: false
+      required: [revision, ceiling, commandDefault]
+      properties:
+        revision: { type: integer, minimum: 1, maximum: 2147483647 }
+        ceiling: { $ref: "#/components/schemas/PlatformExecutionCeiling" }
+        commandDefault: { $ref: "#/components/schemas/ExecutionCommandAccess" }
+    PlatformExecutionAccessEdit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, ceiling, commandDefault]
+      properties:
+        expectedRevision: { type: integer, minimum: 1, maximum: 2147483647 }
+        ceiling: { $ref: "#/components/schemas/PlatformExecutionCeiling" }
+        commandDefault: { $ref: "#/components/schemas/ExecutionCommandAccess" }
     TaskLaunchOptions:
       type: object
       additionalProperties: false

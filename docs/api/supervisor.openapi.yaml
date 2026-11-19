@@ -76,6 +76,12 @@ servers:
       port:
         default: "7777"
 security: []
+x-designed-security:
+  status: Designed
+  scheme: ExecutionManagerBearer
+  scope: All routes including health, diagnostics, SSE, acknowledgements and binary objects.
+  challengeStatus: 401
+  bind: Loopback
 tags:
   - name: health
     description: Supervisor readiness.
@@ -108,6 +114,51 @@ tags:
       composition can address this socket. Nothing here takes a filesystem path
       or an active assignment.
 paths:
+  /workload-commands:
+    post:
+      operationId: startWorkloadCommand
+      x-implementation-status: Designed
+      summary: Accept a fenced host workload
+      description: An authenticated manager submits immutable intent. A 202 acknowledges durable acceptance. Read the command receipt and canonical event stream for the outcome.
+      security:
+        - ExecutionManagerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadCommandStart" }
+      responses:
+        "202":
+          description: Identical replay returns the same acceptance identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadCommandAccepted" }
+        "400": { description: Malformed start contract. }
+        "401": { description: Missing or invalid manager authentication. }
+        "409": { description: "Refused policy, stale assignment, or conflicting canonical intent." }
+        "503": { description: Host admission or sandbox startup unavailable. }
+  /workload-commands/{commandId}/cancel:
+    post:
+      operationId: cancelWorkloadCommand
+      x-implementation-status: Designed
+      summary: Accept a fenced request to cancel an existing workload
+      security:
+        - ExecutionManagerBearer: []
+      parameters:
+        - name: commandId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadCommandCancel" }
+      responses:
+        "202": { description: Cancel intent accepted under its own immutable command identity. }
+        "400": { description: Malformed cancel contract. }
+        "401": { description: Missing or invalid manager authentication. }
+        "409": { description: Fence or command identity differs from the retained owner. }
   /capabilities:
     get:
       tags: [execution-host]
@@ -1248,6 +1299,9 @@ paths:
         retirement handshake below, which compacts a receipt to a tombstone and
         keeps its key.
       operationId: getCommandReceipt
+      x-designed-response-schema:
+        description: Workload receipts join the existing receipt union when both peers negotiate workload commands.
+        schema: { $ref: "#/components/schemas/WorkloadCommandReceipt" }
       parameters:
         - name: commandId
           in: path
@@ -2640,6 +2694,11 @@ paths:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 
 components:
+  securitySchemes:
+    ExecutionManagerBearer:
+      type: http
+      scheme: bearer
+      description: Designed local manager credential, separate from app secrets and never delivered to workloads.
   parameters:
     RuntimeObjectId:
       name: objectId
@@ -2723,6 +2782,99 @@ components:
         type: string
         enum: ["true"]
   schemas:
+    WorkloadRunOwner:
+      type: object
+      additionalProperties: false
+      required: [kind, runId, assignmentId, assignmentEpoch]
+      properties:
+        kind: { type: string, enum: [run] }
+        runId: { type: string, minLength: 1, maxLength: 128 }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+    WorkloadOperationOwner:
+      type: object
+      additionalProperties: false
+      required: [kind, operationId, assignmentId, assignmentEpoch]
+      properties:
+        kind: { type: string, enum: [operation] }
+        operationId: { type: string, format: uuid }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+    WorkloadCommandStart:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, commandId, hostKey, owner, targetHandle, workloadClass, descriptorSha256, policySha256, timeoutMs]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        commandId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        owner:
+          oneOf:
+            - { $ref: "#/components/schemas/WorkloadRunOwner" }
+            - { $ref: "#/components/schemas/WorkloadOperationOwner" }
+        targetHandle: { type: string, pattern: '^ws_[0-9a-f]{32}$' }
+        workloadClass:
+          type: string
+          enum: [cli, check, gate, requirement_probe, package_setup, diagnostic]
+        descriptorSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        policySha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        timeoutMs: { type: integer, minimum: 1, maximum: 2147483647 }
+      example:
+        schemaVersion: 1
+        commandId: 56f4ab77-10eb-4bf9-9fc7-1aaf95616b46
+        hostKey: eh_design_fixture
+        owner:
+          kind: operation
+          operationId: 7cce87b7-46f7-472c-b6a8-ec890c24199e
+          assignmentId: 454900af-8141-4864-a4a7-b0e16ec48f4a
+          assignmentEpoch: 1
+        targetHandle: ws_eeed9528af8e4c71b75017562e1c3844
+        workloadClass: requirement_probe
+        descriptorSha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        policySha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        timeoutMs: 10000
+    WorkloadCommandAccepted:
+      type: object
+      additionalProperties: false
+      required: [commandId, acceptedAt, policySha256]
+      properties:
+        commandId: { type: string, format: uuid }
+        acceptedAt: { type: string, format: date-time }
+        policySha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    WorkloadCommandCancel:
+      type: object
+      additionalProperties: false
+      required: [commandId, hostKey, owner]
+      properties:
+        commandId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        owner:
+          oneOf:
+            - { $ref: "#/components/schemas/WorkloadRunOwner" }
+            - { $ref: "#/components/schemas/WorkloadOperationOwner" }
+    WorkloadCommandReceipt:
+      type: object
+      additionalProperties: false
+      required: [receiptKind, commandId, hostKey, owner, requestSha256, policySha256, phase, acceptedAt]
+      properties:
+        receiptKind: { type: string, enum: [workload] }
+        commandId: { type: string, format: uuid }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        owner:
+          oneOf:
+            - { $ref: "#/components/schemas/WorkloadRunOwner" }
+            - { $ref: "#/components/schemas/WorkloadOperationOwner" }
+        requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        policySha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        phase: { type: string, enum: [accepted, completed, indeterminate] }
+        acceptedAt: { type: string, format: date-time }
+        terminalEventId: { type: string, format: uuid }
+        resultObjectId: { type: string, format: uuid }
+      description: |
+        The manager accepts a completion only when its exact terminal event
+        matches the owner, command and digest. An accepted or indeterminate
+        receipt never advances graph state. Verify any declared result against
+        the sealed owner-bound runtime object before advancing.
     SupervisorHealthResponse:
       type: object
       required: [status, version, uptimeMs, sessions, checkedAt, host]

@@ -93,6 +93,97 @@ components:
       payload:
         $ref: "#/components/schemas/RuntimeEventAck"
   schemas:
+    OperationRuntimeEvent:
+      x-implementation-status: Designed
+      description: |
+        This non-Run envelope shares the durable host stream and decimal
+        sequence space with Run envelope v1. It is enabled only after the
+        manager negotiates v2. Operation ownership is projected independently
+        of Run cursors. Acknowledge only the contiguous committed prefix.
+      type: object
+      additionalProperties: false
+      required: [envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, operationId, assignmentId, assignmentEpoch, commandId, eventType, occurredAt, payloadSchema, payload]
+      properties:
+        envelopeVersion: { type: integer, const: 2 }
+        eventId: { $ref: "#/components/schemas/EventId" }
+        hostKey: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+        hostBootId: { type: string, format: uuid }
+        streamId: { type: string, format: uuid }
+        sequence: { $ref: "#/components/schemas/Sequence" }
+        operationId: { type: string, format: uuid }
+        assignmentId: { type: string, format: uuid }
+        assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
+        commandId: { type: string, format: uuid }
+        eventType:
+          enum: [workload.accepted, workload.output, workload.terminal, workload.egress]
+        occurredAt: { type: string, format: date-time }
+        payloadSchema:
+          enum: [maister.workload.accepted.v1, maister.workload.output.v1, maister.workload.terminal.v1, maister.workload.egress.v1]
+        payload: { type: object }
+      examples:
+        - envelopeVersion: 2
+          eventId: d9a8f1cf-8ad9-488a-acae-ae87576c145a
+          hostKey: eh_design_fixture
+          hostBootId: c1f5131a-7bbd-42c9-9e39-81286d724032
+          streamId: 9178a839-0a89-49d0-8dae-83c01897b78c
+          sequence: "42"
+          operationId: 7cce87b7-46f7-472c-b6a8-ec890c24199e
+          assignmentId: 454900af-8141-4864-a4a7-b0e16ec48f4a
+          assignmentEpoch: 1
+          commandId: 56f4ab77-10eb-4bf9-9fc7-1aaf95616b46
+          eventType: workload.terminal
+          occurredAt: "2026-11-19T10:00:00Z"
+          payloadSchema: maister.workload.terminal.v1
+          payload: { outcome: succeeded, quiescent: true }
+      allOf:
+        - if:
+            properties: { eventType: { const: workload.accepted } }
+          then:
+            properties:
+              payloadSchema: { const: maister.workload.accepted.v1 }
+              payload:
+                additionalProperties: false
+                required: [requestSha256, policySha256]
+                properties:
+                  requestSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  policySha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        - if:
+            properties: { eventType: { const: workload.output } }
+          then:
+            properties:
+              payloadSchema: { const: maister.workload.output.v1 }
+              payload:
+                additionalProperties: false
+                required: [channel, byteOffset, text, truncated]
+                properties:
+                  channel: { enum: [stdout, stderr] }
+                  byteOffset: { $ref: "#/components/schemas/Sequence" }
+                  text: { type: string, maxLength: 16384 }
+                  truncated: { type: boolean }
+        - if:
+            properties: { eventType: { const: workload.terminal } }
+          then:
+            properties:
+              payloadSchema: { const: maister.workload.terminal.v1 }
+              payload:
+                additionalProperties: false
+                required: [outcome, quiescent]
+                properties:
+                  outcome: { enum: [succeeded, failed, limited, cancelled, indeterminate] }
+                  quiescent: { type: boolean }
+                  resultObjectId: { type: string, format: uuid }
+        - if:
+            properties: { eventType: { const: workload.egress } }
+          then:
+            properties:
+              payloadSchema: { const: maister.workload.egress.v1 }
+              payload:
+                additionalProperties: false
+                required: [destination, connections, deniedConnections]
+                properties:
+                  destination: { type: string, minLength: 1, maxLength: 253 }
+                  connections: { type: integer, minimum: 0 }
+                  deniedConnections: { type: integer, minimum: 0 }
     Sequence:
       type: string
       pattern: "^(0|[1-9][0-9]{0,18})$"
@@ -151,7 +242,7 @@ components:
         retentionClass: { type: string, enum: [run] }
         state: { type: string, enum: [available] }
         sealedAt: { type: string, format: date-time }
-        expiresAt: { nullable: true, enum: [null] }
+        expiresAt: { type: 'null' }
     RuntimeEventEnvelope:
       type: object
       additionalProperties: false

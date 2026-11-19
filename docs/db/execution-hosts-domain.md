@@ -1,5 +1,51 @@
 # Execution-host domain ERD
 
+## Isolation migration design
+
+**Designed.** The planning base is Postgres migration `0342_domain_event_run_pr_merged` and host SQLite `user_version=17`. Reserve 0343 and the next available migrations for policy and owner changes. Recheck the generated journal and SQLite version at implementation. [ADR-210](../decisions/adr-210.md)
+
+| Record | Required storage invariant |
+| --- | --- |
+| Platform ceiling and command default | Standalone singleton with a singleton-key check, versioned policy JSON and positive CAS revision. A first boot with no runner resolves secure defaults. |
+| Runner and project command policy | Store normalized revisioned configuration with a monotonic revision separate from unrelated settings. Missing inherit and explicit empty deny remain distinguishable. |
+| Run launch capture and applied session witness | Capture policy and runner choices at once for an admitted Run. Bind a named logical session or node attempt to the immutable capture and record applied host, generation and digest on actual dispatch. Existing sessions and their captured values survive unchanged. |
+| Operation owner and placement | Add an operation head for project preflight, package revision setup or diagnostic. Exactly one immutable target scope per head. Bind each assignment to the owner and host. Require positive epoch, unique owner/epoch and at most one active assignment per owner. |
+| Command ledger | Existing Run owner columns remain authoritative for Run commands. An operation command binds the operation, assignment and host through composite constraints. Exactly one owner form may be populated. Uniqueness on immutable command ID enforces content-guarded replay. Leave the prompt continuation `owner_kind` and `owner_ref` unchanged. |
+| Canonical events and sealed objects | Preserve the existing globally unique host-stream position and legacy envelope. Extend the owner check for the operation form and require v2 for that form. Bind object intent, seal, digest, size and generation to the exact originating command. Advance Run consumers only for Run-owned events. |
+
+```mermaid
+erDiagram
+    EXECUTION_OPERATIONS ||--o{ EXECUTION_OPERATION_ASSIGNMENTS : "positive epoch and one active"
+    EXECUTION_HOSTS ||--o{ EXECUTION_OPERATION_ASSIGNMENTS : "restrict host deletion"
+    EXECUTION_OPERATION_ASSIGNMENTS o|--o{ EXECUTION_COMMANDS : "exclusive operation form"
+    EXECUTION_ASSIGNMENTS o|--o{ EXECUTION_COMMANDS : "exclusive Run form"
+    EXECUTION_COMMANDS ||--o{ EXECUTION_EVENTS : "new workload evidence"
+    EXECUTION_COMMANDS ||--o{ EXECUTION_RUNTIME_OBJECTS : "new output binding"
+    RUNS ||--o| EXECUTION_LAUNCH_CAPTURES : "immutable policy and runner choices"
+    EXECUTION_LAUNCH_CAPTURES ||--o{ ISOLATION_APPLICATION_RECEIPTS : "bound to actual epoch and digest"
+```
+
+For upgraded rows, derive the owner from existing foreign keys. Report inconsistent row counts before strengthening constraints. Retain the original Run IDs, command IDs, payload bytes, cursors and session snapshots. Leave the enforcement witness absent for legacy attempts. A secure first admission creates new legitimate evidence.
+
+Host SQLite uses one transactional upgrade with equivalent fresh-create DDL. Add operation fences, receipt ownership, scoped workspace handles, process obligations and runtime object bindings. Keep accepted legacy receipts, stream sequence, ACK floor and unacknowledged event bytes intact. Stale or unsupported peers must refuse dispatch before emitting a new owner version.
+
+| Legacy fixture | Expected state after upgrade |
+| --- | --- |
+| Parked Run session with runner snapshot | Original owner, ACP handle and snapshot retained. Applied isolation evidence absent. Re-entry requires explicit admission compatible with the pinned state. |
+| Pending accepted Run command in both stores | Run-form owner derived from existing assignment, same request and result identity, no operation row. Delivery recovery joins the retained receipt. |
+| Unacknowledged Run event | Byte-identical v1 payload at its original host sequence. Replay remains eligible for the original Run projector and advances the shared ACK once. |
+| Sealed Run object and retired receipt | Exact binding, content integrity, retention deadline and retirement identity preserved. Neither can be reopened as an operation-owned record. |
+| Owner fields disagree or a newer SQLite version is present | Refuse upgrade or boot before enabling workers. Emit the conflicting constraint or version, with identifiers scoped to operator diagnostics. |
+
+| Fault window | Recovery |
+| --- | --- |
+| Interrupted SQLite DDL | Roll back and reopen the exact store. Advance `user_version` only after the entire migration commits. |
+| Postgres expanded, SQLite not upgraded | Preserve read compatibility. Keep operation admission inactive. Complete the coordinated host upgrade before activation. |
+| Host committed acceptance before manager received it | Replay the identical command and recover the same receipt. Reject divergent content, stale epoch and inconsistent owner. |
+| New-format writes already accepted | Drain, reconcile effects and repair forward with compatible binaries. Coordinated restore of both stores requires a verified backup and explicit reconciliation of accepted external effects. |
+
+Exercise fresh, populated upgrade, repeat application, rollback interruption, mixed peer and conflicting owner fixtures with both real stores. Document generated entities in the Drizzle journal, current schema narrative and affected ERDs in the migration commit.
+
 Tables for the local execution-host contract introduced by
 [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).
 Behavior lives in

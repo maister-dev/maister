@@ -1,5 +1,9 @@
 # Projects domain ERD
 
+**Designed — execution isolation.** A project may store an optional
+command-access override and a positive CAS revision. Clearing the override
+restores platform defaults. See the [isolation migration design](execution-hosts-domain.md#isolation-migration-design).
+
 Tables for project registration and the immediate fanout. See
 [`../system-analytics/projects.md`](../system-analytics/projects.md) for
 process flows and [`../system-analytics/executors.md`](../system-analytics/executors.md)

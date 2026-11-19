@@ -1,5 +1,10 @@
 # Runs domain ERD
 
+**Designed — execution isolation.** Every new admission has one immutable
+launch capture. Each session or command incarnation binds that capture to
+its applied host, epoch and digest. Legacy rows retain their original
+snapshots. See the [isolation migration design](execution-hosts-domain.md#isolation-migration-design).
+
 ## Native knowledge actor snapshot (Implemented)
 
 Main `0233_native_knowledge_execution` adds nullable immutable

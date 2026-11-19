@@ -1,5 +1,10 @@
 # Capabilities domain ERD
 
+**Designed — execution isolation.** Package setup operations bind the exact
+capability import revision before executing. Setup completion needs a
+host receipt and scoped publication, as described in the
+[isolation migration design](execution-hosts-domain.md#isolation-migration-design).
+
 Tables for the capability registry, git-pinned capability imports, and the
 per-node-attempt materialization plan introduced by ADR-041. See
 [`../system-analytics/capabilities.md`](../system-analytics/capabilities.md)

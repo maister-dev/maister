@@ -576,6 +576,14 @@ a Stage-C deletion obligation (ADR-166 D9).
 
 ## Command kinds, routes, and completion signals
 
+**Designed — execution isolation.** Run commands retain the existing
+assignment fence. Requirement, install and diagnostic operations use an
+independent owner with their own host placement and epoch. Both use the
+host-global replay order. A v2 operation event advances the contiguous
+host ACK after its own domain commit. It never advances a Run cursor or
+applies a Run lifecycle event. See [Execution isolation](execution-isolation.md)
+and the [migration design](../db/execution-hosts-domain.md#isolation-migration-design).
+
 | Kind                 | Route                            | Effect                                                                                                           | Duration     | Completion signal(s)                                                                                          |
 | -------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------- |
 | `workspace.adopt`    | `POST /workspaces/adopt`         | register path → handle (idempotent on `(runId, realpath)` among ACTIVE handles; a released path mints a NEW one) | immediate    | HTTP 200                                                                                                      |
