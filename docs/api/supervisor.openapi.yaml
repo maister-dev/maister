@@ -75,12 +75,18 @@ servers:
     variables:
       port:
         default: "7777"
-security: []
-x-designed-security:
-  status: Designed
+security:
+  - ExecutionManagerBearer: []
+    ExecutionManagerHost: []
+  - {}
+x-local-manager-authentication:
+  status: Implemented when manager credential file is configured
+  activation: MAISTER_MANAGER_AUTH_FILE
   scheme: ExecutionManagerBearer
-  scope: All routes including health, diagnostics, SSE, acknowledgements and binary objects.
+  scope: All TCP routes including health, diagnostics, SSE, acknowledgements and binary objects.
   challengeStatus: 401
+  credentialUnavailableStatus: 503
+  authenticatedResponseHeader: X-Maister-Execution-Host
   bind: Loopback
 tags:
   - name: health
@@ -122,6 +128,7 @@ paths:
       description: An authenticated manager submits immutable intent. A 202 acknowledges durable acceptance. Read the command receipt and canonical event stream for the outcome.
       security:
         - ExecutionManagerBearer: []
+          ExecutionManagerHost: []
       requestBody:
         required: true
         content:
@@ -144,6 +151,7 @@ paths:
       summary: Accept a fenced request to cancel an existing workload
       security:
         - ExecutionManagerBearer: []
+          ExecutionManagerHost: []
       parameters:
         - name: commandId
           in: path
@@ -2698,7 +2706,12 @@ components:
     ExecutionManagerBearer:
       type: http
       scheme: bearer
-      description: Designed local manager credential, separate from app secrets and never delivered to workloads.
+      description: Service-owned manager credential encoded as 64 lowercase hexadecimal characters.
+    ExecutionManagerHost:
+      type: apiKey
+      in: header
+      name: X-Maister-Execution-Host
+      description: Expected execution host key. Returned on authenticated responses.
   parameters:
     RuntimeObjectId:
       name: objectId
@@ -4369,6 +4382,8 @@ components:
         - workspace_released
         - workspace_rejected
         - workload_environment_reserved
+        - manager_auth_required
+        - manager_auth_unavailable
         - workspace_in_use
         - invalid_librarian_workspace
         - legacy_field

@@ -122,6 +122,7 @@ export async function captureOwnedAdapterProcess(
 type SupervisorProcessCapture = Readonly<{
   invocation: Invocation;
   url: string;
+  headers?: Readonly<Record<string, string>>;
   supervisorPid: number;
   runtimeRoot: string;
   bootId: string;
@@ -134,6 +135,7 @@ export async function captureSupervisorProcessGroups(
   input: SupervisorProcessCapture,
 ): Promise<readonly number[]> {
   const response = await fetch(`${input.url}/sessions`, {
+    headers: input.headers,
     signal: AbortSignal.timeout(2_000),
   });
 

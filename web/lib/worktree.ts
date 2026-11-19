@@ -14,6 +14,8 @@ import { promisify } from "node:util";
 import pino from "pino";
 import { z } from "zod";
 
+import { gitInspectionEnvironment } from "../../runtime/git-inspection-environment";
+
 import { branchNameSchema } from "@/lib/git-ref-names";
 import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
@@ -169,6 +171,17 @@ async function runGit(
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: EXEC_MAX_BUFFER,
     env: cLocaleGitEnv(),
+  });
+}
+
+async function runGitInspection(
+  repo: string,
+  args: readonly string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return executeRepositoryGit(repo, args, {
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: EXEC_MAX_BUFFER,
+    env: gitInspectionEnvironment(),
   });
 }
 
@@ -695,7 +708,7 @@ export async function diffRunWorkspaceFileMetadata(
 
   try {
     const [raw, numstat] = await Promise.all([
-      runGit(repo, [
+      runGitInspection(repo, [
         "diff",
         ...REVIEW_DIFF_OPTIONS,
         "--raw",
@@ -703,7 +716,13 @@ export async function diffRunWorkspaceFileMetadata(
         "-z",
         range,
       ]),
-      runGit(repo, ["diff", ...REVIEW_DIFF_OPTIONS, "--numstat", "-z", range]),
+      runGitInspection(repo, [
+        "diff",
+        ...REVIEW_DIFF_OPTIONS,
+        "--numstat",
+        "-z",
+        range,
+      ]),
     ]);
     const countsByPath = parseNumstat(numstat.stdout);
 
@@ -742,7 +761,7 @@ export async function diffRunWorkspace(
     // from merge-base(base, branch), which under-reports the branch when its
     // history is rewritten off its stored base (rebase/reset). Matches the
     // documented contract (workbench.md) and the M18 review-panel `diffRange`.
-    const { stdout } = await runGit(repo, diffArgs);
+    const { stdout } = await runGitInspection(repo, diffArgs);
 
     return { text: stdout, truncated: false };
   } catch (err) {
@@ -2228,10 +2247,11 @@ export async function logRange(args: LogRangeArgs): Promise<string> {
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "logRange");
 
   try {
-    const { stdout } = await runGit(wt, [
+    const { stdout } = await runGitInspection(wt, [
       "log",
       "--oneline",
       "--no-color",
+      "--no-show-signature",
       "--end-of-options",
       `${base}..${br}`,
     ]);
@@ -2287,6 +2307,7 @@ export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
     const { stdout } = await execFileAsync("git", ["-C", wt, ...diffArgs], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
+      env: gitInspectionEnvironment(),
     });
 
     return { text: stdout, truncated: false };
@@ -2349,7 +2370,7 @@ async function streamGitTruncatedTo(
     (resolve, reject) => {
       const child = spawn("git", ["-C", repo, ...args], {
         signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-        env: env ?? process.env,
+        env: env ?? gitInspectionEnvironment(),
       });
 
       let bytes = 0;
@@ -2459,7 +2480,14 @@ export async function logRangeBounded(
 
   return streamGitTruncatedTo(
     wt,
-    ["log", "--oneline", "--no-color", "--end-of-options", `${base}..${br}`],
+    [
+      "log",
+      "--oneline",
+      "--no-color",
+      "--no-show-signature",
+      "--end-of-options",
+      `${base}..${br}`,
+    ],
     maxBytes,
     `git log ${base}..${br}`,
   );
@@ -2495,7 +2523,7 @@ async function withTempIndexCopy<T>(
         {
           timeout: GIT_TIMEOUT_MS,
           maxBuffer: EXEC_MAX_BUFFER,
-          env: cLocaleGitEnv(),
+          env: gitInspectionEnvironment(),
         },
       ));
     } catch (err) {
@@ -2527,7 +2555,9 @@ async function withIntentToAddTempIndex<T>(
   worktreePath: string,
   fn: (env: NodeJS.ProcessEnv) => Promise<T>,
 ): Promise<T> {
-  return withTempIndexCopy(worktreePath, async (env) => {
+  return withTempIndexCopy(worktreePath, async (indexEnv) => {
+    const env = gitInspectionEnvironment(indexEnv.GIT_INDEX_FILE);
+
     await execFileAsync("git", ["-C", worktreePath, "add", "-N", "."], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
@@ -2773,7 +2803,7 @@ export async function diffNameStatus(
   log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffNameStatus");
 
   try {
-    const { stdout } = await runGit(wt, [
+    const { stdout } = await runGitInspection(wt, [
       "diff",
       ...REVIEW_DIFF_OPTIONS,
       "--name-status",
@@ -2806,7 +2836,7 @@ export async function diffChangeStats(
   try {
     const [nameStatus, { stdout: numstatRaw }] = await Promise.all([
       diffNameStatus({ worktreePath: wt, baseRef: base, branch: br }),
-      runGit(wt, [
+      runGitInspection(wt, [
         "diff",
         ...REVIEW_DIFF_OPTIONS,
         "--numstat",

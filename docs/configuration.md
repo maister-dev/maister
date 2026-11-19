@@ -1289,6 +1289,8 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
 > | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
 > | `MAISTER_SUPERVISOR_URL` | no | `http://127.0.0.1:7777` | Web → supervisor HTTP+SSE base URL. Manager calls refuse redirects. See [Supervisor](supervisor.md). |
+> | `MAISTER_MANAGER_AUTH_FILE` | no | unset | On each service, its own absolute mode-0600 or mode-0400 file containing the same 32-byte hexadecimal manager credential. The supervisor authenticates all TCP routes when configured. |
+> | `MAISTER_SUPERVISOR_EXPECTED_HOST_KEY` | paired with manager auth file on web | unset | Web's expected durable supervisor host key. Authenticated transport requires the literal IPv4 loopback URL. |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |

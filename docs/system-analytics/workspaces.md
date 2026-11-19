@@ -686,7 +686,10 @@ absence, no live session, grace expiry, and final lease fence.
 ### Privileged Git invocation (ADR-210)
 
 Worktree patch and metadata reads disable external diff and text conversion,
-including on the bounded streaming path. Remaining invocation policy is
+including on the bounded streaming path. Those reads use an explicit Git
+environment with hooks, fsmonitor and network protocols disabled. The Git
+directory is selected by the validated argument, and working-tree inspection
+receives its operation-owned scratch index. Remaining invocation policy is
 Designed. Its migration must cover these owning entry points.
 
 | Family | Current entry points and behavior to preserve |

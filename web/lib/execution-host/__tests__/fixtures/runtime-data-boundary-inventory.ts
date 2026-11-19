@@ -94,6 +94,29 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "../runtime/manager-credential.ts",
+      "manager-flow-state",
+      "Read the service-owned manager credential with a private mode, without resolving a final symlink or reading host runtime data",
+      [
+        ["readManagerCredential", "node:fs/promises.open", "open"],
+        ["readManagerCredential", "node:fs.constants.O_RDONLY", "unresolved"],
+        ["readManagerCredential", "node:fs.constants.O_NOFOLLOW", "unresolved"],
+        ["readManagerCredential", "node:fs.constants.O_NONBLOCK", "unresolved"],
+      ],
+    ),
+    ...classified(
+      "lib/supervisor-client.ts",
+      "manager-flow-state",
+      "Read the manager's own absolute credential path from its startup configuration; no route, repository, or supervisor supplies the path",
+      [
+        [
+          "managerAuthorization",
+          "../runtime/manager-credential.ts#readManagerCredential",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
       "lib/stand-operations/authority-runtime.ts",
       "manager-flow-state",
       "Read operator-configured TLS files at manager boot for the stand authority listener; no request or supervisor path is accepted",
@@ -2645,6 +2668,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("../runtime/manager-credential.ts", "manager-flow-state", [
+    ["readManagerCredential", true],
+  ]),
   ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [
     ["readCommittedCanonicalSql", false],
   ]),

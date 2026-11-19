@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import pino from "pino";
 import {
   Agent,
+  Headers as UndiciHeaders,
   Request as UndiciRequest,
   fetch as undiciFetch,
   type RequestInit as UndiciRequestInit,
@@ -31,6 +32,11 @@ import {
   parseCommandReceiptV2,
   type CommandReceiptV2,
 } from "../../runtime/command-evidence";
+import {
+  MANAGER_HOST_HEADER,
+  ManagerCredentialError,
+  readManagerCredential,
+} from "../../runtime/manager-credential";
 import {
   MAX_OBJECT_RESPONSE_BYTES,
   parseObjectContentLength,
@@ -778,6 +784,12 @@ function unknownOutcomeError(
 }
 
 function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
+  if (err instanceof ManagerCredentialError) {
+    return new MaisterError("CONFIG", err.message, {
+      details: { transport: "not_sent", reason: "manager_auth_unavailable" },
+    });
+  }
+
   return unknownOutcomeError(
     err,
     ctx,
@@ -785,8 +797,80 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
   );
 }
 
-function fetchSupervisor(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, redirect: "manual" });
+type ManagerAuthorization = Readonly<{ credential: string; hostKey: string }>;
+
+async function managerAuthorization(
+  url: string,
+): Promise<ManagerAuthorization | undefined> {
+  const file = process.env.MAISTER_MANAGER_AUTH_FILE;
+  const hostKey = process.env.MAISTER_SUPERVISOR_EXPECTED_HOST_KEY;
+
+  if (file === undefined && hostKey === undefined) return undefined;
+  if (!file || !hostKey || !/^[A-Za-z0-9_-]{8,64}$/.test(hostKey)) {
+    throw new ManagerCredentialError(
+      "Configure a manager credential file and expected supervisor host key",
+    );
+  }
+  const endpoint = new URL(url);
+
+  if (
+    endpoint.protocol !== "http:" ||
+    endpoint.hostname !== "127.0.0.1" ||
+    endpoint.username ||
+    endpoint.password
+  ) {
+    throw new ManagerCredentialError(
+      "Manager credentials require an IPv4 loopback supervisor URL",
+    );
+  }
+
+  return { credential: await readManagerCredential(file), hostKey };
+}
+
+function authorizedHeaders(
+  authorization: ManagerAuthorization,
+  headers: RequestInit["headers"] | UndiciRequestInit["headers"],
+): [string, string][] {
+  const merged = new UndiciHeaders(headers as UndiciRequestInit["headers"]);
+
+  merged.set("authorization", `Bearer ${authorization.credential}`);
+  merged.set(MANAGER_HOST_HEADER, authorization.hostKey);
+
+  return [...merged.entries()];
+}
+
+async function verifyManagerPeer<T extends Response | UndiciResponse>(
+  response: T,
+  authorization: ManagerAuthorization | undefined,
+): Promise<T> {
+  if (
+    authorization &&
+    response.headers.get(MANAGER_HOST_HEADER) !== authorization.hostKey
+  ) {
+    await response.body?.cancel();
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Supervisor did not authenticate with the expected host identity",
+    );
+  }
+
+  return response;
+}
+
+async function fetchSupervisor(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const authorization = await managerAuthorization(url);
+  const response = await fetch(url, {
+    ...init,
+    ...(authorization
+      ? { headers: authorizedHeaders(authorization, init?.headers) }
+      : {}),
+    redirect: "manual",
+  });
+
+  return verifyManagerPeer(response, authorization);
 }
 
 async function fetchLongLivedSupervisor(
@@ -799,11 +883,20 @@ async function fetchLongLivedSupervisor(
     "[FIX:supervisor-long-lived-fetch] using undici dispatcher without headers/body timeout",
   );
 
-  return (await undiciFetch(url, {
+  const authorization = await managerAuthorization(url);
+  const response = await undiciFetch(url, {
     ...init,
+    ...(authorization
+      ? { headers: authorizedHeaders(authorization, init.headers) }
+      : {}),
     redirect: "manual",
     dispatcher: longLivedDispatcher,
-  })) as unknown as Response;
+  });
+
+  return (await verifyManagerPeer(
+    response,
+    authorization,
+  )) as unknown as Response;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -876,6 +969,18 @@ export async function checkSupervisorHealth(
       kind: "unavailable",
       reason: "malformed",
       message: parsed.error.message,
+    };
+  }
+
+  if (
+    process.env.MAISTER_MANAGER_AUTH_FILE !== undefined &&
+    parsed.data.host?.hostKey !== res.headers.get(MANAGER_HOST_HEADER)
+  ) {
+    return {
+      kind: "unavailable",
+      reason: "malformed",
+      message:
+        "Supervisor readiness identity differs from its authenticated host key",
     };
   }
 
@@ -1945,14 +2050,26 @@ async function runtimeObjectBinaryResponse(input: {
   }
   const timeoutMs = input.timeoutMs ?? ADMIN_READ_TIMEOUT_MS;
   const controller = new AbortController();
+  const url = `${baseUrl()}${input.path}`;
+  let authorization: ManagerAuthorization | undefined;
+
+  try {
+    authorization = await managerAuthorization(url);
+  } catch (error) {
+    if (error instanceof ManagerCredentialError)
+      throw networkErrorToMaister(error, input.ctx);
+    throw invalidBinaryRequest(input.ctx);
+  }
   let request: UndiciRequest;
 
   // Construction is synchronous and cannot have reached the peer. Do not
   // classify malformed local headers/URLs as uncertain remote execution.
   try {
-    request = new UndiciRequest(`${baseUrl()}${input.path}`, {
+    request = new UndiciRequest(url, {
       method: input.method,
-      headers: input.headers,
+      headers: authorization
+        ? authorizedHeaders(authorization, input.headers)
+        : input.headers,
       body: input.bytes,
       cache: "no-store",
       redirect: "manual",
@@ -1969,9 +2086,12 @@ async function runtimeObjectBinaryResponse(input: {
   };
 
   try {
-    const response = await undiciFetch(request, {
-      dispatcher: binaryDispatcher,
-    });
+    const response = await verifyManagerPeer(
+      await undiciFetch(request, {
+        dispatcher: binaryDispatcher,
+      }),
+      authorization,
+    );
 
     logger.debug(
       {

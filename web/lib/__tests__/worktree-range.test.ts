@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 import {
@@ -262,6 +262,19 @@ describe("worktree range ops", () => {
         text: out.text.slice(0, 28),
         truncated: true,
       });
+    });
+
+    it("IT-ISO-06 uses the selected repository for buffered and streamed review", async () => {
+      const range = { worktreePath: repo, baseRef: baseSha, branch: "feature" };
+      const expected = await diffRange(range);
+
+      vi.stubEnv("GIT_DIR", join(repo, "unused-repository"));
+      try {
+        await expect(diffRange(range)).resolves.toEqual(expected);
+        await expect(diffRangeBounded(range, 4096)).resolves.toEqual(expected);
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it("rejects a baseRef containing '..'", async () => {

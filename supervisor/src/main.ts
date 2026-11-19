@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import pino, { type Logger } from "pino";
 
 import { assertSupportedNode } from "../../runtime/node-version";
+import { readManagerCredential } from "../../runtime/manager-credential";
 
 import { startHeartbeatWatcher } from "./heartbeat";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./host-state";
 import { installPermissionCapTeardown } from "./checkpoint-teardown";
 import { registerRoutes } from "./http-api";
+import { registerManagerAuthentication } from "./manager-auth";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
 import {
   pendingPermissions,
@@ -173,6 +175,11 @@ export function bootExecutionHost(deps: {
 }
 
 export async function start(): Promise<void> {
+  const managerCredentialFile = process.env.MAISTER_MANAGER_AUTH_FILE;
+
+  if (managerCredentialFile !== undefined) {
+    await readManagerCredential(managerCredentialFile);
+  }
   const port = envInt("MAISTER_SUPERVISOR_PORT", DEFAULT_PORT);
   const shutdownGraceMs = envInt(
     "MAISTER_SHUTDOWN_GRACE_MS",
@@ -217,6 +224,14 @@ export async function start(): Promise<void> {
   }
   const app = Fastify({ logger: loggerConfig });
   const hostState = bootExecutionHost({ runtimeRoot: root, logger });
+
+  if (managerCredentialFile !== undefined) {
+    registerManagerAuthentication(
+      app,
+      managerCredentialFile,
+      hostState.hostKey,
+    );
+  }
 
   logger.info(
     {
@@ -322,7 +337,15 @@ export async function start(): Promise<void> {
   const host = "127.0.0.1";
 
   await app.listen({ port, host });
-  logger.info({ port, host }, "supervisor-listening");
+  logger.info(
+    {
+      port,
+      host,
+      managerAuthentication:
+        managerCredentialFile === undefined ? "legacy-loopback" : "required",
+    },
+    "supervisor-listening",
+  );
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {

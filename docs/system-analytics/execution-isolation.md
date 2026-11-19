@@ -65,15 +65,18 @@ Manager credential files belong to the manager and trusted host principals only.
 
 ### Local transport activation
 
-The proposed P1 direct transport uses a dedicated manager bearer credential
-on a loopback-only listener. Keep the manager and supervisor copies in
-service-owned files outside repos and runtime roots. Rotate by atomically
-replacing both copies and reopening manager connections. Refuse requests with
-missing, malformed or mismatched credentials before route handlers run,
-including SSE and byte-range reads. Disable redirects on manager requests.
-Readiness requires the expected host key from an authenticated peer. A
-single-user local install also needs its workload file boundary before this
-credential can be treated as confidential from a workload.
+The P1 loopback transport supports a configured manager bearer credential.
+Each service reads its own private file outside repos and runtime roots.
+Fastify checks the credential and execution host key before invoking a route.
+The manager checks the host key on responses. The same checks cover health,
+JSON commands, SSE reconnects and byte-range reads. Redirects stay disabled.
+Each new request reads the current credential file. Rotation replaces both
+files atomically per service and closes existing SSE connections by restarting
+the manager after a drained cutover. Full credential confinement still depends
+on the service identity split and the same-user workload boundary. The
+host-key check binds application responses to the configured host key. Plain
+loopback HTTP requires an OS boundary that keeps workloads away from the
+listener and credential files.
 
 The P1 Flow child policy uses the ADR-153 allow-list plus explicitly supplied
 execution plumbing. Exclude the SSH agent socket and remove full inheritance.

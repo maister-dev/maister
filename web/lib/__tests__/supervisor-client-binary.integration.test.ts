@@ -1,8 +1,10 @@
-import { rm } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type RequestListener, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   adoptWorkspace,
@@ -54,6 +56,7 @@ async function serve(handler: RequestListener): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const server of servers.splice(0)) {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
@@ -65,6 +68,116 @@ afterEach(async () => {
 });
 
 describe("runtime-object binary HTTP transport (AT-17)", () => {
+  it("IT-ISO-01 authenticates readiness and all route families through credential rotation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "maister-manager-auth-"));
+    const hostCredential = join(directory, "supervisor");
+    const managerCredential = join(directory, "manager");
+    const hostKey = "eh_manager_auth_fixture";
+    const first = randomBytes(32).toString("hex");
+    const second = randomBytes(32).toString("hex");
+    const headersFor = (credential: string, key = hostKey) => ({
+      authorization: `Bearer ${credential}`,
+      "x-maister-execution-host": key,
+    });
+
+    await writeFile(hostCredential, first, { mode: 0o600 });
+    await writeFile(managerCredential, first, { mode: 0o600 });
+    const host = await startRealSupervisor({
+      env: {
+        MAISTER_MANAGER_AUTH_FILE: hostCredential,
+        MAISTER_EXECUTION_HOST_KEY: hostKey,
+      },
+      requestHeaders: async () =>
+        headersFor(await readFile(hostCredential, "utf8")),
+    });
+
+    try {
+      vi.stubEnv("MAISTER_MANAGER_AUTH_FILE", managerCredential);
+      vi.stubEnv("MAISTER_SUPERVISOR_EXPECTED_HOST_KEY", hostKey);
+      process.env.MAISTER_SUPERVISOR_URL = host.url;
+      const responses = await Promise.all(
+        [
+          "/health",
+          "/diagnostics",
+          "/sessions/missing/stream",
+          `/runtime-objects/${randomUUID()}/content`,
+        ].map((route) =>
+          fetch(`${host.url}${route}`).then((response) => response.status),
+        ),
+      );
+
+      expect(responses).toEqual([401, 401, 401, 401]);
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "ready",
+        health: { host: { hostKey } },
+      });
+      const sse = await fetch(`${host.url}/runtime-events`, {
+        headers: headersFor(first),
+      });
+
+      expect(sse.status).toBe(200);
+      expect(sse.headers.get("x-maister-execution-host")).toBe(hostKey);
+      await sse.body?.cancel();
+      expect(
+        (await fetch(`${host.url}/health`, { headers: headersFor(second) }))
+          .status,
+      ).toBe(401);
+      vi.stubEnv(
+        "MAISTER_SUPERVISOR_EXPECTED_HOST_KEY",
+        "eh_other_host_fixture",
+      );
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "unavailable",
+      });
+      vi.stubEnv("MAISTER_SUPERVISOR_EXPECTED_HOST_KEY", hostKey);
+
+      await writeFile(join(directory, "next-host"), second, { mode: 0o600 });
+      await rename(join(directory, "next-host"), hostCredential);
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "unavailable",
+      });
+      await expect(streamSession("missing", {}).next()).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+      });
+      await writeFile(join(directory, "next-manager"), second, { mode: 0o600 });
+      await rename(join(directory, "next-manager"), managerCredential);
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "ready",
+      });
+      await expect(streamSession("missing", {}).next()).rejects.toMatchObject({
+        code: "PRECONDITION",
+      });
+      const healthy = await fetch(`${host.url}/health`, {
+        headers: headersFor(second),
+      });
+      const body = await healthy.json();
+
+      await serve((_request, response) => {
+        response
+          .writeHead(200, {
+            "content-type": "application/json",
+            "x-maister-execution-host": hostKey,
+          })
+          .end(
+            JSON.stringify({
+              ...body,
+              host: { ...body.host, hostKey: "eh_other_host_fixture" },
+            }),
+          );
+      });
+      await expect(checkSupervisorHealth()).resolves.toMatchObject({
+        kind: "unavailable",
+        reason: "malformed",
+      });
+      expect(await host.logTail()).not.toContain(first);
+      expect(await host.logTail()).not.toContain(second);
+    } finally {
+      await host.stop();
+      await rm(host.runtimeRoot, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("IT-ISO-01 keeps manager HTTP, SSE and range reads on their original authority", async () => {
     const forwarded: string[] = [];
     const target = await serve((request, response) => {
@@ -89,12 +202,24 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
   });
 
   it("reserves, uploads and reads exact full/range bytes through the real supervisor HTTP and SQLite registry", async () => {
-    const host = await startRealSupervisor();
-    const health = (await fetch(`${host.url}/health`).then((response) =>
-      response.json(),
-    )) as { host: { hostKey: string } };
+    const credentialRoot = await mkdtemp(join(tmpdir(), "maister-range-auth-"));
+    const credentialFile = join(credentialRoot, "manager");
+    const credential = randomBytes(32).toString("hex");
+    const hostKey = "eh_manager_range_fixture";
+
+    await writeFile(credentialFile, credential, { mode: 0o600 });
+    const host = await startRealSupervisor({
+      env: {
+        MAISTER_MANAGER_AUTH_FILE: credentialFile,
+        MAISTER_EXECUTION_HOST_KEY: hostKey,
+      },
+      requestHeaders: async () => ({
+        authorization: `Bearer ${credential}`,
+        "x-maister-execution-host": hostKey,
+      }),
+    });
     const fence = {
-      hostKey: health.host.hostKey,
+      hostKey,
       runId: randomUUID(),
       assignmentId: randomUUID(),
       assignmentEpoch: 1,
@@ -105,6 +230,8 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
 
     try {
       process.env.MAISTER_SUPERVISOR_URL = host.url;
+      vi.stubEnv("MAISTER_MANAGER_AUTH_FILE", credentialFile);
+      vi.stubEnv("MAISTER_SUPERVISOR_EXPECTED_HOST_KEY", hostKey);
       await adoptWorkspace(
         envelope("workspace.adopt", fence, {
           runId: fence.runId,
@@ -148,6 +275,7 @@ describe("runtime-object binary HTTP transport (AT-17)", () => {
     } finally {
       await host.stop();
       await rm(host.runtimeRoot, { recursive: true, force: true });
+      await rm(credentialRoot, { recursive: true, force: true });
     }
   });
 

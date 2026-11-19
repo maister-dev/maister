@@ -416,6 +416,46 @@ the local web/supervisor processes.
 
 ## 10. Smoke test
 
+### Configured manager authentication
+
+For authenticated loopback transport, generate 32 random bytes with
+`openssl rand -hex 32`. Install the same value in two separate absolute
+files, one owned by the web service identity and one by the supervisor
+identity. Set mode `0600` and place each file in a service-owned or
+root-controlled directory outside repositories, workspace roots, and
+runtime data. Set `MAISTER_MANAGER_AUTH_FILE` to the corresponding file on
+each service. On the web service, set
+`MAISTER_SUPERVISOR_EXPECTED_HOST_KEY` to the supervisor's existing durable
+host key. On a new installation the supervisor can seed the key from
+`MAISTER_EXECUTION_HOST_KEY`.
+
+Set the manager URL to `http://127.0.0.1:7777` or the configured loopback
+port. Compose runs Postgres only. The web and supervisor processes read
+their own files on the host. Single-user Linux and macOS installs can use
+separate files under owner-only directories; the workload must be
+filesystem-confined before those files provide separate credential custody.
+
+During a drained rotation, replace each service's file by a same-directory
+rename with its owner and mode intact. Restart the manager after both
+replacements to close old SSE connections. Readiness must fail during a
+credential mismatch and recover once both copies are current. Check the
+web registration and service journals in the smoke test below. A direct
+supervisor health request requires the bearer credential and
+`X-Maister-Execution-Host` when authentication is enabled.
+
+From the web service account with its two manager settings loaded, run
+the authenticated health check. Curl reads the headers from standard input.
+
+```bash
+{
+  awk 'NR == 1 {printf "header = \"Authorization: Bearer %s\"\n", $0}' "$MAISTER_MANAGER_AUTH_FILE"
+  printf 'header = "X-Maister-Execution-Host: %s"\n' "$MAISTER_SUPERVISOR_EXPECTED_HOST_KEY"
+} | curl --config - -fsS http://127.0.0.1:7777/health
+```
+
+`curl` without manager credentials is the smoke check for the legacy
+loopback listener configuration.
+
 ```bash
 curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",..., "host":{"hostKey":"eh_…","bootId":"…","protocolVersion":1}}
 curl -fsS http://127.0.0.1:3000/ >/dev/null    # web responds

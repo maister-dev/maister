@@ -55,6 +55,7 @@ export type RealSupervisorOptions = {
   fixtureArgs?: string[];
   port?: number;
   env?: Record<string, string>;
+  requestHeaders?: () => Promise<Readonly<Record<string, string>>>;
   logFile?: string;
   startTimeoutMs?: number;
 };
@@ -145,6 +146,7 @@ async function waitForHealth(
   url: string,
   timeoutMs: number,
   exited: Promise<number | null>,
+  requestHeaders?: RealSupervisorOptions["requestHeaders"],
 ): Promise<{ bootId: string; hostKey: string }> {
   const deadline = Date.now() + timeoutMs;
   let done = false;
@@ -159,6 +161,7 @@ async function waitForHealth(
       );
     try {
       const res = await fetch(`${url}/health`, {
+        headers: await requestHeaders?.(),
         cache: "no-store",
         signal: AbortSignal.timeout(2_000),
       });
@@ -277,8 +280,14 @@ async function startRealSupervisorAttempt(
     bootId: `starting:${child.pid ?? -1}`,
     killGraceMs: 10_000,
     ready: async (exited: Promise<number | null>) =>
-      (await waitForHealth(url, options.startTimeoutMs ?? 60_000, exited))
-        .bootId,
+      (
+        await waitForHealth(
+          url,
+          options.startTimeoutMs ?? 60_000,
+          exited,
+          options.requestHeaders,
+        )
+      ).bootId,
   });
   const { pid, exited } = owned;
   const sessionGroups = new Set<number>();
@@ -292,6 +301,7 @@ async function startRealSupervisorAttempt(
     const groups = await captureSupervisorProcessGroups({
       invocation,
       url,
+      headers: await options.requestHeaders?.(),
       supervisorPid: pid,
       runtimeRoot,
       bootId: owned.bootId,
