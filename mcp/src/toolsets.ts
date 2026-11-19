@@ -61,7 +61,7 @@ export const LIBRARIAN_TOOLSET = [
 export const TOOLSETS = {
   company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
-  vault: ["memory", "agent_memory_write"],
+  vault: ["memory", "agent_memory_write", "memory_search", "memory_backlinks", "memory_tags"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ToolsetName = keyof typeof TOOLSETS;

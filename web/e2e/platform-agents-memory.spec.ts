@@ -54,11 +54,23 @@ test("AV-17 edits Markdown through Memory and restores a revision on a narrow sc
     .fill("/memories/index.md");
   await dialog
     .getByRole("textbox", { name: "Note Markdown" })
-    .fill("# Initial note\nReference facts.");
+    .fill(
+      "---\ntags: [reference]\n---\n# Initial note\nReference facts. [[unfiled]]",
+    );
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     memory.getByText("Reference facts.", { exact: false }),
   ).toBeVisible();
+  await memory.getByRole("link", { name: "reference (1)" }).click();
+  const results = memory.getByRole("region", { name: "Search results" });
+
+  await expect(
+    results.getByRole("link", { name: "/memories/index.md" }),
+  ).toBeVisible();
+  await expect(
+    memory.getByText("Unresolved: unfiled", { exact: true }),
+  ).toBeVisible();
+  await memory.getByRole("link", { name: "Clear filters" }).click();
   await memory.getByRole("button", { name: "Edit note" }).click();
   dialog = page.getByRole("dialog", { name: "Edit note" });
   const source = dialog.getByRole("textbox", { name: "Note Markdown" });

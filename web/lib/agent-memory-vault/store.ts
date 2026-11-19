@@ -13,6 +13,7 @@ import pino from "pino";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { insertMemoryText, replaceMemoryText } from "./commands";
+import { indexMemoryRevision, resolveIndexedMemoryLinks } from "./indexes";
 import { isUnderMemoryPath, memoryNotePath, MEMORY_INDEX } from "./paths";
 
 import {
@@ -406,11 +407,22 @@ async function planTree(
     }));
   if (
     command.new_path === command.old_path ||
-    isUnderMemoryPath(command.old_path, command.new_path)
+    isUnderMemoryPath(command.old_path, command.new_path) ||
+    isUnderMemoryPath(command.new_path, command.old_path)
   )
     throw new MaisterError(
       "CONFIG",
-      "Memory destination must be outside the source directory",
+      "Memory directory rename requires a disjoint destination",
+    );
+  const occupied = active.filter(({ note }) =>
+    isUnderMemoryPath(command.new_path, note.path),
+  );
+  for (const item of occupied)
+    await requireRevisionRead(db, access, item.revision);
+  if (occupied.length > 0)
+    throw new MaisterError(
+      "CONFLICT",
+      "Memory destination directory is occupied",
     );
 
   return Promise.all(
@@ -617,6 +629,14 @@ async function recordChange(
     await db
       .insert(payloads)
       .values({ vaultId: access.vaultId, noteId, revisionId, content });
+  await indexMemoryRevision(
+    db,
+    record,
+    content,
+    access.actor.kind === "operator_import" || change.kind === "renamed"
+      ? "retain-legacy"
+      : "validate",
+  );
   if (change.head !== null) {
     await db
       .update(notes)
@@ -762,7 +782,8 @@ export async function applyVaultMutationInTransaction(
 
   for (const [ordinal, change] of plan.entries())
     results.push(await recordChange(db, access, operationId, ordinal, change));
-  if (results.length > 0)
+  if (results.length > 0) {
+    await resolveIndexedMemoryLinks(db, vault.id);
     await db
       .update(vaults)
       .set({
@@ -772,6 +793,7 @@ export async function applyVaultMutationInTransaction(
         noteCount: quota.count,
       })
       .where(eq(vaults.id, vault.id));
+  }
   await access.capture(db, results);
 
   return {

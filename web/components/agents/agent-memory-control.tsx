@@ -15,6 +15,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
+import { AgentMemoryNavigation } from "./agent-memory-navigation";
+
 import {
   buildVaultCommand,
   displayIssue,
@@ -272,6 +274,15 @@ export function AgentMemoryControl({
       {data === null ? <p role="status">{t("loading")}</p> : null}
       {data?.issue ? <p role="alert">{textFor(data.issue)}</p> : null}
       {error && !draft ? <p role="alert">{textFor(error)}</p> : null}
+      {page ? (
+        <AgentMemoryNavigation
+          api={api}
+          href={href}
+          path={path}
+          note={page.kind === "note"}
+          version={version}
+        />
+      ) : null}
       {page && canEdit ? (
         <div className="flex flex-wrap gap-2">
           {actionButton("create")}

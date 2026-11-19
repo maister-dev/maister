@@ -7,6 +7,7 @@ import { MAX_VAULT_COMMAND_BYTES } from "./limits";
 
 import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { httpStatusForAuthz } from "@/lib/authz";
+import { redactQueryError } from "@/lib/db/pg-error";
 import { isMaisterError } from "@/lib/errors";
 import { readBoundedJson } from "@/lib/http/bounded-json";
 
@@ -42,7 +43,13 @@ export function vaultErrorResponse(
   error: unknown,
   route: string,
 ): NextResponse {
-  if (!isMaisterError(error)) return privateErrorResponse(error, route);
+  if (!isMaisterError(error))
+    return privateErrorResponse(redactQueryError(error), route);
+  if (error.code === "EMBEDDING_UNAVAILABLE")
+    return privateJson(
+      { code: error.code, message: "Memory embedding is unavailable" },
+      503,
+    );
   const status = httpStatusForAuthz(error.code);
 
   if (status !== null)

@@ -227,6 +227,22 @@ it("AV-04/15 binds commands to the credential's current run and applies the prev
 
   expect(get.headers.get("Cache-Control")).toBe("private, no-store");
   expect(head).toMatchObject({ kind: "note", content: "retained" });
+  const search = await import("../search/route");
+  const searchRequest = (query: string) =>
+    new NextRequest(
+      `http://localhost/api/v1/ext/agent/memory/search?${query}`,
+      { headers: { authorization: `Bearer ${issued.secret}` } },
+    );
+  const results = await search.GET(searchRequest("q=retain&limit=1"));
+
+  expect(results.status).toBe(200);
+  expect(results.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await results.json()).toMatchObject({
+    hits: [{ revisionId: head.revisionId }],
+  });
+  expect(
+    (await search.GET(searchRequest("q=retain&vaultId=another"))).status,
+  ).toBe(422);
   const legacy = await GET(getRequest());
 
   expect(await legacy.json()).toMatchObject({

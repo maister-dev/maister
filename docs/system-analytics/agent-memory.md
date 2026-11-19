@@ -280,7 +280,22 @@ activation the operator can restart the legacy writer with intact files.
 After activation, recover with a vault-compatible build or restore a
 consistent backup. Reimport cannot overwrite an activated head.
 
-**Vault expectations (Designed):**
+### Current-head index and search
+
+Main migration `0346` adds exact-head tag, alias, heading, link and lexical
+projections. Updates share the revision transaction. The existing system
+sweep rebuilds missing heads in bounded batches without creating revisions.
+Unsafe reserved frontmatter in legacy content has a repair state. New invalid
+frontmatter is refused before a head change.
+
+English and Russian lexical search runs in the main database. Brain migration
+`0012` adds the optional vector projection. It uses the configured provider
+and only considers entries for the current head and provider generation.
+A worker checks the same witnesses when writing its leased result. Visibility
+checks precede candidate ranking and determine what contributes to tag counts,
+alias resolution and backlinks.
+
+**Vault expectations (Design and implementation):**
 
 - **AV-01, AV-12.** A mutation MUST compare revision and hash in the locked
   head transaction before creating any revision.

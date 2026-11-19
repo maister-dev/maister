@@ -2395,6 +2395,13 @@
       "when": 1795096555996,
       "tag": "0345_agent_memory_capture_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 346,
+      "version": "7",
+      "when": 1795100183299,
+      "tag": "0346_agent_memory_structure",
+      "breakpoints": true
     }
   ]
 }

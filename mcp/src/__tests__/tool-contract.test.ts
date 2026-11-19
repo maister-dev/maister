@@ -369,6 +369,9 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/agent/memory/commands",
   },
+  memory_search: { method: "get", path: "/api/v1/ext/agent/memory/search" },
+  memory_backlinks: { method: "get", path: "/api/v1/ext/agent/memory/backlinks" },
+  memory_tags: { method: "get", path: "/api/v1/ext/agent/memory/tags" },
   // ADR-152: the ONE facade tool with no `slug` — the project comes from the
   // run-bound token (D15/D24).
   agent_memory_write: {

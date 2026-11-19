@@ -1746,3 +1746,9 @@ remains readable after reducing a write cap. An operation that moves the live
 state toward the configured quota can proceed. The launch refuses if the
 escaped protocol and index alone exceed the injection budget. These settings
 are for the host web service and its environment template.
+
+`MAISTER_AGENT_MEMORY_VECTOR_ENABLED` defaults to `0`. Set it to `1` only after
+applying the optional Brain migration `0012` and configuring the Brain
+embedding provider. This opts in to sending private current note bodies and
+vector search queries to that provider. Lexical search runs entirely in the
+main database. A vector request reports provider failures after bounded retry.

@@ -12662,3 +12662,109 @@ export const agentMemoryImportPayloads = pgTable(
     content: text("content").notNull(),
   },
 );
+
+export const agentMemoryNoteIndex = pgTable(
+  "agent_memory_note_index",
+  {
+    vaultId: text("vault_id").notNull(),
+    noteId: text("note_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    path: text("path").notNull(),
+    basenameKey: text("basename_key").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    aliases: jsonb("aliases").$type<string[]>().notNull(),
+    aliasKeys: jsonb("alias_keys").$type<string[]>().notNull(),
+    headings: jsonb("headings").$type<string[]>().notNull(),
+    state: text("state", { enum: ["ready", "repair"] }).notNull(),
+    document: tsvector("document").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.vaultId, t.noteId] }),
+    ownedVersion: unique("agent_memory_index_head_version_uq").on(
+      t.vaultId,
+      t.noteId,
+      t.revisionId,
+    ),
+    path: unique("agent_memory_index_live_path_uq").on(t.vaultId, t.path),
+    lookup: index("agent_memory_index_basename_idx").on(
+      t.vaultId,
+      t.basenameKey,
+    ),
+    tags: index("agent_memory_index_tags_gin").using("gin", t.tags),
+    aliases: index("agent_memory_index_alias_keys_gin").using(
+      "gin",
+      t.aliasKeys,
+    ),
+    lexical: index("agent_memory_index_document_gin").using("gin", t.document),
+    exactRevision: foreignKey({
+      name: "agent_memory_index_revision_fk",
+      columns: [t.vaultId, t.noteId, t.revisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    metadata: check(
+      "agent_memory_index_metadata_check",
+      sql`
+      ${t.state} IN ('ready','repair')
+      AND jsonb_typeof(${t.tags})='array' AND jsonb_array_length(${t.tags}) <= 64
+      AND jsonb_typeof(${t.aliases})='array' AND jsonb_array_length(${t.aliases}) <= 64
+      AND jsonb_typeof(${t.aliasKeys})='array' AND jsonb_array_length(${t.aliasKeys}) = jsonb_array_length(${t.aliases})
+      AND jsonb_typeof(${t.headings})='array' AND jsonb_array_length(${t.headings}) <= 512`,
+    ),
+  }),
+);
+
+export const agentMemoryNoteLinks = pgTable(
+  "agent_memory_note_links",
+  {
+    vaultId: text("vault_id").notNull(),
+    sourceNoteId: text("source_note_id").notNull(),
+    sourceRevisionId: text("source_revision_id").notNull(),
+    raw: text("raw").notNull(),
+    kind: text("kind", {
+      enum: ["note", "task", "run", "brain", "knowledge", "repo", "unresolved"],
+    }).notNull(),
+    target: text("target").notNull(),
+    fragment: text("fragment"),
+    lookupPath: text("lookup_path"),
+    lookupKey: text("lookup_key"),
+    targetNoteId: text("target_note_id"),
+    state: text("state", {
+      enum: ["resolved", "unresolved", "pointer"],
+    }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.vaultId, t.sourceNoteId, t.raw] }),
+    backlinks: index("agent_memory_link_target_idx").on(
+      t.vaultId,
+      t.targetNoteId,
+    ),
+    liveSource: foreignKey({
+      name: "agent_memory_link_projection_fk",
+      columns: [t.vaultId, t.sourceNoteId, t.sourceRevisionId],
+      foreignColumns: [
+        agentMemoryNoteIndex.vaultId,
+        agentMemoryNoteIndex.noteId,
+        agentMemoryNoteIndex.revisionId,
+      ],
+    }).onDelete("cascade"),
+    targetNote: foreignKey({
+      name: "agent_memory_link_same_vault_target_fk",
+      columns: [t.vaultId, t.targetNoteId],
+      foreignColumns: [agentMemoryNotes.vaultId, agentMemoryNotes.id],
+    }).onDelete("restrict"),
+    shape: check(
+      "agent_memory_link_shape_check",
+      sql`
+      octet_length(${t.raw}) BETWEEN 1 AND 512
+      AND ${t.kind} IN ('note','task','run','brain','knowledge','repo','unresolved')
+      AND ${t.state} IN ('resolved','unresolved','pointer')
+      AND ((${t.kind}='note')=(num_nonnulls(${t.lookupPath},${t.lookupKey})=2))
+      AND ((${t.state}='resolved')=(${t.targetNoteId} IS NOT NULL))
+      AND (${t.targetNoteId} IS NULL OR ${t.kind}='note')`,
+    ),
+  }),
+);

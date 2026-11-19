@@ -32,6 +32,11 @@ const querySchema = z
     memoryCursor: z.string().min(1).max(2048).optional(),
     memoryRevision: z.string().min(1).max(192).optional(),
     memoryHistoryCursor: z.string().min(1).max(2048).optional(),
+    memorySearch: z.string().min(1).max(2000).optional(),
+    memoryTag: z.string().min(1).max(128).optional(),
+    memorySearchCursor: z.string().min(1).max(2048).optional(),
+    memoryTagCursor: z.string().min(1).max(2048).optional(),
+    memoryBacklinkCursor: z.string().min(1).max(2048).optional(),
     tab: z
       .enum(["history", "attempts", "memory", "definition", "settings"])
       .default("history"),

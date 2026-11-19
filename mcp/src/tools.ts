@@ -43,6 +43,20 @@ const standOperationSelector: ToolSpec["inputSchema"] = {
 const agentMemoryInput = z.fromJSONSchema(
   agentMemorySchema as unknown as z.core.JSONSchema.JSONSchema,
 );
+const vaultPage = {
+  cursor: { type: "string", minLength: 1, maxLength: 2048 },
+  limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+};
+const vaultIndexRoutes = {
+  memory_search: "search",
+  memory_backlinks: "backlinks",
+  memory_tags: "tags",
+} as const;
+type VaultIndexTool = keyof typeof vaultIndexRoutes;
+
+function isVaultIndexTool(name: string): name is VaultIndexTool {
+  return Object.hasOwn(vaultIndexRoutes, name);
+}
 
 // ADR-206: mirrors `TaskSourceInput` in the external OpenAPI.
 const TASK_SOURCE_PROPERTIES = {
@@ -557,6 +571,32 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     description:
       "Work in the current session's private /memories vault. View one note or a directory page, create a note, replace one literal occurrence, insert text, delete or rename a note or folder. Pass the observed revision and hash for changes and reuse a request key for retries.",
     inputSchema: agentMemorySchema as ToolSpec["inputSchema"],
+  },
+  memory_search: {
+    description: "Search current visible notes in the session vault. Use lexical mode by default; vector requires installation configuration. A tag alone lists notes with that tag.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      anyOf: [{ required: ["q"] }, { required: ["tag"], properties: { mode: { const: "lexical" } } }],
+      properties: {
+        ...vaultPage, q: { type: "string", minLength: 1, maxLength: 2000 },
+        tag: { type: "string", minLength: 1, maxLength: 128 },
+        mode: { type: "string", enum: ["lexical", "vector"] },
+      },
+    },
+    annotations: { readOnlyHint: true },
+  },
+  memory_backlinks: {
+    description: "List visible current notes linking to the specified vault note path.",
+    inputSchema: {
+      type: "object", additionalProperties: false, required: ["path"],
+      properties: { ...vaultPage, path: { type: "string", minLength: 1, maxLength: 512, pattern: "^/memories(?:/[^/]+)*$" } },
+    },
+    annotations: { readOnlyHint: true },
+  },
+  memory_tags: {
+    description: "List frontmatter tags and counts of visible current notes.",
+    inputSchema: { type: "object", additionalProperties: false, properties: vaultPage },
+    annotations: { readOnlyHint: true },
   },
   agent_memory_write: {
     description:
@@ -1549,6 +1589,7 @@ export async function dispatchTool(opts: {
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
       name === "memory" ||
+      isVaultIndexTool(name) ||
       name === "agent_memory_write" ||
       isKnowledgeTool(name) ||
       name.startsWith("stand_operation_")
@@ -2022,6 +2063,20 @@ function resolveRouting(
         path: "/api/v1/ext/agent/memory/commands",
         body: args,
       };
+    case "memory_search":
+    case "memory_backlinks":
+    case "memory_tags": {
+      const query = new URLSearchParams();
+
+      for (const [key, value] of Object.entries(args)) {
+        if (typeof value === "string" || typeof value === "number") query.set(key, String(value));
+      }
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/agent/memory/${vaultIndexRoutes[name]}${query.size ? `?${query}` : ""}`,
+      };
+    }
     case "agent_memory_write": {
       // No `slug`: the project and agent are derived server-side from the
       // run-bound token (ADR-152 D15).

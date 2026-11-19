@@ -7677,20 +7677,27 @@ paths:
     get:
       operationId: extAgentVaultSearch
       summary: Search visible current heads
-      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
-        agent_memory:propose scope appropriate to the command. Target identity comes from current
+      description: Requires the run-bound agent_memory:read scope. Target identity comes from current
         credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
         - name: q
           in: query
-          required: true
+          required: false
+          description: Required unless a tag is supplied in lexical mode.
           schema:
             type: string
             minLength: 1
             maxLength: 2000
+        - name: tag
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
         - name: mode
           in: query
           required: false
@@ -7755,10 +7762,9 @@ paths:
     get:
       operationId: extAgentVaultBacklinks
       summary: List visible backlinks
-      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
-        agent_memory:propose scope appropriate to the command. Target identity comes from current
+      description: Requires the run-bound agent_memory:read scope. Target identity comes from current
         credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -7816,10 +7822,9 @@ paths:
     get:
       operationId: extAgentVaultTags
       summary: List tags and visible note counts
-      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
-        agent_memory:propose scope appropriate to the command. Target identity comes from current
+      description: Requires the run-bound agent_memory:read scope. Target identity comes from current
         credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -8002,11 +8007,19 @@ paths:
             maxLength: 192
         - name: q
           in: query
-          required: true
+          required: false
+          description: Required unless a tag is supplied in lexical mode.
           schema:
             type: string
             minLength: 1
             maxLength: 2000
+        - name: tag
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
         - name: mode
           in: query
           required: false
@@ -9166,6 +9179,30 @@ components:
                   depth and leaf kind.
           minItems: 0
           maxItems: 100
+        structure:
+          type: object
+          description: Authorized project screen projection of the current note. The link list contains at most the first 100 pointers by raw text.
+          additionalProperties: false
+          required: [aliases, state, links]
+          properties:
+            aliases:
+              type: array
+              maxItems: 64
+              items: { type: string, minLength: 1, maxLength: 192 }
+            state:
+              type: string
+              enum: [ready, repair]
+            links:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [raw, notePath, href]
+                properties:
+                  raw: { type: string, minLength: 1, maxLength: 512 }
+                  notePath: { type: string, maxLength: 512, nullable: true }
+                  href: { type: string, nullable: true }
         nextCursor:
           type: string
           minLength: 1

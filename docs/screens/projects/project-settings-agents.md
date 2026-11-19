@@ -266,6 +266,6 @@ Each cron row has an optional multiline **Request at launch / Запрос пр�
 
 The project Agents tab omits request text from client props unless the live reader has readRepoFiles, including after role revocation. The field changes future invocations, leaving definition, policy and already claimed input intact. Non-cron bindings cannot carry nonempty text. See the [input lifecycle](../../system-analytics/scheduled-agent-requests.md) for exact contracts and unsupported Flow consumers.
 
-## Agent memory tab (Designed)
+## Agent memory tab
 
-The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. A proposal link opens the filtered Inbox.
+The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. Search and tag filters are kept in the URL. Select a note to inspect its aliases, outgoing links and backlinks. When the target is unavailable, the pointer remains as plain text. The filtered Inbox link is part of the review deliverable.

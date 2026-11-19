@@ -290,22 +290,23 @@ Each task includes its tests/updated assertions; no task is complete merely beca
 
 ### P2 — Frontmatter, links, tags, backlinks and search
 
-- [ ] **T13 — Parse and transactionally index note structure.**
+- [x] **T13 — Parse and transactionally index note structure.**
   - Files: new `agent-memory-vault/{structure,indexes}.ts`, main migration 0346/schema, shared command service.
   - Implement D5 syntax, safe YAML bounds, alias ambiguity, headings/entity links, deletion/rename/revert reindexing and dangling/backlink semantics. Backfill active P1/imported heads without creating revisions. Make rebuilding resumable by exact head revision and safe against a concurrent edit. Keep malformed legacy content in a repair state. Reject malformed new reserved frontmatter before commit.
   - Tests: pure parser cases plus Postgres head/index atomicity and concurrent rename/create resolution; no foreign hidden target metadata. Logging: DEBUG parser counts/version and non-content validation reason. Depends on: T12.
-- [ ] **T14 — Add lexical and explicitly configured vector search.**
+- [x] **T14 — Add lexical and explicitly configured vector search.**
   - Files: new `agent-memory-vault/search.ts`, Brain embedding provider/ranker adapters, `web/lib/brain/schema.ts`, Brain migration 0012, existing indexing worker registration.
   - Core lexical index is main-lineage and bilingual; optional vector projection is keyed by exact revision/generation and never published into shared Brain records. Reuse provider/ranker mechanics without changing Brain recall contracts. Source filters precede top-K; redact/delete disables stale candidates immediately. Durable reindex jobs use fenced completion, bounded retry and keyset progress, not a new clock.
   - Tests: main-only lexical search, pgvector when configured, stale generation and tombstoned revisions, visibility before ranking, bounded retry/poison item and real scheduler registration seam. T18 adds the redaction race when redaction is reachable. Logging: query lengths/ranking mode/profile/timing/job attempts, no query or snippet text. Depends on: T13.
-- [ ] **T15 — Expose search/tag/backlink tools and Memory navigation.**
+- [x] **T15 — Expose search/tag/backlink tools and Memory navigation.**
   - Files: MCP registry/dispatch, D7 routes, vault UI, message catalogs, scope/enforcement mirrors.
   - Add `memory_search`, `memory_backlinks`, `memory_tags`; bounded stable cursors and visible-only counts. UI adds backlink panel, tag filter, alias/dangling indicators and authorized entity navigation; no graph view. Search/error state is URL-backed; no inline row mutation.
   - Tests: HTTP/MCP schema parity, UI filter/navigation, hidden tags/counts/dangling existence, active revision update after edit. Logging: DEBUG operation/count/cursor metadata only. Depends on: T13, T14.
-- [ ] **T16 — Complete P2 regression and documentation checkpoint.**
+- [x] **T16 — Complete P2 regression and documentation checkpoint.**
   - Files: affected vault/Brain tests, `docs/system-analytics/agent-memory.md`, DB/ERD/API/config/screen artifacts, requirement coverage cases.
   - Extend `web/lib/brain/__tests__/private-memory-isolation.integration.test.ts` to prove vault notes never appear in shared Brain import/recall. Ensure index rebuilding cannot mutate immutable note history and provider failure is explicit. Update designed/implemented status and generated ERD.
   - Validation: P2 runnability, focused E2E, all phase suites green and docs/contracts clean. Logging: validation output only. Depends on: T13–T15.
+  - Verified locally: 45 parser, scheduler and authenticated HTTP checks. Four PostgreSQL projection, search and shared Brain isolation checks, including independent concurrent writes and an in-flight vector result after a tombstone. MCP unit and parity suite 496, MCP build, Web typecheck, migration generation, DBML, `pnpm validate:docs`, `pnpm validate:contracts`, and Chromium `authed` Memory scenario with session setup. The vector tests used a local fixture provider. Seeded previous-lineage upgrade and production adapter qualification remain in T37/T38.
 
 ### P3 — Review policy, redaction, promotion and one Inbox
 
