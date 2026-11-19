@@ -48,7 +48,7 @@ export interface RailBadge {
   label: string;
 }
 
-export type RailBadges = Partial<Record<RailSectionId, RailBadge>>;
+export type RailBadges = Partial<Record<RailSectionId | "reviews", RailBadge>>;
 
 export interface LeftRailNavProps {
   activeSection?: RailSectionId | null;
@@ -109,15 +109,18 @@ const BADGE_TONE = {
 function CollapsedRailBadge({
   badge,
   sectionId,
+  second,
 }: {
   badge: RailBadge;
-  sectionId: RailSectionId;
+  sectionId: RailSectionId | "reviews";
+  second?: boolean;
 }): ReactElement {
   return (
     <span
       aria-hidden="true"
       className={clsx(
-        "absolute -right-0.5 -top-0.5 min-w-4 rounded-full px-1 py-px text-center font-mono text-[9px] font-bold leading-none",
+        "absolute -right-0.5 min-w-4 rounded-full px-1 py-px text-center font-mono text-[9px] font-bold leading-none",
+        second ? "-bottom-0.5" : "-top-0.5",
         BADGE_TONE[badge.tone],
       )}
       data-testid={`${sectionId}-nav-badge-collapsed`}
@@ -141,6 +144,10 @@ function LeftRailNavBody({
         const isActive = section.id === activeSection;
         const badge = badges[section.id];
         const shownBadge = badge && badge.value > 0 ? badge : null;
+        const reviewsBadge =
+          section.id === "inbox" && badges.reviews && badges.reviews.value > 0
+            ? badges.reviews
+            : null;
 
         if (!section.ready) {
           return variant === "collapsed" ? (
@@ -175,11 +182,13 @@ function LeftRailNavBody({
               // The link's own `aria-label` REPLACES its contents, so a badge's
               // accessible name has to ride on it here rather than as an
               // `sr-only` child the way the expanded variant does.
-              aria-label={
-                shownBadge
-                  ? `${section.label} · ${shownBadge.label}`
-                  : section.label
-              }
+              aria-label={[
+                section.label,
+                shownBadge?.label,
+                reviewsBadge?.label,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
               className={clsx(
                 "relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] transition-colors",
                 "hover:bg-ivory hover:text-ink",
@@ -193,6 +202,13 @@ function LeftRailNavBody({
               <span className="sr-only">{section.label}</span>
               {shownBadge ? (
                 <CollapsedRailBadge badge={shownBadge} sectionId={section.id} />
+              ) : null}
+              {reviewsBadge ? (
+                <CollapsedRailBadge
+                  badge={reviewsBadge}
+                  sectionId="reviews"
+                  second={shownBadge !== null}
+                />
               ) : null}
             </Link>
           );
@@ -224,6 +240,23 @@ function LeftRailNavBody({
               >
                 {shownBadge.value}
               </span>
+            ) : null}
+            {reviewsBadge ? (
+              <>
+                <span
+                  aria-hidden="true"
+                  className={clsx(
+                    "rounded-full px-1.5 py-px font-mono text-[9.5px] font-bold",
+                    BADGE_TONE.neutral,
+                    shownBadge ? "" : "ml-auto",
+                  )}
+                  data-testid="reviews-nav-badge"
+                  title={reviewsBadge.label}
+                >
+                  {reviewsBadge.value}
+                </span>
+                <span className="sr-only">{reviewsBadge.label}</span>
+              </>
             ) : null}
             {/* The badge itself is a bare digit; its meaning is announced here,
                 so `textContent` on the badge stays a plain number. */}

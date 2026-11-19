@@ -4,7 +4,7 @@ import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { ProjectAction } from "@/lib/authz";
 import type { Db } from "@/lib/execution-host/db";
 import type { TokenActor } from "@/lib/tokens/verify";
-import type { PrepareVaultAccess, VaultRevision } from "./store";
+import type { PrepareVaultAccess, VaultAccess, VaultRevision } from "./store";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
@@ -18,6 +18,7 @@ import { projectRolesForActions } from "@/lib/authz";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { lockCurrentNativeKnowledgeToken } from "@/lib/brain/knowledge-token-lock";
 import {
+  agentMemoryInjections,
   agentMemoryVaults,
   agentProjectLinks,
   projects,
@@ -38,11 +39,12 @@ async function requireEnabledAttachment(
   db: Db,
   projectId: string,
   agentId: string,
-): Promise<void> {
+): Promise<"auto" | "review"> {
   const [attachment] = await db
     .select({
       memoryEnabled: agentProjectLinks.memoryEnabled,
       enabled: agentProjectLinks.enabled,
+      policy: agentProjectLinks.memoryWritePolicy,
     })
     .from(agentProjectLinks)
     .where(
@@ -62,6 +64,8 @@ async function requireEnabledAttachment(
         details: { reason: "agent_memory_disabled" },
       },
     );
+
+  return attachment.policy;
 }
 
 export async function ensureProjectVault(
@@ -111,15 +115,14 @@ function humanReadRestrictions(
   );
 }
 
-export function prepareHumanProjectVault(
-  input: Readonly<{
-    userId: string;
-    slug: string;
-    agentId: string;
-    action: VaultProjectAction;
-  }>,
-): PrepareVaultAccess {
-  return async (db) => {
+type HumanProjectVaultInput = Readonly<{
+  userId: string;
+  slug: string;
+  agentId: string;
+  action: VaultProjectAction;
+}>;
+
+async function authorizeHumanProjectVault(db: Db, input: HumanProjectVaultInput) {
     await requireVaultActive(db);
     const [user] = await db
       .select({ role: users.role })
@@ -163,22 +166,23 @@ export function prepareHumanProjectVault(
           "Current project rights do not permit this vault operation",
         );
     }
-    await requireEnabledAttachment(db, project.id, input.agentId);
-    const vaultId = await ensureProjectVault(db, project.id, input.agentId);
+  return project;
+}
 
+function humanProjectVaultAccess(userId: string, projectId: string, vaultId: string): VaultAccess {
     return {
       vaultId,
-      principalKey: `user:${input.userId}`,
-      actor: { kind: "human", userId: input.userId },
-      sourceProjectIds: [project.id],
+      principalKey: `user:${userId}`,
+      actor: { kind: "human", userId: userId },
+      sourceProjectIds: [projectId],
       sourceRestrictions: [],
       writeAdmission: "apply",
       async canRead(tx, revision) {
-        if (!withinProject(revision, project.id)) return false;
+        if (!withinProject(revision, projectId)) return false;
         try {
           await authorizeSourceRestrictions(
             tx,
-            { kind: "user", userId: input.userId },
+            { kind: "user", userId: userId },
             humanReadRestrictions(revision),
           );
 
@@ -191,13 +195,35 @@ export function prepareHumanProjectVault(
       },
       capture: async () => {},
     };
+}
+
+export function prepareHumanProjectVault(input: HumanProjectVaultInput): PrepareVaultAccess {
+  return async (db) => {
+    const project = await authorizeHumanProjectVault(db, input);
+    await requireEnabledAttachment(db, project.id, input.agentId);
+    const vaultId = await ensureProjectVault(db, project.id, input.agentId);
+
+    return humanProjectVaultAccess(input.userId, project.id, vaultId);
   };
+}
+
+export async function authorizeRetainedProjectVaultReview(db: Db, input: Omit<HumanProjectVaultInput, "action">, vaultId: string) {
+  const project = await authorizeHumanProjectVault(db, { ...input, action: "editSettings" });
+  const [attachment] = await db.select({ enabled: agentProjectLinks.enabled, memoryEnabled: agentProjectLinks.memoryEnabled })
+    .from(agentProjectLinks).where(and(eq(agentProjectLinks.projectId, project.id), eq(agentProjectLinks.agentId, input.agentId))).for("share");
+  if (!attachment) throw unavailableMemory();
+
+  return { reviewer: humanProjectVaultAccess(input.userId, project.id, vaultId), enabled: attachment.enabled && attachment.memoryEnabled };
 }
 
 export function prepareProjectExecutionVault(
   actor: TokenActor,
   projectId: string,
-  action: "agent_memory:read" | "agent_memory:write" | "index:compat:read",
+  action:
+    | "agent_memory:read"
+    | "agent_memory:write"
+    | "agent_memory:propose"
+    | "index:compat:read",
 ): PrepareVaultAccess {
   return async (db) => {
     await requireVaultActive(db);
@@ -242,7 +268,11 @@ export function prepareProjectExecutionVault(
       .for("share");
 
     if (!project) throw unavailableMemory();
-    await requireEnabledAttachment(db, projectId, agentId);
+    const currentPolicy = await requireEnabledAttachment(
+      db,
+      projectId,
+      agentId,
+    );
     const vaultId = await ensureProjectVault(db, projectId, agentId);
     const native = await prepareNativeVaultSources(db, {
       tokenId: token.id,
@@ -251,10 +281,30 @@ export function prepareProjectExecutionVault(
       agentId,
       vaultId,
     });
-    const writeAdmission =
-      action === "agent_memory:write"
-        ? await executionVaultWriteAdmission(db, runId)
-        : "apply";
+    let writeAdmission: Awaited<
+      ReturnType<typeof executionVaultWriteAdmission>
+    > = "apply";
+    if (action === "agent_memory:write") {
+      const [frozen] = await db
+        .select({ id: agentMemoryInjections.id })
+        .from(agentMemoryInjections)
+        .where(
+          and(
+            eq(agentMemoryInjections.runId, runId),
+            eq(agentMemoryInjections.vaultId, vaultId),
+            eq(agentMemoryInjections.requiresReviewAtLaunch, true),
+            nodeAttemptId === null
+              ? isNull(agentMemoryInjections.nodeAttemptId)
+              : eq(agentMemoryInjections.nodeAttemptId, nodeAttemptId),
+          ),
+        )
+        .limit(1);
+
+      writeAdmission =
+        currentPolicy === "review" || frozen
+          ? "review_required"
+          : await executionVaultWriteAdmission(db, runId);
+    }
 
     if (action === "agent_memory:write") native.allowWrite();
     const sessionKey = nodeAttemptId ?? runId;

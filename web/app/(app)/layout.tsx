@@ -23,6 +23,7 @@ import { getDb } from "@/lib/db/client";
 import { readLibrarianIndicator } from "@/lib/librarian/view";
 import { getDecisionsCount } from "@/lib/queries/decisions";
 import { getUpdatesCount } from "@/lib/queries/updates";
+import { getProposalReviewCounter } from "@/lib/queries/knowledge-memory-reviews";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import {
   getPlatformDiagnostics,
@@ -71,6 +72,7 @@ export default async function AppLayout({
     runnerRows,
     decisions,
     updates,
+    reviewCounter,
     librarianIndicator,
   ] = await Promise.all([
     sessionUser
@@ -84,6 +86,9 @@ export default async function AppLayout({
     loadRunnerReadinessRows(),
     sessionUser ? getDecisionsCount(sessionUser.id, sessionUser.role) : 0,
     sessionUser ? getUpdatesCount(sessionUser.id, sessionUser.role) : 0,
+    sessionUser
+      ? getProposalReviewCounter(sessionUser.id)
+      : { reviews: 0, reviewVersion: undefined },
     // ADR-191 D2: a state, computed once here like the counters.
     sessionUser
       ? readLibrarianIndicator(sessionUser.id, getDb() as never).catch(
@@ -126,6 +131,11 @@ export default async function AppLayout({
       value: updates,
       tone: "neutral",
       label: tNav("badgeUpdates").replace("$count", String(updates)),
+    },
+    reviews: {
+      value: reviewCounter.reviews,
+      tone: "neutral",
+      label: tNav("badgeReviews", { count: reviewCounter.reviews }),
     },
   };
 
@@ -176,7 +186,12 @@ export default async function AppLayout({
                 reconnect: tRun("streamReconnect"),
                 reconnecting: tRun("streamReconnecting"),
               }}
-              since={{ cursor: String(renderedAt), decisions, updates }}
+              since={{
+                cursor: String(renderedAt),
+                decisions,
+                updates,
+                ...reviewCounter,
+              }}
             />
           ) : null
         }

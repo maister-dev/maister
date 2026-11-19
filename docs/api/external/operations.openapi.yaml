@@ -7636,10 +7636,10 @@ paths:
     post:
       operationId: extAgentVaultPromote
       summary: Propose the exact source revision for review
-      description: Designed (P3). Requires the run-bound agent_memory:read, agent_memory:write or
+      description: Requires the run-bound agent_memory:read, agent_memory:write or
         agent_memory:propose scope appropriate to the command. Target identity comes from current
         credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       requestBody:
@@ -9012,7 +9012,7 @@ components:
           pattern: ^[0-9a-f]{64}$
         requestKey:
           type: string
-          minLength: 1
+          minLength: 8
           maxLength: 128
           pattern: ^[A-Za-z0-9_.:-]{8,128}$
         target:

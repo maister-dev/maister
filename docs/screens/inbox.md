@@ -400,6 +400,11 @@ social Inbox items; the parent review keeps its existing gate chat.
 
 Agent problems have one stable project/agent card with distinct cause episodes, exact occurrence/failed-run counts and per-reader acknowledgement. Repeated causes stay quiet after acknowledgement. HITL requests remain independent. Current grouped semantics are specified in agent-incidents. See [canonical behavior](../system-analytics/agent-activity-history.md).
 
-## Knowledge and memory review (Designed)
+## Knowledge and memory review
 
 Eligible reviewers see a neutral Knowledge & memory group. URL filters retain the proposal source and target. A batch returns a result per selected row. Review actions revalidate authority and show stale proposals without applying them. EN and RU labels distinguish this group from amber blocked work.
+
+Open a proposal to inspect its pending diff or evidence. Select eligible rows
+and accept or reject them together. Knowledge decisions require a reason.
+Each row commits independently and displays its own outcome. The project
+Brain, Knowledge proposals and agent Memory screens link to the group.

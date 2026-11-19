@@ -3,8 +3,9 @@ import "server-only";
 import type { AgentMemoryState } from "@/lib/agents/memory-store";
 import type { Db } from "@/lib/execution-host/db";
 import type { PrepareVaultAccess, VaultAccess } from "./store";
+import type { VaultPending } from "./proposals";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { parseAgentMemoryMutation } from "./commands";
 import { agentMemoryVaultLimits } from "./limits";
@@ -64,7 +65,8 @@ type IndexMutation = Readonly<{
 }>;
 type IndexMutationResult =
   | Readonly<{ ok: true; state: AgentMemoryState }>
-  | Readonly<{ ok: false; current: AgentMemoryState }>;
+  | Readonly<{ ok: false; current: AgentMemoryState }>
+  | VaultPending;
 
 export async function mutateCompatibleVaultIndex(
   db: Db,
@@ -87,7 +89,12 @@ export async function mutateCompatibleVaultIndex(
     return { ok: true, state: await indexState(db, access, undefined) };
   const shared = {
     path: MEMORY_INDEX,
-    requestKey: randomUUID(),
+    requestKey:
+      access.writeAdmission === "review_required"
+        ? `legacy:${createHash("sha256")
+            .update(JSON.stringify([head?.revision.id, write.content]))
+            .digest("hex")}`
+        : randomUUID(),
     ifRevisionId: head?.revision.id ?? null,
     ifHash: write.ifHash,
   };
@@ -102,6 +109,7 @@ export async function mutateCompatibleVaultIndex(
     limits,
   );
 
+  if (result.status === "pending") return result;
   if (result.status !== "applied")
     throw new MaisterError(
       "CRASH",

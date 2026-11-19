@@ -64,15 +64,12 @@ function digest(value: unknown) {
   return createHash("sha256").update(canonicalCommandJson(value)).digest("hex");
 }
 
-async function enabled(
-  db: Db,
-  projectId: string,
-  agentId: string,
-): Promise<boolean> {
+async function enabledAttachment(db: Db, projectId: string, agentId: string) {
   const [link] = await db
     .select({
       enabled: agentProjectLinks.enabled,
       memoryEnabled: agentProjectLinks.memoryEnabled,
+      policy: agentProjectLinks.memoryWritePolicy,
     })
     .from(agentProjectLinks)
     .where(
@@ -83,7 +80,7 @@ async function enabled(
     )
     .for("share");
 
-  return link?.enabled === true && link.memoryEnabled;
+  return link?.enabled === true && link.memoryEnabled ? link : null;
 }
 
 function revisionReference(revision: VaultRevision): VaultRevisionRestriction {
@@ -262,8 +259,13 @@ async function stageFreshProjectSession(
   session: ProjectSession,
   nodeAttemptId: string | null,
 ): Promise<Extract<StageResult, { mode: "vault" }>> {
-  if (!(await enabled(tx, session.projectId, session.agentId)))
-    return { mode: "vault", text: null };
+  const attachment = await enabledAttachment(
+    tx,
+    session.projectId,
+    session.agentId,
+  );
+
+  if (!attachment) return { mode: "vault", text: null };
   const [existing] = await tx
     .select()
     .from(injections)
@@ -330,6 +332,7 @@ async function stageFreshProjectSession(
   await tx.insert(injections).values({
     ...descriptor,
     descriptorDigest: digest(descriptor),
+    requiresReviewAtLaunch: attachment.policy === "review",
   });
   log.debug(
     {
@@ -369,7 +372,7 @@ export async function assertMemorySessionSources(
   for (const { injection, owner } of rows) {
     if (
       owner.projectId === null ||
-      !(await enabled(db, owner.projectId, owner.agentId))
+      !(await enabledAttachment(db, owner.projectId, owner.agentId))
     )
       throw new MaisterError(
         "PRECONDITION",

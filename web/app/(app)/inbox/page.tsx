@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 
 import { DecisionSections } from "@/components/inbox/decision-sections";
 import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
+import { ProposalReviews } from "@/components/inbox/proposal-reviews";
 import { InboxPanel } from "@/components/portfolio/inbox-panel";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { requireSession } from "@/lib/authz";
@@ -14,6 +15,12 @@ import {
   hitlDecisionsOf,
 } from "@/lib/queries/decisions";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
+import { getDb } from "@/lib/db/client";
+import {
+  listProposalReviews,
+  parseReviewFilters,
+  parseReviewSelector,
+} from "@/lib/queries/knowledge-memory-reviews";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("inbox");
@@ -21,21 +28,39 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t("title") };
 }
 
-export default async function InboxPage(): Promise<ReactElement> {
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("inbox");
   const tp = await getTranslations("portfolio");
   const tStage = await getTranslations("workStage");
+  const { proposalId, kind, projectId, companyId, agentId, cursor } =
+    await searchParams;
+  const { limit, ...reviewFilters } = parseReviewFilters({
+    kind,
+    projectId,
+    companyId,
+    agentId,
+    cursor,
+  });
+  const initialReview =
+    proposalId === undefined
+      ? undefined
+      : parseReviewSelector({ kind, id: proposalId });
 
   // ADR-169 D8/ATN-05: the ONE canonical queue. Its `count` is the number the
   // rail badge shows — React-`cache`d, so this is the same computation, not a
   // second one free to disagree with it.
-  const [inboxItems, unreadInbox, queue] = await Promise.all([
+  const [inboxItems, unreadInbox, queue, reviews] = await Promise.all([
     getInboxItems(user.id, user.role),
     // The notifications panel's own population — unread mentions and comments,
     // which are `updates`, not `decisions`. Keeping them separate is the point.
     getUnreadInboxCount(user.id, user.role),
     getDecisionsQueue(user.id, user.role),
+    listProposalReviews(getDb(), user.id, { ...reviewFilters, limit }),
   ]);
   const decisions = queue.count;
   // ATN-01: the HITL cards come from the queue the count is the length of, not
@@ -57,7 +82,18 @@ export default async function InboxPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      {decisions === 0 && unreadInbox === 0 ? (
+      <div className="mb-8">
+        <ProposalReviews
+          key={JSON.stringify([reviewFilters, proposalId])}
+          page={reviews}
+          filters={reviewFilters}
+          initial={initialReview}
+        />
+      </div>
+      {decisions === 0 &&
+      unreadInbox === 0 &&
+      reviews.items.length === 0 &&
+      kind === undefined ? (
         <div className="rounded-[14px] border border-line bg-paper px-6 py-12 text-center text-[13.5px] text-mute">
           {t("empty")}
         </div>

@@ -310,38 +310,40 @@ Each task includes its tests/updated assertions; no task is complete merely beca
 
 ### P3 — Review policy, redaction, promotion and one Inbox
 
-- [ ] **T17 — Persist policies, external-input taint and pending vault proposals.**
-  - Files: main migration 0346/schema, attachment settings, new `agent-memory-vault/{policy,proposals}.ts`, mutation/launch/trigger/task-source/resume/steering consumers.
+- [x] **T17 — Persist policies, external-input taint and pending vault proposals.**
+  - Files: main migration 0347/schema, attachment settings, `agent-memory-vault/{write-admission,proposals}.ts`, mutation/launch/trigger/task-source/resume/steering consumers.
   - Implement D6 auto/review outcomes, persisted launch witness and monotonic external provenance from webhook/task external source through descendants/retry/continuation. Human editing is separately authorized. Capture exact diff/author/base; pending writes leave heads untouched and bounded. Old alias uses same service.
   - Tests: auto+manual, review+manual, auto+webhook, external-task manual trigger, inherited/steered external content, policy changes, duplicate proposal and quota races; SET/CLEAR/re-SET persisted policy. Logging: INFO effect/proposal IDs, DEBUG policy reason, no diff text. Depends on: T16.
-- [ ] **T18 — Implement CAS review actions and revision redaction.**
+- [x] **T18 — Implement CAS review actions and revision redaction.**
   - Files: proposal/domain services, revision payload guards, admin redaction/revert routes and UI history modal.
   - Apply/reject with current authority, immutable base/source checks and same-transaction receipt; test accept/accept and accept/reject races. Implement D5 admin-only redaction, head tombstone and removal from all derivative content channels. Revert cannot reintroduce redacted or newly hidden source content.
   - Tests: real Postgres stale CAS, source revocation, caps changed while pending, partial directory proposal refusal, conflict/history/receipt payload denial and non-admin denial. Assert a worker completion that raced redaction cannot revive a vector cache entry. T19 and T35 qualify the evidence and card cases at their own boundary. Logging: INFO audited decision/redaction reason code and reference IDs, WARN conflict. Depends on: T17.
-- [ ] **T19 — Promote exact vault revisions through existing governed proposals.**
+- [x] **T19 — Promote exact vault revisions through existing governed proposals.**
   - Files: new vault promotion service, Brain/knowledge source-reference and proposal services, MCP `memory_promote`, existing schema validators.
   - Resolve explicit destination under current rights and retain exact source revision plus fine-grained restrictions. Create pending proposal and promotion receipt in one transaction. For Brain, use its existing guarded submission primitives with a mandatory human-review admission for this origin, even when another proposal path auto-drafts. Both destination review and subsequent governed reads honor the exact source dependency. Handle deleted/redacted source, duplicate key and changed destination payload.
   - Tests: project Brain and company/project knowledge targets, narrower source than destination, no auto-draft, revocation before accept, and redaction before and after accept cannot expose the source in evidence or dependent content. Logging: INFO source/destination/proposal IDs, no content. Depends on: T17, T18.
-- [ ] **T20 — Add canonical reviewer-filtered Inbox read model and batch service.**
+- [x] **T20 — Add canonical reviewer-filtered Inbox read model and batch service.**
   - Files: new `web/lib/queries/knowledge-memory-reviews.ts`, shared review dispatcher, existing `brain/{proposals,knowledge-proposals,knowledge-proposal-query}.ts`, D7 Inbox routes.
   - Disjoint source union, one list/count predicate, per-action affordances, stable pagination/filtering, exact source access before previews. Batch delegates to existing domains and vault service with per-item transactions/results; no parallel decision engine.
   - Tests: mixed legacy/native/vault populations, proposer-not-reviewer excluded, differing Brain accept/reject rights, hidden source/count, stale/repeated/opposite decisions and partial batch outcomes. Logging: bounded batch/item IDs, authorized outcome and timing. Depends on: T18, T19.
-- [ ] **T21 — Extend attention SSE and rail with neutral reviews.**
+- [x] **T21 — Extend attention SSE and rail with neutral reviews.**
   - Files: `web/app/(app)/layout.tsx`, `web/app/api/attention/stream/route.ts`, `web/lib/use-attention-stream.ts`, `web/components/attention/attention-live-refresh.tsx`, `web/components/chrome/{left-rail,left-rail-nav}.tsx`, attention notification consumers and contracts.
   - Implement the D6 review version contract in initial props, counters, reconnect and refresh routing. Verify both stream branches that emit ticks and reauthorize the current reader on each counter pass. Preserve the project-change cursor when only reviews move. Test existing and new client baselines to prevent refresh loops. Review invalidation must stay out of amber publication.
   - Tests: stream reconnection, role loss while connected, no hidden counts, same-count replacement, collapsed/mobile/expanded rail accessible labels; no periodic client refresh. Logging: DEBUG authorized counter/generation transitions only. Depends on: T20.
-- [ ] **T22 — Build the Inbox group and remove duplicate decision controls.**
+- [x] **T22 — Build the Inbox group and remove duplicate decision controls.**
   - Files: `web/app/(app)/inbox/page.tsx`, review components, Brain panel/actions, `web/app/(app)/knowledge/proposals/**`, knowledge decision controls, Memory UI, EN/RU catalogs.
   - Filterable single review surface with details/diff, multi-select batch actions outside view-only rows and explicit partial results. Fix Inbox empty state. Old Brain/knowledge views link to filtered Inbox; no accepted/rejected control remains there or in Memory tab. Keep history inspectable.
   - Tests: `web/e2e/inbox.spec.ts`, memory spec, source review navigation/deep links, permissions and focus/error behavior in EN/RU. Logging: existing UI diagnostics only; domain owns audit. Depends on: T20, T21.
-- [ ] **T23 — Verify integrated webhook-to-Inbox review.**
+- [x] **T23 — Verify integrated webhook-to-Inbox review.**
   - Files: `web/e2e/inbox.spec.ts` and existing authenticated seed/trigger helpers.
   - Exercise webhook trigger → pending mutation → reviewer sees it in Inbox → accept once → updated note and neutral rail count. Verify amber count throughout. Use the entry points from T17–T22 and reuse their DB and stream witnesses for races, redaction and publication isolation.
   - Validation: the browser checks the journey and a durable applied receipt. Detailed error/policy matrices remain in their owning integration suites. Logging: test diagnostics with IDs only. Depends on: T17–T22.
-- [ ] **T24 — Finish P3 contracts and first-release readiness.**
+  - Browser evidence: the authenticated Chromium scenario seeds an already reserved webhook-triggered Run with an actual run-bound credential, sends the write through the MCP HTTP facade, observes the neutral SSE badge, opens the diff, accepts in Inbox, and verifies original Run attribution in the durable effect. The browser scenario starts after inbound webhook reservation.
+- [x] **T24 — Finish P3 contracts and first-release readiness.**
   - Files: affected docs/ADRs/status metadata, OpenAPI/AsyncAPI/ERDs, deployment/import instructions and compatibility tests.
   - Ensure P1 temporary forced-review refusal is replaced by durable pending outcome, all writers including alias/UI/internal calls share policy/history, and no second review controls survive. Document one-release alias window and bounded history storage behavior.
   - Validation: P3 focused E2E, full phase suites, docs/contracts/type/lint green; dry-run cutover acceptance, no production apply. Logging: validation output only. Depends on: T23.
+  - Verified locally: pending CAS RED → GREEN, mixed queue and batch effects, governed Brain/knowledge promotion, active redaction and in-flight vector refusal, focused SSE and attachment browser/unit suites, MCP parity (500), docs/contracts, migration schema and ERD. Inbound webhook reservation and the full cross-phase regression remain part of T38.
 
 ### P4 — Installation-scope bindings, principals, provenance and UI
 

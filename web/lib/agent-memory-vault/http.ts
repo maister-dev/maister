@@ -25,6 +25,7 @@ export function vaultMutationResponse(
   result: VaultMutationResult,
 ): NextResponse {
   if (result.status === "applied") return privateJson(result);
+  if (result.status === "pending") return privateJson(result, 202);
 
   const { current, mismatches } = result;
 

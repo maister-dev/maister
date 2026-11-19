@@ -297,6 +297,8 @@ export default async function ProjectAgentPage({
           <AgentMemoryControl
             agentId={access.agentId}
             canEdit={access.canEditSettings}
+            canRedact={access.actor.role === "admin"}
+            projectId={access.projectId}
             slug={slug}
           />
         ) : (

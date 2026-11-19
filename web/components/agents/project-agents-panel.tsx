@@ -83,6 +83,7 @@ export async function ProjectAgentsPanel({
           canReadBrain: row.canReadBrain,
           canWriteBrain: row.canWriteBrain,
           memoryEnabled: row.memoryEnabled,
+          memoryWritePolicy: row.memoryWritePolicy,
           crossProjectReach: row.crossProjectReach,
           schedulesRevision: row.schedulesRevision,
           schedules: canReadRepoFiles

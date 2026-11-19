@@ -215,6 +215,7 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   // an unmapped write scope silently resolves to the VIEWER-level action.
   "agent_memory:write": "writeAgentMemory",
   "agent_memory:read": "readRepoFiles",
+  "agent_memory:propose": "readRepoFiles",
 };
 
 function projectActionForScope(scope: string): ProjectAction {

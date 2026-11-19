@@ -141,6 +141,9 @@ export function AttachEditModal({
   const [canReadBrain, setCanReadBrain] = useState(row.canReadBrain);
   const [canWriteBrain, setCanWriteBrain] = useState(row.canWriteBrain);
   const [memoryEnabled, setMemoryEnabled] = useState(row.memoryEnabled);
+  const [memoryWritePolicy, setMemoryWritePolicy] = useState(
+    row.memoryWritePolicy ?? "auto",
+  );
   // (ADR-156) Cross-project reach. The grant only applies to an ENABLED
   // attachment, so the control follows the LIVE `enabled` state above rather
   // than the persisted row: granting on an attachment the operator is switching
@@ -295,7 +298,7 @@ export function AttachEditModal({
         // (ADR-122) Fold the Brain grants into the SAME aggregating PATCH.
         canReadBrain,
         canWriteBrain,
-        ...(sharesSession ? {} : { memoryEnabled }),
+        ...(sharesSession ? {} : { memoryEnabled, memoryWritePolicy }),
         // (ADR-156) Always sent, never conditionally omitted: an explicit value
         // both grants and revokes, so the saved state is exactly what the
         // operator sees. While the attachment is disabled the control is inert,
@@ -509,6 +512,20 @@ export function AttachEditModal({
               />
               {t("memoryToggle")}
             </label>
+            {memoryEnabled && !sharesSession ? (
+              <label className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={memoryWritePolicy === "review"}
+                  onChange={(event) =>
+                    setMemoryWritePolicy(
+                      event.target.checked ? "review" : "auto",
+                    )
+                  }
+                />
+                {t("reviewMemoryWrites")}
+              </label>
+            ) : null}
             {sharesSession ? (
               <p className="m-0 font-mono text-[11px] text-mute">
                 {t("memorySharedSession")}

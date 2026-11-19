@@ -94,8 +94,24 @@ export async function inspectKnowledgeWitness(
     content?: unknown;
     recordId?: unknown;
     revision?: unknown;
+    revisionId?: unknown;
   }>;
-  const content = typeof locator.content === "string" ? locator.content : null;
+  let content = typeof locator.content === "string" ? locator.content : null;
+  if (locator.kind === "vault_revision") {
+    const source = restrictions?.find(
+      (ref) =>
+        ref.kind === "agent_vault_revision_v1" &&
+        ref.revisionId === locator.revisionId,
+    );
+    if (source?.kind !== "agent_vault_revision_v1")
+      throw unavailableKnowledgeReference();
+    const result =
+      await tx.execute(sql`SELECT content FROM agent_memory_revision_payloads
+      WHERE (vault_id,note_id,revision_id)=(${source.vaultId},${source.noteId},${source.revisionId}) FOR SHARE`);
+    if (typeof result.rows[0]?.content !== "string")
+      throw unavailableKnowledgeReference();
+    content = result.rows[0].content;
+  }
 
   if (content !== null && sha256(content) !== row.content_sha256)
     throw new MaisterError(
@@ -136,6 +152,8 @@ async function witnessAvailability(
   locator: Readonly<{ kind?: unknown; recordId?: unknown; revision?: unknown }>,
   content: string | null,
 ): Promise<KnowledgeWitnessDto["availability"]> {
+  if (locator.kind === "vault_revision")
+    return content === null ? "missing" : "available";
   if (locator.kind === "record" && typeof locator.recordId === "string") {
     const record = (
       await tx.execute(

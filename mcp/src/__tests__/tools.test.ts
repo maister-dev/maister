@@ -61,6 +61,7 @@ describe("TOOL_SPECS registry", () => {
         "memory_search",
         "memory_backlinks",
         "memory_tags",
+        "memory_promote",
         "ask_human",
         "assignment_get",
         "assignment_context_get",

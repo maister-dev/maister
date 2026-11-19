@@ -295,6 +295,21 @@ A worker checks the same witnesses when writing its leased result. Visibility
 checks precede candidate ranking and determine what contributes to tag counts,
 alias resolution and backlinks.
 
+### Project review and redaction
+
+The attachment's `memoryWritePolicy` defaults to `auto`. Changing it to
+`review` holds subsequent agent mutations. The launch witness can also force
+review after a policy change. Run lineage and retained input markers preserve
+external provenance from webhook delivery and task source links. Human saves
+remain governed by `editSettings`.
+
+A pending result returns HTTP `202` with an operation ID and proposal ID.
+Retries preserve the original receipt. Current reviewers see the exact
+selection and its proposed diff in Inbox. Acceptance repeats CAS, source and
+quota checks in the revision transaction. Admin redaction tombstones an
+active head, removes the payload and cancels dependent vault previews. Governed
+evidence points to an exact revision and refuses reads after redaction.
+
 **Vault expectations (Design and implementation):**
 
 - **AV-01, AV-12.** A mutation MUST compare revision and hash in the locked

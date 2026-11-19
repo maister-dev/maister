@@ -7,10 +7,12 @@ import { expect, it, vi } from "vitest";
 import { parseAgentMemoryMutation } from "../commands";
 import { runMemoryIndexSweep } from "../embedding-sweep";
 import { agentMemoryVaultLimits } from "../limits";
+import { redactMemoryRevision } from "../redaction";
 import { searchMemory } from "../search";
 import { applyVaultMutation } from "../store";
 
 import { seedProject } from "@/test-support/execution-host-seed";
+import { seedActiveUser } from "@/test-support/librarian-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { platformAcpRunners } from "@/lib/db/schema";
@@ -134,6 +136,18 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
       hits: [],
       nextCursor: null,
     });
+
+    const withdrawn = await apply({ command: "create", path, file_text: "withdrawn-vector",
+      ifRevisionId: null, ifHash: null, requestKey: "vector-withdraw" });
+    const admin = await seedActiveUser(fixture.db, { role: "admin" });
+
+    await fixture.pool.query("INSERT INTO agent_memory_cutover(generation) VALUES (1)");
+    onEmbed = async (text) => {
+      if (text === "withdrawn-vector") await redactMemoryRevision(fixture.db, admin, withdrawn.revisionId,
+        { reason: "Withdraw exact source", requestKey: "redact-vector" });
+    };
+    expect(await runMemoryIndexSweep(fixture.db)).toMatchObject({ embedded: 0, failed: 0 });
+    expect((await fixture.pool.query("SELECT revision_id FROM agent_memory_embeddings WHERE revision_id=$1", [withdrawn.revisionId])).rows).toEqual([]);
 
     const failing = await apply({
       command: "create",

@@ -268,4 +268,4 @@ The project Agents tab omits request text from client props unless the live read
 
 ## Agent memory tab
 
-The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. Search and tag filters are kept in the URL. Select a note to inspect its aliases, outgoing links and backlinks. When the target is unavailable, the pointer remains as plain text. The filtered Inbox link is part of the review deliverable.
+The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. Search and tag filters are kept in the URL. Select a note to inspect its aliases, outgoing links and backlinks. When the target is unavailable, the pointer remains as plain text. Global admins can redact an exact revision with a reason. A link opens the filtered Inbox for pending reviews.

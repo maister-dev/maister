@@ -167,8 +167,8 @@ it("AV-12 replays once and denies collisions with targets the writer cannot see"
       { ...access, writeAdmission: "review_required" },
       create("/memories/notes/pending.md", "pending", "create-03"),
     ),
-  ).rejects.toMatchObject({
-    details: { reason: "agent_memory_review_required" },
+  ).resolves.toMatchObject({
+    status: "pending",
   });
 });
 

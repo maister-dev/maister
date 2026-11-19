@@ -233,6 +233,7 @@ export async function PUT(
       };
     });
 
+    if ("status" in result) return privateJson(result, 202);
     if (!result.ok) {
       return privateJson(
         {
@@ -326,6 +327,7 @@ export async function DELETE(
       };
     });
 
+    if ("status" in result) return privateJson(result, 202);
     if (!result.ok) {
       return privateJson(
         {

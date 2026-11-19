@@ -88,6 +88,7 @@ export type AttachedAgentView = {
   // Brain axis implies it. Seeded on attach from the effective definition's
   // `memory:` field, effective thereafter.
   memoryEnabled: boolean;
+  memoryWritePolicy: "auto" | "review";
   // ADR-156: per-link cross-project reach grant. On an ENABLED link it admits an
   // agent token minted for ANOTHER project, bounded by CROSS_PROJECT_AGENT_SCOPES.
   crossProjectReach: boolean;
@@ -297,6 +298,7 @@ export async function getProjectAgentsView(
     canReadBrain: Boolean(link.canReadBrain),
     canWriteBrain: Boolean(link.canWriteBrain),
     memoryEnabled: Boolean(link.memoryEnabled),
+    memoryWritePolicy: link.memoryWritePolicy,
     crossProjectReach: Boolean(link.crossProjectReach),
     schedulesRevision: link.schedulesRevision as number,
     schedules: scheduleRows
@@ -490,6 +492,7 @@ export async function updateAgentLink(
       // ADR-152: per-link agent-memory axis. Only an explicit true/false
       // writes, mirroring the Brain axes — absent means untouched.
       memoryEnabled?: boolean;
+      memoryWritePolicy?: "auto" | "review";
       // ADR-156: per-link cross-project reach grant. Same idiom as the Brain
       // axes — explicit true grants, explicit false revokes, absent is untouched.
       crossProjectReach?: boolean;
@@ -715,6 +718,9 @@ export async function updateAgentLink(
     }
     if (input.patch.memoryEnabled !== undefined) {
       set.memoryEnabled = input.patch.memoryEnabled;
+    }
+    if (input.patch.memoryWritePolicy !== undefined) {
+      set.memoryWritePolicy = input.patch.memoryWritePolicy;
     }
     // ADR-156: not-null boolean (no clear) — an explicit true grants reach,
     // an explicit false revokes it, and an absent field leaves the grant

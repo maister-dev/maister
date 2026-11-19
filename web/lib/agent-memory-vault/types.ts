@@ -32,3 +32,10 @@ export type AgentMemoryTreeDescriptor = Readonly<{
 }>;
 
 export type AgentMemoryHashFormat = "legacy-file-v1" | "vault-manifest-v1";
+
+export type AgentMemoryProposedChange = Readonly<{
+  kind: "created" | "edited" | "renamed" | "deleted" | "reverted";
+  path: string;
+  beforeRevisionId: string | null;
+  afterHash: string | null;
+}>;

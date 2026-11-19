@@ -174,7 +174,7 @@ async function write(body: unknown) {
   return { status: res.status, body: (await res.json()) as any };
 }
 
-it("AV-04/15 binds commands to the credential's current run and applies the preview review guard", async () => {
+it("AV-04/15 binds commands to the credential's current run and holds external writes for review", async () => {
   const commands = await import("../commands/route");
   const { verifyToken } = await vi.importActual<
     typeof import("@/lib/tokens/verify")
@@ -261,8 +261,11 @@ it("AV-04/15 binds commands to the credential's current run and applies the prev
     ifRevisionId: head.revisionId,
   });
 
-  expect(refused.status).toBe(409);
-  expect(await refused.json()).toMatchObject({ code: "PRECONDITION" });
+  expect(refused.status).toBe(202);
+  expect(await refused.json()).toMatchObject({
+    status: "pending",
+    proposalId: expect.any(String),
+  });
   expect(await (await send(index)).json()).toMatchObject({
     content: "retained",
   });

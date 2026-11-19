@@ -546,6 +546,7 @@ export const brainEvidenceWitnesses = pgTable("brain_evidence_witnesses", {
     .$type<
       | { kind: "inline"; content: string }
       | { kind: "record"; recordId: string; revision: number; content: string }
+      | { kind: "vault_revision"; revisionId: string }
     >()
     .notNull(),
   capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" })

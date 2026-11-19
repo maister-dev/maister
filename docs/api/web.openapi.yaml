@@ -1555,15 +1555,20 @@ paths:
             Query-string fallback for `Last-Event-ID`, same canonical decimal
             form. An unusable value yields a snapshot rather than an error.
           schema: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        - name: reviewProtocol
+          in: query
+          required: false
+          description: Selects review-aware reconciliation when the review baseline is missing or invalid.
+          schema: { type: string, enum: ["1"] }
         - name: reviews
           in: query
           required: false
-          description: (Designed, ADR-212) Most recent visible review count.
+          description: (ADR-212) Most recent visible review count.
           schema: { type: integer, minimum: 0 }
         - name: reviewVersion
           in: query
           required: false
-          description: (Designed, ADR-212) Paired opaque version of the visible review set.
+          description: (ADR-212) Paired opaque version of the visible review set.
           schema: { type: string, pattern: "^[0-9a-f]{64}$" }
       responses:
         "200":
@@ -2987,7 +2992,11 @@ paths:
                   description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
                 memoryEnabled:
                   type: boolean
-                  description: "(ADR-152) Per-link agent-memory axis — gates launch injection and `agent_memory_write`. A SEPARATE store from Brain: neither Brain axis implies it. Threaded through THIS aggregating PATCH, never a per-field route. An explicit `true` is refused with `422 CONFIG` for a flow-bound agent (its launch produces a `run_kind=flow` run that can never carry memory); `false` is always accepted so a mis-set link stays fixable."
+                  description: ADR-210 per-attachment vault enablement for the acting session agent or Flow persona. Brain permissions are independent.
+                memoryWritePolicy:
+                  type: string
+                  enum: [auto, review]
+                  description: Current per-attachment policy. External input always requires review. Omission preserves the stored policy.
                 crossProjectReach:
                   type: boolean
                   description: |
@@ -23174,9 +23183,9 @@ paths:
     post:
       operationId: agentVaultProjectPromote
       summary: Propose the exact vault revision for review
-      description: Designed (P3). Requires editSettings and current source access. Target identity comes
+      description: Requires editSettings and current source access. Target identity comes
         from current credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -23784,9 +23793,9 @@ paths:
     post:
       operationId: agentVaultRedactRevision
       summary: Redact one exact vault revision
-      description: Designed (P3). Requires current global admin. Target identity comes from current
+      description: Requires current global admin. Target identity comes from current
         credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -23832,9 +23841,9 @@ paths:
     get:
       operationId: listInboxProposalReviews
       summary: List reviewer-authorized proposals
-      description: Designed (P3). Evaluate each proposal kind's current decision and source rights. Target
+      description: Evaluate each proposal kind's current decision and source rights. Target
         identity comes from current credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -23912,9 +23921,9 @@ paths:
     get:
       operationId: getInboxProposalReview
       summary: Read one reviewer-visible proposal
-      description: Designed (P3). Check exact target and source rules before returning proposed content.
+      description: Check exact target and source rules before returning proposed content.
         Target identity comes from current credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -23961,10 +23970,10 @@ paths:
     post:
       operationId: decideInboxProposals
       summary: Settle an ordered batch of proposal decisions
-      description: Designed (P3). Evaluate each decision separately under current authority. Hidden and
+      description: Evaluate each decision separately under current authority. Hidden and
         missing items yield unavailable. Target identity comes from current credentials and the
         resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       requestBody:
@@ -24736,7 +24745,7 @@ components:
           pattern: ^[0-9a-f]{64}$
         requestKey:
           type: string
-          minLength: 1
+          minLength: 8
           maxLength: 128
           pattern: ^[A-Za-z0-9_.:-]{8,128}$
         target:
@@ -25213,6 +25222,11 @@ components:
                 minLength: 1
                 maxLength: 128
                 pattern: ^[A-Za-z0-9_.:-]{8,128}$
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                description: Required for knowledge reviews and optional for Brain reviews.
           minItems: 1
           maxItems: 50
     AgentVaultReviewResults:

@@ -260,6 +260,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           });
         });
 
+        if ("status" in result) return privateJson(result, 202);
         if (!result.ok) {
           // The current state rides the 409 so the caller can merge and retry
           // rather than clobber — the whole point of the CAS.

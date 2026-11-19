@@ -16,6 +16,7 @@ import type {
 import type { CreateKnowledgeProposalInput } from "./knowledge-types";
 import type { KnowledgeDatabase } from "./knowledge-access";
 import type { KnowledgeProposalReceipt } from "./knowledge-proposals";
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 
 export {
   reviewKnowledgeProposal,
@@ -28,6 +29,10 @@ import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { createKnowledgeProposal } from "./knowledge-proposals";
+import {
+  authorizeSourceRestrictions,
+  unavailableKnowledgeReference,
+} from "./knowledge-restrictions";
 
 import {
   getBrainAutonomyPolicy,
@@ -102,6 +107,7 @@ export interface CreateBrainProposalInput {
   autonomyDecision: BrainProposalAutonomyDecision;
   clusterHash?: string | null;
   actor: BrainProposalActor;
+  sourceRestrictions?: readonly KnowledgeAccessRestriction[];
 }
 
 export interface CreateBrainProposalWithAutonomyInput {
@@ -135,6 +141,7 @@ export interface ConcludeBrainProposalInput {
   action: "accept" | "reject";
   actor: BrainProposalActor;
   reason?: string;
+  expectedVersion?: string;
 }
 
 function isOneOf<T extends string>(
@@ -218,6 +225,7 @@ async function loadProposalForUpdate(
   db: ProposalDb,
   projectId: string,
   proposalId: string,
+  actor?: BrainProposalActor,
 ): Promise<BrainProposalDto> {
   const rows = await db.execute(sql`
     SELECT *
@@ -231,13 +239,31 @@ async function loadProposalForUpdate(
     throw new MaisterError("PRECONDITION", "Brain proposal not found");
   }
 
+  await assertBrainProposalSources(db, rows.rows[0].source_restrictions, actor);
+
   return toProposal(rows.rows[0]);
+}
+
+async function assertBrainProposalSources(
+  db: ProposalDb,
+  sources: unknown,
+  actor?: BrainProposalActor,
+): Promise<void> {
+  if (sources == null || (Array.isArray(sources) && sources.length === 0))
+    return;
+  if (actor?.type !== "user") throw unavailableKnowledgeReference();
+  await authorizeSourceRestrictions(
+    db,
+    { kind: "user", userId: actor.id },
+    sources,
+  );
 }
 
 export async function getBrainProposal(
   db: ProposalDb,
   projectId: string,
   proposalId: string,
+  actor?: BrainProposalActor,
 ): Promise<BrainProposalDto> {
   const rows = await db.execute(sql`
     SELECT *, false AS idempotent
@@ -250,6 +276,8 @@ export async function getBrainProposal(
   if (!rows.rows[0]) {
     throw new MaisterError("PRECONDITION", "Brain proposal not found");
   }
+
+  await assertBrainProposalSources(db, rows.rows[0].source_restrictions, actor);
 
   return toProposal(rows.rows[0]);
 }
@@ -323,13 +351,14 @@ export async function createBrainProposal(
   const rows = await db.execute(sql`
     INSERT INTO brain_proposals
       (id, project_id, kind, evidence_item_ids, draft, status, blast_radius,
-       autonomy_decision, cluster_hash, actor)
+       autonomy_decision, cluster_hash, actor, source_restrictions)
     VALUES
       (${id}, ${input.projectId}, ${input.kind},
        ${JSON.stringify(input.evidenceItemIds)}::jsonb,
        ${JSON.stringify(input.draft)}::jsonb, 'pending',
        ${input.blastRadius}, ${input.autonomyDecision},
-       ${input.clusterHash ?? null}, ${JSON.stringify(input.actor)}::jsonb)
+       ${input.clusterHash ?? null}, ${JSON.stringify(input.actor)}::jsonb,
+       ${input.sourceRestrictions ? JSON.stringify(input.sourceRestrictions) : null}::jsonb)
     RETURNING *, false AS idempotent
   `);
   const proposal = toProposal(rows.rows[0]);
@@ -420,6 +449,7 @@ async function transitionBrainProposalInTransaction(
     db,
     input.projectId,
     input.proposalId,
+    input.actor,
   );
 
   return transitionLoadedBrainProposal(db, current, input);
@@ -534,7 +564,21 @@ export async function concludeBrainProposal(
       tx,
       input.projectId,
       input.proposalId,
+      input.actor,
     );
+
+    if (input.expectedVersion !== undefined) {
+      const [version] = (
+        await tx.execute(
+          sql`SELECT updated_at::text AS version FROM brain_proposals WHERE id=${current.id}`,
+        )
+      ).rows;
+      if (version?.version !== input.expectedVersion)
+        throw new MaisterError(
+          "CONFLICT",
+          "Brain proposal changed while reviewing",
+        );
+    }
 
     if (current.status !== "pending") {
       throw new MaisterError(
@@ -572,6 +616,12 @@ export async function concludeBrainProposal(
       actor: input.actor,
       reason: input.reason,
     });
+
+    const vaultEvidence = await tx.execute(
+      sql`SELECT 1 FROM agent_memory_promotions WHERE proposal_id=${current.id}`,
+    );
+
+    if (vaultEvidence.rows.length > 0) return accepted;
 
     if (!isCatalogProposalKind(current.kind)) {
       const projected = await projectBrainProposalToTask(tx as any, {

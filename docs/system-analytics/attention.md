@@ -217,7 +217,7 @@ flowchart LR
     CQ --> Q["computeDecisionsQueue, fifth source"]
 ```
 
-### Governed knowledge and memory review (Designed — ADR-212)
+### Governed knowledge and memory review (ADR-212)
 
 The Inbox is the review surface for pending vault, Project Brain and native
 knowledge proposals. These rows do not contribute to amber `decisions` or
@@ -228,7 +228,7 @@ Inbox review projection.
 | Source | Eligibility before listing and counting | Settlement |
 | --- | --- | --- |
 | Project vault | Current `readRepoFiles`, `editSettings` and all stored source rights. | Accept applies the exact proposed command through the vault CAS transaction. Reject settles the proposal with no head change. |
-| Installation vault | Current global administrator and available exact sources. | Same vault transaction. Installation author credentials only create pending proposals. |
+| Installation vault (Designed) | Current global administrator and available exact sources. | Same vault transaction. Installation author credentials only create pending proposals. |
 | Project Brain legacy proposal | Existing kind-specific conclusion rights and evidence visibility. | Use the existing Brain transition. Show only the outcomes this actor may choose. |
 | Native knowledge proposal | Current `knowledge:review` on the destination and visibility to every source. | Use the native knowledge review service and its revision/evidence checks. |
 
@@ -240,7 +240,8 @@ the reviewer has current rejection authority. Stale acceptance returns a
 conflict and leaves the proposal pending.
 
 The batch accepts at most 50 decisions. Each item names a typed source,
-proposal ID, expected version, outcome and request key. Each item resolves
+proposal ID, expected version, outcome and request key. Knowledge decisions
+also require a reason. Each item resolves
 live authorization and commits its own effect and receipt. Replay of an
 authorized settled key returns its previous outcome when the normalized
 request matches. A reused key with different input or a lost decision CAS

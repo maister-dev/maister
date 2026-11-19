@@ -598,6 +598,24 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: { type: "object", additionalProperties: false, properties: vaultPage },
     annotations: { readOnlyHint: true },
   },
+  memory_promote: {
+    description: "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["path", "ifRevisionId", "ifHash", "requestKey", "target"],
+      properties: {
+        path: { type: "string", minLength: 1, maxLength: 512, pattern: "^/memories(?:/[^/]+)*$" },
+        ifRevisionId: { type: "string", minLength: 1, maxLength: 192 },
+        ifHash: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+        requestKey: { type: "string", minLength: 8, maxLength: 128, pattern: "^[A-Za-z0-9_.:-]{8,128}$" },
+        target: {
+          type: "object", additionalProperties: false, required: ["kind", "ownerKind", "ownerId"],
+          properties: { kind: { type: "string", enum: ["brain", "knowledge"] }, ownerKind: { type: "string", enum: ["project", "company"] },
+            ownerId: { type: "string", minLength: 1, maxLength: 192 } },
+        },
+      },
+    },
+  },
   agent_memory_write: {
     description:
       "Deprecated for one release. Use the memory tool for new work. This compatibility command replaces /memories/index.md in the current session vault. Supply its current ifHash, or null for a first write. A conflict includes the authorized current index state.",
@@ -1589,6 +1607,7 @@ export async function dispatchTool(opts: {
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
       name === "memory" ||
+      name === "memory_promote" ||
       isVaultIndexTool(name) ||
       name === "agent_memory_write" ||
       isKnowledgeTool(name) ||
@@ -2063,6 +2082,8 @@ function resolveRouting(
         path: "/api/v1/ext/agent/memory/commands",
         body: args,
       };
+    case "memory_promote":
+      return { method: "POST", path: "/api/v1/ext/agent/memory/promote", body: args };
     case "memory_search":
     case "memory_backlinks":
     case "memory_tags": {

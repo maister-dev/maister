@@ -88,6 +88,7 @@ export const TOKEN_SCOPES = [
   // additionally gated by agent_project_links.memory_enabled; neither the scope
   // nor the flag alone authorizes a write.
   "agent_memory:read",
+  "agent_memory:propose",
   "agent_memory:write",
   // ADR-145 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
   // are minted ONLY on a judge attempt's ephemeral agent token
@@ -157,6 +158,7 @@ export const AGENT_TOKEN_SCOPES = [
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
   "agent_memory:read",
+  "agent_memory:propose",
   "agent_memory:write",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 

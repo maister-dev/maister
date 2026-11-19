@@ -217,6 +217,6 @@ labels), `gc` (TTL badges).
 
 A separate Agents section shows every active agent-origin run, including Pending/parked and flow-driving runs. Physical workspace rows require a retained workspace and exclude runs already represented in Agents. Terminal operations leave the rail; repeated failures are grouped in Inbox. Expanded/collapsed/mobile share the population and accessible exact status. See [canonical behavior](../../system-analytics/agent-activity-history.md).
 
-## Neutral Reviews count (Designed)
+## Neutral Reviews count
 
 Inbox has a neutral review badge alongside its amber decisions badge. Its accessible label identifies optional reviews. The existing attention connection updates it on visible review changes.

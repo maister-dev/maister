@@ -16,6 +16,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { AgentMemoryNavigation } from "./agent-memory-navigation";
+import { AgentMemoryRedact } from "./agent-memory-redact";
 
 import {
   buildVaultCommand,
@@ -113,12 +114,17 @@ export function AgentMemoryControl({
   slug,
   agentId,
   canEdit,
+  canRedact,
+  projectId,
 }: {
   slug: string;
   agentId: string;
   canEdit: boolean;
+  canRedact: boolean;
+  projectId: string;
 }) {
   const t = useTranslations("agentVault");
+  const tReview = useTranslations("inbox.reviews");
   const board = useTranslations("board");
   const format = useFormatter();
   const router = useRouter();
@@ -271,6 +277,14 @@ export function AgentMemoryControl({
         ) : null}
         <span className="break-all font-mono text-xs text-mute">{path}</span>
       </nav>
+      {canEdit ? (
+        <Link
+          className="text-sm"
+          href={`/inbox?${new URLSearchParams({ kind: "vault", projectId, agentId })}#knowledge-memory`}
+        >
+          {tReview("link")}
+        </Link>
+      ) : null}
       {data === null ? <p role="status">{t("loading")}</p> : null}
       {data?.issue ? <p role="alert">{textFor(data.issue)}</p> : null}
       {error && !draft ? <p role="alert">{textFor(error)}</p> : null}
@@ -349,6 +363,16 @@ export function AgentMemoryControl({
             {revision?.revision.state === "available" && canEdit
               ? actionButton("revert", revision.revision.id)
               : null}
+            {revision?.revision.state === "available" && canRedact ? (
+              <AgentMemoryRedact
+                key={revision.revision.id}
+                revisionId={revision.revision.id}
+                onRedacted={() => {
+                  refresh((value) => value + 1);
+                  router.replace(href(parentPath(path)));
+                }}
+              />
+            ) : null}
             {history ? (
               <section
                 aria-label={t("history")}

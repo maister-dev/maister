@@ -17,7 +17,7 @@ info:
     visible projects moved. Clients follow the `retain: false` idiom and must not
     accumulate frames in state.
 
-    Designed (ADR-212): a tick also carries the authorized neutral reviews count
+    ADR-212: a tick also carries the authorized neutral reviews count
     and opaque reviewVersion. Both fields travel together. Review-only changes
     can reuse the prior cursor and carry no project IDs.
 
@@ -69,7 +69,7 @@ channels:
         not parse is ignored. Without a cursor the stream opens with a snapshot
         tick whose `changed` is empty.
 
-        With the Designed reviews projection, `reviews` and `reviewVersion` are
+        With `reviewProtocol=1`, `reviews` and `reviewVersion` are
         optional reconnect baselines. A changed version can trigger one refresh
         even when count and cursor match. Missing or invalid baselines reconcile
         once. Older clients ignore the additive fields and reviews region.
@@ -136,11 +136,11 @@ components:
           type: integer
           minimum: 0
         reviews:
-          description: (Designed, ADR-212) Pending optional reviews this reader can decide.
+          description: (ADR-212) Pending optional reviews this reader can decide.
           type: integer
           minimum: 0
         reviewVersion:
-          description: (Designed, ADR-212) Opaque digest of reviewer-visible state.
+          description: (ADR-212) Opaque digest of reviewer-visible state.
           type: string
           pattern: "^[0-9a-f]{64}$"
         changed:

@@ -70,6 +70,7 @@ export type AttachedAgentRow = {
   canWriteBrain: boolean;
   // (ADR-152) Per-link agent-memory axis — a SEPARATE store from Brain.
   memoryEnabled: boolean;
+  memoryWritePolicy?: "auto" | "review";
   // (ADR-156) Per-link cross-project reach grant — admits an agent token minted
   // for ANOTHER project into this one, and only while the link is enabled.
   crossProjectReach: boolean;

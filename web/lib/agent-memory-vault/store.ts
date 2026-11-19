@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AgentMemoryMutation } from "./commands";
 import type { AgentMemoryLimits } from "./limits";
+import type { VaultPending } from "./proposals";
 import type { AgentMemoryAuthor, AgentMemoryRestriction } from "./types";
 import type { Db } from "@/lib/execution-host/db";
 
@@ -15,6 +16,12 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { insertMemoryText, replaceMemoryText } from "./commands";
 import { indexMemoryRevision, resolveIndexedMemoryLinks } from "./indexes";
 import { isUnderMemoryPath, memoryNotePath, MEMORY_INDEX } from "./paths";
+import {
+  findVaultProposal,
+  retainVaultProposal,
+  vaultProposalBases,
+} from "./proposals";
+import { parseMemoryStructure } from "./structure";
 
 import {
   agentMemoryNotes as notes,
@@ -58,6 +65,13 @@ type EffectiveChange =
       head: Head;
       inherited: readonly VaultRevision[];
     }>;
+type RedactedHead = Readonly<{
+  kind: "redacted";
+  path: string;
+  content: null;
+  head: Head;
+  inherited: readonly VaultRevision[];
+}>;
 
 export type VaultAccess = Readonly<{
   vaultId: string;
@@ -95,7 +109,7 @@ export type VaultConflict = Readonly<{
   }>[];
 }>;
 
-export type VaultMutationResult = VaultApplied | VaultConflict;
+export type VaultMutationResult = VaultApplied | VaultConflict | VaultPending;
 
 export function unavailableMemory(): MaisterError {
   return new MaisterError("PRECONDITION", "Resource unavailable", {
@@ -587,7 +601,7 @@ async function recordChange(
   access: VaultAccess,
   operationId: string,
   ordinal: number,
-  change: EffectiveChange,
+  change: EffectiveChange | RedactedHead,
 ): Promise<VaultRevision> {
   const noteId = change.head?.note.id ?? randomUUID();
   const revisionId = randomUUID();
@@ -667,17 +681,88 @@ async function recordChange(
   return record;
 }
 
+export async function tombstoneRedactedHead(
+  tx: Db,
+  vault: Vault,
+  revision: VaultRevision,
+  userId: string,
+  redactionId: string,
+): Promise<void> {
+  const head = await readHead(tx, vault.id, revision.noteId);
+  if (head.revision.id !== revision.id) return;
+  const operationId = randomUUID();
+
+  await tx
+    .insert(operations)
+    .values({
+      id: operationId,
+      vaultId: vault.id,
+      principalKey: `redaction:${userId}`,
+      commandKind: "redact",
+      requestKey: redactionId,
+      commandDigest: createHash("sha256").update(revision.id).digest("hex"),
+      outcome: "applied",
+    });
+  await recordChange(
+    tx,
+    {
+      vaultId: vault.id,
+      principalKey: `user:${userId}`,
+      actor: { kind: "human", userId },
+      sourceProjectIds: revision.sourceProjectIds,
+      sourceRestrictions: revision.sourceRestrictions,
+      writeAdmission: "apply",
+      canRead: async () => true,
+      capture: async () => {},
+    },
+    operationId,
+    0,
+    {
+      kind: "redacted",
+      path: head.note.path,
+      content: null,
+      head,
+      inherited: [revision],
+    },
+  );
+  await resolveIndexedMemoryLinks(tx, vault.id);
+  await tx
+    .update(vaults)
+    .set({
+      generation: vault.generation + 1n,
+      noteCount: vault.noteCount - 1,
+      contentBytes: vault.contentBytes - revision.sizeBytes,
+      contentChars: vault.contentChars - revision.sizeChars,
+    })
+    .where(eq(vaults.id, vault.id));
+}
+
 async function replay(
   db: Db,
   access: VaultAccess,
   operation: typeof operations.$inferSelect,
   digest: string,
-): Promise<VaultApplied> {
-  if (operation.outcome !== "applied")
-    throw new MaisterError(
-      "PRECONDITION",
-      "Memory operation is awaiting review",
-    );
+): Promise<VaultApplied | VaultPending> {
+  if (operation.outcome === "pending") {
+    const proposal = await findVaultProposal(db, access.vaultId, operation.id);
+    if (!proposal || proposal.state === "redacted") throw unavailableMemory();
+    const bases = await vaultProposalBases(db, access.vaultId, operation.id);
+
+    for (const revision of bases)
+      await requireRevisionRead(db, access, revision);
+    if (operation.commandDigest !== digest)
+      throw new MaisterError(
+        "CONFLICT",
+        "Memory request key already belongs to a different command",
+      );
+    await access.capture(db, bases);
+
+    return {
+      status: "pending",
+      operationId: operation.id,
+      proposalId: proposal.id,
+    };
+  }
   const rows = await db
     .select({ revision: revisions })
     .from(operationRevisions)
@@ -699,8 +784,10 @@ async function replay(
     .orderBy(operationRevisions.ordinal);
   const results = rows.map((row) => row.revision);
 
-  for (const revision of results)
+  for (const revision of results) {
     await requireRevisionRead(db, access, revision);
+    if (revision.contentSha256 !== null) await readVaultPayload(db, revision);
+  }
   if (operation.commandDigest !== digest)
     throw new MaisterError(
       "CONFLICT",
@@ -738,14 +825,6 @@ export async function applyVaultMutationInTransaction(
     );
 
   if (existing) return replay(db, access, existing, digest);
-  if (access.writeAdmission === "review_required")
-    throw new MaisterError(
-      "PRECONDITION",
-      "This vault mutation requires review",
-      {
-        details: { reason: "agent_memory_review_required" },
-      },
-    );
   const active = await loadActiveHeads(db, vault.id);
   const plan =
     "ifGeneration" in command
@@ -768,6 +847,43 @@ export async function applyVaultMutationInTransaction(
   await checkPaths(db, access, active, plan);
   const quota = quotaAfter(vault, plan, limits);
   const operationId = randomUUID();
+
+  if (access.writeAdmission === "review_required") {
+    const bases = [
+      ...new Map(
+        plan
+          .flatMap((change) => change.inherited)
+          .map((revision) => [revision.id, revision]),
+      ).values(),
+    ];
+    const sources = retentionSources(access, bases);
+    const changes = plan.map((change) => {
+      if (change.content !== null && change.kind !== "renamed")
+        parseMemoryStructure(change.content);
+
+      return {
+        kind: change.kind,
+        path: change.path,
+        beforeRevisionId: change.head?.revision.id ?? null,
+        afterHash:
+          change.content === null
+            ? null
+            : createHash("sha256").update(change.content).digest("hex"),
+      };
+    });
+
+    return retainVaultProposal(db, {
+      operationId,
+      digest,
+      command,
+      changes,
+      sourceProjectIds: sources.projectIds,
+      sourceRestrictions: sources.restrictions,
+      refs: bases,
+      access,
+      maxPending: limits.pending,
+    });
+  }
 
   await db.insert(operations).values({
     id: operationId,
@@ -826,6 +942,15 @@ export async function applyVaultMutation(
         revisions: result.affected.length,
       },
       "agent memory operation settled",
+    );
+  else if (result.status === "pending")
+    log.info(
+      {
+        ...metadata,
+        operationId: result.operationId,
+        proposalId: result.proposalId,
+      },
+      "agent memory operation awaits review",
     );
   else log.warn(metadata, "agent memory compare-and-swap lost");
   log.debug(metadata, "agent memory mutation transaction returned");
