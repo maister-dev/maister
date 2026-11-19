@@ -1,6 +1,6 @@
 import type { StartSessionRequest } from "../types";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildChildEnv } from "../spawn";
 
@@ -16,16 +16,58 @@ function makeRequest(
 }
 
 describe("buildChildEnv — env layering precedence", () => {
-  it("includes process.env as the baseline layer", () => {
-    process.env.MAISTER_BCE_BASELINE = "baseline-value";
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
-    try {
-      const env = buildChildEnv(makeRequest());
+  it("IT-ISO-05 projects host tool startup without ambient credentials or sockets", () => {
+    vi.stubEnv("MAISTER_BCE_BASELINE", "baseline-value");
+    vi.stubEnv("ANTHROPIC_API_KEY", "host-secret");
+    vi.stubEnv("SSH_AUTH_SOCK", "/example/ssh-agent.sock");
+    vi.stubEnv("HTTPS_PROXY", "http://proxy.invalid");
+    vi.stubEnv("LC_ALL", "C");
 
-      expect(env.MAISTER_BCE_BASELINE).toBe("baseline-value");
-    } finally {
-      delete process.env.MAISTER_BCE_BASELINE;
-    }
+    const env = buildChildEnv(makeRequest());
+
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.HOME).toBe(process.env.HOME);
+    expect(env.LC_ALL).toBe("C");
+    expect(env).not.toHaveProperty("MAISTER_BCE_BASELINE");
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
+    expect(env).not.toHaveProperty("HTTPS_PROXY");
+  });
+
+  it.each(["HOME", "PATH", "https_proxy", "NODE_OPTIONS", "CODEX_HOME"])(
+    "refuses an adapter launch override of %s before spawning",
+    (name) => {
+      expect(() =>
+        buildChildEnv(
+          makeRequest({ adapterLaunch: { env: { [name]: "synthetic" } } }),
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          code: "PRECONDITION",
+          details: { reason: "workload_environment_reserved", field: name },
+        }),
+      );
+    },
+  );
+
+  it("keeps the Codex capability home only for its adopted Run", () => {
+    const workspace = { cwd: process.cwd(), runId: "run-home" };
+    const home = `${workspace.cwd}/.maister/capabilities/run-home/codex-home-fixture`;
+    const request = makeRequest({
+      executor: { agent: "codex", model: "default" },
+      adapterLaunch: { env: { CODEX_HOME: home } },
+    });
+
+    expect(buildChildEnv(request, { workspace }).CODEX_HOME).toBe(home);
+    expect(() =>
+      buildChildEnv(request, {
+        workspace: { ...workspace, runId: "sibling" },
+      }),
+    ).toThrow(expect.objectContaining({ code: "PRECONDITION" }));
   });
 
   it("executor.env overrides process.env on key collision", () => {
@@ -100,31 +142,38 @@ describe("buildChildEnv — env layering precedence", () => {
     expect("MAISTER_CAPABILITY_PROFILE_PATH" in env).toBe(false);
   });
 
-  it("server-derived object paths override untrusted child environment collisions", () => {
+  it("refuses a spoofed server-derived path even without an output object", () => {
     const profilePath = `${process.cwd()}/profile.json`;
     const instructionsPath = `${process.cwd()}/instructions.md`;
-    const env = buildChildEnv(
-      makeRequest({
-        adapterLaunch: {
-          env: {
-            MAISTER_CAPABILITY_PROFILE_PATH: "from-adapter",
-            MAISTER_CAPABILITY_INSTRUCTIONS_PATH: "from-adapter",
-            MAISTER_PLAN_DOCUMENT_FILE: "from-adapter",
+
+    expect(() =>
+      buildChildEnv(
+        makeRequest({
+          adapterLaunch: {
+            env: {
+              MAISTER_CAPABILITY_PROFILE_PATH: "from-adapter",
+              MAISTER_CAPABILITY_INSTRUCTIONS_PATH: "from-adapter",
+              MAISTER_PLAN_DOCUMENT_FILE: "from-adapter",
+            },
+          },
+        }),
+        {
+          capabilityProfilePath: profilePath,
+          capabilityInstructionsPath: instructionsPath,
+          outputPaths: {
+            MAISTER_PLAN_DOCUMENT_FILE: `${process.cwd()}/plan.md`,
           },
         },
-      }),
-      {
-        capabilityProfilePath: profilePath,
-        capabilityInstructionsPath: instructionsPath,
-        outputPaths: {
-          MAISTER_PLAN_DOCUMENT_FILE: `${process.cwd()}/plan.md`,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "PRECONDITION",
+        details: {
+          reason: "workload_environment_reserved",
+          field: "MAISTER_CAPABILITY_PROFILE_PATH",
         },
-      },
+      }),
     );
-
-    expect(env.MAISTER_CAPABILITY_PROFILE_PATH).toBe(profilePath);
-    expect(env.MAISTER_CAPABILITY_INSTRUCTIONS_PATH).toBe(instructionsPath);
-    expect(env.MAISTER_PLAN_DOCUMENT_FILE).toBe(`${process.cwd()}/plan.md`);
   });
 
   it("adds no spurious keys beyond the configured layers", () => {
@@ -141,14 +190,12 @@ describe("buildChildEnv — env layering precedence", () => {
       { capabilityProfilePath: profilePath },
     );
 
-    const expected: NodeJS.ProcessEnv = {
-      ...process.env,
+    expect(withEmpty).toMatchObject({
       A: "1",
       MAISTER_CAPABILITY_PROFILE_PATH: profilePath,
       B: "2",
       ANTHROPIC_MODEL: "claude-sonnet-4-6",
-    };
-
-    expect(withEmpty).toEqual(expected);
+    });
+    expect(withEmpty).not.toHaveProperty("MAISTER_CONTEXT_REPOS");
   });
 });

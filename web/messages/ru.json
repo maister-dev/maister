@@ -1769,7 +1769,7 @@
     "readinessReady": "Готов",
     "readinessNotReady": "Не готов",
     "readinessUnknown": "Неизвестно",
-    "readinessAmbient": "Доступен (внешние учётные данные — ключ/логин не проверены)",
+    "readinessAmbient": "Доступен (учётные данные не проверены)",
     "colEnabled": "Включён",
     "colActions": "Действия",
     "colTrust": "Доверие",

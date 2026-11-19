@@ -111,7 +111,10 @@ login/config flows for `claude-agent-acp`, `codex-acp`, `gemini --acp`, and
 `opencode acp`, and `mimo acp`; put provider env vars in `supervisor/.env` only
 when you intentionally want MAIster to supply an explicit compatible-provider,
 gateway, model-discovery, or sidecar override (the supervisor spawns the
-adapters, so its env is what they inherit).
+adapters with a startup allow-list and explicitly resolved runner settings).
+
+The supervisor listens on IPv4 loopback. The web manager rejects redirects
+on JSON, event stream and runtime object requests.
 
 `MAISTER_RUNTIME_ROOT` no longer has to be the same directory for both
 services: since the Stage B cut-over the run event stream, costs, prompt

@@ -159,4 +159,29 @@ describe("probe header resolution (ADR-179)", () => {
       }),
     ).toEqual({ A: "env-probe", B: "literal", C: "" });
   });
+
+  it.each([
+    {
+      transport: "stdio" as const,
+      command: "unused",
+      env: { PATH: "/example" },
+    },
+    {
+      transport: "http" as const,
+      url: "https://mcp.example/mcp",
+      bearerTokenEnv: "env:AUTH_SECRET",
+    },
+  ])(
+    "refuses reserved host configuration before building $transport transport",
+    (request) => {
+      expect(() => buildMcpTransport(request)).toThrow(
+        expect.objectContaining({
+          code: "PRECONDITION",
+          details: expect.objectContaining({
+            reason: "workload_environment_reserved",
+          }),
+        }),
+      );
+    },
+  );
 });

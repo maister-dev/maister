@@ -222,6 +222,25 @@ describe("worktree range ops", () => {
   });
 
   describe("diffRange", () => {
+    it("renders original review bytes when Git config enables a text converter", async () => {
+      const attributes = join(repo, ".git", "info", "attributes");
+      const range = { worktreePath: repo, baseRef: baseSha, branch: "feature" };
+
+      await writeFile(attributes, "a.txt diff=byte-count\n");
+      await git(repo, "config", "diff.byte-count.textconv", "wc -c");
+
+      try {
+        const buffered = await diffRange(range);
+        const streamed = await diffRangeBounded(range, 4096);
+
+        expect(buffered.text).toContain("+alpha\n");
+        expect(streamed).toEqual(buffered);
+      } finally {
+        await rm(attributes);
+        await git(repo, "config", "--unset", "diff.byte-count.textconv");
+      }
+    });
+
     it("returns the raw unified diff for base..branch", async () => {
       const range = {
         worktreePath: repo,

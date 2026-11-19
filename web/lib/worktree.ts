@@ -74,6 +74,7 @@ const log = pino({
 
 const GIT_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+const REVIEW_DIFF_OPTIONS = ["--no-ext-diff", "--no-textconv"] as const;
 const repoPromotionLocks = new Map<string, Promise<unknown>>();
 
 const absolutePathSchema = z
@@ -694,8 +695,15 @@ export async function diffRunWorkspaceFileMetadata(
 
   try {
     const [raw, numstat] = await Promise.all([
-      runGit(repo, ["diff", "--raw", "--no-abbrev", "-z", range]),
-      runGit(repo, ["diff", "--numstat", "-z", range]),
+      runGit(repo, [
+        "diff",
+        ...REVIEW_DIFF_OPTIONS,
+        "--raw",
+        "--no-abbrev",
+        "-z",
+        range,
+      ]),
+      runGit(repo, ["diff", ...REVIEW_DIFF_OPTIONS, "--numstat", "-z", range]),
     ]);
     const countsByPath = parseNumstat(numstat.stdout);
 
@@ -727,7 +735,7 @@ export async function diffRunWorkspace(
   );
   const baseCommit = validate(gitCommitSchema, args.baseCommit, "baseCommit");
   const branch = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-ext-diff", `${baseCommit}..${branch}`];
+  const diffArgs = ["diff", ...REVIEW_DIFF_OPTIONS, `${baseCommit}..${branch}`];
 
   try {
     // 2-dot: the literal stored-base -> branch tree delta. A 3-dot range diffs
@@ -2259,7 +2267,13 @@ function prepareDiffRange(args: DiffRangeArgs) {
   const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
   const base = validate(gitRefSchema, args.baseRef, "baseRef");
   const br = validate(branchNameSchema, args.branch, "branch");
-  const diffArgs = ["diff", "--no-color", "--end-of-options", `${base}..${br}`];
+  const diffArgs = [
+    "diff",
+    ...REVIEW_DIFF_OPTIONS,
+    "--no-color",
+    "--end-of-options",
+    `${base}..${br}`,
+  ];
 
   return { wt, base, br, diffArgs };
 }
@@ -2533,7 +2547,13 @@ export async function diffWorkingTree(
     baseRef === "HEAD" ? "HEAD" : validate(gitRefSchema, baseRef, "baseRef");
 
   return await withIntentToAddTempIndex(wt, async (env) => {
-    const diffArgs = ["diff", "--no-color", "--end-of-options", base];
+    const diffArgs = [
+      "diff",
+      ...REVIEW_DIFF_OPTIONS,
+      "--no-color",
+      "--end-of-options",
+      base,
+    ];
     let text: string;
     let truncated = false;
 
@@ -2573,6 +2593,7 @@ export async function diffWorkingTree(
         "-C",
         wt,
         "diff",
+        ...REVIEW_DIFF_OPTIONS,
         "--name-status",
         "--no-color",
         "--end-of-options",
@@ -2754,6 +2775,7 @@ export async function diffNameStatus(
   try {
     const { stdout } = await runGit(wt, [
       "diff",
+      ...REVIEW_DIFF_OPTIONS,
       "--name-status",
       "--no-color",
       "--end-of-options",
@@ -2786,6 +2808,7 @@ export async function diffChangeStats(
       diffNameStatus({ worktreePath: wt, baseRef: base, branch: br }),
       runGit(wt, [
         "diff",
+        ...REVIEW_DIFF_OPTIONS,
         "--numstat",
         "--no-color",
         "--find-renames",
@@ -3026,6 +3049,7 @@ export async function diffWorkingTreeChangeStats(
             "-C",
             wt,
             "diff",
+            ...REVIEW_DIFF_OPTIONS,
             "--name-status",
             "--no-color",
             "--end-of-options",
@@ -3043,6 +3067,7 @@ export async function diffWorkingTreeChangeStats(
             "-C",
             wt,
             "diff",
+            ...REVIEW_DIFF_OPTIONS,
             "--numstat",
             "--no-color",
             "--find-renames",

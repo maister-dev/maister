@@ -712,6 +712,7 @@ export const REASON_TOKENS = [
   "workspace_in_use",
   "invalid_librarian_workspace",
   "workspace_rejected",
+  "workload_environment_reserved",
   "legacy_field",
   "missing_envelope",
   "health_query_invalid",

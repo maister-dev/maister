@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { adapterFixtureShellCommand } from "../../supervisor/test/adapter-fixture-environment";
+
 import {
   FIXTURE_WATCHDOG,
   assertInvocationGroupEmpty,
@@ -110,17 +112,15 @@ async function writeAdapterWrapper(
   runtimeRoot: string,
   fixturePath: string,
   fixtureArgs: string[],
+  env: NodeJS.ProcessEnv,
 ): Promise<string> {
   const binDir = path.join(runtimeRoot, "bin");
   const wrapper = path.join(binDir, "claude-agent-acp");
-  const quoted = fixtureArgs
-    .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
-    .join(" ");
 
   await mkdir(binDir, { recursive: true });
   await writeFile(
     wrapper,
-    `#!/bin/sh\nexec '${process.execPath}' '${fixturePath}' ${quoted} "$@"\n`,
+    `#!/bin/sh\n${adapterFixtureShellCommand(env, fixturePath, fixtureArgs)}\n`,
     { mode: 0o755 },
   );
 
@@ -220,11 +220,6 @@ async function startRealSupervisorAttempt(
       `supervisor-${randomUUID().slice(0, 8)}.log`,
     );
   const fixturePath = resolveFixture(options.fixture ?? DEFAULT_FIXTURE);
-  const wrapper = await writeAdapterWrapper(
-    runtimeRoot,
-    fixturePath,
-    options.fixtureArgs ?? [],
-  );
   const env: NodeJS.ProcessEnv = {
     ...scrubbedEnv(),
     NODE_ENV: "production",
@@ -233,13 +228,21 @@ async function startRealSupervisorAttempt(
     MAISTER_RUNTIME_ROOT: runtimeRoot,
     MAISTER_EXECUTION_HOST_STATE_DIR: stateDir,
     MAISTER_WORKSPACE_ROOTS: workspaceRoots.join(path.delimiter),
-    MAISTER_ADAPTER_BINARY_CLAUDE: wrapper,
     MAISTER_HEARTBEAT_INTERVAL_MS: "1000",
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",
     ...options.env,
     ...(await fixtureProcessEnvironment(invocation)),
   };
+
+  env.MAISTER_ADAPTER_BINARY_CLAUDE =
+    options.env?.MAISTER_ADAPTER_BINARY_CLAUDE ??
+    (await writeAdapterWrapper(
+      runtimeRoot,
+      fixturePath,
+      options.fixtureArgs ?? [],
+      env,
+    ));
 
   // The child must not inherit the vitest marker: `main.ts` only boots when
   // it is absent.

@@ -68,7 +68,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
 servers:
-  - url: http://localhost:{port}
+  - url: http://127.0.0.1:{port}
     description: |
       Local supervisor on the operator's workstation. POC ships single-host
       host web/supervisor processes with Postgres-only compose.
@@ -4368,6 +4368,7 @@ components:
         - unknown_workspace
         - workspace_released
         - workspace_rejected
+        - workload_environment_reserved
         - workspace_in_use
         - invalid_librarian_workspace
         - legacy_field

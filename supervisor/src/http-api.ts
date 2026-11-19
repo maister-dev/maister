@@ -156,6 +156,7 @@ import {
   type WorkspaceKind,
   type WorkspaceRecordResponse,
 } from "./types";
+import { workloadBaseEnvironment } from "./workload-environment";
 import { WorkspaceRegistry } from "./workspace-registry";
 
 // ADR-166: the `payload` of every enveloped teardown-class command
@@ -474,6 +475,7 @@ async function probeAdapterVersion(
     let stderr = "";
     let timer: ReturnType<typeof setTimeout>;
     const child = spawn(binary, [...args], {
+      env: workloadBaseEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const settle = (result: {

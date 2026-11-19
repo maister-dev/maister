@@ -20,13 +20,14 @@ const hangingFixturePath = fileURLToPath(
 async function fixtureBinary(
   fixture: string = fixturePath,
   args: readonly string[] = [],
+  environment?: (directory: string) => Record<string, string>,
 ): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "maister-smoke-script-test-"));
   const binaryPath = join(dir, "opencode");
 
   await writeFile(
     binaryPath,
-    `#!/usr/bin/env node\nprocess.argv.push(...${JSON.stringify(args)});\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`,
+    `#!/usr/bin/env node\nObject.assign(process.env, ${JSON.stringify(environment?.(dir) ?? {})});\nprocess.argv.push(...${JSON.stringify(args)});\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`,
     "utf8",
   );
   await chmod(binaryPath, 0o755);
@@ -173,7 +174,10 @@ describe("smoke ACP adapter CLI helpers", () => {
   });
 
   it("reaps a SIGTERM-ignoring adapter after an initialize timeout", async () => {
-    const binaryPath = await fixtureBinary(hangingFixturePath);
+    const binaryPath = await fixtureBinary(hangingFixturePath, [], (dir) => ({
+      MAISTER_SMOKE_CHILD_PID_PATH: join(dir, "child.pid"),
+      MAISTER_SMOKE_CHILD_TERM_PATH: join(dir, "child.term"),
+    }));
     const fixtureDir = dirname(binaryPath);
     const pidPath = join(fixtureDir, "child.pid");
     const termPath = join(fixtureDir, "child.term");
@@ -181,8 +185,6 @@ describe("smoke ACP adapter CLI helpers", () => {
     cleanupDirs.push(fixtureDir);
     cleanupPidPaths.push(pidPath);
     process.env.MAISTER_ADAPTER_BINARY_OPENCODE = binaryPath;
-    process.env.MAISTER_SMOKE_CHILD_PID_PATH = pidPath;
-    process.env.MAISTER_SMOKE_CHILD_TERM_PATH = termPath;
 
     const result = await smokeAdapter("opencode");
     const pid = Number.parseInt(await readFile(pidPath, "utf8"), 10);

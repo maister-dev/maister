@@ -6,6 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { resolveMcpHeaderRecord, resolveMcpMap } from "./mcp-values.js";
+import { workloadBaseEnvironment } from "./workload-environment.js";
 
 // ADR-129 (W-F) + ADR-179: a real MCP `initialize` handshake against a target
 // server. The web tier sends `env`/`headers` VALUE maps; a `literal` is used as
@@ -54,8 +55,7 @@ export function buildMcpTransport(req: McpProbeRequest): Transport {
       command: req.command ?? "",
       args: req.args ?? [],
       env: {
-        PATH: process.env.PATH ?? "",
-        HOME: process.env.HOME ?? "",
+        ...workloadBaseEnvironment(),
         ...resolveMcpMap(req.env),
       },
       stderr: "ignore",

@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { adapterFixtureAssignments } from "../../../test/adapter-fixture-environment";
+
 import { createAcpProbeSource } from "./acp-probe";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -33,7 +35,11 @@ function spyingSpawn(): {
     args: readonly string[],
     options: Parameters<typeof realSpawn>[2],
   ) => {
-    const child = realSpawn(command, args as string[], options);
+    const child = realSpawn(
+      "/usr/bin/env",
+      [...adapterFixtureAssignments(process.env), command, ...args],
+      options,
+    );
 
     vi.spyOn(child, "kill");
     children.push(child);

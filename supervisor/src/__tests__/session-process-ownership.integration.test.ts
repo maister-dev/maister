@@ -48,9 +48,9 @@ const owners: OwnedHost[] = [];
 async function ownedHost(options: BootHostOptions): Promise<OwnedHost> {
   const evidence = await mkdtemp(join(tmpdir(), "session-ownership-evidence-"));
   const invocation = await createInvocation(evidence);
-  const runtimeRoot = await mkdtemp(
-    join(tmpdir(), "session-ownership-runtime-"),
-  );
+  const runtimeRoot =
+    options.runtimeRoot ??
+    (await mkdtemp(join(tmpdir(), "session-ownership-runtime-")));
 
   await registerRoot(invocation, runtimeRoot, "supervisor-session-ownership");
   for (const [key, value] of Object.entries(invocationEnvironment(invocation)))
@@ -249,7 +249,7 @@ it("retires an inherited process group when its adapter is killed during initial
       executor: {
         agent: "claude",
         model: "fixture",
-        env: { MAISTER_DESCENDANT_PID_FILE: pidFile },
+        env: { MOCK_ACP_DESCENDANT_PID_FILE: pidFile },
       },
     },
   );
@@ -352,7 +352,7 @@ it.each([
         executor: {
           agent: "claude",
           model: "fixture",
-          env: { MAISTER_DESCENDANT_PID_FILE: pidFile },
+          env: { MOCK_ACP_DESCENDANT_PID_FILE: pidFile },
         },
       },
     );
@@ -474,7 +474,7 @@ it("DELETE retains ownership and records the group stage when a descendant outli
       executor: {
         agent: "claude",
         model: "fixture",
-        env: { MAISTER_DESCENDANT_PID_FILE: pidFile },
+        env: { MOCK_ACP_DESCENDANT_PID_FILE: pidFile },
       },
     },
   );
@@ -539,12 +539,43 @@ it("DELETE retains ownership and records the group stage when a descendant outli
   );
 });
 
+it("IT-ISO-05 refuses a scratch-style launch override before creating an adapter process", async () => {
+  const owner = await ownedHost({});
+  const runId = "reserved-scratch-env";
+  const command = await createEnvelope(
+    owner.host,
+    { runId },
+    {
+      adapterLaunch: {
+        preArgs: ["--hang"],
+        env: { SSH_AUTH_SOCK: "/disposable/agent.sock" },
+      },
+    },
+  );
+
+  const response = await postJson(`${owner.host.url}/sessions`, command);
+
+  expect(response.status).toBe(409);
+  expect(response.body).toMatchObject({
+    code: "PRECONDITION",
+    details: {
+      reason: "workload_environment_reserved",
+      field: "SSH_AUTH_SOCK",
+      sessionCreateQuiescence: { process: "not_started" },
+    },
+  });
+  expect(owner.host.hostState.sessionProcessesForRun(runId)).toEqual([]);
+  expect(owner.host.registry.list()).toEqual([]);
+});
+
 it.each(["protected", "guard-disabled"] as const)(
   "keeps adapter NODE_OPTIONS preloads behind the durable GO barrier (%s control)",
   async (guard) => {
-    const owner = await ownedHost({ fixtureArgs: ["--hang"] });
-    const marker = join(owner.host.runtimeRoot, "adapter-preload.pid");
-    const preload = join(owner.host.runtimeRoot, "adapter-preload.cjs");
+    const runtimeRoot = await mkdtemp(
+      join(tmpdir(), "session-ownership-preload-"),
+    );
+    const marker = join(runtimeRoot, "adapter-preload.pid");
+    const preload = join(runtimeRoot, "adapter-preload.cjs");
 
     await writeFile(
       preload,
@@ -554,6 +585,11 @@ it.each(["protected", "guard-disabled"] as const)(
       NODE_OPTIONS: `--require ${preload}`,
       MAISTER_GATE_MARKER: marker,
     };
+    const owner = await ownedHost({
+      runtimeRoot,
+      fixtureArgs: ["--hang"],
+      fixtureEnvironment: adapterEnv,
+    });
     const gateEnvironment = sessionOwnership.sessionGateEnvironment;
 
     if (guard === "guard-disabled")
@@ -598,7 +634,7 @@ it.each(["protected", "guard-disabled"] as const)(
     const command = await createEnvelope(
       owner.host,
       { runId: `preload-${guard}` },
-      { executor: { agent: "claude", model: "fixture", env: adapterEnv } },
+      { executor: { agent: "claude", model: "fixture" } },
     );
     const pending = postJson(`${owner.host.url}/sessions`, command).then(
       (value) => ({ value }),

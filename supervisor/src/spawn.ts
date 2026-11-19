@@ -41,6 +41,11 @@ import {
   startGatedSessionProcess,
 } from "./session-process-ownership";
 import { isSupervisorError } from "./types";
+import {
+  assertAdapterEnvironment,
+  assertExplicitEnvironment,
+  workloadBaseEnvironment,
+} from "./workload-environment";
 
 type RuntimeObjectEnvName =
   | "MAISTER_OUTPUT_FILE"
@@ -88,8 +93,7 @@ export type SpawnSessionResult = {
   acpStdoutTap: Readable;
 };
 
-// The request fields the child environment is layered from. The model-catalog
-// the subset rather than a full StartSessionRequest.
+// Model discovery uses the same environment projection without a session.
 export type ChildEnvRequest = Pick<
   StartSessionRequest,
   "executor" | "adapterLaunch" | "enforcementProfile"
@@ -102,6 +106,7 @@ export function buildChildEnv(
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     outputPaths?: RuntimeObjectEnvPaths;
+    workspace?: Pick<WorkspaceResolution, "cwd" | "runId">;
   } = {},
 ): NodeJS.ProcessEnv {
   // ADR-166: mounts come from the resolved workspace (the adopted handle) —
@@ -118,8 +123,15 @@ export function buildChildEnv(
       ? claudeModelOptions(request.executor.model)
       : {};
 
+  assertExplicitEnvironment(request.executor.env);
+  assertAdapterEnvironment({
+    agent: request.executor.agent,
+    env: request.adapterLaunch?.env,
+    workspace: opts.workspace,
+  });
+
   return {
-    ...process.env,
+    ...workloadBaseEnvironment(),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath
@@ -191,6 +203,7 @@ export async function spawnSession(
     }
 
     const childEnv = buildChildEnv(request, {
+      workspace,
       contextMounts: workspace.contextMounts,
       capabilityProfilePath: opts.runtimeObjectEnv?.capabilityProfilePath,
       capabilityInstructionsPath:
@@ -203,6 +216,7 @@ export async function spawnSession(
         sessionId,
         agent: request.executor.agent,
         adapter: adapterRuntime.id,
+        environmentPolicy: "allowlist-v1",
         binary,
         binarySource: binaryResolution.source,
         binaryOverrideEnv: binaryResolution.overrideEnv ?? null,

@@ -139,12 +139,12 @@ See [Supervisor](supervisor.md) for adapter diagnostics and
 
 ## Run the dev servers
 
-The web tier defaults to `MAISTER_SUPERVISOR_URL=http://localhost:7777`,
+The web tier defaults to `MAISTER_SUPERVISOR_URL=http://127.0.0.1:7777`,
 so start the supervisor first when running both locally.
 
 ```bash
 # Terminal 1: supervisor (Fastify + tsx watch on src/main.ts)
-pnpm --filter @maister/supervisor dev    # http://localhost:7777
+pnpm --filter @maister/supervisor dev    # http://127.0.0.1:7777
 
 # Terminal 2: web (Next.js dev server)
 pnpm --filter maister-web dev            # http://localhost:3000

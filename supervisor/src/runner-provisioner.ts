@@ -6,6 +6,10 @@ import type {
 } from "./types";
 
 import { SupervisorError } from "./types";
+import {
+  assertExplicitEnvironment,
+  assertReferenceSource,
+} from "./workload-environment";
 
 type ProvisionedRunnerLaunch = {
   executor: Executor;
@@ -13,6 +17,8 @@ type ProvisionedRunnerLaunch = {
 };
 
 function resolveEnvRef(name: string, context: string): string {
+  assertReferenceSource(name);
+
   const value = process.env[name];
 
   if (!value) {
@@ -85,6 +91,8 @@ function resolveRunnerEnvValue(
 }
 
 function resolveRunnerEnv(runner: RunnerLaunch): Record<string, string> {
+  assertExplicitEnvironment(runner.env);
+
   return Object.fromEntries(
     Object.entries(runner.env ?? {}).map(([targetName, value]) => [
       targetName,

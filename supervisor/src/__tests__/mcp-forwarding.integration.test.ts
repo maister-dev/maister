@@ -37,12 +37,21 @@ async function boot(): Promise<BootResult> {
 }
 
 async function createSession(
-  host: BootedHost,
+  host: BootResult,
   mcpServers: Array<Record<string, unknown>>,
 ) {
   return postJson(
     `${host.url}/sessions`,
-    await createEnvelope(host, { runId: "run-mcp" }, { mcpServers }),
+    await createEnvelope(
+      host,
+      { runId: "run-mcp" },
+      {
+        adapterLaunch: {
+          env: { MOCK_ACP_NEWSESSION_RECORD_PATH: host.recordPath },
+        },
+        mcpServers,
+      },
+    ),
   );
 }
 
@@ -64,15 +73,11 @@ async function readRecord(
 
 let booted: BootResult | null = null;
 let originalSentinel: string | undefined;
-const RECORD_PATH_ENV = "MOCK_ACP_NEWSESSION_RECORD_PATH";
 
 beforeEach(async () => {
   originalSentinel = process.env[SENTINEL_ENV_KEY];
   process.env[SENTINEL_ENV_KEY] = SENTINEL_ENV_VALUE;
   booted = await boot();
-  // The supervisor spawns the adapter with `...process.env`, so the recording
-  // fixture reads this to know where to write the newSession params it saw.
-  process.env[RECORD_PATH_ENV] = booted.recordPath;
 });
 
 afterEach(async () => {
@@ -81,7 +86,6 @@ afterEach(async () => {
     await cleanupRuntimeRoot(booted.runtimeRoot);
     booted = null;
   }
-  delete process.env[RECORD_PATH_ENV];
   if (originalSentinel === undefined) {
     delete process.env[SENTINEL_ENV_KEY];
   } else {

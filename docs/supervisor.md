@@ -498,7 +498,7 @@ Presence check for host environment-variable **names**. Unauthenticated, same
 posture as `GET /diagnostics`.
 
 ```bash
-curl -s -XPOST localhost:7777/diagnostics/env-refs \
+curl -s -XPOST 127.0.0.1:7777/diagnostics/env-refs \
   -H 'content-type: application/json' \
   -d '{"names":["PATH","NOPE_SENTINEL"]}'
 ```
@@ -1381,8 +1381,8 @@ docker compose; production overrides go in `.env`.
 
 | Var                                | Default                                                                 | Purpose                                                                                                                                                                                              |
 | ---------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAISTER_SUPERVISOR_PORT`          | `7777`                                                                  | Bind port on `0.0.0.0`.                                                                                                                                                                              |
-| `MAISTER_SUPERVISOR_URL`           | `http://localhost:7777`                                                 | Read by `web/lib/supervisor-client.ts`.                                                                                                                                                              |
+| `MAISTER_SUPERVISOR_PORT`          | `7777`                                                                  | Bind port on `127.0.0.1`.                                                                                                                                                                            |
+| `MAISTER_SUPERVISOR_URL`           | `http://127.0.0.1:7777`                                                 | Read by `web/lib/supervisor-client.ts`.                                                                                                                                                              |
 | `MAISTER_RUNTIME_ROOT`             | `process.cwd()`                                                         | Root under which `.maister/<slug>/runs/...` is written.                                                                                                                                              |
 | `MAISTER_EXECUTION_HOST_STATE_DIR` | `<MAISTER_RUNTIME_ROOT>/.maister/execution-host/`                       | **(Implemented — ADR-166)** Supervisor-private `node:sqlite` state dir (identity, fences, handles, receipts). Unwritable → fatal boot error.                                                         |
 | `MAISTER_EXECUTION_HOST_KEY`       | unset                                                                   | **(Implemented — ADR-166)** Optional identity pin (`^[A-Za-z0-9_-]{8,64}$`). Applied when no key is stored or equal to the stored key; a CONFLICTING pin refuses boot (exit 1).                      |
@@ -1392,8 +1392,8 @@ docker compose; production overrides go in `.env`.
 | `MAISTER_SHUTDOWN_GRACE_MS`        | `15000`                                                                 | Grace before SIGKILL during supervisor shutdown; the total deadline adds MAISTER_KILL_GRACE_MS and 5000 ms for output/HTTP cleanup.                                                                                                                                            |
 | `MAISTER_PERMISSION_MAX_HOURS`     | `24`                                                                    | **(Implemented — ADR-180)** Absolute cap on a single pending permission. On expiry the host runs the graceful checkpoint teardown — never a reject. Parsed as a positive FLOAT (fractional values accepted; the integration lane uses sub-second caps); invalid → 24 with one WARN. |
 | ~~`MAISTER_KEEPALIVE_MINUTES`~~     | —                                                                       | **(Implemented — ADR-180)** No longer read by the supervisor; it is a WEB variable (see [`configuration.md`](configuration.md)). Still set in the supervisor env → one boot WARN, never a refusal.    |
-| `ANTHROPIC_BASE_URL`               | `https://api.anthropic.com`                                             | Process-wide default for Claude-compatible adapters. Platform runners should prefer typed provider config plus env refs.                                                                             |
-| `ANTHROPIC_AUTH_TOKEN`             | unset                                                                   | Required when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …).                                                                                                                |
+| `ANTHROPIC_BASE_URL`               | Adapter default                                                        | Claude-compatible endpoint. Use typed runner provider config or an explicit env mapping.                                                                                                           |
+| `ANTHROPIC_AUTH_TOKEN`             | unset                                                                   | Explicit runner env mapping for compatible endpoints that require this token.                                                                                                                       |
 | `MAISTER_ADAPTER_BINARY_CLAUDE`    | unset                                                                   | Optional supervisor-side executable override for `claude`. When unset, PATH resolution uses `claude-agent-acp`.                                                                                      |
 | `MAISTER_ADAPTER_BINARY_CODEX`     | unset                                                                   | Optional supervisor-side executable override for `codex`. When unset, PATH resolution uses `codex-acp`.                                                                                              |
 | `MAISTER_ADAPTER_BINARY_GEMINI`    | unset                                                                   | Optional supervisor-side executable override for `gemini`. When unset, PATH resolution uses `gemini` plus the registry argv `--acp`.                                                                 |
@@ -1415,38 +1415,23 @@ runner env overrides. Raw values pass through literally; `env:NAME` values are
 resolved by the supervisor. During migration, the legacy `executor.env` path
 still exists.
 
-The implemented path in `supervisor/src/spawn.ts` builds the child's env as
-`{ ...process.env, ...executor.env, ...requestDerivedEnv,
-...adapterLaunch.env }`. Before spawn, `provisionRunnerLaunch()` resolves typed
-provider settings and `env:NAME` runner references into `executor.env`.
+The supervisor builds each ACP child environment from its tool startup
+allow-list. It includes `PATH`, `HOME`, locale and temporary-directory settings.
+The same base serves adapter version checks and stdio MCP probes. Model
+discovery uses the ACP projection.
 
-1. `process.env` — the supervisor's own env at startup (base).
-2. `executor.env` — typed provider and runner env values resolved by the
-   supervisor; this layer wins over ambient process values.
-3. request-derived env — `MAISTER_CAPABILITY_PROFILE_PATH` and
-   `MAISTER_CAPABILITY_INSTRUCTIONS_PATH` when present, plus
-   `MAISTER_CONTEXT_REPOS` derived from the first-class `contextMounts[]`
-   request field. **(Implemented — ADR-157)** Neither field is overloaded onto
-   runner configuration.
-4. `adapterLaunch.env` — run-scoped capability materializer output.
-   It wins on collision so a run-scoped MCP/settings profile can point the
-   adapter at the materialized files for that one session.
+The supervisor then applies explicit executor and adapter values, followed by
+host-derived capability paths, output paths and model options. Provider keys
+and gateway settings supplied in the supervisor environment need an explicit
+runner configuration. For example, use a runner env mapping of
+`ANTHROPIC_API_KEY: env:ANTHROPIC_API_KEY`, or use the adapter's CLI login.
 
-This means:
-
-- `executor.env.ANTHROPIC_AUTH_TOKEN` wins over the supervisor's own
-  `ANTHROPIC_AUTH_TOKEN`, which is what you want when pinning one particular
-  executor through z.ai GLM, OpenRouter, etc. Designed
-  `adapterLaunch.env` wins only for materializer-produced session-scoped
-  values.
-- Any provider env already present in the supervisor process is inherited by
-  spawned adapter children unless overridden. The default platform-runner model
-  treats ACP tools as configured in their own CLIs; MAIster only resolves env
-  refs when an operator explicitly configures a compatible-provider, gateway,
-  or gateway override. If you want to **deny** a supervisor process env value
-  from reaching an executor, unset it in the supervisor's process env at
-  startup; do not rely on `executor.env` to "shadow" values it doesn't list.
-  Phase 2 may add an explicit allow-list mode.
+Launch overrides cannot change reserved tool, loader, SSH, Git, proxy or host
+configuration. A supported adapter can receive its designated capability-home
+redirect under the adopted Run's materialization directory. The supervisor
+refuses reserved values and references with
+`PRECONDITION/workload_environment_reserved` before launch. Host-generated
+runtime object paths and context mounts are applied separately.
 
 ## Running locally
 
@@ -1467,7 +1452,7 @@ docker compose -f compose.yml -f compose.production.yml up -d postgres
 ```
 
 When running locally without docker, the web tier defaults to
-`http://localhost:7777` — start the supervisor first.
+`http://127.0.0.1:7777` — start the supervisor first.
 
 ## Testing
 
@@ -1629,8 +1614,8 @@ operator runbook: [`deployment.md`](deployment.md#14-stage-b-execution-data-cut-
 
 - **Single host, unauthenticated loopback.** Exactly one non-retired local
   execution host; the web tier no longer mounts or reads host runtime data.
-  Worktree/diff/promotion are still web-side Git and remain Stage C. The HTTP wire carries no host
-  auth (`0.0.0.0:7777` — keep it loopback-only); remote transport, relay,
+  Worktree/diff/promotion are still web-side Git and remain Stage C. The HTTP listener is
+  loopback-only (`127.0.0.1:7777`); remote transport, relay,
   enrollment, multiple simultaneous hosts, placement, and cross-host ACP
   resume are later stages.
 - **Per-session diagnostic SSE replay is bounded** (1000 entries). Canonical

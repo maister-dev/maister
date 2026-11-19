@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { adapterFixtureShellCommand } from "../../../test/adapter-fixture-environment";
 import { captureSupervisorProcessGroups } from "../../../../web/test-support/capture-supervisor-process-groups";
 import {
   assertInvocationGroupEmpty,
@@ -132,16 +133,14 @@ async function writeAdapterWrapper(
   runtimeRoot: string,
   fixturePath: string,
   fixtureArgs: string[],
+  env: NodeJS.ProcessEnv,
 ): Promise<string> {
   const wrapper = path.join(runtimeRoot, "bin", "claude-agent-acp");
-  const quoted = fixtureArgs
-    .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
-    .join(" ");
 
   await mkdir(path.dirname(wrapper), { recursive: true });
   await writeFile(
     wrapper,
-    `#!/bin/sh\nexec '${process.execPath}' '${fixturePath}' ${quoted} "$@"\n`,
+    `#!/bin/sh\n${adapterFixtureShellCommand(env, fixturePath, fixtureArgs)}\n`,
     { mode: 0o755 },
   );
 
@@ -178,17 +177,21 @@ export async function startRealSupervisor(
       "execution-host",
     ),
     MAISTER_WORKSPACE_ROOTS: runtimeRoot,
-    MAISTER_ADAPTER_BINARY_CLAUDE: await writeAdapterWrapper(
-      runtimeRoot,
-      fixturePath,
-      options.fixtureArgs ?? [],
-    ),
     MAISTER_HEARTBEAT_INTERVAL_MS: "1000",
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",
     ...options.env,
     ...(await fixtureProcessEnvironment(invocation)),
   };
+
+  env.MAISTER_ADAPTER_BINARY_CLAUDE =
+    options.env?.MAISTER_ADAPTER_BINARY_CLAUDE ??
+    (await writeAdapterWrapper(
+      runtimeRoot,
+      fixturePath,
+      options.fixtureArgs ?? [],
+      env,
+    ));
 
   delete env.MAISTER_EXECUTION_HOST_KEY;
   delete env.VITEST;

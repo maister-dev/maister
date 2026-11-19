@@ -1,5 +1,10 @@
 import type * as acp from "@agentclientprotocol/sdk/unstable";
 
+import {
+  assertMcpEnvironment,
+  assertReferenceSource,
+} from "./workload-environment";
+
 // ADR-179: the execution host is the ONLY place an `env:NAME` reference becomes
 // a value. A value is whole-value — `literal | env:NAME` — with no
 // interpolation, so a literal containing `${X}` reaches the MCP server
@@ -16,12 +21,18 @@ export type McpValueMap = Readonly<Record<string, string>>;
 export function resolveMcpValue(value: string): string {
   if (!value.startsWith(ENV_REF_PREFIX)) return value;
 
-  return process.env[value.slice(ENV_REF_PREFIX.length)] ?? "";
+  const source = value.slice(ENV_REF_PREFIX.length);
+
+  assertReferenceSource(source);
+
+  return process.env[source] ?? "";
 }
 
 export function resolveMcpMap(
   map: McpValueMap | undefined,
 ): Record<string, string> {
+  assertMcpEnvironment(map);
+
   const out: Record<string, string> = {};
 
   for (const [name, value] of Object.entries(map ?? {})) {
@@ -35,6 +46,8 @@ export function resolveMcpMap(
 export function resolveMcpEnvVariables(
   map: McpValueMap | undefined,
 ): acp.EnvVariable[] {
+  assertMcpEnvironment(map);
+
   return Object.entries(map ?? {}).map(([name, value]) => ({
     name,
     value: resolveMcpValue(value),

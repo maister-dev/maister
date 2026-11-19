@@ -23,6 +23,7 @@ import { openHostState } from "../../host-state";
 import { registerRoutes, type SpawnOverrides } from "../../http-api";
 import { SessionRegistry } from "../../registry";
 import { requestOwnedSessionTermination } from "../../execution-fence";
+import { adapterFixtureAssignments } from "../../../test/adapter-fixture-environment";
 
 export const FIXTURES_DIR = resolve(
   fileURLToPath(import.meta.url),
@@ -83,6 +84,7 @@ export type BootHostOptions = {
   now?: () => Date;
   fixture?: string;
   fixtureArgs?: string[];
+  fixtureEnvironment?: Readonly<Record<string, string>>;
   stateDir?: string;
   runtimeRoot?: string;
   workspaceRoots?: string[];
@@ -120,8 +122,13 @@ export async function bootHost(
   const app = Fastify({ logger: false });
   const workspaceRoots = opts.workspaceRoots ?? [await realpath(runtimeRoot)];
   const spawnOverrides: SpawnOverrides = opts.spawnOverrides ?? {
-    binary: process.execPath,
+    binary: "/usr/bin/env",
     preArgs: [
+      ...adapterFixtureAssignments(process.env),
+      ...Object.entries(opts.fixtureEnvironment ?? {}).map(
+        ([name, value]) => `${name}=${value}`,
+      ),
+      process.execPath,
       join(FIXTURES_DIR, opts.fixture ?? "mock-acp-lifecycle.mjs"),
       ...(opts.fixtureArgs ?? []),
     ],

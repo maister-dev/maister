@@ -64,7 +64,7 @@ MAIster состоит из двух Node-процессов:
 pnpm --filter @maister/supervisor dev
 ```
 
-Супервизор поднимается на `http://localhost:7777` и владеет ACP-сессиями.
+Супервизор поднимается на `http://127.0.0.1:7777` и владеет ACP-сессиями.
 
 ```bash
 pnpm --filter maister-web dev

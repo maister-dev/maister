@@ -1075,7 +1075,7 @@ describe("supervisor lifecycle integration", () => {
                 model: "mock",
                 provider: {
                   kind: "anthropic_compatible",
-                  authTokenEnv: "MAISTER_CONTROLLED_UNSET_TOKEN",
+                  authTokenEnv: "CONTROLLED_UNSET_PROVIDER_TOKEN",
                 },
                 permissionPolicy: "default",
               },
@@ -1083,7 +1083,7 @@ describe("supervisor lifecycle integration", () => {
           : {};
       const command = await createEnvelope(host, { runId: RUN_ID }, extra);
 
-      vi.stubEnv("MAISTER_CONTROLLED_UNSET_TOKEN", "");
+      vi.stubEnv("CONTROLLED_UNSET_PROVIDER_TOKEN", "");
       await mkdir(runDirectory, { recursive: true });
       if (failure === "unwritable log") await chmod(runDirectory, 0o500);
       try {

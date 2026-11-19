@@ -462,7 +462,7 @@ on what the turn is doing when the steer lands.
 - Native `anthropic`/`openai` readiness MUST be treated as adapter-binary
   availability, NOT credential verification — `evaluateRunnerReadiness` performs
   no API-key/login check for those kinds; the UI MUST label a `Ready` native
-  runner "Available (ambient credentials — key/login not verified)", never an
+  runner as available with credentials unverified, never an
   unqualified "Ready". (Implemented, ADR-094)
 - When supervisor diagnostics are unavailable (null), the reconcile MUST be a
   no-op — it MUST NOT clobber runners to `NotReady`, materialize defaults, or

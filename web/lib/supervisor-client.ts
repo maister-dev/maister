@@ -55,7 +55,7 @@ const logger = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_BASE_URL = "http://localhost:7777";
+const DEFAULT_BASE_URL = "http://127.0.0.1:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
 // /diagnostics probes every adapter binary (~0.75 s idle on a five-adapter
 // host); under the 1 s health budget the admin reconcile and create-time
@@ -785,6 +785,10 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
   );
 }
 
+function fetchSupervisor(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, redirect: "manual" });
+}
+
 async function fetchLongLivedSupervisor(
   url: string,
   init: Omit<UndiciRequestInit, "dispatcher">,
@@ -797,6 +801,7 @@ async function fetchLongLivedSupervisor(
 
   return (await undiciFetch(url, {
     ...init,
+    redirect: "manual",
     dispatcher: longLivedDispatcher,
   })) as unknown as Response;
 }
@@ -831,7 +836,7 @@ export async function checkSupervisorHealth(
   logger.debug({ url }, "checkSupervisorHealth");
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -909,7 +914,7 @@ export async function checkSupervisorDiagnostics(
   logger.debug({ url }, "checkSupervisorDiagnostics");
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -975,7 +980,7 @@ export async function checkSupervisorEnvRefs(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       cache: "no-store",
       headers: { "content-type": "application/json" },
@@ -1013,7 +1018,7 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   let res: Response;
 
   try {
-    res = await fetch(url);
+    res = await fetchSupervisor(url);
   } catch (err) {
     throw networkErrorToMaister(err, "listSessions");
   }
@@ -1091,7 +1096,7 @@ export async function resolveModelSuggestions(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...draft, force: opts?.force ?? false }),
@@ -1137,7 +1142,7 @@ export async function probeMcpViaSupervisor(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(req),
@@ -1481,7 +1486,7 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
     try {
       res = spec.longLived
         ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-        : await fetch(url, { ...init, cache: "no-store" });
+        : await fetchSupervisor(url, { ...init, cache: "no-store" });
     } catch (err) {
       throw networkErrorToMaister(err, spec.ctx);
     }
@@ -1950,6 +1955,7 @@ async function runtimeObjectBinaryResponse(input: {
       headers: input.headers,
       body: input.bytes,
       cache: "no-store",
+      redirect: "manual",
       signal: combineSignals(input.signal, controller.signal),
     });
   } catch {

@@ -12,6 +12,8 @@ import {
   openRuntimeObjectContent,
   uploadRuntimeObject,
   reserveRuntimeObject,
+  checkSupervisorHealth,
+  streamSession,
 } from "@/lib/supervisor-client";
 import { startRealSupervisor } from "@/test-support/real-supervisor";
 import { verifyRuntimeObjectResponse } from "@/lib/execution-host/runtime-object-response";
@@ -31,7 +33,7 @@ function envelope<T>(
 const servers: Server[] = [];
 const originalUrl = process.env.MAISTER_SUPERVISOR_URL;
 
-async function serve(handler: RequestListener): Promise<void> {
+async function serve(handler: RequestListener): Promise<string> {
   const server = createServer(handler);
 
   servers.push(server);
@@ -44,7 +46,11 @@ async function serve(handler: RequestListener): Promise<void> {
   if (!address || typeof address === "string") {
     throw new Error("binary transport fixture did not bind a TCP port");
   }
-  process.env.MAISTER_SUPERVISOR_URL = `http://127.0.0.1:${address.port}`;
+  const url = `http://127.0.0.1:${address.port}`;
+
+  process.env.MAISTER_SUPERVISOR_URL = url;
+
+  return url;
 }
 
 afterEach(async () => {
@@ -59,6 +65,29 @@ afterEach(async () => {
 });
 
 describe("runtime-object binary HTTP transport (AT-17)", () => {
+  it("IT-ISO-01 keeps manager HTTP, SSE and range reads on their original authority", async () => {
+    const forwarded: string[] = [];
+    const target = await serve((request, response) => {
+      forwarded.push(request.url ?? "");
+      response.writeHead(404).end();
+    });
+
+    await serve((request, response) => {
+      response.writeHead(307, { location: `${target}${request.url}` }).end();
+    });
+
+    await expect(checkSupervisorHealth()).resolves.toMatchObject({
+      kind: "unavailable",
+    });
+    await expect(
+      streamSession("redirected-session", {}).next(),
+    ).rejects.toThrow();
+    await expect(
+      getRuntimeObjectContent(randomUUID(), { range: { start: 0, end: 1 } }),
+    ).rejects.toThrow();
+    expect(forwarded).toEqual([]);
+  });
+
   it("reserves, uploads and reads exact full/range bytes through the real supervisor HTTP and SQLite registry", async () => {
     const host = await startRealSupervisor();
     const health = (await fetch(`${host.url}/health`).then((response) =>

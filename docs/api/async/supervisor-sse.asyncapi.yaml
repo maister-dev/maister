@@ -41,7 +41,7 @@ info:
 defaultContentType: application/json
 servers:
   local:
-    url: http://localhost:7777
+    url: http://127.0.0.1:7777
     protocol: http
     description: Local supervisor (default port).
 channels:

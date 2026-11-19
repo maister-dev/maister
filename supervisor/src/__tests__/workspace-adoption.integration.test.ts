@@ -503,7 +503,6 @@ describe("workspace adoption", () => {
 
     // Shared-state consumers must stop before the fixture that owns the store.
     booted.unshift(handleHost);
-    process.env.MOCK_ACP_NEWSESSION_RECORD_PATH = recordPath;
     const handle = await postJson(
       `${handleHost.url}/sessions`,
       envelope(
@@ -513,12 +512,14 @@ describe("workspace adoption", () => {
           executionWorkspaceId: adopted.body.executionWorkspaceId,
           stepId: "plan",
           executor: { agent: "claude", model: "claude-sonnet-4-6" },
+          adapterLaunch: {
+            env: { MOCK_ACP_NEWSESSION_RECORD_PATH: recordPath },
+          },
         },
       ),
     );
 
     expect(handle.status).toBe(201);
-    delete process.env.MOCK_ACP_NEWSESSION_RECORD_PATH;
     const record = handleHost.registry.get(handle.body.sessionId)!.record;
     const runDir = join(l.root, ".maister", "demo", "runs", l.runId);
 

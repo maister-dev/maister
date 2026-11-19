@@ -39,7 +39,7 @@ info:
     name: MIT
 servers:
   local:
-    url: http://localhost:7777
+    url: http://127.0.0.1:7777
     protocol: http
     description: Default single-host loopback supervisor; no remote enrollment or relay is required.
 defaultContentType: application/json

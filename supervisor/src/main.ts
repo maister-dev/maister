@@ -319,8 +319,10 @@ export async function start(): Promise<void> {
     );
   }
 
-  await app.listen({ port, host: "0.0.0.0" });
-  logger.info({ port, host: "0.0.0.0" }, "supervisor-listening");
+  const host = "127.0.0.1";
+
+  await app.listen({ port, host });
+  logger.info({ port, host }, "supervisor-listening");
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {

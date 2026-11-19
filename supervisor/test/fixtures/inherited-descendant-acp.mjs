@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 
-const pidFile = process.env.MAISTER_DESCENDANT_PID_FILE;
+const pidFile = process.env.MOCK_ACP_DESCENDANT_PID_FILE;
 if (!pidFile)
   throw new Error("The owned descendant fixture requires its PID file");
 const descendant = spawn(

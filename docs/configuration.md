@@ -1288,7 +1288,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_IMPORT_MAX_BYTES` | no | `52428800` (50 MiB) | **(ADR-096.)** Total-size cap for a `/studio/local-packages/:id/import` batch (folder or zip/tar.gz); the archive blob is also checked against this BEFORE parsing (zip-bomb defense). Over → `PRECONDITION`, nothing persisted. `web/lib/instance-config.ts:importMaxBytes()`. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. |
 > | `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
 > | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
-> | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
+> | `MAISTER_SUPERVISOR_URL` | no | `http://127.0.0.1:7777` | Web → supervisor HTTP+SSE base URL. Manager calls refuse redirects. See [Supervisor](supervisor.md). |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |
@@ -1296,7 +1296,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_SHUTDOWN_GRACE_MS` | no | `15000` | Total budget for graceful supervisor shutdown |
 > | `LOG_LEVEL` | no | `debug` (dev) / `info` (prod) | pino level for both web and supervisor |
 > | `ANTHROPIC_API_KEY` | no | — | Optional provider env inherited by spawned children if present; ACP tools are configured in their own CLIs by default. Also read by the model-discovery `provider_api` source for plain `anthropic` runner drafts (ADR-076). |
-> | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Per-executor `env` overrides the global default |
+> | `ANTHROPIC_BASE_URL` | no | api.anthropic.com | Adapter children use a runner's explicit provider endpoint or env mapping. Host process settings do not pass through implicitly. |
 > | `ANTHROPIC_AUTH_TOKEN` | no | uses tool/provider default | Optional explicit provider env when `ANTHROPIC_BASE_URL` points at a third-party (z.ai GLM, OpenRouter, …). Platform runners should prefer typed env refs only when overriding CLI-native config. |
 > | `OPENAI_API_KEY` | no | — | Model discovery only (ADR-076): the supervisor's `provider_api` source lists models for plain `openai` codex runner drafts; unset → that source reports `skipped`. NOT used to run codex sessions. |
 > | `MAISTER_ADAPTER_SMOKE_CACHE_PATH` | no | `<runtimeRoot>/adapter-smoke-cache.json` | Optional supervisor-side diagnostics cache written by `pnpm -C supervisor smoke:acp --cache <path> gemini opencode mimo`. Gemini/OpenCode/MiMo readiness requires cached `smoke.status="ok"`. Host/service-env only; never a compose var in the default Postgres-only topology. |

@@ -1769,7 +1769,7 @@
     "readinessReady": "Ready",
     "readinessNotReady": "Not ready",
     "readinessUnknown": "Unknown",
-    "readinessAmbient": "Available (ambient credentials — key/login not verified)",
+    "readinessAmbient": "Available (credentials unverified)",
     "colEnabled": "Enabled",
     "colActions": "Actions",
     "colTrust": "Trust",
