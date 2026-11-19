@@ -44,6 +44,7 @@ import { isSupervisorError } from "./types";
 import {
   assertAdapterEnvironment,
   assertExplicitEnvironment,
+  configuredClaudeDirectory,
   workloadBaseEnvironment,
 } from "./workload-environment";
 
@@ -129,9 +130,14 @@ export function buildChildEnv(
     env: request.adapterLaunch?.env,
     workspace: opts.workspace,
   });
+  const claudeDirectory =
+    request.executor.agent === "claude"
+      ? configuredClaudeDirectory()
+      : undefined;
 
   return {
     ...workloadBaseEnvironment(),
+    ...(claudeDirectory ? { CLAUDE_CONFIG_DIR: claudeDirectory } : {}),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath

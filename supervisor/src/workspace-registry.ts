@@ -12,6 +12,7 @@ import { lstat, readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { SupervisorError } from "./types";
+import { configuredClaudeDirectory } from "./workload-environment";
 import { isUnderRoot } from "./workspace-roots";
 
 // ADR-166 D7: opaque adopted-workspace handles. `POST /workspaces/adopt` is the
@@ -237,7 +238,7 @@ export class WorkspaceRegistry {
       );
     if (librarianRoot) {
       const claudeDir =
-        process.env.CLAUDE_CONFIG_DIR ??
+        configuredClaudeDirectory() ??
         (process.env.HOME ? path.join(process.env.HOME, ".claude") : null);
 
       if (!claudeDir)

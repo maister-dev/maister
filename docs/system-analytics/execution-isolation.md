@@ -77,6 +77,7 @@ credential can be treated as confidential from a workload.
 
 The P1 Flow child policy uses the ADR-153 allow-list plus explicitly supplied
 execution plumbing. Exclude the SSH agent socket and remove full inheritance.
+Flow and capability package setup use the same allow-list.
 The host ACP, version and MCP diagnostic paths use explicit startup
 environments. Pre-confinement deployment may still resolve deliberately
 configured provider or MCP credentials. OS identity and filesystem policy

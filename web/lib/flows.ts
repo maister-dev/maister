@@ -39,6 +39,7 @@ import { OUTPUT_COORDINATOR_ENGINE_MIN } from "@/lib/config.schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { childProcessEnv } from "@/lib/flows/child-env";
 import { manifestDigest } from "@/lib/flows/digest";
 import {
   collectReferencedSchemaPaths,
@@ -589,6 +590,7 @@ async function runSetupSh(opts: {
   try {
     const { stdout, stderr } = await execFileAsync("bash", [setupPath], {
       cwd: opts.target,
+      env: childProcessEnv(),
       signal: buildExecSignal(opts.signal, SETUP_SH_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
     });

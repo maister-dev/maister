@@ -99,7 +99,7 @@ authenticates to the helper with a separate client certificate and sends one
 restart request. The Web callback still decides whether that exact request may
 execute. A lost response requires a separate read of the original target
 receipt. Target credential values are read from host files and excluded from
-the command ledger and inherited ACP environment.
+the command ledger and ACP child environment.
 
 | Bound | Limit or policy |
 | --- | --- |

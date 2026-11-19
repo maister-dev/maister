@@ -30,6 +30,7 @@ import { upsertCapabilitiesFromConfig } from "@/lib/capabilities/catalog";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { childProcessEnv } from "@/lib/flows/child-env";
 import {
   flowIdSchema,
   sourceUrlSchema,
@@ -276,6 +277,7 @@ async function runSetupSh(opts: {
   try {
     const { stdout, stderr } = await execFileAsync("bash", [setupPath], {
       cwd: opts.target,
+      env: childProcessEnv(),
       signal: buildExecSignal(opts.signal, SETUP_SH_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
     });

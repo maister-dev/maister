@@ -10,8 +10,8 @@ const log = pino({
 });
 
 /**
- * ADR-153. Env for bash children spawned by the flow engine — cli/check node
- * commands, command_check gates (both via runCliStep), and requirement probes.
+ * ADR-153. Env for bash children running cli/check node commands,
+ * command_check gates, requirement probes and reviewed package setup scripts.
  * The web process env carries secrets (DB_URL, provider keys, auth secrets)
  * that a flow package's shell command must never see, so the child gets only
  * the SAME allow-list the {{ env.* }} template namespace exposes, plus

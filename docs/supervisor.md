@@ -1427,7 +1427,9 @@ runner configuration. For example, use a runner env mapping of
 `ANTHROPIC_API_KEY: env:ANTHROPIC_API_KEY`, or use the adapter's CLI login.
 
 Launch overrides cannot change reserved tool, loader, SSH, Git, proxy or host
-configuration. A supported adapter can receive its designated capability-home
+configuration. The supervisor can set an absolute `CLAUDE_CONFIG_DIR` for
+Claude. Librarian transcript purge uses the same directory. A supported
+adapter can receive its designated capability-home
 redirect under the adopted Run's materialization directory. The supervisor
 refuses reserved values and references with
 `PRECONDITION/workload_environment_reserved` before launch. Host-generated

@@ -683,6 +683,26 @@ authority. Before a v2 candidate can be rescued or removed, the reconciler
 independently proves its root containment, canonical Git registration, database
 absence, no live session, grace expiry, and final lease fence.
 
+### Privileged Git invocation (ADR-210)
+
+Worktree patch and metadata reads disable external diff and text conversion,
+including on the bounded streaming path. Remaining invocation policy is
+Designed. Its migration must cover these owning entry points.
+
+| Family | Current entry points and behavior to preserve |
+| --- | --- |
+| Worktree lifecycle and evidence | `web/lib/worktree.ts` owns allocation, ref and tree inspection, buffered and streamed review reads, sync, promotion, pushes and removal. `web/lib/auto-promotion/readers.ts` reads promotion evidence. `web/lib/worktree-provenance.ts` installs worktree-local provenance; privileged commits need the same trailers and delivery-root identity without delegating to the worktree hook. |
+| Reviewed publication | `web/lib/project-config-persistence/` owns the physical repository fence, commit signing choice, transport verification, reviewed remote compare-and-swap and uncertain-delivery reconciliation. Its push gate currently invokes the prior repo hook. Preserve its exact remote/ref and expected object checks before replacing that delegation. |
+| Repository acquisition and packages | `web/lib/repo-source.ts`, `capabilities/{import,materialize,materialize-bundle}.ts`, `local-packages/git.ts`, `packages/catalog.ts` and `flows.ts` invoke Git for discovery, clone/fetch, revision pinning, export and materialization. Preserve revision identity and approved transport semantics. |
+| Run and gate state | `web/lib/flows/graph/{mutation-check,run-context,workspace-checkpoint}.ts` and `web/lib/services/{gate-chat,gate-chat-turn-completion}.ts` inspect or reset state. Resume and gate consumers depend on the same base, index and outcome evidence as the launch path. |
+| Transport diagnostics and wrappers | `web/lib/instance-config.ts` probes tool versions through a variable executable name. `web/lib/runs/pr-adapter.ts` and the delivery-history scheduler use provider tooling. Keep their credentials and transport scope distinct from Git repository configuration. |
+
+The worktree diff flags cover review renderers. A shared invocation policy
+also needs trusted executable/config resolution, worktree and common-dir
+ownership checks, and explicit policies for filters, transports and signers.
+Acceptance includes a caller inventory check and the real publication cases
+for an exact remote baseline and unknown acknowledgement. [ADR-210](../decisions/adr-210.md)
+
 ## Auto-promotion lanes (ADR-126, Implemented)
 
 ### Purpose

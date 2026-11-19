@@ -82,6 +82,20 @@ export function workloadBaseEnvironment(): Record<string, string> {
   );
 }
 
+// ADR-190 uses this same host-owned setting for launch and transcript purge.
+export function configuredClaudeDirectory(): string | undefined {
+  const directory = process.env.CLAUDE_CONFIG_DIR;
+
+  if (
+    directory !== undefined &&
+    (!isAbsolute(directory) || directory.includes("\0"))
+  ) {
+    refuseEnvironment("CLAUDE_CONFIG_DIR");
+  }
+
+  return directory;
+}
+
 export function assertReferenceSource(name: string): void {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) refuseEnvironment();
   if (

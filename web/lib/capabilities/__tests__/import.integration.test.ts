@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   installCapabilityRevision,
@@ -61,7 +61,7 @@ async function buildCapabilityFixture(
     // the path stays valid after the repo is copied to the cache directory.
     await writeFile(
       join(repoDir, "setup.sh"),
-      `#!/usr/bin/env bash\necho "ran" > ./sentinel.txt\nexit ${setupExitCode}\n`,
+      `#!/usr/bin/env bash\ntest -z "\${MAISTER_TEST_SETUP_ENV_SENTINEL+x}" || exit 91\necho "ran" > ./sentinel.txt\nexit ${setupExitCode}\n`,
     );
     await chmod(join(repoDir, "setup.sh"), 0o755);
   }
@@ -290,10 +290,11 @@ describe("runCapabilityRevisionSetup", () => {
     });
 
     // Ensure trusted_by_policy (local source → already trusted_by_policy after install).
+    vi.stubEnv("MAISTER_TEST_SETUP_ENV_SENTINEL", "synthetic");
     const result = await runCapabilityRevisionSetup({
       importRowId: installed.importRowId,
       db,
-    });
+    }).finally(() => vi.unstubAllEnvs());
 
     expect(result.setupStatus).toBe("done");
 

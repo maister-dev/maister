@@ -38,21 +38,38 @@ describe("buildChildEnv — env layering precedence", () => {
     expect(env).not.toHaveProperty("HTTPS_PROXY");
   });
 
-  it.each(["HOME", "PATH", "https_proxy", "NODE_OPTIONS", "CODEX_HOME"])(
-    "refuses an adapter launch override of %s before spawning",
-    (name) => {
-      expect(() =>
-        buildChildEnv(
-          makeRequest({ adapterLaunch: { env: { [name]: "synthetic" } } }),
-        ),
-      ).toThrow(
-        expect.objectContaining({
-          code: "PRECONDITION",
-          details: { reason: "workload_environment_reserved", field: name },
-        }),
-      );
-    },
-  );
+  it.each([
+    "HOME",
+    "PATH",
+    "https_proxy",
+    "NODE_OPTIONS",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+  ])("refuses an adapter launch override of %s before spawning", (name) => {
+    expect(() =>
+      buildChildEnv(
+        makeRequest({ adapterLaunch: { env: { [name]: "synthetic" } } }),
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "PRECONDITION",
+        details: { reason: "workload_environment_reserved", field: name },
+      }),
+    );
+  });
+
+  it("keeps the supervisor's transcript directory for Claude only", () => {
+    const directory = `${process.cwd()}/claude-config`;
+
+    vi.stubEnv("CLAUDE_CONFIG_DIR", directory);
+
+    expect(buildChildEnv(makeRequest()).CLAUDE_CONFIG_DIR).toBe(directory);
+    expect(
+      buildChildEnv(
+        makeRequest({ executor: { agent: "codex", model: "default" } }),
+      ),
+    ).not.toHaveProperty("CLAUDE_CONFIG_DIR");
+  });
 
   it("keeps the Codex capability home only for its adopted Run", () => {
     const workspace = { cwd: process.cwd(), runId: "run-home" };

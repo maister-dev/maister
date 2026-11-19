@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { buildFlowFixture } from "./_fixtures/build-flow-plugin";
 
@@ -683,6 +683,8 @@ nodes:
 
   it("setup.sh exit 0: install completes, sentinel written, second install skips setup.sh (sentinel mtime unchanged)", async () => {
     const setupOkRepo = await buildFlowFixture(fixturesDir, "with-setup-ok");
+
+    vi.stubEnv("MAISTER_TEST_SETUP_ENV_SENTINEL", "synthetic");
     const result1 = await installFlowPlugin({
       source: setupOkRepo,
       version: "v1.0.0",
@@ -691,8 +693,9 @@ nodes:
       flowId: "setup-ok-once",
       workspaceRoot,
       db,
-    });
+    }).finally(() => vi.unstubAllEnvs());
 
+    expect(result1.enablementState).toBe("Enabled");
     const sentinelPath = `${result1.installedPath}/.maister-setup-done`;
     const sentinelStat = await stat(sentinelPath);
 

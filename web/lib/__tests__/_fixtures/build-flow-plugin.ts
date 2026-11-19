@@ -112,7 +112,7 @@ export async function buildFlowFixture(
     await writeFile(join(repoDir, "flow.yaml"), VALID_FLOW_YAML_V1);
     await writeFile(
       join(repoDir, "setup.sh"),
-      `#!/usr/bin/env bash\necho "setup.sh ran"\nexit ${exitCode}\n`,
+      `#!/usr/bin/env bash\ntest -z "\${MAISTER_TEST_SETUP_ENV_SENTINEL+x}" || exit 91\necho "setup.sh ran"\nexit ${exitCode}\n`,
     );
     await chmod(join(repoDir, "setup.sh"), 0o755);
     await gitRun(repoDir, ["add", "."]);

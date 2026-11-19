@@ -60,7 +60,7 @@ From the repo root, with `pnpm` and Node 24 installed.
    pnpm --filter maister-web dev
    ```
 
-   App: <http://localhost:3000> · supervisor: <http://localhost:7777>.
+   App: <http://localhost:3000> · supervisor: <http://127.0.0.1:7777>.
 
 ## Scripts
 
