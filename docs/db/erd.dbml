@@ -128,6 +128,26 @@ table agent_incident_reader_states {
   }
 }
 
+table agent_installation_run_authorities {
+  run_id text [pk, not null]
+  binding_id text [not null]
+  binding_revision integer [not null]
+  binding_digest text [not null]
+  grant_snapshot jsonb [not null]
+  principal jsonb [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table agent_installation_run_sources {
+  run_id text [not null]
+  project_id text [not null]
+  captured_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, project_id) [pk]
+  }
+}
+
 table agent_memory_cutover {
   singleton boolean [pk, not null, default: true]
   generation bigint [not null]
@@ -2788,6 +2808,7 @@ table project_tokens {
   project_id text
   company_id text
   company_run_id text
+  installation_run_id text
   name text [not null]
   token_kind text [not null, default: 'project']
   owner_user_id text
@@ -4930,6 +4951,10 @@ ref agent_incident_reader_states_user_id_users_id_fk: agent_incident_reader_stat
 
 ref agent_incident_reader_states_episode_id_agent_incident_episodes_id_fk: agent_incident_reader_states.episode_id > agent_incident_episodes.id [delete: cascade, update: no action]
 
+ref agent_installation_authority_revision_fk: agent_installation_run_authorities.(binding_id, binding_revision) > company_specialist_binding_revisions.(binding_id, revision) [delete: restrict, update: no action]
+
+ref agent_installation_run_sources_run_id_agent_installation_run_authorities_run_id_fk: agent_installation_run_sources.run_id > agent_installation_run_authorities.run_id [delete: restrict, update: no action]
+
 ref agent_memory_import_payloads_receipt_id_agent_memory_import_receipts_id_fk: agent_memory_import_payloads.receipt_id > agent_memory_import_receipts.id [delete: restrict, update: no action]
 
 ref agent_memory_import_revision_fk: agent_memory_import_receipts.(vault_id, note_id, revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
@@ -5471,6 +5496,8 @@ ref project_tokens_project_id_projects_id_fk: project_tokens.project_id > projec
 ref project_tokens_company_id_companies_id_fk: project_tokens.company_id > companies.id [delete: restrict, update: no action]
 
 ref project_tokens_company_run_id_runs_id_fk: project_tokens.company_run_id > runs.id [delete: cascade, update: no action]
+
+ref project_tokens_installation_run_id_agent_installation_run_authorities_run_id_fk: project_tokens.installation_run_id > agent_installation_run_authorities.run_id [delete: restrict, update: no action]
 
 ref project_tokens_owner_user_id_users_id_fk: project_tokens.owner_user_id > users.id [delete: set null, update: no action]
 

@@ -3,6 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { installationReadAdapter } from "@/lib/agents/installation-facade";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getTaskDTO, updateTask } from "@/lib/services/tasks";
@@ -41,6 +42,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "tasks:read",
+      installation: installationReadAdapter(req, "tasks", { slug, id: taskId }),
       admitLibrarian: true,
       endpoint: ENDPOINT_TASK_GET,
       method: "GET",

@@ -5,6 +5,7 @@ import {
   vaultErrorResponse,
   vaultMutationResponse,
 } from "@/lib/agent-memory-vault/http";
+import { prepareInstallationExecutionVault } from "@/lib/agent-memory-vault/installation-access";
 import { prepareProjectExecutionVault } from "@/lib/agent-memory-vault/project-access";
 import {
   parseMemoryPromotion,
@@ -20,9 +21,9 @@ const scope = "agent_memory:propose";
 export async function POST(request: Request) {
   return handleOwnedExt(
     request,
-    { endpoint, method: "POST", scopeLabel: scope },
+    { endpoint, method: "POST", scopeLabel: scope, admitInstallation: true },
     async ({ actor }) => {
-      if (!actor.projectId)
+      if (!actor.projectId && !actor.installationScope)
         throw new MaisterError(
           "UNAUTHORIZED",
           "Project-bound agent credential required",
@@ -34,7 +35,9 @@ export async function POST(request: Request) {
           getDb(),
           { kind: "token", tokenId: actor.tokenId },
           command,
-          prepareProjectExecutionVault(actor, actor.projectId, scope),
+          actor.installationScope
+            ? prepareInstallationExecutionVault(actor.tokenId, scope)
+            : prepareProjectExecutionVault(actor, actor.projectId!, scope),
         ),
       );
     },

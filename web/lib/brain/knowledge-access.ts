@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { InstallationRunAuthority } from "@/lib/agents/installation-authority";
+
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyAction, Owner } from "@/lib/company/types";
@@ -8,6 +10,11 @@ import type { KnowledgeAttribution } from "./record-types";
 import type { SessionUser } from "@/lib/authz";
 
 import { sql } from "drizzle-orm";
+import {
+  installationProjectAccess,
+  requireInstallationCredential,
+  requireInstallationRunAuthority,
+} from "@/lib/agents/installation-authority";
 
 import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
 import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
@@ -72,7 +79,31 @@ export type KnowledgePrincipalIdentity =
       initiatingUser: SessionUser;
       actionLimits: readonly CompanyAction[];
       execution: CompanyExecutionSnapshot;
+    }>
+  | Readonly<{
+      kind: "installation_agent";
+      actor: KnowledgeAuthorityActor & {
+        kind: "agent";
+        runId: string;
+        attemptId: null;
+      };
+      installation: InstallationRunAuthority;
     }>;
+
+function installationKnowledgeIdentity(
+  installation: InstallationRunAuthority,
+): KnowledgePrincipalIdentity {
+  return {
+    kind: "installation_agent",
+    installation,
+    actor: {
+      kind: "agent",
+      id: installation.agentId,
+      runId: installation.runId,
+      attemptId: null,
+    },
+  };
+}
 
 export function knowledgeOwner(row: Readonly<Record<string, unknown>>): Owner {
   if (typeof row.company_id === "string" && row.project_id === null)
@@ -130,6 +161,11 @@ export async function resolveKnowledgePrincipal(
         "UNAUTHORIZED",
         "Execution inspection is read-only and cannot authorize knowledge changes",
       );
+    const installation =
+      principal.nodeAttemptId === null
+        ? await requireInstallationRunAuthority(tx, principal.runId)
+        : null;
+    if (installation) return installationKnowledgeIdentity(installation);
     const resolved = await resolveKnowledgeRunIdentity(
       tx,
       principal.runId,
@@ -155,6 +191,20 @@ export async function resolveNativeTokenPrincipal(
   action: CompanyAction,
 ): Promise<KnowledgePrincipalIdentity> {
   const token = await lockCurrentNativeKnowledgeToken(tx, tokenId);
+  if (
+    token.installation_run_id !== null &&
+    token.installation_run_id !== undefined
+  ) {
+    if (action !== "knowledge:read" && action !== "knowledge:propose")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Installation agents can only read or propose knowledge",
+      );
+
+    return installationKnowledgeIdentity(
+      await requireInstallationCredential(tx, tokenId, action),
+    );
+  }
 
   if (
     !token ||
@@ -239,6 +289,58 @@ export async function authorizeKnowledge(
   action: KnowledgeAction,
 ): Promise<KnowledgeAuthority> {
   const identity = await resolveKnowledgePrincipal(tx, principal, action);
+
+  if (identity.kind === "installation_agent") {
+    const context = identity.installation;
+    if (
+      (action !== "knowledge:read" && action !== "knowledge:propose") ||
+      !context.scopes.includes(action)
+    )
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Current installation knowledge scope is required",
+      );
+    if (owner.kind === "company") {
+      if (owner.companyId !== context.companyId)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Knowledge owner is unavailable",
+        );
+      if (context.principal.kind === "manual")
+        await authorizeCompanyPrincipal(
+          tx,
+          {
+            kind: "user",
+            id: context.principal.userId,
+            runId: null,
+            attemptId: null,
+          },
+          owner.companyId,
+          action,
+        );
+    } else {
+      const projectAction =
+        action === "knowledge:read" ? "readBrain" : "writeBrain";
+      const allowed =
+        await tx.execute(sql`SELECT id FROM projects p WHERE p.id=${owner.projectId}
+        AND p.archived_at IS NULL AND p.brain_enabled AND ${installationProjectAccess(context, sql`p.id`, projectAction)} FOR SHARE`);
+      if (!allowed.rows.length)
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Knowledge owner is unavailable",
+        );
+    }
+
+    return {
+      actor: identity.actor,
+      policy: {
+        version: 1,
+        authorityId: context.bindingId,
+        authorityRevision: context.bindingRevision,
+        confirmationClasses: [],
+      },
+    };
+  }
 
   if (
     identity.kind === "user" &&

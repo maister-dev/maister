@@ -20,6 +20,7 @@ import {
 } from "./knowledge-access";
 import {
   projectContextReadPolicy,
+  projectVisibilityReadPolicy,
   agentMemoryReadPolicy,
   vaultRevisionReferenceQuery,
 } from "./knowledge-context-policy";
@@ -55,6 +56,7 @@ const retainedVaultRestrictions = z
   )
   .max(256);
 const retainedVaultSources = z.object({
+  installation: z.boolean(),
   source_project_ids: z.array(z.string().min(1).max(128)).max(256),
   source_restrictions: retainedVaultRestrictions,
 });
@@ -139,13 +141,15 @@ async function authorizeContextRestriction(
     "knowledge:read",
   );
   const policy =
-    restriction.kind === "project_context"
-      ? projectContextReadPolicy(identity, sql`${restriction.projectId}`)
-      : agentMemoryReadPolicy(
-          identity,
-          sql`${restriction.projectId}`,
-          sql`${restriction.agentId}`,
-        );
+    restriction.kind === "project_visibility"
+      ? projectVisibilityReadPolicy(identity, sql`${restriction.projectId}`)
+      : restriction.kind === "project_context"
+        ? projectContextReadPolicy(identity, sql`${restriction.projectId}`)
+        : agentMemoryReadPolicy(
+            identity,
+            sql`${restriction.projectId}`,
+            sql`${restriction.agentId}`,
+          );
 
   if ((await tx.execute(sql`SELECT 1 WHERE ${policy}`)).rows.length === 0)
     throw unavailableKnowledgeReference();
@@ -219,7 +223,9 @@ async function authorizeVaultRevisionRestriction(
 
   if (!source.success) throw unavailableKnowledgeReference();
   const projectSources = source.data.source_project_ids.map((projectId) => ({
-    kind: "project_context" as const,
+    kind: source.data.installation
+      ? ("project_visibility" as const)
+      : ("project_context" as const),
     projectId,
   }));
 
@@ -290,7 +296,8 @@ export async function authorizeSourceRestrictions(
     }
     current =
       restriction.kind === "agent_memory" ||
-      restriction.kind === "project_context"
+      restriction.kind === "project_context" ||
+      restriction.kind === "project_visibility"
         ? await authorizeContextRestriction(tx, principal, restriction, current)
         : restriction.kind === "record"
           ? (
@@ -359,6 +366,20 @@ export async function authorizeKnowledgeRecordRead(
 
       if (!initiatingGrant) throw unavailableKnowledgeReference();
     }
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      principal,
+      "knowledge:read",
+    );
+    if (
+      identity.kind === "installation_agent" &&
+      identity.installation.principal.kind === "manual"
+    ) {
+      const initiatingGrant =
+        await tx.execute(sql`SELECT id FROM brain_record_grants WHERE record_id=${id}
+        AND principal_type='user' AND principal_id=${identity.installation.principal.userId} AND action='knowledge:read' AND revoked_at IS NULL FOR SHARE`);
+      if (!initiatingGrant.rows.length) throw unavailableKnowledgeReference();
+    }
     if (!grant) throw unavailableKnowledgeReference();
   }
 
@@ -406,6 +427,7 @@ export function restrictionsForKnowledgeAccess(
       kind === "agent_memory" ||
       kind === "agent_vault_revision_v1" ||
       kind === "project_context" ||
+      kind === "project_visibility" ||
       kind === "assignment_input"
     ) {
       const parsed = knowledgeAccessRestrictionSchema.safeParse(

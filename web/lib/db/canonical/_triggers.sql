@@ -1,4 +1,6 @@
 CREATE TRIGGER actor_identities_owner_guard BEFORE INSERT OR UPDATE ON public.actor_identities FOR EACH ROW EXECUTE FUNCTION guard_human_work_owner();
+CREATE TRIGGER agent_installation_authority_immutable BEFORE DELETE OR UPDATE ON public.agent_installation_run_authorities FOR EACH ROW EXECUTE FUNCTION reject_installation_witness_mutation();
+CREATE TRIGGER agent_installation_source_immutable BEFORE DELETE OR UPDATE ON public.agent_installation_run_sources FOR EACH ROW EXECUTE FUNCTION reject_installation_witness_mutation();
 CREATE TRIGGER agent_memory_import_payload_immutable BEFORE DELETE OR UPDATE ON public.agent_memory_import_payloads FOR EACH ROW EXECUTE FUNCTION agent_memory_immutable_history();
 CREATE CONSTRAINT TRIGGER agent_memory_note_head_projection AFTER INSERT OR UPDATE ON public.agent_memory_notes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION agent_memory_guard_note_head();
 CREATE TRIGGER agent_memory_redaction_admin_required BEFORE INSERT ON public.agent_memory_redactions FOR EACH ROW EXECUTE FUNCTION agent_memory_require_redaction_admin();
@@ -86,7 +88,9 @@ CREATE TRIGGER project_config_persist_guard_before_update BEFORE UPDATE ON publi
 CREATE TRIGGER project_config_push_guard_before_update BEFORE UPDATE ON public.project_config_push_intents FOR EACH ROW EXECUTE FUNCTION project_config_guard_intent();
 CREATE TRIGGER project_config_attachment_after_change AFTER INSERT OR DELETE OR UPDATE ON public.project_package_attachments FOR EACH ROW EXECUTE FUNCTION project_config_attachment_revision();
 CREATE TRIGGER project_config_attachment_before_binding_change BEFORE INSERT OR DELETE OR UPDATE ON public.project_package_attachments FOR EACH ROW EXECUTE FUNCTION project_config_lock_attachment_installs();
-CREATE TRIGGER project_tokens_company_binding_guard BEFORE INSERT OR UPDATE ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_company_agent_credential();
+CREATE TRIGGER project_tokens_company_binding_insert_guard BEFORE INSERT ON public.project_tokens FOR EACH ROW WHEN ((new.installation_run_id IS NULL)) EXECUTE FUNCTION guard_company_agent_credential();
+CREATE TRIGGER project_tokens_company_binding_update_guard BEFORE UPDATE ON public.project_tokens FOR EACH ROW WHEN (((old.installation_run_id IS NULL) AND (new.installation_run_id IS NULL))) EXECUTE FUNCTION guard_company_agent_credential();
+CREATE TRIGGER project_tokens_installation_binding_guard BEFORE INSERT OR UPDATE ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_installation_agent_credential();
 CREATE TRIGGER project_tokens_knowledge_node_attempt_immutable BEFORE UPDATE OF knowledge_node_attempt_id, name, token_kind, project_id ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_native_knowledge_token_binding();
 CREATE TRIGGER project_tokens_run_origin_guard BEFORE INSERT OR UPDATE ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_project_token_run_origin();
 CREATE TRIGGER specialist_native_credential_time BEFORE INSERT OR UPDATE OF created_at ON public.project_tokens FOR EACH ROW WHEN (((new.company_run_id IS NOT NULL) OR (new.bound_run_id IS NOT NULL))) EXECUTE FUNCTION stamp_native_specialist_credential();

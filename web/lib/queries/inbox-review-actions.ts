@@ -21,7 +21,7 @@ import {
 import { vaultProposalBases } from "@/lib/agent-memory-vault/proposals";
 import {
   decideVaultProposalInTransaction,
-  lockProjectVaultReview,
+  lockVaultReview,
   readVaultProposalCommand,
 } from "@/lib/agent-memory-vault/review";
 import {
@@ -60,7 +60,7 @@ function sharedTx(tx: Db) {
 }
 
 async function vaultPreview(tx: Db, selection: ReviewSelector, userId: string) {
-  const { proposal } = await lockProjectVaultReview(tx, selection.id, userId);
+  const { proposal } = await lockVaultReview(tx, selection.id, userId);
   const command = await readVaultProposalCommand(tx, proposal);
   const bases = await vaultProposalBases(
     tx,
@@ -257,7 +257,7 @@ async function settle(
       ? await authorizeBrainDecision(tx, userId, item)
       : null;
   if (item.kind === "vault" && prior)
-    await lockProjectVaultReview(tx, item.id, userId);
+    await lockVaultReview(tx, item.id, userId);
   if (item.kind === "knowledge") {
     await lockKnowledgeWriteConsumer(tx, principal);
     const proposal = await getKnowledgeProposal(

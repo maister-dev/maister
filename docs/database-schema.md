@@ -5798,3 +5798,12 @@ use `vault-manifest-v1` after application is acknowledged. An empty injection
 set has no hash. The [cutover contract](system-analytics/agent-memory.md#vault-ownership-writes-and-cutover-designed-adr-210)
 defines how the operator verifies file contents before activating the new
 writer.
+
+### Installation execution authority
+
+Main migration `0348_agent_installation_authority` retains a reviewed grant,
+principal and binding-revision digest per installation Run. It also adds the
+append-only `agent_installation_run_sources` relation keyed by Run and project
+identity. The source rows survive project and Run retention. Main migration
+`0349_agent_installation_credentials` binds the installation credential to that
+exact execution authority and preserves existing company credential guards.

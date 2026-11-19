@@ -53,6 +53,8 @@ export function assignmentInputReadPolicy(
       AND ${digest}=${identity.execution.assignment.inputSha256}) OR (${assignmentId}=${identity.execution.assignment.id} AND specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text))
       OR (${companyWorkInputReadPolicy(identity, assignmentId, revision, digest)})
       OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
+  if (identity.kind === "installation_agent")
+    return sql`specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text)`;
 
   return sql`EXISTS (
     SELECT 1 FROM specialist_assignments source_assignment

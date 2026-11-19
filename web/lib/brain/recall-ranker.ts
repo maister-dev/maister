@@ -40,6 +40,7 @@ export interface RecallQuery {
   limit: number;
   kinds?: BrainItemKind[];
   minConfidence?: number;
+  sourceClass?: "owned";
 }
 
 export interface RankedOwnedBrainItem {
@@ -171,7 +172,7 @@ export const pgVectorRecallRanker: RecallRanker = {
       },
     }));
     const indexed =
-      q.kinds && q.kinds.length > 0
+      q.sourceClass === "owned" || (q.kinds && q.kinds.length > 0)
         ? []
         : await rankIndexedChunks(db, {
             ...q,

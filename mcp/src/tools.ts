@@ -2,6 +2,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { z } from "zod";
 
+import { installationToolNames } from "../../runtime/installation-agent-tools";
+
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
 import agentMemorySchema from "../../runtime/agent-memory.schema.json";
@@ -74,6 +76,20 @@ const TASK_SOURCE_PROPERTIES = {
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
+  observatory_summary: {
+    description:
+      "Read scoped installation run counts, successful executions and elapsed durations by project.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        slug: { type: "string", minLength: 1, maxLength: 192 },
+        period: { type: "string", enum: ["24h", "7d", "30d"], default: "7d" },
+        limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+        cursor: { type: "string", minLength: 1, maxLength: 2048 },
+      },
+    },
+  },
   ...TASK_LAUNCH_TOOL_SPECS,
   ...KNOWLEDGE_TOOL_SPECS,
   stand_operation_get: {
@@ -573,12 +589,18 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: agentMemorySchema as ToolSpec["inputSchema"],
   },
   memory_search: {
-    description: "Search current visible notes in the session vault. Use lexical mode by default; vector requires installation configuration. A tag alone lists notes with that tag.",
+    description:
+      "Search current visible notes in the session vault. Use lexical mode by default; vector requires installation configuration. A tag alone lists notes with that tag.",
     inputSchema: {
-      type: "object", additionalProperties: false,
-      anyOf: [{ required: ["q"] }, { required: ["tag"], properties: { mode: { const: "lexical" } } }],
+      type: "object",
+      additionalProperties: false,
+      anyOf: [
+        { required: ["q"] },
+        { required: ["tag"], properties: { mode: { const: "lexical" } } },
+      ],
       properties: {
-        ...vaultPage, q: { type: "string", minLength: 1, maxLength: 2000 },
+        ...vaultPage,
+        q: { type: "string", minLength: 1, maxLength: 2000 },
         tag: { type: "string", minLength: 1, maxLength: 128 },
         mode: { type: "string", enum: ["lexical", "vector"] },
       },
@@ -586,32 +608,69 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     annotations: { readOnlyHint: true },
   },
   memory_backlinks: {
-    description: "List visible current notes linking to the specified vault note path.",
+    description:
+      "List visible current notes linking to the specified vault note path.",
     inputSchema: {
-      type: "object", additionalProperties: false, required: ["path"],
-      properties: { ...vaultPage, path: { type: "string", minLength: 1, maxLength: 512, pattern: "^/memories(?:/[^/]+)*$" } },
+      type: "object",
+      additionalProperties: false,
+      required: ["path"],
+      properties: {
+        ...vaultPage,
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 512,
+          pattern: "^/memories(?:/[^/]+)*$",
+        },
+      },
     },
     annotations: { readOnlyHint: true },
   },
   memory_tags: {
     description: "List frontmatter tags and counts of visible current notes.",
-    inputSchema: { type: "object", additionalProperties: false, properties: vaultPage },
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: vaultPage,
+    },
     annotations: { readOnlyHint: true },
   },
   memory_promote: {
-    description: "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
+    description:
+      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
     inputSchema: {
-      type: "object", additionalProperties: false,
+      type: "object",
+      additionalProperties: false,
       required: ["path", "ifRevisionId", "ifHash", "requestKey", "target"],
       properties: {
-        path: { type: "string", minLength: 1, maxLength: 512, pattern: "^/memories(?:/[^/]+)*$" },
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 512,
+          pattern: "^/memories(?:/[^/]+)*$",
+        },
         ifRevisionId: { type: "string", minLength: 1, maxLength: 192 },
-        ifHash: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
-        requestKey: { type: "string", minLength: 8, maxLength: 128, pattern: "^[A-Za-z0-9_.:-]{8,128}$" },
+        ifHash: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[a-f0-9]{64}$",
+        },
+        requestKey: {
+          type: "string",
+          minLength: 8,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9_.:-]{8,128}$",
+        },
         target: {
-          type: "object", additionalProperties: false, required: ["kind", "ownerKind", "ownerId"],
-          properties: { kind: { type: "string", enum: ["brain", "knowledge"] }, ownerKind: { type: "string", enum: ["project", "company"] },
-            ownerId: { type: "string", minLength: 1, maxLength: 192 } },
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "ownerKind", "ownerId"],
+          properties: {
+            kind: { type: "string", enum: ["brain", "knowledge"] },
+            ownerKind: { type: "string", enum: ["project", "company"] },
+            ownerId: { type: "string", minLength: 1, maxLength: 192 },
+          },
         },
       },
     },
@@ -1682,6 +1741,24 @@ function resolveRouting(
   if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
 
   switch (name) {
+    case "observatory_summary": {
+      const selection = z
+        .fromJSONSchema(
+          TOOL_SPECS.observatory_summary!
+            .inputSchema as z.core.JSONSchema.JSONSchema,
+        )
+        .parse(args);
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(
+        selection as Record<string, unknown>,
+      ))
+        if (value !== undefined) params.set(key, String(value));
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/observatory/summary?${params.toString()}`,
+      };
+    }
     case "stand_operation_get":
     case "stand_operation_logs":
     case "stand_operation_observe":
@@ -2083,14 +2160,19 @@ function resolveRouting(
         body: args,
       };
     case "memory_promote":
-      return { method: "POST", path: "/api/v1/ext/agent/memory/promote", body: args };
+      return {
+        method: "POST",
+        path: "/api/v1/ext/agent/memory/promote",
+        body: args,
+      };
     case "memory_search":
     case "memory_backlinks":
     case "memory_tags": {
       const query = new URLSearchParams();
 
       for (const [key, value] of Object.entries(args)) {
-        if (typeof value === "string" || typeof value === "number") query.set(key, String(value));
+        if (typeof value === "string" || typeof value === "number")
+          query.set(key, String(value));
       }
 
       return {
@@ -2688,10 +2770,17 @@ function resolveRouting(
 
 // The tools a facade process exposes. An unnamed or unknown toolset exposes
 // every registered tool — the default for project and agent tokens.
-export function toolNamesForToolset(toolset: string | undefined): string[] {
+export function toolNamesForToolset(
+  toolset: string | undefined,
+  scopes: readonly string[] = [],
+): string[] {
   if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
 
-  const allowed = new Set<string>(TOOLSETS[toolset]);
+  const allowed = new Set<string>(
+    toolset === "installation"
+      ? installationToolNames(scopes)
+      : TOOLSETS[toolset],
+  );
 
   return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
 }
@@ -2699,9 +2788,10 @@ export function toolNamesForToolset(toolset: string | undefined): string[] {
 export function isToolInToolset(
   name: string,
   toolset: string | undefined,
+  scopes: readonly string[] = [],
 ): boolean {
   return (
     Object.hasOwn(TOOL_SPECS, name) &&
-    toolNamesForToolset(toolset).includes(name)
+    toolNamesForToolset(toolset, scopes).includes(name)
   );
 }

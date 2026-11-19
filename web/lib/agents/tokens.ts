@@ -11,6 +11,7 @@ import pino from "pino";
 import { COMPANY_FLOW_TOKEN_SCOPES } from "../../../runtime/company-flow-tools";
 
 import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import { requireInstallationRunAuthority } from "./installation-authority";
 import {
   requireCompanyRunCredentialOwner,
   requireCompanyFlowNodeKnowledgeOwner,
@@ -382,6 +383,35 @@ export async function retainCompanyAgentSessionCredential(
   await tx.execute(
     sql`SELECT id FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
   );
+  const installation = await requireInstallationRunAuthority(tx, runId);
+  if (installation) {
+    const { secret, prefix, hash } = generateToken();
+    const tokenId = randomUUID();
+    const ownerUserId =
+      installation.principal.kind === "manual"
+        ? installation.principal.userId
+        : null;
+
+    await tx.execute(
+      sql`UPDATE project_tokens SET revoked_at=now() WHERE company_run_id=${runId} AND revoked_at IS NULL`,
+    );
+    await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,installation_run_id,name,token_kind,
+      owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
+      VALUES(${tokenId},${installation.companyId},${runId},${runId},${`agent-run:${runId}`},'agent',
+        ${ownerUserId},${installation.agentId},${prefix},${hash},${JSON.stringify(installation.scopes)}::jsonb,
+        ${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
+    log.info(
+      {
+        runId,
+        tokenId,
+        agentId: installation.agentId,
+        principal: installation.principal.kind,
+      },
+      "installation agent credential issued",
+    );
+
+    return { tokenId, secret };
+  }
   const owner = await requireCompanyRunCredentialOwner(tx, runId);
 
   if (owner.snapshot.schemaVersion !== 1)

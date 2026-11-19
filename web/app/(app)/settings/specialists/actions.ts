@@ -3,9 +3,11 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
+import { updateCompanySpecialistBinding } from "@/lib/agents/company-binding-mutations";
 import { createCompanySpecialistBinding } from "@/lib/agents/company-bindings";
 import {
   companyBindingCreateSchema,
+  companyBindingUpdateSchema,
   companySpecialistIdSchema,
 } from "@/lib/agents/company-binding-types";
 import { createCompanyFlowBinding } from "@/lib/agents/company-flow-bindings";
@@ -41,6 +43,36 @@ export async function createSpecialistBinding(
       id,
       parsed.data.agentId,
       parsed.data.binding,
+    );
+
+    return { ok: true };
+  } catch (error) {
+    if (isMaisterError(error)) return { ok: false, code: error.code };
+    throw error;
+  }
+}
+
+const specialistUpdate = z.strictObject({
+  agentId: companySpecialistIdSchema,
+  bindingId: z.uuid(),
+  binding: companyBindingUpdateSchema,
+});
+
+export async function updateSpecialistBinding(
+  value: unknown,
+): Promise<Receipt> {
+  const { id } = await requireActiveSession();
+  const parsed = specialistUpdate.safeParse(value);
+  if (!parsed.success) return { ok: false, code: "CONFIG" };
+
+  try {
+    const { agentId, bindingId, binding } = parsed.data;
+    await updateCompanySpecialistBinding(
+      getDb(),
+      id,
+      agentId,
+      bindingId,
+      binding,
     );
 
     return { ok: true };

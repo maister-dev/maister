@@ -14,6 +14,13 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { currentVaultNodeAttempt } from "./node-attempt";
 import { lockVaultCutover } from "./cutover";
 import { agentMemoryVaultLimits } from "./limits";
+import {
+  canReadInstallationRevision,
+  ensureInstallationVault,
+  seesEveryProject,
+} from "./installation-access";
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
+import { installationRunProjects } from "@/lib/agents/installation-source-capture";
 import { MEMORY_INDEX } from "./paths";
 import { ensureProjectVault } from "./project-access";
 import {
@@ -49,6 +56,11 @@ const log = pino({
 });
 
 type MemoryInjection = typeof injections.$inferSelect;
+type OwnedSession = Readonly<{
+  runId: string;
+  agentId: string;
+  sessionKey: string;
+}>;
 type ProjectSession = Readonly<{
   runId: string;
   projectId: string;
@@ -266,6 +278,83 @@ async function stageFreshProjectSession(
   );
 
   if (!attachment) return { mode: "vault", text: null };
+  const vaultId = await ensureProjectVault(
+    tx,
+    session.projectId,
+    session.agentId,
+  );
+
+  return stageVaultSession(
+    tx,
+    session,
+    nodeAttemptId,
+    vaultId,
+    attachment.policy === "review",
+    async (revision) =>
+      revision.sourceProjectIds.every((id) => id === session.projectId),
+  );
+}
+
+export async function stageInstallationAgentMemory(
+  tx: Db,
+  sessionKey: string,
+  runId: string,
+  resumed: boolean,
+): Promise<string | null> {
+  if ((await lockVaultCutover(tx)) === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Installation memory requires active vault storage",
+    );
+  const active = await tx.execute(sql`SELECT id FROM runs WHERE id=${runId}
+    AND execution_assignment_id=${sessionKey} FOR NO KEY UPDATE`);
+  const authority = await requireInstallationRunAuthority(tx, runId);
+  if (active.rows.length !== 1 || !authority)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Current run does not own the installation memory session",
+    );
+  const revealed = await installationRunProjects(tx, runId);
+  if (!(await seesEveryProject(tx, authority, revealed)))
+    throw new MaisterError(
+      "PRECONDITION",
+      "An installation session source is no longer visible",
+    );
+  if (resumed) {
+    await assertMemorySessionSources(tx, runId);
+
+    return null;
+  }
+  if (
+    !authority.memoryEnabled ||
+    !authority.scopes.includes("agent_memory:read")
+  )
+    return null;
+  const vaultId = await ensureInstallationVault(
+    tx,
+    authority.companyId,
+    authority.agentId,
+  );
+  const staged = await stageVaultSession(
+    tx,
+    { runId, sessionKey, agentId: authority.agentId },
+    null,
+    vaultId,
+    true,
+    (revision) => canReadInstallationRevision(tx, authority, revision),
+  );
+
+  return staged.text;
+}
+
+async function stageVaultSession(
+  tx: Db,
+  session: OwnedSession,
+  nodeAttemptId: string | null,
+  vaultId: string,
+  requiresReviewAtLaunch: boolean,
+  allows: (revision: VaultRevision) => Promise<boolean>,
+): Promise<Extract<StageResult, { mode: "vault" }>> {
   const [existing] = await tx
     .select()
     .from(injections)
@@ -275,13 +364,6 @@ async function stageFreshProjectSession(
         eq(injections.sessionKey, session.sessionKey),
       ),
     );
-
-  const vaultId = await ensureProjectVault(
-    tx,
-    session.projectId,
-    session.agentId,
-  );
-
   if (existing) {
     if (
       existing.vaultId !== vaultId ||
@@ -297,9 +379,8 @@ async function stageFreshProjectSession(
   const heads = (await loadActiveHeads(tx, vaultId)).map(
     ({ revision }) => revision,
   );
-  const visible = heads.filter((head) =>
-    head.sourceProjectIds.every((id) => id === session.projectId),
-  );
+  const visible: VaultRevision[] = [];
+  for (const head of heads) if (await allows(head)) visible.push(head);
   const indexHead = visible.find((head) => head.path === MEMORY_INDEX);
   const index = indexHead ? await readVaultPayload(tx, indexHead) : null;
   const byPath = new Map(visible.map((entry) => [entry.path, entry]));
@@ -332,7 +413,7 @@ async function stageFreshProjectSession(
   await tx.insert(injections).values({
     ...descriptor,
     descriptorDigest: digest(descriptor),
-    requiresReviewAtLaunch: attachment.policy === "review",
+    requiresReviewAtLaunch,
   });
   log.debug(
     {
@@ -370,10 +451,18 @@ export async function assertMemorySessionSources(
     );
 
   for (const { injection, owner } of rows) {
-    if (
-      owner.projectId === null ||
-      !(await enabledAttachment(db, owner.projectId, owner.agentId))
-    )
+    const installation =
+      owner.projectId === null
+        ? await requireInstallationRunAuthority(db, runId)
+        : null;
+    const enabled =
+      owner.projectId === null
+        ? installation?.companyId === owner.companyId &&
+          installation?.agentId === owner.agentId &&
+          installation.memoryEnabled &&
+          installation.scopes.includes("agent_memory:read")
+        : Boolean(await enabledAttachment(db, owner.projectId, owner.agentId));
+    if (!enabled)
       throw new MaisterError(
         "PRECONDITION",
         "Memory session attachment is unavailable",

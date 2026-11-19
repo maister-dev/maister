@@ -4,9 +4,10 @@ import type { PendingVaultProposal } from "./proposals";
 import type { VaultAccess } from "./store";
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { parseAgentMemoryMutation } from "./commands";
+import { authorizeHumanInstallationVault } from "./installation-access";
 import { agentMemoryVaultLimits } from "./limits";
 import { authorizeRetainedProjectVaultReview } from "./project-access";
 import { vaultProposalBases } from "./proposals";
@@ -21,12 +22,10 @@ import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions"
 import {
   agentMemoryProposalPayloads as payloads,
   agentMemoryProposals as proposals,
-  agentMemoryVaults as vaults,
-  projects,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
-export async function lockProjectVaultReview(
+export async function lockVaultReview(
   tx: Db,
   proposalId: string,
   userId: string,
@@ -35,38 +34,59 @@ export async function lockProjectVaultReview(
   proposal: PendingVaultProposal;
   enabled: boolean;
 }> {
-  const [owner] = await tx
-    .select({
-      slug: projects.slug,
-      agentId: vaults.agentId,
-      vaultId: vaults.id,
-    })
-    .from(proposals)
-    .innerJoin(vaults, eq(vaults.id, proposals.vaultId))
-    .innerJoin(projects, eq(projects.id, vaults.projectId))
-    .where(eq(proposals.id, proposalId));
+  const owner = (
+    await tx.execute<{
+      slug: string | null;
+      agent_id: string;
+      vault_id: string;
+      binding_id: string | null;
+    }>(sql`
+    SELECT p.slug,v.agent_id,v.id AS vault_id,b.id AS binding_id
+    FROM agent_memory_proposals proposal JOIN agent_memory_vaults v ON v.id=proposal.vault_id
+    LEFT JOIN projects p ON p.id=v.project_id
+    LEFT JOIN company_specialist_bindings b ON b.company_id=v.company_id AND b.agent_id=v.agent_id AND b.detached_at IS NULL
+    LEFT JOIN company_specialist_binding_revisions revision ON (revision.binding_id,revision.revision)=(b.id,b.revision)
+    WHERE proposal.id=${proposalId}
+      AND (p.id IS NOT NULL OR revision.snapshot->'installationGrant'->>'reach'='active_projects')
+  `)
+  ).rows[0];
   if (!owner) throw unavailableMemory();
 
   try {
-    const { reviewer, enabled } = await authorizeRetainedProjectVaultReview(tx, {
-      userId,
-      slug: owner.slug,
-      agentId: owner.agentId,
-    }, owner.vaultId);
-    await lockVault(tx, owner.vaultId);
+    const { reviewer, enabled } =
+      owner.slug !== null
+        ? await authorizeRetainedProjectVaultReview(
+            tx,
+            { userId, slug: owner.slug, agentId: owner.agent_id },
+            owner.vault_id,
+          )
+        : await authorizeHumanInstallationVault(tx, {
+            userId,
+            agentId: owner.agent_id,
+            bindingId: owner.binding_id!,
+            action: "edit",
+          }).then(({ access, memoryEnabled }) => ({
+            reviewer: access,
+            enabled: memoryEnabled,
+          }));
+    await lockVault(tx, owner.vault_id);
     const [proposal] = await tx
       .select()
       .from(proposals)
       .where(
-        and(eq(proposals.id, proposalId), eq(proposals.vaultId, owner.vaultId)),
+        and(
+          eq(proposals.id, proposalId),
+          eq(proposals.vaultId, owner.vault_id),
+        ),
       )
       .for("update");
     if (
       !proposal ||
       proposal.state === "redacted" ||
-      !proposal.sourceProjectIds.every((id) =>
-        reviewer.sourceProjectIds.includes(id),
-      )
+      (owner.slug !== null &&
+        !proposal.sourceProjectIds.every((id) =>
+          reviewer.sourceProjectIds.includes(id),
+        ))
     )
       throw unavailableMemory();
 
@@ -81,7 +101,7 @@ export async function lockProjectVaultReview(
     );
     for (const revision of await vaultProposalBases(
       tx,
-      owner.vaultId,
+      owner.vault_id,
       proposal.operationId,
     )) {
       if (!(await reviewer.canRead(tx, revision))) throw unavailableMemory();
@@ -133,7 +153,7 @@ export async function decideVaultProposalInTransaction(
   tx: Db,
   input: VaultReviewDecision,
 ) {
-  const { reviewer, proposal, enabled } = await lockProjectVaultReview(
+  const { reviewer, proposal, enabled } = await lockVaultReview(
     tx,
     input.proposalId,
     input.userId,
@@ -156,7 +176,11 @@ export async function decideVaultProposalInTransaction(
   let operationId: string | null = null;
 
   if (state === "accepted") {
-    if (!enabled) throw new MaisterError("CONFLICT", "Enable the vault before accepting this proposal");
+    if (!enabled)
+      throw new MaisterError(
+        "CONFLICT",
+        "Enable the vault before accepting this proposal",
+      );
     const command = await readVaultProposalCommand(tx, proposal);
     const applied = await applyVaultMutationInTransaction(
       tx,
@@ -167,6 +191,7 @@ export async function decideVaultProposalInTransaction(
         actor: proposal.author,
         sourceProjectIds: proposal.sourceProjectIds,
         sourceRestrictions: proposal.sourceRestrictions,
+        resolveLinkSources: undefined,
       }),
       agentMemoryVaultLimits(),
     );

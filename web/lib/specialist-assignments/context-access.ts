@@ -354,7 +354,11 @@ async function authorizeAssignmentActionGrants(
       ],
     };
   }
-  if (owner.kind !== "project" || owner.projectId !== identity.projectId)
+  if (
+    identity.kind !== "agent" ||
+    owner.kind !== "project" ||
+    owner.projectId !== identity.projectId
+  )
     throw new MaisterError(
       "UNAUTHORIZED",
       "The executing role does not own this project appointment",

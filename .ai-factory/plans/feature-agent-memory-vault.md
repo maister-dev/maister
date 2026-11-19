@@ -347,10 +347,12 @@ Each task includes its tests/updated assertions; no task is complete merely beca
 
 ### P4 — Installation-scope bindings, principals, provenance and UI
 
-- [ ] **T25 — Extend reviewed company bindings with explicit installation reach.**
+- [x] **T25 — Extend reviewed company bindings with explicit installation reach.**
   - Files: `web/lib/agents/company-binding-types.ts`, `company-bindings.ts`, `company-agent-definition.ts`, main migration 0347/schema and binding routes.
   - Versioned binding/grant contract, global-admin-only explicit allow-list, company-only default, workspace-none enforcement and exact-revision revoke. Lift memory refusal only for explicit installation binding, preserving all project attachments and legacy company behavior.
   - Tests: historical snapshot decode, no widening after migration/upgrade, positive admin attach and non-admin company-manager denial; authoring/picker/action preconditions agree. Logging: INFO grant/revoke actor/binding/version, WARN policy refusal. Depends on: T24.
+  - Verified with disposable PostgreSQL: the binding suite passed all eight cases, including admin-only issuance, unchanged company-only bindings, exact revocation and immutable historical grant. Migrations are 0348–0349 after 0347 was allocated to review. The browser and REST binding contract carries `installationGrant` with explicit versioned scopes.
+
 - [ ] **T26 — Implement manual and unattended execution principals end to end.**
   - Files: `company-agent-execution-types.ts`, `company-agent-context.ts`, `company-session-context.ts`, `company-run-credential-owner.ts`, company launch/retry/trigger context, `web/lib/tokens/{verify,owned-ext-handler,ext-handler}.ts`, `web/lib/brain/{knowledge-access,knowledge-run-identity}.ts`.
   - New discriminated principal snapshot: manual user-intersection vs unattended agent grant. Revalidate live authority on launch/token/read/write/resume/retry; retain source admin only as provenance. Preserve exact legacy bytes/decoders. No user-null shortcut to broad access.
@@ -382,6 +384,8 @@ Each task includes its tests/updated assertions; no task is complete merely beca
   - Files: installation authority/provenance/scheduler integration suites, existing company bindings/context/records/cross-project/budget tests, relevant docs and generated ERD.
   - Run D4 positive/negative matrix across manual/unattended, active/archived/future projects, company-only/installation, stale/current credentials and resumed/fresh context. Preserve ordinary company agent and company Flow runtime; do not implicitly enable installation-reach coordinators/delegation.
   - Validation: cron reads A+B→pending restricted note→admin Inbox accept; B-only all-channel absence; full phase suites and docs/contracts green. Logging: validation output only. Depends on: T25–T31.
+
+Local P4 evidence: the isolated PostgreSQL `AV-06` fixture verifies manual live rights, future/archived filtering, the A+B source union, neutral Inbox review eligibility and exact applied revision, loss of note/session access following project membership revocation and credential refusal after binding revision drift. The same fixture runs the registered scheduler through a real cron claim and reservation, then obtains the unattended credential and verifies live A+B HTTP Run reads and the restricted proposal. It advances the reserved Run to Running in the fixture. The qualified scheduler branch still uses the reviewed human's authority for new assignment intake before reservation. Event lineage, fresh unattended intake after reviewer departure, the full read/proposal tool matrix and the installation settings browser scenario remain open.
 
 ### P5 — Librarian knowledge/vault reads and confirmed proposals
 

@@ -110,18 +110,21 @@ function useVaultSelection(
   return state.key === key ? state : null;
 }
 
+type MemoryLocation = Readonly<
+  | { kind: "project"; slug: string; projectId: string }
+  | { kind: "installation"; companyId: string; bindingId: string }
+>;
+
 export function AgentMemoryControl({
-  slug,
   agentId,
   canEdit,
   canRedact,
-  projectId,
+  location,
 }: {
-  slug: string;
   agentId: string;
   canEdit: boolean;
   canRedact: boolean;
-  projectId: string;
+  location: MemoryLocation;
 }) {
   const t = useTranslations("agentVault");
   const tReview = useTranslations("inbox.reviews");
@@ -129,8 +132,21 @@ export function AgentMemoryControl({
   const format = useFormatter();
   const router = useRouter();
   const search = useSearchParams();
-  const base = `/projects/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}`;
-  const api = `/api${base}/memory`;
+  const agent = encodeURIComponent(agentId);
+  const base =
+    location.kind === "project"
+      ? `/projects/${encodeURIComponent(location.slug)}/agents/${agent}`
+      : "/settings/specialists";
+  const api =
+    location.kind === "project"
+      ? `/api${base}/memory`
+      : `/api/specialists/${agent}/bindings/${encodeURIComponent(location.bindingId)}/memory`;
+  const route: Record<string, string> =
+    location.kind === "project" ? {} : { binding: location.bindingId };
+  const review: Record<string, string> =
+    location.kind === "project"
+      ? { projectId: location.projectId }
+      : { companyId: location.companyId };
   const path = search.get("memoryPath") ?? memoryRoot;
   const [version, refresh] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -148,7 +164,7 @@ export function AgentMemoryControl({
   );
   const { page, directory, history, revision } = data ?? {};
   const href = (target: string, extra: Record<string, string> = {}) =>
-    `${base}?${new URLSearchParams({ tab: "memory", memoryPath: target, ...extra })}`;
+    `${base}?${new URLSearchParams({ ...route, tab: "memory", memoryPath: target, ...extra })}`;
   const textFor = (issue: Issue) =>
     t(
       issue.code === "CONFLICT"
@@ -280,7 +296,7 @@ export function AgentMemoryControl({
       {canEdit ? (
         <Link
           className="text-sm"
-          href={`/inbox?${new URLSearchParams({ kind: "vault", projectId, agentId })}#knowledge-memory`}
+          href={`/inbox?${new URLSearchParams({ kind: "vault", ...review, agentId })}#knowledge-memory`}
         >
           {tReview("link")}
         </Link>

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
+
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
 import type {
@@ -234,6 +236,7 @@ import { readAgentMemory } from "@/lib/agents/memory-store";
 import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
 import {
   assertMemorySessionSources,
+  stageInstallationAgentMemory,
   stageProjectAgentMemory,
 } from "@/lib/agent-memory-vault/injection";
 import {
@@ -5289,8 +5292,19 @@ async function driveAgentSession(
       operationalSpawnStage = "prompt";
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
+      const installationMemory =
+        companyContext?.installation && assignmentId && !agentTurn
+          ? await _db.transaction((tx: ExecutionDb) =>
+              stageInstallationAgentMemory(
+                tx,
+                assignmentId,
+                runId,
+                Boolean(run.acpSessionId),
+              ),
+            )
+          : null;
       const memory = companyContext
-        ? null
+        ? { legacy: null, vault: installationMemory }
         : await _db.transaction(async (tx: ExecutionDb) => {
             if ((await lockVaultCutover(tx)) === null)
               return {
@@ -5325,7 +5339,9 @@ async function driveAgentSession(
             };
           });
       const basePrompt = companyContext
-        ? buildCompanyAgentPrompt(companyContext)
+        ? [buildCompanyAgentPrompt(companyContext), installationMemory]
+            .filter(Boolean)
+            .join("\n\n")
         : await buildAgentPrompt(
             _db,
             effective.parsed,
@@ -5452,7 +5468,19 @@ async function driveAgentSession(
             `Agent Run ${runId} requires the MAIster MCP facade. Build it with pnpm --filter @maister/mcp build or set MAISTER_MCP_FACADE_COMMAND.`,
           );
 
-        return [facadeServer];
+        if (!companyContext?.installation) return [facadeServer];
+
+        return [
+          {
+            ...facadeServer,
+            env: {
+              ...facadeServer.env,
+              MAISTER_MCP_TOOLSET: "installation",
+              MAISTER_INSTALLATION_SCOPES:
+                companyContext.installation.scopes.join(","),
+            },
+          },
+        ];
       };
       const projectFacade =
         companyContext || !effective.parsed.platformMcp
@@ -5574,7 +5602,15 @@ async function driveAgentSession(
           // ephemeral token to the agent.
           mcpServers: [...profileMcpServers, ...projectFacade],
           // ADR-090 L1: none/repo_read agents run the whole session read-only.
-          readOnlySession: workspace !== "worktree",
+          readOnlySession:
+            workspace !== "worktree" && !companyContext?.installation,
+          ...(companyContext?.installation && {
+            enforcementProfile: installationEnforcementProfile(
+              effective.parsed.platformMcp
+                ? companyContext.installation.scopes
+                : [],
+            ),
+          }),
           agentKind: baseRun.agentKind ?? "code_delivery",
           // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
           // on a bare end_turn — let the supervisor reap the session so the run

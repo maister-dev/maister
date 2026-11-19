@@ -20,7 +20,10 @@ import {
   decodeCompanyBindingHead,
   loadCompanyBindingRevision,
 } from "./company-bindings";
-import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
+import {
+  assertInstallationAgentDefinition,
+  assertStandaloneCompanyAgentDefinition,
+} from "./company-agent-definition";
 import { resolveAgentConfig } from "./config";
 import { resolveInstalledAgentDefinition } from "./effective";
 import { buildOperationalContract } from "./launch-contract";
@@ -347,7 +350,9 @@ function requireStandaloneContext(
   const { effective, binding, input } = context;
   const definition = effective.parsed;
 
-  assertStandaloneCompanyAgentDefinition(definition);
+  if (binding.snapshot.installationGrant)
+    assertInstallationAgentDefinition(definition);
+  else assertStandaloneCompanyAgentDefinition(definition);
   if (binding.snapshot.coordinatorFlowRevisionId !== null)
     throw new MaisterError(
       "CONFIG",

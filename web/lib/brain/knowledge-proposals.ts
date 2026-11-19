@@ -1,5 +1,7 @@
 import "server-only";
 
+import { installationRunProjects } from "@/lib/agents/installation-source-capture";
+
 import type { KnowledgeAccessRestriction, Owner } from "@/lib/company/types";
 import type { KnowledgeAttribution } from "./record-types";
 import type {
@@ -419,7 +421,13 @@ export async function createKnowledgeProposalInTransaction(
     owner.data,
     actor,
   );
+  const installationProjectSources =
+    consumer === null ? [] : await installationRunProjects(tx, consumer.runId);
   let restrictions = additionalKnowledgeRestrictions(owner.data, [
+    ...installationProjectSources.map((projectId) => ({
+      kind: "project_visibility" as const,
+      projectId,
+    })),
     ...(consumer?.capture.restrictions ?? []),
     ...links.flatMap(
       (link) => parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],

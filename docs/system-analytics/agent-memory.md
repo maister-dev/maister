@@ -481,3 +481,12 @@ memory in the assistant pulse · package-shipped seed templates · a
   `web/app/api/v1/ext/agent/memory/route.ts`,
   `web/app/api/projects/[slug]/agents/[agentId]/memory/route.ts`,
   `mcp/src/tools.ts`.
+
+## Installation vault
+
+The vault owner is the qualified agent and the installation company. Admins
+can edit and review, and a non-admin needs current `specialists:read` plus
+access to every source project and any finer source restrictions. Each
+installation session proposal retains the union of projects disclosed up to
+the write, guarded links and base revision sources. The Memory tab and Inbox
+resolve the same company and agent identifiers from their URL filters.

@@ -7,12 +7,14 @@ import type { KnowledgePrincipal } from "./knowledge-types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
 import { recordKnowledgeDisclosure } from "./knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
+  restrictionsForKnowledgeAccess,
   unavailableKnowledgeReference,
 } from "./knowledge-restrictions";
 
@@ -169,11 +171,16 @@ export async function assertNativeRunKnowledgeInputsInTransaction(
 
   const mounts = mountedSourceRestrictions(row.context_mounts);
 
-  await authorizeSourceRestrictions(tx, principal, [
+  const walk = await authorizeSourceRestrictions(tx, principal, [
     ...capture.data.restrictions,
     ...mounts,
   ]);
-  await recordKnowledgeDisclosure(tx, { runId, capture: capture.data }, mounts);
+  const installation = await requireInstallationRunAuthority(tx, runId);
+  await recordKnowledgeDisclosure(
+    tx,
+    { runId, capture: capture.data },
+    installation ? restrictionsForKnowledgeAccess(walk) : mounts,
+  );
   log.debug(
     {
       runId,
@@ -229,14 +236,15 @@ export async function recordNativeRunSourcesInTransaction(
     nodeAttemptId,
   );
 
-  await authorizeSourceRestrictions(tx, principal, [
+  const walk = await authorizeSourceRestrictions(tx, principal, [
     ...capture.data.restrictions,
     ...restrictions,
   ]);
+  const installation = await requireInstallationRunAuthority(tx, runId);
   await recordKnowledgeDisclosure(
     tx,
     { runId, capture: capture.data },
-    restrictions,
+    installation ? restrictionsForKnowledgeAccess(walk) : restrictions,
   );
   log.debug(
     { runId, addedSourceCount: restrictions.length },

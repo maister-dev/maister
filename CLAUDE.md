@@ -484,8 +484,8 @@ opened as `pr_state='open'` and clears a previous PR's fields.
   same-project. Explicit non-goals: multi-repo runs/workspaces, coordinated
   cross-repo promotion, orchestrator cross-project delegation, a
   meta-project/project-group entity, cross-project task moves.
-- **Installation agent analysis** (Designed, ADR-211): a reviewed company
-  binding can grant the bounded project read and proposal operations in the
+- **Installation agent analysis** (ADR-211): a reviewed company binding
+  grants explicit active-project read and proposal scopes listed in the
   [specialist runtime contract](docs/system-analytics/specialist-runtime.md#installation-agent-authority-designed--adr-211).
   The agent runs without a repository workspace.
 - **Flow plugin engine**: install plugins from `git URL + tag` to

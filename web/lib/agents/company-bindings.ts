@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { agentDefinitionSha256 } from "./activity-snapshot";
+import { assertInstallationAgentDefinition } from "./company-agent-definition";
 import {
   decodeCompanyBindingRevision,
   retainCompanyBindingRevision,
@@ -66,6 +67,7 @@ export function logCompanyBindingChange(
       packageInstallId: specialist.packageInstallId,
       definitionSha256: specialist.definitionSha256,
       policyPreset: specialist.executionPolicy.preset,
+      installationScopeCount: specialist.installationGrant?.scopes.length ?? 0,
       enabled: specialist.enabled,
       duplicate,
     },
@@ -191,6 +193,9 @@ export function companySpecialistDto(
     runnerId: snapshot.runnerId,
     executionPolicy: snapshot.executionPolicy,
     coordinatorFlowRevisionId: snapshot.coordinatorFlowRevisionId,
+    ...(snapshot.installationGrant && {
+      installationGrant: snapshot.installationGrant,
+    }),
     createdAt: head.createdAt,
     updatedAt: retained.createdAt,
   });
@@ -233,6 +238,14 @@ export async function buildCompanyBindingSnapshot(
     effective.parsed.config,
     input.configuration,
   );
+  if (input.installationGrant) {
+    assertInstallationAgentDefinition(effective.parsed);
+    if (input.coordinatorFlowRevisionId !== null)
+      throw new MaisterError(
+        "CONFIG",
+        "An installation agent cannot bind a coordinator Flow",
+      );
+  }
 
   if (configurationError) throw new MaisterError("CONFIG", configurationError);
   if (input.runnerId !== null) {
@@ -291,7 +304,29 @@ export async function buildCompanyBindingSnapshot(
     runnerId: input.runnerId,
     executionPolicy: input.executionPolicy,
     coordinatorFlowRevisionId: input.coordinatorFlowRevisionId,
+    ...(input.installationGrant && {
+      installationGrant: input.installationGrant,
+    }),
   };
+}
+
+export async function assertInstallationGrantAdmin(
+  tx: SqlTransaction,
+  userId: string,
+): Promise<void> {
+  const result =
+    await tx.execute(sql`SELECT 1 FROM users WHERE id=${userId} AND account_status='active'
+    AND role='admin' AND NOT must_change_password FOR SHARE`);
+  if (!result.rows.length) {
+    log.warn(
+      { userId, reason: "installation_grant_admin_required" },
+      "installation binding change refused",
+    );
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Installation reach requires a current global administrator",
+    );
+  }
 }
 
 export async function retainBindingChange(
@@ -342,6 +377,7 @@ export async function createCompanySpecialistBinding(
 
   const result = await db.transaction(async (tx) => {
     await beginCompanyBindingTransaction(tx);
+    if (input.installationGrant) await assertInstallationGrantAdmin(tx, userId);
     const authority = await authorizeCompanyUserAction(
       tx,
       userId,

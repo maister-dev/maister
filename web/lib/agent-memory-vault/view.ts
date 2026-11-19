@@ -9,12 +9,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { MAX_NOTE_CHARS, MAX_PAGE_CHARS } from "./limits";
-import { isUnderMemoryPath, MEMORY_ROOT } from "./paths";
+import { MEMORY_ROOT } from "./paths";
 import {
   loadActiveHeads,
   lockVault,
   readVaultPayload,
   unavailableMemory,
+  visibleVaultDirectory,
 } from "./store";
 
 import { parseCursorPayload, signCursorPayload } from "@/lib/keyset-cursor";
@@ -157,7 +158,6 @@ async function pageDirectory(
   >();
 
   for (const revision of revisions) {
-    if (!(await access.canRead(db, revision))) continue;
     const child = revision.path.slice(command.path.length + 1);
     const separator = child.indexOf("/");
     const path =
@@ -247,16 +247,20 @@ export async function viewAgentMemory(
         command.view_range,
       );
     if (command.view_range !== undefined) throw unavailableMemory();
-    const matching = active
-      .filter(({ note }) => isUnderMemoryPath(command.path, note.path))
-      .map(({ revision }) => revision);
+    const { visible, generation } = await visibleVaultDirectory(
+      tx,
+      access,
+      vault,
+      command.path,
+      active.map(({ revision }) => revision),
+    );
 
     return pageDirectory(
       tx,
       access,
       command,
-      String(vault.generation),
-      matching,
+      generation,
+      visible,
       cursor,
       scope,
     );

@@ -6,6 +6,7 @@ import type { KnowledgePrincipalIdentity } from "./knowledge-access";
 import { sql } from "drizzle-orm";
 
 import { projectRolesForActions } from "@/lib/authz";
+import { installationProjectAccess } from "@/lib/agents/installation-authority";
 
 /** Execution inputs use repository/context authority independently of the Brain enablement axis. */
 export function projectContextReadPolicy(
@@ -13,6 +14,9 @@ export function projectContextReadPolicy(
   project: SQL,
 ): SQL {
   if (identity.kind === "company_agent") return sql`false`;
+  if (identity.kind === "installation_agent")
+    return sql`EXISTS (SELECT 1 FROM projects p
+    WHERE p.id=${project} AND p.archived_at IS NULL AND ${installationProjectAccess(identity.installation, sql`p.id`, "readRepoFiles")} FOR SHARE)`;
   const boundary =
     identity.kind === "user" && identity.boundProjectId !== null
       ? sql`${project}=${identity.boundProjectId}`
@@ -32,13 +36,42 @@ export function projectContextReadPolicy(
   return sql`${boundary} AND coalesce(${project} IN (SELECT context_source_project.id FROM projects context_source_project WHERE context_source_project.archived_at IS NULL AND (${role}) FOR SHARE),false)`;
 }
 
+/** Installation list metadata needs the same current board visibility as its original disclosure. */
+export function projectVisibilityReadPolicy(
+  identity: KnowledgePrincipalIdentity,
+  project: SQL,
+): SQL {
+  if (identity.kind === "installation_agent")
+    return sql`EXISTS (SELECT 1 FROM projects p WHERE p.id=${project} AND p.archived_at IS NULL
+      AND ${installationProjectAccess(identity.installation, sql`p.id`, "readBoard")} FOR SHARE)`;
+  if (identity.kind === "agent") return sql`${project}=${identity.projectId}`;
+  if (identity.kind !== "user") return sql`false`;
+  const user = identity.user;
+  if (user.role === "admin" && identity.boundProjectId === null)
+    return sql`true`;
+  const roles = sql.join(
+    projectRolesForActions(["readBoard"]).map((role) => sql`${role}`),
+    sql`, `,
+  );
+  const bound = identity.boundProjectId
+    ? sql`AND m.project_id=${identity.boundProjectId}`
+    : sql``;
+
+  return sql`EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=${project}
+    AND m.user_id=${user.id} AND m.role IN (${roles}) ${bound} FOR SHARE)`;
+}
+
 /** A role cannot read another role's private notes merely through a shared company/project grant. */
 export function agentMemoryReadPolicy(
   identity: KnowledgePrincipalIdentity,
   project: SQL,
   agent: SQL,
 ): SQL {
-  if (identity.kind === "company_agent") return sql`false`;
+  if (
+    identity.kind === "company_agent" ||
+    identity.kind === "installation_agent"
+  )
+    return sql`false`;
   const source =
     identity.kind === "agent"
       ? sql`source_memory_link.agent_id=${identity.actor.id} AND source_memory_link.enabled AND source_memory_link.memory_enabled`
@@ -52,8 +85,22 @@ export function vaultRevisionReferenceQuery(
   identity: KnowledgePrincipalIdentity,
   reference: SQL,
 ): SQL {
+  const companyAuthority =
+    identity.kind === "installation_agent"
+      ? sql`vault.company_id=${identity.installation.companyId} AND vault.agent_id=${identity.installation.agentId} AND ${identity.installation.memoryEnabled}`
+      : identity.kind === "user" && identity.boundProjectId === null
+        ? identity.user.role === "admin"
+          ? sql`true`
+          : sql`EXISTS (SELECT 1 FROM company_grants g WHERE g.company_id=vault.company_id AND g.principal_type='user'
+          AND g.principal_id=${identity.user.id} AND g.action='specialists:read' AND g.revoked_at IS NULL FOR SHARE)`
+        : sql`false`;
+  const installationPolicy = sql`vault.company_id IS NOT NULL AND (${companyAuthority}) AND EXISTS (
+    SELECT 1 FROM company_specialist_bindings b JOIN company_specialist_binding_revisions v
+      ON (v.binding_id,v.revision)=(b.id,b.revision)
+    WHERE b.company_id=vault.company_id AND b.agent_id=vault.agent_id AND b.detached_at IS NULL
+      AND v.snapshot->'installationGrant'->>'reach'='active_projects' FOR SHARE OF b,v)`;
   return sql`
-    SELECT revision.source_project_ids, revision.source_restrictions
+    SELECT revision.source_project_ids, revision.source_restrictions, vault.company_id IS NOT NULL AS installation
     FROM agent_memory_revisions revision
     JOIN agent_memory_vaults vault ON vault.id=revision.vault_id
     JOIN agent_memory_revision_payloads payload
@@ -63,7 +110,7 @@ export function vaultRevisionReferenceQuery(
       AND revision.note_id=${reference}->>'noteId'
       AND revision.id=${reference}->>'revisionId'
       AND revision.content_sha256=${reference}->>'contentSha256'
-      AND ${agentMemoryReadPolicy(identity, sql`vault.project_id`, sql`vault.agent_id`)}
+      AND ((${agentMemoryReadPolicy(identity, sql`vault.project_id`, sql`vault.agent_id`)}) OR (${installationPolicy}))
     FOR SHARE OF payload
   `;
 }

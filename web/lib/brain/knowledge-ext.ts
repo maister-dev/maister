@@ -13,10 +13,16 @@ export async function handleKnowledgeExt(
   scopeLabel: KnowledgeAction,
   endpoint: string,
   work: (principal: KnowledgePrincipal) => Promise<NextResponse>,
+  admission?: Readonly<{ installation?: true; librarian?: "read" | "confirm" }>,
 ): Promise<NextResponse> {
   return handleOwnedExt(
     request,
-    { scopeLabel, endpoint, method: request.method },
+    {
+      scopeLabel,
+      endpoint,
+      method: request.method,
+      admitInstallation: admission?.installation,
+    },
     async ({ actor }) => work({ kind: "token", tokenId: actor.tokenId }),
     (error) => {
       const response = knowledgeErrorResponse(error, endpoint);

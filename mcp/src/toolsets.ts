@@ -1,3 +1,7 @@
+import {
+  installationToolNames,
+  INSTALLATION_SCOPE_TOOLS,
+} from "../../runtime/installation-agent-tools";
 import { COMPANY_FLOW_TOOL_CONTRACT } from "../../runtime/company-flow-tools";
 
 // Named tool subsets a facade process may expose (`MAISTER_MCP_TOOLSET`).
@@ -61,7 +65,14 @@ export const LIBRARIAN_TOOLSET = [
 export const TOOLSETS = {
   company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
-  vault: ["memory", "agent_memory_write", "memory_search", "memory_backlinks", "memory_tags"],
+  installation: installationToolNames(Object.keys(INSTALLATION_SCOPE_TOOLS)),
+  vault: [
+    "memory",
+    "agent_memory_write",
+    "memory_search",
+    "memory_backlinks",
+    "memory_tags",
+  ],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ToolsetName = keyof typeof TOOLSETS;

@@ -131,6 +131,7 @@ function vaultSourcePolicy(actor: ReviewActor, brainReady: boolean): SQL {
 }
 
 async function reviewPolicy(tx: Db, userId: string) {
+  await tx.execute(sql`SET LOCAL jit=off`);
   const principal = { kind: "user", userId } as const;
   const actor = await resolveKnowledgePrincipal(
     tx,
@@ -161,15 +162,21 @@ async function reviewPolicy(tx: Db, userId: string) {
 
   return sql`${knowledge}${ready ? sql`,` : sql``} current_reviews(kind,id,version,title,allowed,created_at,project_id,company_id,agent_id) AS (
     SELECT 'vault', vp.id, vp.version::text, vp.changes->0->>'path',
-      CASE WHEN l.enabled AND l.memory_enabled THEN ARRAY['accept','reject'] ELSE ARRAY['reject'] END,
+      CASE WHEN (l.enabled AND l.memory_enabled) OR (reviewed.snapshot->'installationGrant'->>'memoryEnabled'='true')
+           THEN ARRAY['accept','reject'] ELSE ARRAY['reject'] END,
       vp.created_at,v.project_id,v.company_id,v.agent_id
     FROM agent_memory_proposals vp
     JOIN agent_memory_vaults v ON v.id=vp.vault_id
-    JOIN projects p ON p.id=v.project_id AND p.archived_at IS NULL
-    JOIN agent_project_links l ON l.project_id=v.project_id AND l.agent_id=v.agent_id
-    WHERE vp.state='pending' AND ${projectRole(actor, sql`p.id`, "editSettings")}
+    LEFT JOIN projects p ON p.id=v.project_id AND p.archived_at IS NULL
+    LEFT JOIN agent_project_links l ON l.project_id=v.project_id AND l.agent_id=v.agent_id
+    LEFT JOIN company_specialist_bindings b ON b.company_id=v.company_id AND b.agent_id=v.agent_id AND b.detached_at IS NULL
+    LEFT JOIN company_specialist_binding_revisions reviewed ON (reviewed.binding_id,reviewed.revision)=(b.id,b.revision)
+    WHERE vp.state='pending' AND (
+      (p.id IS NOT NULL AND l.project_id IS NOT NULL AND ${projectRole(actor, sql`p.id`, "editSettings")}
+        AND NOT EXISTS (SELECT 1 FROM unnest(vp.source_project_ids) source_id WHERE source_id IS DISTINCT FROM p.id))
+      OR (v.company_id IS NOT NULL AND ${actor.user.role === "admin"}
+        AND reviewed.snapshot->'installationGrant'->>'reach'='active_projects'))
       AND EXISTS (SELECT 1 FROM agent_memory_cutover)
-      AND NOT EXISTS (SELECT 1 FROM unnest(vp.source_project_ids) source_id WHERE source_id IS DISTINCT FROM p.id)
       AND NOT EXISTS (SELECT 1 FROM agent_memory_operation_revisions refs
          JOIN agent_memory_redactions r ON (r.vault_id,r.note_id,r.revision_id)=(refs.vault_id,refs.note_id,refs.revision_id)
          WHERE refs.vault_id=v.id AND refs.operation_id=vp.operation_id)

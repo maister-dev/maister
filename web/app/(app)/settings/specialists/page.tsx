@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
+import { AgentMemoryControl } from "@/components/agents/agent-memory-control";
 import { BindingReviewForm } from "@/components/specialist-assignments/binding-review-form";
 import {
   DisableStandInspection,
@@ -21,18 +22,31 @@ import { isMaisterError } from "@/lib/errors";
 export default async function SpecialistsSettings({
   searchParams,
 }: {
-  searchParams: Promise<{ binding?: string; revision?: string; kind?: string }>;
+  searchParams: Promise<{
+    binding?: string;
+    revision?: string;
+    kind?: string;
+    tab?: string;
+    edit?: string;
+  }>;
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("specialistAssignments");
 
-  const { page, flows, snapshot, companyId, canManage, kind } =
-    await readSettings(user.id, await searchParams);
+  const query = await searchParams;
+  const { page, flows, snapshot, companyId, canManage, kind, selected } =
+    await readSettings(user.id, query);
+  const installation =
+    selected?.installationGrant && selected.detachedAt === null
+      ? selected
+      : null;
+  const canGrantInstallation = canManage && user.role === "admin";
 
   const inspectors = canManage
     ? page.items.filter(
         (item) =>
           item.enabled &&
+          !item.installationGrant &&
           item.kind === "operational" &&
           item.targetClasses.includes("stand") &&
           item.grantActions.includes("targets:read") &&
@@ -82,7 +96,72 @@ export default async function SpecialistsSettings({
           ))}
         </ul>
       </div>
-      {snapshot ? (
+      {installation ? (
+        <nav className="flex gap-4 text-sm" aria-label={t("installationGrant")}>
+          <a
+            className="underline"
+            href={`?binding=${encodeURIComponent(installation.bindingId)}`}
+          >
+            {t("configuration")}
+          </a>
+          {installation.installationGrant?.memoryEnabled ? (
+            <a
+              className="underline"
+              href={`?binding=${encodeURIComponent(installation.bindingId)}&tab=memory`}
+            >
+              {t("installationMemory")}
+            </a>
+          ) : null}
+          {canGrantInstallation ? (
+            <a
+              className="underline"
+              href={`?binding=${encodeURIComponent(installation.bindingId)}&edit=installation`}
+            >
+              {t("editInstallationBinding")}
+            </a>
+          ) : null}
+        </nav>
+      ) : null}
+      {installation &&
+      query.tab === "memory" &&
+      installation.installationGrant?.memoryEnabled ? (
+        <AgentMemoryControl
+          agentId={installation.id}
+          canRedact={user.role === "admin"}
+          canEdit={user.role === "admin"}
+          location={{
+            kind: "installation",
+            companyId,
+            bindingId: installation.bindingId,
+          }}
+        />
+      ) : null}
+      {installation && canGrantInstallation && query.edit === "installation" ? (
+        <BindingReviewForm
+          key={installation.configRevision}
+          bindingKind="specialist"
+          companyId={companyId}
+          canGrantInstallation
+          editing={{
+            agentId: installation.id,
+            bindingId: installation.bindingId,
+            revision: installation.configRevision,
+            grant: installation.installationGrant,
+          }}
+          example={{
+            packageInstallId: installation.packageInstallId,
+            packageRevision: installation.packageRevision,
+            definitionSha256: installation.definitionSha256,
+            enabled: installation.enabled,
+            configuration: installation.configuration,
+            grantActions: installation.grantActions,
+            runnerId: installation.runnerId,
+            executionPolicy: installation.executionPolicy,
+            coordinatorFlowRevisionId: null,
+          }}
+        />
+      ) : null}
+      {snapshot && !query.tab && !query.edit ? (
         <div className="space-y-3 rounded-xl border border-line bg-paper p-5">
           <h2 className="font-semibold">{t("configuration")}</h2>
           <form className="flex flex-wrap items-end gap-2">
@@ -150,6 +229,7 @@ export default async function SpecialistsSettings({
           <BindingReviewForm
             bindingKind="specialist"
             companyId={companyId}
+            canGrantInstallation={canGrantInstallation}
             example={{
               packageInstallId: "",
               packageRevision: "",
@@ -182,7 +262,13 @@ export default async function SpecialistsSettings({
 
 async function readSettings(
   userId: string,
-  searchParams: { binding?: string; revision?: string; kind?: string },
+  searchParams: {
+    binding?: string;
+    revision?: string;
+    kind?: string;
+    tab?: string;
+    edit?: string;
+  },
 ) {
   const db = getDb();
 
@@ -237,7 +323,7 @@ async function readSettings(
           )
         : null;
 
-    return { page, flows, snapshot, companyId, canManage, kind };
+    return { page, flows, snapshot, companyId, canManage, kind, selected };
   } catch (error) {
     if (
       isMaisterError(error) &&

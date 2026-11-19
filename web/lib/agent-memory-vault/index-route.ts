@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { vaultErrorResponse } from "./http";
 import { listMemoryBacklinks, listMemoryTags } from "./index-queries";
+import { prepareInstallationExecutionVault } from "./installation-access";
 import { MAX_PAGE_ENTRIES } from "./limits";
 import { memoryNotePath } from "./paths";
 import { prepareProjectExecutionVault } from "./project-access";
@@ -68,7 +69,7 @@ function parseQuery<T>(request: Request, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
-const readers = {
+export const memoryIndexReaders = {
   search: (request: Request, prepare: PrepareVaultAccess) => {
     const query = parseQuery(request, searchQuery);
 
@@ -91,12 +92,12 @@ const readers = {
     listMemoryTags(getDb(), parseQuery(request, tagsQuery), prepare),
 };
 
-type VaultIndexResource = keyof typeof readers;
+type VaultIndexResource = keyof typeof memoryIndexReaders;
 
 export function projectMemoryIndex(resource: VaultIndexResource) {
   return (request: Request, route: ProjectVaultRoute) =>
     withProjectVault(route, "readRepoFiles", async (prepare) =>
-      privateJson(await readers[resource](request, prepare, true)),
+      privateJson(await memoryIndexReaders[resource](request, prepare, true)),
     );
 }
 
@@ -106,23 +107,32 @@ export function executionMemoryIndex(resource: VaultIndexResource) {
   return (request: Request) =>
     handleOwnedExt(
       request,
-      { endpoint, method: "GET", scopeLabel: "agent_memory:read" },
+      {
+        endpoint,
+        method: "GET",
+        scopeLabel: "agent_memory:read",
+        admitInstallation: true,
+      },
       async ({ actor }) => {
-        if (!actor.projectId)
+        if (!actor.projectId && !actor.installationScope)
           throw new MaisterError(
             "UNAUTHORIZED",
             "Project-bound agent credential required",
           );
 
-        return privateJson(
-          await readers[resource](
-            request,
-            prepareProjectExecutionVault(
-              actor,
-              actor.projectId,
+        const prepare = actor.installationScope
+          ? prepareInstallationExecutionVault(
+              actor.tokenId,
               "agent_memory:read",
-            ),
-          ),
+            )
+          : prepareProjectExecutionVault(
+              actor,
+              actor.projectId!,
+              "agent_memory:read",
+            );
+
+        return privateJson(
+          await memoryIndexReaders[resource](request, prepare),
         );
       },
       (error) => vaultErrorResponse(error, endpoint),

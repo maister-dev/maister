@@ -479,6 +479,10 @@ beforeAll(async () => {
     primarySource,
   );
   await writeFile(
+    join(source, "maister-agents/vault-installation-fixture.md"),
+    primarySource,
+  );
+  await writeFile(
     join(source, "maister-agents/context-observer.md"),
     primarySource,
   );
@@ -17418,4 +17422,409 @@ describe("company terminal evidence and project child dispatch", () => {
       else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
     }
   });
+});
+
+it("AV-06 reserves an installation Run and intersects current project authority before MCP disclosure", async () => {
+  const { updateCompanySpecialistBinding } =
+    await import("../company-binding-mutations");
+  const { retainCompanyAgentSessionCredential } = await import("../tokens");
+  const { installationRunProjects } =
+    await import("../installation-source-capture");
+  const projectList = await import("@/app/api/v1/ext/projects/route");
+  const noteCommand =
+    await import("@/app/api/v1/ext/agent/memory/commands/route");
+  const { hosts } = await fakeExecutionHosts(database.db);
+  const db: Db = database.db;
+  const launchUserId = randomUUID();
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [launchUserId, `${launchUserId}@example.test`],
+  );
+  await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: launchUserId,
+    actions: [
+      "specialists:read",
+      "specialists:manage",
+      "assignments:read",
+      "assignments:submit",
+      "assignments:update",
+    ],
+    idempotencyKey: randomUUID(),
+  });
+  const installationAdminId = randomUUID();
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [installationAdminId, `${installationAdminId}@example.test`],
+  );
+  const pin = assignmentInput.standingDefinition;
+  const candidateId = "rah:vault-installation-fixture";
+  const effective = await resolveInstalledAgentDefinition(db, {
+    agentId: candidateId,
+    packageInstallId: pin.packageInstallId,
+  });
+  await createCompanyGrants(db, installationAdminId, {
+    principalKind: "user",
+    principalId: installationAdminId,
+    actions: ["specialists:read", "specialists:manage", "assignments:read"],
+    idempotencyKey: randomUUID(),
+  });
+  const configuration = {
+    owner: assignmentInput.owner as { kind: "company"; companyId: string },
+    packageInstallId: pin.packageInstallId,
+    packageRevision: pin.packageRevision,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+    enabled: true,
+    configuration: {},
+    grantActions: [] as [],
+  };
+  const grant = {
+    schemaVersion: 1 as const,
+    reach: "active_projects" as const,
+    memoryEnabled: true,
+    scopes: [
+      "projects:read",
+      "runs:read",
+      "agent_memory:read",
+      "agent_memory:propose",
+    ] as const,
+  };
+  const { specialist } = await createCompanySpecialistBinding(
+    db,
+    installationAdminId,
+    candidateId,
+    {
+      ...configuration,
+      installationGrant: { ...grant, scopes: [...grant.scopes] },
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const runnerId = randomUUID();
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(db, launchUserId, {
+    ...assignmentInput,
+    destination: { kind: "inbox", userId: launchUserId },
+    specialistBindingId: specialist.bindingId,
+    responsibleAgentId: candidateId,
+    standingDefinition: {
+      ...pin,
+      agentId: candidateId,
+      definition: effective.parsed,
+      definitionSha256: configuration.definitionSha256,
+    },
+  });
+  const run = await reserveCompanyAgentRun(
+    db,
+    launchUserId,
+    {
+      ...request,
+      assignmentId: assignment.id,
+      bindingId: specialist.bindingId,
+      bindingRevision: specialist.configRevision,
+    },
+    hosts,
+  );
+  const [a, b, archived] = [randomUUID(), randomUUID(), randomUUID()] as [
+    string,
+    string,
+    string,
+  ];
+  for (const [id, name] of [
+    [a, "install-a"],
+    [b, "install-b"],
+    [archived, "install-archive"],
+  ]) {
+    await database.pool.query(
+      "INSERT INTO projects(id,slug,name,repo_path,task_key,archived_at) VALUES($1,$2,$2,$3,$4,$5)",
+      [
+        id,
+        name,
+        join(root, name!),
+        name!.toUpperCase(),
+        id === archived ? new Date() : null,
+      ],
+    );
+  }
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member'),($4,$5,$3,'member')",
+    [randomUUID(), a, launchUserId, randomUUID(), archived],
+  );
+  await database.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES(1) ON CONFLICT DO NOTHING",
+  );
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    run.runId,
+  ]);
+  const token = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, run.runId),
+  );
+  const headers = {
+    authorization: `Bearer ${token.secret}`,
+    "content-type": "application/json",
+  };
+  const list = () =>
+    projectList.GET(
+      new NextRequest("http://localhost/api/v1/ext/projects", { headers }),
+    );
+  const initial = await list();
+  expect(initial.status).toBe(200);
+  const ids = (body: { items: { id: string }[] }) =>
+    body.items.map(({ id }) => id);
+  expect(ids(await initial.json())).toContain(a);
+  await expect(installationRunProjects(db, run.runId)).resolves.toContain(a);
+  await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
+    b,
+  );
+  await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
+    archived,
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), b, launchUserId],
+  );
+  expect(ids(await (await list()).json())).toContain(b);
+  const proposed = await noteCommand.POST(
+    new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "create",
+        path: "/memories/notes/installation.md",
+        file_text: "Observe the two project runs.",
+        ifHash: null,
+        ifRevisionId: null,
+        requestKey: randomUUID(),
+      }),
+    }),
+  );
+  expect(proposed.status, JSON.stringify(await proposed.clone().json())).toBe(
+    202,
+  );
+  const { proposalId } = await proposed.json();
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_project_ids FROM agent_memory_proposals WHERE id=$1",
+        [proposalId],
+      )
+    ).rows,
+  ).toEqual([{ source_project_ids: [a, b].sort() }]);
+  const { decideVaultProposal } =
+    await import("@/lib/agent-memory-vault/review");
+  const { listProposalReviews } =
+    await import("@/lib/queries/knowledge-memory-reviews");
+  const { prepareHumanInstallationVault } =
+    await import("@/lib/agent-memory-vault/installation-access");
+  const { viewAgentMemory } = await import("@/lib/agent-memory-vault/view");
+  const { parseAgentMemoryView } =
+    await import("@/lib/agent-memory-vault/commands");
+  const listReviews = (reviewer: string) =>
+    listProposalReviews(db, reviewer, {
+      kind: "vault",
+      agentId: candidateId,
+      limit: 20,
+    });
+  expect((await listReviews(installationAdminId)).items).toContainEqual(
+    expect.objectContaining({ id: proposalId, allowed: ["accept", "reject"] }),
+  );
+  expect((await listReviews(launchUserId)).items).toEqual([]);
+  await expect(
+    decideVaultProposal(db, {
+      proposalId,
+      userId: installationAdminId,
+      expectedVersion: 1,
+      decision: "accept",
+      requestKey: randomUUID(),
+    }),
+  ).resolves.toMatchObject({ state: "accepted" });
+  const command = parseAgentMemoryView({
+    command: "view",
+    path: "/memories/notes/installation.md",
+  });
+  const view = (viewer: string) =>
+    viewAgentMemory(
+      db,
+      command,
+      prepareHumanInstallationVault({
+        userId: viewer,
+        agentId: candidateId,
+        bindingId: specialist.bindingId,
+        action: "read",
+      }),
+    );
+  await expect(view(installationAdminId)).resolves.toMatchObject({
+    kind: "note",
+    content: "Observe the two project runs.",
+  });
+  await expect(view(launchUserId)).resolves.toMatchObject({ kind: "note" });
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [a, launchUserId],
+  );
+  await expect(view(launchUserId)).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "agent_memory_unavailable" },
+  });
+  await expect(
+    db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  const cron = await createCompanyCronSchedule(db, launchUserId, {
+    owner: configuration.owner,
+    specialistBindingId: specialist.bindingId,
+    cronExpr: "*/5 * * * *",
+    timezone: "UTC",
+    requestAtLaunch: "Inspect recent runs in active installation projects.",
+    enabled: true,
+    idempotencyKey: randomUUID(),
+  });
+  await database.pool.query(
+    "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 minute' WHERE id=$1",
+    [cron.scheduleId],
+  );
+  await database.pool.query(
+    "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+  );
+  try {
+    await runSchedulerTick({ jobKind: "agent_tick" });
+  } finally {
+    await database.pool.query("DELETE FROM execution_host_pressure");
+  }
+  const [cronRun] = (
+    await database.pool.query<{ id: string; principal: unknown }>(
+      "SELECT r.id,authority.principal FROM runs r JOIN agent_installation_run_authorities authority ON authority.run_id=r.id WHERE r.agent_schedule_id=$1",
+      [cron.scheduleId],
+    )
+  ).rows;
+  expect(cronRun?.principal).toEqual({ kind: "unattended", trigger: "cron" });
+  if (!cronRun) throw new Error("Scheduler did not retain an installation Run");
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    cronRun.id,
+  ]);
+  await database.pool.query(
+    "UPDATE users SET must_change_password=true WHERE id=$1",
+    [launchUserId],
+  );
+  try {
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, cronRun.id)),
+    ).resolves.toMatchObject({
+      installation: { principal: { kind: "unattended", trigger: "cron" } },
+    });
+    const scheduled = await db.transaction((tx) =>
+      retainCompanyAgentSessionCredential(tx, cronRun.id),
+    );
+    const { GET: getRun } = await import("@/app/api/v1/ext/runs/[runId]/route");
+    for (const source of [a, b]) {
+      const runId = randomUUID();
+      await database.pool.query(
+        "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision) VALUES($1,$2,'flow','Done','fixture','fixture')",
+        [runId, source],
+      );
+      expect(
+        (
+          await getRun(
+            new NextRequest(`http://localhost/api/v1/ext/runs/${runId}`, {
+              headers: { authorization: `Bearer ${scheduled.secret}` },
+            }),
+            { params: Promise.resolve({ runId }) },
+          )
+        ).status,
+      ).toBe(200);
+    }
+    await expect(installationRunProjects(db, cronRun.id)).resolves.toEqual(
+      [a, b].sort(),
+    );
+    const scheduledProposal = await noteCommand.POST(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${scheduled.secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command: "create",
+          path: "/memories/notes/cron.md",
+          file_text: "A scheduled observation.",
+          ifHash: null,
+          ifRevisionId: null,
+          requestKey: randomUUID(),
+        }),
+      }),
+    );
+    expect(scheduledProposal.status).toBe(202);
+    const { proposalId: cronProposal } = await scheduledProposal.json();
+    expect((await listReviews(installationAdminId)).items).toContainEqual(
+      expect.objectContaining({ id: cronProposal }),
+    );
+    await expect(
+      decideVaultProposal(db, {
+        proposalId: cronProposal,
+        userId: installationAdminId,
+        expectedVersion: 1,
+        decision: "accept",
+        requestKey: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ state: "accepted" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT source_project_ids,author->>'runId' AS author FROM agent_memory_revisions WHERE path='/memories/notes/cron.md'",
+        )
+      ).rows,
+    ).toEqual([{ source_project_ids: [a, b].sort(), author: cronRun.id }]);
+  } finally {
+    await database.pool.query(
+      "UPDATE users SET must_change_password=false WHERE id=$1",
+      [launchUserId],
+    );
+  }
+  const cronNote = parseAgentMemoryView({
+    command: "view",
+    path: "/memories/notes/cron.md",
+  });
+  await expect(
+    viewAgentMemory(
+      db,
+      cronNote,
+      prepareHumanInstallationVault({
+        userId: launchUserId,
+        agentId: candidateId,
+        bindingId: specialist.bindingId,
+        action: "read",
+      }),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "agent_memory_unavailable" },
+  });
+  await updateCompanySpecialistBinding(
+    db,
+    installationAdminId,
+    candidateId,
+    specialist.bindingId,
+    {
+      ...configuration,
+      installationGrant: null,
+      expectedRevision: specialist.configRevision,
+      idempotencyKey: randomUUID(),
+      runnerId: null,
+      coordinatorFlowRevisionId: null,
+      executionPolicy: { preset: "supervised" },
+    },
+  );
+  expect((await list()).status).toBe(403);
 });

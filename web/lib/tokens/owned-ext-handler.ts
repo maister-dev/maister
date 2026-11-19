@@ -21,6 +21,7 @@ export type OwnedExtOptions = Readonly<{
   resolveScopeLabel?: (context: OwnedExtCtx) => Promise<string>;
   endpoint: string;
   method: string;
+  admitInstallation?: true;
 }>;
 
 export async function handleOwnedExt(
@@ -46,6 +47,11 @@ export async function handleOwnedExt(
   let scopeLabel = options.scopeLabel;
 
   try {
+    if (actor.installationScope && !options.admitInstallation)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "This endpoint does not admit an installation agent",
+      );
     if (actor.tokenKind === "librarian")
       throw new MaisterError(
         "UNAUTHORIZED",

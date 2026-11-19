@@ -22,6 +22,7 @@ import {
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { pgErrorOf } from "@/lib/db/pg-error";
+import { captureInstallationProjects } from "@/lib/agents/installation-source-capture";
 import { parseBoundRunId } from "@/lib/tokens/verify";
 
 const log = pino({
@@ -182,6 +183,37 @@ export async function recordKnowledgeDisclosure(
   restrictions: readonly KnowledgeAccessRestriction[],
 ): Promise<void> {
   if (consumer === null) return;
+  const installation = await tx.execute(
+    sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${consumer.runId}`,
+  );
+  if (installation.rows.length) {
+    const projects: string[] = [];
+    for (const source of restrictions) {
+      if (
+        source.kind === "project" ||
+        source.kind === "project_context" ||
+        source.kind === "project_visibility" ||
+        source.kind === "agent_memory"
+      )
+        projects.push(source.projectId);
+      if (source.kind === "agent_vault_revision_v1") {
+        const result =
+          await tx.execute(sql`SELECT source_project_ids FROM agent_memory_revisions
+          WHERE (vault_id,note_id,id)=(${source.vaultId},${source.noteId},${source.revisionId})`);
+        const ids = result.rows[0]?.source_project_ids;
+        if (
+          !Array.isArray(ids) ||
+          ids.some((id: unknown) => typeof id !== "string")
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Installation vault source capture is incomplete",
+          );
+        projects.push(...(ids as string[]));
+      }
+    }
+    await captureInstallationProjects(tx, consumer.runId, projects);
+  }
   const combined = canonicalKnowledgeRestrictions([
     ...consumer.capture.restrictions,
     ...restrictions,

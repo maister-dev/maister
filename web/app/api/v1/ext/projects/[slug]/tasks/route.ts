@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 
+import { installationReadAdapter } from "@/lib/agents/installation-facade";
 import { getDb } from "@/lib/db/client";
 import {
   librarianTaskLinks,
@@ -279,6 +280,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "tasks:read",
+      installation: installationReadAdapter(req, "tasks", { slug }),
       admitLibrarian: true,
       endpoint: ENDPOINT_TASKS_GET,
       method: "GET",

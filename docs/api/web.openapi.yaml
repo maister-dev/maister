@@ -20793,7 +20793,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/specialists/{specialistId}/bindings:
-    x-installation-authority: Designed. Only a current global administrator may create or change installation reach. Omitted reach retains company-only behavior for new bindings.
+    x-installation-authority: Only a current global administrator may create or change installation reach. Omitted reach retains company-only behavior for new bindings.
     post:
       operationId: specialistBind
       summary: Create explicit company pinned binding
@@ -20850,7 +20850,7 @@ paths:
             maxLength: 192
           description: URL selector resolved and authorized against server state; no filesystem path.
   /api/specialists/{specialistId}/bindings/{bindingId}:
-    x-installation-authority: Designed. Only a current global administrator may create or change installation reach. Omitted reach retains company-only behavior for new bindings.
+    x-installation-authority: Only a current global administrator may create or change installation reach. Omitted reach retains company-only behavior for new bindings.
     patch:
       operationId: specialistBindingUpdate
       summary: Update pinned binding atomically
@@ -24450,60 +24450,33 @@ components:
               maxItems: 1024
       x-implementation-status: Designed
     AgentVaultBindingReach:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, reach, scopes, memoryEnabled]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        reach: { type: string, enum: [active_projects] }
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 11
+          uniqueItems: true
+          items:
+            type: string
+            enum: [projects:read, tasks:read, runs:read, activity:read, observatory:read,
+                   memory:read, memory:propose, knowledge:read, knowledge:propose,
+                   agent_memory:read, agent_memory:propose]
+        memoryEnabled: { type: boolean }
       oneOf:
-        - type: object
-          additionalProperties: false
-          required:
-            - kind
-          properties:
-            kind:
-              type: string
-              enum:
-                - company_only
-        - type: object
-          additionalProperties: false
-          required:
-            - kind
-            - workspace
-            - memoryEnabled
-            - allowedOperations
-          properties:
-            kind:
-              type: string
-              enum:
-                - all_non_archived_projects
-            workspace:
-              type: string
-              enum:
-                - none
-            memoryEnabled:
-              type: boolean
-            allowedOperations:
+        - properties:
+            memoryEnabled: { type: boolean, enum: [true] }
+        - properties:
+            memoryEnabled: { type: boolean, enum: [false] }
+            scopes:
               type: array
               items:
                 type: string
-                enum:
-                  - project_list
-                  - project_get
-                  - task_list
-                  - task_get
-                  - run_get
-                  - run_activity
-                  - observatory_summary
-                  - memory_recall
-                  - knowledge_search
-                  - knowledge_get
-                  - memory_propose
-                  - knowledge_propose
-                  - memory_promote
-                  - memory
-                  - memory_search
-                  - memory_tags
-                  - memory_backlinks
-              minItems: 1
-              maxItems: 17
-              uniqueItems: true
-      x-implementation-status: Designed
+                not: { enum: [agent_memory:read, agent_memory:propose] }
     AgentVaultHeadPrecondition:
       type: object
       additionalProperties: false
@@ -39720,7 +39693,7 @@ components:
     CBSpecialist:
       type: object
       properties:
-        reach:
+        installationGrant:
           $ref: "#/components/schemas/AgentVaultBindingReach"
         id:
           type: string
@@ -39935,7 +39908,7 @@ components:
     CBBindingInput:
       type: object
       properties:
-        reach:
+        installationGrant:
           $ref: "#/components/schemas/AgentVaultBindingReach"
         owner:
           type: object
@@ -45085,8 +45058,11 @@ components:
     CBBindingUpdate:
       type: object
       properties:
-        reach:
-          $ref: "#/components/schemas/AgentVaultBindingReach"
+        installationGrant:
+          description: Omit to retain the reviewed grant. Null revokes installation reach.
+          oneOf:
+            - $ref: "#/components/schemas/AgentVaultBindingReach"
+            - { type: object, nullable: true, enum: [null] }
         owner:
           type: object
           properties:

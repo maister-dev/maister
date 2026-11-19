@@ -5,7 +5,7 @@ import type { ParsedAgentDefinition } from "./definition";
 import { MaisterError } from "@/lib/errors";
 
 /** Company standalone execution cannot silently discard repository, memory or coordinator declarations. */
-export function assertCompanySessionDefinition(
+function assertProjectlessSessionDefinition(
   definition: ParsedAgentDefinition,
 ): void {
   if (
@@ -20,15 +20,40 @@ export function assertCompanySessionDefinition(
       "Company sessions require a finite workspace-none role without repository qualification",
       { details: { reason: "company_agent_workspace_unsupported" } },
     );
-  if (
-    definition.memory !== "none" ||
-    (definition.capabilityProfile?.mcps?.length ?? 0) > 0
-  )
+  if ((definition.capabilityProfile?.mcps?.length ?? 0) > 0)
     throw new MaisterError(
       "CONFIG",
       "Company sessions require native knowledge tools; project memory and project MCP bindings require explicit project admission",
       {
         details: { reason: "company_agent_project_capability_unsupported" },
+      },
+    );
+}
+
+export function assertCompanySessionDefinition(
+  definition: ParsedAgentDefinition,
+): void {
+  assertProjectlessSessionDefinition(definition);
+  if (definition.memory !== "none")
+    throw new MaisterError(
+      "CONFIG",
+      "Company memory requires an installation-scope grant",
+      {
+        details: { reason: "company_agent_project_capability_unsupported" },
+      },
+    );
+}
+
+export function assertInstallationAgentDefinition(
+  definition: ParsedAgentDefinition,
+): void {
+  assertProjectlessSessionDefinition(definition);
+  if (definition.flow !== null)
+    throw new MaisterError(
+      "CONFIG",
+      "Installation agents require a standalone session",
+      {
+        details: { reason: "installation_agent_coordinator_unsupported" },
       },
     );
 }

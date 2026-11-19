@@ -40,6 +40,10 @@ import {
   agentMemoryOperations as operations,
   agentMemoryPromotions as promotions,
 } from "@/lib/db/schema";
+import {
+  installationProjectAccess,
+  requireInstallationCredential,
+} from "@/lib/agents/installation-authority";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -140,7 +144,15 @@ async function authorizePromotionNote(
     contentSha256: revision.contentSha256,
   };
 
-  await authorizeSourceRestrictions(tx, principal, [source]);
+  const inspection =
+    access.visibleGeneration && access.actor.kind === "agent_session"
+      ? {
+          kind: "execution" as const,
+          runId: access.actor.runId,
+          nodeAttemptId: null,
+        }
+      : principal;
+  await authorizeSourceRestrictions(tx, inspection, [source]);
 
   return source;
 }
@@ -165,10 +177,25 @@ export async function promoteMemory(
     const vault = await lockVault(tx, access.vaultId);
     const author = attribution(access);
     if (input.target.kind === "brain") {
-      if (target.kind !== "project" || target.projectId !== vault.projectId)
-        throw unavailableMemory();
+      if (target.kind !== "project") throw unavailableMemory();
       await assertProjectBrainEnabled(tx, target.projectId);
-      if (author.kind === "agent") {
+      if (vault.companyId && principal.kind === "token") {
+        const context = await requireInstallationCredential(
+          tx,
+          principal.tokenId,
+          "memory:propose",
+        );
+        if (!context.scopes.includes("agent_memory:read"))
+          throw unavailableMemory();
+        const decision =
+          await tx.execute(sql`SELECT id FROM projects p WHERE p.id=${target.projectId}
+          AND p.archived_at IS NULL AND ${installationProjectAccess(context, sql`p.id`, "writeBrain")} FOR SHARE`);
+        if (!decision.rows.length) throw unavailableMemory();
+      } else if (vault.companyId) {
+        await authorizeKnowledge(tx, principal, target, "knowledge:propose");
+      } else if (target.projectId !== vault.projectId)
+        throw unavailableMemory();
+      else if (author.kind === "agent") {
         const grant =
           await tx.execute(sql`SELECT 1 FROM agent_project_links WHERE project_id=${target.projectId}
           AND agent_id=${author.id} AND enabled AND can_write_brain FOR SHARE`);
@@ -278,26 +305,22 @@ export async function promoteMemory(
         })
       ).id;
     }
-    await tx
-      .insert(operations)
-      .values({
-        id: operationId,
-        vaultId: vault.id,
-        principalKey: access.principalKey,
-        requestKey: input.requestKey,
-        commandKind: "promote",
-        commandDigest: digest,
-        outcome: "pending",
-      });
-    await tx
-      .insert(promotions)
-      .values({
-        operationId,
-        vaultId: vault.id,
-        noteId: source.noteId,
-        revisionId: source.revisionId,
-        proposalId,
-      });
+    await tx.insert(operations).values({
+      id: operationId,
+      vaultId: vault.id,
+      principalKey: access.principalKey,
+      requestKey: input.requestKey,
+      commandKind: "promote",
+      commandDigest: digest,
+      outcome: "pending",
+    });
+    await tx.insert(promotions).values({
+      operationId,
+      vaultId: vault.id,
+      noteId: source.noteId,
+      revisionId: source.revisionId,
+      proposalId,
+    });
     await access.capture(tx, [current]);
 
     return { status: "pending" as const, operationId, proposalId };

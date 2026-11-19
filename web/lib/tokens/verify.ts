@@ -8,6 +8,7 @@ import {
   requireCompanyRunCredentialOwner,
   requireCompanyFlowNodeKnowledgeOwner,
 } from "@/lib/agents/company-run-credential-owner";
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import { isMaisterError } from "@/lib/errors";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -45,6 +46,7 @@ export type TokenActor = {
   tokenId: string;
   projectId: string | null;
   companyId?: string;
+  installationScope?: true;
   tokenKind: TokenKind;
   ownerUserId: string | null;
   agentId: string | null;
@@ -189,6 +191,7 @@ export async function verifyToken(
 
   const companyId: string | null = row.company_id ?? null;
 
+  const isInstallation = typeof row.installation_run_id === "string";
   if (companyId !== null) {
     if (
       tokenKind !== "agent" ||
@@ -202,39 +205,73 @@ export async function verifyToken(
         { tokenId: row.id, projectId: null },
       );
     try {
-      const rootOwner = await requireCompanyRunCredentialOwner(
+      const installation = await requireInstallationRunAuthority(
         d,
         row.company_run_id,
       );
-      const owner =
-        typeof row.knowledge_node_attempt_id === "string"
-          ? await requireCompanyFlowNodeKnowledgeOwner(
-              d,
-              rootOwner,
-              row.knowledge_node_attempt_id,
-            )
-          : rootOwner;
-
-      if (
-        (rootOwner.snapshot.schemaVersion === 2) !==
-        (typeof row.knowledge_node_attempt_id === "string")
-      )
-        throw new TokenAuthError(
-          "owner-unavailable",
-          "The company credential has no exact execution/node binding",
-          { tokenId: row.id, projectId: null },
+      if (isInstallation) {
+        const manualUser =
+          installation?.principal.kind === "manual"
+            ? installation.principal.userId
+            : null;
+        if (
+          !installation ||
+          row.installation_run_id !== row.company_run_id ||
+          row.knowledge_node_attempt_id != null ||
+          installation.companyId !== companyId ||
+          installation.agentId !== agentId ||
+          ownerUserId !== manualUser ||
+          !Array.isArray(row.scopes) ||
+          !(row.scopes as string[]).every((value) =>
+            installation.scopes.some((scope) => scope === value),
+          )
+        )
+          throw new TokenAuthError(
+            "owner-unavailable",
+            "The installation credential is no longer current",
+            { tokenId: row.id, projectId: null },
+          );
+      } else {
+        if (installation)
+          throw new TokenAuthError(
+            "owner-unavailable",
+            "The installation run requires its dedicated credential",
+            { tokenId: row.id, projectId: null },
+          );
+        const rootOwner = await requireCompanyRunCredentialOwner(
+          d,
+          row.company_run_id,
         );
+        const owner =
+          typeof row.knowledge_node_attempt_id === "string"
+            ? await requireCompanyFlowNodeKnowledgeOwner(
+                d,
+                rootOwner,
+                row.knowledge_node_attempt_id,
+              )
+            : rootOwner;
 
-      if (
-        owner.companyId !== companyId ||
-        owner.userId !== ownerUserId ||
-        owner.agentId !== agentId
-      )
-        throw new TokenAuthError(
-          "owner-unavailable",
-          "company credential owner is unavailable",
-          { tokenId: row.id, projectId: null },
-        );
+        if (
+          (rootOwner.snapshot.schemaVersion === 2) !==
+          (typeof row.knowledge_node_attempt_id === "string")
+        )
+          throw new TokenAuthError(
+            "owner-unavailable",
+            "The company credential has no exact execution/node binding",
+            { tokenId: row.id, projectId: null },
+          );
+
+        if (
+          owner.companyId !== companyId ||
+          owner.userId !== ownerUserId ||
+          owner.agentId !== agentId
+        )
+          throw new TokenAuthError(
+            "owner-unavailable",
+            "company credential owner is unavailable",
+            { tokenId: row.id, projectId: null },
+          );
+      }
     } catch (error) {
       if (!isMaisterError(error) || error.code !== "UNAUTHORIZED") throw error;
       throw new TokenAuthError(
@@ -249,6 +286,7 @@ export async function verifyToken(
     tokenId: row.id,
     projectId: row.project_id ?? null,
     ...(companyId === null ? {} : { companyId }),
+    ...(isInstallation && { installationScope: true as const }),
     tokenKind,
     ownerUserId,
     agentId,

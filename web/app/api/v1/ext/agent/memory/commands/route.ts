@@ -9,6 +9,7 @@ import {
   vaultMutationResponse,
 } from "@/lib/agent-memory-vault/http";
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import { prepareInstallationExecutionVault } from "@/lib/agent-memory-vault/installation-access";
 import { prepareProjectExecutionVault } from "@/lib/agent-memory-vault/project-access";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
@@ -28,16 +29,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       endpoint,
       method: "POST",
       scopeLabel: "agent_memory:write",
-      async resolveScopeLabel() {
+      admitInstallation: true,
+      async resolveScopeLabel({ actor }) {
         parsed = parseAgentSessionMemoryCommand(await readVaultJson(request));
 
         return parsed.command === "view"
           ? "agent_memory:read"
-          : "agent_memory:write";
+          : actor.installationScope
+            ? "agent_memory:propose"
+            : "agent_memory:write";
       },
     },
     async ({ actor }) => {
-      if (!actor.projectId)
+      if (!actor.projectId && !actor.installationScope)
         throw new MaisterError(
           "UNAUTHORIZED",
           "Project-bound agent credential required",
@@ -45,31 +49,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!parsed)
         throw new MaisterError("CRASH", "Vault command was not validated");
       const db = getDb();
+      const action =
+        parsed.command === "view" ? "agent_memory:read" : "agent_memory:write";
+      const prepare = actor.installationScope
+        ? prepareInstallationExecutionVault(
+            actor.tokenId,
+            parsed.command === "view"
+              ? "agent_memory:read"
+              : "agent_memory:propose",
+          )
+        : prepareProjectExecutionVault(actor, actor.projectId!, action);
 
       if (parsed.command === "view")
-        return privateJson(
-          await viewAgentMemory(
-            db,
-            parsed,
-            prepareProjectExecutionVault(
-              actor,
-              actor.projectId,
-              "agent_memory:read",
-            ),
-          ),
-        );
+        return privateJson(await viewAgentMemory(db, parsed, prepare));
 
       return vaultMutationResponse(
-        await applyVaultMutation(
-          db,
-          parsed,
-          prepareProjectExecutionVault(
-            actor,
-            actor.projectId,
-            "agent_memory:write",
-          ),
-          agentMemoryVaultLimits(),
-        ),
+        await applyVaultMutation(db, parsed, prepare, agentMemoryVaultLimits()),
       );
     },
     (error) => vaultErrorResponse(error, endpoint),

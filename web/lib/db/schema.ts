@@ -8328,6 +8328,10 @@ export const projectTokens = pgTable(
     company_run_id: text("company_run_id").references(() => runs.id, {
       onDelete: "cascade",
     }),
+    installation_run_id: text("installation_run_id").references(
+      (): AnyPgColumn => agentInstallationRunAuthorities.runId,
+      { onDelete: "restrict" },
+    ),
     name: text("name").notNull(),
     token_kind: text("token_kind", {
       enum: ["project", "user", "agent", "librarian"],
@@ -8377,7 +8381,11 @@ export const projectTokens = pgTable(
   (t) => ({
     companyScopeCheck: check(
       "project_tokens_company_scope_check",
-      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read","assignments:update","assignments:accept","targets:read","targets:logs","targets:restart"]'::jsonb)) IS TRUE`,
+      sql`((${t.company_id} IS NULL AND ${t.company_run_id} IS NULL AND ${t.installation_run_id} IS NULL) OR (${t.company_id} IS NOT NULL AND ${t.company_run_id} IS NOT NULL AND ${t.project_id} IS NULL AND ${t.token_kind}='agent' AND ${t.agent_id} IS NOT NULL AND ${t.name}='agent-run:'||${t.company_run_id} AND ${t.expires_at} IS NOT NULL AND ${t.librarian_turn_id} IS NULL AND jsonb_typeof(${t.scopes})='array' AND (
+        (${t.installation_run_id} IS NULL AND ${t.scopes}<@'["knowledge:read","knowledge:propose","assignments:read","assignments:update","assignments:accept","targets:read","targets:logs","targets:restart"]'::jsonb)
+        OR (${t.installation_run_id}=${t.company_run_id} AND ${t.knowledge_node_attempt_id} IS NULL AND ${t.bound_run_id} IS NULL AND ${t.origin_kind} IS NULL
+          AND ${t.scopes}<@'["projects:read","tasks:read","runs:read","activity:read","observatory:read","memory:read","memory:propose","knowledge:read","knowledge:propose","agent_memory:read","agent_memory:propose"]'::jsonb)
+      ))) IS TRUE`,
     ),
     companyLiveRunIndex: uniqueIndex("project_tokens_company_live_run_uq")
       .on(t.company_run_id)
@@ -12924,4 +12932,55 @@ export const inboxReviewReceipts = pgTable(
       sql`${t.digest} ~ '^[a-f0-9]{64}$' AND ${t.requestKey} ~ '^[A-Za-z0-9_.:-]{8,128}$'`,
     ),
   }),
+);
+
+export const agentInstallationRunAuthorities = pgTable(
+  "agent_installation_run_authorities",
+  {
+    runId: text("run_id").primaryKey(),
+    bindingId: text("binding_id").notNull(),
+    bindingRevision: integer("binding_revision").notNull(),
+    bindingDigest: text("binding_digest").notNull(),
+    grantSnapshot: jsonb("grant_snapshot").notNull(),
+    principal: jsonb("principal").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    binding: foreignKey({
+      name: "agent_installation_authority_revision_fk",
+      columns: [t.bindingId, t.bindingRevision],
+      foreignColumns: [
+        companySpecialistBindingRevisions.bindingId,
+        companySpecialistBindingRevisions.revision,
+      ],
+    }).onDelete("restrict"),
+    shape: check(
+      "agent_installation_authority_shape_check",
+      sql`
+      ${t.bindingDigest} ~ '^[a-f0-9]{64}$' AND ${t.bindingRevision}>0 AND
+      jsonb_typeof(${t.grantSnapshot})='object' AND ${t.grantSnapshot}->>'reach'='active_projects' AND
+      jsonb_typeof(${t.principal})='object' AND
+      ((${t.principal}->>'kind'='manual' AND char_length(${t.principal}->>'userId') BETWEEN 1 AND 192)
+       OR (${t.principal}->>'kind'='unattended' AND ${t.principal}->>'trigger' IN ('cron','domain_event'))) IS TRUE
+    `,
+    ),
+  }),
+);
+
+export const agentInstallationRunSources = pgTable(
+  "agent_installation_run_sources",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentInstallationRunAuthorities.runId, {
+        onDelete: "restrict",
+      }),
+    projectId: text("project_id").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.runId, t.projectId] }) }),
 );

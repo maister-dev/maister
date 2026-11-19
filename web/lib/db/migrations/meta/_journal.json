@@ -2409,6 +2409,20 @@
       "when": 1795102790828,
       "tag": "0347_agent_memory_review",
       "breakpoints": true
+    },
+    {
+      "idx": 348,
+      "version": "7",
+      "when": 1795103885970,
+      "tag": "0348_agent_installation_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 349,
+      "version": "7",
+      "when": 1795104046719,
+      "tag": "0349_agent_installation_credentials",
+      "breakpoints": true
     }
   ]
 }

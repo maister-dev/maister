@@ -37,6 +37,9 @@ const BASE_URL = process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000";
 // Named company/librarian processes expose only their declared tool subset.
 // Current token, owner and action authority are still enforced by the routes.
 const TOOLSET = process.env.MAISTER_MCP_TOOLSET;
+const INSTALLATION_SCOPES = (
+  process.env.MAISTER_INSTALLATION_SCOPES ?? ""
+).split(",");
 
 // --- publish the canonical JSON Schemas and dispatch external facade tools ---
 
@@ -49,7 +52,7 @@ function buildServer(transportType: "stdio" | "http"): Server {
   // A generic Zod record serializes to an empty object schema in the SDK.
   // Publish the JSON Schemas directly; the ext routes own input validation.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolNamesForToolset(TOOLSET).map((name) => ({
+    tools: toolNamesForToolset(TOOLSET, INSTALLATION_SCOPES).map((name) => ({
       name,
       ...TOOL_SPECS[name],
       execution: { taskSupport: "forbidden" as const },
@@ -59,7 +62,7 @@ function buildServer(transportType: "stdio" | "http"): Server {
   server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
     const toolName = params.name;
 
-    if (!isToolInToolset(toolName, TOOLSET)) {
+    if (!isToolInToolset(toolName, TOOLSET, INSTALLATION_SCOPES)) {
       return {
         isError: true,
         content: [

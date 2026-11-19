@@ -15,7 +15,12 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { insertMemoryText, replaceMemoryText } from "./commands";
 import { indexMemoryRevision, resolveIndexedMemoryLinks } from "./indexes";
-import { isUnderMemoryPath, memoryNotePath, MEMORY_INDEX } from "./paths";
+import {
+  isUnderMemoryPath,
+  memoryNotePath,
+  MEMORY_INDEX,
+  MEMORY_ROOT,
+} from "./paths";
 import {
   findVaultProposal,
   retainVaultProposal,
@@ -80,6 +85,16 @@ export type VaultAccess = Readonly<{
   sourceProjectIds: readonly string[];
   sourceRestrictions: readonly AgentMemoryRestriction[];
   writeAdmission: "apply" | "review_required";
+  visibleGeneration?: true;
+  resolveLinkSources?: (
+    db: Db,
+    content: string,
+  ) => Promise<
+    Readonly<{
+      projectIds: readonly string[];
+      restrictions: readonly AgentMemoryRestriction[];
+    }>
+  >;
   canRead: (db: Db, revision: VaultRevision) => Promise<boolean>;
   capture: (db: Db, revisions: readonly VaultRevision[]) => Promise<void>;
 }>;
@@ -373,6 +388,36 @@ function classifyTree(command: TreeMutation, active: readonly Head[]): Head[] {
   return active.filter((head) => isUnderMemoryPath(prefix, head.note.path));
 }
 
+export async function visibleVaultDirectory(
+  db: Db,
+  access: VaultAccess,
+  vault: Vault,
+  path: string,
+  revisions: readonly VaultRevision[],
+) {
+  const visible: VaultRevision[] = [];
+  for (const revision of revisions)
+    if (
+      isUnderMemoryPath(path, revision.path) &&
+      (await access.canRead(db, revision))
+    )
+      visible.push(revision);
+  if (!access.visibleGeneration)
+    return { visible, generation: String(vault.generation) };
+  // The public generation codec accepts a decimal 64-bit identifier.
+  const digest = createHash("sha256")
+    .update(
+      canonicalCommandJson(
+        visible
+          .map((revision) => [revision.id, revision.path])
+          .sort((left, right) => left[0]!.localeCompare(right[0]!)),
+      ),
+    )
+    .digest("hex");
+
+  return { visible, generation: BigInt(`0x${digest.slice(0, 15)}`).toString() };
+}
+
 async function planTree(
   db: Db,
   access: VaultAccess,
@@ -391,8 +436,21 @@ async function planTree(
     return !precondition || !sameHead(head, precondition);
   });
 
+  const directory =
+    command.command === "rename"
+      ? command.old_path
+      : command.command === "clear"
+        ? MEMORY_ROOT
+        : command.path;
+  const { generation } = await visibleVaultDirectory(
+    db,
+    access,
+    vault,
+    directory,
+    targets.map(({ revision }) => revision),
+  );
   if (
-    String(vault.generation) !== command.ifGeneration ||
+    generation !== command.ifGeneration ||
     expected.size !== command.heads.length ||
     targets.length !== expected.size ||
     mismatches.length > 0
@@ -563,19 +621,27 @@ async function planOne(
   }
 }
 
-function retentionSources(
+async function retentionSources(
+  db: Db,
   access: VaultAccess,
   inherited: readonly VaultRevision[],
+  contents: readonly (string | null)[],
 ) {
+  const derived = [];
+  for (const content of contents)
+    if (content !== null && access.resolveLinkSources)
+      derived.push(await access.resolveLinkSources(db, content));
   const projectIds = [
     ...new Set([
       ...access.sourceProjectIds,
+      ...derived.flatMap((source) => source.projectIds),
       ...inherited.flatMap((item) => item.sourceProjectIds),
     ]),
   ].sort();
   const byKey = new Map(
     [
       ...access.sourceRestrictions,
+      ...derived.flatMap((source) => source.restrictions),
       ...inherited.flatMap((item) => item.sourceRestrictions),
     ].map((restriction) => [canonicalCommandJson(restriction), restriction]),
   );
@@ -605,7 +671,9 @@ async function recordChange(
 ): Promise<VaultRevision> {
   const noteId = change.head?.note.id ?? randomUUID();
   const revisionId = randomUUID();
-  const sources = retentionSources(access, change.inherited);
+  const sources = await retentionSources(db, access, change.inherited, [
+    change.content,
+  ]);
   const { content } = change;
 
   if (change.head === null)
@@ -692,17 +760,15 @@ export async function tombstoneRedactedHead(
   if (head.revision.id !== revision.id) return;
   const operationId = randomUUID();
 
-  await tx
-    .insert(operations)
-    .values({
-      id: operationId,
-      vaultId: vault.id,
-      principalKey: `redaction:${userId}`,
-      commandKind: "redact",
-      requestKey: redactionId,
-      commandDigest: createHash("sha256").update(revision.id).digest("hex"),
-      outcome: "applied",
-    });
+  await tx.insert(operations).values({
+    id: operationId,
+    vaultId: vault.id,
+    principalKey: `redaction:${userId}`,
+    commandKind: "redact",
+    requestKey: redactionId,
+    commandDigest: createHash("sha256").update(revision.id).digest("hex"),
+    outcome: "applied",
+  });
   await recordChange(
     tx,
     {
@@ -856,7 +922,12 @@ export async function applyVaultMutationInTransaction(
           .map((revision) => [revision.id, revision]),
       ).values(),
     ];
-    const sources = retentionSources(access, bases);
+    const sources = await retentionSources(
+      db,
+      access,
+      bases,
+      plan.map(({ content }) => content),
+    );
     const changes = plan.map((change) => {
       if (change.content !== null && change.kind !== "renamed")
         parseMemoryStructure(change.content);

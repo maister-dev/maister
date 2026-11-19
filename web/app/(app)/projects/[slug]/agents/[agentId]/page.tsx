@@ -298,8 +298,7 @@ export default async function ProjectAgentPage({
             agentId={access.agentId}
             canEdit={access.canEditSettings}
             canRedact={access.actor.role === "admin"}
-            projectId={access.projectId}
-            slug={slug}
+            location={{ kind: "project", slug, projectId: access.projectId }}
           />
         ) : (
           <p className="text-sm text-mute">

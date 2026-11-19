@@ -20,7 +20,10 @@ import { MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 
 export type KnowledgeRunIdentity = Readonly<{
-  identity: Exclude<KnowledgePrincipalIdentity, { kind: "user" }>;
+  identity: Extract<
+    KnowledgePrincipalIdentity,
+    { kind: "agent" | "company_agent" }
+  >;
   runKind: "agent" | "flow";
 }>;
 

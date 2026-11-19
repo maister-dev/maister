@@ -379,6 +379,11 @@ Both company agent and result-only Flow paths derive the following actions from 
 
 ### Installation agent authority (Designed — ADR-211)
 
+The binding API represents installation reach as `installationGrant` with a version,
+`reach: active_projects`, an explicit scope list and `memoryEnabled`. A new
+binding with the field omitted is company-only. A PATCH that omits the field
+keeps the current grant. Sending null revokes it by exact binding revision.
+
 The reviewed company binding opts into `all_non_archived_projects`. Its
 revision freezes the allowed operations. Admission requires a current
 global administrator to configure the grant and a package definition that
@@ -402,7 +407,7 @@ cannot inherit a later grant.
 | --- | --- | --- |
 | List / get project metadata | `project_list`, GET `/api/v1/ext/projects`; `project_get`, GET `/api/v1/ext/projects/{slug}/directory`. Scope `projects:read`. | Return only project ID, slug and display name for installation tokens. A manual user needs `readBoard`. Capture every project returned in the same snapshot. |
 | Read task list / detail | `task_list`, `task_get`, GET `/api/v1/ext/projects/{slug}/tasks` with optional `/{taskId}`. Scope `tasks:read`. | Apply target ownership and `readBoard` for manual users. Use the bounded task read DTO with matching owner, and carry any stricter sources attached to returned task content. |
-| Read Run summary and activity | `run_get`, `run_activity`, GET `/api/v1/ext/runs/{runId}` or `/{runId}/activity`. Scope `runs:read`. | Resolve project from the Run. Manual minimum is `readBoard` for summary, `readRepoFiles` for source-derived activity. Retain finer evidence gates and capture exact sources returned. |
+| Read Run summary and activity | `run_get`, `run_activity`, GET `/api/v1/ext/runs/{runId}` or `/{runId}/activity`. Scopes `runs:read` for a summary and `activity:read` for activity metadata. | Resolve project from the Run. Manual minimum is `readBoard` for summary and `readRepoFiles` for activity. The activity response includes event identity, kind and timestamp. Capture the project before returning the response. |
 | Read bounded Observatory summaries | `observatory_summary`, GET `/api/v1/ext/observatory/summary`. Scope `observatory:read`. | Accept an optional project slug, period `24h/7d/30d` default `7d`, limit 1–50 default 20 and a scoped cursor. Return per-project Run count, success count and measured elapsed duration, filtered before grouping. Require manual `readBoard` on every project contributor. Capture exact aggregate contributors in the same query snapshot. |
 | Recall Project Brain | `memory_recall`, GET `/api/v1/ext/projects/{slug}/memory`. Scope `memory:read`. | Apply Brain read policy and exact restrictions. Capture project plus each visible hit's restrictions before bytes leave the handler. |
 | Read structured knowledge | `knowledge_search`, `knowledge_get`, GET `/api/v1/ext/knowledge` or `/{recordId}`. Scope `knowledge:read`. | Apply existing company/project owner and native-record source policies. Capture every returned exact record source plus its own restrictions. |

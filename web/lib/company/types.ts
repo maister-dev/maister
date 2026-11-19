@@ -33,6 +33,10 @@ export type VaultRevisionRestriction = z.infer<
 export const knowledgeAccessRestrictionSchema = z.union([
   ownerSchema,
   vaultRevisionRestrictionSchema,
+  z.strictObject({
+    kind: z.literal("project_visibility"),
+    projectId: postgresTextSchema.min(1).max(128),
+  }),
   z
     .object({
       kind: z.literal("stand_target"),
@@ -75,7 +79,7 @@ export type KnowledgeAccessRestriction = z.infer<
 >;
 export type ExecutionContextRestriction = Extract<
   KnowledgeAccessRestriction,
-  { kind: "project_context" | "agent_memory" }
+  { kind: "project_context" | "project_visibility" | "agent_memory" }
 >;
 /** Server-captured source restrictions on an existing run; NULL remains unknown. */
 export const knowledgeAccessCaptureSchema = z

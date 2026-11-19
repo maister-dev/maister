@@ -8,7 +8,7 @@ import {
   type MockInstance,
 } from "vitest";
 
-import { dispatchTool, TOOL_SPECS } from "@/tools";
+import { dispatchTool, toolNamesForToolset, TOOL_SPECS } from "@/tools";
 
 const BASE_URL = "http://localhost:3000";
 const AUTH = "Bearer mai_test";
@@ -50,6 +50,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("maps installation grant scopes without including project mutation tools", () => {
+  expect(
+    toolNamesForToolset("installation", [
+      "runs:read",
+      "agent_memory:propose",
+      "runs:launch",
+      "*",
+    ]).sort(),
+  ).toEqual(["memory", "memory_promote", "run_get"]);
+  expect(toolNamesForToolset("installation", ["runs:launch"])).toEqual([]);
+});
+
 describe("TOOL_SPECS registry", () => {
   it("registers every external tool", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
@@ -61,6 +73,7 @@ describe("TOOL_SPECS registry", () => {
         "memory_search",
         "memory_backlinks",
         "memory_tags",
+        "observatory_summary",
         "memory_promote",
         "ask_human",
         "assignment_get",
