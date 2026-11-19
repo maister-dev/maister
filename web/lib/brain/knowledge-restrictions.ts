@@ -3,11 +3,13 @@ import "server-only";
 import type {
   KnowledgeAccessRestriction,
   ExecutionContextRestriction,
+  VaultRevisionRestriction,
 } from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { assignmentInputReadPolicy } from "./knowledge-assignment-policy";
 import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
@@ -19,6 +21,7 @@ import {
 import {
   projectContextReadPolicy,
   agentMemoryReadPolicy,
+  vaultRevisionReferenceQuery,
 } from "./knowledge-context-policy";
 
 import {
@@ -39,6 +42,22 @@ export type KnowledgeAccessWalk = Readonly<{
   visited: readonly string[];
   remaining: number;
 }>;
+
+const retainedVaultRestrictions = z
+  .array(
+    z.union([
+      knowledgeAccessRestrictionSchema,
+      z.strictObject({
+        kind: z.literal("legacy_project_private"),
+        projectId: z.string().min(1).max(128),
+      }),
+    ]),
+  )
+  .max(256);
+const retainedVaultSources = z.object({
+  source_project_ids: z.array(z.string().min(1).max(128)).max(256),
+  source_restrictions: retainedVaultRestrictions,
+});
 
 export function unavailableKnowledgeReference(): MaisterError {
   return new MaisterError(
@@ -175,6 +194,54 @@ async function authorizeAssignmentInputRestriction(
   );
 }
 
+async function authorizeVaultRevisionRestriction(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  restriction: VaultRevisionRestriction,
+  state: KnowledgeAccessWalk,
+): Promise<KnowledgeAccessWalk> {
+  const key = `agent_vault_revision_v1:${JSON.stringify(restriction)}`;
+
+  if (state.visited.includes(key)) return state;
+  const next = enterRestriction(state, key);
+  const identity = await resolveKnowledgePrincipal(
+    tx,
+    principal,
+    "knowledge:read",
+  );
+  const { rows } = await tx.execute(
+    vaultRevisionReferenceQuery(
+      identity,
+      sql`${JSON.stringify(restriction)}::jsonb`,
+    ),
+  );
+  const source = retainedVaultSources.safeParse(rows[0]);
+
+  if (!source.success) throw unavailableKnowledgeReference();
+  const projectSources = source.data.source_project_ids.map((projectId) => ({
+    kind: "project_context" as const,
+    projectId,
+  }));
+
+  const withProjects = await authorizeSourceRestrictions(
+    tx,
+    principal,
+    projectSources,
+    next,
+  );
+
+  return authorizeSourceRestrictions(
+    tx,
+    principal,
+    source.data.source_restrictions.map((ref) =>
+      ref.kind === "legacy_project_private"
+        ? { kind: "project_context", projectId: ref.projectId }
+        : ref,
+    ),
+    withProjects,
+  );
+}
+
 export async function authorizeSourceRestrictions(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -205,6 +272,15 @@ export async function authorizeSourceRestrictions(
     }
     if (restriction.kind === "assignment_input") {
       current = await authorizeAssignmentInputRestriction(
+        tx,
+        principal,
+        restriction,
+        current,
+      );
+      continue;
+    }
+    if (restriction.kind === "agent_vault_revision_v1") {
+      current = await authorizeVaultRevisionRestriction(
         tx,
         principal,
         restriction,
@@ -328,6 +404,7 @@ export function restrictionsForKnowledgeAccess(
     if (kind === "stand_target") return { kind, companyId: id };
     if (
       kind === "agent_memory" ||
+      kind === "agent_vault_revision_v1" ||
       kind === "project_context" ||
       kind === "assignment_input"
     ) {

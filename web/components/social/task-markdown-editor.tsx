@@ -27,6 +27,35 @@ export type TaskMarkdownEditorLabels = {
   toolbar: TaskMarkdownToolbarLabels;
 };
 
+export function markdownEditorLabels(
+  tBoard: (key: string) => string,
+  textarea = tBoard("editDescriptionLabel"),
+): TaskMarkdownEditorLabels {
+  return {
+    visual: tBoard("markdownVisual"),
+    source: tBoard("markdownSource"),
+    loading: tBoard("markdownLoading"),
+    empty: tBoard("markdownEmpty"),
+    textarea,
+    toolbar: {
+      undo: tBoard("markdownToolbar.undo"),
+      redo: tBoard("markdownToolbar.redo"),
+      heading1: tBoard("markdownToolbar.heading1"),
+      heading2: tBoard("markdownToolbar.heading2"),
+      quote: tBoard("markdownToolbar.quote"),
+      bold: tBoard("markdownToolbar.bold"),
+      italic: tBoard("markdownToolbar.italic"),
+      inlineCode: tBoard("markdownToolbar.inlineCode"),
+      codeBlock: tBoard("markdownToolbar.codeBlock"),
+      bulletList: tBoard("markdownToolbar.bulletList"),
+      numberedList: tBoard("markdownToolbar.numberedList"),
+      link: tBoard("markdownToolbar.link"),
+      linkPrompt: tBoard("markdownToolbar.linkPrompt"),
+      divider: tBoard("markdownToolbar.divider"),
+    },
+  };
+}
+
 export type { TaskMarkdownToolbarLabels };
 
 type HtmlListContext = {
@@ -36,6 +65,7 @@ type HtmlListContext = {
 type TaskMarkdownEditorProps = {
   value: string;
   labels: TaskMarkdownEditorLabels;
+  initialMode?: TaskMarkdownEditorMode;
   disabled?: boolean;
   autoFocusOnMount?: boolean;
   className?: string;
@@ -266,6 +296,7 @@ function restoreCaret(
 export function TaskMarkdownEditor({
   value,
   labels,
+  initialMode = "visual",
   disabled = false,
   autoFocusOnMount = false,
   className,
@@ -275,7 +306,7 @@ export function TaskMarkdownEditor({
   onSubmitShortcut,
   onCancelShortcut,
 }: TaskMarkdownEditorProps): ReactElement {
-  const [mode, setMode] = useState<TaskMarkdownEditorMode>("visual");
+  const [mode, setMode] = useState<TaskMarkdownEditorMode>(initialMode);
   const [richReady, setRichReady] = useState(false);
   const [richEditor, setRichEditor] = useState<Editor | null>(null);
   const [, refreshToolbar] = useReducer((revision: number) => revision + 1, 0);

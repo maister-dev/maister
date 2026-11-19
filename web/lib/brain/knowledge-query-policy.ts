@@ -9,6 +9,7 @@ import { sql } from "drizzle-orm";
 import {
   projectContextReadPolicy,
   agentMemoryReadPolicy,
+  vaultRevisionReferenceQuery,
 } from "./knowledge-context-policy";
 import {
   assignmentInputReadPolicy,
@@ -120,14 +121,17 @@ function sourceIdentity(reference: SQL): SQL {
     WHEN 'stand_target' THEN ${reference}->>'companyId'
     WHEN 'project' THEN ${reference}->>'projectId'
     WHEN 'project_context' THEN ${reference}->>'projectId'
+    WHEN 'legacy_project_private' THEN ${reference}->>'projectId'
     WHEN 'agent_memory' THEN ${reference}::text
+    WHEN 'agent_vault_revision_v1' THEN ${reference}::text
     WHEN 'assignment_input' THEN ${reference}::text
     WHEN 'record' THEN ${reference}->>'recordId' END`;
 }
 
 /** Both record revisions and exact assignment inputs contribute immutable source edges. */
-function sourceDependencyJoins(): SQL {
+function sourceDependencyJoins(identity: KnowledgePrincipalIdentity): SQL {
   const assignment = sql`CASE WHEN d.kind='assignment_input' THEN d.identity::jsonb ELSE '{}'::jsonb END`;
+  const vaultRevision = sql`CASE WHEN d.kind='agent_vault_revision_v1' THEN d.identity::jsonb ELSE '{}'::jsonb END`;
 
   return sql`CROSS JOIN LATERAL (
     SELECT record_child.kind,record_child.identity,record_child.revision
@@ -149,6 +153,15 @@ function sourceDependencyJoins(): SQL {
     WHERE d.kind='assignment_input' AND retained_input.assignment_id=(${assignment})->>'assignmentId'
       AND retained_input.revision::text=(${assignment})->>'inputRevision'
       AND retained_input.digest=(${assignment})->>'inputSha256'
+    UNION ALL
+    SELECT vault_child.kind, vault_child.identity, NULL::integer
+    FROM (${vaultRevisionReferenceQuery(identity, vaultRevision)}) source
+    CROSS JOIN LATERAL (
+      SELECT 'project_context' AS kind, project_id AS identity FROM unnest(source.source_project_ids) project_id
+      UNION ALL
+      SELECT ref->>'kind', ${sourceIdentity(sql`ref`)}
+      FROM native_knowledge_source_restrictions(source.source_restrictions) ref
+    ) vault_child
   ) child`;
 }
 
@@ -157,8 +170,10 @@ function sourceDependencyPolicy(identity: KnowledgePrincipalIdentity): SQL {
     WHEN 'company' THEN ${readableOwner(identity, sql`NULL::text`, sql`d.identity`)}
     WHEN 'project' THEN ${readableOwner(identity, sql`d.identity`, sql`NULL::text`)}
     WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
+    WHEN 'legacy_project_private' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
     WHEN 'stand_target' THEN ${standEvidenceReadPolicy(identity, sql`d.identity`)}
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`(d.identity::jsonb)->>'projectId'`, sql`(d.identity::jsonb)->>'agentId'`)}
+    WHEN 'agent_vault_revision_v1' THEN EXISTS (${vaultRevisionReferenceQuery(identity, sql`d.identity::jsonb`)})
     WHEN 'assignment_input' THEN ${
       identity.kind === "user"
         ? sql`((d.identity::jsonb)->>'assignmentId',(d.identity::jsonb)->>'inputRevision',(d.identity::jsonb)->>'inputSha256') IN (SELECT assignment_id,revision::text,digest FROM knowledge_authorized_assignment_dependencies)`
@@ -214,7 +229,7 @@ export function knowledgeSourceReadPolicy(
   return sql`(WITH RECURSIVE knowledge_source_dependencies(kind,identity,revision) AS (
     SELECT ${reference}->>'kind',${sourceIdentity(reference)},NULL::integer
     UNION
-    SELECT child.kind,child.identity,child.revision FROM knowledge_source_dependencies d ${sourceDependencyJoins()}
+    SELECT child.kind,child.identity,child.revision FROM knowledge_source_dependencies d ${sourceDependencyJoins(identity)}
   ), ${authorizedRecordDependencies(identity, sql`knowledge_source_dependencies`)}, ${authorizedAssignmentDependencies(identity, sql`knowledge_source_dependencies`)}
   SELECT NOT EXISTS (SELECT 1 FROM knowledge_source_dependencies d WHERE NOT (${sourceDependencyPolicy(identity)})))`;
 }
@@ -231,7 +246,7 @@ export function knowledgeRevisionReadPolicyCte(
     (SELECT id,selected_revision,'record'::text,id,current_revision FROM knowledge_candidates
      UNION SELECT id,selected_revision,'record'::text,id,selected_revision FROM knowledge_candidates)
     UNION
-    SELECT d.root_id,d.root_revision,child.kind,child.identity,child.revision FROM knowledge_access_dependencies d ${sourceDependencyJoins()}
+    SELECT d.root_id,d.root_revision,child.kind,child.identity,child.revision FROM knowledge_access_dependencies d ${sourceDependencyJoins(identity)}
   ), ${authorizedRecordDependencies(identity, sql`knowledge_access_dependencies`)}, ${authorizedAssignmentDependencies(identity, sql`knowledge_access_dependencies`)}, knowledge_readable_records AS (
     SELECT i.* FROM knowledge_candidates i WHERE NOT EXISTS (
       SELECT 1 FROM knowledge_access_dependencies d WHERE d.root_id=i.id AND d.root_revision=i.selected_revision AND NOT (${sourceDependencyPolicy(identity)})

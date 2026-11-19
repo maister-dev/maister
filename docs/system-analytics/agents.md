@@ -902,7 +902,7 @@ single-active-run guards.
   `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md),
   [`agent-mentions.md`](agent-mentions.md) (`trigger_type='mention'` bindings
   and the directed `@<agentId>` summon branch, ADR-151).
-- **Agent memory:** [`agent-memory.md`](agent-memory.md) (ADR-152, Implemented).
+- **Agent memory:** [`agent-memory.md`](agent-memory.md) describes the activated project vault and the legacy cutover window.
 - **Cross-project + sibling context (Implemented, ADR-155/156/157):**
   [`identity-access.md`](identity-access.md) (the `CROSS_PROJECT_AGENT_SCOPES`
   subset, the `tasks:create` grant, token authority at the cross-project seam),

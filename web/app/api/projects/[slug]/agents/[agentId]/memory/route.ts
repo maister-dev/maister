@@ -5,13 +5,20 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
+import {
+  mutateCompatibleVaultIndex,
+  readCompatibleVaultIndex,
+} from "@/lib/agent-memory-vault/index-compatibility";
+import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
+import { privateJson } from "@/lib/api/private-json";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import {
   assertAgentMemoryWithinCap,
   clearAgentMemoryCas,
   readAgentMemoryRaw,
   writeAgentMemoryCas,
-  type AgentMemoryCasDb,
   type AgentMemoryState,
 } from "@/lib/agents/memory-store";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
@@ -51,14 +58,14 @@ const deleteBodySchema = z
   .object({ ifHash: z.string().min(1).nullable() })
   .strict();
 
-function serialize(state: AgentMemoryState) {
+function serialize(state: AgentMemoryState, maxChars: number) {
   return {
     content: state.content,
     hash: state.hash,
     sizeChars: state.sizeChars,
     // The drawer renders a live `sizeChars / max` indicator, so the resolved cap
     // travels with the state rather than being duplicated client-side.
-    maxChars: agentMemoryMaxChars(),
+    maxChars,
     updatedAt: state.updatedAt ? state.updatedAt.toISOString() : null,
   };
 }
@@ -124,7 +131,7 @@ export async function GET(
   const { slug, agentId: rawAgentId } = await params;
 
   try {
-    await requireActiveSession();
+    const actor = await requireActiveSession();
     const agentId = decodeRouteParam(rawAgentId, "agentId");
     const lookup = await resolveAttachment(slug, agentId);
 
@@ -136,9 +143,28 @@ export async function GET(
     // ADR-053 boundary that keeps git-tracked file browsing above `readBoard`.
     await requireProjectAction(lookup.projectId, "readRepoFiles");
 
-    const state = await readAgentMemoryRaw(slug, agentId);
+    const response = await getDb().transaction(async (tx) => {
+      if ((await lockVaultCutover(tx)) === null)
+        return serialize(
+          await readAgentMemoryRaw(slug, agentId),
+          agentMemoryMaxChars(),
+        );
 
-    return NextResponse.json(serialize(state), { status: 200 });
+      return serialize(
+        await readCompatibleVaultIndex(
+          tx,
+          prepareHumanProjectVault({
+            userId: actor.id,
+            slug,
+            agentId,
+            action: "readRepoFiles",
+          }),
+        ),
+        agentMemoryVaultLimits().indexChars,
+      );
+    });
+
+    return privateJson(response);
   } catch (err) {
     return agentsErrorResponse(err);
   }
@@ -178,27 +204,44 @@ export async function PUT(
       throw new MaisterError("CONFIG", `invalid body: ${parsed.error.message}`);
     }
 
-    // Checked BEFORE the CAS so an over-cap body answers 422 CONFIG rather than
-    // a misleading 409 when the hash also happens to be stale.
-    assertAgentMemoryWithinCap(parsed.data.content);
+    const { result, cap } = await getDb().transaction(async (tx) => {
+      if ((await lockVaultCutover(tx)) !== null)
+        return {
+          result: await mutateCompatibleVaultIndex(
+            tx,
+            prepareHumanProjectVault({
+              userId: actor.id,
+              slug,
+              agentId,
+              action: "editSettings",
+            }),
+            parsed.data,
+          ),
+          cap: agentMemoryVaultLimits().indexChars,
+        };
+      assertAgentMemoryWithinCap(parsed.data.content);
 
-    const result = await writeAgentMemoryCas(
-      getDb() as unknown as AgentMemoryCasDb,
-      slug,
-      agentId,
-      parsed.data.content,
-      parsed.data.ifHash,
-    );
+      return {
+        result: await writeAgentMemoryCas(
+          tx,
+          slug,
+          agentId,
+          parsed.data.content,
+          parsed.data.ifHash,
+        ),
+        cap: agentMemoryMaxChars(),
+      };
+    });
 
     if (!result.ok) {
-      return NextResponse.json(
+      return privateJson(
         {
           code: "CONFLICT",
           message:
             "agent memory changed since it was loaded — merge the returned content and save again",
-          current: serialize(result.current),
+          current: serialize(result.current, cap),
         },
-        { status: 409 },
+        409,
       );
     }
 
@@ -213,7 +256,7 @@ export async function PUT(
     );
 
     // This write's own post-write state, captured under the CAS lock.
-    return NextResponse.json(serialize(result.state), { status: 200 });
+    return privateJson(serialize(result.state, cap));
   } catch (err) {
     return agentsErrorResponse(err);
   }
@@ -256,22 +299,42 @@ export async function DELETE(
     // ADR-152 D27: compare-and-delete, same lock and same bar as the write CAS.
     // A blind unlink would destroy a concurrent agent write with a 204 and no
     // conflict signal — the exact clobber D18 refuses to let a blind Save do.
-    const result = await clearAgentMemoryCas(
-      getDb() as unknown as AgentMemoryCasDb,
-      slug,
-      agentId,
-      parsed.data.ifHash,
-    );
+    const { result, cap } = await getDb().transaction(async (tx) => {
+      if ((await lockVaultCutover(tx)) !== null)
+        return {
+          result: await mutateCompatibleVaultIndex(
+            tx,
+            prepareHumanProjectVault({
+              userId: actor.id,
+              slug,
+              agentId,
+              action: "editSettings",
+            }),
+            { content: null, ifHash: parsed.data.ifHash },
+          ),
+          cap: agentMemoryVaultLimits().indexChars,
+        };
+
+      return {
+        result: await clearAgentMemoryCas(
+          tx,
+          slug,
+          agentId,
+          parsed.data.ifHash,
+        ),
+        cap: agentMemoryMaxChars(),
+      };
+    });
 
     if (!result.ok) {
-      return NextResponse.json(
+      return privateJson(
         {
           code: "CONFLICT",
           message:
             "agent memory changed since it was loaded — review the returned content before clearing again",
-          current: serialize(result.current),
+          current: serialize(result.current, cap),
         },
-        { status: 409 },
+        409,
       );
     }
 

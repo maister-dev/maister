@@ -18,6 +18,7 @@ import { MaisterError } from "@/lib/errors";
 export type OwnedExtCtx = Readonly<{ actor: TokenActor }>;
 export type OwnedExtOptions = Readonly<{
   scopeLabel: string;
+  resolveScopeLabel?: (context: OwnedExtCtx) => Promise<string>;
   endpoint: string;
   method: string;
 }>;
@@ -42,6 +43,7 @@ export async function handleOwnedExt(
     });
   const actor = authenticated;
   let response: NextResponse;
+  let scopeLabel = options.scopeLabel;
 
   try {
     if (actor.tokenKind === "librarian")
@@ -50,10 +52,12 @@ export async function handleOwnedExt(
         "This endpoint does not admit a librarian token",
         { details: { reason: "librarian_not_admitted" } },
       );
-    if (!tokenHasScope(actor.scopes, options.scopeLabel))
+    if (options.resolveScopeLabel)
+      scopeLabel = await options.resolveScopeLabel({ actor });
+    if (!tokenHasScope(actor.scopes, scopeLabel))
       throw new MaisterError(
         "UNAUTHORIZED",
-        `This endpoint requires '${options.scopeLabel}'`,
+        `This endpoint requires '${scopeLabel}'`,
       );
     response = await work({ actor });
   } catch (error) {
@@ -63,7 +67,7 @@ export async function handleOwnedExt(
     {
       ...tokenAuditIdentity(actor),
       projectId: actor.projectId,
-      scopeUsed: options.scopeLabel,
+      scopeUsed: scopeLabel,
       endpoint: options.endpoint,
       method: options.method,
       result: response.status < 400 ? "ok" : "error",

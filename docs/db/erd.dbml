@@ -128,6 +128,189 @@ table agent_incident_reader_states {
   }
 }
 
+table agent_memory_cutover {
+  singleton boolean [pk, not null, default: true]
+  generation bigint [not null]
+  activated_at "timestamp with time zone" [not null, default: `now()`]
+}
+
+table agent_memory_import_payloads {
+  receipt_id text [pk, not null]
+  content text [not null]
+}
+
+table agent_memory_import_receipts {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  generation bigint [not null]
+  source_kind text [not null]
+  source_identity text [not null]
+  source_digest text
+  source_bytes integer
+  state text [not null]
+  vault_id text
+  note_id text
+  revision_id text
+  run_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (generation, source_kind, source_identity) [name: 'agent_memory_import_source_uq', unique]
+
+
+  }
+}
+
+table agent_memory_injections {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  vault_id text [not null]
+  run_id text [not null]
+  node_attempt_id text
+  session_key text [not null]
+  protocol_version text [not null]
+  protocol_sha256 text [not null]
+  tree jsonb [not null]
+  index_note_id text
+  index_revision_id text
+  descriptor_digest text [not null]
+  rendered_chars integer [not null]
+  application_state text [not null, default: 'staged']
+  application_receipt_id text
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, session_key) [name: 'agent_memory_injection_session_uq', unique]
+
+
+
+  }
+}
+
+table agent_memory_notes {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  vault_id text [not null]
+  path text [not null]
+  head_revision_id text [not null]
+  deleted_at "timestamp with time zone"
+
+  indexes {
+    (vault_id, id) [name: 'agent_memory_note_vault_id_uq', unique]
+    (vault_id, path) [name: 'agent_memory_note_live_path_uq', unique]
+
+  }
+}
+
+table agent_memory_operation_revisions {
+  vault_id text [not null]
+  operation_id text [not null]
+  role text [not null]
+  ordinal integer [not null]
+  note_id text [not null]
+  revision_id text [not null]
+
+  indexes {
+    (vault_id, operation_id, role, ordinal) [pk]
+
+
+
+  }
+}
+
+table agent_memory_operations {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  vault_id text [not null]
+  principal_key text [not null]
+  request_key text [not null]
+  command_kind text [not null]
+  command_digest text [not null]
+  outcome text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (vault_id, id) [name: 'agent_memory_operation_vault_id_uq', unique]
+    (vault_id, principal_key, request_key) [name: 'agent_memory_operation_request_uq', unique]
+
+  }
+}
+
+table agent_memory_redactions {
+  vault_id text [not null]
+  note_id text [not null]
+  revision_id text [not null]
+  id text [not null, default: `gen_random_uuid()::text`]
+  administrator_id text [not null]
+  reason text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (vault_id, note_id, revision_id) [pk]
+    id [name: 'agent_memory_redaction_id_uq', unique]
+
+
+  }
+}
+
+table agent_memory_revision_payloads {
+  vault_id text [not null]
+  note_id text [not null]
+  revision_id text [not null]
+  content text [not null]
+
+  indexes {
+    (vault_id, note_id, revision_id) [pk]
+
+
+  }
+}
+
+table agent_memory_revisions {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  vault_id text [not null]
+  note_id text [not null]
+  parent_revision_id text
+  operation_id text
+  path text [not null]
+  kind text [not null]
+  content_sha256 text
+  size_chars integer [not null]
+  size_bytes integer [not null]
+  author jsonb [not null]
+  source_restrictions jsonb [not null, default: `'[]'::jsonb`]
+  source_project_ids text[] [not null, default: `'{}'::text[]`]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (vault_id, note_id, id) [name: 'agent_memory_revision_owner_uq', unique]
+
+
+
+    note_id [name: 'agent_memory_revision_first_uq', unique]
+    parent_revision_id [name: 'agent_memory_revision_child_uq', unique]
+    (vault_id, note_id, created_at, id) [name: 'agent_memory_revision_history_idx']
+
+
+  }
+}
+
+table agent_memory_vaults {
+  id text [pk, not null, default: `gen_random_uuid()::text`]
+  agent_id text [not null]
+  project_id text
+  company_id text
+  generation bigint [not null, default: `0`]
+  note_count integer [not null, default: 0]
+  content_chars integer [not null, default: 0]
+  content_bytes integer [not null, default: 0]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+
+    (project_id, agent_id) [name: 'agent_memory_vault_project_uq', unique]
+    (company_id, agent_id) [name: 'agent_memory_vault_company_uq', unique]
+  }
+}
+
 table agent_preparation_operations {
   id text [pk, not null]
   run_id text [not null]
@@ -2918,6 +3101,7 @@ table runs {
   agent_config jsonb
   cost_reconciled_at "timestamp with time zone"
   agent_memory_hash text
+  agent_memory_hash_format text
   agent_chain_depth integer [not null, default: 0]
   context_mounts jsonb
   result_contract jsonb
@@ -4606,6 +4790,34 @@ ref agent_incident_occurrences_run_id_runs_id_fk: agent_incident_occurrences.run
 ref agent_incident_reader_states_user_id_users_id_fk: agent_incident_reader_states.user_id > users.id [delete: cascade, update: no action]
 
 ref agent_incident_reader_states_episode_id_agent_incident_episodes_id_fk: agent_incident_reader_states.episode_id > agent_incident_episodes.id [delete: cascade, update: no action]
+
+ref agent_memory_import_payloads_receipt_id_agent_memory_import_receipts_id_fk: agent_memory_import_payloads.receipt_id > agent_memory_import_receipts.id [delete: restrict, update: no action]
+
+ref agent_memory_import_revision_fk: agent_memory_import_receipts.(vault_id, note_id, revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_injections_vault_id_agent_memory_vaults_id_fk: agent_memory_injections.vault_id > agent_memory_vaults.id [delete: restrict, update: no action]
+
+ref agent_memory_injection_index_fk: agent_memory_injections.(vault_id, index_note_id, index_revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_notes_vault_id_agent_memory_vaults_id_fk: agent_memory_notes.vault_id > agent_memory_vaults.id [delete: restrict, update: no action]
+
+ref agent_memory_operation_ref_operation_fk: agent_memory_operation_revisions.(vault_id, operation_id) > agent_memory_operations.(vault_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_operation_ref_revision_fk: agent_memory_operation_revisions.(vault_id, note_id, revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_operations_vault_id_agent_memory_vaults_id_fk: agent_memory_operations.vault_id > agent_memory_vaults.id [delete: restrict, update: no action]
+
+ref agent_memory_redaction_revision_fk: agent_memory_redactions.(vault_id, note_id, revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_payload_revision_fk: agent_memory_revision_payloads.(vault_id, note_id, revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_revision_note_fk: agent_memory_revisions.(vault_id, note_id) > agent_memory_notes.(vault_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_revision_parent_fk: agent_memory_revisions.(vault_id, note_id, parent_revision_id) > agent_memory_revisions.(vault_id, note_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_revision_operation_fk: agent_memory_revisions.(vault_id, operation_id) > agent_memory_operations.(vault_id, id) [delete: restrict, update: no action]
+
+ref agent_memory_vaults_company_id_companies_id_fk: agent_memory_vaults.company_id > companies.id [delete: restrict, update: no action]
 
 ref agent_preparation_operations_run_id_runs_id_fk: agent_preparation_operations.run_id > runs.id [delete: cascade, update: no action]
 

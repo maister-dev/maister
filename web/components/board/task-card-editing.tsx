@@ -48,8 +48,8 @@ import { createPortal } from "react-dom";
 import { MarkdownBody } from "@/components/social/markdown-body";
 import { RelationsEditor } from "@/components/social/relations-editor";
 import {
+  markdownEditorLabels,
   TaskMarkdownEditor,
-  type TaskMarkdownEditorLabels,
 } from "@/components/social/task-markdown-editor";
 import {
   blindShipLockedOptions,
@@ -259,32 +259,6 @@ function flowOptionLabel(
   if (flow.enabled) return flow.name;
 
   return `${flow.name} · ${flowDisabledReasonLabel(flow, tBoard)}`;
-}
-
-function markdownEditorLabels(tBoard: TranslationFn): TaskMarkdownEditorLabels {
-  return {
-    visual: tBoard("markdownVisual"),
-    source: tBoard("markdownSource"),
-    loading: tBoard("markdownLoading"),
-    empty: tBoard("markdownEmpty"),
-    textarea: tBoard("editDescriptionLabel"),
-    toolbar: {
-      undo: tBoard("markdownToolbar.undo"),
-      redo: tBoard("markdownToolbar.redo"),
-      heading1: tBoard("markdownToolbar.heading1"),
-      heading2: tBoard("markdownToolbar.heading2"),
-      quote: tBoard("markdownToolbar.quote"),
-      bold: tBoard("markdownToolbar.bold"),
-      italic: tBoard("markdownToolbar.italic"),
-      inlineCode: tBoard("markdownToolbar.inlineCode"),
-      codeBlock: tBoard("markdownToolbar.codeBlock"),
-      bulletList: tBoard("markdownToolbar.bulletList"),
-      numberedList: tBoard("markdownToolbar.numberedList"),
-      link: tBoard("markdownToolbar.link"),
-      linkPrompt: tBoard("markdownToolbar.linkPrompt"),
-      divider: tBoard("markdownToolbar.divider"),
-    },
-  };
 }
 
 function expandFlowOptions(

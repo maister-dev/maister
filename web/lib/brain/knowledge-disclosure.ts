@@ -205,6 +205,11 @@ export async function recordKnowledgeDisclosure(
     );
   const capture: KnowledgeAccessCapture = {
     ...consumer.capture,
+    schemaVersion: combined.some(
+      ({ kind }) => kind === "agent_vault_revision_v1",
+    )
+      ? 2
+      : consumer.capture.schemaVersion,
     generation: consumer.capture.generation + 1,
     restrictions: combined,
   };

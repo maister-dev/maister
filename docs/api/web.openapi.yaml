@@ -22674,9 +22674,9 @@ paths:
     get:
       operationId: agentVaultProjectRead
       summary: Read a note or list a directory
-      description: Designed (P1). Requires readRepoFiles. Target identity comes from current credentials
+      description: Requires readRepoFiles. Target identity comes from current credentials
         and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -22748,9 +22748,9 @@ paths:
     get:
       operationId: agentVaultProjectHistory
       summary: List history by note identity
-      description: Designed (P1). Requires readRepoFiles. Target identity comes from current credentials
+      description: Requires readRepoFiles. Target identity comes from current credentials
         and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -22819,9 +22819,9 @@ paths:
     get:
       operationId: agentVaultProjectRevision
       summary: Read the exact authorized revision
-      description: Designed (P1). Requires readRepoFiles. Target identity comes from current credentials
+      description: Requires readRepoFiles. Target identity comes from current credentials
         and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -23104,9 +23104,9 @@ paths:
     post:
       operationId: agentVaultProjectCommand
       summary: Apply a human vault command
-      description: Designed (P1). Requires editSettings and current source access. Target identity comes
+      description: Requires editSettings and current source access. Target identity comes
         from current credentials and the resolved route resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -24582,6 +24582,8 @@ components:
               - path
               - kind
               - noteId
+              - revisionId
+              - hash
             properties:
               path:
                 type: string
@@ -24599,6 +24601,15 @@ components:
                 type: string
                 minLength: 1
                 maxLength: 192
+                nullable: true
+              revisionId:
+                type: string
+                minLength: 1
+                maxLength: 192
+                nullable: true
+              hash:
+                type: string
+                pattern: ^[0-9a-f]{64}$
                 nullable: true
           minItems: 0
           maxItems: 100
@@ -25208,6 +25219,15 @@ components:
           type: string
           enum:
             - view
+        view_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: integer
+            minimum: -1
+            maximum: 262145
+          description: Inclusive one-based start and end lines for a note. Use -1 as the end to include the rest of the note.
         path:
           type: string
           minLength: 1
@@ -25574,6 +25594,7 @@ components:
           maxLength: 192
         ifHash:
           type: string
+          nullable: true
           minLength: 1
           maxLength: 64
           pattern: ^[0-9a-f]{64}$

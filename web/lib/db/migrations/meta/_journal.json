@@ -2374,6 +2374,27 @@
       "when": 1794838876078,
       "tag": "0342_domain_event_run_pr_merged",
       "breakpoints": true
+    },
+    {
+      "idx": 343,
+      "version": "7",
+      "when": 1795095570224,
+      "tag": "0343_agent_memory_vault",
+      "breakpoints": true
+    },
+    {
+      "idx": 344,
+      "version": "7",
+      "when": 1795095582689,
+      "tag": "0344_agent_memory_history_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 345,
+      "version": "7",
+      "when": 1795096555996,
+      "tag": "0345_agent_memory_capture_v2",
+      "breakpoints": true
     }
   ]
 }

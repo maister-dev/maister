@@ -466,6 +466,12 @@ export async function issueNativeNodeRunToken(
   return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
 }
 
+export async function issueProjectVaultNodeToken(
+  args: NodeRunTokenInput & Readonly<{ nodeAttemptId: string }>,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, ["agent_memory:read", "agent_memory:write"]);
+}
+
 /** Assign governed work decisions only to the appointed project's orchestrator node. */
 async function appointedProjectCoordinatorScope(
   tx: SqlTransaction,
@@ -504,6 +510,11 @@ async function issueNodeRunToken(
     };
 
     await lockMintingRun(tx, binding);
+    const attempt =
+      args.nodeAttemptId && !scopes.includes("runs:delegate")
+        ? eq(projectTokens.knowledge_node_attempt_id, args.nodeAttemptId)
+        : undefined;
+
     await tx
       .update(projectTokens)
       .set({
@@ -511,7 +522,9 @@ async function issueNodeRunToken(
         // Only an actual delegation credential can retain accepted child obligations.
         revocation_reason: sql`CASE WHEN ${projectTokens.scopes} ? 'runs:delegate' OR ${projectTokens.scopes} ? '*' THEN 'rotation' ELSE 'revoked' END`,
       })
-      .where(and(runFamily(binding), isNull(projectTokens.revoked_at)));
+      .where(
+        and(runFamily(binding), attempt, isNull(projectTokens.revoked_at)),
+      );
     // Legacy names can identify a private credential for retirement, never for a grant.
     await tx
       .update(projectTokens)
@@ -537,7 +550,7 @@ async function issueNodeRunToken(
         ...(scopes.includes("runs:delegate")
           ? await appointedProjectCoordinatorScope(tx, args)
           : []),
-        ...(args.nodeAttemptId
+        ...(args.nodeAttemptId && scopes.includes("assignments:read")
           ? await projectStandScopes(tx, args.runId, args.nodeAttemptId)
           : []),
       ],

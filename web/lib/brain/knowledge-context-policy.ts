@@ -46,3 +46,24 @@ export function agentMemoryReadPolicy(
 
   return sql`(${projectContextReadPolicy(identity, project)}) AND coalesce((${project},${agent}) IN (SELECT source_memory_link.project_id,source_memory_link.agent_id FROM agent_project_links source_memory_link WHERE (${source}) FOR SHARE),false)`;
 }
+
+/** Match the retained identity and live payload before authorizing a derived disclosure. */
+export function vaultRevisionReferenceQuery(
+  identity: KnowledgePrincipalIdentity,
+  reference: SQL,
+): SQL {
+  return sql`
+    SELECT revision.source_project_ids, revision.source_restrictions
+    FROM agent_memory_revisions revision
+    JOIN agent_memory_vaults vault ON vault.id=revision.vault_id
+    JOIN agent_memory_revision_payloads payload
+      ON (payload.vault_id,payload.note_id,payload.revision_id) =
+         (revision.vault_id,revision.note_id,revision.id)
+    WHERE revision.vault_id=${reference}->>'vaultId'
+      AND revision.note_id=${reference}->>'noteId'
+      AND revision.id=${reference}->>'revisionId'
+      AND revision.content_sha256=${reference}->>'contentSha256'
+      AND ${agentMemoryReadPolicy(identity, sql`vault.project_id`, sql`vault.agent_id`)}
+    FOR SHARE OF payload
+  `;
+}

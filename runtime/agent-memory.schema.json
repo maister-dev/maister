@@ -1,0 +1,445 @@
+{
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "view"
+          ]
+        },
+        "view_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 262145
+          }
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "file_text",
+        "ifRevisionId",
+        "ifHash",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "create"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "file_text": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "ifRevisionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 192
+        },
+        "ifHash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "old_str",
+        "new_str",
+        "ifRevisionId",
+        "ifHash",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "str_replace"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "old_str": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144
+        },
+        "new_str": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "ifRevisionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 192
+        },
+        "ifHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "insert_line",
+        "insert_text",
+        "ifRevisionId",
+        "ifHash",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "insert"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "insert_line": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262145
+        },
+        "insert_text": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "ifRevisionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 192
+        },
+        "ifHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "ifRevisionId",
+        "ifHash",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "delete"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "ifRevisionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 192
+        },
+        "ifHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "old_path",
+        "new_path",
+        "ifRevisionId",
+        "ifHash",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "rename"
+          ]
+        },
+        "old_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "new_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "ifRevisionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 192
+        },
+        "ifHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "ifGeneration",
+        "heads",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "delete"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "ifGeneration": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,18})$"
+        },
+        "heads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "ifRevisionId",
+              "ifHash"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^/memories(?:/[^/]+)*$"
+              },
+              "ifRevisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 192
+              },
+              "ifHash": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "old_path",
+        "new_path",
+        "ifGeneration",
+        "heads",
+        "requestKey"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": [
+            "rename"
+          ]
+        },
+        "old_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "new_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^/memories(?:/[^/]+)*$"
+        },
+        "ifGeneration": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,18})$"
+        },
+        "heads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "ifRevisionId",
+              "ifHash"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^/memories(?:/[^/]+)*$"
+              },
+              "ifRevisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 192
+              },
+              "ifHash": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "requestKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+        }
+      }
+    }
+  ]
+}

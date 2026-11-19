@@ -200,6 +200,7 @@ export async function recordNativeRunSourcesInTransaction(
   tx: SqlTransaction,
   runId: string,
   restrictions: readonly KnowledgeAccessRestriction[],
+  nodeAttemptId?: string,
 ): Promise<void> {
   const row = (
     await tx.execute(
@@ -222,7 +223,11 @@ export async function recordNativeRunSourcesInTransaction(
       "Native source consumption requires complete server-owned capture",
       { details: { reason: "knowledge_capture_profile_required" } },
     );
-  const principal = await resolveRunKnowledgePrincipal(tx, runId);
+  const principal = await resolveRunKnowledgePrincipal(
+    tx,
+    runId,
+    nodeAttemptId,
+  );
 
   await authorizeSourceRestrictions(tx, principal, [
     ...capture.data.restrictions,

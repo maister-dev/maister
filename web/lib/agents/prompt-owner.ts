@@ -49,6 +49,10 @@ import {
 } from "./permission-resume";
 
 import {
+  assertMemorySessionSources,
+  settleMemoryInjection,
+} from "@/lib/agent-memory-vault/injection";
+import {
   executionCommands,
   runMessages,
   runs,
@@ -387,6 +391,7 @@ export async function admitAgentTurnPrompt(
   )
     throw new PromptOwnerInvariantError("agent_message_admission_generation");
   await assertAgentResumeTurn(tx, turn, client.assignment);
+  await assertMemorySessionSources(tx, session.runId);
   if (
     turn.variant === "initial" &&
     (turn.id !== session.assignmentId || turn.ordinal !== 0)
@@ -918,6 +923,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
           if (!application.parked)
             throw new PromptOwnerDeferred("agent_park_pending");
           await acknowledgeAgentMessage(tx, ref, command.id);
+          await settleMemoryInjection(
+            tx,
+            ref.runId,
+            ref.assignmentId,
+            command.id,
+          );
 
           return "applied";
         },
@@ -961,6 +972,13 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         if (!application.finalized)
           throw new PromptOwnerDeferred("agent_finalization_pending");
         await acknowledgeAgentMessage(tx, ref, command.id);
+        if (outcome.state === "succeeded")
+          await settleMemoryInjection(
+            tx,
+            ref.runId,
+            ref.assignmentId,
+            command.id,
+          );
         log.info(
           {
             runId: ref.runId,

@@ -34,6 +34,7 @@
     "db:erd": "tsx --import ./scripts/_register-shim.mjs scripts/generate-erd-dbml.ts",
     "db:canonical-sql": "tsx --import ./scripts/_register-shim.mjs scripts/generate-canonical-sql.ts",
     "execution-data-plane:import-legacy": "tsx --import ./scripts/_register-shim.mjs scripts/import-legacy-execution-data-plane.ts",
+    "agent-memory:import": "tsx --import ./scripts/_register-shim.mjs scripts/import-agent-memory-vault.ts",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",
     "install-package": "tsx --import ./scripts/_register-shim.mjs scripts/install-package.ts",
     "run-flow": "tsx --import ./scripts/_register-shim.mjs scripts/run-flow.ts",

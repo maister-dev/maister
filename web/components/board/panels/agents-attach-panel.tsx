@@ -12,7 +12,6 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import { AgentRetryBatchControl } from "@/components/agents/agent-retry-batch-control";
-import { AgentMemoryDrawer } from "@/components/board/panels/agent-memory-drawer";
 import {
   AttachEditModal,
   sendJson,
@@ -222,7 +221,6 @@ export function AgentsAttachPanel({
   const [error, setError] = useState<string | null>(null);
   const [attachId, setAttachId] = useState(available[0]?.id ?? "");
   const [editing, setEditing] = useState<AttachedAgentRow | null>(null);
-  const [memoryFor, setMemoryFor] = useState<AttachedAgentRow | null>(null);
   const [attaching, setAttaching] = useState<AvailableAgentRow | null>(null);
   const [retryOffer, setRetryOffer] = useState<{
     agentId: string;
@@ -428,15 +426,20 @@ export function AgentsAttachPanel({
                       {/* Icon-only, per the UI affordance convention — the row's
                           action cluster is scanned by glyph. The accessible name
                           comes from aria-label. */}
-                      <button
+                      <Link
                         aria-label={t("memoryAction")}
                         className="flex h-8 items-center rounded-[8px] border border-line px-3 text-ink"
+                        href={
+                          "/projects/" +
+                          encodeURIComponent(slug) +
+                          "/agents/" +
+                          encodeURIComponent(row.agent.id) +
+                          "?tab=memory"
+                        }
                         title={t("memoryAction")}
-                        type="button"
-                        onClick={() => setMemoryFor(row)}
                       >
                         <DocumentTextIcon aria-hidden className="h-4 w-4" />
-                      </button>
+                      </Link>
                       <button
                         className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
                         disabled={pending !== null}
@@ -460,33 +463,6 @@ export function AgentsAttachPanel({
           </tbody>
         </table>
       </div>
-
-      {memoryFor ? (
-        <AgentMemoryDrawer
-          agentId={memoryFor.agent.id}
-          agentLabel={memoryFor.agent.id}
-          canEdit={canManage}
-          labels={{
-            title: t("memoryTitle"),
-            close: t("memoryClose"),
-            edit: t("memoryEdit"),
-            save: t("memorySave"),
-            cancel: t("memoryCancel"),
-            clear: t("memoryClear"),
-            clearConfirm: t("memoryClearConfirm"),
-            clearConfirmTitle: t("memoryClearConfirmTitle"),
-            clearError: t("memoryClearError"),
-            empty: t("memoryEmpty"),
-            // RAW: the drawer interpolates `{size}`/`{max}` itself.
-            size: t.raw("memorySize"),
-            overCap: t("memoryOverCap"),
-            conflict: t("memoryConflict"),
-            loadError: t("memoryLoadError"),
-          }}
-          slug={slug}
-          onClose={() => setMemoryFor(null)}
-        />
-      ) : null}
 
       {retryOffer ? (
         <div className="mt-4" data-testid="agent-retry-runner-offer">

@@ -231,6 +231,11 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
+import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
+import {
+  assertMemorySessionSources,
+  stageProjectAgentMemory,
+} from "@/lib/agent-memory-vault/injection";
 import {
   withAgentMaterializationLock,
   agentMaterializationWitnessPathsForRun,
@@ -3145,6 +3150,7 @@ export async function buildAgentPrompt(
   parsed: ParsedAgentDefinition,
   run: Record<string, any>,
   memory?: string | null,
+  vaultBlock?: string | null,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
   const scopeBlock = await projectScopeBlock(_db, run);
@@ -3164,7 +3170,8 @@ export async function buildAgentPrompt(
   if (configBlock) sections.push(configBlock);
   // ADR-152 D13: standing project knowledge belongs WITH standing config, and
   // the current ask comes after it.
-  if (memory) sections.push(memoryBlock(memory));
+  if (vaultBlock) sections.push(vaultBlock);
+  else if (memory) sections.push(memoryBlock(memory));
   if (taskBlock) sections.push(taskBlock);
   if (run.taskQualificationSnapshot?.role === "qualifier")
     sections.push(
@@ -4428,6 +4435,11 @@ async function driveAgentSession(
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
     await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    if (!agentTurn.commandId && !run.companyId)
+      await _db.transaction(async (tx: ExecutionDb) => {
+        if ((await lockVaultCutover(tx)) !== null)
+          await assertMemorySessionSources(tx, runId);
+      });
     if (agentTurn.commandId) {
       const [command] = await _db
         .select()
@@ -5274,32 +5286,64 @@ async function driveAgentSession(
         });
       }
 
-      // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
-      // override branch below (which discards `basePrompt` and would otherwise
-      // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
-      const memoryText = companyContext
+      const memory = companyContext
         ? null
-        : await applyAgentMemoryForLaunch(
-            _db,
-            run,
-            project.slug as string,
-            overridePrompt != null,
-          );
+        : await _db.transaction(async (tx: ExecutionDb) => {
+            if ((await lockVaultCutover(tx)) === null)
+              return {
+                legacy: await applyAgentMemoryForLaunch(
+                  tx,
+                  run,
+                  project.slug as string,
+                  overridePrompt != null,
+                ),
+                vault: null,
+              };
+            if (agentTurn) return { legacy: null, vault: null };
+            if (!assignmentId)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Agent memory requires an owned session",
+              );
+            const prepared = await stageProjectAgentMemory(
+              tx,
+              {
+                runId,
+                projectId: run.projectId as string,
+                agentId: run.agentId as string,
+                sessionKey: assignmentId,
+              },
+              Boolean(run.acpSessionId),
+            );
+
+            return {
+              legacy: null,
+              vault: prepared.mode === "vault" ? prepared.text : null,
+            };
+          });
       const basePrompt = companyContext
         ? buildCompanyAgentPrompt(companyContext)
-        : await buildAgentPrompt(_db, effective.parsed, run, memoryText);
+        : await buildAgentPrompt(
+            _db,
+            effective.parsed,
+            run,
+            memory?.legacy,
+            memory?.vault,
+          );
+      const selectedPrompt =
+        overridePrompt === undefined
+          ? draftPayload
+            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+            : basePrompt
+          : memory?.vault && !agentTurn
+            ? [memory.vault, overridePrompt].join("\n\n")
+            : overridePrompt;
       const completionPrompt = nativeFindingsCompletionPrompt(
         run.resultContract,
-        operationalCompletionPrompt(
-          run,
-          overridePrompt ??
-            (draftPayload
-              ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-              : basePrompt),
-        ),
+        operationalCompletionPrompt(run, selectedPrompt),
       );
 
       // RD7: the agent's capability_profile.mcps resolve through the existing

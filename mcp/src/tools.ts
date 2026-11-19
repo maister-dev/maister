@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
+import agentMemorySchema from "../../runtime/agent-memory.schema.json";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import {
@@ -39,6 +40,9 @@ const standOperationSelector: ToolSpec["inputSchema"] = {
   required: ["operationId"],
   properties: { operationId: { type: "string", minLength: 1, maxLength: 128 } },
 };
+const agentMemoryInput = z.fromJSONSchema(
+  agentMemorySchema as unknown as z.core.JSONSchema.JSONSchema,
+);
 
 // ADR-206: mirrors `TaskSourceInput` in the external OpenAPI.
 const TASK_SOURCE_PROPERTIES = {
@@ -549,9 +553,14 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "content", "kind"],
     },
   },
+  memory: {
+    description:
+      "Work in the current session's private /memories vault. View one note or a directory page, create a note, replace one literal occurrence, insert text, delete or rename a note or folder. Pass the observed revision and hash for changes and reuse a request key for retries.",
+    inputSchema: agentMemorySchema as ToolSpec["inputSchema"],
+  },
   agent_memory_write: {
     description:
-      "Replace THIS agent's memory file for its bound project (ADR-152), through a content-hash CAS. Pass the `ifHash` you were given; `null` is the first-writer form and succeeds only while the file is absent. A lost CAS returns 409 with the CURRENT content and hash so you can merge and retry rather than clobber. NOTE: unlike every other MAIster tool, this one takes NO `slug` — the project and the agent both come from your run-bound token. This is NOT the Project Brain: `memory_recall`/`memory_retain` remain a separate, project-owned store.",
+      "Deprecated for one release. Use the memory tool for new work. This compatibility command replaces /memories/index.md in the current session vault. Supply its current ifHash, or null for a first write. A conflict includes the authorized current index state.",
     inputSchema: {
       type: "object",
       // D24: `dispatchTool` silently drops args it does not destructure, and the
@@ -1428,6 +1437,14 @@ export async function dispatchTool(opts: {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
 
+  if (name === "memory" && !agentMemoryInput.safeParse(args).success)
+    return {
+      isError: true,
+      status: 422,
+      code: "CONFIG",
+      message: "Invalid agent memory command",
+    };
+
   if (isDelegationAdmissionTool(name)) {
     const parsed = z
       .fromJSONSchema(
@@ -1531,6 +1548,8 @@ export async function dispatchTool(opts: {
       name === "ask_human" ||
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
+      name === "memory" ||
+      name === "agent_memory_write" ||
       isKnowledgeTool(name) ||
       name.startsWith("stand_operation_")
     )
@@ -1997,6 +2016,12 @@ function resolveRouting(
         body,
       };
     }
+    case "memory":
+      return {
+        method: "POST",
+        path: "/api/v1/ext/agent/memory/commands",
+        body: args,
+      };
     case "agent_memory_write": {
       // No `slug`: the project and agent are derived server-side from the
       // run-bound token (ADR-152 D15).

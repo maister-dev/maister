@@ -44,7 +44,7 @@ describe("T-C9b — agent-memory keys are complete in both catalogs", () => {
     "memoryConflict",
     "memoryLoadError",
     "memoryToggle",
-    "memoryFlowBound",
+    "memorySharedSession",
   ];
 
   it.each(["en", "ru"] as const)(
@@ -77,7 +77,7 @@ describe("T-C9b — agent-memory keys are complete in both catalogs", () => {
     for (const key of [
       "memoryTitle",
       "memoryClearConfirm",
-      "memoryFlowBound",
+      "memorySharedSession",
     ]) {
       expect(ruNs[key]).not.toBe(enNs[key]);
     }

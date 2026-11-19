@@ -2,9 +2,12 @@
 
 ## Purpose
 
-The existing file behavior is Implemented. [ADR-210](../decisions/adr-210.md) defines the Designed PostgreSQL vault and its explicit cutover.
+The PostgreSQL project vault stores current Markdown notes and immutable
+revisions. The Memory tab and session-bound MCP command use it after
+activation. Existing installations use the file behavior below until their
+operator completes the explicit cutover. [ADR-210](../decisions/adr-210.md)
 
-**Agent memory** is a single small markdown file per `(agent, project)`
+**Legacy agent memory** is a single Markdown file per `(agent, project)`
 attachment that a platform agent may read at launch and rewrite during a run.
 It is the agent's own durable cross-run scratch note — "what I learned about
 this project last time" — and it exists so a summoned agent

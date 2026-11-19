@@ -36,7 +36,7 @@ type JudgeTokenScope = (typeof JUDGE_TOKEN_SCOPES)[number];
 
 type UserTokenScope = Exclude<
   TokenScope,
-  JudgeTokenScope | LibrarianOnlyTokenScope
+  JudgeTokenScope | LibrarianOnlyTokenScope | "agent_memory:read"
 >;
 
 // ADR-186: the librarian's personal surfaces admit only a librarian turn token,
@@ -44,6 +44,7 @@ type UserTokenScope = Exclude<
 const MACHINE_ONLY_TOKEN_SCOPES: readonly TokenScope[] = [
   ...JUDGE_TOKEN_SCOPES,
   ...LIBRARIAN_ONLY_TOKEN_SCOPES,
+  "agent_memory:read",
 ];
 
 export const USER_TOKEN_SCOPE_VALUES: readonly UserTokenScope[] =

@@ -57,6 +57,7 @@ describe("TOOL_SPECS registry", () => {
         "activity_feed",
         "activity_pulse",
         "agent_memory_write",
+        "memory",
         "ask_human",
         "assignment_get",
         "assignment_context_get",

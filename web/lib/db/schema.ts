@@ -1,3 +1,9 @@
+import type {
+  AgentMemoryAuthor,
+  AgentMemoryHashFormat,
+  AgentMemoryRestriction,
+  AgentMemoryTreeDescriptor,
+} from "@/lib/agent-memory-vault/types";
 import type { StandInspectionAppointment } from "@/lib/stand-operations/scheduled-inspection-types";
 import type {
   AssignmentWorkDefinition,
@@ -2619,6 +2625,9 @@ export const runs = pgTable(
     // Deliberately NOT folded into runner_snapshot, which resume/recover reads
     // and which must stay runner identity only.
     agentMemoryHash: text("agent_memory_hash"),
+    agentMemoryHashFormat: text(
+      "agent_memory_hash_format",
+    ).$type<AgentMemoryHashFormat>(),
     // ADR-156: how many agent→agent trigger hops this run is deep, snapshotted
     // at launch and never re-derived. A run launched from a domain event whose
     // actor_type='agent' inherits the producing run's depth + 1; every other
@@ -2706,7 +2715,7 @@ export const runs = pgTable(
       .where(sql`${t.sourceAgentId} IS NOT NULL`),
     knowledgeAccessCheck: check(
       "runs_knowledge_access_check",
-      sql`${t.knowledgeAccess} IS NULL OR (jsonb_typeof(${t.knowledgeAccess})='object' AND ${t.knowledgeAccess}->'schemaVersion'='1'::jsonb AND ${t.knowledgeAccess}->>'state' IN ('capturing','complete','unknown') AND jsonb_typeof(${t.knowledgeAccess}->'generation')='number' AND ${t.knowledgeAccess}->>'generation' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.knowledgeAccess}->'restrictions')='array') IS TRUE`,
+      sql`${t.knowledgeAccess} IS NULL OR (jsonb_typeof(${t.knowledgeAccess})='object' AND ${t.knowledgeAccess}->'schemaVersion' IN ('1'::jsonb,'2'::jsonb) AND ${t.knowledgeAccess}->>'state' IN ('capturing','complete','unknown') AND jsonb_typeof(${t.knowledgeAccess}->'generation')='number' AND ${t.knowledgeAccess}->>'generation' ~ '^[1-9][0-9]*$' AND jsonb_typeof(${t.knowledgeAccess}->'restrictions')='array' AND (${t.knowledgeAccess}->'schemaVersion'='2'::jsonb OR NOT (${t.knowledgeAccess}->'restrictions' @> '[{"kind":"agent_vault_revision_v1"}]'::jsonb))) IS TRUE`,
     ),
     agentActivitySnapshotCheck: check(
       "runs_agent_activity_snapshot_check",
@@ -12220,4 +12229,436 @@ export const companyFlowBindingRevisions = pgTable(
       t.requestKey,
     ),
   }),
+);
+
+export const agentMemoryVaults = pgTable(
+  "agent_memory_vaults",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    agentId: text("agent_id").notNull(),
+    projectId: text("project_id"),
+    companyId: text("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
+    generation: bigint("generation", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
+    noteCount: integer("note_count").notNull().default(0),
+    contentChars: integer("content_chars").notNull().default(0),
+    contentBytes: integer("content_bytes").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    owner: check(
+      "agent_memory_vault_owner_check",
+      sql`num_nonnulls(${t.projectId}, ${t.companyId}) = 1 AND ${t.agentId} ~ '^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$'`,
+    ),
+    totals: check(
+      "agent_memory_vault_totals_check",
+      sql`${t.generation} >= 0 AND ${t.noteCount} >= 0 AND ${t.contentChars} >= 0 AND ${t.contentBytes} >= 0`,
+    ),
+    project: uniqueIndex("agent_memory_vault_project_uq")
+      .on(t.projectId, t.agentId)
+      .where(sql`${t.projectId} IS NOT NULL`),
+    company: uniqueIndex("agent_memory_vault_company_uq")
+      .on(t.companyId, t.agentId)
+      .where(sql`${t.companyId} IS NOT NULL`),
+  }),
+);
+
+export const agentMemoryNotes = pgTable(
+  "agent_memory_notes",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => agentMemoryVaults.id, {
+        onDelete: "restrict",
+      }),
+    path: text("path").notNull(),
+    headRevisionId: text("head_revision_id").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => ({
+    inVault: unique("agent_memory_note_vault_id_uq").on(t.vaultId, t.id),
+    activePath: uniqueIndex("agent_memory_note_live_path_uq")
+      .on(t.vaultId, sql`${t.path} COLLATE "C"`)
+      .where(sql`${t.deletedAt} IS NULL`),
+    path: check(
+      "agent_memory_note_path_check",
+      sql`left(${t.path}, 10) = '/memories/' AND right(${t.path}, 3) = '.md' AND octet_length(${t.path}) <= 512`,
+    ),
+  }),
+);
+
+export const agentMemoryOperations = pgTable(
+  "agent_memory_operations",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => agentMemoryVaults.id, {
+        onDelete: "restrict",
+      }),
+    principalKey: text("principal_key").notNull(),
+    requestKey: text("request_key").notNull(),
+    commandKind: text("command_kind").notNull(),
+    commandDigest: text("command_digest").notNull(),
+    outcome: text("outcome", { enum: ["applied", "pending"] }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    inVault: unique("agent_memory_operation_vault_id_uq").on(t.vaultId, t.id),
+    request: unique("agent_memory_operation_request_uq").on(
+      t.vaultId,
+      t.principalKey,
+      t.requestKey,
+    ),
+    receipt: check(
+      "agent_memory_operation_receipt_check",
+      sql`${t.outcome} IN ('applied', 'pending')
+        AND ${t.commandDigest} ~ '^[0-9a-f]{64}$'
+        AND ${t.requestKey} ~ '^[A-Za-z0-9_.:-]{8,128}$'`,
+    ),
+  }),
+);
+
+export const agentMemoryRevisions = pgTable(
+  "agent_memory_revisions",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    vaultId: text("vault_id").notNull(),
+    noteId: text("note_id").notNull(),
+    parentRevisionId: text("parent_revision_id"),
+    operationId: text("operation_id"),
+    path: text("path").notNull(),
+    kind: text("kind", {
+      enum: ["created", "edited", "renamed", "deleted", "reverted", "redacted"],
+    }).notNull(),
+    contentSha256: text("content_sha256"),
+    sizeChars: integer("size_chars").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    author: jsonb("author").$type<AgentMemoryAuthor>().notNull(),
+    sourceRestrictions: jsonb("source_restrictions")
+      .$type<AgentMemoryRestriction[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    sourceProjectIds: text("source_project_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    exact: unique("agent_memory_revision_owner_uq").on(
+      t.vaultId,
+      t.noteId,
+      t.id,
+    ),
+    note: foreignKey({
+      name: "agent_memory_revision_note_fk",
+      columns: [t.vaultId, t.noteId],
+      foreignColumns: [agentMemoryNotes.vaultId, agentMemoryNotes.id],
+    }).onDelete("restrict"),
+    parent: foreignKey({
+      name: "agent_memory_revision_parent_fk",
+      columns: [t.vaultId, t.noteId, t.parentRevisionId],
+      foreignColumns: [t.vaultId, t.noteId, t.id],
+    }).onDelete("restrict"),
+    operation: foreignKey({
+      name: "agent_memory_revision_operation_fk",
+      columns: [t.vaultId, t.operationId],
+      foreignColumns: [agentMemoryOperations.vaultId, agentMemoryOperations.id],
+    }).onDelete("restrict"),
+    first: uniqueIndex("agent_memory_revision_first_uq")
+      .on(t.noteId)
+      .where(sql`${t.parentRevisionId} IS NULL`),
+    successor: uniqueIndex("agent_memory_revision_child_uq")
+      .on(t.parentRevisionId)
+      .where(sql`${t.parentRevisionId} IS NOT NULL`),
+    history: index("agent_memory_revision_history_idx").on(
+      t.vaultId,
+      t.noteId,
+      t.createdAt,
+      t.id,
+    ),
+    revision: check(
+      "agent_memory_revision_content_check",
+      sql`(${t.kind} = 'created') = (${t.parentRevisionId} IS NULL)
+        AND (${t.parentRevisionId} IS NULL OR ${t.id} <> ${t.parentRevisionId})
+        AND ${t.kind} IN ('created', 'edited', 'renamed', 'deleted', 'reverted', 'redacted')
+        AND CASE WHEN ${t.kind} IN ('deleted', 'redacted')
+          THEN ${t.contentSha256} IS NULL AND ${t.sizeChars} = 0 AND ${t.sizeBytes} = 0
+          ELSE (${t.contentSha256} ~ '^[0-9a-f]{64}$') IS TRUE
+            AND ${t.sizeChars} BETWEEN 0 AND 262144 AND ${t.sizeBytes} BETWEEN 0 AND 1048576
+          END`,
+    ),
+    provenance: check(
+      "agent_memory_revision_provenance_check",
+      sql`jsonb_typeof(${t.author}) = 'object'
+        AND (${t.author}->>'kind' IN ('human', 'librarian', 'agent_session', 'operator_import')) IS TRUE
+        AND jsonb_typeof(${t.sourceRestrictions}) = 'array'
+        AND octet_length(${t.sourceRestrictions}::text) <= 65536
+        AND cardinality(${t.sourceProjectIds}) <= 256`,
+    ),
+  }),
+);
+
+export const agentMemoryRevisionPayloads = pgTable(
+  "agent_memory_revision_payloads",
+  {
+    vaultId: text("vault_id").notNull(),
+    noteId: text("note_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    content: text("content").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.vaultId, t.noteId, t.revisionId] }),
+    revision: foreignKey({
+      name: "agent_memory_payload_revision_fk",
+      columns: [t.vaultId, t.noteId, t.revisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    bytes: check(
+      "agent_memory_payload_bytes_check",
+      sql`octet_length(${t.content}) <= 1048576`,
+    ),
+  }),
+);
+
+export const agentMemoryRedactions = pgTable(
+  "agent_memory_redactions",
+  {
+    vaultId: text("vault_id").notNull(),
+    noteId: text("note_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    id: text("id")
+      .notNull()
+      .default(sql`gen_random_uuid()::text`),
+    administratorId: text("administrator_id").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.vaultId, t.noteId, t.revisionId] }),
+    id: unique("agent_memory_redaction_id_uq").on(t.id),
+    revision: foreignKey({
+      name: "agent_memory_redaction_revision_fk",
+      columns: [t.vaultId, t.noteId, t.revisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    reason: check(
+      "agent_memory_redaction_reason_check",
+      sql`char_length(btrim(${t.reason})) BETWEEN 1 AND 1024`,
+    ),
+  }),
+);
+
+export const agentMemoryOperationRevisions = pgTable(
+  "agent_memory_operation_revisions",
+  {
+    vaultId: text("vault_id").notNull(),
+    operationId: text("operation_id").notNull(),
+    role: text("role", { enum: ["base", "result"] }).notNull(),
+    ordinal: integer("ordinal").notNull(),
+    noteId: text("note_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.vaultId, t.operationId, t.role, t.ordinal] }),
+    operation: foreignKey({
+      name: "agent_memory_operation_ref_operation_fk",
+      columns: [t.vaultId, t.operationId],
+      foreignColumns: [agentMemoryOperations.vaultId, agentMemoryOperations.id],
+    }).onDelete("restrict"),
+    revision: foreignKey({
+      name: "agent_memory_operation_ref_revision_fk",
+      columns: [t.vaultId, t.noteId, t.revisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    ref: check(
+      "agent_memory_operation_ref_check",
+      sql`${t.role} IN ('base', 'result') AND ${t.ordinal} BETWEEN 0 AND 1023`,
+    ),
+  }),
+);
+
+export const agentMemoryInjections = pgTable(
+  "agent_memory_injections",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => agentMemoryVaults.id, {
+        onDelete: "restrict",
+      }),
+    runId: text("run_id").notNull(),
+    nodeAttemptId: text("node_attempt_id"),
+    sessionKey: text("session_key").notNull(),
+    protocolVersion: text("protocol_version").notNull(),
+    protocolSha256: text("protocol_sha256").notNull(),
+    tree: jsonb("tree").$type<AgentMemoryTreeDescriptor>().notNull(),
+    indexNoteId: text("index_note_id"),
+    indexRevisionId: text("index_revision_id"),
+    descriptorDigest: text("descriptor_digest").notNull(),
+    renderedChars: integer("rendered_chars").notNull(),
+    applicationState: text("application_state", {
+      enum: ["staged", "applied", "retired"],
+    })
+      .notNull()
+      .default("staged"),
+    applicationReceiptId: text("application_receipt_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    session: unique("agent_memory_injection_session_uq").on(
+      t.runId,
+      t.sessionKey,
+    ),
+    indexRevision: foreignKey({
+      name: "agent_memory_injection_index_fk",
+      columns: [t.vaultId, t.indexNoteId, t.indexRevisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    descriptor: check(
+      "agent_memory_injection_descriptor_check",
+      sql`(${t.indexNoteId} IS NULL) = (${t.indexRevisionId} IS NULL)
+        AND ${t.protocolSha256} ~ '^[0-9a-f]{64}$'
+        AND ${t.descriptorDigest} ~ '^[0-9a-f]{64}$'
+        AND ${t.renderedChars} BETWEEN 1 AND 262144
+        AND jsonb_typeof(${t.tree}) = 'object'`,
+    ),
+    application: check(
+      "agent_memory_injection_application_check",
+      sql`${t.applicationState} IN ('staged', 'applied', 'retired')
+        AND (${t.applicationState} = 'applied') = (${t.applicationReceiptId} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export const agentMemoryCutover = pgTable(
+  "agent_memory_cutover",
+  {
+    singleton: boolean("singleton").primaryKey().default(true),
+    generation: bigint("generation", { mode: "bigint" }).notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    active: check(
+      "agent_memory_cutover_active_check",
+      sql`${t.singleton} AND ${t.generation} > 0`,
+    ),
+  }),
+);
+
+export const agentMemoryImportReceipts = pgTable(
+  "agent_memory_import_receipts",
+  {
+    id: text("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()::text`),
+    generation: bigint("generation", { mode: "bigint" }).notNull(),
+    sourceKind: text("source_kind", {
+      enum: ["note", "run_snapshot"],
+    }).notNull(),
+    sourceIdentity: text("source_identity").notNull(),
+    sourceDigest: text("source_digest"),
+    sourceBytes: integer("source_bytes"),
+    state: text("state", {
+      enum: [
+        "inventoried",
+        "imported",
+        "verified",
+        "cleaned",
+        "missing",
+        "mismatched",
+      ],
+    }).notNull(),
+    vaultId: text("vault_id"),
+    noteId: text("note_id"),
+    revisionId: text("revision_id"),
+    runId: text("run_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    source: unique("agent_memory_import_source_uq").on(
+      t.generation,
+      t.sourceKind,
+      t.sourceIdentity,
+    ),
+    revision: foreignKey({
+      name: "agent_memory_import_revision_fk",
+      columns: [t.vaultId, t.noteId, t.revisionId],
+      foreignColumns: [
+        agentMemoryRevisions.vaultId,
+        agentMemoryRevisions.noteId,
+        agentMemoryRevisions.id,
+      ],
+    }).onDelete("restrict"),
+    witness: check(
+      "agent_memory_import_witness_check",
+      sql`${t.generation} > 0
+        AND ${t.sourceKind} IN ('note', 'run_snapshot')
+        AND ${t.state} IN ('inventoried', 'imported', 'verified', 'cleaned', 'missing', 'mismatched')
+        AND num_nonnulls(${t.vaultId}, ${t.noteId}, ${t.revisionId}) IN (0, 3)
+        AND (${t.sourceKind} = 'run_snapshot') = (${t.runId} IS NOT NULL)
+        AND (${t.sourceDigest} IS NULL OR ${t.sourceDigest} ~ '^[0-9a-f]{64}$')
+        AND (${t.sourceBytes} IS NULL OR ${t.sourceBytes} >= 0)`,
+    ),
+  }),
+);
+
+export const agentMemoryImportPayloads = pgTable(
+  "agent_memory_import_payloads",
+  {
+    receiptId: text("receipt_id")
+      .primaryKey()
+      .references(() => agentMemoryImportReceipts.id, {
+        onDelete: "restrict",
+      }),
+    content: text("content").notNull(),
+  },
 );

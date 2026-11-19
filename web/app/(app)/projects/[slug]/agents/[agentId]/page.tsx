@@ -28,6 +28,10 @@ import { ProjectAgentSettings } from "@/components/agents/project-agent-settings
 
 const querySchema = z
   .object({
+    memoryPath: z.string().min(1).max(512).optional(),
+    memoryCursor: z.string().min(1).max(2048).optional(),
+    memoryRevision: z.string().min(1).max(192).optional(),
+    memoryHistoryCursor: z.string().min(1).max(2048).optional(),
     tab: z
       .enum(["history", "attempts", "memory", "definition", "settings"])
       .default("history"),

@@ -129,7 +129,7 @@ export async function authorizeCompanyRunUserActionInTransaction(
 /** Reuse the retained company Run/input ownership witness without requiring Brain SQL functions. */
 export function companyRunOwnershipReadPolicy(): SQL {
   return sql`runs.company_id IS NOT NULL AND runs.project_id IS NULL
-    AND runs.knowledge_access->>'schemaVersion'='1'
+    AND runs.knowledge_access->>'schemaVersion' IN ('1','2')
     AND runs.knowledge_access->>'state'='complete'
     AND EXISTS (
       SELECT 1 FROM specialist_run_links link

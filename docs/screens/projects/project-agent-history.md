@@ -20,6 +20,14 @@ Enter from the project Agents summary or project tabs; history rows link to run 
 
 Header: pinned identity, safe configuration provenance, retained/active counts and last launched/completed outcome. URL tabs: History, Attempts, Memory, Definition, Settings. Separate 25/max100 keyset cursors. Definition and Memory are permission-gated. Settings uses the existing modal. History remains after detach; settings/memory edits do not.
 
+The Memory tab browses current notes by path and shows revisions for the
+selected note. Links retain the selected path, page or revision in the URL.
+Readers with `readRepoFiles` can view content. Users with `editSettings` can
+create, edit, rename, delete, clear or restore a revision. Markdown edits use
+a modal with the loaded revision and hash. On a conflict, the modal keeps
+the draft and shows the authorized current content before another save.
+[Agent memory domain](../../system-analytics/agent-memory.md)
+
 ## States & interactions
 
 Use shared skeleton/error boundaries. Empty history says not run yet, zero successful scan is a success, failed/crashed use exact localized status. Pending candidate is not Ready. Safe metadata remains available if definition/evidence is unavailable. Accessible text and icon supplement color; no operational Git/promotion actions. On concurrent edits show conflict and reload/merge, never overwrite. Retry previews identify one-off runner override separately from future defaults. Unknown effects disable retry with a precise remediation. Human asks keep separate request IDs. SSE refreshes changed content under stable card IDs; no client poller.

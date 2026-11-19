@@ -458,6 +458,30 @@ project repos / `.maister/` run artifacts as needed.
 
 ## 13. Engine 3.0.0 Postgres/graph-only upgrade
 
+### Agent memory vault cutover
+
+Apply the main database migrations and back up the database and legacy runtime
+root before activation. Stop services that still write legacy agent memory
+files and drain their execution contexts. Set `MAISTER_RUNTIME_ROOT` to the
+legacy root and use the web service database environment.
+
+```bash
+pnpm --filter maister-web agent-memory:import
+pnpm --filter maister-web agent-memory:import --import --actor-user-id <admin-id>
+pnpm --filter maister-web agent-memory:import --activate --actor-user-id <admin-id>
+```
+
+The first command previews the source inventory. The import can be retried.
+Activation checks that every inventoried source has a retained receipt, refuses
+file drift and switches the compatible binary to the Postgres vault. Review
+the import counts and probe the Memory tab before cleaning up legacy files.
+An optional and separately invoked `--cleanup --actor-user-id <admin-id>`
+removes verified sources and leaves mismatched snapshots available for
+investigation. After activation, use a vault-compatible binary for service
+rollback or restore a consistent backup of the database and runtime root.
+
+Vault caps belong in the web service environment. [Agent memory vault limits](configuration.md#agent-memory-vault-limits-adr-210)
+
 This upgrade is intentionally non-rolling and irreversible after migration
 0094 drops `step_runs`. The main-lineage sequence is 0094 followed by the
 data-only 0095 stale-C2-claim closure and 0096 cut-over-event indexes. Complete

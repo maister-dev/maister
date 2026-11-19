@@ -1091,6 +1091,9 @@ Reach for it before hand-rolling another `Record<string, string>` editor.
   mutate buttons. Rows display data only.
 * **Edit lives in a popup or a dedicated edit page**, never inline. Popup =
   modal following `user-edit-modal.tsx`; heavier edits get their own route.
+  The agent Memory tab browses the vault and revision history with URL-backed
+  selection. It edits Markdown in a modal and sends the loaded revision and
+  hash to the project vault command route.
 * **Filter on the main fields** of the list (e.g. users: name search, role,
   status, project access) — not just one field.
 * **Apply changes through ONE aggregating endpoint** (partial body in a single

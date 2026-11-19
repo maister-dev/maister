@@ -365,6 +365,10 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/projects/{slug}/memory",
   },
+  memory: {
+    method: "post",
+    path: "/api/v1/ext/agent/memory/commands",
+  },
   // ADR-152: the ONE facade tool with no `slug` — the project comes from the
   // run-bound token (D15/D24).
   agent_memory_write: {
@@ -681,6 +685,15 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     const toolProps = spec.properties ?? {};
     const toolRequired = spec.required ?? [];
 
+    if (toolName === "memory") {
+      it("mirrors the closed session vault command union", () => {
+        expect(body).toBeDefined();
+        expectTargetUnionMirrors(body!, spec, "memory");
+      });
+
+      return;
+    }
+
     it("advertises exactly the operation's params + body properties", () => {
       const expected = new Set([
         ...params,
@@ -726,6 +739,18 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
         );
 
         const specEnum = enumSet(openapiField);
+        const designed = (openapiField as Record<string, unknown>)[
+          "x-maister-designed-enum"
+        ];
+
+        if (Array.isArray(designed)) {
+          for (const value of designed) {
+            expect(
+              specEnum?.delete(value),
+              `${toolName}.${field} designed value ${value}`,
+            ).toBe(true);
+          }
+        }
 
         if (specEnum) {
           expect(

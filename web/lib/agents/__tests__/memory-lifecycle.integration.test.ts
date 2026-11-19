@@ -90,8 +90,7 @@ async function columnOf(
 async function seedAttachable(input: {
   memory?: "none" | "enabled";
   writeDefinition?: boolean;
-  // ADR-152 D22: a definition declaring `flow:` produces a run_kind='flow' run
-  // that never reaches the prompt seam, so the memory axis can never apply.
+  mode?: "session" | "subagent";
   flow?: string;
 }): Promise<{ projectId: string; agentId: string; pkgRoot: string }> {
   const db = testDatabase.db;
@@ -119,11 +118,9 @@ async function seedAttachable(input: {
     name: "Keeper",
     description: "d",
     workspace: "none",
-    mode: "session",
-    triggers: ["manual"],
+    mode: input.mode ?? "session",
+    triggers: input.mode === "subagent" ? ["flow"] : ["manual"],
     riskTier: "read_only",
-    // The catalog projection carries the definition's `flow:` — the same column
-    // the attachment panel reads to disable the Memory toggle.
     ...(input.flow ? { flowRef: input.flow } : {}),
     sourcePath: path.join(pkgRoot, "maister-agents", `${stem}.md`),
   });
@@ -157,8 +154,8 @@ async function seedAttachable(input: {
         name: "Keeper",
         description: "Keeps notes across runs.",
         workspace: "none",
-        mode: "session",
-        triggers: ["manual"],
+        mode: input.mode ?? "session",
+        triggers: input.mode === "subagent" ? ["flow"] : ["manual"],
         riskTier: "read_only",
         memory: input.memory ?? "none",
         ...(input.flow ? { flow: input.flow } : {}),
@@ -237,61 +234,36 @@ describe("T-C2b / REQ-C2 — the attach-time memory default is applied SERVER-si
     }
   });
 
-  it("D22 — a FLOW-BOUND agent lands memory_enabled=false even though its definition says `memory: enabled`", async () => {
+  it("AV-01 applies and updates the memory flag for a Flow driver", async () => {
     const fx = await seedAttachable({ memory: "enabled", flow: "mem-flow" });
 
     try {
-      await attachAgent(
-        { projectId: fx.projectId, agentId: fx.agentId },
-        testDatabase.db,
-      );
-
-      // Its launch diverts to a run_kind='flow' run that never reaches the
-      // prompt seam, so `true` here would be permanently inert.
-      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
-        false,
-      );
+      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, testDatabase.db);
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(true);
+      for (const memoryEnabled of [false, true]) {
+        await updateAgentLink({
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: { memoryEnabled },
+        }, testDatabase.db);
+        expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(memoryEnabled);
+      }
     } finally {
       await rm(fx.pkgRoot, { force: true, recursive: true });
     }
   });
 
-  it("D22 — PATCHing memoryEnabled:true on a flow-bound agent is refused CONFIG; false always works", async () => {
-    const fx = await seedAttachable({ memory: "none", flow: "mem-flow" });
+  it("AV-01 a shared subagent cannot enable independent memory", async () => {
+    const fx = await seedAttachable({ memory: "enabled", mode: "subagent" });
 
     try {
-      await attachAgent(
-        { projectId: fx.projectId, agentId: fx.agentId },
-        testDatabase.db,
-      );
-
-      // The UI disables the toggle, but the UI is an affordance — a direct PATCH
-      // must not be able to land the inert `true`.
-      await expect(
-        updateAgentLink(
-          {
-            projectId: fx.projectId,
-            agentId: fx.agentId,
-            patch: { memoryEnabled: true },
-          },
-          testDatabase.db,
-        ),
-      ).rejects.toMatchObject({ code: "CONFIG" });
-
-      // Turning it OFF is never refused, so a link mis-set before this rule
-      // existed stays fixable.
-      await updateAgentLink(
-        {
-          projectId: fx.projectId,
-          agentId: fx.agentId,
-          patch: { memoryEnabled: false },
-        },
-        testDatabase.db,
-      );
-
-      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
-        false,
-      );
+      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, testDatabase.db);
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(false);
+      await expect(updateAgentLink({
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { memoryEnabled: true },
+      }, testDatabase.db)).rejects.toMatchObject({ code: "CONFIG" });
     } finally {
       await rm(fx.pkgRoot, { force: true, recursive: true });
     }

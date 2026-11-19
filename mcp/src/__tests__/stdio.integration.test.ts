@@ -1129,4 +1129,27 @@ describe("MCP stdio wire contract", () => {
     expect(result.isError).toBe(true);
     expect(requests).toHaveLength(count);
   });
+
+  it("AV-15 exposes the vault tool and forwards only closed self-vault commands", async () => {
+    const listed = await client.listTools();
+    const vault = listed.tools.find(({ name }) => name === "memory");
+
+    expect(vault?.inputSchema.oneOf).toHaveLength(8);
+    const wanted = { command: "view", path: "/memories/index.md" };
+
+    await client.callTool({ name: "memory", arguments: wanted });
+    expect(requests.at(-1)).toMatchObject({
+      method: "POST",
+      url: "/api/v1/ext/agent/memory/commands",
+      body: wanted,
+    });
+    const count = requests.length;
+    const refused = await client.callTool({
+      name: "memory",
+      arguments: { ...wanted, agentId: "another:agent" },
+    });
+
+    expect(refused.isError).toBe(true);
+    expect(requests).toHaveLength(count);
+  });
 });

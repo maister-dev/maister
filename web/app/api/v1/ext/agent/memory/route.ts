@@ -8,6 +8,14 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
+import {
+  mutateCompatibleVaultIndex,
+  readCompatibleVaultIndex,
+} from "@/lib/agent-memory-vault/index-compatibility";
+import { prepareProjectExecutionVault } from "@/lib/agent-memory-vault/project-access";
+import { unavailableMemory } from "@/lib/agent-memory-vault/store";
+import { privateJson } from "@/lib/api/private-json";
 import {
   assertAgentMemoryWithinCap,
   readAgentMemoryRaw,
@@ -51,7 +59,13 @@ const bodySchema = z
 
 function extError(err: unknown): NextResponse {
   if (isMaisterError(err)) {
-    return NextResponse.json(
+    if (
+      err.details?.reason === "agent_memory_disabled" ||
+      err.details?.reason === "agent_memory_unavailable"
+    )
+      return forbidden();
+
+    return privateJson(
       {
         code: err.code,
         message: err.message,
@@ -59,7 +73,7 @@ function extError(err: unknown): NextResponse {
           ? { details: { reason: "native_unclassified_memory" } }
           : {}),
       },
-      { status: httpStatusForExtCode(err.code) },
+      httpStatusForExtCode(err.code),
     );
   }
 
@@ -70,9 +84,9 @@ function extError(err: unknown): NextResponse {
 // axis failed — an agent learning "the flag is off" vs "you are detached" is
 // information it has no use for and a probe surface we need not offer.
 function forbidden(): NextResponse {
-  return NextResponse.json(
+  return privateJson(
     { code: "UNAUTHORIZED", message: "agent memory is not available" },
-    { status: 403 },
+    403,
   );
 }
 
@@ -129,32 +143,46 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     { scopeLabel: SCOPE, endpoint: ENDPOINT_GET, method: "GET", db },
     async (ctx: ExtCtx) => {
       try {
-        const target = await resolveAgentMemoryTarget(
-          db,
-          ctx.actor,
-          ctx.projectId,
-        );
+        return await db.transaction(async (tx) => {
+          if ((await lockVaultCutover(tx)) !== null) {
+            const state = await readCompatibleVaultIndex(
+              tx,
+              prepareProjectExecutionVault(
+                ctx.actor,
+                ctx.projectId,
+                "index:compat:read",
+              ),
+            );
 
-        if (!target) return forbidden();
+            return privateJson(serialize(state));
+          }
+          const target = await resolveAgentMemoryTarget(
+            tx,
+            ctx.actor,
+            ctx.projectId,
+          );
 
-        if (ctx.actor.boundRunId)
-          await recordNativeRunSources(db, ctx.actor.boundRunId, [
-            {
-              kind: "agent_memory",
-              projectId: ctx.projectId,
-              agentId: target.agentId,
-            },
-          ]);
+          if (!target) return forbidden();
 
-        const state = await readAgentMemoryRaw(
-          target.projectSlug,
-          target.agentId,
-        );
+          if (ctx.actor.boundRunId)
+            await recordNativeRunSources(tx, ctx.actor.boundRunId, [
+              {
+                kind: "agent_memory",
+                projectId: ctx.projectId,
+                agentId: target.agentId,
+              },
+            ]);
 
-        // An absent file is NOT a 404 — it is the first-writer state, and
-        // reporting it as one would make `ifHash: null` look like a workaround
-        // rather than the contract.
-        return NextResponse.json(serialize(state), { status: 200 });
+          const state = await readAgentMemoryRaw(
+            target.projectSlug,
+            target.agentId,
+          );
+
+          // An absent file is NOT a 404 — it is the first-writer state, and
+          // reporting it as one would make `ifHash: null` look like a workaround
+          // rather than the contract.
+          return privateJson(serialize(state));
+        });
       } catch (err) {
         return extError(err);
       }
@@ -170,14 +198,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     { scopeLabel: SCOPE, endpoint: ENDPOINT_POST, method: "POST", db },
     async (ctx: ExtCtx) => {
       try {
-        const target = await resolveAgentMemoryTarget(
-          db,
-          ctx.actor,
-          ctx.projectId,
-        );
-
-        if (!target) return forbidden();
-
         // Parse JSON as its own step so a malformed body maps to the documented
         // 422 CONFIG family rather than an unhandled throw.
         let raw: unknown;
@@ -200,46 +220,63 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           );
         }
 
-        // Checked BEFORE the CAS so an over-cap body answers 422 CONFIG rather
-        // than a misleading 409 when the hash also happens to be stale.
-        assertAgentMemoryWithinCap(parsed.data.content);
+        const result = await db.transaction(async (tx) => {
+          if ((await lockVaultCutover(tx)) !== null)
+            return mutateCompatibleVaultIndex(
+              tx,
+              prepareProjectExecutionVault(ctx.actor, ctx.projectId, SCOPE),
+              {
+                content: parsed.data.content,
+                ifHash: parsed.data.ifHash ?? null,
+              },
+            );
 
-        if (ctx.actor.boundRunId)
-          await recordNativeRunSources(db, ctx.actor.boundRunId, [
-            {
-              kind: "agent_memory",
-              projectId: ctx.projectId,
-              agentId: target.agentId,
-            },
-          ]);
+          // Check the legacy cap before the CAS.
+          const target = await resolveAgentMemoryTarget(
+            tx,
+            ctx.actor,
+            ctx.projectId,
+          );
 
-        const result = await writeExecutionAgentMemory(db, {
-          runId: ctx.actor.boundRunId,
-          tokenId: ctx.actor.tokenId,
-          projectId: ctx.projectId,
-          projectSlug: target.projectSlug,
-          agentId: target.agentId,
-          content: parsed.data.content,
-          ifHash: parsed.data.ifHash ?? null,
+          if (!target) throw unavailableMemory();
+          assertAgentMemoryWithinCap(parsed.data.content);
+          if (ctx.actor.boundRunId)
+            await recordNativeRunSources(tx, ctx.actor.boundRunId, [
+              {
+                kind: "agent_memory",
+                projectId: ctx.projectId,
+                agentId: target.agentId,
+              },
+            ]);
+
+          return writeExecutionAgentMemory(tx, {
+            runId: ctx.actor.boundRunId,
+            tokenId: ctx.actor.tokenId,
+            projectId: ctx.projectId,
+            projectSlug: target.projectSlug,
+            agentId: target.agentId,
+            content: parsed.data.content,
+            ifHash: parsed.data.ifHash ?? null,
+          });
         });
 
         if (!result.ok) {
           // The current state rides the 409 so the caller can merge and retry
           // rather than clobber — the whole point of the CAS.
-          return NextResponse.json(
+          return privateJson(
             {
               code: "CONFLICT",
               message:
                 "agent memory: ifHash does not match the current file — merge the returned content and retry",
               current: serialize(result.current),
             },
-            { status: 409 },
+            409,
           );
         }
 
         log.debug(
           {
-            agentId: target.agentId,
+            agentId: ctx.actor.agentId,
             projectId: ctx.projectId,
             // Server-derived from the token name (`agent-run:<id>`), never a
             // body field — log/audit only.
@@ -254,7 +291,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         // THIS write's own post-write state, captured under the CAS lock — not a
         // fresh read, which could report a later writer's bytes as the outcome
         // of this call.
-        return NextResponse.json(serialize(result.state), { status: 200 });
+        return privateJson(serialize(result.state));
       } catch (err) {
         return extError(err);
       }

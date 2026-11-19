@@ -34,6 +34,33 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+function privateMemorySource(
+  run: ReturnType<typeof sql>,
+): ReturnType<typeof sql> {
+  return sql`EXISTS (SELECT 1 FROM agent_memory_injections memory
+    WHERE memory.run_id=${run} AND memory.application_state <> 'retired')`;
+}
+
+async function vaultRunRestrictions(
+  tx: SqlTransaction,
+  runId: unknown,
+  projectId: unknown,
+): Promise<unknown[]> {
+  if (typeof runId !== "string" || typeof projectId !== "string")
+    throw unavailableKnowledgeReference();
+  const rows = (
+    await tx.execute(sql`
+    SELECT tree->'references' AS refs FROM agent_memory_injections
+    WHERE run_id=${runId} AND application_state <> 'retired'
+  `)
+  ).rows;
+
+  return [
+    { kind: "project_context", projectId },
+    ...rows.flatMap(({ refs }) => (Array.isArray(refs) ? refs : [])),
+  ];
+}
+
 /** Authorize a bounded execution page in one read transaction; no per-run payload query is needed. */
 export async function authorizeRunsKnowledgeDisclosure(
   tx: SqlTransaction,
@@ -56,7 +83,10 @@ export async function authorizeRunsKnowledgeDisclosure(
   // Classification precedes locks so an enrolled parent is always locked before its children.
   const classifications = (
     await tx.execute(
-      sql`SELECT id,knowledge_access IS NOT NULL OR result_contract->>'nativeContract'=${FINDINGS_CONTRACT} AS enrolled FROM runs WHERE ${predicate}`,
+      sql`SELECT id,project_id,
+        coalesce(knowledge_access IS NOT NULL OR result_contract->>'nativeContract'=${FINDINGS_CONTRACT},false) AS enrolled,
+        ${privateMemorySource(sql`runs.id`)} AS has_vault
+        FROM runs WHERE ${predicate}`,
     )
   ).rows;
 
@@ -66,7 +96,11 @@ export async function authorizeRunsKnowledgeDisclosure(
     .filter((row) => row.enrolled === true)
     .map((row) => row.id);
 
-  if (!governed.length) return;
+  const privateRuns = classifications.filter(
+    (row) => row.has_vault === true && row.enrolled !== true,
+  );
+
+  if (!governed.length && !privateRuns.length) return;
   if (!recipient)
     throw new MaisterError(
       "CONFIG",
@@ -74,14 +108,17 @@ export async function authorizeRunsKnowledgeDisclosure(
       { details: { reason: "native_recipient_required" } },
     );
   const consumer = await lockKnowledgeReadConsumer(tx, recipient);
-  const rows = (
-    await tx.execute(
-      sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id IN (${sql.join(
-        governed.map((id) => sql`${id}`),
-        sql`, `,
-      )}) ORDER BY id FOR SHARE`,
-    )
-  ).rows;
+  const rows =
+    governed.length === 0
+      ? []
+      : (
+          await tx.execute(
+            sql`SELECT knowledge_access,workspace_mode FROM runs WHERE id IN (${sql.join(
+              governed.map((id) => sql`${id}`),
+              sql`, `,
+            )}) ORDER BY id FOR SHARE`,
+          )
+        ).rows;
 
   if (rows.length !== governed.length) throw unavailableKnowledgeReference();
   await resolveKnowledgePrincipal(tx, recipient, "knowledge:read");
@@ -92,6 +129,18 @@ export async function authorizeRunsKnowledgeDisclosure(
   );
   const disclosed: KnowledgeAccessRestriction[] = [];
   let sourceChecks = 0;
+
+  for (const row of privateRuns) {
+    const access = await authorizeSourceRestrictions(
+      tx,
+      recipient,
+      await vaultRunRestrictions(tx, row.id, row.project_id),
+      baseline,
+    );
+
+    sourceChecks += access.visited.length;
+    if (consumer) disclosed.push(...restrictionsForKnowledgeAccess(access));
+  }
 
   for (const row of rows) {
     assertNativeWorkspaceMode(row.workspace_mode);
@@ -114,7 +163,7 @@ export async function authorizeRunsKnowledgeDisclosure(
   await recordKnowledgeDisclosure(tx, consumer, disclosed);
   log.debug(
     {
-      runCount: governed.length,
+      runCount: governed.length + privateRuns.length,
       recipientKind: recipient.kind,
       sourceChecks,
     },
@@ -274,7 +323,13 @@ export async function protectRunKnowledgeStream(
   let enrolled: boolean;
 
   try {
-    enrolled = await usesNativeKnowledgeTransport(db, runId);
+    enrolled =
+      (await usesNativeKnowledgeTransport(db, runId)) ||
+      (
+        await db.execute(
+          sql`SELECT 1 WHERE ${privateMemorySource(sql`${runId}`)}`,
+        )
+      ).rows.length > 0;
     if (enrolled) await assertRunKnowledgeDisclosure(db, recipient, runId);
   } catch (error) {
     return cancelUnservedContent(body, error);

@@ -1655,23 +1655,14 @@ paths:
 
   /api/v1/ext/agent/memory:
     get:
-      x-vault-cutover: Designed. This authorized compatibility view addresses the index only.
+      deprecated: true
       tags: [agent-memory]
-      summary: Read this agent's memory file for its bound project
+      summary: Read this session's memory index
       description: |
-        (ADR-152) Scope `agent_memory:write` — v1 ships exactly ONE agent-memory
-        scope, and an agent that may maintain its memory may read it back. The
-        content is already injected into the agent's own prompt at launch, so
-        this route exposes nothing new; it exists for symmetry and diagnostics
-        and ships no MCP tool.
-
-        **No body-controlled identifier and no `slug` path segment.**
-        `projectId` and `agentId` come from the run-bound token, and the
-        project slug is a server-state lookup by `projectId`.
-
-        An absent file is NOT a 404: it returns `200` with `content: ""`,
-        `hash: null`, `sizeChars: 0`, `updatedAt: null`, which is exactly the
-        first-writer state (`ifHash: null`).
+        The compatibility route requires agent_memory:write and an enabled
+        attachment. After activation, it reads /memories/index.md from the
+        attested session vault. The run-bound credential supplies the owner.
+        An absent index returns 200 with empty content, a null hash and size zero.
       operationId: extAgentMemoryGet
       security:
         - projectToken: []
@@ -1687,35 +1678,16 @@ paths:
         "403":
           $ref: "#/components/responses/AgentMemoryForbidden"
     post:
-      x-vault-cutover: Designed. The alias addresses the index only for one compatibility release.
+      deprecated: true
       tags: [agent-memory]
-      summary: Replace this agent's memory file through a content-hash CAS
+      summary: Replace this session's memory index using content CAS
       description: |
-        Native execution writes authorize their current same-project/same-role
-        source footprint under the run-capture lock through the existing CAS.
-        Additional sources return PRECONDITION without writing or returning the
-        proposed replacement as an accepted state. See the native destination policy.
-        (ADR-152) Scope `agent_memory:write`, mapped to the dedicated
-        `writeAgentMemory` project action (minimum `member`) — never the
-        `readBoard` fallback. BOTH the scope and the per-attachment
-        `agent_project_links.memory_enabled` flag must pass; neither alone
-        authorizes a write.
-
-        **No body-controlled identifier and no `slug` path segment** (the one
-        MAIster facade tool without `slug` — the project comes from the
-        run-bound token). `content` and `ifHash` are payload, never locators:
-        neither reaches a path or a cross-resource lookup.
-
-        Ordering is read-current → compare CAS → atomic write → return the
-        **post-write** hash. `ifHash: null` is the first-writer form (an absent
-        file hashes to `null`). A stale `ifHash` returns `409 CONFLICT` whose
-        body carries the current `{content, hash}` so the caller can merge and
-        retry rather than clobber. Two concurrent writers leave the file
-        containing exactly one writer's bytes.
-
-        The write targets `.maister/<project-slug>/agents/…`, never the
-        worktree, so it works in every workspace mode including `none` and
-        leaves the read-only enforcement contour untouched.
+        The compatibility route requires agent_memory:write and the current
+        enabled attachment. It compares the submitted hash with the current
+        index under the vault lock. A null hash expects an absent index. A
+        stale hash returns the authorized current index in a 409 response.
+        After activation, both successful writes and native conflict disclosures
+        retain exact revision evidence. The route takes only content and ifHash.
       operationId: extAgentMemoryWrite
       security:
         - projectToken: []
@@ -8889,6 +8861,8 @@ components:
               - path
               - kind
               - noteId
+              - revisionId
+              - hash
             properties:
               path:
                 type: string
@@ -8906,6 +8880,15 @@ components:
                 type: string
                 minLength: 1
                 maxLength: 192
+                nullable: true
+              revisionId:
+                type: string
+                minLength: 1
+                maxLength: 192
+                nullable: true
+              hash:
+                type: string
+                pattern: ^[0-9a-f]{64}$
                 nullable: true
           minItems: 0
           maxItems: 100
@@ -9314,6 +9297,15 @@ components:
           type: string
           enum:
             - view
+        view_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: integer
+            minimum: -1
+            maximum: 262145
+          description: Inclusive one-based start and end lines for a note. Use -1 as the end to include the rest of the note.
         path:
           type: string
           minLength: 1
@@ -14947,7 +14939,9 @@ components:
           type: string
           minLength: 1
           maxLength: 192
+          x-maister-designed: true
         vaultCommand:
+          x-maister-designed: true
           oneOf:
             - $ref: "#/components/schemas/AgentVaultCreateCommand"
             - $ref: "#/components/schemas/AgentVaultReplaceCommand"
@@ -14956,8 +14950,12 @@ components:
             - $ref: "#/components/schemas/AgentVaultRenameCommand"
             - $ref: "#/components/schemas/AgentVaultDeleteTreeCommand"
             - $ref: "#/components/schemas/AgentVaultRenameTreeCommand"
-        knowledgeProposal: { $ref: "#/components/schemas/CBProposalInput" }
-        brainProposal: { $ref: "#/components/schemas/ExtMemoryProposalBody" }
+        knowledgeProposal:
+          allOf: [{ $ref: "#/components/schemas/CBProposalInput" }]
+          x-maister-designed: true
+        brainProposal:
+          allOf: [{ $ref: "#/components/schemas/ExtMemoryProposalBody" }]
+          x-maister-designed: true
         action:
           type: string
           enum:
@@ -14971,6 +14969,10 @@ components:
               brain_propose,
               agent_vault_propose_edit,
             ]
+          x-maister-designed-enum:
+            - knowledge_propose
+            - brain_propose
+            - agent_vault_propose_edit
         taskId: { type: string, format: uuid }
         expectedRevision: { type: integer, minimum: 0 }
         statement: { type: object }

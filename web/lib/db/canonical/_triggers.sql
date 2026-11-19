@@ -1,4 +1,12 @@
 CREATE TRIGGER actor_identities_owner_guard BEFORE INSERT OR UPDATE ON public.actor_identities FOR EACH ROW EXECUTE FUNCTION guard_human_work_owner();
+CREATE TRIGGER agent_memory_import_payload_immutable BEFORE DELETE OR UPDATE ON public.agent_memory_import_payloads FOR EACH ROW EXECUTE FUNCTION agent_memory_immutable_history();
+CREATE CONSTRAINT TRIGGER agent_memory_note_head_projection AFTER INSERT OR UPDATE ON public.agent_memory_notes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION agent_memory_guard_note_head();
+CREATE TRIGGER agent_memory_redaction_admin_required BEFORE INSERT ON public.agent_memory_redactions FOR EACH ROW EXECUTE FUNCTION agent_memory_require_redaction_admin();
+CREATE CONSTRAINT TRIGGER agent_memory_redaction_effect_required AFTER INSERT ON public.agent_memory_redactions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION agent_memory_require_redaction_effect();
+CREATE TRIGGER agent_memory_redaction_immutable BEFORE DELETE OR UPDATE ON public.agent_memory_redactions FOR EACH ROW EXECUTE FUNCTION agent_memory_immutable_history();
+CREATE TRIGGER agent_memory_payload_guard BEFORE INSERT OR DELETE OR UPDATE ON public.agent_memory_revision_payloads FOR EACH ROW EXECUTE FUNCTION agent_memory_guard_payload();
+CREATE TRIGGER agent_memory_revision_immutable BEFORE DELETE OR UPDATE ON public.agent_memory_revisions FOR EACH ROW EXECUTE FUNCTION agent_memory_immutable_history();
+CREATE CONSTRAINT TRIGGER agent_memory_revision_payload_required AFTER INSERT ON public.agent_memory_revisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION agent_memory_require_revision_payload();
 CREATE TRIGGER agent_preparation_guard BEFORE INSERT OR UPDATE ON public.agent_preparation_operations FOR EACH ROW EXECUTE FUNCTION guard_agent_preparation();
 CREATE TRIGGER agent_retry_recipe_immutable BEFORE DELETE OR UPDATE ON public.agent_retry_intents FOR EACH ROW EXECUTE FUNCTION guard_agent_retry_intent();
 CREATE TRIGGER company_retry_replacement_guard BEFORE INSERT OR UPDATE ON public.agent_retry_intents FOR EACH ROW WHEN (((new.company_id IS NOT NULL) AND (new.recipe ? 'replacement'::text))) EXECUTE FUNCTION guard_company_replacement_retry();
@@ -90,6 +98,7 @@ CREATE TRIGGER run_messages_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public
 CREATE CONSTRAINT TRIGGER run_results_operational_receipt AFTER INSERT OR DELETE OR UPDATE ON public.run_results DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_operational_terminal_result();
 CREATE TRIGGER run_results_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_results FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('summary', 'run_id,revision,validity,schema_ref,schema_version,value,value_bytes,invalid_reason,first_collected_at');
 CREATE TRIGGER run_sessions_consensus_binding BEFORE INSERT OR UPDATE OF runner_id, session_name ON public.run_sessions FOR EACH ROW EXECUTE FUNCTION guard_consensus_child_runner_binding();
+CREATE TRIGGER agent_memory_run_hash_format BEFORE INSERT OR UPDATE OF agent_memory_hash, agent_memory_hash_format ON public.runs FOR EACH ROW EXECUTE FUNCTION agent_memory_set_hash_format();
 CREATE TRIGGER project_replacement_event_insert BEFORE INSERT ON public.runs FOR EACH ROW WHEN (((new.company_id IS NULL) AND (new.trigger_event_id IS NOT NULL) AND (new.retry_of_run_id IS NOT NULL))) EXECUTE FUNCTION guard_project_replacement_event_run();
 CREATE TRIGGER project_replacement_event_update BEFORE UPDATE OF retry_of_run_id, project_id, task_id, source_agent_id, agent_schedule_id, trigger_event_id, trigger_source, agent_chain_depth ON public.runs FOR EACH ROW WHEN (((new.company_id IS NULL) AND ((new.trigger_event_id IS NOT NULL) OR (old.trigger_event_id IS NOT NULL)) AND ((new.retry_of_run_id IS NOT NULL) OR (old.retry_of_run_id IS NOT NULL)))) EXECUTE FUNCTION guard_project_replacement_event_run();
 CREATE TRIGGER runs_agent_activity_changed AFTER INSERT OR UPDATE ON public.runs FOR EACH ROW EXECUTE FUNCTION maister_emit_agent_activity_change();
