@@ -5786,3 +5786,15 @@ Generated main `0259_specialist_context_revisions` adds immutable, attributed co
 Generated main `0260_specialist_context_credentials` admits `assignments:read` in the existing company token CHECK, retaining all standalone/Flow-node owner constraints and immutable credential guards. The issuer intersects its native scope set with the reviewed role limits; context reads still require the current exact Run/node appointment and inherited-source access. Existing token/input bytes are unchanged.
 
 Generated main `0261_specialist_context_mutation_credentials` adds `assignments:update` to the existing company credential CHECK while retaining the read scope and every previous standalone/Flow-node owner predicate. Existing credentials are not widened or rewritten. Current professional/initiator authority, exact input/context CAS and full execution source inheritance are enforced by context persistence. Business ownership epoch remains explicitly unknown until its recovery-owning slice.
+
+### Agent memory vault and cutover (Designed — ADR-210)
+
+The [agent memory vault ERD and migration ledger](db/agents-domain.md#agent-memory-vault-designed)
+own the planned relational model and upgrade constraints. The main lineage
+owns retained vault data independently of Brain. Existing
+`runs.agentMemoryHash` remains nullable and retains the legacy raw-file
+meaning through `agentMemoryHashFormat = legacy-file-v1`. New Run aggregates
+use `vault-manifest-v1` after application is acknowledged. An empty injection
+set has no hash. The [cutover contract](system-analytics/agent-memory.md#vault-ownership-writes-and-cutover-designed-adr-210)
+defines how the operator verifies file contents before activating the new
+writer.

@@ -635,3 +635,81 @@ test("CT-CBX-05 contract command enforces nested examples and public schema pari
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("AV-15 vault examples agree across HTTP surfaces and distinguish commands from receipts", () => {
+  const documents = [
+    readContract("../docs/api/web.openapi.yaml"),
+    readContract("../docs/api/external/operations.openapi.yaml"),
+  ];
+  const [web, external] = documents;
+  const components = external.components.schemas;
+
+  for (const name of Object.keys(components).filter((key) => key.startsWith("AgentVault"))) {
+    if (web.components.schemas[name]) {
+      assert.deepEqual(web.components.schemas[name], components[name], name);
+    }
+  }
+
+  const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  ajv.addSchema(web, "web");
+  ajv.addSchema(external, "external");
+  const validate = (surface, schema, value, expected) => {
+    const validator = ajv.getSchema(`${surface}#/components/schemas/${schema}`);
+    assert.ok(validator, schema);
+    assert.equal(validator(value), expected, JSON.stringify(validator.errors));
+  };
+  const create = {
+    command: "create",
+    path: "/memories/index.md",
+    file_text: "# Notes",
+    ifRevisionId: null,
+    ifHash: null,
+    requestKey: "create-01",
+  };
+
+  validate("web", "AgentVaultBrowserCommand", create, true);
+  validate("external", "AgentVaultCommand", create, true);
+  validate("external", "AgentVaultCommand", { ...create, path: "/etc/group" }, false);
+  validate("external", "AgentVaultCommand", { ...create, vaultId: "supplied-owner" }, false);
+  validate("external", "AgentVaultPending", {
+    status: "pending",
+    operationId: "op-01",
+    proposalId: "proposal-01",
+  }, true);
+  validate("external", "AgentVaultApplied", { status: "pending", operationId: "op-01", proposalId: "proposal-01" }, false);
+  validate("web", "AgentVaultReviewResults", {
+    results: [
+      { status: "applied", replayed: false, receiptId: "effect-01" },
+      { status: "unavailable", replayed: false, receiptId: null },
+    ],
+  }, true);
+  validate("web", "AgentVaultReviewBatch", { items: [] }, false);
+});
+
+test("AV-13 review-only attention tick preserves the old cursor and omits project detail", () => {
+  const contract = readContract("../docs/api/async/attention-stream.asyncapi.yaml");
+  const ajv = new Ajv({ strict: false, validateFormats: false });
+  const validate = ajv.compile(contract.components.schemas.AttentionTickEvent);
+  const oldTick = {
+    type: "attention.tick",
+    id: "412",
+    occurredAt: "2026-11-19T09:00:00Z",
+    decisions: 3,
+    updates: 11,
+    changed: [],
+    projectIds: [],
+  };
+
+  assert.equal(validate(oldTick), true);
+  const reviewOnly = {
+    ...oldTick,
+    reviews: 4,
+    reviewVersion: "a".repeat(64),
+    changed: ["reviews"],
+  };
+
+  assert.equal(validate(reviewOnly), true);
+  assert.equal(validate({ ...reviewOnly, reviewVersion: undefined }), false);
+  assert.equal(validate({ ...reviewOnly, reviews: -1 }), false);
+  assert.equal(validate({ ...reviewOnly, notePath: "/memories/index.md" }), false);
+});

@@ -620,6 +620,10 @@ Per-cron current input and immutable claim/run retention are specified in [sched
 
 The [specialist runtime contract](specialist-runtime.md) owns implemented company bindings, standalone/result-only graph execution and scoped invocation. Existing project admission remains authoritative for repository work. Assignment-scoped delegation, exact-result acceptance, replacement-owner recovery and the stand pilot remain Designed in the [cooperation contract](specialist-cooperation.md).
 
+### Installation agent binding (Designed — ADR-211)
+
+The reviewed company binding grants explicit installation reach as described in the [specialist runtime contract](specialist-runtime.md#installation-agent-authority-designed--adr-211). It resolves a separate installation vault using the [agent memory contract](agent-memory.md).
+
 ## Expectations
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =

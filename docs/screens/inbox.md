@@ -399,3 +399,7 @@ social Inbox items; the parent review keeps its existing gate chat.
 ## Designed agent activity extension
 
 Agent problems have one stable project/agent card with distinct cause episodes, exact occurrence/failed-run counts and per-reader acknowledgement. Repeated causes stay quiet after acknowledgement. HITL requests remain independent. Current grouped semantics are specified in agent-incidents. See [canonical behavior](../system-analytics/agent-activity-history.md).
+
+## Knowledge and memory review (Designed)
+
+Eligible reviewers see a neutral Knowledge & memory group. URL filters retain the proposal source and target. A batch returns a result per selected row. Review actions revalidate authority and show stale proposals without applying them. EN and RU labels distinguish this group from amber blocked work.

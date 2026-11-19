@@ -132,6 +132,41 @@ flowchart LR
     D -- no --> G["refused - token, settings, admin, delegate, collect, agent memory"]
 ```
 
+### Knowledge and agent vault authority (Designed — ADR-213)
+
+| Turn or operation | Admission | Effect |
+| --- | --- | --- |
+| Owner message | Current owner/turn credential and named operation scope | Read authorized knowledge search, get, evidence, witness and conflicts, Project Brain and selected agent vaults. May prepare a confirmation card. |
+| Explain | Current read-only owner/turn credential | Same allowed read family with live rights. Card creation is refused. |
+| Summary | Existing tool-less session | No added reads or mutations. |
+| Vault list/view/search/backlinks/tags | Owner-bound token and current vault read, attachment and source rights | Project reads require `readRepoFiles`. Installation reads require the company binding read grant and visibility to every source. Treat hidden and missing IDs alike. |
+| Prepare knowledge/Brain/vault mutation | Named confirmation-only scope, live owner and exact authorized target | Persist a pending card with intended command, target identity, expected revision/hash, source capture, receipt key and canonical digest. No domain mutation. |
+| Owner confirmation | Existing owner decision surface, live owner rights, matching target/preconditions and current access to captured sources | Record one durable domain effect and audit in the same transaction as card and operation settlement. |
+| Expired, stale, redacted, revoked, or reset | Recheck under the current owner, turn and operation locks | Refuse without domain mutation. Keep the established cancellation and reset barriers. |
+
+Use the existing source policies for knowledge and Brain reads. Treat the
+librarian credential as a turn principal through both the external handler
+and domain authorization. Do not turn it into an unbound user token. Vault
+tools use a validated opaque selector. Its owner resolves from the database.
+A turn inherits source restrictions only from restored context actually
+passed to that turn. Collect exact disclosures before returning bytes.
+Freeze the union with command and evidence in the confirmation card.
+
+A confirmed vault edit uses the human command policy. It requires
+`editSettings` for a project vault or a current global administrator for
+installation memory. Structured knowledge remains pending for the native
+review owner. Project Brain follows the owner's rights and the existing
+per-command domain policy. Owner actor and librarian turn/card/operation
+IDs belong in the effect receipt. Replayed confirmation first revalidates
+the permitted result projection and returns the committed effect receipt.
+If the owner no longer has access, replay returns the same hidden response
+as a missing card. It cannot recreate the effect or reveal its payload.
+
+- **AV-07 (Designed).** A librarian confirmation MUST commit one
+  owner-attributed domain effect through the durable operation barrier.
+- **AV-08 (Designed).** Tool and route admission MUST reject direct writes
+  and projects or revisions beyond the owner's current visibility.
+
 ## Expectations
 
 - **LAU-01:** The owner MUST come only from the authenticated session (`auth-context`), and no librarian route or tool may accept a user id, enforced by the ADR-186 route identifier table across `/api/librarian/*` and `/api/v1/ext/librarian/*` (Implemented).

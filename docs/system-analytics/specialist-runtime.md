@@ -377,6 +377,68 @@ Both company agent and result-only Flow paths derive the following actions from 
 | Abandoned | Preserve cancellation/effects and close owned waits; no unattended relaunch | Terminal outbox and independent operation reconciliation |
 | Failed | Keep classified diagnostics/results; no success inference; explicit bounded retry where contract permits | Existing retry recipe and assignment revision |
 
+### Installation agent authority (Designed — ADR-211)
+
+The reviewed company binding opts into `all_non_archived_projects`. Its
+revision freezes the allowed operations. Admission requires a current
+global administrator to configure the grant and a package definition that
+supports a repository-free single agent session. A disabled binding, archived
+target, revoked grant or unavailable exact definition refuses admission.
+Reuse the existing active agent pool and chain-depth rules. The reviewed
+binding controls manual, cron and event trigger admission independently.
+
+Manual execution records the initiating user ID. The live authority on
+each operation is the frozen allow-list intersected with the current
+installation grant and that user's current project, company and exact-source
+rights. A reviewed cron/event reserves a Run as the agent principal and
+records the administrator's appointment as provenance. Unattended operations
+intersect the frozen list with the current installation grant and the
+destination/source conditions. Ordinary company Runs continue to resolve
+through the company-only principal contract. Exact reviewed binding drift
+revokes the installed session's authority. A stale token or node attempt
+cannot inherit a later grant.
+
+| Allowed operation | Tool and transport | Minimum source/filter and capture |
+| --- | --- | --- |
+| List / get project metadata | `project_list`, GET `/api/v1/ext/projects`; `project_get`, GET `/api/v1/ext/projects/{slug}/directory`. Scope `projects:read`. | Return only project ID, slug and display name for installation tokens. A manual user needs `readBoard`. Capture every project returned in the same snapshot. |
+| Read task list / detail | `task_list`, `task_get`, GET `/api/v1/ext/projects/{slug}/tasks` with optional `/{taskId}`. Scope `tasks:read`. | Apply target ownership and `readBoard` for manual users. Use the bounded task read DTO with matching owner, and carry any stricter sources attached to returned task content. |
+| Read Run summary and activity | `run_get`, `run_activity`, GET `/api/v1/ext/runs/{runId}` or `/{runId}/activity`. Scope `runs:read`. | Resolve project from the Run. Manual minimum is `readBoard` for summary, `readRepoFiles` for source-derived activity. Retain finer evidence gates and capture exact sources returned. |
+| Read bounded Observatory summaries | `observatory_summary`, GET `/api/v1/ext/observatory/summary`. Scope `observatory:read`. | Accept an optional project slug, period `24h/7d/30d` default `7d`, limit 1–50 default 20 and a scoped cursor. Return per-project Run count, success count and measured elapsed duration, filtered before grouping. Require manual `readBoard` on every project contributor. Capture exact aggregate contributors in the same query snapshot. |
+| Recall Project Brain | `memory_recall`, GET `/api/v1/ext/projects/{slug}/memory`. Scope `memory:read`. | Apply Brain read policy and exact restrictions. Capture project plus each visible hit's restrictions before bytes leave the handler. |
+| Read structured knowledge | `knowledge_search`, `knowledge_get`, GET `/api/v1/ext/knowledge` or `/{recordId}`. Scope `knowledge:read`. | Apply existing company/project owner and native-record source policies. Capture every returned exact record source plus its own restrictions. |
+| Submit a governed proposal | `memory_propose`, `knowledge_propose`, `memory_promote` on their explicit proposal APIs. | The operation requires the frozen matching submit grant, advisory-only/pending path, and current destination rights. The output carries the full captured source union. |
+| Read or propose in the session vault | `memory`, `memory_search`, `memory_tags`, `memory_backlinks` through the self-vault facade. | `agent_memory:read` reads current visible revisions. `agent_memory:propose` allows pending changes. Capture every disclosed exact revision. |
+
+The table is exhaustive for external data and proposal operations. The
+installation profile has no shell, repository mounts, direct write,
+deployment, task creation or Run launching. Tool discovery and route
+admission both enforce the table. Current nonarchived projects are selected
+at the read boundary before rows, counts and search rankings are produced.
+A scoped cursor cannot change the reader, grant, filter or target. Hidden
+targets and missing targets share a response.
+
+Each successful disclosure extends the Run's bounded source receipt in the
+response transaction, including returned metadata, search results, prompt
+inputs and aggregate contributors. JSON v2 adds an exact
+`agent_vault_revision_v1` source with vault ID, note ID, revision ID and
+content SHA-256, while retaining existing restriction types. A receipt may
+contain at most 256 restrictions and 65536 serialized UTF-8 bytes. Overflow
+or unknown pre-existing provenance refuses before disclosure. New revisions
+capture the union of current Run sources, readable entity links and
+inherited revision sources. A+B remains A+B if a later edit removes a
+citation. A deleted or hidden source makes a dependent revision unavailable
+to a non-admin who cannot see it. Redaction denies payload even to an admin.
+Source-denied resume refuses before session dispatch.
+
+- **AV-05, AV-14 (Designed).** The capture transaction MUST record all
+  returned project/source contributors before disclosure and before an
+  installation mutation can snapshot the same Run.
+- **AV-06 (Designed).** Installation credential admission MUST enforce
+  reviewed binding version, trigger-derived actor, operation allow-list,
+  active project selection, current source constraints and cap/chain guards.
+- **AV-15 (Designed).** Installation tool discovery MUST match the
+  authenticated route allow-list.
+
 ## Expectations
 
 - **CBS-01:** Specialist metadata retains agent identity/kind and config symmetry across lifecycle gates, enforced by the common definition/package/binding validator (`IT-CBS-01`).

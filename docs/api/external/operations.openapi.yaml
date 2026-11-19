@@ -1655,6 +1655,7 @@ paths:
 
   /api/v1/ext/agent/memory:
     get:
+      x-vault-cutover: Designed. This authorized compatibility view addresses the index only.
       tags: [agent-memory]
       summary: Read this agent's memory file for its bound project
       description: |
@@ -1686,6 +1687,7 @@ paths:
         "403":
           $ref: "#/components/responses/AgentMemoryForbidden"
     post:
+      x-vault-cutover: Designed. The alias addresses the index only for one compatibility release.
       tags: [agent-memory]
       summary: Replace this agent's memory file through a content-hash CAS
       description: |
@@ -1750,6 +1752,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtAgentMemoryState"
+        "202":
+          description: Designed P3. Pending vault proposal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultPending"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -5632,6 +5640,7 @@ paths:
                 $ref: "#/components/schemas/ExtErrorBody"
   /api/v1/ext/knowledge:
     get:
+      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
       operationId: extKnowledgeSearch
       summary: Search accessible owned records
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -5737,6 +5746,7 @@ paths:
               - unknown
   /api/v1/ext/knowledge/{recordId}:
     get:
+      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
       operationId: extKnowledgeGet
       summary: Inspect exact record revision
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -5789,6 +5799,7 @@ paths:
           description: Exact accepted revision; absent selects current authorized head.
   /api/v1/ext/knowledge/{recordId}/evidence:
     get:
+      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
       operationId: extKnowledgeEvidence
       summary: Inspect exact authorized evidence
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -7477,6 +7488,7 @@ paths:
             maxLength: 128
   /api/v1/ext/knowledge/{recordId}/conflicts:
     get:
+      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
       operationId: extKnowledgeEvidence
       summary: Inspect authorized unresolved conflict references
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -7540,6 +7552,7 @@ paths:
           description: Exact accepted revision. The record head must still match the authorized conflict cursor.
   /api/v1/ext/knowledge/witnesses/{witnessId}:
     get:
+      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
       operationId: extKnowledgeWitnessGet
       summary: Inspect an authorized retained evidence witness
       description: Requires current token scope and owner/source read authority. Returns the original witness
@@ -7580,6 +7593,702 @@ paths:
             minLength: 1
             maxLength: 128
           description: URL selector resolved and authorized against server state; no filesystem path.
+
+  /api/v1/ext/agent/memory/commands:
+    post:
+      operationId: extAgentVaultCommand
+      summary: View or mutate the attested session vault
+      description: Designed (P1 for project memory, P3 for pending and P4 for installation). Requires the
+        run-bound agent_memory:read, agent_memory:write or agent_memory:propose scope appropriate to
+        the command. Target identity comes from current credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentVaultCommand"
+            example:
+              command: create
+              path: /memories/index.md
+              file_text: "# Notes"
+              ifRevisionId: null
+              ifHash: null
+              requestKey: create-01
+      responses:
+        "200":
+          description: View or mutate the attested session vault.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AgentVaultView"
+                  - $ref: "#/components/schemas/AgentVaultApplied"
+        "202":
+          description: Proposal is pending review.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultPending"
+              example:
+                status: pending
+                operationId: op-01
+                proposalId: proposal-01
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/agent/memory/promote:
+    post:
+      operationId: extAgentVaultPromote
+      summary: Propose the exact source revision for review
+      description: Designed (P3). Requires the run-bound agent_memory:read, agent_memory:write or
+        agent_memory:propose scope appropriate to the command. Target identity comes from current
+        credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentVaultPromotion"
+      responses:
+        "202":
+          description: Propose the exact source revision for review.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultPending"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/agent/memory/search:
+    get:
+      operationId: extAgentVaultSearch
+      summary: Search visible current heads
+      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
+        agent_memory:propose scope appropriate to the command. Target identity comes from current
+        credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - lexical
+              - vector
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Search visible current heads.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultSearchPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+        "503":
+          description: Configured embedding provider is unavailable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultError"
+  /api/v1/ext/agent/memory/backlinks:
+    get:
+      operationId: extAgentVaultBacklinks
+      summary: List visible backlinks
+      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
+        agent_memory:propose scope appropriate to the command. Target identity comes from current
+        credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^/memories(?:/[^/]+)*$
+            description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+              depth and leaf kind.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: List visible backlinks.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultBacklinkPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/agent/memory/tags:
+    get:
+      operationId: extAgentVaultTags
+      summary: List tags and visible note counts
+      description: Designed (P2). Requires the run-bound agent_memory:read, agent_memory:write or
+        agent_memory:propose scope appropriate to the command. Target identity comes from current
+        credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: List tags and visible note counts.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultTagsPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/librarian/vaults:
+    get:
+      operationId: extLibrarianVaultList
+      summary: List owner-visible agent vaults
+      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+        target/source access. Target identity comes from current credentials and the resolved route
+        resource.
+      x-implementation-status: Designed
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: List owner-visible agent vaults.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultList"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/librarian/vaults/{vaultId}/view:
+    get:
+      operationId: extLibrarianVaultRead
+      summary: Read a note or list a directory
+      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+        target/source access. Target identity comes from current credentials and the resolved route
+        resource.
+      x-implementation-status: Designed
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: vaultId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^/memories(?:/[^/]+)*$
+            description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+              depth and leaf kind.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Read a note or list a directory.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultView"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/librarian/vaults/{vaultId}/search:
+    get:
+      operationId: extLibrarianVaultSearch
+      summary: Search visible current heads
+      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+        target/source access. Target identity comes from current credentials and the resolved route
+        resource.
+      x-implementation-status: Designed
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: vaultId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2000
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - lexical
+              - vector
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Search visible current heads.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultSearchPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+        "503":
+          description: Configured embedding provider is unavailable.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultError"
+  /api/v1/ext/librarian/vaults/{vaultId}/backlinks:
+    get:
+      operationId: extLibrarianVaultBacklinks
+      summary: List visible backlinks
+      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+        target/source access. Target identity comes from current credentials and the resolved route
+        resource.
+      x-implementation-status: Designed
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: vaultId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: ^/memories(?:/[^/]+)*$
+            description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+              depth and leaf kind.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: List visible backlinks.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultBacklinkPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/librarian/vaults/{vaultId}/tags:
+    get:
+      operationId: extLibrarianVaultTags
+      summary: List tags and visible note counts
+      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+        target/source access. Target identity comes from current credentials and the resolved route
+        resource.
+      x-implementation-status: Designed
+      security:
+        - librarianTurnToken: []
+      parameters:
+        - name: vaultId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: List tags and visible note counts.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultTagsPage"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
+  /api/v1/ext/observatory/summary:
+    get:
+      operationId: extInstallationObservatorySummary
+      summary: Return authorized project Run aggregates
+      description: Designed (P4). Requires installation observatory:read. Filters current active projects
+        before aggregation and captures every returned contributor. Target identity comes from current
+        credentials and the resolved route resource.
+      x-implementation-status: Designed
+      security:
+        - projectToken: []
+      parameters:
+        - name: slug
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 192
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - 24h
+              - 7d
+              - 30d
+            default: 7d
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        "200":
+          description: Return authorized project Run aggregates.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentVaultObservatorySummary"
+        "401":
+          $ref: "#/components/responses/AgentVault401"
+        "403":
+          $ref: "#/components/responses/AgentVault403"
+        "404":
+          $ref: "#/components/responses/AgentVault404"
+        "409":
+          $ref: "#/components/responses/AgentVault409"
+        "413":
+          $ref: "#/components/responses/AgentVault413"
+        "422":
+          $ref: "#/components/responses/AgentVault422"
 
 components:
   securitySchemes:
@@ -7694,6 +8403,88 @@ components:
         type: string
         enum: ["true"]
   responses:
+    AgentVault401:
+      description: Active authentication required.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+    AgentVault403:
+      description: The caller lacks the required operation scope.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+    AgentVault404:
+      description: The target is missing or hidden.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+          example:
+            code: PRECONDITION
+            message: Resource unavailable
+    AgentVault409:
+      description: Stale, conflicting or disabled condition. Authorized single-note conflicts carry the
+        current head.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+          example:
+            code: PRECONDITION
+            message: Agent memory is disabled
+    AgentVault413:
+      description: JSON entity exceeds the byte limit.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+    AgentVault422:
+      description: Invalid request shape, command, path or cap.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            enum:
+              - private, no-store
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentVaultError"
+          example:
+            code: CONFIG
+            message: Invalid memory path
     CBFailure:
       description: Safe typed failure; no raw query, source contents, credential or
         target stderr.
@@ -7798,6 +8589,1049 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
+    AgentVaultCardKnowledge:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - proposalId
+        - targetLabel
+        - draftTitle
+      properties:
+        kind:
+          type: string
+          enum:
+            - knowledge_proposal
+        proposalId:
+          type: string
+          minLength: 1
+          maxLength: 192
+          nullable: true
+        targetLabel:
+          type: string
+          minLength: 1
+          maxLength: 512
+        draftTitle:
+          type: string
+          minLength: 1
+          maxLength: 512
+      x-implementation-status: Designed
+    AgentVaultCardBrain:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - projectSlug
+        - targetLabel
+        - draftTitle
+      properties:
+        kind:
+          type: string
+          enum:
+            - brain_proposal
+        projectSlug:
+          type: string
+          minLength: 1
+          maxLength: 192
+        targetLabel:
+          type: string
+          minLength: 1
+          maxLength: 512
+        draftTitle:
+          type: string
+          minLength: 1
+          maxLength: 512
+      x-implementation-status: Designed
+    AgentVaultCardEdit:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - vaultId
+        - path
+        - commandKind
+        - preview
+      properties:
+        kind:
+          type: string
+          enum:
+            - vault_edit
+        vaultId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+        commandKind:
+          type: string
+          enum:
+            - create
+            - str_replace
+            - insert
+            - delete
+            - rename
+            - clear
+            - revert
+        preview:
+          type: string
+          maxLength: 16384
+      x-implementation-status: Designed
+    AgentVaultLibrarianEffect:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - proposalId
+          properties:
+            kind:
+              type: string
+              enum:
+                - knowledge
+            proposalId:
+              type: string
+              minLength: 1
+              maxLength: 192
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - proposalId
+          properties:
+            kind:
+              type: string
+              enum:
+                - brain
+            proposalId:
+              type: string
+              minLength: 1
+              maxLength: 192
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - operationId
+            - revisionIds
+          properties:
+            kind:
+              type: string
+              enum:
+                - vault
+            operationId:
+              type: string
+              minLength: 1
+              maxLength: 192
+            revisionIds:
+              type: array
+              items:
+                type: string
+                minLength: 1
+                maxLength: 192
+              maxItems: 1024
+      x-implementation-status: Designed
+    AgentVaultBindingReach:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+          properties:
+            kind:
+              type: string
+              enum:
+                - company_only
+        - type: object
+          additionalProperties: false
+          required:
+            - kind
+            - workspace
+            - memoryEnabled
+            - allowedOperations
+          properties:
+            kind:
+              type: string
+              enum:
+                - all_non_archived_projects
+            workspace:
+              type: string
+              enum:
+                - none
+            memoryEnabled:
+              type: boolean
+            allowedOperations:
+              type: array
+              items:
+                type: string
+                enum:
+                  - project_list
+                  - project_get
+                  - task_list
+                  - task_get
+                  - run_get
+                  - run_activity
+                  - observatory_summary
+                  - memory_recall
+                  - knowledge_search
+                  - knowledge_get
+                  - memory_propose
+                  - knowledge_propose
+                  - memory_promote
+                  - memory
+                  - memory_search
+                  - memory_tags
+                  - memory_backlinks
+              minItems: 1
+              maxItems: 17
+              uniqueItems: true
+      x-implementation-status: Designed
+    AgentVaultHeadPrecondition:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - ifRevisionId
+        - ifHash
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+    AgentVaultNotePage:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - noteId
+        - revisionId
+        - path
+        - hash
+        - content
+        - nextCursor
+      properties:
+        kind:
+          type: string
+          enum:
+            - note
+        noteId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        revisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        hash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        content:
+          type: string
+          maxLength: 16384
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultDirectoryPage:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - path
+        - generation
+        - entries
+        - nextCursor
+      properties:
+        kind:
+          type: string
+          enum:
+            - directory
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        generation:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: ^(0|[1-9][0-9]{0,18})$
+        entries:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - path
+              - kind
+              - noteId
+            properties:
+              path:
+                type: string
+                minLength: 1
+                maxLength: 512
+                pattern: ^/memories(?:/[^/]+)*$
+                description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+                  depth and leaf kind.
+              kind:
+                type: string
+                enum:
+                  - note
+                  - directory
+              noteId:
+                type: string
+                minLength: 1
+                maxLength: 192
+                nullable: true
+          minItems: 0
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultView:
+      oneOf:
+        - $ref: "#/components/schemas/AgentVaultNotePage"
+        - $ref: "#/components/schemas/AgentVaultDirectoryPage"
+    AgentVaultApplied:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - operationId
+        - affected
+      properties:
+        status:
+          type: string
+          enum:
+            - applied
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        affected:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - noteId
+              - revisionId
+              - path
+              - hash
+            properties:
+              noteId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              revisionId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              path:
+                type: string
+                minLength: 1
+                maxLength: 512
+                pattern: ^/memories(?:/[^/]+)*$
+                description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+                  depth and leaf kind.
+              hash:
+                type: string
+                minLength: 1
+                maxLength: 64
+                pattern: ^[0-9a-f]{64}$
+                nullable: true
+          minItems: 0
+          maxItems: 1024
+    AgentVaultPending:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - operationId
+        - proposalId
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        proposalId:
+          type: string
+          minLength: 1
+          maxLength: 192
+    AgentVaultPromotion:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - ifRevisionId
+        - ifHash
+        - requestKey
+        - target
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+        target:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - ownerKind
+            - ownerId
+          properties:
+            kind:
+              type: string
+              enum:
+                - brain
+                - knowledge
+            ownerKind:
+              type: string
+              enum:
+                - project
+                - company
+            ownerId:
+              type: string
+              minLength: 1
+              maxLength: 192
+    AgentVaultError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - UNAUTHENTICATED
+            - UNAUTHORIZED
+            - CONFIG
+            - PRECONDITION
+            - CONFLICT
+            - EMBEDDING_UNAVAILABLE
+        message:
+          type: string
+          minLength: 1
+          maxLength: 512
+        current:
+          type: object
+          additionalProperties: false
+          required:
+            - noteId
+            - revisionId
+            - path
+            - hash
+            - content
+          properties:
+            noteId:
+              type: string
+              minLength: 1
+              maxLength: 192
+            revisionId:
+              type: string
+              minLength: 1
+              maxLength: 192
+            path:
+              type: string
+              minLength: 1
+              maxLength: 512
+              pattern: ^/memories(?:/[^/]+)*$
+              description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+                depth and leaf kind.
+            hash:
+              type: string
+              minLength: 1
+              maxLength: 64
+              pattern: ^[0-9a-f]{64}$
+            content:
+              type: string
+              maxLength: 262144
+              description: Exact text. The service validates configured UTF-16 caps and rejects invalid scalar
+                values.
+        mismatches:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentVaultHeadPrecondition"
+          minItems: 0
+          maxItems: 1024
+    AgentVaultSearchPage:
+      type: object
+      additionalProperties: false
+      required:
+        - hits
+        - nextCursor
+      properties:
+        hits:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - noteId
+              - revisionId
+              - path
+              - snippet
+              - score
+            properties:
+              noteId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              revisionId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              path:
+                type: string
+                minLength: 1
+                maxLength: 512
+                pattern: ^/memories(?:/[^/]+)*$
+                description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+                  depth and leaf kind.
+              snippet:
+                type: string
+                minLength: 1
+                maxLength: 512
+              score:
+                type: number
+          minItems: 0
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultBacklinkPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - noteId
+              - revisionId
+              - path
+            properties:
+              noteId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              revisionId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              path:
+                type: string
+                minLength: 1
+                maxLength: 512
+                pattern: ^/memories(?:/[^/]+)*$
+                description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+                  depth and leaf kind.
+          minItems: 0
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultTagsPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - tag
+              - count
+            properties:
+              tag:
+                type: string
+                minLength: 1
+                maxLength: 128
+              count:
+                type: integer
+                minimum: 1
+          minItems: 0
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - agentId
+              - ownerKind
+              - ownerLabel
+            properties:
+              id:
+                type: string
+                minLength: 1
+                maxLength: 192
+              agentId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              ownerKind:
+                type: string
+                enum:
+                  - project
+                  - installation
+              ownerLabel:
+                type: string
+                minLength: 1
+                maxLength: 256
+          minItems: 0
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultObservatorySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - projectId
+              - slug
+              - runCount
+              - successCount
+              - durationMs
+            properties:
+              projectId:
+                type: string
+                minLength: 1
+                maxLength: 192
+              slug:
+                type: string
+                minLength: 1
+                maxLength: 192
+              runCount:
+                type: integer
+                minimum: 0
+              successCount:
+                type: integer
+                minimum: 0
+              durationMs:
+                type: integer
+                minimum: 0
+          minItems: 0
+          maxItems: 50
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+    AgentVaultViewCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+      properties:
+        command:
+          type: string
+          enum:
+            - view
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        cursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+    AgentVaultCreateCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+        - file_text
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - create
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        file_text:
+          type: string
+          maxLength: 262144
+          description: Exact text. The service validates configured UTF-16 caps and rejects invalid scalar values.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+          nullable: true
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+          nullable: true
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultReplaceCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+        - old_str
+        - new_str
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - str_replace
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        old_str:
+          type: string
+          minLength: 1
+          maxLength: 262144
+        new_str:
+          type: string
+          maxLength: 262144
+          description: Exact text. The service validates configured UTF-16 caps and rejects invalid scalar values.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultInsertCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+        - insert_line
+        - insert_text
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - insert
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        insert_line:
+          type: integer
+          minimum: 0
+          maximum: 262145
+        insert_text:
+          type: string
+          maxLength: 262144
+          description: Exact text. The service validates configured UTF-16 caps and rejects invalid scalar values.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultDeleteCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - delete
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultRenameCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - old_path
+        - new_path
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - rename
+        old_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        new_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultDeleteTreeCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - path
+        - ifGeneration
+        - heads
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - delete
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifGeneration:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: ^(0|[1-9][0-9]{0,18})$
+        heads:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentVaultHeadPrecondition"
+          minItems: 1
+          maxItems: 1024
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultRenameTreeCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - old_path
+        - new_path
+        - ifGeneration
+        - heads
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - rename
+        old_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        new_path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: ^/memories(?:/[^/]+)*$
+          description: Canonical virtual NFC path. The service also checks encoded bytes, forbidden segments,
+            depth and leaf kind.
+        ifGeneration:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: ^(0|[1-9][0-9]{0,18})$
+        heads:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentVaultHeadPrecondition"
+          minItems: 1
+          maxItems: 1024
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultCommand:
+      oneOf:
+        - $ref: "#/components/schemas/AgentVaultViewCommand"
+        - $ref: "#/components/schemas/AgentVaultCreateCommand"
+        - $ref: "#/components/schemas/AgentVaultReplaceCommand"
+        - $ref: "#/components/schemas/AgentVaultInsertCommand"
+        - $ref: "#/components/schemas/AgentVaultDeleteCommand"
+        - $ref: "#/components/schemas/AgentVaultRenameCommand"
+        - $ref: "#/components/schemas/AgentVaultDeleteTreeCommand"
+        - $ref: "#/components/schemas/AgentVaultRenameTreeCommand"
     TaskLaunchOptions:
       type: object
       additionalProperties: false
@@ -12990,6 +14824,22 @@ components:
       additionalProperties: false
       description: The exact objects a card is bound to; keys it does not address are absent.
       properties:
+        vaultId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        noteId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        knowledgeRecordId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        projectSlug:
+          type: string
+          minLength: 1
+          maxLength: 192
         taskId: { type: string, format: uuid }
         taskKey: { type: string }
         runId: { type: string, format: uuid }
@@ -13093,6 +14943,21 @@ components:
         required for that action, binds the current target revision and writes
         the payload digest. `memory_suggest` remains inert until owner accept.
       properties:
+        vaultId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        vaultCommand:
+          oneOf:
+            - $ref: "#/components/schemas/AgentVaultCreateCommand"
+            - $ref: "#/components/schemas/AgentVaultReplaceCommand"
+            - $ref: "#/components/schemas/AgentVaultInsertCommand"
+            - $ref: "#/components/schemas/AgentVaultDeleteCommand"
+            - $ref: "#/components/schemas/AgentVaultRenameCommand"
+            - $ref: "#/components/schemas/AgentVaultDeleteTreeCommand"
+            - $ref: "#/components/schemas/AgentVaultRenameTreeCommand"
+        knowledgeProposal: { $ref: "#/components/schemas/CBProposalInput" }
+        brainProposal: { $ref: "#/components/schemas/ExtMemoryProposalBody" }
         action:
           type: string
           enum:
@@ -13102,6 +14967,9 @@ components:
               run_promote,
               run_discard,
               memory_suggest,
+              knowledge_propose,
+              brain_propose,
+              agent_vault_propose_edit,
             ]
         taskId: { type: string, format: uuid }
         expectedRevision: { type: integer, minimum: 0 }
@@ -13138,7 +15006,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [statement_proposal, confirmation, memory_suggestion]
+          enum: [statement_proposal, confirmation, memory_suggestion, knowledge_proposal, brain_proposal, vault_edit]
         status:
           type: string
           enum:
@@ -13157,6 +15025,9 @@ components:
             - $ref: "#/components/schemas/LibrarianStatementProposal"
             - $ref: "#/components/schemas/LibrarianConfirmationProposal"
             - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
+            - $ref: "#/components/schemas/AgentVaultCardKnowledge"
+            - $ref: "#/components/schemas/AgentVaultCardBrain"
+            - $ref: "#/components/schemas/AgentVaultCardEdit"
         requiresOwner:
           type: boolean
           description: True for a human-only action; the token can never decide any card.
@@ -14374,6 +16245,8 @@ components:
     CBSpecialist:
       type: object
       properties:
+        reach:
+          $ref: "#/components/schemas/AgentVaultBindingReach"
         id:
           type: string
           minLength: 1

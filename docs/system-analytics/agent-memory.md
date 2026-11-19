@@ -2,6 +2,8 @@
 
 ## Purpose
 
+The existing file behavior is Implemented. [ADR-210](../decisions/adr-210.md) defines the Designed PostgreSQL vault and its explicit cutover.
+
 **Agent memory** is a single small markdown file per `(agent, project)`
 attachment that a platform agent may read at launch and rewrite during a run.
 It is the agent's own durable cross-run scratch note — "what I learned about
@@ -199,6 +201,117 @@ sequenceDiagram
     UI->>API: DELETE memory
     API-->>UI: 204 - idempotent when already absent
 ```
+
+### Vault ownership, writes and cutover (Designed, ADR-210)
+
+A vault resolves from a current memory-enabled attachment and a stable owner
+key. For a project, the key is the project ID plus qualified agent ID. For
+an installation, it is the company ID plus qualified agent ID. History
+survives detach and catalog retirement. The [vault data
+contract](../db/agents-domain.md#agent-memory-vault-designed) owns its storage
+constraints. The [external API](../api/external/operations.openapi.yaml) and
+[browser API](../api/web.openapi.yaml) own the command and response schemas.
+
+| State or operation | Guard | Result and owner |
+| --- | --- | --- |
+| Missing path → create | Both expected hash and revision are null. Destination is free, policy admits the writer, and quotas allow the new head. | Commit a note, first revision and receipt. A name reused after deletion gets a new note identity. |
+| Active → edit, insert or replace | Match the current revision and hash. Replace requires one literal match. Insert addresses the position after the 1-based line number, with zero for the start. | Append a revision and change only its head. Match and split lines on LF, preserve other bytes, and use the supplied insert text verbatim. |
+| Active → rename | Match the current revision and hash and verify the destination is unused. | Keep the note ID and append a path-change revision. |
+| Active → delete or clear | Match every current head in the bounded selection. For a virtual directory or vault clear, also match the vault generation. | Append tombstone revisions in one transaction. Directory paths and root are virtual. Root cannot be renamed or deleted through the MCP command. |
+| Retained revision → revert | Match the current head, require a readable payload on the exact selected revision, and validate the resulting path, content and quotas. | Append a new revision with its own author and inherited source restrictions. |
+| Mutation requires review | Policy forces review after authority and content validation. | Commit the proposed operation and its receipt, with no head or live quota change. Review completion uses the same CAS service. |
+| Active or historical → redacted | Current global administrator selects an exact revision and supplies a reason. | Record redaction and remove payload in one transaction with index and dependent access invalidation. If the revision is current, append a tombstone. The revision identity and hash remain. |
+| Inventoried → imported → verified | Operator quiesces all legacy writers and revokes or drains their credentials. Resolve owners using immutable IDs or an unambiguous current slug/catalog match. | Persist checksummed exact bytes and receipts. Files remain as rollback input until activation. Repeated import of the same inventory is a replay. |
+| Verified → active | All live notes resolve, every staged payload matches its receipt, and the maintenance process confirms writer quiescence. | Advance the durable cutover generation. New writes and token admission use the active generation. |
+| Active → cleaned | Explicit operator action checks the live generation, exact file identity and SHA-256 from its import receipt. | Remove the verified original and settle cleanup. An already absent file is a replay only for an imported and verified identity. |
+
+The vault namespace is NFC, case sensitive and rooted at `/memories`.
+Commands accept canonical virtual paths only. Relative paths, empty and dot
+segments, backslashes, percent escapes, URL/query/fragment syntax, control
+characters and non-scalar UTF-16 are invalid. File leaves end in `.md`.
+Directories are implicit parents. A file cannot also be a parent prefix.
+The limit is 512 UTF-8 bytes and 16 segments below the root. A directory page
+sorts by canonical UTF-8 path, and a note page binds to its exact revision.
+Every cursor binds the vault, selection, kind and sort key. Offset into a
+long note is measured in UTF-16 code units and a page cannot split a
+surrogate pair.
+
+A command locks the current principal and provenance consumer first, then the
+cross-domain knowledge lock where applicable, the vault quota/generation row,
+and the affected note heads in ID order. If an operation starts from a
+librarian card or review proposal, its decision owner locks that row after
+principal and knowledge admission and before acquiring the vault; redaction
+must not invert that order. It invalidates dependent copies through the exact
+source guard, with projection cleanup after commit. No external provider or
+filesystem action runs under a vault write transaction. The service validates
+every CAS, authorization and resulting quota before modifying any head.
+
+An operation receipt is unique for the vault, author principal and request key.
+Its digest uses the UTF-8 encoding of the normalized command with recursively
+sorted object keys, preserving list order. Same digest replays the original
+permitted receipt. Distinct digest conflicts. A replay that would disclose
+content reapplies current read and source checks. A single-note CAS conflict
+carries the authorized current state. A multi-note conflict identifies only
+the authorized mismatched heads and includes a reload instruction.
+
+For launch, an attested Flow node persona takes precedence over the Run
+persona. An enabled attachment authorizes bounded protocol, visible
+`/memories/index.md` and a sorted path page delimited as untrusted data.
+Escape reserved markers in note bytes and path names for rendering only.
+Use the existing prompt application owner to stage the exact manifest before
+dispatch and settle applied or retired. An uncertain delivery keeps its staged
+manifest. Record a Run-level digest over applied descriptors in session-key
+order under the Run lock. Preserve prior receipts on a resumed context and
+reauthorize their sources before restore. A fresh context uses a new
+descriptor. A shared-session subagent definition has no independent vault
+credential.
+
+Legacy imports use the current ADR-152 encoder only for resolving original
+files. Reject symlinks, nonregular files, invalid UTF-8 and ambiguous owners.
+Move exact note bytes into the index only if they fit its cap. Otherwise use
+`/memories/notes/legacy.md` and create a small bounded index pointer. Preserve
+the original SHA-256 in the import receipt. Snapshot evidence is separately
+classified as retained, missing or mismatched, using the Run ID and the
+historical hash. Cleanup of mismatched evidence is forbidden. Before
+activation the operator can restart the legacy writer with intact files.
+After activation, recover with a vault-compatible build or restore a
+consistent backup. Reimport cannot overwrite an activated head.
+
+**Vault expectations (Designed):**
+
+- **AV-01, AV-12.** A mutation MUST compare revision and hash in the locked
+  head transaction before creating any revision.
+- **AV-02.** The prompt application receipt MUST bind the exact rendered
+  manifest and its attested session, including on parallel Flow sessions.
+- **AV-03.** The authorization service MUST enforce `readRepoFiles` on
+  project memory bodies and metadata, `editSettings` on human mutations, and
+  a current global admin for redaction.
+- **AV-09.** Index publication MUST compare the current head revision under
+  the vault lock before serving tags, links, terms or embeddings.
+- **AV-10.** The cutover generation MUST fence API writes until the operator
+  verifies import receipts and quiesces legacy writers.
+- **AV-14.** The disclosure service MUST record exact memory revision sources
+  before private bytes leave a read, conflict, replay or prompt path.
+- **AV-15.** The wire adapters MUST distinguish applied, pending, disabled,
+  stale and hidden outcomes using the canonical schemas.
+- **AV-16.** An exact redaction MUST deny derivatives and future effects
+  that depend on the redacted payload.
+- **AV-17.** A history revert MUST write a new revision through the same
+  command service used for normal edits.
+
+**Vault refusals (Designed):**
+
+- Invalid path, command, insertion line, or configured cap uses
+  `CONFIG`. A stale head, conflicting destination or replay digest uses
+  `CONFLICT`. A disabled vault or absent verified cutover uses
+  `PRECONDITION` after target authorization.
+- An unauthorized source, foreign note, or hidden target follows the missing
+  resource response. An overflow in the disclosure receipt refuses the read
+  before bytes leave and retains the previous capture.
+- A storage or provider error leaves the last committed history intact.
+  Index-provider retries are bounded and keyed by exact revision and model.
+  The lexical index remains locally available. A configured vector error is
+  visible to the caller.
 
 ## Expectations
 

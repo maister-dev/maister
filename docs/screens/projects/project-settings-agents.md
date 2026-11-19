@@ -265,3 +265,7 @@ does not misreport a successful settings save as failed. See
 Each cron row has an optional multiline **Request at launch / Запрос при запуске** field, help and a normalized Unicode character counter. The maximum is 8000 code points after newline normalization and outer trimming. Invalid or overlong input disables Save and has localized feedback; the API independently validates it. Empty input serializes as explicit null, clearing a retained row. Reload preserves each schedule's independent value and stable ID. Request-only saves preserve cadence progress and use the existing schedulesRevision conflict feedback.
 
 The project Agents tab omits request text from client props unless the live reader has readRepoFiles, including after role revocation. The field changes future invocations, leaving definition, policy and already claimed input intact. Non-cron bindings cannot carry nonempty text. See the [input lifecycle](../../system-analytics/scheduled-agent-requests.md) for exact contracts and unsupported Flow consumers.
+
+## Agent memory tab (Designed)
+
+The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. A proposal link opens the filtered Inbox.

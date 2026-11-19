@@ -238,3 +238,7 @@ The [peek navigation contract](../../system-analytics/run-peek-navigation.md) ow
 ## Package 2 presentation (Implemented)
 
 Action history opens beside the conversation. The composer area keeps a compact cue for current confirmations or unresolved work. A changed HITL question or invalidated memory suggestion loses its confirm control and leaves the Attention count. Its receipt remains in Action history. Receipts with proven linkage appear on messages in the current segment.
+
+## Knowledge and vault confirmations (Designed)
+
+Knowledge and agent vault reads follow the current owner's rights. New mutation cards show the exact target and intended effect. Owner confirmation commits a result or exposes a refusal through the existing card refresh.

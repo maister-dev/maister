@@ -223,3 +223,20 @@ no migration rewrites historical source metadata. Main
 `native_knowledge_source_restrictions(jsonb)` iterator with a small-row planner
 estimate; this estimate never truncates the actual array. See the [company runtime
 source contract](../system-analytics/specialist-runtime.md).
+
+## Installation binding and disclosure (Designed)
+
+Main migration 0347 extends `company_specialist_binding_revisions` and the
+current binding projection with a versioned `reach` discriminant. Missing
+historical values decode as `company_only`. Explicit installation scope
+records its reviewed authority, allowed operation keys and workspace mode
+none. Run execution snapshots distinguish the manual initiating user and
+grant-only agent actor. Existing snapshots keep their original bytes.
+
+Main migration 0348 extends the retained Run capture contract with exact vault
+revision restrictions. Capture is versioned and locked by source consumer
+and Run before disclosure. Archive and detach retain identity values for
+existing restrictions. A project that no longer resolves cannot turn a
+previously restricted note into an unrestricted note. The [specialist runtime
+contract](../system-analytics/specialist-runtime.md#installation-agent-authority-designed--adr-211)
+owns live admission and capture bounds.
