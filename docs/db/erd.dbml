@@ -2165,6 +2165,7 @@ table librarian_cards {
   target jsonb [not null]
   target_revision text
   payload jsonb [not null]
+  effect_context jsonb
   payload_digest text [not null]
   requires_owner boolean [not null]
   expires_at "timestamp with time zone" [not null]
@@ -2328,6 +2329,7 @@ table librarian_segment_summaries {
   from_seq bigint [not null]
   to_seq bigint [not null]
   content jsonb [not null]
+  knowledge_access jsonb
   source_project_ids text[] [not null, default: `'{}'::text[]`]
   forget_generation integer [not null]
   history_generation integer [not null]
@@ -2377,6 +2379,7 @@ table librarian_turns {
   variant text [not null]
   status text [not null]
   failure_reason text
+  knowledge_access jsonb
   context_snapshot_id text
   runner_snapshot jsonb
   token_id text

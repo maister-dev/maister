@@ -1,0 +1,3 @@
+ALTER TABLE "librarian_cards" DROP CONSTRAINT "librarian_cards_kind_check";--> statement-breakpoint
+ALTER TABLE "librarian_cards" ADD COLUMN "effect_context" jsonb;--> statement-breakpoint
+ALTER TABLE "librarian_cards" ADD CONSTRAINT "librarian_cards_kind_check" CHECK ("librarian_cards"."kind" IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit'));

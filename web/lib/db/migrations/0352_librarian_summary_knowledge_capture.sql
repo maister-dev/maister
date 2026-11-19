@@ -1,0 +1,1 @@
+ALTER TABLE "librarian_segment_summaries" ADD COLUMN "knowledge_access" jsonb;

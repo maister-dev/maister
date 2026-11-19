@@ -3,7 +3,10 @@ import { z } from "zod";
 import { KNOWLEDGE_KINDS, type KnowledgeAttribution } from "./record-types";
 
 import { postgresTextSchema } from "@/lib/text-schema";
-import { ownerSchema } from "@/lib/company/types";
+import {
+  ownerSchema,
+  type KnowledgeAccessRestriction,
+} from "@/lib/company/types";
 
 export const knowledgeRevisionSchema = z.number().int().min(1).max(2147483647);
 
@@ -78,6 +81,7 @@ export type KnowledgeReference = z.infer<typeof knowledgeReferenceSchema>;
 export type KnowledgePrincipal =
   | Readonly<{ kind: "user"; userId: string }>
   | Readonly<{ kind: "token"; tokenId: string }>
+  | Readonly<{ kind: "librarian_read"; tokenId: string }>
   /** Server-only read inspection; no wire input accepts this principal. */
   | Readonly<{
       kind: "execution";
@@ -101,6 +105,7 @@ export type CreateKnowledgeProposalInput = Readonly<{
   draft: KnowledgeDraft;
   targetRecordId?: string;
   expectedRecordRevision?: number;
+  inheritedRestrictions?: readonly KnowledgeAccessRestriction[];
 }>;
 
 export type KnowledgeProposalDto = Readonly<{

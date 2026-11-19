@@ -20,6 +20,7 @@ import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
 import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
 
 import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-credential-owner";
+import { lockLibrarianKnowledgeContext } from "@/lib/librarian/knowledge-authority";
 import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { parseBoundRunId } from "@/lib/tokens/verify";
@@ -155,6 +156,20 @@ export async function resolveKnowledgePrincipal(
 ): Promise<KnowledgePrincipalIdentity> {
   if (principal.kind === "user")
     return currentKnowledgeUser(tx, principal.userId);
+  if (principal.kind === "librarian_read") {
+    if (action !== "knowledge:read")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Librarian knowledge access is read-only",
+      );
+    const context = await lockLibrarianKnowledgeContext(
+      tx,
+      principal.tokenId,
+      "knowledge:read",
+    );
+
+    return currentKnowledgeUser(tx, context.ownerId);
+  }
   if (principal.kind === "execution") {
     if (action !== "knowledge:read")
       throw new MaisterError(

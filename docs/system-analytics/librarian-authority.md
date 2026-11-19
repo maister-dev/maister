@@ -144,6 +144,14 @@ flowchart LR
 | Owner confirmation | Existing owner decision surface, live owner rights, matching target/preconditions and current access to captured sources | Record one durable domain effect and audit in the same transaction as card and operation settlement. |
 | Expired, stale, redacted, revoked, or reset | Recheck under the current owner, turn and operation locks | Refuse without domain mutation. Keep the established cancellation and reset barriers. |
 
+Native knowledge and vault responses append the exact source restrictions to
+the current turn in the response transaction. The conversation, history
+search and prompt composition recheck those restrictions before including a
+reply. Summaries retain the source union of the composed excerpt so older
+message retention cannot remove their restrictions. For the rest of a
+segment that has captured guarded source material, each turn starts a fresh
+ACP session with reauthorized context.
+
 Use the existing source policies for knowledge and Brain reads. Treat the
 librarian credential as a turn principal through both the external handler
 and domain authorization. Do not turn it into an unbound user token. Vault

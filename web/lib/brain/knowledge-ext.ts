@@ -22,8 +22,13 @@ export async function handleKnowledgeExt(
       endpoint,
       method: request.method,
       admitInstallation: admission?.installation,
+      admitLibrarian: admission?.librarian === "read" ? true : undefined,
     },
-    async ({ actor }) => work({ kind: "token", tokenId: actor.tokenId }),
+    async ({ actor }) =>
+      work({
+        kind: actor.tokenKind === "librarian" ? "librarian_read" : "token",
+        tokenId: actor.tokenId,
+      }),
     (error) => {
       const response = knowledgeErrorResponse(error, endpoint);
 

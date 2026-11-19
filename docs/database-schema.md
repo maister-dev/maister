@@ -5807,3 +5807,14 @@ append-only `agent_installation_run_sources` relation keyed by Run and project
 identity. The source rows survive project and Run retention. Main migration
 `0349_agent_installation_credentials` binds the installation credential to that
 exact execution authority and preserves existing company credential guards.
+
+### Librarian source capture and governed confirmations
+
+Main migration `0350_librarian_knowledge_capture` adds nullable versioned
+source capture to `librarian_turns`. Migration `0351_librarian_knowledge_cards`
+extends the card kind constraint with knowledge proposals, Brain proposals
+and vault edits and adds the exact target and source context used at
+confirmation. `0352_librarian_summary_knowledge_capture` retains the composed
+source union on each summary. Legacy turns, cards and summaries keep their
+existing payloads and permissions. The existing operation receipt remains
+the idempotent decision record.

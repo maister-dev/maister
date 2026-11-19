@@ -2423,6 +2423,27 @@
       "when": 1795104046719,
       "tag": "0349_agent_installation_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 350,
+      "version": "7",
+      "when": 1795106255085,
+      "tag": "0350_librarian_knowledge_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 351,
+      "version": "7",
+      "when": 1795106448040,
+      "tag": "0351_librarian_knowledge_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 352,
+      "version": "7",
+      "when": 1795113328330,
+      "tag": "0352_librarian_summary_knowledge_capture",
+      "breakpoints": true
     }
   ]
 }

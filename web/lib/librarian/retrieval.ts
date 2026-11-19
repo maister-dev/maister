@@ -1,11 +1,16 @@
 import "server-only";
 
+import type { KnowledgeAccessRestriction } from "@/lib/company/types";
 import type { Db } from "@/lib/execution-host/db";
 import type { ComposerMessage, ComposerRevisioned } from "./composer";
 
-import { and, asc, eq, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  visibleLibrarianCapture,
+  visibleLibrarianTurnSources,
+} from "./disclosed-context";
 import { memoryContentDigest } from "./memory";
 import { queueLibrarianSummary } from "./summary";
 
@@ -16,6 +21,7 @@ import {
   librarianConversations,
   librarianMessages,
   librarianSegmentSummaries,
+  librarianTurns,
   users,
 } from "@/lib/db/schema";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
@@ -39,6 +45,9 @@ export async function retrieveLibrarianContext(
   history: ComposerMessage[];
   summaries: ComposerRevisioned[];
   memoryItems: ComposerRevisioned[];
+  guardedHistory: boolean;
+  sourceMessages: ReadonlyMap<string, readonly KnowledgeAccessRestriction[]>;
+  sourceSummaries: ReadonlyMap<string, readonly KnowledgeAccessRestriction[]>;
 }> {
   const [owner] = await tx
     .select({ role: users.role })
@@ -54,6 +63,7 @@ export async function retrieveLibrarianContext(
       authorKind: librarianMessages.authorKind,
       body: librarianMessages.body,
       sourceProjectIds: librarianMessages.sourceProjectIds,
+      turnId: librarianMessages.turnId,
     })
     .from(librarianMessages)
     .where(
@@ -65,10 +75,24 @@ export async function retrieveLibrarianContext(
       ),
     )
     .orderBy(asc(librarianMessages.seq));
+  const disclosures = await visibleLibrarianTurnSources(
+    tx,
+    input.ownerId,
+    historyRows.flatMap(({ turnId }) => (turnId ? [turnId] : [])),
+  );
+  const sourceMessages = new Map<
+    string,
+    readonly KnowledgeAccessRestriction[]
+  >();
+  for (const row of historyRows) {
+    const restrictions = row.turnId ? disclosures.get(row.turnId) : undefined;
+    if (restrictions?.length) sourceMessages.set(row.id, restrictions);
+  }
   const visibleHistory = historyRows.filter(
     (row) =>
       row.authorKind === "owner" ||
-      row.sourceProjectIds.every((id) => visible.has(id)),
+      (row.sourceProjectIds.every((id) => visible.has(id)) &&
+        (!row.turnId || disclosures.get(row.turnId) !== null)),
   ) as ComposerMessage[];
 
   const summaryRows = await tx
@@ -93,11 +117,25 @@ export async function retrieveLibrarianContext(
     .where(eq(librarianMemoryTombstones.userId, input.ownerId));
   const forgotten = new Set(tombstones.map((row) => row.digest));
   const summaries: ComposerRevisioned[] = [];
+  const sourceSummaries = new Map<
+    string,
+    readonly KnowledgeAccessRestriction[]
+  >();
   let dropped = historyRows.length - visibleHistory.length;
   let coveredToSeq = 0n;
   let invalidated = 0;
 
   for (const row of summaryRows) {
+    const sources = await visibleLibrarianCapture(
+      tx,
+      input.ownerId,
+      row.knowledgeAccess,
+    );
+    if (sources === null) {
+      dropped += 1;
+      continue;
+    }
+    if (sources.length) sourceSummaries.set(row.id, sources);
     if (row.sourceProjectIds.some((id) => !visible.has(id))) {
       await tx
         .update(librarianSegmentSummaries)
@@ -193,5 +231,22 @@ export async function retrieveLibrarianContext(
     "librarian context retrieved",
   );
 
-  return { history, summaries, memoryItems };
+  const [guardedTurn] = await tx
+    .select({ id: librarianTurns.id })
+    .from(librarianTurns)
+    .where(
+      and(
+        eq(librarianTurns.segmentId, input.segmentId),
+        isNotNull(librarianTurns.knowledgeAccess),
+      ),
+    )
+    .limit(1);
+  return {
+    history,
+    summaries,
+    memoryItems,
+    guardedHistory: guardedTurn !== undefined,
+    sourceMessages,
+    sourceSummaries,
+  };
 }

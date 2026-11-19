@@ -5060,7 +5060,12 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LibrarianCardProposal" }
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/LibrarianCardProposal"
+                - $ref: "#/components/schemas/LibrarianKnowledgeProposalInput"
+                - $ref: "#/components/schemas/LibrarianBrainProposalInput"
+                - $ref: "#/components/schemas/LibrarianVaultEditInput"
       responses:
         "201":
           description: Card created and shown to the owner.
@@ -7872,10 +7877,10 @@ paths:
     get:
       operationId: extLibrarianVaultList
       summary: List owner-visible agent vaults
-      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+      description: Requires current turn-scoped agent_memory:read and the owner's live
         target/source access. Target identity comes from current credentials and the resolved route
         resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - librarianTurnToken: []
       parameters:
@@ -7923,10 +7928,10 @@ paths:
     get:
       operationId: extLibrarianVaultRead
       summary: Read a note or list a directory
-      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+      description: Requires current turn-scoped agent_memory:read and the owner's live
         target/source access. Target identity comes from current credentials and the resolved route
         resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - librarianTurnToken: []
       parameters:
@@ -7991,10 +7996,10 @@ paths:
     get:
       operationId: extLibrarianVaultSearch
       summary: Search visible current heads
-      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+      description: Requires current turn-scoped agent_memory:read and the owner's live
         target/source access. Target identity comes from current credentials and the resolved route
         resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - librarianTurnToken: []
       parameters:
@@ -8084,10 +8089,10 @@ paths:
     get:
       operationId: extLibrarianVaultBacklinks
       summary: List visible backlinks
-      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+      description: Requires current turn-scoped agent_memory:read and the owner's live
         target/source access. Target identity comes from current credentials and the resolved route
         resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - librarianTurnToken: []
       parameters:
@@ -8152,10 +8157,10 @@ paths:
     get:
       operationId: extLibrarianVaultTags
       summary: List tags and visible note counts
-      description: Designed (P5). Requires current turn-scoped agent_memory:read and the owner's live
+      description: Requires current turn-scoped agent_memory:read and the owner's live
         target/source access. Target identity comes from current credentials and the resolved route
         resource.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - librarianTurnToken: []
       parameters:
@@ -9619,6 +9624,73 @@ components:
             $ref: "#/components/schemas/AgentVaultHeadPrecondition"
           minItems: 1
           maxItems: 1024
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultClearCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - ifGeneration
+        - heads
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - clear
+        ifGeneration:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: ^(0|[1-9][0-9]{0,18})$
+        heads:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentVaultHeadPrecondition"
+          minItems: 0
+          maxItems: 1024
+        requestKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_.:-]{8,128}$
+    AgentVaultRevertCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - command
+        - noteId
+        - revisionId
+        - ifRevisionId
+        - ifHash
+        - requestKey
+      properties:
+        command:
+          type: string
+          enum:
+            - revert
+        noteId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        revisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifRevisionId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        ifHash:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
         requestKey:
           type: string
           minLength: 1
@@ -14936,6 +15008,45 @@ components:
           type: string
           maxLength: 1000
 
+    LibrarianKnowledgeProposalInput:
+      type: object
+      additionalProperties: false
+      required: [action, content]
+      properties:
+        action: { type: string, enum: [knowledge_proposal] }
+        content: { $ref: "#/components/schemas/CBProposalInput/properties/content" }
+    LibrarianBrainProposalInput:
+      type: object
+      additionalProperties: false
+      required: [action, projectSlug, kind, draft]
+      properties:
+        action: { type: string, enum: [brain_proposal] }
+        projectSlug: { type: string, minLength: 1, maxLength: 192 }
+        kind: { type: string, enum: [rule, skill, flow, adr, roadmap, state] }
+        evidenceItemIds:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 192 }
+        draft: { type: object }
+        blastRadius: { type: string, enum: [low, medium, high], default: low }
+    LibrarianVaultEditInput:
+      type: object
+      additionalProperties: false
+      required: [action, vaultId, command]
+      properties:
+        action: { type: string, enum: [vault_edit] }
+        vaultId: { type: string, minLength: 1, maxLength: 192 }
+        command:
+          oneOf:
+            - $ref: "#/components/schemas/AgentVaultCreateCommand"
+            - $ref: "#/components/schemas/AgentVaultReplaceCommand"
+            - $ref: "#/components/schemas/AgentVaultInsertCommand"
+            - $ref: "#/components/schemas/AgentVaultDeleteCommand"
+            - $ref: "#/components/schemas/AgentVaultRenameCommand"
+            - $ref: "#/components/schemas/AgentVaultDeleteTreeCommand"
+            - $ref: "#/components/schemas/AgentVaultRenameTreeCommand"
+            - $ref: "#/components/schemas/AgentVaultClearCommand"
+            - $ref: "#/components/schemas/AgentVaultRevertCommand"
     LibrarianCardProposal:
       type: object
       additionalProperties: false
@@ -14945,44 +15056,9 @@ components:
         required for that action, binds the current target revision and writes
         the payload digest. `memory_suggest` remains inert until owner accept.
       properties:
-        vaultId:
-          type: string
-          minLength: 1
-          maxLength: 192
-          x-maister-designed: true
-        vaultCommand:
-          x-maister-designed: true
-          oneOf:
-            - $ref: "#/components/schemas/AgentVaultCreateCommand"
-            - $ref: "#/components/schemas/AgentVaultReplaceCommand"
-            - $ref: "#/components/schemas/AgentVaultInsertCommand"
-            - $ref: "#/components/schemas/AgentVaultDeleteCommand"
-            - $ref: "#/components/schemas/AgentVaultRenameCommand"
-            - $ref: "#/components/schemas/AgentVaultDeleteTreeCommand"
-            - $ref: "#/components/schemas/AgentVaultRenameTreeCommand"
-        knowledgeProposal:
-          allOf: [{ $ref: "#/components/schemas/CBProposalInput" }]
-          x-maister-designed: true
-        brainProposal:
-          allOf: [{ $ref: "#/components/schemas/ExtMemoryProposalBody" }]
-          x-maister-designed: true
         action:
           type: string
-          enum:
-            [
-              statement_accept,
-              hitl_respond,
-              run_promote,
-              run_discard,
-              memory_suggest,
-              knowledge_propose,
-              brain_propose,
-              agent_vault_propose_edit,
-            ]
-          x-maister-designed-enum:
-            - knowledge_propose
-            - brain_propose
-            - agent_vault_propose_edit
+          enum: [statement_accept, hitl_respond, run_promote, run_discard, memory_suggest]
         taskId: { type: string, format: uuid }
         expectedRevision: { type: integer, minimum: 0 }
         statement: { type: object }

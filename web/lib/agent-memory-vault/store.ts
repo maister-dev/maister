@@ -868,6 +868,71 @@ async function replay(
   };
 }
 
+/** Inspect the exact plan under the same preconditions as a future owner-confirmed edit. */
+export async function previewVaultMutation(
+  tx: Db,
+  access: VaultAccess,
+  command: AgentMemoryMutation,
+) {
+  const vault = await lockVault(tx, access.vaultId);
+  const active = await loadActiveHeads(tx, vault.id);
+  const plan =
+    "ifGeneration" in command
+      ? await planTree(tx, access, vault, command, active)
+      : await planOne(tx, access, command, active);
+  if ("status" in plan)
+    throw new MaisterError("CONFLICT", "Memory changed before confirmation");
+  await checkPaths(tx, access, active, plan);
+  const sources = await retentionSources(
+    tx,
+    access,
+    plan.flatMap(({ inherited }) => inherited),
+    plan.map(({ content }) => content),
+  );
+  const preview = await Promise.all(
+    plan.map(async (step) => {
+      const base = step.head?.revision;
+      const before = base?.contentSha256
+        ? await readVaultPayload(tx, base)
+        : null;
+      const after = step.content;
+
+      return {
+        path: step.path,
+        revisionId: base?.id ?? null,
+        beforeSha256: base?.contentSha256 ?? null,
+        afterSha256:
+          after === null
+            ? null
+            : createHash("sha256").update(after).digest("hex"),
+        before: before?.slice(0, 2048) ?? null,
+        after: after?.slice(0, 2048) ?? null,
+      };
+    }),
+  );
+  const dependencies = [
+    ...new Map(
+      plan
+        .flatMap(({ inherited }) => inherited)
+        .map((revision) => [revision.id, revision]),
+    ).values(),
+  ].flatMap((revision) =>
+    revision.contentSha256
+      ? [
+          {
+            kind: "agent_vault_revision_v1" as const,
+            vaultId: revision.vaultId,
+            noteId: revision.noteId,
+            revisionId: revision.id,
+            contentSha256: revision.contentSha256,
+          },
+        ]
+      : [],
+  );
+
+  return { sources, preview, dependencies };
+}
+
 export async function applyVaultMutationInTransaction(
   db: Db,
   command: AgentMemoryMutation,

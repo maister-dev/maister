@@ -14,6 +14,10 @@ import {
   structuredResponseToToolError,
   restResponseToToolError,
 } from "./rest";
+import {
+  librarianVaultRoute,
+  librarianVaultToolSpecs,
+} from "./librarian-vault-tools";
 import { isToolsetName, TOOLSETS } from "./toolsets";
 import {
   isTaskLaunchTool,
@@ -76,6 +80,7 @@ const TASK_SOURCE_PROPERTIES = {
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
+  ...librarianVaultToolSpecs,
   observatory_summary: {
     description:
       "Read scoped installation run counts, successful executions and elapsed durations by project.",
@@ -1545,6 +1550,7 @@ export async function dispatchTool(opts: {
   ctx: AuthContext;
   baseUrl: string;
   signal?: AbortSignal;
+  toolset?: string;
 }): Promise<DispatchResult> {
   const { name, args, ctx, baseUrl, signal } = opts;
 
@@ -1632,13 +1638,41 @@ export async function dispatchTool(opts: {
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
   const { operationKey, ...routedArgs } = nativeArguments;
-  const { method, path, body } = resolveRouting(
-    name,
-    coerceNumericArgs(name, routedArgs),
-  );
+  const normalizedArgs = coerceNumericArgs(name, routedArgs);
+  const librarian = opts.toolset === "librarian";
+  const confirmation =
+    name === "agent_vault_propose_edit"
+      ? {
+          action: "vault_edit",
+          vaultId: normalizedArgs.vaultId,
+          command: normalizedArgs.command,
+        }
+      : librarian && name === "knowledge_propose"
+        ? { action: "knowledge_proposal", content: normalizedArgs.content }
+        : librarian && name === "memory_propose"
+          ? {
+              action: "brain_proposal",
+              projectSlug: normalizedArgs.slug,
+              kind: normalizedArgs.kind,
+              draft: normalizedArgs.draft,
+              blastRadius: normalizedArgs.blastRadius,
+              evidenceItemIds: normalizedArgs.evidenceItemIds,
+            }
+          : null;
+  const contextKey =
+    librarian && name === "knowledge_propose"
+      ? normalizedArgs.idempotencyKey
+      : operationKey;
+  const { method, path, body } = confirmation
+    ? {
+        method: "POST" as const,
+        path: "/api/v1/ext/librarian/cards",
+        body: confirmation,
+      }
+    : resolveRouting(name, normalizedArgs);
   const headers =
-    typeof operationKey === "string" && operationKey.length > 0
-      ? { "Idempotency-Key": operationKey }
+    typeof contextKey === "string" && contextKey.length > 0
+      ? { "Idempotency-Key": contextKey }
       : undefined;
 
   let res: Response;
@@ -1667,6 +1701,7 @@ export async function dispatchTool(opts: {
       isDelegationAdmissionTool(name) ||
       name === "memory" ||
       name === "memory_promote" ||
+      name.startsWith("agent_vault_") ||
       isVaultIndexTool(name) ||
       name === "agent_memory_write" ||
       isKnowledgeTool(name) ||
@@ -1739,6 +1774,7 @@ function resolveRouting(
 } {
   if (isTaskLaunchTool(name)) return taskLaunchRouting(name, args);
   if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
+  if (name.startsWith("agent_vault_")) return librarianVaultRoute(name, args);
 
   switch (name) {
     case "observatory_summary": {

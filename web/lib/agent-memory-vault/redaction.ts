@@ -58,6 +58,12 @@ async function removeDerivedVaultContent(
     DELETE FROM agent_memory_proposal_payloads payload USING dependent d
     WHERE (payload.vault_id,payload.proposal_id)=(d.vault_id,d.id)
   `);
+  await tx.execute(sql`
+    UPDATE librarian_cards
+    SET status=CASE WHEN status='pending' THEN 'superseded' ELSE status END,
+      payload='{}'::jsonb, effect_context=NULL
+    WHERE effect_context->'restrictions' @> ${JSON.stringify([restriction])}::jsonb
+  `);
   const cache = await tx.execute<{ enabled: boolean }>(
     sql`SELECT to_regclass('agent_memory_embeddings') IS NOT NULL AS enabled`,
   );

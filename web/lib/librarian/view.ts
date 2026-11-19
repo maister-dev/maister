@@ -54,6 +54,8 @@ import {
 
 // ADR-185 / web.openapi.yaml: explicit DTO projections — never a row.
 
+import { visibleLibrarianTurnSources } from "./disclosed-context";
+
 export type LibrarianIndicatorState =
   "none" | "running" | "unread" | "action_required";
 
@@ -312,10 +314,16 @@ export async function librarianMessageDtos(
     eventRows.map((event) => [event.id, event.occurredAt]),
   );
 
+  const disclosures = await visibleLibrarianTurnSources(
+    db,
+    ownerId,
+    rows.flatMap(({ turnId }) => (turnId ? [turnId] : [])),
+  );
   return rows.map((row) => {
     const masked =
       row.authorKind !== "owner" &&
-      row.sourceProjectIds.some((projectId) => !visibleIds.has(projectId));
+      (row.sourceProjectIds.some((projectId) => !visibleIds.has(projectId)) ||
+        Boolean(row.turnId && disclosures.get(row.turnId) === null));
     const update = row.updateId ? updateById.get(row.updateId) : null;
     const task = update?.taskId ? taskById.get(update.taskId) : null;
     const slug = task ? visibleSlugs.get(task.projectId) : null;
@@ -457,7 +465,7 @@ export async function readLibrarianIndicator(
 
       return conversation ? librarianIndicator(tx, conversation) : "none";
     },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
+    { isolationLevel: "repeatable read" },
   );
 }
 
@@ -542,7 +550,7 @@ export async function getLibrarianWorkView(
 
       return { ...common, ...work };
     },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
+    { isolationLevel: "repeatable read" },
   );
 }
 

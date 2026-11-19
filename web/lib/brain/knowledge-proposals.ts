@@ -421,9 +421,11 @@ export async function createKnowledgeProposalInTransaction(
     owner.data,
     actor,
   );
-  const installationProjectSources =
-    consumer === null ? [] : await installationRunProjects(tx, consumer.runId);
+  const installationProjectSources = !consumer?.runId
+    ? []
+    : await installationRunProjects(tx, consumer.runId);
   let restrictions = additionalKnowledgeRestrictions(owner.data, [
+    ...(input.inheritedRestrictions ?? []),
     ...installationProjectSources.map((projectId) => ({
       kind: "project_visibility" as const,
       projectId,

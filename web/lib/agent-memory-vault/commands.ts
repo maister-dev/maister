@@ -74,7 +74,7 @@ const memoryView = z.strictObject({
     .optional(),
 });
 
-const memoryMutation = z.union([
+export const memoryMutation = z.union([
   z
     .strictObject({
       command: z.literal("create"),

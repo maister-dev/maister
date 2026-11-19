@@ -22,6 +22,7 @@ export type OwnedExtOptions = Readonly<{
   endpoint: string;
   method: string;
   admitInstallation?: true;
+  admitLibrarian?: true;
 }>;
 
 export async function handleOwnedExt(
@@ -52,7 +53,7 @@ export async function handleOwnedExt(
         "UNAUTHORIZED",
         "This endpoint does not admit an installation agent",
       );
-    if (actor.tokenKind === "librarian")
+    if (actor.tokenKind === "librarian" && !options.admitLibrarian)
       throw new MaisterError(
         "UNAUTHORIZED",
         "This endpoint does not admit a librarian token",

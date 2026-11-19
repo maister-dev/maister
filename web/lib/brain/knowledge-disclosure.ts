@@ -23,6 +23,7 @@ import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { pgErrorOf } from "@/lib/db/pg-error";
 import { captureInstallationProjects } from "@/lib/agents/installation-source-capture";
+import { lockLibrarianKnowledgeContext } from "@/lib/librarian/knowledge-authority";
 import { parseBoundRunId } from "@/lib/tokens/verify";
 
 const log = pino({
@@ -30,10 +31,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type KnowledgeReadConsumer = Readonly<{
-  runId: string;
-  capture: KnowledgeAccessCapture;
-}> | null;
+export type KnowledgeReadConsumer = Readonly<
+  | { runId: string; capture: KnowledgeAccessCapture }
+  | { runId: null; librarianTurnId: string; capture: KnowledgeAccessCapture }
+> | null;
 
 export function canonicalKnowledgeRestrictions(
   restrictions: readonly KnowledgeAccessRestriction[],
@@ -84,6 +85,15 @@ export async function lockKnowledgeReadConsumer(
     "FIX native knowledge admission avoids policy JIT compilation",
   );
   if (principal.kind === "user") return null;
+  if (principal.kind === "librarian_read") {
+    const { turnId, capture } = await lockLibrarianKnowledgeContext(
+      tx,
+      principal.tokenId,
+      "knowledge:read",
+    );
+
+    return { runId: null, librarianTurnId: turnId, capture };
+  }
   if (principal.kind === "execution")
     return lockRunKnowledgeReadConsumer(tx, principal.runId);
   const token = await lockCurrentNativeKnowledgeToken(tx, principal.tokenId);
@@ -141,7 +151,7 @@ export async function lockKnowledgeWriteConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
-  if (principal.kind === "execution")
+  if (principal.kind === "execution" || principal.kind === "librarian_read")
     throw new MaisterError(
       "UNAUTHORIZED",
       "Execution inspection cannot authorize knowledge writes",
@@ -183,10 +193,13 @@ export async function recordKnowledgeDisclosure(
   restrictions: readonly KnowledgeAccessRestriction[],
 ): Promise<void> {
   if (consumer === null) return;
-  const installation = await tx.execute(
-    sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${consumer.runId}`,
-  );
-  if (installation.rows.length) {
+  const installation =
+    consumer.runId === null
+      ? null
+      : await tx.execute(
+          sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${consumer.runId}`,
+        );
+  if (consumer.runId !== null && installation?.rows.length) {
     const projects: string[] = [];
     for (const source of restrictions) {
       if (
@@ -246,7 +259,10 @@ export async function recordKnowledgeDisclosure(
     restrictions: combined,
   };
 
+  const contents = JSON.stringify(capture);
   await tx.execute(
-    sql`UPDATE runs SET knowledge_access=${JSON.stringify(capture)}::jsonb WHERE id=${consumer.runId}`,
+    consumer.runId === null
+      ? sql`UPDATE librarian_turns SET knowledge_access=${contents}::jsonb WHERE id=${consumer.librarianTurnId}`
+      : sql`UPDATE runs SET knowledge_access=${contents}::jsonb WHERE id=${consumer.runId}`,
   );
 }

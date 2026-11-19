@@ -395,7 +395,7 @@ Local P4 evidence: the isolated PostgreSQL `AV-06` fixture verifies manual live 
   - Tests: existing librarian authority/admission/visibility/profile/toolset tests plus positive knowledge/vault reads and missing/hidden equivalence. Logging: DEBUG tool/turn/target class and outcome only.
   - Early delivery after T12 may include knowledge reads and `agent_vault_list/view`. Register search/backlinks/tags after T15. Expose installation targets once their guarded reads are available.
   - Depends on: T04, T12, T15, T29, T30 for full completion.
-- [ ] **T34 — Route knowledge, Brain and vault mutation tools into confirmation cards.**
+- [x] **T34 — Route knowledge, Brain and vault mutation tools into confirmation cards.**
   - Files: `web/lib/librarian/cards.ts`, tool adapters, MCP registry/toolset, ext librarian cards route, operation payload/schema mirrors and confirmation UI/i18n.
   - Add discriminated knowledge-proposal, Brain fact/proposal and vault-command card types, including `agent_vault_propose_edit` dispatch. Freeze complete payload/diff/evidence/base/target/digest; show exact pending action. Projectless cards admit only separately authorized company knowledge/installation vault targets. Explain cannot propose. No effect before confirmation.
   - Tests: every tool creates one owner-bound card; raw mutation endpoints still deny librarian bypass; duplicate/changed-key handling, captured turn sources and hidden-target refusal. Keep new card types unadvertised until T35 can settle them. Logging: INFO card/turn/type/digest creation, no proposed body. Depends on: T24, T33.
@@ -408,6 +408,8 @@ Local P4 evidence: the isolated PostgreSQL `AV-06` fixture verifies manual live 
   - Files: `web/e2e/librarian-acceptance.spec.ts`, `web/playwright.librarian.config.ts`, card/authority/operation/memory-boundary suites, librarian authority/docs/screens/API schemas.
   - Ask to record a project Brain fact → visible card → confirm → durable owner-attributed proposal/item. Cover knowledge pending review and vault apply, EN/RU, hidden project, stale rights and no pre-confirm effect. Preserve ADR-190 personal-memory paths and existing owner confirmation behavior.
   - Validation: separate librarian runner actually lists/executes the scenario; all P5 phase suites and docs/contracts green. Logging: validation output only. Depends on: T33–T35.
+
+Local P5 evidence: all 85 Librarian PostgreSQL integration tests passed across 15 suites. AV-08 observes the owner-bound knowledge and vault requests, the direct-write refusal, the no-effect-before-confirmation boundary, owner-attributed Brain and knowledge proposals, a vault edit, decision replay, permission revocation, and redaction of a captured source. The history-search redaction regression failed before filtering and passed afterward. The Librarian Playwright lane ran the real MCP facade with scripted ACP and passed the authenticated Brain confirmation journey (2 tests including setup). The complete installation authority dependency and the remaining decision interleavings are still tracked above.
 
 ### Final integration — Namespace integrity and release acceptance
 

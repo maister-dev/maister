@@ -41,6 +41,15 @@ on every request of every turn through `requireProjectActionForUser`.
 | Project member / admin / owner | Same | Create, update, triage, launch and message work as the role allows; human-only actions (human HITL answers, promotion, discard) only by clicking a confirmation card, which runs through a session route under `requireProjectAction` |
 | Global admin | Only their own conversation — never another user's conversation, memory or snapshots | Same as their project roles; enables the librarian and selects its runner on [Settings → ACP runners](../settings-acp-runners.md) (`requireGlobalRole("admin")`) |
 
+The **Needs attention** section shows confirmation cards for knowledge
+proposals, Project Brain proposals and agent vault edits. Each card shows
+the target and proposed change, with the existing confirmation and reject
+actions. Confirmation submits a proposal for Brain or knowledge review, or
+applies a vault edit with the owner's current edit authority. A card with
+unavailable source material hides its preview and decision controls.
+[Librarian authority](../../system-analytics/librarian-authority.md#knowledge-and-agent-vault-authority-designed--adr-213)
+defines the live checks.
+
 ## Navigation
 
 - **Entry:** the Librarian entry in the [top nav](top-nav.md), on every `(app)`

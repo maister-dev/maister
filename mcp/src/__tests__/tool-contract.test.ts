@@ -463,6 +463,27 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "get",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications",
   },
+  agent_vault_list: { method: "get", path: "/api/v1/ext/librarian/vaults" },
+  agent_vault_view: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/view",
+  },
+  agent_vault_search: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/search",
+  },
+  agent_vault_backlinks: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/backlinks",
+  },
+  agent_vault_tags: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/tags",
+  },
+  agent_vault_propose_edit: {
+    method: "post",
+    path: "/api/v1/ext/librarian/cards",
+  },
   librarian_card_propose: {
     method: "post",
     path: "/api/v1/ext/librarian/cards",
@@ -685,8 +706,14 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       delete queryFields.ownerId;
       queryFields.owner = deref({ $ref: "#/components/schemas/CBOwner" });
     }
-    const body = bodySchema(op);
+    const body =
+      toolName === "librarian_card_propose"
+        ? deref({ $ref: "#/components/schemas/LibrarianCardProposal" })
+        : toolName === "agent_vault_propose_edit"
+          ? deref({ $ref: "#/components/schemas/LibrarianVaultEditInput" })
+          : bodySchema(op);
     const bodyProps = implementedEntries(body?.properties ?? {});
+    if (toolName === "agent_vault_propose_edit") delete bodyProps.action;
     const bodyRequired = (body?.required ?? []).filter((name) =>
       Object.hasOwn(bodyProps, name),
     );

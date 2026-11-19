@@ -32,6 +32,6 @@ export async function GET(
         await getKnowledgeRecord(getDb(), principal, selector),
       );
     },
-    { installation: true },
+    { installation: true, librarian: "read" },
   );
 }

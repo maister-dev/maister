@@ -31,5 +31,6 @@ export async function GET(
         await getKnowledgeEvidencePage(getDb(), principal, selector, page),
       );
     },
+    { librarian: "read" },
   );
 }

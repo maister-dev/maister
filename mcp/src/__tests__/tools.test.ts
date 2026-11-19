@@ -67,6 +67,12 @@ describe("TOOL_SPECS registry", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "activity_feed",
+        "agent_vault_list",
+        "agent_vault_view",
+        "agent_vault_search",
+        "agent_vault_backlinks",
+        "agent_vault_tags",
+        "agent_vault_propose_edit",
         "activity_pulse",
         "agent_memory_write",
         "memory",

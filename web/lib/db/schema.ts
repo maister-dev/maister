@@ -9632,6 +9632,7 @@ export const librarianTurns = pgTable(
     // deadline, capability_trip, summary_invalid.
     failureReason: text("failure_reason"),
     // No FK: the snapshot references its turn.
+    knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
     contextSnapshotId: text("context_snapshot_id"),
     runnerSnapshot: jsonb("runner_snapshot").$type<RunnerSnapshot>(),
     // No FK: the token references its turn.
@@ -9787,7 +9788,14 @@ export const librarianCards = pgTable(
       onDelete: "set null",
     }),
     kind: text("kind", {
-      enum: ["statement_proposal", "confirmation", "memory_suggestion"],
+      enum: [
+        "statement_proposal",
+        "confirmation",
+        "memory_suggestion",
+        "knowledge_proposal",
+        "brain_proposal",
+        "vault_edit",
+      ],
     }).notNull(),
     status: text("status", {
       enum: [
@@ -9802,6 +9810,7 @@ export const librarianCards = pgTable(
     target: jsonb("target").$type<Record<string, string>>().notNull(),
     targetRevision: text("target_revision"),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    effectContext: jsonb("effect_context").$type<Record<string, unknown>>(),
     payloadDigest: text("payload_digest").notNull(),
     requiresOwner: boolean("requires_owner").notNull(),
     expiresAt: timestamp("expires_at", {
@@ -9824,7 +9833,7 @@ export const librarianCards = pgTable(
       .where(sql`${t.status} = 'pending'`),
     kindCheck: check(
       "librarian_cards_kind_check",
-      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion')`,
+      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit')`,
     ),
     statusCheck: check(
       "librarian_cards_status_check",
@@ -10148,6 +10157,7 @@ export const librarianSegmentSummaries = pgTable(
     fromSeq: bigint("from_seq", { mode: "bigint" }).notNull(),
     toSeq: bigint("to_seq", { mode: "bigint" }).notNull(),
     content: jsonb("content").$type<LibrarianSummaryContent>().notNull(),
+    knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
     sourceProjectIds: text("source_project_ids")
       .array()
       .notNull()

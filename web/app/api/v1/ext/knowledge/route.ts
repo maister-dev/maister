@@ -21,6 +21,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           knowledgeSearchFromUrl(request.nextUrl.searchParams),
         ),
       ),
-    { installation: true },
+    { installation: true, librarian: "read" },
   );
 }
