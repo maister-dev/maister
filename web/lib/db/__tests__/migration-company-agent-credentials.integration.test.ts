@@ -7,6 +7,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { generateToken } from "@/lib/tokens/secret";
 import { verifyToken } from "@/lib/tokens/verify";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
   applyMainMigration,
   startMainPostgresTestDbUpTo,
@@ -74,12 +75,15 @@ it("preserves existing project, user and agent token hashes, bindings and verifi
   ).toEqual(
     before.map((row) => ({ ...row, company_id: null, company_run_id: null })),
   );
+  await upgradeMainTestDb(database, "0241_company_agent_credentials");
+
   for (const credential of credentials) {
     const actor = await verifyToken(credential.secret, database.db);
 
     expect(actor.tokenKind).toBe(credential.kind);
     expect(actor.projectId).toBe(credential.kind === "user" ? null : projectId);
     expect(actor).not.toHaveProperty("companyId");
+    expect(actor).not.toHaveProperty("installationScope");
   }
 });
 

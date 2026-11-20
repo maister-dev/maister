@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { SqlTransaction } from "@/lib/db/sql-types";
-
 import type { Db } from "@/lib/execution-host/db";
 import type { StandComponentConfig, StandTarget } from "./target-types";
 
@@ -24,6 +23,7 @@ import {
   standTargets,
 } from "@/lib/db/schema";
 import { isUniqueViolation, redactQueryError } from "@/lib/db/pg-error";
+import { configureKnowledgeReadExecution } from "@/lib/brain/knowledge-disclosure";
 import { readKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
@@ -44,6 +44,7 @@ export async function readStandRunbookDigest(
   companyId: string,
   runbook: StandComponentConfig["runbook"],
 ): Promise<string> {
+  await configureKnowledgeReadExecution(db, "user");
   const { record } = await readKnowledgeRecord(
     db,
     { kind: "user", userId },

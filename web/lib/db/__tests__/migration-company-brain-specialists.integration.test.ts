@@ -568,6 +568,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   expect(after.company_id).toBeNull();
   expect(after.company_execution_snapshot).toBeNull();
   expect(after.company_cancellation_intent).toBeNull();
+  expect(after.agent_memory_hash_format).toBeNull();
   expect(
     (
       await database.pool.query(
@@ -584,6 +585,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   ).toEqual({
     ...tokenBefore,
     knowledge_node_attempt_id: null,
+    installation_run_id: null,
     company_id: null,
     company_run_id: null,
     bound_run_id: null,
@@ -598,6 +600,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
       "company_id",
       "company_execution_snapshot",
       "company_cancellation_intent",
+      "agent_memory_hash_format",
     ].sort(),
   );
   expect(

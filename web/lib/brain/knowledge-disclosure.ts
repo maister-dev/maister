@@ -72,18 +72,26 @@ export function additionalKnowledgeRestrictions(
   return retained;
 }
 
+/** Keep recursive source authorization interpreted for this transaction. */
+export async function configureKnowledgeReadExecution(
+  tx: KnowledgeTransaction,
+  principalKind: KnowledgePrincipal["kind"],
+): Promise<void> {
+  // Fresh/small policy tables can overestimate recursive work and spend seconds
+  // compiling authorization branches while holding the consumer Run lock.
+  await tx.execute(sql`SET LOCAL jit=off`);
+  log.debug(
+    { principalKind, queryExecutionPolicy: "interpreted" },
+    "native knowledge admission avoids policy JIT compilation",
+  );
+}
+
 /** Lock the consumer before record/grant reads; concurrent tools cannot upgrade shared run locks. */
 export async function lockKnowledgeReadConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
-  // Fresh/small policy tables can overestimate recursive work and spend seconds
-  // compiling authorization branches while holding the consumer Run lock.
-  await tx.execute(sql`SET LOCAL jit=off`);
-  log.debug(
-    { principalKind: principal.kind, queryExecutionPolicy: "interpreted" },
-    "FIX native knowledge admission avoids policy JIT compilation",
-  );
+  await configureKnowledgeReadExecution(tx, principal.kind);
   if (principal.kind === "user") return null;
   if (principal.kind === "librarian_read") {
     const { turnId, capture } = await lockLibrarianKnowledgeContext(
@@ -199,8 +207,10 @@ export async function recordKnowledgeDisclosure(
       : await tx.execute(
           sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${consumer.runId}`,
         );
+
   if (consumer.runId !== null && installation?.rows.length) {
     const projects: string[] = [];
+
     for (const source of restrictions) {
       if (
         source.kind === "project" ||
@@ -214,6 +224,7 @@ export async function recordKnowledgeDisclosure(
           await tx.execute(sql`SELECT source_project_ids FROM agent_memory_revisions
           WHERE (vault_id,note_id,id)=(${source.vaultId},${source.noteId},${source.revisionId})`);
         const ids = result.rows[0]?.source_project_ids;
+
         if (
           !Array.isArray(ids) ||
           ids.some((id: unknown) => typeof id !== "string")
@@ -260,6 +271,7 @@ export async function recordKnowledgeDisclosure(
   };
 
   const contents = JSON.stringify(capture);
+
   await tx.execute(
     consumer.runId === null
       ? sql`UPDATE librarian_turns SET knowledge_access=${contents}::jsonb WHERE id=${consumer.librarianTurnId}`

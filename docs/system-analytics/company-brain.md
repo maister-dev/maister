@@ -195,11 +195,12 @@ revalidated under the token lock before current scope, role and source checks.
 Revocation during admission refuses disclosure without widening its capture.
 Native admission also disables PostgreSQL JIT for that transaction. Fresh or
 small policy tables can overestimate recursive authorization work and otherwise
-spend seconds compiling it while holding the Run lock. This execution setting
-changes no authorization predicate or timeout and restores the pooled session's
-prior setting after commit or rollback. The separate company-history policy is
-outside this admission path; its populated-history performance is not qualified
-by the native query measurements.
+spend seconds compiling it while holding the Run lock. Stand operations use
+the same execution setting when they resolve an exact runbook inside a
+transaction with a tighter lock budget. The setting restores the pooled
+session's prior value after commit or rollback. The separate company-history
+policy is outside this admission path; its populated-history performance is
+not qualified by the native query measurements.
 
 Native create/review/confirmation transactions take the consumer run lock first,
 then the installation-wide transaction advisory write lock before any record or
