@@ -67,6 +67,25 @@ resolve exact objects without replacement refs.
 
 Manager credential files belong to the manager and trusted host principals only. The trusted host owns provider credentials, deployment configuration, app secrets and private runtime state. Workloads receive an explicit environment and opaque grants. Reserve the manager, supervisor, databases, local credential stores, runtime state and privileged sockets from workload mounts and general egress. The brokered façade authorizes a specific audience, operation and resource.
 
+### Privileged Git caller inventory
+
+The inventory covers literal Node Git launches in production web and supervisor
+TypeScript, including the streamed worktree reader. Each family must select a
+policy compatible with the operations it owns.
+
+| Family | Production callers |
+| --- | --- |
+| Local repository and streamed worktree reads, mutation and promotion | `web/lib/worktree.ts`, `web/lib/worktree-provenance.ts`, `web/lib/auto-promotion/readers.ts` |
+| Reviewed configuration publication | `web/lib/project-config-persistence/git-process.ts` and its publication and push consumers |
+| Flow and gate state | `web/lib/flows.ts`, `web/lib/flows/graph/{mutation-check,run-context,workspace-checkpoint}.ts`, `web/lib/services/{gate-chat,gate-chat-turn-completion}.ts` |
+| Repository source and packages | `web/lib/repo-source.ts`, `web/lib/local-packages/git.ts`, `web/lib/packages/catalog.ts`, `web/lib/capabilities/{import,materialize,materialize-bundle}.ts` |
+
+The scan found no literal Git process launch in `supervisor/src`. Git
+invoked by adapters or shell commands runs through the workload boundary.
+Indirect executable resolution, shell wrappers and library consumers need
+coverage in the architecture guard before the inventory is enforced. The
+Git write, signing and transport policies remain pending.
+
 ### Local transport activation
 
 The shipped systemd units require a readable manager credential file before
