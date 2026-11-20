@@ -222,3 +222,15 @@ Correlate the observed assignment, superseded turn, token revocations and single
 3. Tasks 7–9: `fix(agents): scope checkout integrity and preserve preparation refusals`.
 4. Tasks 10–12: `fix(agents): bound continuation and prompt-owner recovery`.
 5. Tasks 13–15: `fix(workbench): distinguish busy pulls and document operational recovery`. Production verification follows deployment and has its own incident receipt.
+
+## Local verification on 2026-11-20
+
+| Gate | Evidence |
+| --- | --- |
+| Stop and checkout disposition | Native `POST /api/runs/{runId}/stop` returned 200 and Abandoned with a delayed predecessor exit. The test verified the superseded turn, released assignment, user audit and one fewer occupied slot. The separate disposition test kept the checkout and Git registration until exact terminal proof, then verified both were removed and the adopted handle was released. |
+| Upgrade and worker ordering | A populated PostgreSQL 16 schema at 0342 kept its v1 bytes through 0343 and 0344. After rebinding the driver, the Run failed with `operational_legacy_baseline_unverifiable`, epoch 2 created no preparation, the original prompt settled, and the occupied slot count fell by one. A separate v2 fixture ran the real continuation and prompt-owner workers in both orderings. |
+| Recovery and fencing integration | The four-file focused run passed 84 cases on Node 24.15.0. The latest application-quiescence file passed 16 cases, including the upgraded fixture and Stop API. Preparation ownership, finalization transactions and the migration suite passed 43 cases. The four existing historical permission-result resume cases passed. |
+| Pull | Real route integration exercised contention and fast-forward after release. The two targeted Playwright locales passed, along with their authentication setup. |
+| Unit, schema and contracts | Node 24.15.0 passed all 9,178 web unit cases. Typecheck, contracts, operational and agent-activity coverage, APR traceability, `pnpm validate:docs` and the all-docs gate passed. Fresh main and Brain migrations, `db:check`, `db:generate`, the 197-table ERD check and the 215-file canonical SQL check passed. The runbook query executed in a read-only transaction against the disposable migrated database. |
+
+The original Stop RED reproduced `EXECUTOR_UNAVAILABLE / agent_execution_quiescence_unproven`. The original same-epoch secondary publish has a source trace above. T2 also requires a pre-fix execution of that exact publication path. T12 and T14 remain open for the full integration and composed race gates. T15 still requires the continuous restart observation and an authorized deployment receipt. The administratively abandoned production Run still needs read-only checkout and historical command verification.

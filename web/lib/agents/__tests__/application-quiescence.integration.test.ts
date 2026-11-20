@@ -86,9 +86,12 @@ import {
   fakeExecutionHosts,
 } from "@/test-support/fake-execution-host";
 import {
+  declareCurrentTestDatabaseWriter,
   startMainPostgresTestDb,
+  startMainPostgresTestDbUpTo,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
 
 let database: StartedPostgresTestDb;
@@ -360,6 +363,31 @@ async function seedUndispatchedOperationalResume(
     return { successor, turn };
   });
   return { runId, command, client, resumed };
+}
+
+async function freezeLegacyCheckout(runId: string): Promise<void> {
+  const [seeded] = await db.select().from(runs).where(eq(runs.id, runId));
+  const context = await operationalWorkspace(db, seeded);
+  if (context.ownerKind !== "project")
+    throw new Error("expected project checkout allocation");
+  const { cwd, repoPath, projectSlug } = context;
+  await addDetachedWorktree({
+    projectRepoPath: repoPath,
+    worktreePath: cwd,
+    committish: "main",
+  });
+  const baseline = await captureOperationalBaseline(cwd, "ephemeral_checkout", {
+    legacyEphemeral: true,
+  });
+  await db
+    .update(runs)
+    .set({
+      operationalIntegrityBaseline: {
+        ...baseline,
+        owner: { cwd, repoPath, projectSlug },
+      },
+    })
+    .where(eq(runs.id, runId));
 }
 
 describe("agent application quiescence", () => {
@@ -702,67 +730,74 @@ describe("agent application quiescence", () => {
     ).toHaveLength(1);
   }, 45_000);
 
-  it("IT-APR-02 refuses a frozen v1 checkout once before opening preparation", async () => {
-    const { runId, resumed } = await seedUndispatchedOperationalResume(
-      "repo_read",
-      false,
-      async (id) => {
-        const [seeded] = await db.select().from(runs).where(eq(runs.id, id));
-        const context = await operationalWorkspace(db, seeded);
-        if (context.ownerKind !== "project")
-          throw new Error("expected project checkout allocation");
-        const { cwd, repoPath, projectSlug } = context;
-        await addDetachedWorktree({
-          projectRepoPath: repoPath,
-          worktreePath: cwd,
-          committish: "main",
-        });
-        const baseline = await captureOperationalBaseline(
-          cwd,
-          "ephemeral_checkout",
-          {
-            legacyEphemeral: true,
-          },
-        );
-        await db
-          .update(runs)
-          .set({
-            operationalIntegrityBaseline: {
-              ...baseline,
-              owner: { cwd, repoPath, projectSlug },
-            },
-          })
-          .where(eq(runs.id, id));
-      },
+  it("IT-APR-02 recovers a frozen v1 checkout after upgrading a populated 0342 database", async () => {
+    const previous = { db, fake, hosts };
+    const cutoff = "0342_domain_event_run_pr_merged";
+    const legacyDatabase = await startMainPostgresTestDbUpTo(
+      { databaseName: "agent_two_epoch_upgrade", poolMax: 1 },
+      cutoff,
     );
-    const [before] = await db.select().from(runs).where(eq(runs.id, runId));
-    expect(before.operationalIntegrityBaseline?.version).toBe(1);
-    expect(await inspectOperationalRun(db, before)).toMatchObject({
-      verdict: "clean",
-    });
-    await startAgentSession(runId, { db, executionHosts: hosts });
-    expect(await recoverAgentContinuationSettlement(db, hosts, runId)).toBe(
-      true,
-    );
-    await startAgentSession(runId, { db, executionHosts: hosts });
+    try {
+      await declareCurrentTestDatabaseWriter(legacyDatabase);
+      db = legacyDatabase.db as unknown as Db;
+      fake = createFakeExecutionHost();
+      fake.setPromptBehavior(() => new Promise(() => {}));
+      ({ hosts } = await fakeExecutionHosts(db, { fake }));
 
-    const [after] = await db.select().from(runs).where(eq(runs.id, runId));
-    expect(after).toMatchObject({
-      status: "Failed",
-      operationalIntegrityBaseline: before.operationalIntegrityBaseline,
-    });
-    expect(after.operationalTerminal?.reasonCodes).toContain(
-      "operational_legacy_baseline_unverifiable",
-    );
-    expect(
-      await db
-        .select()
-        .from(agentPreparationOperations)
-        .where(
-          eq(agentPreparationOperations.assignmentId, resumed.successor.id),
-        ),
-    ).toHaveLength(0);
-  }, 45_000);
+      const { runId, resumed, command } =
+        await seedUndispatchedOperationalResume(
+          "repo_read",
+          false,
+          freezeLegacyCheckout,
+        );
+      const [before] = await db.select().from(runs).where(eq(runs.id, runId));
+      expect(before.operationalIntegrityBaseline?.version).toBe(1);
+      expect(await inspectOperationalRun(db, before)).toMatchObject({
+        verdict: "clean",
+      });
+      const occupied = await countLiveRuns(db as never, "agent");
+      await stopRuntimeEventConsumers();
+
+      await upgradeMainTestDb(legacyDatabase, cutoff);
+      await declareCurrentTestDatabaseWriter(legacyDatabase);
+      ({ hosts } = await fakeExecutionHosts(db, { fake }));
+      await startAgentSession(runId, { db, executionHosts: hosts });
+      expect(await recoverAgentContinuationSettlement(db, hosts, runId)).toBe(
+        true,
+      );
+      expect(
+        await applyPromptOwner({
+          db,
+          owners: agentPromptOwners,
+          commandId: command.id,
+          signal: AbortSignal.timeout(5_000),
+        }),
+      ).toBe("superseded");
+      await startAgentSession(runId, { db, executionHosts: hosts });
+
+      const [after] = await db.select().from(runs).where(eq(runs.id, runId));
+      expect(after).toMatchObject({
+        status: "Failed",
+        operationalIntegrityBaseline: before.operationalIntegrityBaseline,
+      });
+      expect(after.operationalTerminal?.reasonCodes).toContain(
+        "operational_legacy_baseline_unverifiable",
+      );
+      expect(await countLiveRuns(db as never, "agent")).toBe(occupied - 1);
+      expect(
+        await db
+          .select()
+          .from(agentPreparationOperations)
+          .where(
+            eq(agentPreparationOperations.assignmentId, resumed.successor.id),
+          ),
+      ).toHaveLength(0);
+    } finally {
+      await stopRuntimeEventConsumers();
+      await legacyDatabase.stop();
+      ({ db, fake, hosts } = previous);
+    }
+  }, 60_000);
 
   it("IT-APR-06 persists bounded, exclusive continuation admission across callers", async () => {
     const { runId, resumed, client } =

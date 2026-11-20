@@ -759,6 +759,7 @@ export async function startMainAndBrainPostgresTestDb(
       migrationsFolder: "./lib/db/brain-migrations",
       migrationsTable: "__drizzle_brain_migrations",
     });
+    await declareCurrentTestDatabaseWriter(database);
     logger.info(
       {
         lane: options.lane ?? "integration",

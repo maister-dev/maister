@@ -130,8 +130,16 @@ export async function settleAgentCreateFailure(
   source: AgentTurn,
   opts: { hostPressureRefusal?: boolean } = {},
 ): Promise<boolean> {
+  const owner = await db.transaction((tx) =>
+    lockCurrentSessionAssignment(tx, {
+      runId: source.runId,
+      assignmentId: client.assignment.id,
+    }),
+  );
+  if (!owner) return false;
   const prepared = await prepareAgentRunFinalization(source.runId, "Failed", {
     db,
+    expectedAssignmentId: owner.id,
     reason: "agent_session_create_failed",
   });
   let hostPressured = false;
