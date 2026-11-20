@@ -1021,3 +1021,7 @@ checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 - [Host event AsyncAPI](../api/async/execution-host-events.asyncapi.yaml) and [web run AsyncAPI](../api/async/web-runs.asyncapi.yaml) define the wire and browser surfaces.
 - [Database schema](../database-schema.md) and [execution-host ERD domain](../db/execution-hosts-domain.md) define durable records.
 - `IT-*` and `CT-*` labels are specification scenario IDs, not proof of test collection or execution. The [stabilization acceptance matrix](../../.ai-factory/plans/stage-ab-stabilization.md#sddtdd-and-validation-topology) records required executable qualification.
+
+## Historical lifecycle recovery (Designed)
+
+See [Execution hosts](execution-hosts.md#operational-preparation-recovery-designed-adr-214) for the exact canonical replay contract.

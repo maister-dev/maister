@@ -22,6 +22,8 @@ grant those actions to their own account. Company access needs no dummy project.
 
 ## Find and inspect an assertion
 
+![Company Brain with search filters and knowledge records](/assets/screens/en/knowledge.png)
+
 Open **Knowledge** and search by text. Filter by owner, knowledge kind,
 confirmation, freshness or unresolved conflicts. Filters remain in the URL for
 refresh and browser navigation. Follow **Next page** for additional accessible

@@ -67,7 +67,11 @@ function assertUsableComponent(component: string, agentId: string): string {
   return encoded;
 }
 
-export function agentMemoryPath(projectSlug: string, agentId: string): string {
+export function agentMemoryPath(
+  projectSlug: string,
+  agentId: string,
+  root = runtimeRoot(),
+): string {
   const separator = agentId.indexOf(":");
 
   // A bare stem must NOT fall back to a single level: two agents from different
@@ -92,7 +96,7 @@ export function agentMemoryPath(projectSlug: string, agentId: string): string {
   const slug = assertUsableComponent(projectSlug, agentId);
 
   return path.join(
-    runtimeRoot(),
+    root,
     ".maister",
     slug,
     "agents",

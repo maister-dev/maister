@@ -25,6 +25,7 @@ import { migrateTestDatabase } from "./migrate-test-database";
 
 import {
   declareWriterCapability,
+  AGENT_PREPARATION_WRITER_CAPABILITY,
   TASK_QUALIFICATION_WRITER_SETTING,
   TASK_QUALIFICATION_WRITER_CAPABILITY,
 } from "@/lib/db/writer-capability";
@@ -618,7 +619,7 @@ export async function startMainPostgresTestDb(
 
 async function declareFixtureWriter(client: ClientBase): Promise<void> {
   await client.query(
-    `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'`,
+    `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='${AGENT_PREPARATION_WRITER_CAPABILITY}'; SET maister.task_launch_writer='v3'`,
   );
 }
 
@@ -647,9 +648,19 @@ export async function declareCurrentTestDatabaseWriter(
       "Initialize fixture writer capabilities before concurrent pool use",
     );
 
-  database.pool.options.onConnect = declareWriterCapability;
-  if (database.pool.totalCount > 0)
-    await declareWriterCapability(database.pool);
+  const {
+    rows: [capabilities],
+  } = await database.pool.query<{ continuationEpisodes: boolean }>(
+    "SELECT to_regclass('public.agent_continuation_episodes') IS NOT NULL AS \"continuationEpisodes\"",
+  );
+  const declare = async (client: Pick<ClientBase, "query">): Promise<void> => {
+    await declareWriterCapability(client);
+    if (!capabilities.continuationEpisodes)
+      await client.query("SET maister.agent_preparation_writer='v1'");
+  };
+
+  database.pool.options.onConnect = declare;
+  await declare(database.pool);
 }
 
 // Apply a single main-lineage migration by tag, one statement at a time. Suits
@@ -748,6 +759,7 @@ export async function startMainAndBrainPostgresTestDb(
       migrationsFolder: "./lib/db/brain-migrations",
       migrationsTable: "__drizzle_brain_migrations",
     });
+    await declareCurrentTestDatabaseWriter(database);
     logger.info(
       {
         lane: options.lane ?? "integration",

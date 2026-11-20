@@ -16,6 +16,8 @@ import { recall, writeBrainSnapshot } from "@/lib/brain/recall";
 import { RANKER_VERSION } from "@/lib/brain/recall-ranker";
 import { retain } from "@/lib/brain/retain";
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
+import { recallInstallationBrain } from "@/lib/agents/installation-brain";
+import { privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { assertLegacyBrainTransport } from "@/lib/brain/knowledge-execution-access";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -98,6 +100,60 @@ function snapshotActor(actor: TokenActor): {
   return { actorType: "system", actorId: actor.tokenId };
 }
 
+function recallQuery(url: URL) {
+  const q = url.searchParams.get("q");
+
+  if (!q || q.trim().length === 0) {
+    throw new MaisterError("CONFIG", "query parameter `q` is required");
+  }
+
+  if (q.length > MAX_QUERY_CHARS) {
+    throw new MaisterError(
+      "CONFIG",
+      `\`q\` must be at most ${MAX_QUERY_CHARS} characters`,
+    );
+  }
+
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw ? Number(limitRaw) : undefined;
+
+  if (
+    limit !== undefined &&
+    (!Number.isInteger(limit) || limit < 1 || limit > 50)
+  ) {
+    throw new MaisterError("CONFIG", "`limit` must be an integer in 1..50");
+  }
+
+  const kindsRaw = url.searchParams.getAll("kinds");
+  const unknownKinds = kindsRaw.filter(
+    (k) => !(KINDS as readonly string[]).includes(k),
+  );
+
+  // A typo must 422, not silently widen the result set to every kind.
+  if (unknownKinds.length > 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `unknown \`kinds\` value(s): ${unknownKinds.join(", ")} (expected ${KINDS.join(" | ")})`,
+    );
+  }
+
+  const kinds = kindsRaw as BrainItemKind[];
+  const minRaw = url.searchParams.get("minConfidence");
+  const minConfidence = minRaw != null ? Number(minRaw) : undefined;
+
+  if (
+    minConfidence !== undefined &&
+    (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      "`minConfidence` must be a number in 0..1",
+    );
+  }
+
+  return { q, limit, kinds, minConfidence };
+}
+
 export async function GET(
   req: NextRequest,
   { params }: RouteParams,
@@ -110,6 +166,18 @@ export async function GET(
     {
       slug,
       scopeLabel: "memory:read",
+      installation: {
+        scope: "memory:read",
+        work: async ({ tokenId }) =>
+          privateJson(
+            await recallInstallationBrain(
+              db,
+              tokenId,
+              slug,
+              recallQuery(req.nextUrl),
+            ),
+          ),
+      },
       admitLibrarian: true,
       endpoint: ENDPOINT_GET,
       method: "GET",
@@ -125,61 +193,7 @@ export async function GET(
           return forbidden("agent token lacks can_read_brain for this project");
         }
 
-        const url = req.nextUrl;
-        const q = url.searchParams.get("q");
-
-        if (!q || q.trim().length === 0) {
-          throw new MaisterError("CONFIG", "query parameter `q` is required");
-        }
-
-        if (q.length > MAX_QUERY_CHARS) {
-          throw new MaisterError(
-            "CONFIG",
-            `\`q\` must be at most ${MAX_QUERY_CHARS} characters`,
-          );
-        }
-
-        const limitRaw = url.searchParams.get("limit");
-        const limit = limitRaw ? Number(limitRaw) : undefined;
-
-        if (
-          limit !== undefined &&
-          (!Number.isInteger(limit) || limit < 1 || limit > 50)
-        ) {
-          throw new MaisterError(
-            "CONFIG",
-            "`limit` must be an integer in 1..50",
-          );
-        }
-
-        const kindsRaw = url.searchParams.getAll("kinds");
-        const unknownKinds = kindsRaw.filter(
-          (k) => !(KINDS as readonly string[]).includes(k),
-        );
-
-        // A typo must 422, not silently widen the result set to every kind.
-        if (unknownKinds.length > 0) {
-          throw new MaisterError(
-            "CONFIG",
-            `unknown \`kinds\` value(s): ${unknownKinds.join(", ")} (expected ${KINDS.join(" | ")})`,
-          );
-        }
-
-        const kinds = kindsRaw as BrainItemKind[];
-        const minRaw = url.searchParams.get("minConfidence");
-        const minConfidence = minRaw != null ? Number(minRaw) : undefined;
-
-        if (
-          minConfidence !== undefined &&
-          (!Number.isFinite(minConfidence) ||
-            minConfidence < 0 ||
-            minConfidence > 1)
-        ) {
-          throw new MaisterError(
-            "CONFIG",
-            "`minConfidence` must be a number in 0..1",
-          );
-        }
+        const { q, limit, kinds, minConfidence } = recallQuery(req.nextUrl);
 
         const client = await getBrainEmbeddingClient(db);
         const items = await recall(ctx.projectId, q, {

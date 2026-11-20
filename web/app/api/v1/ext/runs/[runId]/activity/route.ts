@@ -3,6 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { installationReadAdapter } from "@/lib/agents/installation-facade";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { isMaisterError } from "@/lib/errors";
@@ -48,6 +49,7 @@ export async function GET(
     req,
     {
       scopeLabel: "runs:read",
+      installation: installationReadAdapter(req, "activity", { runId }),
       admitLibrarian: true,
       resolveProjectId: runProjectResolver(runId),
       endpoint: ENDPOINT,

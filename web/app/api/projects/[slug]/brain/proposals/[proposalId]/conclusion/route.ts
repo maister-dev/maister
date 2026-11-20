@@ -108,7 +108,10 @@ export async function POST(
     const body = conclusionBodySchema.parse(await req.json());
 
     if (body.action === "accept") {
-      const proposal = await getBrainProposal(db, project.id, proposalId);
+      const proposal = await getBrainProposal(db, project.id, proposalId, {
+        type: "user",
+        id: user.id,
+      });
 
       await requireProjectAction(
         project.id,

@@ -82,8 +82,10 @@ inspector must not repeat branch/worktree facts already visible there.
 
 1. **Overview** - run kind, status, executor, token usage facts (token total,
    input tokens, output tokens, cache-read input tokens, cache-creation input
-   tokens, and resume tax when present), separate time facts (active time where
-   attempt durations exist and wall-clock duration), delivery policy, settings
+   tokens, and resume tax when present), separate time facts (flow and agent Runs: **Duration** and
+   **Execution** with its breakdown button —
+   [run timing](../../system-analytics/runs.md#run-timing), ADR-208; scratch Runs keep a
+   single wall-clock fact), delivery policy, settings
    count, capability count, and resolved capability-set count. While the run is
    live the token facts re-poll on each SSE tick and the wall-clock fact ticks
    client-side, so spend and elapsed time advance without a reload. Branch,

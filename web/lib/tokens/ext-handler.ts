@@ -214,6 +214,8 @@ export const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   // ADR-152: MUST be mapped — resolveProjectAction ends in `?? "readBoard"`, so
   // an unmapped write scope silently resolves to the VIEWER-level action.
   "agent_memory:write": "writeAgentMemory",
+  "agent_memory:read": "readRepoFiles",
+  "agent_memory:propose": "readRepoFiles",
 };
 
 function projectActionForScope(scope: string): ProjectAction {
@@ -430,6 +432,61 @@ export async function authenticateExtRequest(
   return actor;
 }
 
+type InstallationExtAdapter = Readonly<{
+  scope: string;
+  work: (actor: TokenActor) => Promise<NextResponse>;
+}>;
+
+async function handleInstallationExt(
+  actor: TokenActor,
+  adapter: InstallationExtAdapter | undefined,
+  endpoint: string,
+  method: string,
+  db: ExecutionDb,
+): Promise<NextResponse> {
+  let response: NextResponse;
+
+  if (!adapter || !actor.scopes.includes(adapter.scope)) {
+    response = NextResponse.json(
+      {
+        code: "UNAUTHORIZED",
+        message: "This endpoint does not admit an installation agent",
+      },
+      { status: 403, headers: { "Cache-Control": "private, no-store" } },
+    );
+  } else {
+    try {
+      response = await adapter.work(actor);
+    } catch (error) {
+      if (!isMaisterError(error)) throw error;
+      const status =
+        error.details?.reason === "installation_resource_unavailable"
+          ? 404
+          : httpStatusForExtCode(error.code);
+
+      response = NextResponse.json(
+        { code: error.code, message: error.message },
+        { status, headers: { "Cache-Control": "private, no-store" } },
+      );
+    }
+  }
+  await recordRequiredTokenAudit(
+    {
+      ...tokenAuditIdentity(actor),
+      projectId: null,
+      scopeUsed: adapter?.scope ?? "installation:denied",
+      endpoint,
+      method,
+      result: response.status < 400 ? "ok" : "error",
+      statusCode: response.status,
+    },
+    db,
+  );
+  await bumpTokenLastUsed(actor.tokenId, db);
+
+  return response;
+}
+
 export async function handleExt(
   req: Request,
   opts: {
@@ -456,6 +513,7 @@ export async function handleExt(
     // is a statement that the route is part of the owner's business-work
     // surface; human-only and coordinator routes never set it.
     admitLibrarian?: boolean;
+    installation?: InstallationExtAdapter;
     // ADR-186: how a project-less librarian token finds the project a
     // resource-addressed route acts in (the run's project, for example). Other
     // kinds keep their existing admission, so a global personal token's answer
@@ -483,6 +541,15 @@ export async function handleExt(
   let targetProjectId: string | null = actor.projectId;
   let auditProjectId: string | null =
     "auditProjectId" in opts ? (opts.auditProjectId ?? null) : actor.projectId;
+
+  if (actor.installationScope)
+    return handleInstallationExt(
+      actor,
+      opts.installation,
+      opts.endpoint,
+      opts.method,
+      d,
+    );
 
   if (actor.tokenKind === "librarian" && !opts.admitLibrarian) {
     await recordRequiredTokenAudit(

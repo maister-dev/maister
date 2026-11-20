@@ -23,6 +23,9 @@ import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
 import { migrateTestDatabase } from "@/test-support/migrate-test-database";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { parseAgentMemoryMutation } from "@/lib/agent-memory-vault/commands";
+import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 
 it("IT-CBE-07 native migration, search and referenced reads leave private agent and personal librarian stores isolated", async () => {
   const database = await startMainPostgresTestDb({
@@ -59,6 +62,34 @@ it("IT-CBE-07 native migration, search and referenced reads leave private agent 
       { kind: "preference", content: librarianContent, scope: "general" },
       database.db,
     );
+    const { rows: vaults } = await database.pool.query<{ id: string }>(
+      "INSERT INTO agent_memory_vaults(project_id,agent_id) VALUES ($1,$2) RETURNING id",
+      [project.id, agentId],
+    );
+    const vault = await applyVaultMutation(
+      database.db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: "/memories/index.md",
+        file_text: `${marker} vault content`,
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: "private-isolation",
+      }),
+      async () => ({
+        vaultId: vaults[0]!.id,
+        actor: { kind: "human", userId },
+        principalKey: `user:${userId}`,
+        sourceProjectIds: [project.id],
+        sourceRestrictions: [],
+        writeAdmission: "apply",
+        canRead: async () => true,
+        capture: async () => {},
+      }),
+      agentMemoryVaultLimits(),
+    );
+
+    if (vault.status !== "applied") throw new Error("Vault seed must apply");
 
     expect(memory.ok).toBe(true);
     // Both private stores are populated before Company Brain's first migration.
@@ -121,7 +152,12 @@ it("IT-CBE-07 native migration, search and referenced reads leave private agent 
         assertion: record.assertion,
       });
     }
-    for (const privateId of [agentId, personalId]) {
+    for (const privateId of [
+      agentId,
+      personalId,
+      vault.affected[0]!.noteId,
+      vault.affected[0]!.revisionId,
+    ]) {
       await expect(
         getKnowledgeRecord(database.db, principal, { recordId: privateId }),
       ).rejects.toMatchObject({

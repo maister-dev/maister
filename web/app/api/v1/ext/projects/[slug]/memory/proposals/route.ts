@@ -13,6 +13,9 @@ import {
   assertProjectBrainEnabled,
 } from "@/lib/brain/guard";
 import { createBrainProposalWithAutonomy } from "@/lib/brain/proposals";
+import { proposeInstallationBrain } from "@/lib/agents/installation-brain";
+import { readVaultJson } from "@/lib/agent-memory-vault/http";
+import { privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
 import { assertLegacyBrainTransport } from "@/lib/brain/knowledge-execution-access";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -114,6 +117,24 @@ export async function POST(
     {
       slug,
       scopeLabel: "memory:write",
+      installation: {
+        scope: "memory:propose",
+        work: async ({ tokenId }) => {
+          const parsed = proposalBodySchema.safeParse(await readVaultJson(req));
+
+          if (!parsed.success)
+            throw new MaisterError("CONFIG", "Invalid Brain proposal");
+          const proposal = await proposeInstallationBrain(db, tokenId, slug, {
+            kind: parsed.data.kind,
+            draft: proposalDraft(parsed.data),
+            evidenceItemIds: parsed.data.evidenceItemIds,
+            blastRadius: parsed.data.blastRadius,
+            clusterHash: parsed.data.clusterHash,
+          });
+
+          return privateJson(proposal, 201);
+        },
+      },
       endpoint: ENDPOINT_POST,
       method: "POST",
       db,

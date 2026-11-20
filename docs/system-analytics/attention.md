@@ -217,6 +217,66 @@ flowchart LR
     CQ --> Q["computeDecisionsQueue, fifth source"]
 ```
 
+### Governed knowledge and memory review (ADR-212)
+
+The Inbox is the review surface for pending vault, Project Brain and native
+knowledge proposals. These rows do not contribute to amber `decisions` or
+to Activity `updates`. A review notification is optional work. The neutral
+`reviews` count comes from the same authorization predicate as the unfiltered
+Inbox review projection.
+
+| Source | Eligibility before listing and counting | Settlement |
+| --- | --- | --- |
+| Project vault | Current `readRepoFiles`, `editSettings` and all stored source rights. | Accept applies the exact proposed command through the vault CAS transaction. Reject settles the proposal with no head change. |
+| Installation vault (Implemented) | Current global administrator and available exact sources. | Same vault transaction. Installation author credentials only create pending proposals. |
+| Project Brain legacy proposal | Existing kind-specific conclusion rights and evidence visibility. | Use the existing Brain transition. Show only the outcomes this actor may choose. |
+| Native knowledge proposal | Current `knowledge:review` on the destination and visibility to every source. | Use the native knowledge review service and its revision/evidence checks. |
+
+Apply mandatory source and decision visibility before cursor pagination,
+search, counts and review signatures. Native knowledge rows in the shared
+proposal store belong only to the native projection. Proposer-only reads
+do not qualify. A disabled or stale vault proposal can still be rejected if
+the reviewer has current rejection authority. Stale acceptance returns a
+conflict and leaves the proposal pending.
+
+The batch accepts at most 50 decisions. Each item names a typed source,
+proposal ID, expected version, outcome and request key. Knowledge decisions
+also require a reason. Each item resolves
+live authorization and commits its own effect and receipt. Replay of an
+authorized settled key returns its previous outcome when the normalized
+request matches. A reused key with different input or a lost decision CAS
+conflicts. Missing and hidden rows share the item status `unavailable`.
+An invalid batch envelope refuses before processing any item. A valid batch
+returns a result for each item in request order even when only some succeed.
+The browser retains the original serialized batch across uncertain delivery,
+even if a refresh removes already settled rows. Retry returns the exact
+outcome for each committed item and attempts the remaining decisions.
+Large vault and Project Brain previews are paged against the exact pending
+proposal version. Every page rechecks reviewer and source authority, and a
+changed or settled proposal invalidates its cursor.
+
+The attention stream computes `reviews` and `reviewVersion` for the
+authorized global queue. The version covers the ordered visible proposal
+IDs, versions and allowed actions, and exposes only an opaque digest. The
+initial render and client reconnect send the count and version as their
+baseline. A version change marks `reviews` as changed even if the count
+matches. A review-only tick may reuse the replay cursor and sends an empty
+`projectIds`. The project-event watermark stays intact. The client
+refreshes the review projection by version/region. A legacy client ignores
+the additive region and fields. A client that supports reviews receiving
+an older tick retains its existing review baseline until it sees a versioned
+review tick. Missing or invalid baselines cause one reconciliation for
+clients that support this projection.
+
+- **AV-04, AV-13 (Implemented).** Attention MUST derive `reviews` and its
+  revision from authorized proposal state and refresh on same-count changes
+  without modifying amber or Activity counters.
+- **AV-11 (Implemented).** Inbox batch settlement MUST preserve item order,
+  use the domain decision transaction and apply current per-outcome rights
+  for each typed source.
+- **AV-16 (Implemented).** Acceptance MUST enforce the proposal's original
+  revision, source constraints and quotas at effect time.
+
 ## Expectations
 
 - **ATN-01:** `decisions` MUST come from one query covering respondable HITL, promotable runs, `Crashed` runs and triage-flagged tasks, scoped to the projects the reader can ACT in (all four populations require project `member`; `readBoard` does not), and its count MUST equal the length of the list it labels.

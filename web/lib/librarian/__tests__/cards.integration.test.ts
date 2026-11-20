@@ -14,6 +14,7 @@ import {
   librarianConversations,
   librarianOperations,
   librarianTaskLinks,
+  librarianTurns,
   taskStatementRevisions,
   tasks,
 } from "@/lib/db/schema";
@@ -41,6 +42,7 @@ import {
 let database: StartedPostgresTestDb;
 let db: ReturnType<typeof getDb>;
 let proposePost: typeof import("@/app/api/v1/ext/librarian/cards/route").POST;
+let memoryPost: typeof import("@/app/api/v1/ext/librarian/memory/route").POST;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 vi.mock("@/lib/services/hitl", () => ({
@@ -52,6 +54,8 @@ beforeAll(async () => {
   db = database.db as unknown as ReturnType<typeof getDb>;
   ({ POST: proposePost } =
     await import("@/app/api/v1/ext/librarian/cards/route"));
+  ({ POST: memoryPost } =
+    await import("@/app/api/v1/ext/librarian/memory/route"));
 }, 180_000);
 
 afterAll(async () => {
@@ -59,6 +63,53 @@ afterAll(async () => {
 });
 
 describe("IT-LMM-01/06: memory suggestion needs owner acceptance", () => {
+  it("AV-08 refuses direct personal memory and suggestions from a turn with governed knowledge", async () => {
+    const owner = await fixture();
+    const draft = {
+      kind: "fact",
+      content: "A retained fact from governed knowledge",
+      scope: "general",
+    };
+
+    await db
+      .update(librarianTurns)
+      .set({
+        knowledgeAccess: {
+          schemaVersion: 2,
+          state: "complete",
+          generation: 1,
+          restrictions: [{ kind: "record", recordId: randomUUID() }],
+        },
+      })
+      .where(eq(librarianTurns.id, owner.turnId));
+
+    function request(route: "memory" | "cards", body: unknown) {
+      return new NextRequest(`http://localhost/api/v1/ext/librarian/${route}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.token}`,
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
+        body: JSON.stringify(body),
+      });
+    }
+
+    const direct = await memoryPost(request("memory", draft));
+    const suggestion = await proposePost(
+      request("cards", { action: "memory_suggest", memory: draft }),
+    );
+
+    expect([direct.status, suggestion.status]).toEqual([409, 409]);
+    for (const response of [direct, suggestion])
+      expect(await response.json()).toMatchObject({
+        code: "PRECONDITION",
+        details: { reason: "governed_memory_source" },
+      });
+    expect((await listPersonalMemory(owner.userId, db)).items).toHaveLength(0);
+    expect((await getLinkedWork(owner.userId, db)).cards).toHaveLength(0);
+  });
+
   it("persists only after acceptance and refuses a forgotten exact suggestion", async () => {
     const owner = await fixture();
     const request = (allowDuplicate = false) =>
@@ -136,7 +187,7 @@ async function fixture() {
     {
       ownerUserId: userId,
       turnId,
-      scopes: ["librarian:cards"],
+      scopes: ["librarian:cards", "librarian:memory"],
       expiresAt: new Date(Date.now() + 60_000),
     },
     db,
@@ -148,7 +199,7 @@ async function fixture() {
     VALUES (${taskId}, ${projectId}, 1, 'Card task', 'Original', 'Backlog', 'Backlog')
   `);
 
-  return { projectId, userId, token: token.secret, taskId };
+  return { projectId, userId, token: token.secret, taskId, turnId };
 }
 
 const statement = {

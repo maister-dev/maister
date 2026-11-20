@@ -57,6 +57,11 @@ pass typed data between graph steps.
   Flow validation.
 - Configure [Project Brain, embeddings, and platform agents](/concepts/project-brain-and-agents)
   for indexed sources and governed memory.
+- Review [company and project knowledge](/guides/company-brain) with its
+  original evidence, proposals, and separate factual confirmation.
+- Assign governed work to company specialists, starting with the
+  [stand-maintenance pilot](/guides/stand-maintenance) or an
+  [inbound webhook](/guides/company-specialist-webhooks).
 
 ## For AI agents
 

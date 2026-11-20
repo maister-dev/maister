@@ -67,7 +67,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             : {}),
         };
       },
-      { isolationLevel: "repeatable read", accessMode: "read only" },
+      // Source authorization takes share locks within this read projection.
+      { isolationLevel: "repeatable read" },
     );
 
     return NextResponse.json(

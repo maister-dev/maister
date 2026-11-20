@@ -2378,8 +2378,113 @@
     {
       "idx": 343,
       "version": "7",
-      "when": 1795186604732,
-      "tag": "0343_acp_context",
+      "when": 1795095570224,
+      "tag": "0343_agent_memory_vault",
+      "breakpoints": true
+    },
+    {
+      "idx": 344,
+      "version": "7",
+      "when": 1795095582689,
+      "tag": "0344_agent_memory_history_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 345,
+      "version": "7",
+      "when": 1795096555996,
+      "tag": "0345_agent_memory_capture_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 346,
+      "version": "7",
+      "when": 1795100183299,
+      "tag": "0346_agent_memory_structure",
+      "breakpoints": true
+    },
+    {
+      "idx": 347,
+      "version": "7",
+      "when": 1795102790828,
+      "tag": "0347_agent_memory_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 348,
+      "version": "7",
+      "when": 1795103885970,
+      "tag": "0348_agent_installation_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 349,
+      "version": "7",
+      "when": 1795104046719,
+      "tag": "0349_agent_installation_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 350,
+      "version": "7",
+      "when": 1795106255085,
+      "tag": "0350_librarian_knowledge_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 351,
+      "version": "7",
+      "when": 1795106448040,
+      "tag": "0351_librarian_knowledge_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 352,
+      "version": "7",
+      "when": 1795113328330,
+      "tag": "0352_librarian_summary_knowledge_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 353,
+      "version": "7",
+      "when": 1795113783642,
+      "tag": "0353_agent_installation_schedule_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 354,
+      "version": "7",
+      "when": 1795168323703,
+      "tag": "0354_agent_memory_import_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 355,
+      "version": "7",
+      "when": 1795173970850,
+      "tag": "0355_installation_credential_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 356,
+      "version": "7",
+      "when": 1795194000528,
+      "tag": "0356_operational_baseline_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 357,
+      "version": "7",
+      "when": 1795194000529,
+      "tag": "0357_agent_continuation_episodes",
+      "breakpoints": true
+    },
+    {
+      "idx": 358,
+      "version": "7",
+      "when": 1795197179277,
+      "tag": "0358_acp_context",
       "breakpoints": true
     }
   ]

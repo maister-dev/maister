@@ -3,7 +3,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-const scenarios = ["L-01", "L-02", "L-03", "L-04", "L-08", "L-12", "D5"];
+const scenarios = ["L-01", "L-02", "L-03", "L-04", "L-08", "L-12", "D5", "AV-07-live"];
 const args = process.argv.slice(2);
 const adapterIndex = args.indexOf("--adapter");
 const adapter = adapterIndex >= 0 ? args[adapterIndex + 1] : undefined;

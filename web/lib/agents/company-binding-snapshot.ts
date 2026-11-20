@@ -18,6 +18,7 @@ import {
 } from "./company-binding-types";
 import { resolveAgentConfig, validateInstanceConfig } from "./config";
 import { frozenAgentDefinitionSchema } from "./frozen-definition";
+import { installationAgentGrantSchema } from "./installation-access-types";
 
 import { knowledgeActorSchema } from "@/lib/brain/knowledge-read-types";
 import { ownerSchema } from "@/lib/company/types";
@@ -77,9 +78,22 @@ export const companySpecialistBindingSnapshotSchema = z
     runnerId: identity.nullable(),
     executionPolicy: executionPolicySchema,
     coordinatorFlowRevisionId: identity.nullable(),
+    installationGrant: installationAgentGrantSchema.optional(),
   })
   .strict()
   .superRefine((snapshot, context) => {
+    if (
+      snapshot.installationGrant &&
+      (snapshot.definition.workspace !== "none" ||
+        snapshot.definition.flow !== null ||
+        snapshot.coordinatorFlowRevisionId !== null)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["installationGrant"],
+        message:
+          "Installation grants require a standalone repository-free role",
+      });
     if (
       !snapshot.definition.specialist ||
       snapshot.definition.id !== snapshot.agentId ||

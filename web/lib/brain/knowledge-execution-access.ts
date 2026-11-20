@@ -10,14 +10,25 @@ import pino from "pino";
 import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
-import { recordKnowledgeDisclosure } from "./knowledge-disclosure";
+import {
+  canonicalKnowledgeRestrictions,
+  fitsKnowledgeCapture,
+  lockKnowledgeReadConsumer,
+  recordKnowledgeDisclosure,
+} from "./knowledge-disclosure";
 import {
   authorizeSourceRestrictions,
+  restrictionsForKnowledgeAccess,
   unavailableKnowledgeReference,
 } from "./knowledge-restrictions";
 
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
+import {
+  installationRunProjects,
+  MAX_INSTALLATION_SOURCES,
+} from "@/lib/agents/installation-source-capture";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
 
 const log = pino({
@@ -169,11 +180,17 @@ export async function assertNativeRunKnowledgeInputsInTransaction(
 
   const mounts = mountedSourceRestrictions(row.context_mounts);
 
-  await authorizeSourceRestrictions(tx, principal, [
+  const walk = await authorizeSourceRestrictions(tx, principal, [
     ...capture.data.restrictions,
     ...mounts,
   ]);
-  await recordKnowledgeDisclosure(tx, { runId, capture: capture.data }, mounts);
+  const installation = await requireInstallationRunAuthority(tx, runId);
+
+  await recordKnowledgeDisclosure(
+    tx,
+    { runId, capture: capture.data },
+    installation ? restrictionsForKnowledgeAccess(walk) : mounts,
+  );
   log.debug(
     {
       runId,
@@ -195,11 +212,105 @@ export async function recordNativeRunSources(
   );
 }
 
+type NativeSourcePrefix = Readonly<{
+  runId: string;
+  nodeAttemptId: string | null;
+  required: readonly KnowledgeAccessRestriction[];
+  candidates: readonly KnowledgeAccessRestriction[];
+}>;
+
+/** Plan the available prefix without retaining any references until they are actually disclosed. */
+export async function boundNativeRunSourcePrefix(
+  tx: SqlTransaction,
+  { runId, nodeAttemptId, required, candidates }: NativeSourcePrefix,
+): Promise<number> {
+  const consumer = await lockKnowledgeReadConsumer(tx, {
+    kind: "execution",
+    runId,
+    nodeAttemptId,
+  });
+
+  if (consumer?.runId !== runId) throw unavailableKnowledgeReference();
+
+  const principal = await resolveRunKnowledgePrincipal(
+    tx,
+    runId,
+    nodeAttemptId ?? undefined,
+  );
+  const installation = await requireInstallationRunAuthority(tx, runId);
+  const retainedProjects = installation
+    ? await installationRunProjects(tx, runId)
+    : [];
+  let combined = canonicalKnowledgeRestrictions([
+    ...consumer.capture.restrictions,
+    ...required,
+  ]);
+  const requiredBeyondBound = () =>
+    new MaisterError(
+      "PRECONDITION",
+      "Required launch memory exceeds the native source capture bound",
+      { details: { reason: "knowledge_capture_limit" } },
+    );
+
+  if (!fitsKnowledgeCapture(combined)) throw requiredBeyondBound();
+  let walk = await authorizeSourceRestrictions(tx, principal, combined);
+
+  function fits(
+    next: readonly KnowledgeAccessRestriction[],
+    authorized: typeof walk,
+  ): boolean {
+    if (!fitsKnowledgeCapture(next)) return false;
+    if (!installation) return true;
+
+    const expanded = restrictionsForKnowledgeAccess(authorized);
+    const projects = new Set([
+      ...retainedProjects,
+      ...expanded.flatMap((source) =>
+        "projectId" in source ? [source.projectId] : [],
+      ),
+    ]);
+
+    return (
+      projects.size <= MAX_INSTALLATION_SOURCES &&
+      fitsKnowledgeCapture(
+        canonicalKnowledgeRestrictions([...next, ...expanded]),
+      )
+    );
+  }
+
+  if (!fits(combined, walk)) throw requiredBeyondBound();
+  for (const [index, candidate] of candidates.entries()) {
+    const next = canonicalKnowledgeRestrictions([...combined, candidate]);
+
+    if (!fitsKnowledgeCapture(next)) return index;
+    try {
+      walk = await authorizeSourceRestrictions(
+        tx,
+        principal,
+        [candidate],
+        walk,
+      );
+    } catch (error) {
+      if (
+        isMaisterError(error) &&
+        error.details?.reason === "knowledge_reference_budget_exceeded"
+      )
+        return index;
+      throw error;
+    }
+    if (!fits(next, walk)) return index;
+    combined = next;
+  }
+
+  return candidates.length;
+}
+
 /** Compose source capture into an existing source-before-child transaction using current execution authority. */
 export async function recordNativeRunSourcesInTransaction(
   tx: SqlTransaction,
   runId: string,
   restrictions: readonly KnowledgeAccessRestriction[],
+  nodeAttemptId?: string,
 ): Promise<void> {
   const row = (
     await tx.execute(
@@ -222,16 +333,26 @@ export async function recordNativeRunSourcesInTransaction(
       "Native source consumption requires complete server-owned capture",
       { details: { reason: "knowledge_capture_profile_required" } },
     );
-  const principal = await resolveRunKnowledgePrincipal(tx, runId);
+  const principal = await resolveRunKnowledgePrincipal(
+    tx,
+    runId,
+    nodeAttemptId,
+  );
 
-  await authorizeSourceRestrictions(tx, principal, [
-    ...capture.data.restrictions,
-    ...restrictions,
-  ]);
+  const walk = await authorizeSourceRestrictions(
+    tx,
+    principal,
+    canonicalKnowledgeRestrictions([
+      ...capture.data.restrictions,
+      ...restrictions,
+    ]),
+  );
+  const installation = await requireInstallationRunAuthority(tx, runId);
+
   await recordKnowledgeDisclosure(
     tx,
     { runId, capture: capture.data },
-    restrictions,
+    installation ? restrictionsForKnowledgeAccess(walk) : restrictions,
   );
   log.debug(
     { runId, addedSourceCount: restrictions.length },

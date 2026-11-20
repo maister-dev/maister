@@ -12,6 +12,8 @@ import { NextRequest } from "next/server";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { POST as memoryCommand } from "@/app/api/v1/ext/agent/memory/commands/route";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { issueToken } from "@/lib/tokens/issue";
 import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
 import {
@@ -156,9 +158,10 @@ Do the thing.
     [AGENT_ID, path.join(agentsRoot, "maister-agents", "notifier.md")],
   );
   await pool.query(
-    `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,
+    `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id", "memory_enabled") VALUES ($1, $2, $3, true)`,
     [randomUUID(), AGENT_ID, fx.projectId],
   );
+  await pool.query("INSERT INTO agent_memory_cutover(generation) VALUES(1)");
 
   const triggerToken = await issueToken(
     {
@@ -249,7 +252,7 @@ describe("POST /api/agents/[agentId]/event — webhook trigger", () => {
     expect(res.status).toBe(422);
   });
 
-  it("launches on a valid webhook (202) and persists trigger_source + payload", async () => {
+  it("AV-04 reserves a webhook Run with its input and queues the Run's vault write for review", async () => {
     const res = await EVENT(
       request({
         token: fx.triggerToken,
@@ -273,6 +276,47 @@ describe("POST /api/agents/[agentId]/event — webhook trigger", () => {
     expect(row.rows[0].trigger_source).toBe("webhook");
     expect(Number(row.rows[0].trigger_event_id)).toBe(8000);
     expect(row.rows[0].trigger_payload).toMatchObject({ branch: "feature/x" });
+
+    const credential = await issueAgentRunToken({
+      db,
+      runId: json.runId,
+      projectId: fx.projectId,
+      agentId: AGENT_ID,
+    });
+    const response = await memoryCommand(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential.secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command: "create",
+          path: "/memories/index.md",
+          file_text: "Imported webhook observation",
+          ifHash: null,
+          ifRevisionId: null,
+          requestKey: "inbound-webhook-memory",
+        }),
+      }),
+    );
+    const proposal = await response.json();
+
+    expect(response.status, JSON.stringify(proposal)).toBe(202);
+    expect(proposal).toMatchObject({
+      status: "pending",
+      proposalId: expect.any(String),
+    });
+    const persisted = await pool.query(
+      `SELECT proposal.state, proposal.author->>'runId' AS run_id,
+        (SELECT count(*)::int FROM agent_memory_notes WHERE vault_id=proposal.vault_id) AS notes
+      FROM agent_memory_proposals proposal WHERE proposal.id=$1`,
+      [proposal.proposalId],
+    );
+
+    expect(persisted.rows).toEqual([
+      { state: "pending", run_id: json.runId, notes: 0 },
+    ]);
   });
 
   it("dedups a redelivery of the same trigger-event-id (409)", async () => {

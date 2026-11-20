@@ -2,8 +2,10 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { z } from "zod";
 
+import { installationToolNames } from "../../runtime/installation-agent-tools";
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
+import agentMemorySchema from "../../runtime/agent-memory.schema.json";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import {
@@ -11,6 +13,10 @@ import {
   structuredResponseToToolError,
   restResponseToToolError,
 } from "./rest";
+import {
+  librarianVaultRoute,
+  librarianVaultToolSpecs,
+} from "./librarian-vault-tools";
 import { isToolsetName, TOOLSETS } from "./toolsets";
 import {
   isTaskLaunchTool,
@@ -39,6 +45,56 @@ const standOperationSelector: ToolSpec["inputSchema"] = {
   required: ["operationId"],
   properties: { operationId: { type: "string", minLength: 1, maxLength: 128 } },
 };
+const agentMemoryInput = z.fromJSONSchema(
+  agentMemorySchema as unknown as z.core.JSONSchema.JSONSchema,
+);
+const vaultPage = {
+  cursor: { type: "string", minLength: 1, maxLength: 2048 },
+  limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+};
+const installationPaging = z.strictObject({
+  cursor: z.string().min(1).max(2048).optional(),
+  limit: z.int().min(1).max(50).optional().meta({ default: 20 }),
+});
+const installationPageInputs = {
+  project_list: installationPaging,
+  task_list: installationPaging.extend({ slug: z.string().min(1).max(192) }),
+  run_activity: installationPaging.extend({
+    runId: z.string().min(1).max(192),
+  }),
+};
+
+type InstallationPageTool = keyof typeof installationPageInputs;
+const installationReadDescriptions: Readonly<Record<string, string>> = {
+  project_list:
+    "List authorized active projects as compact identities. Follow nextCursor with cursor and the same limit to read the next page.",
+  project_get:
+    "Read an authorized active project's compact identity (id, projectId, slug, name).",
+  task_list:
+    "List compact task summaries in one authorized active project. Follow nextCursor with cursor and the same limit to read the next page.",
+  task_get:
+    "Read a compact task summary (id, projectId, slug, number, title, status) in one authorized active project.",
+  run_get:
+    "Read compact run metadata (id, projectId, slug, status, runKind, taskId, startedAt, endedAt) in one authorized active project.",
+  run_activity:
+    "Read execution-event metadata for an authorized run. This page excludes event payloads. Follow nextCursor with cursor and the same limit to read the next page.",
+};
+
+function isInstallationPageTool(name: string): name is InstallationPageTool {
+  return Object.hasOwn(installationPageInputs, name);
+}
+
+const vaultIndexRoutes = {
+  memory_search: "search",
+  memory_backlinks: "backlinks",
+  memory_tags: "tags",
+} as const;
+
+type VaultIndexTool = keyof typeof vaultIndexRoutes;
+
+function isVaultIndexTool(name: string): name is VaultIndexTool {
+  return Object.hasOwn(vaultIndexRoutes, name);
+}
 
 // ADR-206: mirrors `TaskSourceInput` in the external OpenAPI.
 const TASK_SOURCE_PROPERTIES = {
@@ -56,6 +112,21 @@ const TASK_SOURCE_PROPERTIES = {
 };
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
+  ...librarianVaultToolSpecs,
+  observatory_summary: {
+    description:
+      "Read scoped installation run counts, successful executions and elapsed durations by project.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        slug: { type: "string", minLength: 1, maxLength: 192 },
+        period: { type: "string", enum: ["24h", "7d", "30d"], default: "7d" },
+        limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+        cursor: { type: "string", minLength: 1, maxLength: 2048 },
+      },
+    },
+  },
   ...TASK_LAUNCH_TOOL_SPECS,
   ...KNOWLEDGE_TOOL_SPECS,
   stand_operation_get: {
@@ -549,9 +620,101 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "content", "kind"],
     },
   },
+  memory: {
+    description:
+      "Work in the current session's private /memories vault. View one note or a directory page, create a note, replace one literal occurrence, insert text, delete or rename a note or folder. Pass the observed revision and hash for changes and reuse a request key for retries.",
+    inputSchema: agentMemorySchema as ToolSpec["inputSchema"],
+  },
+  memory_search: {
+    description:
+      "Search current visible notes in the session vault. Use lexical mode by default; vector requires installation configuration. A tag alone lists notes with that tag.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      anyOf: [
+        { required: ["q"] },
+        { required: ["tag"], properties: { mode: { const: "lexical" } } },
+      ],
+      properties: {
+        ...vaultPage,
+        q: { type: "string", minLength: 1, maxLength: 2000 },
+        tag: { type: "string", minLength: 1, maxLength: 128 },
+        mode: { type: "string", enum: ["lexical", "vector"] },
+      },
+    },
+    annotations: { readOnlyHint: true },
+  },
+  memory_backlinks: {
+    description:
+      "List visible current notes linking to the specified vault note path.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["path"],
+      properties: {
+        ...vaultPage,
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 512,
+          pattern: "^/memories(?:/[^/]+)*$",
+        },
+      },
+    },
+    annotations: { readOnlyHint: true },
+  },
+  memory_tags: {
+    description: "List frontmatter tags and counts of visible current notes.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: vaultPage,
+    },
+    annotations: { readOnlyHint: true },
+  },
+  memory_promote: {
+    description:
+      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["path", "ifRevisionId", "ifHash", "requestKey", "target"],
+      properties: {
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 512,
+          pattern: "^/memories(?:/[^/]+)*$",
+        },
+        ifRevisionId: { type: "string", minLength: 1, maxLength: 192 },
+        ifHash: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[a-f0-9]{64}$",
+        },
+        requestKey: {
+          type: "string",
+          minLength: 8,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9_.:-]{8,128}$",
+        },
+        target: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "ownerKind", "ownerId"],
+          properties: {
+            kind: { type: "string", enum: ["brain", "knowledge"] },
+            ownerKind: { type: "string", enum: ["project", "company"] },
+            ownerId: { type: "string", minLength: 1, maxLength: 192 },
+          },
+        },
+      },
+    },
+  },
   agent_memory_write: {
     description:
-      "Replace THIS agent's memory file for its bound project (ADR-152), through a content-hash CAS. Pass the `ifHash` you were given; `null` is the first-writer form and succeeds only while the file is absent. A lost CAS returns 409 with the CURRENT content and hash so you can merge and retry rather than clobber. NOTE: unlike every other MAIster tool, this one takes NO `slug` — the project and the agent both come from your run-bound token. This is NOT the Project Brain: `memory_recall`/`memory_retain` remain a separate, project-owned store.",
+      "Deprecated for one release. Use the memory tool for new work. This compatibility command replaces /memories/index.md in the current session vault. Supply its current ifHash, or null for a first write. A conflict includes the authorized current index state.",
     inputSchema: {
       type: "object",
       // D24: `dispatchTool` silently drops args it does not destructure, and the
@@ -1419,6 +1582,7 @@ export async function dispatchTool(opts: {
   ctx: AuthContext;
   baseUrl: string;
   signal?: AbortSignal;
+  toolset?: string;
 }): Promise<DispatchResult> {
   const { name, args, ctx, baseUrl, signal } = opts;
 
@@ -1427,6 +1591,14 @@ export async function dispatchTool(opts: {
   if (!authHeader) {
     return { isError: true, status: 401, message: "Missing bearer token" };
   }
+
+  if (name === "memory" && !agentMemoryInput.safeParse(args).success)
+    return {
+      isError: true,
+      status: 422,
+      code: "CONFIG",
+      message: "Invalid agent memory command",
+    };
 
   if (isDelegationAdmissionTool(name)) {
     const parsed = z
@@ -1498,13 +1670,58 @@ export async function dispatchTool(opts: {
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
   const { operationKey, ...routedArgs } = nativeArguments;
-  const { method, path, body } = resolveRouting(
-    name,
-    coerceNumericArgs(name, routedArgs),
+  const normalizedArgs = coerceNumericArgs(
+    toolSpecForToolset(name, opts.toolset)?.inputSchema,
+    routedArgs,
   );
+  const installationPage =
+    opts.toolset === "installation" && isInstallationPageTool(name)
+      ? installationPageInputs[name].safeParse(normalizedArgs)
+      : null;
+
+  if (installationPage && !installationPage.success)
+    return {
+      isError: true,
+      status: 422,
+      code: "CONFIG",
+      message: "Invalid installation pagination or selection",
+    };
+  const librarian = opts.toolset === "librarian";
+  const confirmation =
+    name === "agent_vault_propose_edit"
+      ? {
+          action: "vault_edit",
+          vaultId: normalizedArgs.vaultId,
+          command: normalizedArgs.command,
+        }
+      : librarian && name === "knowledge_propose"
+        ? { action: "knowledge_proposal", content: normalizedArgs.content }
+        : librarian && name === "memory_propose"
+          ? {
+              action: "brain_proposal",
+              projectSlug: normalizedArgs.slug,
+              kind: normalizedArgs.kind,
+              draft: normalizedArgs.draft,
+              blastRadius: normalizedArgs.blastRadius,
+              evidenceItemIds: normalizedArgs.evidenceItemIds,
+            }
+          : null;
+  const contextKey =
+    librarian && name === "knowledge_propose"
+      ? normalizedArgs.idempotencyKey
+      : operationKey;
+  const { method, path, body } = confirmation
+    ? {
+        method: "POST" as const,
+        path: "/api/v1/ext/librarian/cards",
+        body: confirmation,
+      }
+    : installationPage
+      ? routeInstallationPage(name, installationPage.data)
+      : resolveRouting(name, normalizedArgs);
   const headers =
-    typeof operationKey === "string" && operationKey.length > 0
-      ? { "Idempotency-Key": operationKey }
+    typeof contextKey === "string" && contextKey.length > 0
+      ? { "Idempotency-Key": contextKey }
       : undefined;
 
   let res: Response;
@@ -1531,6 +1748,11 @@ export async function dispatchTool(opts: {
       name === "ask_human" ||
       isLaunchAdmissionTool(name) ||
       isDelegationAdmissionTool(name) ||
+      name === "memory" ||
+      name === "memory_promote" ||
+      name.startsWith("agent_vault_") ||
+      isVaultIndexTool(name) ||
+      name === "agent_memory_write" ||
       isKnowledgeTool(name) ||
       name.startsWith("stand_operation_")
     )
@@ -1563,13 +1785,10 @@ function propertyIsNumeric(prop: unknown): boolean {
 // number; anything else (null, non-numeric string, an already-numeric value) is
 // left untouched so genuinely bad input still surfaces at the route.
 function coerceNumericArgs(
-  name: string,
+  schema: ToolSpec["inputSchema"] | undefined,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  const properties = (
-    TOOL_SPECS[name]?.inputSchema as
-      { properties?: Record<string, unknown> } | undefined
-  )?.properties;
+  const properties = schema?.properties;
 
   if (!properties) return args;
 
@@ -1591,6 +1810,23 @@ function coerceNumericArgs(
   return out;
 }
 
+function routeInstallationPage(
+  name: string,
+  input: z.infer<typeof installationPaging> & {
+    slug?: string;
+    runId?: string;
+  },
+): ReturnType<typeof resolveRouting> {
+  const { cursor, limit, ...selector } = input;
+  const { path } = resolveRouting(name, selector);
+  const query = new URLSearchParams();
+
+  if (cursor !== undefined) query.set("cursor", cursor);
+  if (limit !== undefined) query.set("limit", String(limit));
+
+  return { method: "GET", path: query.size ? `${path}?${query}` : path };
+}
+
 function resolveRouting(
   name: string,
   args: Record<string, unknown>,
@@ -1601,8 +1837,28 @@ function resolveRouting(
 } {
   if (isTaskLaunchTool(name)) return taskLaunchRouting(name, args);
   if (isKnowledgeTool(name)) return knowledgeToolRouting(name, args);
+  if (name.startsWith("agent_vault_")) return librarianVaultRoute(name, args);
 
   switch (name) {
+    case "observatory_summary": {
+      const selection = z
+        .fromJSONSchema(
+          TOOL_SPECS.observatory_summary!
+            .inputSchema as z.core.JSONSchema.JSONSchema,
+        )
+        .parse(args);
+      const params = new URLSearchParams();
+
+      for (const [key, value] of Object.entries(
+        selection as Record<string, unknown>,
+      ))
+        if (value !== undefined) params.set(key, String(value));
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/observatory/summary?${params.toString()}`,
+      };
+    }
     case "stand_operation_get":
     case "stand_operation_logs":
     case "stand_operation_observe":
@@ -1995,6 +2251,33 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/projects/${slug}/memory`,
         body,
+      };
+    }
+    case "memory":
+      return {
+        method: "POST",
+        path: "/api/v1/ext/agent/memory/commands",
+        body: args,
+      };
+    case "memory_promote":
+      return {
+        method: "POST",
+        path: "/api/v1/ext/agent/memory/promote",
+        body: args,
+      };
+    case "memory_search":
+    case "memory_backlinks":
+    case "memory_tags": {
+      const query = new URLSearchParams();
+
+      for (const [key, value] of Object.entries(args)) {
+        if (typeof value === "string" || typeof value === "number")
+          query.set(key, String(value));
+      }
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/agent/memory/${vaultIndexRoutes[name]}${query.size ? `?${query}` : ""}`,
       };
     }
     case "agent_memory_write": {
@@ -2587,20 +2870,51 @@ function resolveRouting(
 
 // The tools a facade process exposes. An unnamed or unknown toolset exposes
 // every registered tool — the default for project and agent tokens.
-export function toolNamesForToolset(toolset: string | undefined): string[] {
+export function toolNamesForToolset(
+  toolset: string | undefined,
+  scopes: readonly string[] = [],
+): string[] {
   if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
 
-  const allowed = new Set<string>(TOOLSETS[toolset]);
+  const allowed = new Set<string>(
+    toolset === "installation"
+      ? installationToolNames(scopes)
+      : TOOLSETS[toolset],
+  );
 
   return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+}
+
+export function toolSpecForToolset(
+  name: string,
+  toolset: string | undefined,
+): ToolSpec {
+  const standard = TOOL_SPECS[name];
+
+  if (
+    toolset !== "installation" ||
+    !Object.hasOwn(installationReadDescriptions, name)
+  )
+    return standard;
+
+  return {
+    ...standard,
+    description: installationReadDescriptions[name],
+    inputSchema: isInstallationPageTool(name)
+      ? (z.toJSONSchema(
+          installationPageInputs[name],
+        ) as ToolSpec["inputSchema"])
+      : standard.inputSchema,
+  };
 }
 
 export function isToolInToolset(
   name: string,
   toolset: string | undefined,
+  scopes: readonly string[] = [],
 ): boolean {
   return (
     Object.hasOwn(TOOL_SPECS, name) &&
-    toolNamesForToolset(toolset).includes(name)
+    toolNamesForToolset(toolset, scopes).includes(name)
   );
 }

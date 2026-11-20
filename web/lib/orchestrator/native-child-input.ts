@@ -4,6 +4,7 @@ import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 
 import { sql } from "drizzle-orm";
 
+import { captureVaultInputTaint } from "@/lib/agent-memory-vault/write-admission";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { recordNativeRunSourcesInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
@@ -65,6 +66,7 @@ async function captureNativeChildInputInTransaction(
   ).rows[0];
 
   if (!source) throw unavailableKnowledgeReference();
+  await captureVaultInputTaint(tx, input.sourceRunId, input.childRunId);
   if (
     source.knowledge_access === null &&
     source.native_contract !== FINDINGS_CONTRACT

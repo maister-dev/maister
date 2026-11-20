@@ -1,0 +1,4 @@
+-- Drizzle can apply the vault hash backfill and this constraint in one transaction.
+SET CONSTRAINTS ALL IMMEDIATE;--> statement-breakpoint
+ALTER TABLE "runs" DROP CONSTRAINT "runs_knowledge_access_check";--> statement-breakpoint
+ALTER TABLE "runs" ADD CONSTRAINT "runs_knowledge_access_check" CHECK ("runs"."knowledge_access" IS NULL OR (jsonb_typeof("runs"."knowledge_access")='object' AND "runs"."knowledge_access"->'schemaVersion' IN ('1'::jsonb,'2'::jsonb) AND "runs"."knowledge_access"->>'state' IN ('capturing','complete','unknown') AND jsonb_typeof("runs"."knowledge_access"->'generation')='number' AND "runs"."knowledge_access"->>'generation' ~ '^[1-9][0-9]*$' AND jsonb_typeof("runs"."knowledge_access"->'restrictions')='array' AND ("runs"."knowledge_access"->'schemaVersion'='2'::jsonb OR NOT ("runs"."knowledge_access"->'restrictions' @> '[{"kind":"agent_vault_revision_v1"}]'::jsonb))) IS TRUE);

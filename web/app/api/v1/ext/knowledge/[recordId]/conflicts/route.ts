@@ -31,5 +31,6 @@ export async function GET(
         await getKnowledgeConflictsPage(getDb(), principal, selector, page),
       );
     },
+    { librarian: "read" },
   );
 }

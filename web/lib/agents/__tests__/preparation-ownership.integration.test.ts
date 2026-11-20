@@ -1101,7 +1101,7 @@ it("TB02 durable ownership rejects identity forgery and terminal publication", a
     const oldWriter = await database.pool.connect();
 
     try {
-      await oldWriter.query("SET maister.agent_preparation_writer=''");
+      await oldWriter.query("SET maister.agent_preparation_writer='v1'");
       await expect(
         oldWriter.query(
           "UPDATE agent_preparation_operations SET updated_at=clock_timestamp() WHERE id=$1",
@@ -1111,7 +1111,7 @@ it("TB02 durable ownership rejects identity forgery and terminal publication", a
         constraint: "agent_preparation_writer_capability",
       });
     } finally {
-      await oldWriter.query("SET maister.agent_preparation_writer='v1'");
+      await oldWriter.query("SET maister.agent_preparation_writer='v2'");
       oldWriter.release();
     }
     await expect(

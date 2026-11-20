@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 import { createCompanyGrants, revokeCompanyGrant } from "@/lib/company/grants";
 import { captureKnowledgeSource } from "@/lib/brain/knowledge-source-capture";
@@ -30,15 +31,22 @@ import {
   recordNativeRunSources,
 } from "@/lib/brain/knowledge-execution-access";
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
-import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
+import {
+  seedLocalHost,
+  seedProjectRow,
+  seedRun,
+} from "@/test-support/execution-host-seed";
 import { seedNativeFindingsExecution } from "@/test-support/native-findings-seed";
 import { poll } from "@/test-support/durable-workers-ledger";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
-import {
-  readAgentMemoryRaw,
-  writeAgentMemoryCas,
-} from "@/lib/agents/memory-store";
-import { applyAgentMemoryForLaunch } from "@/lib/agents/launch";
+import { readAgentMemoryRaw } from "@/lib/agents/memory-store";
+import { parseAgentMemoryMutation } from "@/lib/agent-memory-vault/commands";
+import { stageProjectAgentMemory } from "@/lib/agent-memory-vault/injection";
+import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
+import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
+import { mintAssignment } from "@/lib/execution-host/assignments";
+import * as dbSchema from "@/lib/db/schema";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 
 let database: StartedPostgresTestDb;
@@ -595,9 +603,10 @@ it.each(contextCases)(
   },
 );
 
-it("IT-CBE-06 captures actual private notes before a native launch writes its prompt snapshot", async () => {
-  const execution = await seedNativeFindingsExecution(database, contract);
-
+async function writeNativeFixtureIndex(
+  execution: NativeFindingsExecution,
+  content: string,
+) {
   await database.pool.query(
     "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1 AND agent_id=$2",
     [execution.projectId, execution.agentId],
@@ -608,116 +617,147 @@ it("IT-CBE-06 captures actual private notes before a native launch writes its pr
       [execution.projectId],
     )
   ).rows[0]!.slug;
-  const content =
-    "Private notes remain private source data, separate from Company Brain.";
-
-  await writeAgentMemoryCas(
+  const result = await applyVaultMutation(
     database.db,
-    slug,
-    execution.agentId,
-    content,
-    null,
+    parseAgentMemoryMutation({
+      command: "create",
+      path: "/memories/index.md",
+      file_text: content,
+      ifRevisionId: null,
+      ifHash: null,
+      requestKey: "fixture-native-index",
+    }),
+    prepareHumanProjectVault({
+      userId: execution.submitterId,
+      slug,
+      agentId: execution.agentId,
+      action: "editSettings",
+    }),
+    agentMemoryVaultLimits(),
   );
-  expect(
-    await applyAgentMemoryForLaunch(
+
+  if (result.status !== "applied") throw new Error("Fixture vault write lost");
+
+  return { slug, head: result.affected[0]! };
+}
+
+async function withActiveVaultTest<T>(perform: () => Promise<T>): Promise<T> {
+  await database.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+  try {
+    return await perform();
+  } finally {
+    await database.pool.query("DELETE FROM agent_memory_cutover");
+  }
+}
+
+it("IT-CBE-06 captures the exact private revision before a native launch stages its prompt", async () =>
+  withActiveVaultTest(async () => {
+    const execution = await seedNativeFindingsExecution(database, contract);
+    const host = await seedLocalHost(database.db);
+    const assignment = await drizzle(database.pool, {
+      schema: dbSchema,
+    }).transaction((tx) =>
+      mintAssignment(tx, {
+        runId: execution.runId,
+        hostId: host.id,
+        reason: "launch",
+      }),
+    );
+    const content =
+      "Private notes remain private source data, separate from Company Brain.";
+    const { slug, head } = await writeNativeFixtureIndex(execution, content);
+    const prepared = await stageProjectAgentMemory(
       database.db,
       {
-        id: execution.runId,
         runId: execution.runId,
         agentId: execution.agentId,
         projectId: execution.projectId,
-        runKind: "agent",
-        resultContract: contract,
+        sessionKey: assignment.id,
       },
-      slug,
       false,
-    ),
-  ).toBe(content);
-  const capture = (
-    await database.pool.query("SELECT knowledge_access FROM runs WHERE id=$1", [
-      execution.runId,
-    ])
-  ).rows[0]?.knowledge_access;
+    );
 
-  expect(capture.restrictions).toContainEqual({
-    kind: "agent_memory",
-    projectId: execution.projectId,
-    agentId: execution.agentId,
-  });
-  expect(
-    await readFile(
-      join(
-        runDirPath(runtimeDirectory, slug, execution.runId),
-        "memory-snapshot.md",
+    expect(prepared).toMatchObject({
+      mode: "vault",
+      text: expect.stringContaining(content),
+    });
+    const { rows } = await database.pool.query(
+      "SELECT r.knowledge_access, i.vault_id, i.index_revision_id FROM runs r JOIN agent_memory_injections i ON i.run_id=r.id WHERE r.id=$1",
+      [execution.runId],
+    );
+
+    expect(rows[0]?.index_revision_id).toBe(head.revisionId);
+    expect(rows[0]?.knowledge_access).toMatchObject({ schemaVersion: 2 });
+    expect(rows[0]?.knowledge_access.restrictions).toContainEqual({
+      kind: "agent_vault_revision_v1",
+      vaultId: rows[0]?.vault_id,
+      noteId: head.noteId,
+      revisionId: head.revisionId,
+      contentSha256: head.hash,
+    });
+    await expect(
+      readFile(
+        join(
+          runDirPath(runtimeDirectory, slug, execution.runId),
+          "memory-snapshot.md",
+        ),
       ),
-      "utf8",
-    ),
-  ).toBe(content);
-});
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  }));
 
 it.each(["GET", "POST"] as const)(
   "IT-CBE-06 captures private bytes returned by the actual %s memory endpoint",
-  async (method) => {
-    const execution = await seedNativeFindingsExecution(database, contract);
+  async (method) =>
+    withActiveVaultTest(async () => {
+      const execution = await seedNativeFindingsExecution(database, contract);
 
-    await database.pool.query(
-      "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1 AND agent_id=$2",
-      [execution.projectId, execution.agentId],
-    );
-    const slug = (
-      await database.pool.query<{ slug: string }>(
-        "SELECT slug FROM projects WHERE id=$1",
-        [execution.projectId],
-      )
-    ).rows[0]!.slug;
-    const content =
-      "These private source bytes must constrain even a CAS-conflict response.";
+      const content =
+        "These private source bytes must constrain even a CAS-conflict response.";
+      const { head } = await writeNativeFixtureIndex(execution, content);
+      const route = await import("@/app/api/v1/ext/agent/memory/route");
+      const response = await route[method](
+        new NextRequest("http://localhost/api/v1/ext/agent/memory", {
+          method,
+          headers: {
+            Authorization: `Bearer ${execution.tokenSecret}`,
+            "Content-Type": "application/json",
+          },
+          ...(method === "POST"
+            ? {
+                body: JSON.stringify({
+                  content: "Offered update",
+                  ifHash: "a-stale-memory-hash",
+                }),
+              }
+            : {}),
+        }),
+      );
 
-    await writeAgentMemoryCas(
-      database.db,
-      slug,
-      execution.agentId,
-      content,
-      null,
-    );
-    const route = await import("@/app/api/v1/ext/agent/memory/route");
-    const response = await route[method](
-      new NextRequest("http://localhost/api/v1/ext/agent/memory", {
-        method,
-        headers: {
-          Authorization: `Bearer ${execution.tokenSecret}`,
-          "Content-Type": "application/json",
-        },
-        ...(method === "POST"
-          ? {
-              body: JSON.stringify({
-                content: "Offered update",
-                ifHash: "a-stale-memory-hash",
-              }),
-            }
-          : {}),
-      }),
-    );
+      expect(response.status).toBe(method === "GET" ? 200 : 409);
+      const value: unknown = await response.json();
 
-    expect(response.status).toBe(method === "GET" ? 200 : 409);
-    const value: unknown = await response.json();
+      expect(value).toMatchObject(
+        method === "GET" ? { content } : { current: { content } },
+      );
+      const capture = (
+        await database.pool.query(
+          "SELECT knowledge_access FROM runs WHERE id=$1",
+          [execution.runId],
+        )
+      ).rows[0]?.knowledge_access;
 
-    expect(value).toMatchObject(
-      method === "GET" ? { content } : { current: { content } },
-    );
-    const capture = (
-      await database.pool.query(
-        "SELECT knowledge_access FROM runs WHERE id=$1",
-        [execution.runId],
-      )
-    ).rows[0]?.knowledge_access;
-
-    expect(capture.restrictions).toContainEqual({
-      kind: "agent_memory",
-      projectId: execution.projectId,
-      agentId: execution.agentId,
-    });
-  },
+      expect(capture.schemaVersion).toBe(2);
+      expect(capture.restrictions).toContainEqual(
+        expect.objectContaining({
+          kind: "agent_vault_revision_v1",
+          noteId: head.noteId,
+          revisionId: head.revisionId,
+          contentSha256: head.hash,
+        }),
+      );
+    }),
 );
 
 it.each([

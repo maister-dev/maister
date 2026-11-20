@@ -47,6 +47,10 @@ import {
 } from "@/lib/agents/memory-store";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  addProjectMember,
+  seedActiveUser,
+} from "@/test-support/librarian-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -93,6 +97,7 @@ beforeEach(async () => {
   await testDatabase.db.delete(schema.agentProjectLinks);
   await testDatabase.db.delete(schema.agents);
   await testDatabase.db.delete(schema.projects);
+  await testDatabase.pool.query("DELETE FROM agent_memory_cutover");
 
   projectId = randomUUID();
   await testDatabase.db.insert(schema.projects).values({
@@ -128,6 +133,109 @@ beforeEach(async () => {
 const routeParams = {
   params: Promise.resolve({ slug: SLUG, agentId: AGENT_ID }),
 };
+
+it("AV-03/15 serves only the activated vault with live user rights and legacy index CAS", async () => {
+  const notes = await import("../notes/route");
+  const commands = await import("../commands/route");
+  const history = await import("../revisions/route");
+  const detail = await import("../revisions/[revisionId]/route");
+  const url = `http://localhost/api/projects/${SLUG}/agents/${AGENT_ID}/memory`;
+  const admin = await seedActiveUser(testDatabase.db, { role: "admin" });
+  const member = await seedActiveUser(testDatabase.db);
+  const viewer = await seedActiveUser(testDatabase.db);
+
+  await addProjectMember(testDatabase.db, {
+    projectId,
+    userId: member,
+    role: "member",
+  });
+  await addProjectMember(testDatabase.db, {
+    projectId,
+    userId: viewer,
+    role: "viewer",
+  });
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1",
+    [projectId],
+  );
+  authMocks.requireActiveSession.mockResolvedValue({ id: admin });
+  const noteRead = new Request(`${url}/notes?path=/memories/index.md`);
+  const blocked = await notes.GET(noteRead, routeParams);
+
+  expect(blocked.status).toBe(409);
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+  const initial = await PUT(
+    req("PUT", { content: "index first", ifHash: null }),
+    routeParams,
+  );
+
+  expect(initial.status).toBe(200);
+  const index = await initial.json();
+
+  const create = () =>
+    new Request(`${url}/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command: "create",
+        path: "/memories/notes/second.md",
+        file_text: "outside index",
+        requestKey: "create-extra",
+        ifRevisionId: null,
+        ifHash: null,
+      }),
+    });
+
+  expect((await commands.POST(create(), routeParams)).status).toBe(200);
+  authMocks.requireActiveSession.mockResolvedValue({ id: member });
+  const current = await notes.GET(noteRead, routeParams);
+  const note = await current.json();
+
+  expect(current.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(note).toMatchObject({
+    hash: index.hash,
+    content: "index first",
+    kind: "note",
+  });
+  expect((await commands.POST(create(), routeParams)).status).toBe(403);
+  expect(
+    await (
+      await history.GET(
+        new Request(`${url}/revisions?noteId=${note.noteId}`),
+        routeParams,
+      )
+    ).json(),
+  ).toMatchObject({
+    items: [{ id: note.revisionId, state: "available" }],
+    nextCursor: null,
+  });
+  expect(
+    await (
+      await detail.GET(new Request(`${url}/revisions/${note.revisionId}`), {
+        params: Promise.resolve({
+          slug: SLUG,
+          agentId: AGENT_ID,
+          revisionId: note.revisionId,
+        }),
+      })
+    ).json(),
+  ).toMatchObject({ content: "index first" });
+  authMocks.requireActiveSession.mockResolvedValue({ id: viewer });
+  expect((await notes.GET(noteRead, routeParams)).status).toBe(403);
+  authMocks.requireActiveSession.mockResolvedValue({ id: admin });
+  expect(
+    (await DELETE(req("DELETE", { ifHash: index.hash }), routeParams)).status,
+  ).toBe(204);
+  expect((await notes.GET(noteRead, routeParams)).status).toBe(404);
+  const other = await notes.GET(
+    new Request(`${url}/notes?path=/memories/notes/second.md`),
+    routeParams,
+  );
+
+  expect(await other.json()).toMatchObject({ content: "outside index" });
+});
 
 function req(method: string, body?: unknown): NextRequest {
   return new NextRequest(

@@ -136,6 +136,12 @@ export type AssignmentResultExpectation = z.infer<
 export type AssignmentAuthorityWitness =
   | CompanyGrantWitness
   | Readonly<{
+      kind: "installation_appointment";
+      bindingId: string;
+      bindingRevision: number;
+      reviewedBy: string;
+    }>
+  | Readonly<{
       kind: "project_membership";
       projectId: string;
       membershipId: string;

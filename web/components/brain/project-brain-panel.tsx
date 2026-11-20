@@ -14,7 +14,6 @@ import type {
 import Link from "next/link";
 
 import {
-  BrainProposalReviewActions,
   BrainSourceReindexAction,
   BrainSourceReindexAllAction,
 } from "@/components/brain/project-brain-actions";
@@ -72,6 +71,7 @@ export interface ProjectBrainPanelLabels {
   accept: string;
   reject: string;
   rejectReason: string;
+  reviewInInbox?: string;
   emptyProposals: string;
 }
 
@@ -553,17 +553,12 @@ function ProposalsSection({
                   </div>
                 </div>
                 {proposal.status === "pending" && (canAccept || canReject) ? (
-                  <BrainProposalReviewActions
-                    canAccept={canAccept}
-                    canReject={canReject}
-                    labels={{
-                      accept: labels.accept,
-                      reject: labels.reject,
-                      rejectReason: labels.rejectReason,
-                    }}
-                    proposalId={proposal.id}
-                    slug={slug}
-                  />
+                  <Link
+                    className="text-sm underline"
+                    href={`/inbox?${new URLSearchParams({ kind: "brain", proposalId: proposal.id })}#knowledge-memory`}
+                  >
+                    {labels.reviewInInbox ?? labels.proposalsTitle}
+                  </Link>
                 ) : null}
               </article>
             );

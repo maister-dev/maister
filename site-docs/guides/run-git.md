@@ -79,7 +79,8 @@ merged **and** the Run is finalized — in either order. It completes only when
 this Run is still the task's newest attempt. Check **Partial work — keep the
 task open** before opening the PR (or before promoting) when the PR does not
 finish the task; the choice cannot be changed once a PR exists. If an automatic
-completion is refused, the task page says why and **Complete** stays available.
+completion is refused, the task page says why and **Complete task** stays
+available.
 
 When the task came from a GitHub issue on the same GitHub host, the generated
 description ends with `Closes owner/repo#N`. GitHub closes the issue only when

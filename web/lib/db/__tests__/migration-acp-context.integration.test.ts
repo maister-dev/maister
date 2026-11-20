@@ -20,7 +20,7 @@ import {
 it("upgrades a populated predecessor while preserving old attempt and transcript evidence", async () => {
   const db = await startMainPostgresTestDbUpTo(
     { databaseName: "acp_context_upgrade" },
-    "0342_domain_event_run_pr_merged",
+    "0357_agent_continuation_episodes",
   );
 
   try {
@@ -89,7 +89,7 @@ it("upgrades a populated predecessor while preserving old attempt and transcript
       entries: { tag: string; when: number }[];
     };
     const cutoff = journal.entries.find(
-      ({ tag }) => tag === "0342_domain_event_run_pr_merged",
+      ({ tag }) => tag === "0357_agent_continuation_episodes",
     )?.when;
 
     if (!cutoff) throw new Error("missing context migration predecessor");

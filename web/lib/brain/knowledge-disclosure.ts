@@ -22,6 +22,8 @@ import {
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import { pgErrorOf } from "@/lib/db/pg-error";
+import { captureInstallationProjects } from "@/lib/agents/installation-source-capture";
+import { lockLibrarianKnowledgeContext } from "@/lib/librarian/knowledge-authority";
 import { parseBoundRunId } from "@/lib/tokens/verify";
 
 const log = pino({
@@ -29,10 +31,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type KnowledgeReadConsumer = Readonly<{
-  runId: string;
-  capture: KnowledgeAccessCapture;
-}> | null;
+export type KnowledgeReadConsumer = Readonly<
+  | { runId: string; capture: KnowledgeAccessCapture }
+  | { runId: null; librarianTurnId: string; capture: KnowledgeAccessCapture }
+> | null;
 
 export function canonicalKnowledgeRestrictions(
   restrictions: readonly KnowledgeAccessRestriction[],
@@ -42,6 +44,15 @@ export function canonicalKnowledgeRestrictions(
   );
 
   return [...entries.keys()].sort().map((key) => entries.get(key)!);
+}
+
+export function fitsKnowledgeCapture(
+  restrictions: readonly KnowledgeAccessRestriction[],
+): boolean {
+  return (
+    knowledgeRestrictionsSchema.safeParse(restrictions).success &&
+    Buffer.byteLength(JSON.stringify(restrictions), "utf8") <= 65536
+  );
 }
 
 /** Destination ownership already supplies its own read gate; narrower record/source dependencies remain. */
@@ -57,10 +68,7 @@ export function additionalKnowledgeRestrictions(
     ),
   );
 
-  if (
-    !knowledgeRestrictionsSchema.safeParse(retained).success ||
-    Buffer.byteLength(JSON.stringify(retained), "utf8") > 65536
-  )
+  if (!fitsKnowledgeCapture(retained))
     throw new MaisterError(
       "PRECONDITION",
       "Inherited knowledge source access exceeds its bounded contract",
@@ -70,19 +78,36 @@ export function additionalKnowledgeRestrictions(
   return retained;
 }
 
+/** Keep recursive source authorization interpreted for this transaction. */
+export async function configureKnowledgeReadExecution(
+  tx: KnowledgeTransaction,
+  principalKind: KnowledgePrincipal["kind"],
+): Promise<void> {
+  // Fresh/small policy tables can overestimate recursive work and spend seconds
+  // compiling authorization branches while holding the consumer Run lock.
+  await tx.execute(sql`SET LOCAL jit=off`);
+  log.debug(
+    { principalKind, queryExecutionPolicy: "interpreted" },
+    "native knowledge admission avoids policy JIT compilation",
+  );
+}
+
 /** Lock the consumer before record/grant reads; concurrent tools cannot upgrade shared run locks. */
 export async function lockKnowledgeReadConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
-  // Fresh/small policy tables can overestimate recursive work and spend seconds
-  // compiling authorization branches while holding the consumer Run lock.
-  await tx.execute(sql`SET LOCAL jit=off`);
-  log.debug(
-    { principalKind: principal.kind, queryExecutionPolicy: "interpreted" },
-    "FIX native knowledge admission avoids policy JIT compilation",
-  );
+  await configureKnowledgeReadExecution(tx, principal.kind);
   if (principal.kind === "user") return null;
+  if (principal.kind === "librarian_read") {
+    const { turnId, capture } = await lockLibrarianKnowledgeContext(
+      tx,
+      principal.tokenId,
+      "knowledge:read",
+    );
+
+    return { runId: null, librarianTurnId: turnId, capture };
+  }
   if (principal.kind === "execution")
     return lockRunKnowledgeReadConsumer(tx, principal.runId);
   const token = await lockCurrentNativeKnowledgeToken(tx, principal.tokenId);
@@ -140,7 +165,7 @@ export async function lockKnowledgeWriteConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
-  if (principal.kind === "execution")
+  if (principal.kind === "execution" || principal.kind === "librarian_read")
     throw new MaisterError(
       "UNAUTHORIZED",
       "Execution inspection cannot authorize knowledge writes",
@@ -182,15 +207,49 @@ export async function recordKnowledgeDisclosure(
   restrictions: readonly KnowledgeAccessRestriction[],
 ): Promise<void> {
   if (consumer === null) return;
+  const installation =
+    consumer.runId === null
+      ? null
+      : await tx.execute(
+          sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${consumer.runId}`,
+        );
+
+  if (consumer.runId !== null && installation?.rows.length) {
+    const projects: string[] = [];
+
+    for (const source of restrictions) {
+      if (
+        source.kind === "project" ||
+        source.kind === "project_context" ||
+        source.kind === "project_visibility" ||
+        source.kind === "agent_memory"
+      )
+        projects.push(source.projectId);
+      if (source.kind === "agent_vault_revision_v1") {
+        const result =
+          await tx.execute(sql`SELECT source_project_ids FROM agent_memory_revisions
+          WHERE (vault_id,note_id,id)=(${source.vaultId},${source.noteId},${source.revisionId})`);
+        const ids = result.rows[0]?.source_project_ids;
+
+        if (
+          !Array.isArray(ids) ||
+          ids.some((id: unknown) => typeof id !== "string")
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Installation vault source capture is incomplete",
+          );
+        projects.push(...(ids as string[]));
+      }
+    }
+    await captureInstallationProjects(tx, consumer.runId, projects);
+  }
   const combined = canonicalKnowledgeRestrictions([
     ...consumer.capture.restrictions,
     ...restrictions,
   ]);
 
-  if (
-    !knowledgeRestrictionsSchema.safeParse(combined).success ||
-    Buffer.byteLength(JSON.stringify(combined), "utf8") > 65536
-  )
+  if (!fitsKnowledgeCapture(combined))
     throw new MaisterError(
       "PRECONDITION",
       "Native knowledge source capture reached its bound; narrow the requested work",
@@ -205,11 +264,20 @@ export async function recordKnowledgeDisclosure(
     );
   const capture: KnowledgeAccessCapture = {
     ...consumer.capture,
+    schemaVersion: combined.some(
+      ({ kind }) => kind === "agent_vault_revision_v1",
+    )
+      ? 2
+      : consumer.capture.schemaVersion,
     generation: consumer.capture.generation + 1,
     restrictions: combined,
   };
 
+  const contents = JSON.stringify(capture);
+
   await tx.execute(
-    sql`UPDATE runs SET knowledge_access=${JSON.stringify(capture)}::jsonb WHERE id=${consumer.runId}`,
+    consumer.runId === null
+      ? sql`UPDATE librarian_turns SET knowledge_access=${contents}::jsonb WHERE id=${consumer.librarianTurnId}`
+      : sql`UPDATE runs SET knowledge_access=${contents}::jsonb WHERE id=${consumer.runId}`,
   );
 }

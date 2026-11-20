@@ -285,6 +285,7 @@ async function listProposalRows(
     FROM brain_proposals
     WHERE project_id = ${projectId}
       AND kind NOT IN ('knowledge_add','knowledge_correct')
+      AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
     ORDER BY
       CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
       created_at DESC

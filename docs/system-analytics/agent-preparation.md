@@ -161,6 +161,13 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-02:** The frozen source witness admits historical v1 and new v2 ephemeral witnesses. Generation zero is a non-dispatchable source witness. Positive generations attest trusted materialization without replacing the original source. A legacy operational ephemeral continuation is refused with operational_legacy_baseline_unverifiable. Historical inspection and cancellation remain available.
+- **APR-05:** Record definitive refusal with its exact assignment, operation and cause before releasing preparation ownership. The post-create integrity check also records a definitive refusal, bound to the exact claimed turn and incarnation. A retained refusal blocks create and prompt admission. The settlement owner retires that session and finalizes the failure. Stop remains available under its own authority. Storage and cleanup errors retain distinct causes. Settlement and restart recovery do not reacquire the preparation fence.
+- **APR-11:** On upgrade, a populated two-epoch Run converges through restart and either worker ordering. The repaired production Run remains terminal. Reconcile and report historical application and checkout evidence independently.
+
+
 - TB01: real Postgres/Git driver-plus-continuation tests establish operation owners and actual interference; log ordering alone never establishes historical causation.
 - TB02: durable one-active-resource-owner constraints and token/epoch publication CAS make re-entry idempotent and prevent stale owners writing successor state.
 - TB03: stable cross-process physical exclusion plus verified child lifetime prevents destructive overlap across leases, epochs and restart; real-process regression covers manager SIGKILL during Git.
@@ -184,3 +191,88 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 - [ADR-201](../decisions/adr-201.md), [launch admission](task-launch-admission.md), [persistence](../db/task-launch-domain.md).
 - [Operational lifecycle](operational-agent-lifecycle.md), [execution prompt lifecycle](execution-prompt-lifecycle.md), [execution hosts](execution-hosts.md).
 - Implementation owners: `web/lib/agents/launch.ts`, `web/lib/agents/finalization.ts`, `web/lib/gc/operational-disposition.ts`, existing context/materialization lock and command/session owners.
+
+## Preparation recovery traceability
+
+| ID | Contract | Tasks | Primary test | Status |
+| --- | --- | --- | --- | --- |
+| APR-01 | `operational-agents.md` | T7,T8 | IT-APR-01 | Implemented |
+| APR-02 | `agent-preparation.md` | T3,T7,T8 | IT-APR-02 | Implemented |
+| APR-03 | `execution-hosts.md` | T4,T6 | IT-APR-03 | Implemented |
+| APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Implemented |
+| APR-05 | `agent-preparation.md` | T2,T9 | IT-APR-05 | Implemented |
+| APR-06 | `agent-retry.md` | T3,T10 | IT-APR-06 | Implemented |
+| APR-07 | `operational-agent-lifecycle.md` | T11 | IT-APR-07 | Implemented |
+| APR-08 | `agent-incidents.md` | T11,T12 | IT-APR-08 | Implemented |
+| APR-09 | `operational-agent-lifecycle.md` | T2,T6,T11 | IT-APR-09 | Implemented |
+| APR-10 | `workbench-git.md` | T13 | E2E-APR-10 | Implemented |
+| APR-11 | `agent-preparation.md` | T9,T12,T14,T15 | IT-APR-11 | Implemented |
+| APR-12 | `operational-agent-lifecycle.md` | T5,T6,T14,T15 | IT-APR-12 | Implemented |
+
+
+## Operator recovery ([ADR-214](../decisions/adr-214.md))
+
+Preparation, task-launch dispatch and cleanup, Pull and promotion, and project
+configuration publication and recovery share the common Git-directory fence.
+The preparation owner releases it after the handoff or a durable failure record.
+Retained child-process and orphan checks determine when a dead owner can be
+recovered. A continuation in settlement or attention has no preparation claim.
+
+Search from an authorized read-only database session. The failure count below
+reflects committed preparation rows. A failed secondary publication can leave
+only a log record.
+
+```sql
+SELECT r.id AS run_id, r.execution_assignment_id AS current_assignment,
+       r.operational_integrity_baseline->>'version' AS baseline_version,
+       p.failures, p.last_failure, c.id AS deferred_command,
+       c.execution_assignment_id AS command_assignment, c.application_attempts,
+       c.application_error->>'reason' AS application_reason,
+       c.application_error->>'deferredSince' AS deferred_since,
+       c.application_next_retry_at, e.assignment_epoch AS attention_epoch,
+       e.failure->>'reason' AS continuation_reason,
+       e.failure->>'blockedReason' AS settlement_blocker
+FROM runs AS r
+CROSS JOIN LATERAL (
+  SELECT count(*) AS failures, max(p.updated_at) AS last_failure
+  FROM agent_preparation_operations AS p
+  WHERE p.run_id = r.id AND p.phase = 'failed'
+) AS p
+LEFT JOIN LATERAL (
+  SELECT c.id, c.execution_assignment_id, c.application_attempts,
+         c.application_error, c.application_next_retry_at
+  FROM execution_commands AS c
+  WHERE c.run_id = r.id AND c.kind = 'session.prompt'
+    AND c.owner_kind = 'agent_turn' AND c.completion_applied_at IS NULL
+    AND c.application_state = 'pending' AND c.application_error IS NOT NULL
+  ORDER BY c.updated_at, c.id LIMIT 1
+) AS c ON true
+LEFT JOIN agent_continuation_episodes AS e
+  ON e.run_id = r.id AND e.state = 'attention'
+WHERE r.run_kind = 'agent' AND r.agent_kind = 'operational'
+  AND r.status = 'Running'
+  AND (p.failures >= 2 OR c.id IS NOT NULL OR e.run_id IS NOT NULL)
+ORDER BY p.failures DESC, r.id;
+```
+
+Open the flagged Run's Operation result. An attention record shows the
+original refusal, the latest settlement blocker and the assignment epoch.
+After restoring the host or obtaining the missing evidence, use Recheck
+execution with current project recovery authority. A stale observation
+conflicts. Each accepted recheck schedules one settlement attempt. The Run
+returns to attention if proof is still unavailable. The action records the
+operator and assignment epoch in a structured log. It cannot reopen preparation.
+
+Stop is available independently. For a proven undispatched resume, Abandoned
+releases the scheduler slot even if host inventory is unavailable. Inspect the
+historical prompt owner and any retained checkout disposition separately.
+A blocked checkout shows its typed reason. Confirm retained canonical exit or
+checkpoint facts and the scoped supervisor process-retirement observation
+before authorizing cleanup. Use the existing prompt application observation-token
+rearm for a poisoned application whose original receipt is still eligible.
+
+If the Run failed due to the legacy baseline policy, inspect its retained
+evidence and use the existing retry or relaunch action when admission permits
+a fresh Run. Check the cleanup receipt, Git worktree registration, exact path,
+and adopted workspace handle before reporting release. For an already-terminal
+Run, look up its exact ID because the discovery query selects Running rows.

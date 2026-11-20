@@ -14,7 +14,15 @@ import {
   clearLibrarianHistory,
   previewLibrarianClear,
 } from "@/lib/librarian/clear-history";
-import { lockOwnerConversation } from "@/lib/librarian/conversation";
+import {
+  issueLibrarianTurnToken,
+  scopesForLibrarianTurn,
+} from "@/lib/librarian/authority";
+import {
+  appendConversationMessage,
+  lockOwnerConversation,
+} from "@/lib/librarian/conversation";
+import { rememberFromLibrarianTurn } from "@/lib/librarian/memory";
 import { retrieveLibrarianContext } from "@/lib/librarian/retrieval";
 import {
   acknowledgeLibrarianReset,
@@ -24,7 +32,10 @@ import {
   queueLibrarianSummary,
   writeLibrarianSummary,
 } from "@/lib/librarian/summary";
-import { searchLibrarianHistory } from "@/lib/librarian/history-search";
+import {
+  searchLibrarianHistory,
+  searchLibrarianHistoryForTurn,
+} from "@/lib/librarian/history-search";
 import { librarianMessageDtos } from "@/lib/librarian/view";
 import { runLibrarianRetention } from "@/lib/librarian/retention";
 import { ensureDefaultSchedulerJobs } from "@/lib/scheduler/jobs";
@@ -360,6 +371,82 @@ describe("IT-LMM-04 IT-LMM-05 IT-LMM-07 IT-LMM-08: personal history boundaries",
     );
 
     expect(operations.rows).toHaveLength(1);
+  });
+
+  it("AV-08 binds project-only history search to the receiving turn", async () => {
+    const db = database.db;
+    const ownerId = await seedActiveUser(db);
+    const project = await seedProjectRow(db);
+
+    await addProjectMember(db, {
+      projectId: project.id,
+      userId: ownerId,
+      role: "member",
+    });
+    const turnId = await seedLibrarianTurn(db, ownerId);
+    const { tokenId } = await issueLibrarianTurnToken(
+      {
+        turnId,
+        ownerUserId: ownerId,
+        scopes: scopesForLibrarianTurn("owner_message"),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      db,
+    );
+
+    await db.transaction(async (tx) => {
+      const { conversation, segment } = await lockOwnerConversation(
+        tx,
+        ownerId,
+      );
+
+      await appendConversationMessage(tx, {
+        conversationId: conversation.id,
+        segmentId: segment.id,
+        authorKind: "update",
+        body: "Project milestone reached.",
+        sourceProjectIds: [project.id],
+      });
+      await tx
+        .update(librarianTurns)
+        .set({ tokenId })
+        .where(eq(librarianTurns.id, turnId));
+    });
+
+    expect(
+      await searchLibrarianHistoryForTurn(tokenId, "milestone", db),
+    ).toMatchObject({
+      hits: [{ excerpt: "Project milestone reached." }],
+    });
+    const [turn] = await db
+      .select({ capture: librarianTurns.knowledgeAccess })
+      .from(librarianTurns)
+      .where(eq(librarianTurns.id, turnId));
+
+    expect(turn.capture?.restrictions).toEqual([
+      { kind: "project_visibility", projectId: project.id },
+    ]);
+    await expect(
+      rememberFromLibrarianTurn(
+        ownerId,
+        turnId,
+        {
+          kind: "fact",
+          scope: "general",
+          content: "Project milestone reached.",
+        },
+        async () => {},
+        db,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "governed_memory_source" } });
+    await removeProjectMember(db, { projectId: project.id, userId: ownerId });
+
+    expect(
+      await searchLibrarianHistoryForTurn(tokenId, "milestone", db),
+    ).toEqual({
+      hits: [],
+      truncated: false,
+    });
   });
 
   it("IT-LMM-10: retention advances its durable keyset and keeps newer rows and active snapshots", async () => {

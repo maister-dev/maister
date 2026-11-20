@@ -484,6 +484,10 @@ opened as `pr_state='open'` and clears a previous PR's fields.
   same-project. Explicit non-goals: multi-repo runs/workspaces, coordinated
   cross-repo promotion, orchestrator cross-project delegation, a
   meta-project/project-group entity, cross-project task moves.
+- **Installation agent analysis** (ADR-211): a reviewed company binding
+  grants explicit active-project read and proposal scopes listed in the
+  [specialist runtime contract](docs/system-analytics/specialist-runtime.md#installation-agent-authority-implemented--adr-211).
+  The agent runs without a repository workspace.
 - **Flow plugin engine**: install plugins from `git URL + tag` to
   `~/.maister/flows/<id>@<tag>/` system cache; symlink into each consuming
   project's `.maister/<slug>/flows/`. Manifest (`flow.yaml`) is the source
@@ -565,9 +569,10 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   only. → `social-board.md`
 - **Domain-event outbox / shared trigger bus** (M32, ADR-086):
   `domain_events` append-only fact log emitted in the SAME transaction as
-  the domain write (11-kind taxonomy: task.created/comment_added/
-  triage_requeued/clarification_answered, run.done/failed/crashed/abandoned/
-  review/escalated, gate.failed;
+  the domain write (closed taxonomy owned by
+  `web/lib/domain-events/taxonomy.ts`: `task.*`, `run.*` including
+  `run.pr_merged`, `gate.failed`, and the knowledge/specialist/agent change
+  kinds;
   polymorphic actor, xid8 commit horizon), per-consumer cursor dispatcher
   (`domain_event_dispatch` singleton on the M24 clock, CAS lease + fenced
   advance, at-least-once) with a permanent `noop` consumer. Webhooks
@@ -617,7 +622,13 @@ agent_tick | flow_run | run_schedule`); user-facing task cron schedules
   / context mounts (M49, ADR-155/156/157) · RU user manual (ADR-158) ·
   generated DBML ERD + docs gates (ADR-159) · local execution-host contract
   — durable host identity, epoch-fenced assignments, command ledger, opaque
-  adopted workspaces, strict envelope (Stage A, ADR-166).
+  adopted workspaces, strict envelope (Stage A, ADR-166) · Company Brain
+  records/evidence/review + specialist assignments + evidence findings +
+  stand operations (ADR-202..205; `company-brain.md`,
+  `specialist-assignments.md`, `stand-maintenance.md`) · task external source
+  binding, completion after a confirmed PR merge, run duration/execution
+  timing, active-rail attention membership (ADR-206..209; `tasks.md`,
+  `runs.md`).
 
 Historical product backlog/wave rationale: `docs/pv/improvement-roadmap.md`.
 Current sequencing lives in `.ai-factory/ROADMAP.md`; M45 qualifies

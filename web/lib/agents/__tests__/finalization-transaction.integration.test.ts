@@ -918,12 +918,9 @@ describe("Agent terminal application transaction", () => {
       mintAssignment(tx, { runId, hostId: client.host.id, reason: "recover" }),
     );
 
-    await expect(
-      settleAgentCreateFailure(db, client, turn),
-    ).rejects.toMatchObject({
-      code: "EXECUTOR_UNAVAILABLE",
-      details: { reason: "agent_execution_quiescence_unproven" },
-    });
+    await expect(settleAgentCreateFailure(db, client, turn)).resolves.toBe(
+      false,
+    );
     const [run] = await db.select().from(runs).where(eq(runs.id, runId));
 
     expect(run).toMatchObject({

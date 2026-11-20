@@ -456,6 +456,34 @@ docker compose exec -T postgres pg_dump -U maister maister | gzip > maister-$(da
 Also back up `/etc/maister/maister.env` and `supervisor/.env` (secrets) and the
 project repos / `.maister/` run artifacts as needed.
 
+## Agent memory vault cutover
+
+Apply the main database migrations and back up the database and legacy runtime
+root before activation. Stop services that still write legacy agent memory
+files and drain their execution contexts. Set `MAISTER_RUNTIME_ROOT` to the
+legacy root and use the web service database environment.
+
+```bash
+pnpm --filter maister-web agent-memory:import
+pnpm --filter maister-web agent-memory:import --import --actor-user-id <admin-id>
+pnpm --filter maister-web agent-memory:import --activate --actor-user-id <admin-id>
+```
+
+The first command previews the source inventory. The import can be retried.
+Activation checks that every inventoried source has a retained receipt, refuses
+file or owner drift and switches the compatible binary to the Postgres vault.
+Keep the original project and agent identities resolvable until cleanup.
+An interrupted inventory from before stable owner capture with no retained
+destination cannot be verified. Restore the matching pre-import backup
+before retrying that inventory. Review
+the import counts and probe the Memory tab before cleaning up legacy files.
+An optional and separately invoked `--cleanup --actor-user-id <admin-id>`
+removes verified sources and leaves mismatched snapshots available for
+investigation. After activation, use a vault-compatible binary for service
+rollback or restore a consistent backup of the database and runtime root.
+
+Vault caps belong in the web service environment. [Agent memory vault limits](configuration.md#agent-memory-vault-limits-adr-210)
+
 ## 13. Engine 3.0.0 Postgres/graph-only upgrade
 
 This upgrade is intentionally non-rolling and irreversible after migration

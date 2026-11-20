@@ -1809,6 +1809,15 @@ h2 em {
   line-height: 1.6;
 }
 
+/* A lone card on the last row spans it instead of leaving empty cells. */
+.feature-card:last-child:nth-child(3n + 1) {
+  grid-column: 1 / -1;
+}
+
+.feature-card:last-child:nth-child(3n + 1) p {
+  max-width: 72ch;
+}
+
 /* ---------- Path to agentization, compact ---------- */
 .autonomy-strip {
   display: grid;

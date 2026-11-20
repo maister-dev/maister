@@ -11,6 +11,7 @@ import pino from "pino";
 import { COMPANY_FLOW_TOKEN_SCOPES } from "../../../runtime/company-flow-tools";
 
 import { ACTIVE_AGENT_RUN_STATUSES } from "./activity-status";
+import { requireInstallationRunAuthority } from "./installation-authority";
 import {
   requireCompanyRunCredentialOwner,
   requireCompanyFlowNodeKnowledgeOwner,
@@ -382,6 +383,36 @@ export async function retainCompanyAgentSessionCredential(
   await tx.execute(
     sql`SELECT id FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
   );
+  const installation = await requireInstallationRunAuthority(tx, runId);
+
+  if (installation) {
+    const { secret, prefix, hash } = generateToken();
+    const tokenId = randomUUID();
+    const ownerUserId =
+      installation.principal.kind === "manual"
+        ? installation.principal.userId
+        : null;
+
+    await tx.execute(
+      sql`UPDATE project_tokens SET revoked_at=now() WHERE company_run_id=${runId} AND revoked_at IS NULL`,
+    );
+    await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,installation_run_id,name,token_kind,
+      owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
+      VALUES(${tokenId},${installation.companyId},${runId},${runId},${`agent-run:${runId}`},'agent',
+        ${ownerUserId},${installation.agentId},${prefix},${hash},${JSON.stringify(installation.scopes)}::jsonb,
+        ${new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3600000)})`);
+    log.info(
+      {
+        runId,
+        tokenId,
+        agentId: installation.agentId,
+        principal: installation.principal.kind,
+      },
+      "installation agent credential issued",
+    );
+
+    return { tokenId, secret };
+  }
   const owner = await requireCompanyRunCredentialOwner(tx, runId);
 
   if (owner.snapshot.schemaVersion !== 1)
@@ -466,6 +497,12 @@ export async function issueNativeNodeRunToken(
   return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
 }
 
+export async function issueProjectVaultNodeToken(
+  args: NodeRunTokenInput & Readonly<{ nodeAttemptId: string }>,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(args, ["agent_memory:read", "agent_memory:write"]);
+}
+
 /** Assign governed work decisions only to the appointed project's orchestrator node. */
 async function appointedProjectCoordinatorScope(
   tx: SqlTransaction,
@@ -504,6 +541,11 @@ async function issueNodeRunToken(
     };
 
     await lockMintingRun(tx, binding);
+    const attempt =
+      args.nodeAttemptId && !scopes.includes("runs:delegate")
+        ? eq(projectTokens.knowledge_node_attempt_id, args.nodeAttemptId)
+        : undefined;
+
     await tx
       .update(projectTokens)
       .set({
@@ -511,7 +553,9 @@ async function issueNodeRunToken(
         // Only an actual delegation credential can retain accepted child obligations.
         revocation_reason: sql`CASE WHEN ${projectTokens.scopes} ? 'runs:delegate' OR ${projectTokens.scopes} ? '*' THEN 'rotation' ELSE 'revoked' END`,
       })
-      .where(and(runFamily(binding), isNull(projectTokens.revoked_at)));
+      .where(
+        and(runFamily(binding), attempt, isNull(projectTokens.revoked_at)),
+      );
     // Legacy names can identify a private credential for retirement, never for a grant.
     await tx
       .update(projectTokens)
@@ -537,7 +581,7 @@ async function issueNodeRunToken(
         ...(scopes.includes("runs:delegate")
           ? await appointedProjectCoordinatorScope(tx, args)
           : []),
-        ...(args.nodeAttemptId
+        ...(args.nodeAttemptId && scopes.includes("assignments:read")
           ? await projectStandScopes(tx, args.runId, args.nodeAttemptId)
           : []),
       ],

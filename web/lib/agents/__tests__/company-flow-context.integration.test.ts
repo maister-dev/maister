@@ -754,6 +754,7 @@ beforeAll(async () => {
     throw new Error("The native Flow runtime migration baseline is missing");
   for (const entry of journal.entries.slice(runtimeBaseline + 1))
     await applyMainMigration(database.db, entry.tag);
+  await declareCurrentTestDatabaseWriter(database);
 
   await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
   baselineCounts = await counts();
@@ -882,6 +883,7 @@ async function seedRetainedStandalone(): Promise<void> {
   ]);
   const {
     companyCancellationIntent: _newCancellationColumn,
+    agentMemoryHashFormat: _newMemoryHashFormat,
     ...legacyRunColumns
   } = getTableColumns(runs);
   const [retainedRun] = await database.db

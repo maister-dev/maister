@@ -30,6 +30,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
+import { finishAgentContinuationOnPrompt } from "./continuation-episode";
 import {
   assertAgentExecutionQuiescent,
   assertAgentSessionBindingsQuiescent,
@@ -50,6 +51,10 @@ import {
   acknowledgeAgentPermissionResult,
 } from "./permission-resume";
 
+import {
+  assertMemorySessionSources,
+  settleMemoryInjection,
+} from "@/lib/agent-memory-vault/injection";
 import {
   executionCommands,
   runMessages,
@@ -389,6 +394,7 @@ export async function admitAgentTurnPrompt(
   )
     throw new PromptOwnerInvariantError("agent_message_admission_generation");
   await assertAgentResumeTurn(tx, turn, client.assignment);
+  await assertMemorySessionSources(tx, session.runId);
   if (
     turn.variant === "initial" &&
     (turn.id !== session.assignmentId || turn.ordinal !== 0)
@@ -414,13 +420,19 @@ export async function admitAgentTurnPrompt(
       ref,
     },
     logicalOperationKey,
-    assertCommit: () =>
-      bindAgentTurnCommand(tx, {
+    assertCommit: async () => {
+      await finishAgentContinuationOnPrompt(
+        tx,
+        session.runId,
+        session.assignmentId,
+      );
+      await bindAgentTurnCommand(tx, {
         turn,
         hostKey: client.host.hostKey,
         incarnationId: session.incarnationId,
         logicalOperationKey,
-      }),
+      });
+    },
   };
 }
 
@@ -819,6 +831,38 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       ref.variant !== "persistent_message"
     )
       throw new PromptOwnerInvariantError("agent_variant_not_implemented");
+    const [current] = await db
+      .select({
+        assignmentId: runs.executionAssignmentId,
+        agentKind: runs.agentKind,
+        projectId: runs.projectId,
+      })
+      .from(runs)
+      .where(eq(runs.id, ref.runId));
+    if (
+      current?.agentKind === "operational" &&
+      current.projectId &&
+      current.assignmentId !== ref.assignmentId
+    ) {
+      const historical = await db.transaction((tx) =>
+        lockAgentPermissionResult(tx, ref.runId, command.id),
+      );
+      if (!historical)
+        return {
+          apply: async (tx) => {
+            if (
+              await lockAgentBinding(
+                tx,
+                ref,
+                command.targetSessionId,
+                command.id,
+              )
+            )
+              throw new PromptOwnerDeferred("agent_finalization_pending");
+            return supersedeAgentMessage(tx, ref, command.id);
+          },
+        };
+    }
     const maxBytes = nodeOutputMaxBytes();
     let sentinel = emptySentinelOutput();
 
@@ -923,6 +967,12 @@ export const agentPromptOwner = definePromptOwnerAdapter(
           if (!application.parked)
             throw new PromptOwnerDeferred("agent_park_pending");
           await acknowledgeAgentMessage(tx, ref, command.id);
+          await settleMemoryInjection(
+            tx,
+            ref.runId,
+            ref.assignmentId,
+            command.id,
+          );
 
           return "applied";
         },
@@ -966,6 +1016,13 @@ export const agentPromptOwner = definePromptOwnerAdapter(
         if (!application.finalized)
           throw new PromptOwnerDeferred("agent_finalization_pending");
         await acknowledgeAgentMessage(tx, ref, command.id);
+        if (outcome.state === "succeeded")
+          await settleMemoryInjection(
+            tx,
+            ref.runId,
+            ref.assignmentId,
+            command.id,
+          );
         log.info(
           {
             runId: ref.runId,

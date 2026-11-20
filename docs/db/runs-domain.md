@@ -688,10 +688,10 @@ erDiagram
 
 ## Constraints
 
-**Implemented (ADR-210).** A nullable `node_attempts.error_reason` can name one
+**Implemented (ADR-215).** A nullable `node_attempts.error_reason` can name one
 of the context limit reasons only with `error_code = ACP_PROTOCOL`.
 A gate owns its technical failure independently of its parsed verdict.
-See the [schema contract](../database-schema.md#acp-context-observations-designed-adr-210).
+See the [schema contract](../database-schema.md#acp-context-observations-implemented-adr-215).
 
 - `tasks_id_attempt_uq` on `(id, attempt_number)` — **vacuous**:
   `tasks.id` is already the PK, so this composite UNIQUE guards

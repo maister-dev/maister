@@ -17,6 +17,10 @@ info:
     visible projects moved. Clients follow the `retain: false` idiom and must not
     accumulate frames in state.
 
+    ADR-212: a tick also carries the authorized neutral reviews count
+    and opaque reviewVersion. Both fields travel together. Review-only changes
+    can reuse the prior cursor and carry no project IDs.
+
     Every frame is filtered through the reader's **current** visible projects; a
     project outside that set never appears in `projectIds` and never causes a
     frame. Worktree paths, diff bodies, prompts, credentials and raw ACP frames
@@ -64,6 +68,11 @@ channels:
         A reconnect sends the last tick's cursor and counts. A count that does
         not parse is ignored. Without a cursor the stream opens with a snapshot
         tick whose `changed` is empty.
+
+        With `reviewProtocol=1`, `reviews` and `reviewVersion` are
+        optional reconnect baselines. A changed version can trigger one refresh
+        even when count and cursor match. Missing or invalid baselines reconcile
+        once. Older clients ignore the additive fields and reviews region.
 
         A quiet stream emits `attention.heartbeat`; a stream that stays quiet
         past the module-level cap is closed with `attention.stream_timeout`
@@ -126,6 +135,14 @@ components:
           description: Unseen activity for this reader, as of this frame (ADR-169).
           type: integer
           minimum: 0
+        reviews:
+          description: (ADR-212) Pending optional reviews this reader can decide.
+          type: integer
+          minimum: 0
+        reviewVersion:
+          description: (ADR-212) Opaque digest of reviewer-visible state.
+          type: string
+          pattern: "^[0-9a-f]{64}$"
         changed:
           description: Which regions the reader should refetch.
           type: array
@@ -136,6 +153,7 @@ components:
               - decisions
               - work
               - activity
+              - reviews
         projectIds:
           description: >-
             Visible projects whose state moved. Always a subset of the reader's
@@ -144,6 +162,9 @@ components:
           uniqueItems: true
           items:
             type: string
+      dependencies:
+        reviews: [reviewVersion]
+        reviewVersion: [reviews]
       example:
         type: attention.tick
         id: "412"

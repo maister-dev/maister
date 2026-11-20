@@ -1,5 +1,5 @@
 {
-  "id": "38e54c09-f54f-4929-8ce5-6f4196cf92b1",
+  "id": "7bcc8256-51ea-424e-a5f2-8f4493786154",
   "prevId": "8aee6b4e-c2b9-430f-ad74-e552ff321665",
   "version": "7",
   "dialect": "postgresql",
@@ -954,6 +954,1198 @@
         "agent_incident_reader_receipt_check": {
           "name": "agent_incident_reader_receipt_check",
           "value": "\"agent_incident_reader_states\".\"attention_revision\" > 0 AND ((\"agent_incident_reader_states\".\"notification_recorded_at\" IS NULL AND \"agent_incident_reader_states\".\"notification_mode\" IS NULL AND \"agent_incident_reader_states\".\"notification_event_id\" IS NULL) OR (\"agent_incident_reader_states\".\"notification_recorded_at\" IS NOT NULL AND \"agent_incident_reader_states\".\"notification_mode\" IN ('published','baseline') AND (\"agent_incident_reader_states\".\"notification_mode\" <> 'published' OR \"agent_incident_reader_states\".\"notification_event_id\" IS NOT NULL)))"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_cutover": {
+      "name": "agent_memory_cutover",
+      "schema": "",
+      "columns": {
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": true,
+          "notNull": true,
+          "default": true
+        },
+        "generation": {
+          "name": "generation",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_cutover_active_check": {
+          "name": "agent_memory_cutover_active_check",
+          "value": "\"agent_memory_cutover\".\"singleton\" AND \"agent_memory_cutover\".\"generation\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_import_payloads": {
+      "name": "agent_memory_import_payloads",
+      "schema": "",
+      "columns": {
+        "receipt_id": {
+          "name": "receipt_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_import_payloads_receipt_id_agent_memory_import_receipts_id_fk": {
+          "name": "agent_memory_import_payloads_receipt_id_agent_memory_import_receipts_id_fk",
+          "tableFrom": "agent_memory_import_payloads",
+          "tableTo": "agent_memory_import_receipts",
+          "columnsFrom": [
+            "receipt_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_import_receipts": {
+      "name": "agent_memory_import_receipts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "generation": {
+          "name": "generation",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_identity": {
+          "name": "source_identity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_digest": {
+          "name": "source_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_bytes": {
+          "name": "source_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "note_id": {
+          "name": "note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_import_revision_fk": {
+          "name": "agent_memory_import_revision_fk",
+          "tableFrom": "agent_memory_import_receipts",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_memory_import_source_uq": {
+          "name": "agent_memory_import_source_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "generation",
+            "source_kind",
+            "source_identity"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_import_witness_check": {
+          "name": "agent_memory_import_witness_check",
+          "value": "\"agent_memory_import_receipts\".\"generation\" > 0\n        AND \"agent_memory_import_receipts\".\"source_kind\" IN ('note', 'run_snapshot')\n        AND \"agent_memory_import_receipts\".\"state\" IN ('inventoried', 'imported', 'verified', 'cleaned', 'missing', 'mismatched')\n        AND num_nonnulls(\"agent_memory_import_receipts\".\"vault_id\", \"agent_memory_import_receipts\".\"note_id\", \"agent_memory_import_receipts\".\"revision_id\") IN (0, 3)\n        AND (\"agent_memory_import_receipts\".\"source_kind\" = 'run_snapshot') = (\"agent_memory_import_receipts\".\"run_id\" IS NOT NULL)\n        AND (\"agent_memory_import_receipts\".\"source_digest\" IS NULL OR \"agent_memory_import_receipts\".\"source_digest\" ~ '^[0-9a-f]{64}$')\n        AND (\"agent_memory_import_receipts\".\"source_bytes\" IS NULL OR \"agent_memory_import_receipts\".\"source_bytes\" >= 0)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_injections": {
+      "name": "agent_memory_injections",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_attempt_id": {
+          "name": "node_attempt_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_key": {
+          "name": "session_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "protocol_version": {
+          "name": "protocol_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "protocol_sha256": {
+          "name": "protocol_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tree": {
+          "name": "tree",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "index_note_id": {
+          "name": "index_note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "index_revision_id": {
+          "name": "index_revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "descriptor_digest": {
+          "name": "descriptor_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rendered_chars": {
+          "name": "rendered_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "application_state": {
+          "name": "application_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'staged'"
+        },
+        "application_receipt_id": {
+          "name": "application_receipt_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_injections_vault_id_agent_memory_vaults_id_fk": {
+          "name": "agent_memory_injections_vault_id_agent_memory_vaults_id_fk",
+          "tableFrom": "agent_memory_injections",
+          "tableTo": "agent_memory_vaults",
+          "columnsFrom": [
+            "vault_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "agent_memory_injection_index_fk": {
+          "name": "agent_memory_injection_index_fk",
+          "tableFrom": "agent_memory_injections",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "index_note_id",
+            "index_revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_memory_injection_session_uq": {
+          "name": "agent_memory_injection_session_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "run_id",
+            "session_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_injection_descriptor_check": {
+          "name": "agent_memory_injection_descriptor_check",
+          "value": "(\"agent_memory_injections\".\"index_note_id\" IS NULL) = (\"agent_memory_injections\".\"index_revision_id\" IS NULL)\n        AND \"agent_memory_injections\".\"protocol_sha256\" ~ '^[0-9a-f]{64}$'\n        AND \"agent_memory_injections\".\"descriptor_digest\" ~ '^[0-9a-f]{64}$'\n        AND \"agent_memory_injections\".\"rendered_chars\" BETWEEN 1 AND 262144\n        AND jsonb_typeof(\"agent_memory_injections\".\"tree\") = 'object'"
+        },
+        "agent_memory_injection_application_check": {
+          "name": "agent_memory_injection_application_check",
+          "value": "\"agent_memory_injections\".\"application_state\" IN ('staged', 'applied', 'retired')\n        AND (\"agent_memory_injections\".\"application_state\" = 'applied') = (\"agent_memory_injections\".\"application_receipt_id\" IS NOT NULL)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_notes": {
+      "name": "agent_memory_notes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "path": {
+          "name": "path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "head_revision_id": {
+          "name": "head_revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "agent_memory_note_live_path_uq": {
+          "name": "agent_memory_note_live_path_uq",
+          "columns": [
+            {
+              "expression": "vault_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "\"path\" COLLATE \"C\"",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_memory_notes\".\"deleted_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_memory_notes_vault_id_agent_memory_vaults_id_fk": {
+          "name": "agent_memory_notes_vault_id_agent_memory_vaults_id_fk",
+          "tableFrom": "agent_memory_notes",
+          "tableTo": "agent_memory_vaults",
+          "columnsFrom": [
+            "vault_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_memory_note_vault_id_uq": {
+          "name": "agent_memory_note_vault_id_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vault_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_note_path_check": {
+          "name": "agent_memory_note_path_check",
+          "value": "left(\"agent_memory_notes\".\"path\", 10) = '/memories/' AND right(\"agent_memory_notes\".\"path\", 3) = '.md' AND octet_length(\"agent_memory_notes\".\"path\") <= 512"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_operation_revisions": {
+      "name": "agent_memory_operation_revisions",
+      "schema": "",
+      "columns": {
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_id": {
+          "name": "note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_operation_ref_operation_fk": {
+          "name": "agent_memory_operation_ref_operation_fk",
+          "tableFrom": "agent_memory_operation_revisions",
+          "tableTo": "agent_memory_operations",
+          "columnsFrom": [
+            "vault_id",
+            "operation_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "agent_memory_operation_ref_revision_fk": {
+          "name": "agent_memory_operation_ref_revision_fk",
+          "tableFrom": "agent_memory_operation_revisions",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "agent_memory_operation_revisions_vault_id_operation_id_role_ordinal_pk": {
+          "name": "agent_memory_operation_revisions_vault_id_operation_id_role_ordinal_pk",
+          "columns": [
+            "vault_id",
+            "operation_id",
+            "role",
+            "ordinal"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_operation_ref_check": {
+          "name": "agent_memory_operation_ref_check",
+          "value": "\"agent_memory_operation_revisions\".\"role\" IN ('base', 'result') AND \"agent_memory_operation_revisions\".\"ordinal\" BETWEEN 0 AND 1023"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_operations": {
+      "name": "agent_memory_operations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "principal_key": {
+          "name": "principal_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_key": {
+          "name": "request_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command_kind": {
+          "name": "command_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command_digest": {
+          "name": "command_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_operations_vault_id_agent_memory_vaults_id_fk": {
+          "name": "agent_memory_operations_vault_id_agent_memory_vaults_id_fk",
+          "tableFrom": "agent_memory_operations",
+          "tableTo": "agent_memory_vaults",
+          "columnsFrom": [
+            "vault_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_memory_operation_vault_id_uq": {
+          "name": "agent_memory_operation_vault_id_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vault_id",
+            "id"
+          ]
+        },
+        "agent_memory_operation_request_uq": {
+          "name": "agent_memory_operation_request_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vault_id",
+            "principal_key",
+            "request_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_operation_receipt_check": {
+          "name": "agent_memory_operation_receipt_check",
+          "value": "\"agent_memory_operations\".\"outcome\" IN ('applied', 'pending')\n        AND \"agent_memory_operations\".\"command_digest\" ~ '^[0-9a-f]{64}$'\n        AND \"agent_memory_operations\".\"request_key\" ~ '^[A-Za-z0-9_.:-]{8,128}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_redactions": {
+      "name": "agent_memory_redactions",
+      "schema": "",
+      "columns": {
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_id": {
+          "name": "note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "administrator_id": {
+          "name": "administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_redaction_revision_fk": {
+          "name": "agent_memory_redaction_revision_fk",
+          "tableFrom": "agent_memory_redactions",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "agent_memory_redactions_vault_id_note_id_revision_id_pk": {
+          "name": "agent_memory_redactions_vault_id_note_id_revision_id_pk",
+          "columns": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "agent_memory_redaction_id_uq": {
+          "name": "agent_memory_redaction_id_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_redaction_reason_check": {
+          "name": "agent_memory_redaction_reason_check",
+          "value": "char_length(btrim(\"agent_memory_redactions\".\"reason\")) BETWEEN 1 AND 1024"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_revision_payloads": {
+      "name": "agent_memory_revision_payloads",
+      "schema": "",
+      "columns": {
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_id": {
+          "name": "note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "agent_memory_payload_revision_fk": {
+          "name": "agent_memory_payload_revision_fk",
+          "tableFrom": "agent_memory_revision_payloads",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "agent_memory_revision_payloads_vault_id_note_id_revision_id_pk": {
+          "name": "agent_memory_revision_payloads_vault_id_note_id_revision_id_pk",
+          "columns": [
+            "vault_id",
+            "note_id",
+            "revision_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_payload_bytes_check": {
+          "name": "agent_memory_payload_bytes_check",
+          "value": "octet_length(\"agent_memory_revision_payloads\".\"content\") <= 1048576"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_revisions": {
+      "name": "agent_memory_revisions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "vault_id": {
+          "name": "vault_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note_id": {
+          "name": "note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_revision_id": {
+          "name": "parent_revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "path": {
+          "name": "path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_sha256": {
+          "name": "content_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "size_chars": {
+          "name": "size_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author": {
+          "name": "author",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_restrictions": {
+          "name": "source_restrictions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "source_project_ids": {
+          "name": "source_project_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "agent_memory_revision_first_uq": {
+          "name": "agent_memory_revision_first_uq",
+          "columns": [
+            {
+              "expression": "note_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_memory_revisions\".\"parent_revision_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_memory_revision_child_uq": {
+          "name": "agent_memory_revision_child_uq",
+          "columns": [
+            {
+              "expression": "parent_revision_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_memory_revisions\".\"parent_revision_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_memory_revision_history_idx": {
+          "name": "agent_memory_revision_history_idx",
+          "columns": [
+            {
+              "expression": "vault_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "note_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_memory_revision_note_fk": {
+          "name": "agent_memory_revision_note_fk",
+          "tableFrom": "agent_memory_revisions",
+          "tableTo": "agent_memory_notes",
+          "columnsFrom": [
+            "vault_id",
+            "note_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "agent_memory_revision_parent_fk": {
+          "name": "agent_memory_revision_parent_fk",
+          "tableFrom": "agent_memory_revisions",
+          "tableTo": "agent_memory_revisions",
+          "columnsFrom": [
+            "vault_id",
+            "note_id",
+            "parent_revision_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "note_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "agent_memory_revision_operation_fk": {
+          "name": "agent_memory_revision_operation_fk",
+          "tableFrom": "agent_memory_revisions",
+          "tableTo": "agent_memory_operations",
+          "columnsFrom": [
+            "vault_id",
+            "operation_id"
+          ],
+          "columnsTo": [
+            "vault_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "agent_memory_revision_owner_uq": {
+          "name": "agent_memory_revision_owner_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vault_id",
+            "note_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_revision_content_check": {
+          "name": "agent_memory_revision_content_check",
+          "value": "(\"agent_memory_revisions\".\"kind\" = 'created') = (\"agent_memory_revisions\".\"parent_revision_id\" IS NULL)\n        AND (\"agent_memory_revisions\".\"parent_revision_id\" IS NULL OR \"agent_memory_revisions\".\"id\" <> \"agent_memory_revisions\".\"parent_revision_id\")\n        AND \"agent_memory_revisions\".\"kind\" IN ('created', 'edited', 'renamed', 'deleted', 'reverted', 'redacted')\n        AND CASE WHEN \"agent_memory_revisions\".\"kind\" IN ('deleted', 'redacted')\n          THEN \"agent_memory_revisions\".\"content_sha256\" IS NULL AND \"agent_memory_revisions\".\"size_chars\" = 0 AND \"agent_memory_revisions\".\"size_bytes\" = 0\n          ELSE (\"agent_memory_revisions\".\"content_sha256\" ~ '^[0-9a-f]{64}$') IS TRUE\n            AND \"agent_memory_revisions\".\"size_chars\" BETWEEN 0 AND 262144 AND \"agent_memory_revisions\".\"size_bytes\" BETWEEN 0 AND 1048576\n          END"
+        },
+        "agent_memory_revision_provenance_check": {
+          "name": "agent_memory_revision_provenance_check",
+          "value": "jsonb_typeof(\"agent_memory_revisions\".\"author\") = 'object'\n        AND (\"agent_memory_revisions\".\"author\"->>'kind' IN ('human', 'librarian', 'agent_session', 'operator_import')) IS TRUE\n        AND jsonb_typeof(\"agent_memory_revisions\".\"source_restrictions\") = 'array'\n        AND octet_length(\"agent_memory_revisions\".\"source_restrictions\"::text) <= 65536\n        AND cardinality(\"agent_memory_revisions\".\"source_project_ids\") <= 256"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.agent_memory_vaults": {
+      "name": "agent_memory_vaults",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()::text"
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        },
+        "note_count": {
+          "name": "note_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "content_chars": {
+          "name": "content_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "content_bytes": {
+          "name": "content_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "agent_memory_vault_project_uq": {
+          "name": "agent_memory_vault_project_uq",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_memory_vaults\".\"project_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_memory_vault_company_uq": {
+          "name": "agent_memory_vault_company_uq",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_memory_vaults\".\"company_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "agent_memory_vaults_company_id_companies_id_fk": {
+          "name": "agent_memory_vaults_company_id_companies_id_fk",
+          "tableFrom": "agent_memory_vaults",
+          "tableTo": "companies",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "agent_memory_vault_owner_check": {
+          "name": "agent_memory_vault_owner_check",
+          "value": "num_nonnulls(\"agent_memory_vaults\".\"project_id\", \"agent_memory_vaults\".\"company_id\") = 1 AND \"agent_memory_vaults\".\"agent_id\" ~ '^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$'"
+        },
+        "agent_memory_vault_totals_check": {
+          "name": "agent_memory_vault_totals_check",
+          "value": "\"agent_memory_vaults\".\"generation\" >= 0 AND \"agent_memory_vaults\".\"note_count\" >= 0 AND \"agent_memory_vaults\".\"content_chars\" >= 0 AND \"agent_memory_vaults\".\"content_bytes\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -13475,12 +14667,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "prompt_failure_reason": {
-          "name": "prompt_failure_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "input_artifact_refs": {
           "name": "input_artifact_refs",
           "type": "jsonb",
@@ -13586,10 +14772,6 @@
         "gate_results_prompt_ordinal_check": {
           "name": "gate_results_prompt_ordinal_check",
           "value": "\"gate_results\".\"prompt_ordinal\" >= 0"
-        },
-        "gate_results_context_failure_reason_check": {
-          "name": "gate_results_context_failure_reason_check",
-          "value": "\"gate_results\".\"prompt_failure_reason\" IS NULL OR \"gate_results\".\"prompt_failure_reason\" IN ('context_exhausted', 'max_output_tokens')"
         },
         "gate_results_permission_resume_check": {
           "name": "gate_results_permission_resume_check",
@@ -16789,12 +17971,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "error_reason": {
-          "name": "error_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "owner_user_id": {
           "name": "owner_user_id",
           "type": "text",
@@ -16969,10 +18145,6 @@
         "node_attempts_action_resume_check": {
           "name": "node_attempts_action_resume_check",
           "value": "\"node_attempts\".\"action_resume\" IS NULL OR (jsonb_typeof(\"node_attempts\".\"action_resume\") = 'object' AND \"node_attempts\".\"action_resume\"->'version' = '1'::jsonb AND ((\"node_attempts\".\"action_resume\"->>'kind' = 'clarification' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'questionId')='string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceIncarnationId')='string' AND (\"node_attempts\".\"action_resume\"->'answer'='null'::jsonb OR (jsonb_typeof(\"node_attempts\".\"action_resume\"->'answer')='object' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'answer'->'inputRevision')='number' AND \"node_attempts\".\"action_resume\"->'answer'->>'inputSha256' ~ '^[a-f0-9]{64}$' AND \"node_attempts\".\"action_resume\"->'answer'->>'receiptSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'answer'->'checkpointCommandId')='string'))) OR (\"node_attempts\".\"action_resume\"->>'kind' = 'interrupt' AND \"node_attempts\".\"action_resume\"->>'cause' IN ('operator', 'host_pressure')) OR (\"node_attempts\".\"action_resume\"->>'kind' = 'orchestrator' AND (NOT (\"node_attempts\".\"action_resume\" ? 'permissionResult') OR (jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult') = 'object' AND \"node_attempts\".\"action_resume\"->'permissionResult'->'version' = '1'::jsonb AND \"node_attempts\".\"action_resume\"->'permissionResult'->>'kind' = 'permission_result' AND \"node_attempts\".\"action_prompt_ordinal\" > 0 AND \"node_attempts\".\"action_resume\"->'permissionResult'->'promptOrdinal' = to_jsonb(\"node_attempts\".\"action_prompt_ordinal\" - 1) AND \"node_attempts\".\"action_resume\"->'permissionResult'->>'sourceCommandId' = \"node_attempts\".\"action_resume\"->>'sourceCommandId' AND \"node_attempts\".\"action_resume\"->'permissionResult'->>'sourceAssignmentId' = \"node_attempts\".\"action_resume\"->>'sourceAssignmentId' AND \"node_attempts\".\"action_resume\"->'permissionResult'->>'resumeSessionId' = \"node_attempts\".\"action_resume\"->>'resumeSessionId' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((\"node_attempts\".\"action_resume\"->>'kind' = 'permission' OR (\"node_attempts\".\"action_resume\"->>'kind' = 'permission_continue' AND \"node_attempts\".\"action_prompt_ordinal\" > 0 AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'checkpointCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'inputCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceIncarnationId') = 'string') OR (\"node_attempts\".\"action_resume\"->>'kind' = 'permission_result' AND \"node_attempts\".\"action_completion\"->>'commandId' = \"node_attempts\".\"action_resume\"->>'sourceCommandId' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'checkpointCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'inputCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceIncarnationId') = 'string')) AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'hitlRequestId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceRequestId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'optionId') = 'string')) AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceCommandId') = 'string' AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'sourceAssignmentId') = 'string' AND \"node_attempts\".\"action_resume\"->>'assignmentId' = \"node_attempts\".\"execution_assignment_id\" AND \"node_attempts\".\"action_resume\"->'promptOrdinal' = to_jsonb(\"node_attempts\".\"action_prompt_ordinal\") AND jsonb_typeof(\"node_attempts\".\"action_resume\"->'resumeSessionId') = 'string') IS TRUE"
-        },
-        "node_attempts_context_failure_reason_check": {
-          "name": "node_attempts_context_failure_reason_check",
-          "value": "\"node_attempts\".\"error_reason\" IS NULL OR (\"node_attempts\".\"error_code\" = 'ACP_PROTOCOL' AND \"node_attempts\".\"error_reason\" IN ('context_exhausted', 'max_output_tokens')) IS TRUE"
         }
       },
       "isRLSEnabled": false
@@ -20082,378 +21254,6 @@
       },
       "isRLSEnabled": false
     },
-    "public.run_context_compactions": {
-      "name": "run_context_compactions",
-      "schema": "",
-      "columns": {
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "execution_host_id": {
-          "name": "execution_host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assignment_id": {
-          "name": "assignment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assignment_epoch": {
-          "name": "assignment_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "host_session_id": {
-          "name": "host_session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "node_attempt_id": {
-          "name": "node_attempt_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "compaction_id": {
-          "name": "compaction_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "first_run_sequence": {
-          "name": "first_run_sequence",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "last_run_sequence": {
-          "name": "last_run_sequence",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ended_at": {
-          "name": "ended_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "command_id": {
-          "name": "command_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "before_usage": {
-          "name": "before_usage",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "after_usage": {
-          "name": "after_usage",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "run_context_compactions_status_idx": {
-          "name": "run_context_compactions_status_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "execution_host_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "assignment_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "assignment_epoch",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "host_session_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "run_context_compactions_attempt_idx": {
-          "name": "run_context_compactions_attempt_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "node_attempt_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "run_context_compactions_run_id_runs_id_fk": {
-          "name": "run_context_compactions_run_id_runs_id_fk",
-          "tableFrom": "run_context_compactions",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "run_context_compactions_node_attempt_id_node_attempts_id_fk": {
-          "name": "run_context_compactions_node_attempt_id_node_attempts_id_fk",
-          "tableFrom": "run_context_compactions",
-          "tableTo": "node_attempts",
-          "columnsFrom": [
-            "node_attempt_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "run_context_compactions_pk": {
-          "name": "run_context_compactions_pk",
-          "columns": [
-            "run_id",
-            "execution_host_id",
-            "assignment_id",
-            "assignment_epoch",
-            "host_session_id",
-            "compaction_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "run_context_compactions_lifecycle_check": {
-          "name": "run_context_compactions_lifecycle_check",
-          "value": "\n      \"run_context_compactions\".\"assignment_epoch\" > 0 AND length(\"run_context_compactions\".\"compaction_id\") BETWEEN 1 AND 256\n      AND \"run_context_compactions\".\"first_run_sequence\" BETWEEN 0 AND \"run_context_compactions\".\"last_run_sequence\"\n      AND ((\"run_context_compactions\".\"status\" = 'in_progress' AND \"run_context_compactions\".\"started_at\" IS NOT NULL AND \"run_context_compactions\".\"ended_at\" IS NULL)\n        OR (\"run_context_compactions\".\"status\" IN ('completed', 'failed', 'cancelled', 'interrupted') AND \"run_context_compactions\".\"ended_at\" IS NOT NULL))"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.run_context_usage": {
-      "name": "run_context_usage",
-      "schema": "",
-      "columns": {
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "execution_host_id": {
-          "name": "execution_host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assignment_id": {
-          "name": "assignment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assignment_epoch": {
-          "name": "assignment_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "host_session_id": {
-          "name": "host_session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "node_attempt_id": {
-          "name": "node_attempt_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "used_tokens": {
-          "name": "used_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "size_tokens": {
-          "name": "size_tokens",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "observed_at": {
-          "name": "observed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "usage_run_sequence": {
-          "name": "usage_run_sequence",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_run_sequence": {
-          "name": "last_run_sequence",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_run_sequence": {
-          "name": "created_run_sequence",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "run_context_usage_attempt_idx": {
-          "name": "run_context_usage_attempt_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "node_attempt_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "last_run_sequence",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "run_context_usage_run_id_runs_id_fk": {
-          "name": "run_context_usage_run_id_runs_id_fk",
-          "tableFrom": "run_context_usage",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "run_context_usage_node_attempt_id_node_attempts_id_fk": {
-          "name": "run_context_usage_node_attempt_id_node_attempts_id_fk",
-          "tableFrom": "run_context_usage",
-          "tableTo": "node_attempts",
-          "columnsFrom": [
-            "node_attempt_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "run_context_usage_scope_uq": {
-          "name": "run_context_usage_scope_uq",
-          "nullsNotDistinct": true,
-          "columns": [
-            "run_id",
-            "execution_host_id",
-            "assignment_id",
-            "assignment_epoch",
-            "host_session_id",
-            "node_attempt_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {
-        "run_context_usage_measurement_check": {
-          "name": "run_context_usage_measurement_check",
-          "value": "\n      (num_nonnulls(\"run_context_usage\".\"used_tokens\", \"run_context_usage\".\"size_tokens\", \"run_context_usage\".\"observed_at\", \"run_context_usage\".\"usage_run_sequence\") = 0 OR\n        (num_nonnulls(\"run_context_usage\".\"used_tokens\", \"run_context_usage\".\"size_tokens\", \"run_context_usage\".\"observed_at\", \"run_context_usage\".\"usage_run_sequence\") = 4 AND\n         \"run_context_usage\".\"used_tokens\" BETWEEN 0 AND 9007199254740991 AND\n         \"run_context_usage\".\"size_tokens\" BETWEEN 1 AND 9007199254740991 AND\n         \"run_context_usage\".\"usage_run_sequence\" BETWEEN 0 AND \"run_context_usage\".\"last_run_sequence\"))\n      AND \"run_context_usage\".\"last_run_sequence\" >= 0 AND \"run_context_usage\".\"assignment_epoch\" > 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.run_cost_rollups": {
       "name": "run_cost_rollups",
       "schema": "",
@@ -22701,6 +23501,12 @@
         },
         "agent_memory_hash": {
           "name": "agent_memory_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "agent_memory_hash_format": {
+          "name": "agent_memory_hash_format",
           "type": "text",
           "primaryKey": false,
           "notNull": false

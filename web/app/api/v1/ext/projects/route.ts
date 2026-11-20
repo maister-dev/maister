@@ -3,6 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { installationReadAdapter } from "@/lib/agents/installation-facade";
 import { getDb } from "@/lib/db/client";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 import { handleExt } from "@/lib/tokens/ext-handler";
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     req,
     {
       scopeLabel: "projects:read",
+      installation: installationReadAdapter(req, "projects"),
       endpoint: ENDPOINT,
       method: "GET",
       allowGlobalActorWithoutProject: true,

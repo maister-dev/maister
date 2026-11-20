@@ -175,7 +175,12 @@ function movedFrames(frames: Frame[]): Frame[] {
 function streamRequest(
   controller: AbortController,
   lastEventId?: string,
-  baseline?: { decisions: string; updates: string },
+  baseline?: {
+    decisions: string;
+    updates: string;
+    reviews?: string;
+    reviewVersion?: string;
+  },
 ): NextRequest {
   const url = new URL("http://localhost/api/attention/stream");
 
@@ -184,6 +189,12 @@ function streamRequest(
   if (baseline !== undefined) {
     url.searchParams.set("decisions", baseline.decisions);
     url.searchParams.set("updates", baseline.updates);
+    if (baseline.reviews !== undefined) {
+      url.searchParams.set("reviewProtocol", "1");
+      url.searchParams.set("reviews", baseline.reviews);
+    }
+    if (baseline.reviewVersion !== undefined)
+      url.searchParams.set("reviewVersion", baseline.reviewVersion);
   }
 
   return new NextRequest(url, { signal: controller.signal });
@@ -339,6 +350,8 @@ describe("IT-ATN-11 the stream is user-scoped", () => {
       "id",
       "occurredAt",
       "projectIds",
+      "reviewVersion",
+      "reviews",
       "type",
       "updates",
     ]);
@@ -470,6 +483,8 @@ describe("IT-ATN-17 a render that is current gets no tick", () => {
     cursor: string;
     decisions: number;
     updates: number;
+    reviews: number;
+    reviewVersion: string;
   }> {
     const controller = new AbortController();
     const frames = await collect(
@@ -485,6 +500,8 @@ describe("IT-ATN-17 a render that is current gets no tick", () => {
       cursor: snapshot?.data?.id as string,
       decisions: snapshot?.data?.decisions as number,
       updates: snapshot?.data?.updates as number,
+      reviews: snapshot?.data?.reviews as number,
+      reviewVersion: snapshot?.data?.reviewVersion as string,
     };
   }
 
@@ -522,6 +539,32 @@ describe("IT-ATN-17 a render that is current gets no tick", () => {
 
     expect(moved).toHaveLength(1);
     expect(moved[0].data?.changed).toEqual(["decisions"]);
+  }, 30_000);
+
+  it("reconciles an equal-count review version once and keeps the project cursor", async () => {
+    const render = await rendered();
+    const controller = new AbortController();
+    const response = await GET(
+      streamRequest(controller, render.cursor, {
+        decisions: String(render.decisions),
+        updates: String(render.updates),
+        reviews: String(render.reviews),
+        reviewVersion: "f".repeat(64),
+      }),
+    );
+    const changes = ticks(await collect(response, controller, 2800));
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      id: render.cursor,
+      data: {
+        reviews: render.reviews,
+        reviewVersion: render.reviewVersion,
+        changed: ["reviews"],
+        projectIds: [],
+        decisions: render.decisions,
+      },
+    });
   }, 30_000);
 
   it("ignores a baseline it cannot read, and ticks as a resume always did", async () => {

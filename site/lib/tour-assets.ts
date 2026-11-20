@@ -15,6 +15,7 @@ const AVAILABLE_VARIANTS: Record<TourShotId, ReadonlyArray<TourVariant>> = {
   run: ["en-light", "en-dark", "ru-light", "ru-dark"],
   inbox: ["en-light", "en-dark", "ru-light", "ru-dark"],
   review: ["en-light", "en-dark", "ru-light", "ru-dark"],
+  knowledge: ["en-light", "en-dark", "ru-light", "ru-dark"],
 };
 
 export const TOUR_IMAGE_WIDTH = 1600;

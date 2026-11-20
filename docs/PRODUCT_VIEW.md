@@ -204,6 +204,17 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
   sibling-repo context mounts on `ai_coding`/`judge`/`orchestrator` nodes.
   `project = repo` stays; relations may cross projects, the automation they
   drive may not.
+- Company Brain and governed specialist assignments (ADR-202..205 —
+  Implemented): company- and project-owned knowledge records with evidence,
+  proposal review and separate confirmation under explicit grants; durable
+  assignments to company specialists and coordinator Flows; and the
+  stand-maintenance pilot with an approved restart and independent health
+  verification. Company work needs no repository.
+- Task source identity and delivery completion (ADR-206..209 — Implemented): a
+  provider-neutral external source binding deduplicates imported tasks; a task
+  completes after its Run's pull request is confirmed merged; Runs report
+  duration and execution time separately; and the active rail lists only Runs
+  that need attention.
 
 ## Phase 2
 

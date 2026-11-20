@@ -242,6 +242,48 @@ test("QL-L-01: real adapter lists visible projects in the personal conversation"
   await expect(page.getByTestId("librarian-transcript")).toContainText(slug);
 });
 
+test("AV-07-live: real adapter prepares a governed Brain confirmation", async ({
+  page,
+}) => {
+  const slug = loadFixtures().byKey.board.projectSlug;
+  const title = `Fixture release order ${randomUUID().slice(0, 8)}`;
+
+  await withE2EDb(async (pool) => {
+    await pool.query("UPDATE projects SET brain_enabled=true WHERE slug=$1", [
+      slug,
+    ]);
+  });
+  await sendNatural(
+    page,
+    `Please use memory_propose in MAIster project ${slug} to draft a Project Brain state proposal. Use the exact title "${title}" and content "In this synthetic test project the release job runs the test suite first." Prepare the owner confirmation card now.`,
+  );
+  await page
+    .getByTestId("librarian-linked-work")
+    .getByRole("button", { name: /attention|need.*you/i })
+    .click();
+  const card = page
+    .getByTestId("librarian-card-pending")
+    .filter({ hasText: title });
+
+  await expect(card).toContainText("Project Brain proposal");
+  const proposed = () =>
+    withE2EDb(
+      async (pool) =>
+        (
+          await pool.query(
+            "SELECT status,actor->>'id' AS actor FROM brain_proposals WHERE draft->>'title'=$1",
+            [title],
+          )
+        ).rows,
+    );
+
+  expect(await proposed()).toEqual([]);
+  await card.getByRole("button", { name: /confirm|accept/i }).click();
+  await expect
+    .poll(proposed)
+    .toEqual([{ status: "pending", actor: loadFixtures().users.admin.id }]);
+});
+
 test("QL-L-02: real adapter finds a duplicate before creating two task statements", async ({
   page,
 }) => {

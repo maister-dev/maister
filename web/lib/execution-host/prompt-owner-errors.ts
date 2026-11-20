@@ -113,6 +113,10 @@ export function preservePromptApplicationHistory(
   return {
     ...next,
     deferredSince: previous?.deferredSince ?? next.deferredSince,
+    serviceRetryStartedAt:
+      next.serviceRetryStartedAt ?? previous?.serviceRetryStartedAt,
+    serviceRetryAttempts:
+      next.serviceRetryAttempts ?? previous?.serviceRetryAttempts,
     recoveryRequestedAt:
       previous?.recoveryRequestedAt ?? next.recoveryRequestedAt,
     previousAttempts: previous?.previousAttempts ?? next.previousAttempts,

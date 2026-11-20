@@ -33,6 +33,8 @@ import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
+
 import {
   admitAgentTurnPrompt,
   findInitialAgentPrompt,
@@ -79,7 +81,6 @@ import {
   prepareAgentRunFinalization,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
-  type AgentFinalStatus,
 } from "./finalization";
 import {
   agentReadOnlyWorkdirPath,
@@ -153,6 +154,16 @@ import {
   inspectOperationalRun,
   inspectOperationalContexts,
 } from "@/lib/agents/operational-context";
+import {
+  claimAgentContinuation,
+  assertAgentCreateNotRefused,
+  hasAgentContinuationSettlement,
+  recordAgentDispatchIntegrityFailure,
+  recordAgentContinuationFailure,
+  recoverAgentContinuationSettlement,
+  requireOperationalContinuationWitness,
+  settleAgentContinuation,
+} from "@/lib/agents/continuation-episode";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -231,6 +242,12 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
+import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
+import {
+  assertMemorySessionSources,
+  stageInstallationAgentMemory,
+  stageProjectAgentMemory,
+} from "@/lib/agent-memory-vault/injection";
 import {
   withAgentMaterializationLock,
   agentMaterializationWitnessPathsForRun,
@@ -3145,6 +3162,7 @@ export async function buildAgentPrompt(
   parsed: ParsedAgentDefinition,
   run: Record<string, any>,
   memory?: string | null,
+  vaultBlock?: string | null,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
   const scopeBlock = await projectScopeBlock(_db, run);
@@ -3164,7 +3182,8 @@ export async function buildAgentPrompt(
   if (configBlock) sections.push(configBlock);
   // ADR-152 D13: standing project knowledge belongs WITH standing config, and
   // the current ask comes after it.
-  if (memory) sections.push(memoryBlock(memory));
+  if (vaultBlock) sections.push(vaultBlock);
+  else if (memory) sections.push(memoryBlock(memory));
   if (taskBlock) sections.push(taskBlock);
   if (run.taskQualificationSnapshot?.role === "qualifier")
     sections.push(
@@ -3379,7 +3398,7 @@ export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
   opts: Omit<AgentFinalizeOptions, "db"> & { db?: Db } = {},
-): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
+): ReturnType<typeof finalizeAgentRunPrepared> {
   return finalizeAgentRunPrepared(runId, outcome, opts);
 }
 
@@ -4070,7 +4089,24 @@ async function dispatchStoredAgentTurn(
     specialistPlacementId,
   );
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
-  await assertOperationalDispatchIntegrity(db, turn.runId);
+  try {
+    await assertOperationalDispatchIntegrity(db, turn.runId);
+  } catch (error) {
+    if (
+      await recordAgentDispatchIntegrityFailure(
+        db,
+        {
+          runId: turn.runId,
+          assignmentId: execution.client.assignment.id,
+          turnId: turn.id,
+          hostSessionId: sessionId,
+        },
+        error,
+      )
+    )
+      return;
+    throw error;
+  }
   const handle = await execution.client.prompt(
     sessionId,
     { stepId: "agent", prompt: turn.prompt },
@@ -4142,6 +4178,8 @@ export async function startAgentSession(
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
       companyId: runs.companyId,
+      agentKind: runs.agentKind,
+      projectId: runs.projectId,
       status: runs.status,
     })
     .from(runs)
@@ -4150,6 +4188,20 @@ export async function startAgentSession(
     opts.assignmentId === undefined
       ? (source?.assignmentId ?? null)
       : opts.assignmentId;
+
+  if (
+    source?.agentKind === "operational" &&
+    source.projectId &&
+    expectedAssignmentId &&
+    source.status === "Running" &&
+    (await recoverAgentContinuationSettlement(
+      db,
+      executionHosts,
+      runId,
+      expectedAssignmentId,
+    ))
+  )
+    return;
 
   try {
     const drive = (signal?: AbortSignal) =>
@@ -4188,6 +4240,11 @@ export async function startAgentSession(
 
       return;
     }
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "agent_continuation_settlement_pending"
+    )
+      return;
     if (isTaskLaunchContention(err)) {
       log.info(
         {
@@ -4427,7 +4484,39 @@ async function driveAgentSession(
   if (agentTurn) {
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-    await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    try {
+      await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    } catch (error) {
+      if (
+        run.agentKind !== "operational" ||
+        !run.projectId ||
+        agentTurn.variant !== "resume" ||
+        agentTurn.commandId ||
+        !isMaisterError(error) ||
+        error.details?.reason !== "prompt_owner_invariant"
+      )
+        throw error;
+      const claim = await claimAgentContinuation(_db, {
+        runId,
+        assignmentId: execution.client.assignment.id,
+        logicalKey: agentTurn.logicalKey,
+      });
+      if (!claim) return;
+      if (claim.state === "settlement") {
+        await settleAgentContinuation(_db, hosts, claim);
+      } else {
+        await recordAgentContinuationFailure(_db, claim, error, null, {
+          runId,
+          stage: "resume_source",
+        });
+      }
+      return;
+    }
+    if (!agentTurn.commandId && !run.companyId)
+      await _db.transaction(async (tx: ExecutionDb) => {
+        if ((await lockVaultCutover(tx)) !== null)
+          await assertMemorySessionSources(tx, runId);
+      });
     if (agentTurn.commandId) {
       const [command] = await _db
         .select()
@@ -4482,6 +4571,16 @@ async function driveAgentSession(
               },
             );
           },
+          run.agentKind === "operational" && run.projectId
+            ? {
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
+                  ),
+              }
+            : undefined,
         );
 
         await dispatchStoredAgentTurn(
@@ -4703,6 +4802,8 @@ async function driveAgentSession(
     : null;
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
+  let continuation: Awaited<ReturnType<typeof claimAgentContinuation>> = null;
+  let handedOff = false;
   let preparationCommit: string | null = null;
   const packageCapture: {
     current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
@@ -4724,7 +4825,10 @@ async function driveAgentSession(
       assignmentId
     ) {
       const [assignment] = await _db
-        .select({ epoch: executionAssignments.epoch })
+        .select({
+          epoch: executionAssignments.epoch,
+          placementReason: executionAssignments.placementReason,
+        })
         .from(executionAssignments)
         .where(eq(executionAssignments.id, assignmentId));
 
@@ -4732,6 +4836,25 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
+      if (
+        run.agentKind === "operational" &&
+        run.projectId &&
+        (assignment?.placementReason !== "launch" ||
+          (agentTurn !== undefined && agentTurn !== null))
+      ) {
+        continuation = await claimAgentContinuation(_db, {
+          runId,
+          assignmentId,
+          logicalKey: agentTurn?.logicalKey ?? `prepare:${assignmentId}`,
+        });
+        if (!continuation) return;
+        if (continuation.state === "settlement") {
+          const settlement = continuation;
+          continuation = null;
+          return await settleAgentContinuation(_db, hosts, settlement);
+        }
+        requireOperationalContinuationWitness(run.operationalIntegrityBaseline);
+      }
       const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
@@ -4771,6 +4894,17 @@ async function driveAgentSession(
       : originalError;
 
     packageCapture.current = null;
+    if (continuation && !handedOff) {
+      if (isFencedError(error)) throw error;
+      await recordAgentContinuationFailure(
+        _db,
+        continuation,
+        error,
+        preparation,
+        { ...preparationContext, stage: operationalSpawnStage },
+      );
+      return;
+    }
     if (
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
@@ -5223,6 +5357,7 @@ async function driveAgentSession(
             cwd,
             preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
+              legacyEphemeral: run.agentKind !== "operational",
               context: {
                 ...preparationContext,
                 stage: "baseline",
@@ -5274,32 +5409,77 @@ async function driveAgentSession(
         });
       }
 
-      // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
-      // override branch below (which discards `basePrompt` and would otherwise
-      // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
-      const memoryText = companyContext
-        ? null
-        : await applyAgentMemoryForLaunch(
-            _db,
-            run,
-            project.slug as string,
-            overridePrompt != null,
-          );
+      const installationMemory =
+        companyContext?.installation && assignmentId && !agentTurn
+          ? await _db.transaction((tx: ExecutionDb) =>
+              stageInstallationAgentMemory(
+                tx,
+                assignmentId,
+                runId,
+                Boolean(run.acpSessionId),
+              ),
+            )
+          : null;
+      const memory = companyContext
+        ? { legacy: null, vault: installationMemory }
+        : await _db.transaction(async (tx: ExecutionDb) => {
+            if ((await lockVaultCutover(tx)) === null)
+              return {
+                legacy: await applyAgentMemoryForLaunch(
+                  tx,
+                  run,
+                  project.slug as string,
+                  overridePrompt != null,
+                ),
+                vault: null,
+              };
+            if (agentTurn) return { legacy: null, vault: null };
+            if (!assignmentId)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Agent memory requires an owned session",
+              );
+            const prepared = await stageProjectAgentMemory(
+              tx,
+              {
+                runId,
+                projectId: run.projectId as string,
+                agentId: run.agentId as string,
+                sessionKey: assignmentId,
+              },
+              Boolean(run.acpSessionId),
+            );
+
+            return {
+              legacy: null,
+              vault: prepared.mode === "vault" ? prepared.text : null,
+            };
+          });
       const basePrompt = companyContext
-        ? buildCompanyAgentPrompt(companyContext)
-        : await buildAgentPrompt(_db, effective.parsed, run, memoryText);
+        ? [buildCompanyAgentPrompt(companyContext), installationMemory]
+            .filter(Boolean)
+            .join("\n\n")
+        : await buildAgentPrompt(
+            _db,
+            effective.parsed,
+            run,
+            memory?.legacy,
+            memory?.vault,
+          );
+      const selectedPrompt =
+        overridePrompt === undefined
+          ? draftPayload
+            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+            : basePrompt
+          : memory?.vault && !agentTurn
+            ? [memory.vault, overridePrompt].join("\n\n")
+            : overridePrompt;
       const completionPrompt = nativeFindingsCompletionPrompt(
         run.resultContract,
-        operationalCompletionPrompt(
-          run,
-          overridePrompt ??
-            (draftPayload
-              ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-              : basePrompt),
-        ),
+        operationalCompletionPrompt(run, selectedPrompt),
       );
 
       // RD7: the agent's capability_profile.mcps resolve through the existing
@@ -5408,7 +5588,19 @@ async function driveAgentSession(
             `Agent Run ${runId} requires the MAIster MCP facade. Build it with pnpm --filter @maister/mcp build or set MAISTER_MCP_FACADE_COMMAND.`,
           );
 
-        return [facadeServer];
+        if (!companyContext?.installation) return [facadeServer];
+
+        return [
+          {
+            ...facadeServer,
+            env: {
+              ...facadeServer.env,
+              MAISTER_MCP_TOOLSET: "installation",
+              MAISTER_INSTALLATION_SCOPES:
+                companyContext.installation.scopes.join(","),
+            },
+          },
+        ];
       };
       const projectFacade =
         companyContext || !effective.parsed.platformMcp
@@ -5511,6 +5703,7 @@ async function driveAgentSession(
           phase: "handed_off",
           turnId: ownedTurn.id,
         });
+        handedOff = true;
         await preparation.release();
       }
 
@@ -5530,7 +5723,15 @@ async function driveAgentSession(
           // ephemeral token to the agent.
           mcpServers: [...profileMcpServers, ...projectFacade],
           // ADR-090 L1: none/repo_read agents run the whole session read-only.
-          readOnlySession: workspace !== "worktree",
+          readOnlySession:
+            workspace !== "worktree" && !companyContext?.installation,
+          ...(companyContext?.installation && {
+            enforcementProfile: installationEnforcementProfile(
+              effective.parsed.platformMcp
+                ? companyContext.installation.scopes
+                : [],
+            ),
+          }),
           agentKind: baseRun.agentKind ?? "code_delivery",
           // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
           // on a bare end_turn — let the supervisor reap the session so the run
@@ -5557,15 +5758,24 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
-          companyContext && effective.parsed.platformMcp
+          run.agentKind === "operational" && run.projectId
             ? {
-                bindCredentials: async (tx) =>
-                  appendFacade(
-                    (await retainCompanyAgentSessionCredential(tx, runId))
-                      .secret,
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
                   ),
               }
-            : undefined,
+            : companyContext && effective.parsed.platformMcp
+              ? {
+                  bindCredentials: async (tx) =>
+                    appendFacade(
+                      (await retainCompanyAgentSessionCredential(tx, runId))
+                        .secret,
+                    ),
+                }
+              : undefined,
         );
 
         operationalSpawnStage = "prompt_dispatch";
@@ -5579,6 +5789,7 @@ async function driveAgentSession(
         );
       });
     } catch (originalError) {
+      if (continuation && !handedOff) throw originalError;
       const err = packageCapture.current
         ? await releaseTaskAgentCaptureAfterFailure(
             packageCapture.current,
@@ -6090,7 +6301,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.exited": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         // ADR-166 E-EH-11: the host evicted this session for a newer driver
@@ -6158,7 +6374,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.crashed": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         await finalizeAgentRun(args.runId, "Crashed", {

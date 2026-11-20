@@ -6,6 +6,7 @@
 // requires it — never a relaxation of the gate.
 
 export const WRITER_CAPABILITY_SETTING = "maister.writer_capability";
+export const AGENT_PREPARATION_WRITER_CAPABILITY = "v2";
 export const EXECUTION_AB_WRITER_CAPABILITY = "execution-ab-1";
 
 type SessionClient = { query(text: string): Promise<unknown> };
@@ -15,7 +16,7 @@ export async function declareWriterCapability(
   client: SessionClient,
 ): Promise<void> {
   await client.query(
-    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'; SET ${TASK_QUALIFICATION_WRITER_SETTING} = '${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer = 'v1'; SET ${TASK_LAUNCH_WRITER_SETTING} = '${TASK_LAUNCH_WRITER_CAPABILITY}'`,
+    `SET ${WRITER_CAPABILITY_SETTING} = '${EXECUTION_AB_WRITER_CAPABILITY}'; SET ${TASK_QUALIFICATION_WRITER_SETTING} = '${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer = '${AGENT_PREPARATION_WRITER_CAPABILITY}'; SET ${TASK_LAUNCH_WRITER_SETTING} = '${TASK_LAUNCH_WRITER_CAPABILITY}'`,
   );
 }
 

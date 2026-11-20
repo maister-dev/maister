@@ -2,12 +2,14 @@ import type { ParsedAgentDefinition } from "./definition";
 import type { CompanyAction, CompanyGrantWitness } from "@/lib/company/types";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { KnowledgeAttribution } from "@/lib/brain/record-types";
+import type { InstallationAgentGrant } from "./installation-access-types";
 
 import { z } from "zod";
 
 import { AGENT_WORKSPACE_KINDS, capabilityProfileSchema } from "./definition";
 import { AGENT_KINDS } from "./kind";
 import { agentSpecialistSchema } from "./specialist";
+import { installationAgentGrantSchema } from "./installation-access-types";
 
 import {
   knowledgeDeliveryKeySchema,
@@ -51,6 +53,7 @@ export const companyBindingCreateSchema = z
     runnerId: identity.nullable().default(null),
     executionPolicy: executionPolicySchema.default({ preset: "supervised" }),
     coordinatorFlowRevisionId: identity.nullable().default(null),
+    installationGrant: installationAgentGrantSchema.nullable().optional(),
     idempotencyKey: knowledgeDeliveryKeySchema,
   })
   .strict();
@@ -104,6 +107,7 @@ export const companySpecialistSchema = z
     runnerId: identity.nullable(),
     executionPolicy: executionPolicySchema,
     coordinatorFlowRevisionId: identity.nullable(),
+    installationGrant: installationAgentGrantSchema.optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -141,6 +145,7 @@ export type CompanySpecialistBindingSnapshot = Readonly<{
   runnerId: string | null;
   executionPolicy: ExecutionPolicy;
   coordinatorFlowRevisionId: string | null;
+  installationGrant?: InstallationAgentGrant;
 }>;
 export type CompanyBindingAuthoritySnapshot = Readonly<{
   schemaVersion: 1;

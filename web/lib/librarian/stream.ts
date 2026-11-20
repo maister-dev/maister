@@ -161,7 +161,7 @@ export async function* librarianStreamFrames(input: {
 
           return { conversation, witness, change, pending };
         },
-        { isolationLevel: "repeatable read", accessMode: "read only" },
+        { isolationLevel: "repeatable read" },
       );
       const { conversation, change } = observation;
 

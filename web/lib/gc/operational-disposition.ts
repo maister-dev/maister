@@ -52,6 +52,7 @@ import {
 } from "@/lib/domain-events/outbox";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { createExecutionHosts } from "@/lib/execution-host/client";
+import { assertTerminalAgentCleanupExecutionQuiescent } from "@/lib/agents/execution-quiescence";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { TERMINAL_COMMAND_STATES } from "@/lib/execution-host/types";
 import { preserveOperationalEvidence } from "@/lib/gc/operational-evidence";
@@ -350,17 +351,27 @@ export async function disposeOperationalRun(
     const assignment = await getLatestAssignment(db, runId);
     const client = assignment ? await hosts.forAssignment(assignment) : null;
 
-    if (
+    if (run.runKind === "agent") {
+      await assertTerminalAgentCleanupExecutionQuiescent(
+        db,
+        { id: runId, executionAssignmentId: assignment?.id ?? null },
+        hosts,
+      );
+    } else if (
       client &&
       (await client.sessionsForRun()).some(
         (session) => session.status === "live",
       )
-    )
+    ) {
       throw cleanupError("operational_execution_not_quiescent");
+    }
     const context = await operationalWorkspace(db, run);
     if (workspace && context.ownerKind !== "project")
       throw cleanupError("company_workspace_unexpected_repository");
-    const preparationFence = await acquirePreparationWorkspace({...context,repoPath:context.ownerKind === "company" ? null : context.repoPath});
+    const preparationFence = await acquirePreparationWorkspace({
+      ...context,
+      repoPath: context.ownerKind === "company" ? null : context.repoPath,
+    });
 
     try {
       await preparationFence.run(async () => {
@@ -430,8 +441,8 @@ export async function disposeOperationalRun(
           await renew();
           await restoreAgentMaterialization(context.cwd, runId);
           if (workspace) {
-          if (context.ownerKind !== "project")
-            throw cleanupError("company_workspace_unexpected_repository");
+            if (context.ownerKind !== "project")
+              throw cleanupError("company_workspace_unexpected_repository");
             const preserved = await (options.preserve ?? preserveWorktree)({
               runId,
               worktreePath: context.cwd,

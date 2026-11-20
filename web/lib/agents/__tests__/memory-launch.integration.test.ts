@@ -10,6 +10,8 @@
 // session would re-prove launch mechanics that agent-driven-flow and
 // launch-worktree-modes already cover.
 
+import type { PrepareVaultAccess } from "@/lib/agent-memory-vault/store";
+
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -25,6 +27,8 @@ import {
   vi,
 } from "vitest";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 
 import {
   parseAgentDefinition,
@@ -37,7 +41,36 @@ import {
 } from "@/lib/agents/launch";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { agentMemoryPath, hashAgentMemory } from "@/lib/agents/memory-store";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
+import {
+  parseAgentMemoryMutation,
+  parseAgentMemoryView,
+} from "@/lib/agent-memory-vault/commands";
+import {
+  stageProjectAgentMemory,
+  stageProjectFlowMemory,
+  settleMemoryInjection,
+} from "@/lib/agent-memory-vault/injection";
+import {
+  importLegacyAgentMemory,
+  type LegacyMemoryImportCommand,
+} from "@/lib/agent-memory-vault/import-legacy";
+import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import {
+  ensureProjectVault,
+  prepareHumanProjectVault,
+  prepareProjectExecutionVault,
+} from "@/lib/agent-memory-vault/project-access";
+import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
+import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
+import { mintAssignment } from "@/lib/execution-host/assignments";
 import * as schemaModule from "@/lib/db/schema";
+import { verifyToken } from "@/lib/tokens/verify";
+import {
+  seedLocalHost,
+  seedProjectRow,
+} from "@/test-support/execution-host-seed";
+import { seedActiveUser } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -54,6 +87,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let root: string;
+let hostId: string;
 
 const AGENT_ID = "mem-pkg:keeper";
 const SLUG = "mem-launch";
@@ -65,6 +99,7 @@ beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "agent_memory_launch_test",
   });
+  hostId = (await seedLocalHost(testDatabase.db)).id;
 }, 180_000);
 
 afterAll(async () => {
@@ -76,6 +111,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "maister-memlaunch-"));
   runtimeRootMock.value = root;
   delete process.env.MAISTER_AGENT_MEMORY_MAX_CHARS;
+  await testDatabase.pool.query("DELETE FROM agent_memory_cutover");
 
   await testDatabase.db.delete(schema.agentProjectLinks);
   await testDatabase.db.delete(schema.runs);
@@ -104,6 +140,498 @@ beforeEach(async () => {
     riskTier: "read_only",
     sourcePath: "/tmp/keeper.md",
   });
+});
+
+it("AV-02 stages one exact initial manifest and settles it once with the prompt application receipt", async () => {
+  const db = drizzle(testDatabase.pool, { schema: schemaModule });
+  const run = await seedRun({ memoryEnabled: true });
+  const runId = String(run.runId);
+  const assignment = await db.transaction((tx) =>
+    mintAssignment(tx, { runId, hostId, reason: "launch" }),
+  );
+  const prepare = await vaultFixture();
+
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+
+  const session = {
+    runId,
+    projectId,
+    agentId: AGENT_ID,
+    sessionKey: assignment.id,
+  };
+
+  await putVaultNote(prepare, "/memories/index.md", "Summary to read");
+  await putVaultNote(
+    prepare,
+    "/memories/notes/detail.md",
+    "DETAIL BODY MUST STAY OUT",
+  );
+  const staged = await stageProjectAgentMemory(testDatabase.db, session, false);
+
+  expect(staged.mode).toBe("vault");
+  if (staged.mode !== "vault") throw new Error("Expected a vault prompt");
+  expect(staged.text).toContain("Summary to read");
+  expect(staged.text).toContain("/memories/notes/detail.md");
+  expect(staged.text).not.toContain("DETAIL BODY MUST STAY OUT");
+  const { rows: before } = await testDatabase.pool.query(
+    "SELECT agent_memory_hash FROM runs WHERE id=$1",
+    [runId],
+  );
+
+  expect(before[0]?.agent_memory_hash).toBeNull();
+  await putVaultNote(prepare, "/memories/notes/later.md", "new detail");
+  expect(
+    await stageProjectAgentMemory(testDatabase.db, session, false),
+  ).toEqual(staged);
+  expect(await stageProjectAgentMemory(testDatabase.db, session, true)).toEqual(
+    {
+      mode: "vault",
+      text: null,
+    },
+  );
+  await db.transaction((tx) =>
+    settleMemoryInjection(tx, runId, assignment.id, "applied-prompt-1"),
+  );
+  await db.transaction((tx) =>
+    settleMemoryInjection(tx, runId, assignment.id, "replayed-prompt-1"),
+  );
+  const { rows } = await testDatabase.pool.query(
+    `SELECT r.agent_memory_hash, r.agent_memory_hash_format, i.application_state, i.application_receipt_id
+     FROM runs r JOIN agent_memory_injections i ON i.run_id=r.id WHERE r.id=$1`,
+    [runId],
+  );
+
+  expect(rows).toEqual([
+    {
+      agent_memory_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      agent_memory_hash_format: "vault-manifest-v1",
+      application_state: "applied",
+      application_receipt_id: "applied-prompt-1",
+    },
+  ]);
+  await expect(
+    readFile(path.join(runDirPath(root, SLUG, runId), "memory-snapshot.md")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+async function stageableProjectRun(runId: string, packageId: string) {
+  const db = drizzle(testDatabase.pool, { schema: schemaModule });
+  const assignment = await db.transaction((tx) =>
+    mintAssignment(tx, { runId, hostId, reason: "launch" }),
+  );
+
+  await testDatabase.pool.query(
+    `UPDATE runs SET source_agent_id=$2,activity_sort_at=now(),
+       activity_timestamp_provenance='verified_creation',agent_activity_snapshot=$3::jsonb
+     WHERE id=$1`,
+    [
+      runId,
+      AGENT_ID,
+      JSON.stringify({
+        version: 1,
+        agentId: AGENT_ID,
+        packageInstallId: packageId,
+        packageName: "mem-pkg",
+        definitionSha256: "d".repeat(64),
+      }),
+    ],
+  );
+
+  return { runId, projectId, agentId: AGENT_ID, sessionKey: assignment.id };
+}
+
+async function seedMemoryPackage() {
+  const packageId = randomUUID();
+
+  await testDatabase.pool.query(
+    `INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status)
+     VALUES($1,'https://example.invalid/memory','mem-pkg','v1.0.0',$1,'{}','fixture','/tmp/keeper','Installed','trusted')`,
+    [packageId],
+  );
+  await testDatabase.pool.query(
+    `INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name)
+     VALUES($1,$2,$1,'mem-pkg')`,
+    [packageId, projectId],
+  );
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+
+  return packageId;
+}
+
+async function vaultFixture(
+  sourceRestrictions: Awaited<
+    ReturnType<PrepareVaultAccess>
+  >["sourceRestrictions"] = [],
+): Promise<PrepareVaultAccess> {
+  const vaultId = await ensureProjectVault(
+    testDatabase.db,
+    projectId,
+    AGENT_ID,
+  );
+
+  return async () => ({
+    vaultId,
+    principalKey: "user:operator",
+    actor: { kind: "human", userId: "operator" },
+    sourceProjectIds: [projectId],
+    sourceRestrictions,
+    writeAdmission: "apply",
+    canRead: async () => true,
+    capture: async () => {},
+  });
+}
+
+function putVaultNote(prepare: PrepareVaultAccess, path: string, body: string) {
+  return applyVaultMutation(
+    testDatabase.db,
+    parseAgentMemoryMutation({
+      command: "create",
+      path,
+      file_text: body,
+      requestKey: randomUUID(),
+      ifHash: null,
+      ifRevisionId: null,
+    }),
+    prepare,
+    agentMemoryVaultLimits(),
+  );
+}
+
+it("AV-02 ordinary sessions disclose local vault notes and captured sessions recheck guarded sources", async () => {
+  const first = await seedRun({ memoryEnabled: true });
+  const packageId = await seedMemoryPackage();
+  const original = await stageableProjectRun(String(first.runId), packageId);
+  const mounted = await seedProjectRow(testDatabase.db);
+  const guarded = await vaultFixture([
+    { kind: "project_context", projectId: mounted.id },
+  ]);
+  const local = await vaultFixture();
+
+  await putVaultNote(guarded, "/memories/index.md", "Guarded summary");
+  await putVaultNote(guarded, "/memories/notes/guarded.md", "Guarded note");
+  await putVaultNote(local, "/memories/notes/local.md", "Local note");
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET context_repos=$2::jsonb WHERE project_id=$1",
+    [projectId, JSON.stringify([{ project: mounted.slug }])],
+  );
+  const ordinary = await stageProjectAgentMemory(
+    testDatabase.db,
+    original,
+    false,
+  );
+
+  expect(ordinary).toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("/memories/notes/local.md"),
+  });
+  if (ordinary.mode !== "vault") throw new Error("Expected a vault prompt");
+  expect(ordinary.text).not.toContain("Guarded summary");
+  expect(ordinary.text).not.toContain("/memories/notes/guarded.md");
+  expect(ordinary.text).not.toContain("Local note");
+
+  const credential = await issueAgentRunToken({
+    db: testDatabase.db,
+    runId: original.runId,
+    projectId,
+    agentId: AGENT_ID,
+  });
+  const actor = await verifyToken(credential.secret, testDatabase.db);
+  const read = (path: string) =>
+    viewAgentMemory(
+      testDatabase.db,
+      parseAgentMemoryView({ command: "view", path }),
+      prepareProjectExecutionVault(actor, projectId, "agent_memory:read"),
+    );
+
+  await expect(read("/memories/notes/local.md")).resolves.toMatchObject({
+    content: "Local note",
+  });
+  await expect(read("/memories/notes/guarded.md")).rejects.toMatchObject({
+    details: { reason: "agent_memory_unavailable" },
+  });
+
+  const flow = await seedRun({ runKind: "flow", attached: false });
+  const flowRunId = String(flow.runId);
+
+  await stageableProjectRun(flowRunId, packageId);
+  for (const nodeType of ["ai_coding", "orchestrator"] as const) {
+    const nodeAttemptId = randomUUID();
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET current_step_id=$2 WHERE id=$1",
+      [flowRunId, nodeType],
+    );
+    await testDatabase.pool.query(
+      `INSERT INTO node_attempts(id,run_id,node_id,node_type,status,materialization_plan)
+       VALUES($1,$2,$3,$3,'Running',$4::jsonb)`,
+      [
+        nodeAttemptId,
+        flowRunId,
+        nodeType,
+        JSON.stringify({
+          profileDigest: "d".repeat(64),
+          resolvedRevisions: [],
+          materializedFiles: [],
+          enforcedClasses: [],
+          instructedClasses: [],
+          refusedClasses: [],
+        }),
+      ],
+    );
+    const stagedFlow = await stageProjectFlowMemory(testDatabase.db, {
+      runId: flowRunId,
+      nodeAttemptId,
+      nodeId: nodeType,
+      agentId: AGENT_ID,
+    });
+
+    expect(stagedFlow?.text).not.toContain("Guarded summary");
+    expect(stagedFlow?.text).toContain("/memories/notes/local.md");
+  }
+
+  const second = await seedRun({ attached: false });
+  const capturing = await stageableProjectRun(String(second.runId), packageId);
+
+  await testDatabase.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      capturing.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, false),
+  ).resolves.toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("Guarded summary"),
+  });
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET context_repos=NULL WHERE project_id=$1",
+    [projectId],
+  );
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, true),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, false),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, original, true),
+  ).resolves.toEqual({ mode: "vault", text: null });
+});
+
+it("AV-02 native launch bounds paths by the retained authorization budget", async () => {
+  const run = await seedRun({ memoryEnabled: true });
+  const packageId = await seedMemoryPackage();
+  const session = await stageableProjectRun(String(run.runId), packageId);
+  const prepare = await vaultFixture();
+  const limit = agentMemoryVaultLimits().notes;
+  const inherited = { kind: "project_context", projectId };
+  const capture = {
+    schemaVersion: 1,
+    state: "complete",
+    generation: 1,
+    restrictions: [inherited],
+  };
+
+  await testDatabase.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [session.runId, JSON.stringify(capture)],
+  );
+  await putVaultNote(prepare, "/memories/index.md", "Authorized index");
+  for (let number = 1; number < limit; number++)
+    await putVaultNote(
+      prepare,
+      `/memories/${String(number).padStart(3, "0")}.md`,
+      "",
+    );
+
+  const result = await stageProjectAgentMemory(testDatabase.db, session, false);
+  const { rows } = await testDatabase.pool.query(
+    `SELECT i.tree AS tree, r.knowledge_access AS capture
+     FROM agent_memory_injections i JOIN runs r ON r.id=i.run_id
+     WHERE i.run_id=$1`,
+    [session.runId],
+  );
+  const [stored] = rows;
+
+  expect(result).toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("More paths omitted"),
+  });
+  if (result.mode !== "vault") throw new Error("Expected a vault prompt");
+  expect(result.text).toContain("Authorized index");
+  expect(stored.tree).toMatchObject({ truncated: true });
+  expect(stored.tree.paths.length).toBeGreaterThan(1);
+  expect(stored.tree.paths.length).toBeLessThan(limit);
+  expect(stored.tree.references).toHaveLength(stored.tree.paths.length + 1);
+  expect(stored.capture.restrictions).toHaveLength(
+    stored.tree.references.length + 1,
+  );
+  expect(stored.capture.restrictions).toEqual(
+    expect.arrayContaining([inherited, ...stored.tree.references]),
+  );
+  expect(
+    Buffer.byteLength(JSON.stringify(stored.capture.restrictions)),
+  ).toBeLessThanOrEqual(65536);
+}, 60_000);
+
+it("AV-10 imports and verifies originals once, fences activation and cleans only verified sources", async () => {
+  const db = drizzle(testDatabase.pool, { schema: schemaModule });
+  const actor = await seedActiveUser(testDatabase.db, { role: "admin" });
+  const run = await seedRun({ memoryEnabled: false });
+  const missing = await seedRun({ attached: false });
+  const mismatch = await seedRun({ attached: false });
+  const legacyText = "legacy 🎉 bytes\n".repeat(1000);
+  const snapshotText = "auditable prior input";
+  const rawHash = hashAgentMemory(snapshotText);
+  const command = (action: LegacyMemoryImportCommand) =>
+    importLegacyAgentMemory(db, { root, command: action, actorUserId: actor });
+  const seedSnapshot = async (id: string, content: string | null) => {
+    const dir = runDirPath(root, SLUG, id);
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET status='Done', agent_memory_hash=$2 WHERE id=$1",
+      [id, rawHash],
+    );
+    if (content !== null) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "memory-snapshot.md"), content);
+    }
+  };
+
+  await writeMemory(legacyText);
+  await seedSnapshot(String(run.runId), snapshotText);
+  await seedSnapshot(String(missing.runId), null);
+  await seedSnapshot(String(mismatch.runId), "mismatched input");
+  await command("preview");
+  expect(
+    await db.select().from(schemaModule.agentMemoryImportReceipts),
+  ).toHaveLength(0);
+  await expect(command("activate")).rejects.toMatchObject({
+    code: "PRECONDITION",
+  });
+  await command("import");
+  await command("import");
+  const kept = await db.select().from(schemaModule.agentMemoryRevisions);
+  const own = kept.filter(({ sourceProjectIds }) =>
+    sourceProjectIds.includes(projectId),
+  );
+
+  expect(own.map((row) => row.path).sort()).toEqual([
+    "/memories/index.md",
+    "/memories/notes/legacy.md",
+  ]);
+  expect(
+    own.find((row) => row.path.endsWith("/legacy.md"))?.contentSha256,
+  ).toBe(hashAgentMemory(legacyText));
+  await writeMemory("changed after verification");
+  await expect(command("activate")).rejects.toMatchObject({
+    code: "PRECONDITION",
+  });
+  await writeMemory(legacyText);
+  await testDatabase.pool.query(
+    "UPDATE runs SET status='Running' WHERE id=$1",
+    [missing.runId],
+  );
+  await expect(command("activate")).rejects.toMatchObject({
+    code: "PRECONDITION",
+  });
+  await testDatabase.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    missing.runId,
+  ]);
+  await command("activate");
+  await expect(
+    testDatabase.pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_memory_hash) VALUES($1,$2,'agent','Pending','agent','manual',$3)",
+      [randomUUID(), projectId, rawHash],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "agent_memory_run_writer_required",
+  });
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1 AND agent_id=$2",
+    [projectId, AGENT_ID],
+  );
+  const postCutoverPath = "/memories/notes/post-cutover.md";
+  const postCutoverContent = "New content resides in PostgreSQL.";
+
+  await expect(
+    applyVaultMutation(
+      db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: postCutoverPath,
+        file_text: postCutoverContent,
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: randomUUID(),
+      }),
+      prepareHumanProjectVault({
+        userId: actor,
+        slug: SLUG,
+        agentId: AGENT_ID,
+        action: "editSettings",
+      }),
+      agentMemoryVaultLimits(),
+    ),
+  ).resolves.toMatchObject({ status: "applied" });
+  expect(await readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8")).toBe(
+    legacyText,
+  );
+
+  const restartedPool = new Pool({
+    connectionString: testDatabase.databaseUrl,
+  });
+
+  try {
+    const reopened = drizzle(restartedPool, { schema: schemaModule });
+
+    await expect(
+      viewAgentMemory(
+        reopened,
+        parseAgentMemoryView({ command: "view", path: postCutoverPath }),
+        prepareHumanProjectVault({
+          userId: actor,
+          slug: SLUG,
+          agentId: AGENT_ID,
+          action: "readRepoFiles",
+        }),
+      ),
+    ).resolves.toMatchObject({ kind: "note", content: postCutoverContent });
+  } finally {
+    await restartedPool.end();
+  }
+  await command("cleanup");
+  await command("cleanup");
+  await expect(readFile(agentMemoryPath(SLUG, AGENT_ID))).rejects.toMatchObject(
+    { code: "ENOENT" },
+  );
+  await expect(
+    readFile(
+      path.join(
+        runDirPath(root, SLUG, String(mismatch.runId)),
+        "memory-snapshot.md",
+      ),
+      "utf8",
+    ),
+  ).resolves.toBe("mismatched input");
+  expect(
+    (await db.select().from(schemaModule.runs)).map(
+      (row) => row.agentMemoryHash,
+    ),
+  ).toEqual([rawHash, rawHash, rawHash]);
 });
 
 async function seedRun(input: {

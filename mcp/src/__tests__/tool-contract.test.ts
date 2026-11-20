@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { TOOL_SPECS } from "@/tools";
+import { TOOL_SPECS, toolSpecForToolset } from "@/tools";
 import { isTaskLaunchTool } from "@/task-launch-tools";
 
 // Contract guard: the MCP facade `TOOL_SPECS` are a HAND-MAINTAINED mirror of
@@ -129,12 +129,8 @@ type OpenApiDoc = {
     Record<
       string,
       {
-        parameters?: Array<{
-          $ref?: string;
-          name?: string;
-          in?: string;
-          required?: boolean;
-        }>;
+        parameters?: OpParameter[];
+        security?: Record<string, string[]>[];
         requestBody?: {
           content?: Record<string, { schema?: JsonSchema }>;
         };
@@ -365,6 +361,21 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/projects/{slug}/memory",
   },
+  memory: {
+    method: "post",
+    path: "/api/v1/ext/agent/memory/commands",
+  },
+  memory_search: { method: "get", path: "/api/v1/ext/agent/memory/search" },
+  memory_backlinks: {
+    method: "get",
+    path: "/api/v1/ext/agent/memory/backlinks",
+  },
+  memory_tags: { method: "get", path: "/api/v1/ext/agent/memory/tags" },
+  observatory_summary: {
+    method: "get",
+    path: "/api/v1/ext/observatory/summary",
+  },
+  memory_promote: { method: "post", path: "/api/v1/ext/agent/memory/promote" },
   // ADR-152: the ONE facade tool with no `slug` — the project comes from the
   // run-bound token (D15/D24).
   agent_memory_write: {
@@ -448,6 +459,27 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "get",
     path: "/api/v1/ext/projects/{slug}/tasks/{taskId}/clarifications",
   },
+  agent_vault_list: { method: "get", path: "/api/v1/ext/librarian/vaults" },
+  agent_vault_view: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/view",
+  },
+  agent_vault_search: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/search",
+  },
+  agent_vault_backlinks: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/backlinks",
+  },
+  agent_vault_tags: {
+    method: "get",
+    path: "/api/v1/ext/librarian/vaults/{vaultId}/tags",
+  },
+  agent_vault_propose_edit: {
+    method: "post",
+    path: "/api/v1/ext/librarian/cards",
+  },
   librarian_card_propose: {
     method: "post",
     path: "/api/v1/ext/librarian/cards",
@@ -511,34 +543,40 @@ type OpParameter = {
   schema?: JsonSchema;
   content?: Record<string, { schema?: JsonSchema }>;
   required?: boolean;
+  "x-maister-credentials"?: string[];
+  "x-maister-installation-schema"?: JsonSchema;
 };
 
-function requiredQueryParams(op: { parameters?: OpParameter[] }): string[] {
-  const out: string[] = [];
-
-  for (const raw of op.parameters ?? []) {
-    const p = deref(raw);
-
-    if (p.in === "query" && p.required === true && p.name && !isDesigned(p))
-      out.push(p.name);
-  }
-
-  return out;
+function queryParameters(
+  op: { parameters?: OpParameter[] },
+  credential = "projectToken",
+): (OpParameter & { name: string })[] {
+  return (op.parameters ?? [])
+    .map(deref)
+    .filter(
+      (param): param is OpParameter & { name: string } =>
+        param.in === "query" &&
+        param.name !== undefined &&
+        !isDesigned(param) &&
+        (param["x-maister-credentials"]?.includes(credential) ?? true),
+    );
 }
 
-function queryParamSchemas(op: {
-  parameters?: OpParameter[];
-}): Record<string, JsonSchema> {
-  const out: Record<string, JsonSchema> = {};
-
-  for (const raw of op.parameters ?? []) {
-    const p = deref(raw);
-
-    if (p.in === "query" && p.name && !isDesigned(p))
-      out[p.name] = p.schema ?? p.content?.["application/json"]?.schema ?? {};
-  }
-
-  return out;
+function queryParamSchemas(
+  op: { parameters?: OpParameter[] },
+  credential?: string,
+): Record<string, JsonSchema> {
+  return Object.fromEntries(
+    queryParameters(op, credential).map((param) => [
+      param.name,
+      (credential === "installationAgentToken"
+        ? param["x-maister-installation-schema"]
+        : undefined) ??
+        param.schema ??
+        param.content?.["application/json"]?.schema ??
+        {},
+    ]),
+  );
 }
 
 function bodySchema(op: {
@@ -670,8 +708,19 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       delete queryFields.ownerId;
       queryFields.owner = deref({ $ref: "#/components/schemas/CBOwner" });
     }
-    const body = bodySchema(op);
+    const body =
+      toolName === "librarian_card_propose"
+        ? deref<JsonSchema>({
+            $ref: "#/components/schemas/LibrarianCardProposal",
+          })
+        : toolName === "agent_vault_propose_edit"
+          ? deref<JsonSchema>({
+              $ref: "#/components/schemas/LibrarianVaultEditInput",
+            })
+          : bodySchema(op);
     const bodyProps = implementedEntries(body?.properties ?? {});
+
+    if (toolName === "agent_vault_propose_edit") delete bodyProps.action;
     const bodyRequired = (body?.required ?? []).filter((name) =>
       Object.hasOwn(bodyProps, name),
     );
@@ -680,6 +729,46 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     const spec = toolSpec(toolName);
     const toolProps = spec.properties ?? {};
     const toolRequired = spec.required ?? [];
+
+    if (
+      op.security?.some((grant) =>
+        Object.hasOwn(grant, "installationAgentToken"),
+      ) &&
+      (op.parameters ?? [])
+        .map(deref)
+        .some((parameter) => parameter["x-maister-credentials"])
+    ) {
+      it("mirrors the installation-specific query schema", () => {
+        const credential = "installationAgentToken";
+        const fields = queryParamSchemas(op, credential);
+        const advertised = toolSpecForToolset(toolName, "installation")
+          .inputSchema as JsonSchema;
+        const required = queryParameters(op, credential)
+          .filter((parameter) => parameter.required)
+          .map((parameter) => parameter.name);
+
+        expect(Object.keys(advertised.properties ?? {}).sort()).toEqual(
+          [...params, ...Object.keys(fields)].sort(),
+        );
+        expect([...(advertised.required ?? [])].sort()).toEqual(
+          [...params, ...required].sort(),
+        );
+        for (const [field, schema] of Object.entries(fields))
+          expect(
+            inputContractShape(advertised.properties![field]),
+            field,
+          ).toEqual(inputContractShape(schema));
+      });
+    }
+
+    if (toolName === "memory") {
+      it("mirrors the closed session vault command union", () => {
+        expect(body).toBeDefined();
+        expectTargetUnionMirrors(body!, spec, "memory");
+      });
+
+      return;
+    }
 
     it("advertises exactly the operation's params + body properties", () => {
       const expected = new Set([
@@ -699,7 +788,9 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       const expected = new Set([
         ...params,
         ...bodyRequired,
-        ...requiredQueryParams(op),
+        ...queryParameters(op)
+          .filter((parameter) => parameter.required)
+          .map((parameter) => parameter.name),
       ]);
 
       // Idempotency-Key is conditionally required for librarian tokens; the
@@ -726,6 +817,18 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
         );
 
         const specEnum = enumSet(openapiField);
+        const designed = (openapiField as Record<string, unknown>)[
+          "x-maister-designed-enum"
+        ];
+
+        if (Array.isArray(designed)) {
+          for (const value of designed) {
+            expect(
+              specEnum?.delete(value),
+              `${toolName}.${field} designed value ${value}`,
+            ).toBe(true);
+          }
+        }
 
         if (specEnum) {
           expect(

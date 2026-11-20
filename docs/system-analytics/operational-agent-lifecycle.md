@@ -173,6 +173,13 @@ policy is unchanged. Acknowledgement is not general unseen activity.
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-07:** The prompt owner rechecks the exact owner and turn before Run-level teardown and at terminal CAS. A superseded prompt settles its own application. Retained authorized result-resume ownership still applies through the result gate.
+- **APR-09:** Authorized Stop on a proven undispatched successor commits Abandoned, supersedes its claimed resume turn, releases its assignment, revokes Run tokens and emits one actor-attributed cancellation fact. The locked proof precedes any host inventory or teardown call. This commit releases the scheduler slot while a predecessor may still need reconciliation. Dispatched or inconclusive current assignments require exact current-owner teardown and canonical proof.
+- **APR-12:** Disposition waits for exact predecessor terminal evidence and fresh host process proof. It preserves bytes as required before removing only the Run-owned checkout and Git registration and releasing the adopted handle. Until then, checkout state stays retained and the disposition is diagnosable.
+
+
 - **OPL-01:** Every terminal operational run leaves all active-copy read models, enforced by one frozen-kind/disposition predicate while history remains queryable.
 - **OPL-02:** Failed operations and cleanup failures have safe actionable history/attention, enforced by terminal/cleanup receipts and per-reader acknowledgement keys.
 - **OPL-03:** Independent runs and parallel permission requests retain distinct decisions and normal HITL, enforced by request ownership, admission and delivery CAS/receipts.

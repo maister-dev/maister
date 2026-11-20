@@ -6,7 +6,12 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  requireActiveSession,
+  requireProjectAction,
+  requireProjectActionForUser,
+} from "@/lib/authz";
+import { rearmAgentContinuationSettlement } from "@/lib/agents/continuation-episode";
 import { getDb } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { authorizeCompanyRunUserAction } from "@/lib/agents/company-run-read-access";
@@ -25,6 +30,46 @@ const acknowledgement = z
 const retry = z
   .object({ expectedRevision: z.number().int().positive().max(2147483647) })
   .strict();
+const continuationRetry = z
+  .object({ observation: z.string().regex(/^[0-9a-f]{32}$/) })
+  .strict();
+
+export async function recheckOperationalContinuationRoute(
+  req: NextRequest,
+  runId: string,
+): Promise<NextResponse> {
+  try {
+    const user = await requireActiveSession();
+    const body = continuationRetry.safeParse(
+      await req.json().catch(() => null),
+    );
+    if (!body.success)
+      return NextResponse.json(
+        { code: "CONFIG", message: "Invalid continuation observation" },
+        { status: 400 },
+      );
+    const db = getDb();
+    const [run] = await db
+      .select({ projectId: runs.projectId })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    if (!run?.projectId)
+      return NextResponse.json(
+        { code: "PRECONDITION", message: "Run not found" },
+        { status: 404 },
+      );
+    await requireProjectActionForUser(user.id, run.projectId, "recoverRun");
+    await rearmAgentContinuationSettlement(db, {
+      runId,
+      projectId: run.projectId,
+      userId: user.id,
+      ...body.data,
+    });
+    return NextResponse.json({ scheduled: true }, { status: 202 });
+  } catch (error) {
+    return operationalRouteError(error);
+  }
+}
 
 export async function acknowledgeOperationalRoute(
   req: NextRequest,
@@ -128,7 +173,13 @@ export async function retryOperationalRoute(
 function operationalRouteError(error: unknown): NextResponse {
   if (isMaisterError(error))
     return NextResponse.json(
-      { code: error.code, message: error.message },
+      {
+        code: error.code,
+        message: error.message,
+        ...(error.details?.reason === "agent_continuation_attention_stale"
+          ? { details: { reason: error.details.reason } }
+          : {}),
+      },
       {
         status:
           error.code === "PRECONDITION" &&

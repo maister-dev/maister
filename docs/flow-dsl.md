@@ -509,7 +509,7 @@ nodes:
 
 ## Node `retry_policy` (Implemented)
 
-**Implemented (ADR-210).** `on_reasons` requires `compat.engine_min >= 3.13.0`. Provide at least one nonempty selector list. The rule matches an explicit `on_errors` code or an explicit `on_reasons` match on `ACP_PROTOCOL`. The admitted reasons are `context_exhausted` and `max_output_tokens`. Reason-only rules inherit no broad code selector. Choose `workspace: keep` to retain changes. The retry starts fresh. Rework requesting `resume` on the attributable `context_exhausted` session selects `new_session` and records `session_fallback`. An output cap alone does not invalidate the prior context.
+**Implemented (ADR-215).** `on_reasons` requires `compat.engine_min >= 3.13.0`. Provide at least one nonempty selector list. The rule matches an explicit `on_errors` code or an explicit `on_reasons` match on `ACP_PROTOCOL`. The admitted reasons are `context_exhausted` and `max_output_tokens`. Reason-only rules inherit no broad code selector. Choose `workspace: keep` to retain changes. The retry starts fresh. Rework requesting `resume` on the attributable `context_exhausted` session selects `new_session` and records `session_fallback`. An output cap alone does not invalidate the prior context.
 
 **(Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An
 optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on

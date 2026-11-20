@@ -4,6 +4,10 @@ import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { KnowledgeAccessWalk } from "@/lib/brain/knowledge-restrictions";
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type {
+  InstallationAppointment,
+  SpecialistIntakePrincipal,
+} from "@/lib/agents/installation-appointment";
+import type {
   PreparedSpecialistAssignment,
   SpecialistAssignment,
   AssignmentInputSnapshot,
@@ -38,6 +42,10 @@ import { companyExecutionSnapshotSchema } from "@/lib/agents/company-execution-t
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
+import {
+  assertInstallationAppointment,
+  specialistIntakeActor,
+} from "@/lib/agents/installation-appointment";
 import { knowledgeOwner } from "@/lib/brain/knowledge-access";
 import {
   authorizeSourceRestrictions,
@@ -176,7 +184,9 @@ async function validateStandingDefinition(
 /** Shared projection keeps human and executing principals distinct throughout source authorization. */
 async function inspectAssignmentInTransaction(
   tx: SqlTransaction,
-  principal: Extract<KnowledgePrincipal, { kind: "user" | "execution" }>,
+  principal:
+    | Extract<KnowledgePrincipal, { kind: "user" | "execution" }>
+    | { kind: "installation"; appointment: InstallationAppointment },
   assignmentId: string,
 ): Promise<
   Readonly<{ value: SpecialistAssignment; access: KnowledgeAccessWalk }>
@@ -192,6 +202,12 @@ async function inspectAssignmentInTransaction(
   ).rows[0];
 
   if (!head) throw unavailableAssignment();
+  if (principal.kind === "installation")
+    assertInstallationAppointment(tx, principal.appointment, {
+      companyId: head.company_id,
+      bindingId: head.specialist_binding_id,
+      origin: head.origin,
+    });
   if (principal.kind === "user")
     await authorizeAssignment(
       tx,
@@ -211,15 +227,18 @@ async function inspectAssignmentInTransaction(
       "CONFIG",
       "Assignment input head is missing; inspect migration and transaction integrity",
     );
-  const access = await authorizeSourceRestrictions(tx, principal, [
-    ...knowledgeRestrictionsSchema.parse(input.source_restrictions),
-    {
-      kind: "assignment_input",
-      assignmentId,
-      inputRevision: Number(head.input_revision),
-      inputSha256: String(input.digest),
-    },
-  ]);
+  const access =
+    principal.kind === "installation"
+      ? { visited: [], remaining: 256 }
+      : await authorizeSourceRestrictions(tx, principal, [
+          ...knowledgeRestrictionsSchema.parse(input.source_restrictions),
+          {
+            kind: "assignment_input",
+            assignmentId,
+            inputRevision: Number(head.input_revision),
+            inputSha256: String(input.digest),
+          },
+        ]);
   const objective = assignmentObjectiveInputSchema.safeParse(
     input.objective_input,
   );
@@ -301,13 +320,15 @@ async function inspectAssignmentInTransaction(
 /** Human reads retain current owner and inherited-source authorization. */
 export async function getSpecialistAssignmentInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   assignmentId: string,
 ): Promise<SpecialistAssignment> {
   return (
     await inspectAssignmentInTransaction(
       tx,
-      { kind: "user", userId },
+      typeof principal === "string"
+        ? { kind: "user", userId: principal }
+        : { kind: "installation", appointment: principal },
       assignmentId,
     )
   ).value;
@@ -452,7 +473,7 @@ export async function getSpecialistAssignment(
 /** Intake owners compose this write and their existing delivery receipt in one transaction. */
 export async function createSpecialistAssignmentInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   input: PreparedSpecialistAssignment,
 ): Promise<SpecialistAssignment> {
   const objectiveInput = assignmentObjectiveInputSchema.safeParse(
@@ -479,35 +500,79 @@ export async function createSpecialistAssignmentInTransaction(
       "CONFIG",
       "Invalid server-prepared specialist assignment input",
     );
-  const authoritySnapshot = await authorizeAssignment(
-    tx,
-    userId,
-    owner.data,
-    "assignments:submit",
-    policy.data,
-  );
+  if (typeof principal !== "string") {
+    assertInstallationAppointment(tx, principal, {
+      companyId: owner.data.kind === "company" ? owner.data.companyId : null,
+      bindingId: input.specialistBindingId,
+      origin: origin.data,
+    });
+    if (
+      objectiveInput.data.inputRefs.length ||
+      objectiveInput.data.targetIds.length
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "The installation appointment cannot authorize explicit evidence or stand targets",
+      );
+  }
+  const actor = specialistIntakeActor(principal);
+  const authoritySnapshot: AssignmentInputSnapshot["authoritySnapshot"] =
+    typeof principal === "string"
+      ? await authorizeAssignment(
+          tx,
+          principal,
+          owner.data,
+          "assignments:submit",
+          policy.data,
+        )
+      : {
+          schemaVersion: 1,
+          actor,
+          executionPolicy: policy.data,
+          capturedAt: new Date().toISOString(),
+          witnesses: [
+            {
+              kind: "installation_appointment",
+              bindingId: principal.review.binding.id,
+              bindingRevision: principal.review.binding.revision,
+              reviewedBy: principal.review.reviewer.actor.id,
+            },
+          ],
+        };
 
-  await authorizeAssignment(
+  await validateAssignmentDestination(
     tx,
-    userId,
+    typeof principal === "string"
+      ? principal
+      : principal.review.reviewer.actor.id,
     owner.data,
-    "assignments:read",
-    policy.data,
+    destination.data,
   );
-  await validateAssignmentDestination(tx, userId, owner.data, destination.data);
-  let access = await authorizeSourceRestrictions(
-    tx,
-    { kind: "user", userId },
-    restrictions.data,
-  );
+  let captured = restrictions.data;
 
-  for (const reference of objectiveInput.data.inputRefs)
-    access = await inspectKnowledgeEvidenceReference(
+  if (typeof principal === "string") {
+    await authorizeAssignment(
       tx,
-      { kind: "user", userId },
-      reference,
-      access,
+      principal,
+      owner.data,
+      "assignments:read",
+      policy.data,
     );
+    let access = await authorizeSourceRestrictions(
+      tx,
+      { kind: "user", userId: principal },
+      restrictions.data,
+    );
+
+    for (const reference of objectiveInput.data.inputRefs)
+      access = await inspectKnowledgeEvidenceReference(
+        tx,
+        { kind: "user", userId: principal },
+        reference,
+        access,
+      );
+    captured = restrictionsForKnowledgeAccess(access);
+  }
   await validateStandingDefinition(tx, input);
   const scheduledRequest = parseScheduledRequestSnapshot(
     input.scheduledRequest,
@@ -530,7 +595,7 @@ export async function createSpecialistAssignmentInTransaction(
     standingDefinition: input.standingDefinition,
     scheduledRequest,
     authoritySnapshot,
-    sourceRestrictions: restrictionsForKnowledgeAccess(access),
+    sourceRestrictions: captured,
   };
   const responsible = {
     kind: "agent",
@@ -558,7 +623,7 @@ export async function createSpecialistAssignmentInTransaction(
     previousStatus: null,
     status: "queued",
     cause: "created",
-    actor: { type: "user", id: userId },
+    actor: { type: actor.kind, id: actor.id },
   });
   log.info(
     {
@@ -571,14 +636,16 @@ export async function createSpecialistAssignmentInTransaction(
           ? witness.authorityId
           : witness.kind === "project_membership"
             ? witness.membershipId
-            : witness.userId,
+            : witness.kind === "installation_appointment"
+              ? witness.bindingId
+              : witness.userId,
       ),
       definitionSha256: input.standingDefinition.definitionSha256,
     },
     "specialist assignment created",
   );
 
-  return getSpecialistAssignmentInTransaction(tx, userId, head.id);
+  return getSpecialistAssignmentInTransaction(tx, principal, head.id);
 }
 
 export async function createSpecialistAssignment(
@@ -600,13 +667,13 @@ export async function createSpecialistAssignment(
 /** Historical bytes remain inspectable only under current assignment and inherited-source access. */
 export async function getSpecialistAssignmentInputInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   assignmentId: string,
   revision: number,
 ): Promise<AssignmentInputRevision> {
   const assignment = await getSpecialistAssignmentInTransaction(
     tx,
-    userId,
+    principal,
     assignmentId,
   );
 
@@ -623,11 +690,12 @@ export async function getSpecialistAssignmentInputInTransaction(
   ).rows[0];
 
   if (!row) throw unavailableAssignment();
-  await authorizeSourceRestrictions(
-    tx,
-    { kind: "user", userId },
-    row.source_restrictions,
-  );
+  if (typeof principal === "string")
+    await authorizeSourceRestrictions(
+      tx,
+      { kind: "user", userId: principal },
+      row.source_restrictions,
+    );
 
   return decodeAssignmentInput(row);
 }
@@ -1042,7 +1110,7 @@ export async function recoverSpecialistAssignmentInTransaction(
 /** Admission links its existing run and immutable input in the same transaction, without another attempt ledger. */
 export async function linkSpecialistAssignmentRunInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   assignmentId: string,
   input: SpecialistRunLinkInput,
 ): Promise<{ assignment: SpecialistAssignment; duplicate: boolean }> {
@@ -1053,10 +1121,21 @@ export async function linkSpecialistAssignmentRunInTransaction(
   const head = await lockAssignmentHead(tx, assignmentId);
   const owner = knowledgeOwner(head);
 
-  await authorizeAssignment(tx, userId, owner, "assignments:update", {
-    preset: "supervised",
-  });
-  await getSpecialistAssignmentInTransaction(tx, userId, assignmentId);
+  if (typeof principal === "string")
+    await authorizeAssignment(tx, principal, owner, "assignments:update", {
+      preset: "supervised",
+    });
+  else {
+    assertInstallationAppointment(tx, principal, {
+      companyId: head.company_id,
+      bindingId: head.specialist_binding_id,
+      origin: head.origin,
+      runId: request.data.runId,
+    });
+    if (request.data.work || request.data.role !== "specialist")
+      throw unavailableAssignment();
+  }
+  await getSpecialistAssignmentInTransaction(tx, principal, assignmentId);
   const execution = (
     await tx.execute(
       sql`SELECT id,project_id,company_id,company_execution_snapshot FROM runs WHERE id=${request.data.runId} FOR UPDATE`,
@@ -1110,7 +1189,7 @@ export async function linkSpecialistAssignmentRunInTransaction(
     return {
       assignment: await getSpecialistAssignmentInTransaction(
         tx,
-        userId,
+        principal,
         assignmentId,
       ),
       duplicate: true,
@@ -1160,7 +1239,10 @@ export async function linkSpecialistAssignmentRunInTransaction(
     previousStatus: status,
     status,
     cause: "work",
-    actor: { type: "user", id: userId },
+    actor: {
+      type: specialistIntakeActor(principal).kind,
+      id: specialistIntakeActor(principal).id,
+    },
   });
   log.info(
     {
@@ -1176,7 +1258,7 @@ export async function linkSpecialistAssignmentRunInTransaction(
   return {
     assignment: await getSpecialistAssignmentInTransaction(
       tx,
-      userId,
+      principal,
       assignmentId,
     ),
     duplicate: false,
@@ -1186,7 +1268,7 @@ export async function linkSpecialistAssignmentRunInTransaction(
 /** Link the initial reserved execution and activate its queued assignment atomically. */
 export async function activateInitialSpecialistAssignmentRunInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   assignmentId: string,
   input: Readonly<
     Pick<
@@ -1199,7 +1281,7 @@ export async function activateInitialSpecialistAssignmentRunInTransaction(
 ): Promise<number> {
   const linked = await linkSpecialistAssignmentRunInTransaction(
     tx,
-    userId,
+    principal,
     assignmentId,
     { ...input, work: null },
   );
@@ -1234,7 +1316,10 @@ export async function activateInitialSpecialistAssignmentRunInTransaction(
     previousStatus: "queued",
     status: "active",
     cause: "state",
-    actor: { type: "user", id: userId },
+    actor: {
+      type: specialistIntakeActor(principal).kind,
+      id: specialistIntakeActor(principal).id,
+    },
   });
   log.debug(
     {

@@ -3,6 +3,7 @@ import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireProjectActionForUser } from "@/lib/authz";
+import { installationReadAdapter } from "@/lib/agents/installation-facade";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getProjectDirectory } from "@/lib/queries/project-directory";
@@ -43,6 +44,7 @@ export async function GET(
     {
       slug,
       scopeLabel: "projects:read",
+      installation: installationReadAdapter(req, "projects", { slug }),
       admitLibrarian: true,
       endpoint: ENDPOINT,
       method: "GET",

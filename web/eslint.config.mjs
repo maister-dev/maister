@@ -20,6 +20,74 @@ const cronerRestriction = {
     "Import cron helpers from @/lib/run-schedules/cron — croner is wrapped (ADR-071).",
 };
 
+const librarianGovernedImports = {
+  "disclosed-context.ts": ["brain/knowledge-restrictions"],
+  "history-search.ts": ["brain/knowledge-disclosure"],
+  "knowledge-card-effects.ts": [
+    "agent-memory-vault/card-redaction-fence",
+    "agent-memory-vault/limits",
+    "agent-memory-vault/store",
+    "brain/guard",
+    "brain/knowledge-access",
+    "brain/knowledge-disclosure",
+    "brain/knowledge-proposals",
+    "brain/knowledge-reference",
+    "brain/knowledge-restrictions",
+    "brain/knowledge-types",
+    "brain/proposals",
+  ],
+  "knowledge-card-types.ts": [
+    "agent-memory-vault/commands",
+    "brain/knowledge-write-types",
+  ],
+  "read-models.ts": ["brain/knowledge-restrictions"],
+  "runtime.ts": ["brain/knowledge-disclosure"],
+  "vault-routes.ts": [
+    "agent-memory-vault/commands",
+    "agent-memory-vault/http",
+    "agent-memory-vault/index-route",
+    "agent-memory-vault/view",
+  ],
+  "vaults.ts": [
+    "agent-memory-vault/cutover",
+    "agent-memory-vault/installation-access",
+    "agent-memory-vault/project-access",
+    "agent-memory-vault/store",
+    "brain/knowledge-disclosure",
+  ],
+};
+
+function librarianImportRule(allowed = []) {
+  return [
+    "error",
+    {
+      paths: [
+        cronerRestriction,
+        {
+          name: "@/lib/supervisor-client",
+          message: "Use the execution-host client for supervisor access.",
+        },
+        {
+          name: "@/lib/execution-host/import-maintenance",
+          message: "Historical import maintenance is operator-only.",
+        },
+      ],
+      patterns: [
+        {
+          group: [
+            "**/brain/**",
+            "**/agent-memory-vault/**",
+            "**/agents/memory-store",
+            ...allowed.map((source) => `!@/lib/${source}`),
+          ],
+          message:
+            "Use the explicit ADR-213 authority boundary for shared knowledge. Personal librarian memory stays separate.",
+        },
+      ],
+    },
+  ];
+}
+
 export default defineConfig([
   globalIgnores([
     ".now/*",
@@ -212,32 +280,16 @@ export default defineConfig([
   },
   {
     files: ["lib/librarian/**"],
-
     rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            cronerRestriction,
-            {
-              name: "@/lib/supervisor-client",
-              message: "Use the execution-host client for supervisor access.",
-            },
-            {
-              name: "@/lib/execution-host/import-maintenance",
-              message: "Historical import maintenance is operator-only.",
-            },
-          ],
-          patterns: [
-            {
-              group: ["@/lib/brain/**", "@/lib/agents/memory-store", "**/brain/**", "**/agents/memory-store"],
-              message: "Personal librarian memory must stay separate from Project Brain and agent memory.",
-            },
-          ],
-        },
-      ],
+      "no-restricted-imports": librarianImportRule(),
     },
   },
+  ...Object.entries(librarianGovernedImports).map(([file, allowed]) => ({
+    files: [`lib/librarian/${file}`],
+    rules: {
+      "no-restricted-imports": librarianImportRule(allowed),
+    },
+  })),
   {
     // ADR-166 D10: the local-direct transport, the test doubles and the test
     // suites (module mocks by path) are the only places the wire may be named.

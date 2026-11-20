@@ -232,6 +232,7 @@ export interface BoundClient {
   checkpoint(sessionId: HostSessionId | string): Promise<CheckpointResult>;
   deleteSession(
     sessionId: HostSessionId | string,
+    options?: { assertCommit: (tx: Db) => Promise<void> },
   ): Promise<{ outcome: DeleteSessionOutcome }>;
   reserveRuntimeObject(
     payload: ReserveRuntimeObjectPayload,
@@ -894,7 +895,25 @@ export function createExecutionHosts(
           { targetSessionId: sessionId },
         );
       },
-      deleteSession(sessionId) {
+      async deleteSession(sessionId, options) {
+        if (options) {
+          const issued = await db.transaction(async (tx) => {
+            await options.assertCommit(tx);
+
+            return issue(tx, "session.delete", {}, sessionId);
+          });
+
+          return deliver(
+            issued,
+            (envelope) =>
+              transport.deleteSession(
+                sessionId,
+                envelope,
+                timeoutFor("session.delete"),
+              ),
+            {},
+          );
+        }
         return immediate<
           Record<string, never>,
           { outcome: DeleteSessionOutcome }

@@ -87,6 +87,8 @@ export const TOKEN_SCOPES = [
   // two stores, re-coupling exactly the axes ADR-152 separates. Access is
   // additionally gated by agent_project_links.memory_enabled; neither the scope
   // nor the flag alone authorizes a write.
+  "agent_memory:read",
+  "agent_memory:propose",
   "agent_memory:write",
   // ADR-145 (Evaluation Lab) D10/D12: attempt-bound evaluator judge scopes. These
   // are minted ONLY on a judge attempt's ephemeral agent token
@@ -155,6 +157,8 @@ export const AGENT_TOKEN_SCOPES = [
   "assignments:update",
   // ADR-152: in the fixed agent-token set; the per-link memory_enabled axis
   // still gates the actual write.
+  "agent_memory:read",
+  "agent_memory:propose",
   "agent_memory:write",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
@@ -215,6 +219,8 @@ export const LIBRARIAN_TOKEN_SCOPES = [
   "flows:read",
   "runners:read",
   "memory:read",
+  "knowledge:read",
+  "agent_memory:read",
   "runs:read",
   "runs:launch",
   "runs:cancel",
@@ -243,6 +249,8 @@ export const LIBRARIAN_READ_SCOPES = [
   "flows:read",
   "runners:read",
   "memory:read",
+  "knowledge:read",
+  "agent_memory:read",
   "runs:read",
   "readiness:read",
   "hitl:read",
@@ -268,6 +276,7 @@ export type LibrarianOnlyTokenScope =
 // Defined here rather than in the server-only scopes module so the UI reads the
 // same list instead of mirroring it.
 export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
+  "agent_memory:read",
   "hitl:respond:human",
   "targets:read",
   "targets:logs",

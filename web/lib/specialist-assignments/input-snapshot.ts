@@ -55,6 +55,12 @@ const witnesses = z.array(
         role: z.literal("admin"),
       })
       .strict(),
+    z.strictObject({
+      kind: z.literal("installation_appointment"),
+      bindingId: identity,
+      bindingRevision: revision,
+      reviewedBy: identity,
+    }),
   ]),
 );
 const standingFields = {

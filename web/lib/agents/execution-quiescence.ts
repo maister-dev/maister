@@ -6,9 +6,9 @@ import type {
   ExecutionAssignment,
   ExecutionCommand,
 } from "@/lib/db/schema";
-import type { ExecutionHosts } from "@/lib/execution-host";
+import type { BoundClient, ExecutionHosts } from "@/lib/execution-host";
 
-import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import pino from "pino";
 
 import { isSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
@@ -29,8 +29,14 @@ import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { RUNTIME_EVENT_CLAIM_LEASE_MS } from "@/lib/execution-host/events/consumer";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
 import { createExecutionHosts } from "@/lib/execution-host/client";
-import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
-import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import {
+  projectCanonicalSessionLifecycle,
+  reconcileHistoricalAgentLifecycle,
+} from "@/lib/execution-host/events/lifecycle-projector";
+import {
+  lockCurrentSessionAssignment,
+  staleSessionBinding,
+} from "@/lib/execution-host/session-binding";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
 
 const log = pino({
@@ -241,34 +247,84 @@ export async function readAgentDispatchEvidence(
   };
 }
 
-/** Cancellation before the first create is serialized with create admission. */
+/** Check an exact assignment under the Run-first lock used by create admission. */
+export async function lockUndispatchedAgentAssignment(
+  tx: Db,
+  run: AgentExecutionIdentity,
+): Promise<boolean> {
+  if (!run.executionAssignmentId) return false;
+  const assignment = await lockCurrentSessionAssignment(tx, {
+    runId: run.id,
+    assignmentId: run.executionAssignmentId,
+  });
+
+  return (
+    assignment !== null &&
+    !(await hasAssignmentDispatchEvidence(tx, assignment))
+  );
+}
+
+async function hasAssignmentDispatchEvidence(
+  db: Db,
+  assignment: Pick<ExecutionAssignment, "id" | "runId">,
+): Promise<boolean> {
+  // Treat incomplete ownership as evidence of a possible dispatch. The unfiltered
+  // command read includes queued and retired records, which retain their identities.
+  const [command] = await db
+    .select({ id: executionCommands.id })
+    .from(executionCommands)
+    .where(
+      and(
+        eq(executionCommands.runId, assignment.runId),
+        eq(executionCommands.executionAssignmentId, assignment.id),
+        inArray(executionCommands.kind, ["session.create", "session.prompt"]),
+      ),
+    )
+    .limit(1);
+  if (command) return true;
+
+  const [incarnation] = await db
+    .select({ id: runSessionIncarnations.id })
+    .from(runSessionIncarnations)
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, assignment.runId),
+        or(
+          eq(runSessionIncarnations.executionAssignmentId, assignment.id),
+          isNull(runSessionIncarnations.executionAssignmentId),
+        ),
+      ),
+    )
+    .limit(1);
+  if (incarnation) return true;
+
+  const [session] = await db
+    .select({ id: runSessions.id })
+    .from(runSessions)
+    .where(
+      and(
+        eq(runSessions.runId, assignment.runId),
+        or(
+          eq(runSessions.executionAssignmentId, assignment.id),
+          isNull(runSessions.executionAssignmentId),
+        ),
+        or(
+          isNotNull(runSessions.acpSessionId),
+          isNotNull(runSessions.hostSessionId),
+        ),
+      ),
+    )
+    .limit(1);
+
+  return session !== undefined;
+}
+
 export async function assertAgentCancellationBindingsQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
-  const assignment = await lockCurrentSessionAssignment(db, {
-    runId: run.id,
-    assignmentId: run.executionAssignmentId,
-  });
-
-  if (assignment?.placementReason === "launch" && assignment.epoch === 1) {
-    const [incarnation] = await db
-      .select({ id: runSessionIncarnations.id })
-      .from(runSessionIncarnations)
-      .where(
-        and(
-          eq(runSessionIncarnations.runId, run.id),
-          eq(runSessionIncarnations.executionAssignmentId, assignment.id),
-        ),
-      )
-      .limit(1);
-    const evidence = await readAgentDispatchEvidence(db, run.id);
-
-    if (!incarnation && !evidence.hasOwnedCommand && !evidence.hasBoundSession)
-      return;
-  }
-
+  if (await lockUndispatchedAgentAssignment(db, run)) return;
   await assertAgentSessionBindingsQuiescent(db, run);
 }
 
@@ -306,6 +362,11 @@ export async function assertAgentSessionBindingsQuiescent(
   if (
     incarnations.length === 0 &&
     (await hasRejectedAgentCreateEvidence(db, run))
+  )
+    return;
+  if (
+    incarnations.length === 0 &&
+    (await lockUndispatchedAgentAssignment(db, run))
   )
     return;
   if (
@@ -415,6 +476,7 @@ export async function waitForAgentCancellationExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
   deadline: number,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   for (;;) {
     const controller = new AbortController();
@@ -427,7 +489,7 @@ export async function waitForAgentCancellationExecutionQuiescent(
     );
 
     try {
-      await assertAgentCancellationExecutionQuiescent(db, run);
+      await assertAgentCancellationExecutionQuiescent(db, run, hosts);
 
       return;
     } catch (error) {
@@ -444,56 +506,96 @@ export async function waitForAgentCancellationExecutionQuiescent(
   }
 }
 
-/** Terminal cleanup checks the retained assignment, including a first launch released before create. */
+async function assertCurrentAgentTeardown(
+  tx: Db,
+  client: BoundClient,
+): Promise<void> {
+  const { id: assignmentId, runId, epoch } = client.assignment;
+  const owner = await lockCurrentSessionAssignment(tx, { runId, assignmentId });
+
+  if (owner?.epoch !== epoch) throw staleSessionBinding(runId, assignmentId);
+}
+
+export async function stopCurrentAgentExecution(
+  db: Db,
+  run: AgentExecutionIdentity,
+  hosts: ExecutionHosts,
+): Promise<boolean> {
+  if (!run.executionAssignmentId) return false;
+  const client = await hosts.forAssignment({ id: run.executionAssignmentId });
+  await db.transaction((tx) => assertCurrentAgentTeardown(tx, client));
+
+  let stopped = false;
+  for (const session of await client.sessionsForRun()) {
+    if (
+      session.status !== "live" ||
+      (session.assignmentId && session.assignmentId !== client.assignment.id) ||
+      (session.assignmentEpoch != null &&
+        session.assignmentEpoch !== client.assignment.epoch)
+    )
+      continue;
+    await client.deleteSession(session.sessionId, {
+      assertCommit: (tx) => assertCurrentAgentTeardown(tx, client),
+    });
+    stopped = true;
+  }
+
+  return stopped;
+}
+
+export async function assertHistoricalAgentAssignmentsQuiescent(
+  db: Db,
+  run: AgentExecutionIdentity,
+  hosts: ExecutionHosts,
+): Promise<void> {
+  await reconcileHistoricalAgentLifecycle(db, run.id);
+  const assignments = await db
+    .select()
+    .from(executionAssignments)
+    .where(eq(executionAssignments.runId, run.id));
+  for (const assignment of assignments) {
+    if (assignment.id === run.executionAssignmentId) continue;
+    const identity = { id: run.id, executionAssignmentId: assignment.id };
+    if (!(await hasAssignmentDispatchEvidence(db, assignment))) continue;
+    await assertAgentSessionBindingsQuiescent(db, identity);
+    await assertNoLiveAgentSessions(db, identity, hosts);
+  }
+}
+
+/** Physical disposal requires terminal evidence for every dispatched assignment. */
 export async function assertTerminalAgentCleanupExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   if (!run.executionAssignmentId) return;
   await projectCanonicalSessionLifecycle({ db, runId: run.id });
-  const [assignment] = await db
+  await reconcileHistoricalAgentLifecycle(db, run.id);
+  const assignments = await db
     .select()
     .from(executionAssignments)
-    .where(
-      and(
-        eq(executionAssignments.id, run.executionAssignmentId),
-        eq(executionAssignments.runId, run.id),
-      ),
-    );
-
-  if (!assignment || assignment.state !== "released")
+    .where(eq(executionAssignments.runId, run.id));
+  if (assignments.some((assignment) => assignment.state === "active"))
     throw new MaisterError(
       "PRECONDITION",
-      "Terminal agent cleanup requires its released execution assignment",
+      "Terminal agent cleanup requires released execution assignments",
       {
         details: {
           reason: "agent_execution_quiescence_unproven",
           runId: run.id,
-          assignmentId: run.executionAssignmentId,
         },
       },
     );
-  const [incarnation] = await db
-    .select({ id: runSessionIncarnations.id })
-    .from(runSessionIncarnations)
-    .where(
-      and(
-        eq(runSessionIncarnations.runId, run.id),
-        eq(runSessionIncarnations.executionAssignmentId, assignment.id),
-      ),
-    )
-    .limit(1);
-  const evidence = await readAgentDispatchEvidence(db, run.id);
 
-  if (
-    assignment.placementReason !== "launch" ||
-    assignment.epoch !== 1 ||
-    incarnation ||
-    evidence.hasOwnedCommand ||
-    evidence.hasBoundSession
-  )
-    await assertAgentSessionBindingsQuiescent(db, run);
-  await assertNoLiveAgentSessions(db, run);
+  const observedHosts = new Set<string>();
+  for (const assignment of assignments) {
+    const identity = { id: run.id, executionAssignmentId: assignment.id };
+    if (await hasAssignmentDispatchEvidence(db, assignment))
+      await assertAgentSessionBindingsQuiescent(db, identity);
+    if (observedHosts.has(assignment.executionHostId)) continue;
+    await assertNoLiveAgentSessions(db, identity, hosts);
+    observedHosts.add(assignment.executionHostId);
+  }
 }
 
 async function assertNoLiveAgentSessions(

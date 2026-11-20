@@ -11,6 +11,7 @@ export function standEvidenceReadPolicy(
   identity: KnowledgePrincipalIdentity,
   company: SQL,
 ): SQL {
+  if (identity.kind === "installation_agent") return sql`false`;
   if (identity.kind === "user" && identity.boundProjectId !== null)
     return sql`false`;
   if (identity.kind === "agent") {

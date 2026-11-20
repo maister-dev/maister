@@ -60,6 +60,11 @@ export async function resolveStandExecutionActor(
   inputRevision: number,
   action: StandProfessionalAction,
 ): Promise<StandExecutionActor> {
+  if (identity.kind === "installation_agent")
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Installation agents cannot perform stand operations",
+    );
   if (
     identity.kind === "company_agent" &&
     (!identity.actionLimits.includes("assignments:read") ||

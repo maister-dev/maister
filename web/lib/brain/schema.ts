@@ -52,6 +52,40 @@ export const vector = customType<{ data: number[]; driverData: string }>({
   },
 });
 
+export const agentMemoryEmbeddings = pgTable(
+  "agent_memory_embeddings",
+  {
+    vaultId: text("vault_id").notNull(),
+    noteId: text("note_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    model: text("model").notNull(),
+    dimensions: integer("dimensions").notNull(),
+    generation: text("generation").notNull(),
+    state: text("state", { enum: ["pending", "ready", "poisoned"] })
+      .notNull()
+      .default("pending"),
+    vector: vector("vector"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    leaseToken: text("lease_token"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  },
+  (t) => ({
+    pk: primaryKey({
+      columns: [
+        t.vaultId,
+        t.noteId,
+        t.revisionId,
+        t.model,
+        t.dimensions,
+        t.generation,
+      ],
+    }),
+  }),
+);
+
 export const brainItems = pgTable("brain_items", {
   sourceAclKey: text("source_acl_key")
     .notNull()
@@ -512,6 +546,7 @@ export const brainEvidenceWitnesses = pgTable("brain_evidence_witnesses", {
     .$type<
       | { kind: "inline"; content: string }
       | { kind: "record"; recordId: string; revision: number; content: string }
+      | { kind: "vault_revision"; revisionId: string }
     >()
     .notNull(),
   capturedAt: timestamp("captured_at", { withTimezone: true, mode: "date" })

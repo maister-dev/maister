@@ -34,6 +34,7 @@ export interface RecallOptions {
   limit?: number;
   kinds?: BrainItemKind[];
   minConfidence?: number;
+  sourceClass?: "owned";
   db?: RecallDb;
   client?: OpenAiCompatibleClient;
   ranker?: RecallRanker;
@@ -74,6 +75,7 @@ export async function recall(
     limit,
     kinds: opts.kinds,
     minConfidence: opts.minConfidence,
+    sourceClass: opts.sourceClass,
   });
 }
 

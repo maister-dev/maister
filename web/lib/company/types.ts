@@ -19,8 +19,24 @@ export const ownerSchema = z.discriminatedUnion("kind", [
 
 export type Owner = z.infer<typeof ownerSchema>;
 
+export const vaultRevisionRestrictionSchema = z.strictObject({
+  kind: z.literal("agent_vault_revision_v1"),
+  vaultId: z.uuid(),
+  noteId: z.uuid(),
+  revisionId: z.uuid(),
+  contentSha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export type VaultRevisionRestriction = z.infer<
+  typeof vaultRevisionRestrictionSchema
+>;
+
 export const knowledgeAccessRestrictionSchema = z.union([
   ownerSchema,
+  vaultRevisionRestrictionSchema,
+  z.strictObject({
+    kind: z.literal("project_visibility"),
+    projectId: postgresTextSchema.min(1).max(128),
+  }),
   z
     .object({
       kind: z.literal("stand_target"),
@@ -63,17 +79,22 @@ export type KnowledgeAccessRestriction = z.infer<
 >;
 export type ExecutionContextRestriction = Extract<
   KnowledgeAccessRestriction,
-  { kind: "project_context" | "agent_memory" }
+  { kind: "project_context" | "project_visibility" | "agent_memory" }
 >;
 /** Server-captured source restrictions on an existing run; NULL remains unknown. */
 export const knowledgeAccessCaptureSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
     state: z.enum(["capturing", "complete", "unknown"]),
     generation: z.number().int().positive().max(2147483647),
     restrictions: knowledgeRestrictionsSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ schemaVersion, restrictions }) =>
+      schemaVersion === 2 ||
+      !restrictions.some((source) => source.kind === "agent_vault_revision_v1"),
+  );
 export type KnowledgeAccessCapture = Readonly<
   z.infer<typeof knowledgeAccessCaptureSchema>
 >;

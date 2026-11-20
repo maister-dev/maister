@@ -236,7 +236,7 @@ until the matching forward Drizzle migration exists.
 
 ## Retention
 
-The designed [context projection](../database-schema.md#acp-context-observations-designed-adr-210)
+The [context projection](../database-schema.md#acp-context-observations-implemented-adr-215)
 joins retained events to physical incarnation identity. Rebuild safe
 measurements from retained valid events only. Preserve partial coverage when a
 history range has been pruned. The existing canonical cursor claim and repair

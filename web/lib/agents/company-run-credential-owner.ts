@@ -14,6 +14,7 @@ import { companyExecutionSnapshotSchema } from "./company-execution-types";
 import { companySpecialistBindingSnapshotSchema } from "./company-binding-snapshot";
 import { assertCompanySessionDefinition } from "./company-agent-definition";
 import { bindingActionSubsetSchema } from "./company-binding-types";
+import { requireInstallationRunAuthority } from "./installation-authority";
 
 import { currentKnowledgeNodeAttemptPolicy } from "@/lib/brain/knowledge-node-policy";
 import { nativeKnowledgeActorSchema } from "@/lib/company/types";
@@ -40,7 +41,7 @@ export type CompanyRunCredentialOwner = Readonly<{
   }>;
 }>;
 
-function companyRunOwnerQuery(runId: string): SQL {
+function companyRunOwnerQuery(runId: string, unattended = false): SQL {
   return sql`
     SELECT execution.run_kind,execution.company_id,execution.source_agent_id,execution.company_execution_snapshot,configuration.snapshot->'grantActions' AS action_limits,jsonb_build_object('schemaVersion',1,'agentId',binding.agent_id,'packageInstallId',package.id,'packageName',package.name,'definitionSha256',configuration.snapshot->>'definitionSha256') AS professional_role,
       work.definition AS delegated_definition,configuration.snapshot AS binding_snapshot
@@ -57,8 +58,14 @@ function companyRunOwnerQuery(runId: string): SQL {
     JOIN company_specialist_binding_revisions configuration ON configuration.binding_id=binding.id AND configuration.revision=binding.revision
     JOIN package_installs package ON package.id=binding.package_install_id AND package.package_status='Installed' AND package.trust_status IN ('trusted','trusted_by_policy')
     JOIN agents catalog ON catalog.id=binding.agent_id AND catalog.enabled AND catalog.quarantined_at IS NULL
-    JOIN users principal ON principal.id=execution.company_execution_snapshot->'authority'->'actor'->>'id' AND principal.account_status='active' AND NOT principal.must_change_password
-    JOIN company_grants read_grant ON read_grant.company_id=execution.company_id AND read_grant.principal_type='user' AND read_grant.principal_id=principal.id AND read_grant.action='assignments:read' AND read_grant.revoked_at IS NULL
+    ${
+      unattended
+        ? sql``
+        : sql`
+      JOIN users principal ON principal.id=execution.company_execution_snapshot->'authority'->'actor'->>'id' AND principal.account_status='active' AND NOT principal.must_change_password
+      JOIN company_grants read_grant ON read_grant.company_id=execution.company_id AND read_grant.principal_type='user' AND read_grant.principal_id=principal.id AND read_grant.action='assignments:read' AND read_grant.revoked_at IS NULL
+    `
+    }
     WHERE execution.id=${runId} AND execution.company_id IS NOT NULL AND execution.project_id IS NULL AND (
         (execution.run_kind='agent' AND execution.company_execution_snapshot->>'schemaVersion'='1')
         OR (execution.run_kind='flow' AND execution.company_execution_snapshot->>'schemaVersion'='2'
@@ -180,9 +187,13 @@ export async function requireCompanyKnowledgeRunOwner(
   tx: SqlTransaction,
   runId: string,
 ): Promise<CompanyRunCredentialOwner> {
+  const installation = await requireInstallationRunAuthority(tx, runId);
+  const unattended = installation?.principal.kind === "unattended";
   const row = (
     await tx.execute(
-      sql`${companyRunOwnerQuery(runId)} AND execution.status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','HumanWorking') FOR SHARE OF execution,assignment,binding,package,catalog,principal,read_grant`,
+      sql`${companyRunOwnerQuery(runId, unattended)} AND execution.status IN ('Pending','Running','NeedsInput','NeedsInputIdle','WaitingOnChildren','HumanWorking')
+        ${unattended ? sql`AND link.work_id IS NULL AND execution.run_kind='agent'` : sql``}
+        FOR SHARE OF execution,assignment,binding,package,catalog${unattended ? sql`` : sql`,principal,read_grant`}`,
     )
   ).rows[0];
 

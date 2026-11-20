@@ -6,12 +6,18 @@ import type { Run } from "@/lib/db/schema";
 import type { AssignmentInputRevision } from "@/lib/specialist-assignments/types";
 import type { EffectiveAgentDefinition } from "./effective";
 import type { CompanyRunCredentialOwner } from "./company-run-credential-owner";
+import type { InstallationRunAuthority } from "./installation-authority";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { bindingConfigurationSchema } from "./company-binding-types";
-import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
+import {
+  assertInstallationAgentDefinition,
+  assertStandaloneCompanyAgentDefinition,
+} from "./company-agent-definition";
+import { assertCurrentInstallationSources } from "./installation-source-capture";
+import { requireInstallationRunAuthority } from "./installation-authority";
 import { requireCompanyKnowledgeRunOwner } from "./company-run-credential-owner";
 import { frozenOperationalDefinition } from "./launch-contract";
 import { resolveInstalledAgentDefinition } from "./effective";
@@ -43,6 +49,7 @@ export type CompanyAgentSessionContext = Readonly<{
   input: AssignmentInputRevision;
   effective: EffectiveAgentDefinition;
   configuration: Readonly<Record<string, string | number | boolean>>;
+  installation?: InstallationRunAuthority;
 }>;
 
 /** Read frozen execution input under current authority; call inside the effect admission transaction. */
@@ -67,28 +74,33 @@ export async function loadCompanyAgentSessionContext(
       "Select an exact company agent execution",
       { details: { reason: "company_agent_runtime_unavailable" } },
     );
+  const installation = await requireInstallationRunAuthority(tx, runId);
+
+  if (installation) await assertCurrentInstallationSources(tx, installation);
   const owner = await requireCompanyKnowledgeRunOwner(tx, runId);
 
-  await authorizeCompanyUserAction(
-    tx,
-    owner.userId,
-    owner.companyId,
-    "assignments:update",
-  );
-  if (run.retryOfRunId)
+  if (installation?.principal.kind !== "unattended") {
     await authorizeCompanyUserAction(
       tx,
       owner.userId,
       owner.companyId,
-      "assignments:recover",
+      "assignments:update",
     );
-  if (run.retryOfRunId)
-    await companyReplacementTriggerSource(
-      tx,
-      run.retryOfRunId,
-      owner.userId,
-      run.triggerSource,
-    );
+    if (run.retryOfRunId) {
+      await authorizeCompanyUserAction(
+        tx,
+        owner.userId,
+        owner.companyId,
+        "assignments:recover",
+      );
+      await companyReplacementTriggerSource(
+        tx,
+        run.retryOfRunId,
+        owner.userId,
+        run.triggerSource,
+      );
+    }
+  }
   const row = (
     await tx.execute(
       sql`SELECT * FROM specialist_input_revisions WHERE assignment_id=${owner.snapshot.assignment.id} AND revision=${owner.snapshot.assignment.inputRevision} FOR SHARE`,
@@ -116,7 +128,8 @@ export async function loadCompanyAgentSessionContext(
       "Company execution and retained assignment definition witnesses differ",
       { details: { reason: "company_agent_pin_changed" } },
     );
-  assertStandaloneCompanyAgentDefinition(effective.parsed);
+  if (installation) assertInstallationAgentDefinition(effective.parsed);
+  else assertStandaloneCompanyAgentDefinition(effective.parsed);
   const installed = await resolveInstalledAgentDefinition(tx, {
     agentId: owner.agentId,
     packageInstallId: standing.packageInstallId,
@@ -204,7 +217,14 @@ export async function loadCompanyAgentSessionContext(
     "current company session input authorized",
   );
 
-  return { run, owner, input, effective, configuration };
+  return {
+    run,
+    owner,
+    input,
+    effective,
+    configuration,
+    ...(installation && { installation }),
+  };
 }
 
 /** Keep standing role, work, sources, recurring ask and historical execution policy as separate prompt planes. */

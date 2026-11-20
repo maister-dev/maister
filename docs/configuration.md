@@ -253,7 +253,7 @@ project:
   public_branch_template: feature/{task_key}-{slug} # ADR-181; the default
   default_runner: inherit # or a platform ACP runner id
 promotion:
-  mode: pull_request # local_merge | pull_request
+  mode: pull_request # local_merge | rebase_merge | pull_request
   remote: origin # for pull_request mode
 capabilities:
   mcps:
@@ -1727,3 +1727,34 @@ transport file. Keep the Web authority token out of the supervisor environment.
 Restrict host credential paths to the relevant service identities and keep
 them outside workspaces. See the [host preflight](deployment.md#stand-helper-preflight).
 Compose remains Postgres-only. The stand helper is a host systemd service.
+
+### Agent memory vault limits (ADR-210)
+
+The web tier reads these bounds. The installed attachment settings continue
+to own enablement and policy. Units for character limits are UTF-16 code
+units. Positive decimal integers within the specified bounds are required.
+Omitted settings use the stated defaults.
+
+| Setting | Default | Inclusive range | Applies to |
+| --- | ---: | --- | --- |
+| `MAISTER_AGENT_MEMORY_MAX_CHARS` | 32768 | 2048–262144 | Entire rendered protocol, index and visible path page including framing. Cutover changes the meaning of the legacy file cap described above. |
+| `MAISTER_AGENT_MEMORY_NOTE_MAX_CHARS` | 65536 | 1–262144 | New ordinary note bodies and imports. 262144 is also the absolute storage and authorized single-note conflict ceiling. |
+| `MAISTER_AGENT_MEMORY_INDEX_MAX_CHARS` | 8192 | 1–65536 | New index bodies. Must be within the note cap and leave at least 1024 characters of the rendered injection budget for protocol and framing. |
+| `MAISTER_AGENT_MEMORY_VAULT_MAX_CHARS` | 1048576 | 1–16777216 | Sum of active head sizes. Must be at least the note cap. |
+| `MAISTER_AGENT_MEMORY_MAX_NOTES` | 256 | 1–1024 | Live note count per vault. |
+| `MAISTER_AGENT_MEMORY_MAX_PENDING` | 256 | 1–1024 | Pending operations per vault. |
+
+The command boundary limits paths to 512 UTF-8 bytes and 16 segments, pages
+to 100 entries or 16384 content characters, new vault command JSON bodies
+to 4 MiB, review batches to 50 decisions,
+and a single virtual-directory change to 1024 affected notes. Existing content
+remains readable after reducing a write cap. An operation that moves the live
+state toward the configured quota can proceed. The launch refuses if the
+escaped protocol and index alone exceed the injection budget. These settings
+are for the host web service and its environment template.
+
+`MAISTER_AGENT_MEMORY_VECTOR_ENABLED` defaults to `0`. Set it to `1` only after
+applying the optional Brain migration `0012` and configuring the Brain
+embedding provider. This opts in to sending private current note bodies and
+vector search queries to that provider. Lexical search runs entirely in the
+main database. A vector request reports provider failures after bounded retry.

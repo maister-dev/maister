@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { librarianConversations } from "@/lib/db/schema";
 import type { CardTarget, LibrarianCardProposal } from "./cards";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { and, eq, gt, inArray, notExists, sql } from "drizzle-orm";
 
@@ -12,6 +13,14 @@ import {
   matchesFrozenCardTarget,
   runCardTarget,
 } from "./cards";
+import {
+  isKnowledgeCardProposal,
+  effectContextSchema,
+} from "./knowledge-card-types";
+import {
+  matchesGovernedCardEffect,
+  prepareKnowledgeCard,
+} from "./knowledge-card-effects";
 import { memoryContentDigest } from "./memory";
 
 import {
@@ -23,7 +32,7 @@ import {
   tasks,
   users,
 } from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   getActionableProjectIds,
   getVisibleProjects,
@@ -68,6 +77,7 @@ async function pendingCandidates(db: Db, conversationId: string) {
       target: cards.target,
       targetRevision: cards.targetRevision,
       payload: cards.payload,
+      effectContext: cards.effectContext,
       task: {
         id: tasks.id,
         projectId: tasks.projectId,
@@ -138,6 +148,7 @@ function currentTarget(
   access: Access,
   forgotten: ReadonlySet<string>,
 ): CardTarget | null {
+  if (isKnowledgeCardProposal(proposal)) return null;
   if (proposal.action === "memory_suggest") {
     if (
       owner.currentSegmentId !== card.segmentId ||
@@ -240,7 +251,36 @@ export async function readEligibleConfirmationIds(
   ]);
   const forgotten = new Set(tombstones.map(({ digest }) => digest));
 
-  return candidates.flatMap(({ card, proposal }) => {
+  const eligible: string[] = [];
+
+  for (const { card, proposal } of candidates) {
+    if (isKnowledgeCardProposal(proposal)) {
+      const context = effectContextSchema.safeParse(card.effectContext);
+
+      if (
+        !context.success ||
+        owner.contextEpoch !== context.data.contextEpoch ||
+        owner.currentSegmentId !== card.segmentId ||
+        owner.resetState !== "none"
+      )
+        continue;
+      try {
+        const prepared = await db.transaction((tx) =>
+          prepareKnowledgeCard(
+            tx as unknown as ExecutionDb,
+            owner.userId,
+            proposal,
+            context.data.restrictions,
+          ),
+        );
+
+        if (matchesGovernedCardEffect(card, context.data.preview, prepared))
+          eligible.push(card.id);
+      } catch (error) {
+        if (!isMaisterError(error)) throw error;
+      }
+      continue;
+    }
     const target = currentTarget(
       card,
       proposal,
@@ -249,6 +289,8 @@ export async function readEligibleConfirmationIds(
       forgotten,
     );
 
-    return target && matchesFrozenCardTarget(card, target) ? [card.id] : [];
-  });
+    if (target && matchesFrozenCardTarget(card, target)) eligible.push(card.id);
+  }
+
+  return eligible;
 }

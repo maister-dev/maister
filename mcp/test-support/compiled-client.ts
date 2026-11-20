@@ -23,6 +23,7 @@ export async function connectCompiledMcp(input: {
   baseUrl: string;
   token: string;
   toolset?: string;
+  installationScopes?: readonly string[];
 }): Promise<{ client: Client; close: () => Promise<void> }> {
   const mcpRoot = fileURLToPath(new URL("../", import.meta.url));
   const client = new Client({ name: "web-launch-bridge", version: "1.0.0" });
@@ -38,7 +39,12 @@ export async function connectCompiledMcp(input: {
       LOG_LEVEL: "silent",
       MAISTER_API_BASE_URL: input.baseUrl,
       MAISTER_PROJECT_TOKEN: input.token,
-      ...(input.toolset === undefined ? {} : {MAISTER_MCP_TOOLSET:input.toolset}),
+      ...(input.toolset === undefined
+        ? {}
+        : { MAISTER_MCP_TOOLSET: input.toolset }),
+      ...(input.installationScopes === undefined
+        ? {}
+        : { MAISTER_INSTALLATION_SCOPES: input.installationScopes.join(",") }),
     },
   });
   const exited = new Promise<void>((resolve) => {

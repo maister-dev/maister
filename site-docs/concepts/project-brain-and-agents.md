@@ -56,6 +56,11 @@ tracked content from the project's default branch, chunks it with a typed
 parser, stores source pointers and previews, and creates vector embeddings.
 Ignored, untracked, absolute, or escaping paths are refused.
 
+A plain path selects one tracked file. To select a file whose name contains
+glob characters, escape them with a backslash, for example
+`web/app/\[slug\]/page.tsx`. An unescaped glob operator keeps the whole
+selector in glob mode.
+
 Indexing runs through scheduler jobs. Repository events can enqueue source
 reindexing, and an operator can request it manually. The source row shows the
 last indexed time and a deterministic error when a file, glob, parser, or

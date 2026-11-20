@@ -4,6 +4,11 @@
 
 # Getting Started
 
+The project agent's **Memory** tab shows its Postgres vault when the operator
+has activated the vault and enabled memory on the attachment. Operators
+upgrading from per-agent Markdown files use the separate cutover command.
+[Agent memory vault cutover](deployment.md#agent-memory-vault-cutover)
+
 Set up MAIster for local development. The repo is a pnpm monorepo with
 two long-running Node processes:
 

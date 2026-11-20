@@ -8,7 +8,9 @@ import { sql } from "drizzle-orm";
 
 import {
   projectContextReadPolicy,
+  projectVisibilityReadPolicy,
   agentMemoryReadPolicy,
+  vaultRevisionReferenceQuery,
 } from "./knowledge-context-policy";
 import {
   assignmentInputReadPolicy,
@@ -17,6 +19,7 @@ import {
 import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
 
 import { projectRolesForActions } from "@/lib/authz";
+import { installationProjectAccess } from "@/lib/agents/installation-authority";
 
 export function knowledgeOwnerActionPolicy(
   identity: KnowledgePrincipalIdentity,
@@ -24,6 +27,26 @@ export function knowledgeOwnerActionPolicy(
   company: SQL,
   action: KnowledgeAction,
 ): SQL {
+  if (identity.kind === "installation_agent") {
+    const context = identity.installation;
+
+    if (
+      (action !== "knowledge:read" && action !== "knowledge:propose") ||
+      !context.scopes.includes(action)
+    )
+      return sql`false`;
+    const companyRights =
+      context.principal.kind === "unattended"
+        ? sql`true`
+        : sql`EXISTS (SELECT 1 FROM company_grants g WHERE company_id=${context.companyId} AND principal_type='user'
+        AND principal_id=${context.principal.userId} AND g.action=${action} AND revoked_at IS NULL FOR SHARE)`;
+    const projectAction =
+      action === "knowledge:read" ? "readBrain" : "writeBrain";
+
+    return sql`((${company}=${context.companyId} AND ${companyRights}) OR EXISTS (
+      SELECT 1 FROM projects p WHERE p.id=${project} AND p.archived_at IS NULL AND p.brain_enabled
+      AND ${installationProjectAccess(context, sql`p.id`, projectAction)} FOR SHARE))`;
+  }
   if (identity.kind === "company_agent") {
     const allowed =
       (action === "knowledge:read" || action === "knowledge:propose") &&
@@ -98,7 +121,11 @@ function readableRecord(
   const initiatingRecordGrant =
     identity.kind === "company_agent"
       ? sql`EXISTS (SELECT 1 FROM brain_record_grants initiating_record_grant WHERE initiating_record_grant.record_id=${table}.id AND initiating_record_grant.principal_type='user' AND initiating_record_grant.principal_id=${identity.initiatingUser.id} AND initiating_record_grant.action='knowledge:read' AND initiating_record_grant.revoked_at IS NULL FOR SHARE)`
-      : sql`true`;
+      : identity.kind === "installation_agent" &&
+          identity.installation.principal.kind === "manual"
+        ? sql`EXISTS (SELECT 1 FROM brain_record_grants g WHERE g.record_id=${table}.id AND g.principal_type='user'
+          AND g.principal_id=${identity.installation.principal.userId} AND g.action='knowledge:read' AND g.revoked_at IS NULL FOR SHARE)`
+        : sql`true`;
 
   return sql`${readableOwner(identity, sql`${table}.project_id`, sql`${table}.company_id`)} AND (${table}.visibility='owner_grants' OR (${initiatingRecordGrant} AND EXISTS (SELECT 1 FROM brain_record_grants rg WHERE rg.record_id=${table}.id AND rg.principal_type=${identity.actor.kind} AND rg.principal_id=${identity.actor.id} AND rg.action='knowledge:read' AND rg.revoked_at IS NULL FOR SHARE)))`;
 }
@@ -120,14 +147,18 @@ function sourceIdentity(reference: SQL): SQL {
     WHEN 'stand_target' THEN ${reference}->>'companyId'
     WHEN 'project' THEN ${reference}->>'projectId'
     WHEN 'project_context' THEN ${reference}->>'projectId'
+    WHEN 'project_visibility' THEN ${reference}->>'projectId'
+    WHEN 'legacy_project_private' THEN ${reference}->>'projectId'
     WHEN 'agent_memory' THEN ${reference}::text
+    WHEN 'agent_vault_revision_v1' THEN ${reference}::text
     WHEN 'assignment_input' THEN ${reference}::text
     WHEN 'record' THEN ${reference}->>'recordId' END`;
 }
 
 /** Both record revisions and exact assignment inputs contribute immutable source edges. */
-function sourceDependencyJoins(): SQL {
+function sourceDependencyJoins(identity: KnowledgePrincipalIdentity): SQL {
   const assignment = sql`CASE WHEN d.kind='assignment_input' THEN d.identity::jsonb ELSE '{}'::jsonb END`;
+  const vaultRevision = sql`CASE WHEN d.kind='agent_vault_revision_v1' THEN d.identity::jsonb ELSE '{}'::jsonb END`;
 
   return sql`CROSS JOIN LATERAL (
     SELECT record_child.kind,record_child.identity,record_child.revision
@@ -149,6 +180,15 @@ function sourceDependencyJoins(): SQL {
     WHERE d.kind='assignment_input' AND retained_input.assignment_id=(${assignment})->>'assignmentId'
       AND retained_input.revision::text=(${assignment})->>'inputRevision'
       AND retained_input.digest=(${assignment})->>'inputSha256'
+    UNION ALL
+    SELECT vault_child.kind, vault_child.identity, NULL::integer
+    FROM (${vaultRevisionReferenceQuery(identity, vaultRevision)}) source
+    CROSS JOIN LATERAL (
+      SELECT CASE WHEN source.installation THEN 'project_visibility' ELSE 'project_context' END AS kind, project_id AS identity FROM unnest(source.source_project_ids) project_id
+      UNION ALL
+      SELECT ref->>'kind', ${sourceIdentity(sql`ref`)}
+      FROM native_knowledge_source_restrictions(source.source_restrictions) ref
+    ) vault_child
   ) child`;
 }
 
@@ -157,8 +197,11 @@ function sourceDependencyPolicy(identity: KnowledgePrincipalIdentity): SQL {
     WHEN 'company' THEN ${readableOwner(identity, sql`NULL::text`, sql`d.identity`)}
     WHEN 'project' THEN ${readableOwner(identity, sql`d.identity`, sql`NULL::text`)}
     WHEN 'project_context' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
+    WHEN 'project_visibility' THEN ${projectVisibilityReadPolicy(identity, sql`d.identity`)}
+    WHEN 'legacy_project_private' THEN ${projectContextReadPolicy(identity, sql`d.identity`)}
     WHEN 'stand_target' THEN ${standEvidenceReadPolicy(identity, sql`d.identity`)}
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`(d.identity::jsonb)->>'projectId'`, sql`(d.identity::jsonb)->>'agentId'`)}
+    WHEN 'agent_vault_revision_v1' THEN EXISTS (${vaultRevisionReferenceQuery(identity, sql`d.identity::jsonb`)})
     WHEN 'assignment_input' THEN ${
       identity.kind === "user"
         ? sql`((d.identity::jsonb)->>'assignmentId',(d.identity::jsonb)->>'inputRevision',(d.identity::jsonb)->>'inputSha256') IN (SELECT assignment_id,revision::text,digest FROM knowledge_authorized_assignment_dependencies)`
@@ -214,7 +257,7 @@ export function knowledgeSourceReadPolicy(
   return sql`(WITH RECURSIVE knowledge_source_dependencies(kind,identity,revision) AS (
     SELECT ${reference}->>'kind',${sourceIdentity(reference)},NULL::integer
     UNION
-    SELECT child.kind,child.identity,child.revision FROM knowledge_source_dependencies d ${sourceDependencyJoins()}
+    SELECT child.kind,child.identity,child.revision FROM knowledge_source_dependencies d ${sourceDependencyJoins(identity)}
   ), ${authorizedRecordDependencies(identity, sql`knowledge_source_dependencies`)}, ${authorizedAssignmentDependencies(identity, sql`knowledge_source_dependencies`)}
   SELECT NOT EXISTS (SELECT 1 FROM knowledge_source_dependencies d WHERE NOT (${sourceDependencyPolicy(identity)})))`;
 }
@@ -231,7 +274,7 @@ export function knowledgeRevisionReadPolicyCte(
     (SELECT id,selected_revision,'record'::text,id,current_revision FROM knowledge_candidates
      UNION SELECT id,selected_revision,'record'::text,id,selected_revision FROM knowledge_candidates)
     UNION
-    SELECT d.root_id,d.root_revision,child.kind,child.identity,child.revision FROM knowledge_access_dependencies d ${sourceDependencyJoins()}
+    SELECT d.root_id,d.root_revision,child.kind,child.identity,child.revision FROM knowledge_access_dependencies d ${sourceDependencyJoins(identity)}
   ), ${authorizedRecordDependencies(identity, sql`knowledge_access_dependencies`)}, ${authorizedAssignmentDependencies(identity, sql`knowledge_access_dependencies`)}, knowledge_readable_records AS (
     SELECT i.* FROM knowledge_candidates i WHERE NOT EXISTS (
       SELECT 1 FROM knowledge_access_dependencies d WHERE d.root_id=i.id AND d.root_revision=i.selected_revision AND NOT (${sourceDependencyPolicy(identity)})

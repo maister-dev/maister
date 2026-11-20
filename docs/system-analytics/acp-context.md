@@ -1,6 +1,6 @@
 # ACP context observations
 
-**Status:** Implemented in the platform. Provider-backed and browser qualification are tracked in the [acceptance evidence](../../.ai-factory/plans/feature-acp-context-usage-compaction.md). See [ADR-210](../decisions/adr-210.md).
+**Status:** Implemented in the platform. Provider-backed and browser qualification are tracked in the [acceptance evidence](../../.ai-factory/plans/feature-acp-context-usage-compaction.md). See [ADR-215](../decisions/adr-215.md).
 
 ## Purpose
 
@@ -83,5 +83,5 @@ before it reported usage. A silent or unavailable adapter has no reading.
 
 ## Linked artifacts
 
-- [ADR-210](../decisions/adr-210.md), [sessions](sessions.md), [event plane](execution-event-plane.md), [scratch](scratch-runs.md), [guardrails](guardrail-hooks.md), [runners](acp-runners.md)
+- [ADR-215](../decisions/adr-215.md), [sessions](sessions.md), [event plane](execution-event-plane.md), [scratch](scratch-runs.md), [guardrails](guardrail-hooks.md), [runners](acp-runners.md)
 - [Run SSE](../api/async/web-runs.asyncapi.yaml), [ACP wire](../api/external/acp.asyncapi.yaml), [REST](../api/web.openapi.yaml), [database schema](../database-schema.md)

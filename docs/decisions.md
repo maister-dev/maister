@@ -249,7 +249,12 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-207](#adr-207-task-completion-after-a-confirmed-pull-request-merge) | Task completion after a confirmed pull-request merge | Accepted | 2026-11-15 |
 | [ADR-208](#adr-208-run-duration-and-execution-time) | Run duration and execution time | Accepted | 2026-11-15 |
 | [ADR-209](#adr-209-active-sidebar-membership-by-attention-reason) | Active sidebar membership by attention reason | Accepted | 2026-11-15 |
-| [ADR-210](#adr-210-acp-context-observations-and-overflow-recovery) | ACP context observations and overflow recovery | Accepted | 2026-11-20 |
+| [ADR-210](#adr-210-versioned-agent-memory-vaults-in-postgresql) | Versioned agent memory vaults in PostgreSQL | Accepted | 2026-11-19 |
+| [ADR-211](#adr-211-reviewed-installation-agent-reach) | Reviewed installation agent reach | Accepted | 2026-11-19 |
+| [ADR-212](#adr-212-unified-optional-knowledge-and-memory-review) | Unified optional knowledge and memory review | Accepted | 2026-11-19 |
+| [ADR-213](#adr-213-librarian-knowledge-and-vault-confirmations) | Librarian knowledge and vault confirmations | Accepted | 2026-11-19 |
+| [ADR-214](#adr-214-operational-preparation-and-undispatched-cancellation) | Operational preparation and undispatched cancellation | Proposed | 2026-11-20 |
+| [ADR-215](#adr-215-acp-context-observations-and-overflow-recovery) | ACP context observations and overflow recovery | Accepted | 2026-11-20 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2406,11 +2411,56 @@ Full record: [`decisions/adr-209.md`](decisions/adr-209.md)
 
 ---
 
-### ADR-210: ACP context observations and overflow recovery
+### ADR-210: Versioned agent memory vaults in PostgreSQL
+
+**Status:** Accepted
+**Date:** 2026-11-19
+
+Full record: [`decisions/adr-210.md`](decisions/adr-210.md)
+
+---
+
+### ADR-211: Reviewed installation agent reach
+
+**Status:** Accepted
+**Date:** 2026-11-19
+
+Full record: [`decisions/adr-211.md`](decisions/adr-211.md)
+
+---
+
+### ADR-212: Unified optional knowledge and memory review
+
+**Status:** Accepted
+**Date:** 2026-11-19
+
+Full record: [`decisions/adr-212.md`](decisions/adr-212.md)
+
+---
+
+### ADR-213: Librarian knowledge and vault confirmations
+
+**Status:** Accepted
+**Date:** 2026-11-19
+
+Full record: [`decisions/adr-213.md`](decisions/adr-213.md)
+
+---
+
+### ADR-214: Operational preparation and undispatched cancellation
+
+**Status:** Proposed
+**Date:** 2026-11-20
+
+Full record: [`decisions/adr-214.md`](decisions/adr-214.md)
+
+---
+
+### ADR-215: ACP context observations and overflow recovery
 
 **Status:** Accepted
 **Date:** 2026-11-20
 
-Full record: [`decisions/adr-210.md`](decisions/adr-210.md)
+Full record: [`decisions/adr-215.md`](decisions/adr-215.md)
 
 ---

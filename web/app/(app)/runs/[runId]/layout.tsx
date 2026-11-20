@@ -1618,7 +1618,11 @@ export default async function RunDetailLayout({
 
   const outcomeSummary = isOperational
     ? hasOperationalResult && operational
-      ? tOperational(operational.effectiveOutcome ?? "pending")
+      ? tOperational(
+          operational.continuationAttention
+            ? "continuationAttention"
+            : (operational.effectiveOutcome ?? "pending"),
+        )
       : t("outcomeUnknown")
     : publicResult
       ? resultStatusLabels[publicResult.resultStatus]

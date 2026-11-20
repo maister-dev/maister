@@ -62,6 +62,10 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import {
+  assertMemorySessionSources,
+  stageProjectFlowMemory,
+} from "@/lib/agent-memory-vault/injection";
 import { appendAssignmentQuestionAnswerPrompt } from "@/lib/specialist-assignments/flow-question";
 import { appendSpecialistAssignmentContextPrompt } from "@/lib/specialist-assignments/projection";
 import {
@@ -1344,8 +1348,9 @@ export async function runAgentStep(
 async function resolveFlowRolePrompt(
   prompt: string,
   ctx: RunAgentStepCtx,
-): Promise<string> {
+): Promise<{ prompt: string; personaId: string | null }> {
   let promptTemplate = prompt;
+  let personaId: string | null = null;
 
   // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
   // the agent's .md body becomes the system block and the node prompt is
@@ -1365,6 +1370,7 @@ async function resolveFlowRolePrompt(
 
     if (bound.mode === "session") {
       promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+      personaId = ctx.agentBinding.id;
     }
   } else if (ctx.runPersonaAgentId) {
     // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
@@ -1385,10 +1391,11 @@ async function resolveFlowRolePrompt(
 
     if (bound.mode === "session") {
       promptTemplate = `${bound.prompt}\n\n## Task\n\n${prompt}`;
+      personaId = ctx.runPersonaAgentId;
     }
   }
 
-  return promptTemplate;
+  return { prompt: promptTemplate, personaId };
 }
 
 async function dispatchAgentStep(
@@ -1416,11 +1423,11 @@ async function dispatchAgentStep(
 
     if (completed) return completed;
   }
-  const promptTemplate =
+  const role =
     preparedPrompt ?? (await resolveFlowRolePrompt(step.prompt, ctx));
 
   const rendered = renderStrict(
-    promptTemplate,
+    role.prompt,
     ctx.context as unknown as Record<string, unknown>,
     { traceLog: log },
   );
@@ -1476,9 +1483,32 @@ async function dispatchAgentStep(
           contextualPrompt,
         )
       : contextualPrompt;
+  const nodeAttemptId = ctx.nodeAttemptId;
+  const isProjectNode =
+    nodeAttemptId &&
+    !("owner" in ctx.context.run) &&
+    (ctx.promptOwner?.variant === "node" ||
+      ctx.promptOwner?.variant === "permission_resume");
+  const database: Db = ctx.db ?? getDb();
+
+  if (isProjectNode && ctx.resumeSessionId)
+    await database.transaction((tx) =>
+      assertMemorySessionSources(tx, ctx.runId),
+    );
+  const memory =
+    isProjectNode && role.personaId && !ctx.resumeSessionId
+      ? await stageProjectFlowMemory(database, {
+          runId: ctx.runId,
+          nodeAttemptId,
+          agentId: role.personaId,
+          nodeId: ctx.stepId,
+        })
+      : null;
   const resolvedPrompt = ctx.resumeSessionId
     ? RESUME_READONLY_LIFT + clarifiedPrompt
-    : clarifiedPrompt;
+    : memory
+      ? [clarifiedPrompt, memory.text].join("\n\n")
+      : clarifiedPrompt;
 
   log.info(
     {
@@ -1562,7 +1592,7 @@ async function dispatchAgentStep(
           ctx.runId,
         ));
 
-  return runNewSession(step, ctx, bound, resolvedPrompt);
+  return runNewSession(step, ctx, bound, resolvedPrompt, memory?.projectId);
 }
 
 async function runNewSession(
@@ -1570,6 +1600,7 @@ async function runNewSession(
   ctx: RunAgentStepCtx,
   execution: AgentExecution,
   resolvedPrompt: string,
+  memoryProjectId?: string,
 ): Promise<
   StepResult & {
     acpSessionId?: string;
@@ -1609,6 +1640,33 @@ async function runNewSession(
             mcpServers: ctx.mcpServers,
             enforcementProfile: ctx.enforcementProfile,
           };
+
+      if (
+        !ctx.prepareSessionCapabilities &&
+        memoryProjectId &&
+        ctx.nodeAttemptId
+      ) {
+        const { issueProjectVaultNodeToken } =
+          await import("@/lib/agents/tokens");
+        const { agentFacadeMcpServer } = await import("@/lib/agents/launch");
+        const credential = await issueProjectVaultNodeToken({
+          projectId: memoryProjectId,
+          runId: ctx.runId,
+          nodeAttemptId: ctx.nodeAttemptId,
+          db: ctx.db,
+        });
+        const facade = agentFacadeMcpServer(credential.secret);
+
+        if (!facade)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Flow memory requires the bundled MCP facade",
+          );
+        sessionCapabilities.mcpServers = [
+          ...(sessionCapabilities.mcpServers ?? []),
+          { ...facade, env: { ...facade.env, MAISTER_MCP_TOOLSET: "vault" } },
+        ];
+      }
 
       // ADR-166 D7: the handle form — the worktree, repo root, and context
       // mounts are adopted ONCE per assignment (`runs.context_mounts` rides the

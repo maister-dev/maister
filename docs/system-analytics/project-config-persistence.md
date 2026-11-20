@@ -322,3 +322,7 @@ refuses adoption with guidance; no unknown Git lock is removed. A collision
 before successful linking leaves the existing lock untouched. A crash after
 linking, after ref commit or during reservation cleanup is resumed by that same
 proof before any repository mutation or receipt repair.
+
+## Operational preparation recovery (Designed)
+
+Preparation, task launch dispatch and cleanup, Pull and promotion, and configuration publication and recovery share the common Git-directory mutation fence. Preparation holds it through Git mutation and durable publication. Logical settlement runs after release. An orphan remains subject to the existing process-group exclusion and recovery checks. See [Agent workspace preparation](agent-preparation.md).

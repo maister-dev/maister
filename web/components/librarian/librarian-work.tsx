@@ -97,6 +97,10 @@ function Card({
         <p className="m-0 mt-1 text-[11px] text-mute">
           {t("linkedUnavailable")}
         </p>
+      ) : card.effectPreview !== undefined ? (
+        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-canvas p-2 text-xs">
+          {card.effectPreview}
+        </pre>
       ) : card.action === "statement_accept" ? (
         <StatementDiff card={card} />
       ) : card.action === "memory_suggest" ? (

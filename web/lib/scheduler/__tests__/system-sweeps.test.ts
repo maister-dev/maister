@@ -40,6 +40,7 @@ const runAgentMaterializationCleanupSweepMock = vi.hoisted(() => vi.fn());
 const runSyncRecoverySweepMock = vi.hoisted(() => vi.fn());
 const runBrainDecaySweepMock = vi.hoisted(() => vi.fn());
 const runBrainReindexSweepMock = vi.hoisted(() => vi.fn());
+const runMemoryIndexSweepMock = vi.hoisted(() => vi.fn());
 const sweepEvaluationEvidenceMock = vi.hoisted(() => vi.fn());
 const runPlainAgentDirectoryGcSweepMock = vi.hoisted(() => vi.fn());
 const ensureLocalExecutionDataPlaneMock = vi.hoisted(() => vi.fn());
@@ -177,6 +178,9 @@ vi.mock("@/lib/brain/decay", () => ({
 vi.mock("@/lib/brain/reindex", () => ({
   runBrainReindexSweep: runBrainReindexSweepMock,
 }));
+vi.mock("@/lib/agent-memory-vault/embedding-sweep", () => ({
+  runMemoryIndexSweep: runMemoryIndexSweepMock,
+}));
 vi.mock("@/lib/evaluations/evidence/gc", () => ({
   sweepEvaluationEvidence: sweepEvaluationEvidenceMock,
 }));
@@ -267,6 +271,9 @@ describe("scheduler system sweeps", () => {
     // shape matters, not just the resolution.
     runBrainDecaySweepMock.mockReset().mockResolvedValue({ errors: [] });
     runBrainReindexSweepMock.mockReset().mockResolvedValue({ errors: [] });
+    runMemoryIndexSweepMock
+      .mockReset()
+      .mockResolvedValue({ indexed: 0, embedded: 0, failed: 0 });
     runReconcileSweepMock.mockReset().mockResolvedValue({ reconciled: 0 });
     reconcileTerminalCostRollupsMock
       .mockReset()
@@ -803,11 +810,12 @@ describe("scheduler system sweeps", () => {
     );
   });
 
-  it("runs the cost-rollup reconcile under the same scheduler-owned sweep", async () => {
+  it("runs cost reconciliation and memory indexing under the existing scheduler sweep", async () => {
     const { runSystemSweep } = await import("../system-sweeps");
 
     await runSystemSweep();
 
     expect(reconcileTerminalCostRollupsMock).toHaveBeenCalledTimes(1);
+    expect(runMemoryIndexSweepMock).toHaveBeenCalledTimes(1);
   });
 });

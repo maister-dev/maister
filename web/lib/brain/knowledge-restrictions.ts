@@ -3,11 +3,13 @@ import "server-only";
 import type {
   KnowledgeAccessRestriction,
   ExecutionContextRestriction,
+  VaultRevisionRestriction,
 } from "@/lib/company/types";
 import type { KnowledgePrincipal } from "./knowledge-types";
 import type { KnowledgeTransaction } from "./knowledge-access";
 
 import { sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { assignmentInputReadPolicy } from "./knowledge-assignment-policy";
 import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
@@ -18,7 +20,9 @@ import {
 } from "./knowledge-access";
 import {
   projectContextReadPolicy,
+  projectVisibilityReadPolicy,
   agentMemoryReadPolicy,
+  vaultRevisionReferenceQuery,
 } from "./knowledge-context-policy";
 
 import {
@@ -39,6 +43,23 @@ export type KnowledgeAccessWalk = Readonly<{
   visited: readonly string[];
   remaining: number;
 }>;
+
+const retainedVaultRestrictions = z
+  .array(
+    z.union([
+      knowledgeAccessRestrictionSchema,
+      z.strictObject({
+        kind: z.literal("legacy_project_private"),
+        projectId: z.string().min(1).max(128),
+      }),
+    ]),
+  )
+  .max(256);
+const retainedVaultSources = z.object({
+  installation: z.boolean(),
+  source_project_ids: z.array(z.string().min(1).max(128)).max(256),
+  source_restrictions: retainedVaultRestrictions,
+});
 
 export function unavailableKnowledgeReference(): MaisterError {
   return new MaisterError(
@@ -120,13 +141,15 @@ async function authorizeContextRestriction(
     "knowledge:read",
   );
   const policy =
-    restriction.kind === "project_context"
-      ? projectContextReadPolicy(identity, sql`${restriction.projectId}`)
-      : agentMemoryReadPolicy(
-          identity,
-          sql`${restriction.projectId}`,
-          sql`${restriction.agentId}`,
-        );
+    restriction.kind === "project_visibility"
+      ? projectVisibilityReadPolicy(identity, sql`${restriction.projectId}`)
+      : restriction.kind === "project_context"
+        ? projectContextReadPolicy(identity, sql`${restriction.projectId}`)
+        : agentMemoryReadPolicy(
+            identity,
+            sql`${restriction.projectId}`,
+            sql`${restriction.agentId}`,
+          );
 
   if ((await tx.execute(sql`SELECT 1 WHERE ${policy}`)).rows.length === 0)
     throw unavailableKnowledgeReference();
@@ -175,6 +198,56 @@ async function authorizeAssignmentInputRestriction(
   );
 }
 
+async function authorizeVaultRevisionRestriction(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  restriction: VaultRevisionRestriction,
+  state: KnowledgeAccessWalk,
+): Promise<KnowledgeAccessWalk> {
+  const key = `agent_vault_revision_v1:${JSON.stringify(restriction)}`;
+
+  if (state.visited.includes(key)) return state;
+  const next = enterRestriction(state, key);
+  const identity = await resolveKnowledgePrincipal(
+    tx,
+    principal,
+    "knowledge:read",
+  );
+  const { rows } = await tx.execute(
+    vaultRevisionReferenceQuery(
+      identity,
+      sql`${JSON.stringify(restriction)}::jsonb`,
+    ),
+  );
+  const source = retainedVaultSources.safeParse(rows[0]);
+
+  if (!source.success) throw unavailableKnowledgeReference();
+  const projectSources = source.data.source_project_ids.map((projectId) => ({
+    kind: source.data.installation
+      ? ("project_visibility" as const)
+      : ("project_context" as const),
+    projectId,
+  }));
+
+  const withProjects = await authorizeSourceRestrictions(
+    tx,
+    principal,
+    projectSources,
+    next,
+  );
+
+  return authorizeSourceRestrictions(
+    tx,
+    principal,
+    source.data.source_restrictions.map((ref) =>
+      ref.kind === "legacy_project_private"
+        ? { kind: "project_context", projectId: ref.projectId }
+        : ref,
+    ),
+    withProjects,
+  );
+}
+
 export async function authorizeSourceRestrictions(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -212,9 +285,19 @@ export async function authorizeSourceRestrictions(
       );
       continue;
     }
+    if (restriction.kind === "agent_vault_revision_v1") {
+      current = await authorizeVaultRevisionRestriction(
+        tx,
+        principal,
+        restriction,
+        current,
+      );
+      continue;
+    }
     current =
       restriction.kind === "agent_memory" ||
-      restriction.kind === "project_context"
+      restriction.kind === "project_context" ||
+      restriction.kind === "project_visibility"
         ? await authorizeContextRestriction(tx, principal, restriction, current)
         : restriction.kind === "record"
           ? (
@@ -283,6 +366,22 @@ export async function authorizeKnowledgeRecordRead(
 
       if (!initiatingGrant) throw unavailableKnowledgeReference();
     }
+    const identity = await resolveKnowledgePrincipal(
+      tx,
+      principal,
+      "knowledge:read",
+    );
+
+    if (
+      identity.kind === "installation_agent" &&
+      identity.installation.principal.kind === "manual"
+    ) {
+      const initiatingGrant =
+        await tx.execute(sql`SELECT id FROM brain_record_grants WHERE record_id=${id}
+        AND principal_type='user' AND principal_id=${identity.installation.principal.userId} AND action='knowledge:read' AND revoked_at IS NULL FOR SHARE`);
+
+      if (!initiatingGrant.rows.length) throw unavailableKnowledgeReference();
+    }
     if (!grant) throw unavailableKnowledgeReference();
   }
 
@@ -328,7 +427,9 @@ export function restrictionsForKnowledgeAccess(
     if (kind === "stand_target") return { kind, companyId: id };
     if (
       kind === "agent_memory" ||
+      kind === "agent_vault_revision_v1" ||
       kind === "project_context" ||
+      kind === "project_visibility" ||
       kind === "assignment_input"
     ) {
       const parsed = knowledgeAccessRestrictionSchema.safeParse(

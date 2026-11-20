@@ -14,6 +14,10 @@ import { MaisterError } from "@/lib/errors";
 import { submitOwnerMessage } from "@/lib/librarian/admission";
 import { cardTarget, proposeLibrarianCard } from "@/lib/librarian/cards";
 import {
+  appendConversationMessage,
+  lockOwnerConversation,
+} from "@/lib/librarian/conversation";
+import {
   forgetPersonalMemory,
   rememberPersonalMemory,
 } from "@/lib/librarian/memory";
@@ -464,6 +468,71 @@ describe("IT-LAU-01: the owner comes from the session, never the request", () =>
     );
 
     expect(res.status).toBe(404);
+  });
+});
+
+it("AV-08 pages a reply with retained project authority and masks it after revocation", async () => {
+  const ownerId = await seedActiveUser(db);
+  const project = await seedProjectRow(db);
+
+  await addProjectMember(db, {
+    projectId: project.id,
+    userId: ownerId,
+    role: "member",
+  });
+  const submitted = await sendAs(ownerId, "Show the activity in my project.");
+  const turnId = submitted.turn!.id;
+
+  await database.pool.query(
+    "UPDATE librarian_turns SET knowledge_access = $2 WHERE id = $1",
+    [
+      turnId,
+      {
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [{ kind: "project_visibility", projectId: project.id }],
+      },
+    ],
+  );
+  await database.db.transaction(async (tx) => {
+    const { conversation, segment } = await lockOwnerConversation(tx, ownerId);
+
+    await appendConversationMessage(tx, {
+      conversationId: conversation.id,
+      segmentId: segment.id,
+      authorKind: "librarian",
+      turnId,
+      body: "The project milestone is complete.",
+    });
+  });
+  session = { id: ownerId, role: "member" };
+  const request = () => json("/api/librarian/messages?view=work", "GET");
+  const visible = await routes.messages.GET(request());
+
+  expect(visible.status).toBe(200);
+  expect(await visible.json()).toMatchObject({
+    messages: expect.arrayContaining([
+      expect.objectContaining({
+        authorKind: "librarian",
+        body: "The project milestone is complete.",
+        masked: false,
+      }),
+    ]),
+  });
+
+  await removeProjectMember(db, { projectId: project.id, userId: ownerId });
+  const hidden = await routes.messages.GET(request());
+
+  expect(hidden.status).toBe(200);
+  expect(await hidden.json()).toMatchObject({
+    messages: expect.arrayContaining([
+      expect.objectContaining({
+        authorKind: "librarian",
+        body: null,
+        masked: true,
+      }),
+    ]),
   });
 });
 

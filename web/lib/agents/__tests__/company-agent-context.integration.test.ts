@@ -11,6 +11,7 @@ import type { CompanyAgentExecutionSnapshot } from "../company-agent-execution-t
 import type { PreparedSpecialistAssignment } from "@/lib/specialist-assignments/types";
 
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import {
   cp,
   lstat,
@@ -21,6 +22,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import { join, resolve, sep } from "node:path";
 import { Writable } from "node:stream";
@@ -476,6 +478,14 @@ beforeAll(async () => {
   );
   await writeFile(
     join(source, "maister-agents/runner-observer.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/vault-installation-fixture.md"),
+    primarySource,
+  );
+  await writeFile(
+    join(source, "maister-agents/vault-installation-producer.md"),
     primarySource,
   );
   await writeFile(
@@ -17418,4 +17428,1351 @@ describe("company terminal evidence and project child dispatch", () => {
       else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
     }
   });
+});
+
+it("AV-06 reserves an installation Run and intersects current project authority before MCP disclosure", async () => {
+  const { updateCompanySpecialistBinding } =
+    await import("../company-binding-mutations");
+  const { retainCompanyAgentSessionCredential } = await import("../tokens");
+  const { captureInstallationProjects, installationRunProjects } =
+    await import("../installation-source-capture");
+  const projectList = await import("@/app/api/v1/ext/projects/route");
+
+  type ResponseContract = {
+    content: { "application/json": { schema: object } };
+  };
+  const externalContract = parse(
+    await readFile(
+      resolve("../docs/api/external/operations.openapi.yaml"),
+      "utf8",
+    ),
+  ) as {
+    components: {
+      schemas: Record<string, object>;
+      responses: Record<string, ResponseContract>;
+    };
+    paths: Record<
+      string,
+      {
+        get: {
+          responses: Record<string, ResponseContract | { $ref: string }>;
+        };
+      }
+    >;
+  };
+  const api = new Ajv({ strict: false, validateFormats: false });
+  const validators = new Map<string, ReturnType<typeof api.compile>>();
+
+  async function assertExternalRead(
+    path: string,
+    response: Response,
+    status = 200,
+  ): Promise<unknown> {
+    expect(response.status, await response.clone().text()).toBe(status);
+    const body: unknown = await response.json();
+    const operation = externalContract.paths[path]!.get.responses[status]!;
+    const { content } =
+      "$ref" in operation
+        ? externalContract.components.responses[
+            operation.$ref.split("/").at(-1)!
+          ]!
+        : operation;
+    const key = `${path} ${status}`;
+    const validate =
+      validators.get(key) ??
+      api.compile({
+        components: externalContract.components,
+        ...content["application/json"].schema,
+      });
+
+    validators.set(key, validate);
+    expect(validate(body), `${key}: ${api.errorsText(validate.errors)}`).toBe(
+      true,
+    );
+
+    return body;
+  }
+  const noteCommand =
+    await import("@/app/api/v1/ext/agent/memory/commands/route");
+  const { hosts } = await fakeExecutionHosts(database.db);
+  const db: Db = database.db;
+  const launchUserId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [launchUserId, `${launchUserId}@example.test`],
+  );
+  await createCompanyGrants(db, administratorId, {
+    principalKind: "user",
+    principalId: launchUserId,
+    actions: [
+      "specialists:read",
+      "specialists:manage",
+      "assignments:read",
+      "assignments:submit",
+      "assignments:update",
+      "assignments:recover",
+    ],
+    idempotencyKey: randomUUID(),
+  });
+  const installationAdminId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [installationAdminId, `${installationAdminId}@example.test`],
+  );
+  const pin = assignmentInput.standingDefinition;
+  const candidateId = "rah:vault-installation-fixture";
+  const effective = await resolveInstalledAgentDefinition(db, {
+    agentId: candidateId,
+    packageInstallId: pin.packageInstallId,
+  });
+
+  await createCompanyGrants(db, installationAdminId, {
+    principalKind: "user",
+    principalId: installationAdminId,
+    actions: [
+      "specialists:read",
+      "specialists:manage",
+      "assignments:read",
+      "assignments:submit",
+      "assignments:update",
+    ],
+    idempotencyKey: randomUUID(),
+  });
+  const configuration = {
+    owner: assignmentInput.owner as { kind: "company"; companyId: string },
+    packageInstallId: pin.packageInstallId,
+    packageRevision: pin.packageRevision,
+    definitionSha256: agentDefinitionSha256(effective.parsed),
+    enabled: true,
+    configuration: {},
+    grantActions: [] as [],
+  };
+  const grant = {
+    schemaVersion: 1 as const,
+    reach: "active_projects" as const,
+    memoryEnabled: true,
+    scopes: [
+      "projects:read",
+      "runs:read",
+      "tasks:read",
+      "activity:read",
+      "observatory:read",
+      "memory:read",
+      "memory:propose",
+      "knowledge:read",
+      "knowledge:propose",
+      "agent_memory:read",
+      "agent_memory:propose",
+    ] as const,
+  };
+  const { specialist } = await createCompanySpecialistBinding(
+    db,
+    installationAdminId,
+    candidateId,
+    {
+      ...configuration,
+      installationGrant: { ...grant, scopes: [...grant.scopes] },
+      idempotencyKey: randomUUID(),
+    },
+  );
+  const runnerId = randomUUID();
+
+  await db.insert(platformAcpRunners).values({
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "fixture",
+    provider: { kind: "anthropic" },
+    readinessStatus: "Ready",
+  });
+  await db
+    .insert(platformRuntimeSettings)
+    .values({ id: "singleton", defaultRunnerId: runnerId })
+    .onConflictDoUpdate({
+      target: platformRuntimeSettings.id,
+      set: { defaultRunnerId: runnerId },
+    });
+  const assignment = await createSpecialistAssignment(db, launchUserId, {
+    ...assignmentInput,
+    destination: { kind: "inbox", userId: launchUserId },
+    specialistBindingId: specialist.bindingId,
+    responsibleAgentId: candidateId,
+    standingDefinition: {
+      ...pin,
+      agentId: candidateId,
+      definition: effective.parsed,
+      definitionSha256: configuration.definitionSha256,
+    },
+  });
+  const run = await reserveCompanyAgentRun(
+    db,
+    launchUserId,
+    {
+      ...request,
+      assignmentId: assignment.id,
+      bindingId: specialist.bindingId,
+      bindingRevision: specialist.configRevision,
+    },
+    hosts,
+  );
+  const [a, b, archived] = [
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+  ].sort() as [string, string, string];
+
+  for (const [id, name, taskKey] of [
+    [a, "install-a", "INSTA"],
+    [b, "install-b", "INSTB"],
+    [archived, "install-archive", "INSTAR"],
+  ] as const) {
+    await database.pool.query(
+      "INSERT INTO projects(id,slug,name,repo_path,task_key,archived_at) VALUES($1,$2,$2,$3,$4,$5)",
+      [
+        id,
+        name,
+        join(root, name),
+        taskKey,
+        id === archived ? new Date() : null,
+      ],
+    );
+  }
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member'),($4,$5,$3,'member')",
+    [randomUUID(), a, launchUserId, randomUUID(), archived],
+  );
+  await database.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES(1) ON CONFLICT DO NOTHING",
+  );
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    run.runId,
+  ]);
+  const token = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, run.runId),
+  );
+  const headers = {
+    authorization: `Bearer ${token.secret}`,
+    "content-type": "application/json",
+  };
+  const { secret: userSecret } = await issueUserAccessToken(
+    {
+      name: "Installation facade ordinary reader",
+      ownerUserId: installationAdminId,
+      scopes: ["projects:read", "tasks:read", "runs:read"],
+    },
+    db,
+  );
+  const ordinaryHeaders = { authorization: `Bearer ${userSecret}` };
+  const listUrl = "http://localhost/api/v1/ext/projects";
+  const list = (query = "") =>
+    projectList.GET(new NextRequest(listUrl + query, { headers }));
+  const initial = await list();
+
+  expect(initial.headers.get("cache-control")).toBe("private, no-store");
+  const initialBody = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    initial,
+  )) as {
+    items: { id: string }[];
+  };
+
+  expect(initialBody.items.map(({ id }) => id)).toContain(a);
+  await assertExternalRead(
+    "/api/v1/ext/projects",
+    await projectList.GET(new NextRequest(listUrl)),
+    401,
+  );
+  expect(
+    await assertExternalRead(
+      "/api/v1/ext/projects",
+      await projectList.GET(
+        new NextRequest(listUrl, { headers: ordinaryHeaders }),
+      ),
+    ),
+  ).toMatchObject({
+    projects: expect.arrayContaining([
+      { id: a, slug: "install-a", name: "install-a" },
+    ]),
+  });
+  await expect(installationRunProjects(db, run.runId)).resolves.toContain(a);
+  await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
+    b,
+  );
+  await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
+    archived,
+  );
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), b, launchUserId],
+  );
+  const firstPage = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    await list("?limit=1"),
+  )) as { items: { id: string }[]; nextCursor: string };
+
+  expect(firstPage.items).toHaveLength(1);
+  expect(firstPage.nextCursor).toEqual(expect.any(String));
+  expect(firstPage.items[0]?.id).toBe(a);
+  expect(await installationRunProjects(db, run.runId)).toEqual([a]);
+  const nextPage = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    await list(`?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`),
+  )) as { items: { id: string }[]; nextCursor: string | null };
+
+  expect(
+    [...firstPage.items, ...nextPage.items].map(({ id }) => id).sort(),
+  ).toEqual([a, b].sort());
+  expect(nextPage.nextCursor).toBeNull();
+  const activityRunId = randomUUID();
+  const activityEventId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,started_at) VALUES($1,$2,'flow','Done','fixture','fixture',now()-interval '90 days')",
+    [activityRunId, a],
+  );
+  await database.pool.query(
+    "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,payload,occurred_at,ingest_disposition) VALUES($1,'manager',$1,$2,'fixture.observation','fixture','{}',now(),'accepted')",
+    [activityEventId, activityRunId],
+  );
+  const { generateToken } = await import("@/lib/tokens/secret");
+  const activityToken = generateToken();
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`UPDATE project_tokens SET revoked_at=clock_timestamp() WHERE id=${token.tokenId}`,
+    );
+    // A subset of the appointed scopes is legal on the exact retained Run.
+    await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,installation_run_id,name,token_kind,
+      owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
+      SELECT ${randomUUID()},company_id,company_run_id,installation_run_id,name,token_kind,
+        owner_user_id,agent_id,${activityToken.prefix},${activityToken.hash},'["activity:read"]'::jsonb,expires_at
+      FROM project_tokens WHERE id=${token.tokenId}`);
+  });
+  const { GET: getManualActivity } =
+    await import("@/app/api/v1/ext/runs/[runId]/activity/route");
+  const activityResponse = await getManualActivity(
+    new NextRequest(
+      `http://localhost/api/v1/ext/runs/${activityRunId}/activity`,
+      {
+        headers: { authorization: `Bearer ${activityToken.secret}` },
+      },
+    ),
+    { params: Promise.resolve({ runId: activityRunId }) },
+  );
+
+  expect(
+    await assertExternalRead(
+      "/api/v1/ext/runs/{runId}/activity",
+      activityResponse,
+    ),
+  ).toMatchObject({ items: [{ id: activityEventId, projectId: a }] });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_access FROM runs WHERE id=$1",
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      knowledge_access: expect.objectContaining({
+        restrictions: expect.arrayContaining([
+          { kind: "project_context", projectId: a },
+        ]),
+      }),
+    },
+  ]);
+
+  const refreshedToken = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, run.runId),
+  );
+
+  headers.authorization = `Bearer ${refreshedToken.secret}`;
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+    [a, launchUserId],
+  );
+  try {
+    expect(
+      await assertExternalRead("/api/v1/ext/projects", await list(), 409),
+    ).toMatchObject({ code: "PRECONDITION" });
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  } finally {
+    await database.pool.query(
+      "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+      [a, launchUserId],
+    );
+  }
+  const slug = "install-a";
+  const params = { params: Promise.resolve({ slug }) };
+  const directory =
+    await import("@/app/api/v1/ext/projects/[slug]/directory/route");
+  const directoryPath = "/api/v1/ext/projects/{slug}/directory";
+  const directoryUrl = `http://localhost/api/v1/ext/projects/${slug}/directory`;
+
+  expect(
+    await assertExternalRead(
+      directoryPath,
+      await directory.GET(new NextRequest(directoryUrl, { headers }), params),
+    ),
+  ).toEqual({ id: a, projectId: a, slug, name: slug });
+  expect(
+    await assertExternalRead(
+      directoryPath,
+      await directory.GET(
+        new NextRequest(directoryUrl, { headers: ordinaryHeaders }),
+        params,
+      ),
+    ),
+  ).toMatchObject({ project: { id: a, slug, name: slug } });
+
+  const tasks = await import("@/app/api/v1/ext/projects/[slug]/tasks/route");
+  const taskId = randomUUID();
+  const taskTitle = "Inspect scoped execution metadata";
+
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,$3,'Review run data')",
+    [taskId, a, taskTitle],
+  );
+  const taskListPath = "/api/v1/ext/projects/{slug}/tasks";
+  const taskListUrl = `http://localhost/api/v1/ext/projects/${slug}/tasks`;
+  const compactTask = {
+    id: taskId,
+    projectId: a,
+    slug,
+    number: 1,
+    title: taskTitle,
+    status: "Backlog",
+  };
+
+  expect(
+    await assertExternalRead(
+      taskListPath,
+      await tasks.GET(new NextRequest(taskListUrl, { headers }), params),
+    ),
+  ).toEqual({ items: [compactTask], nextCursor: null });
+  expect(
+    await assertExternalRead(
+      taskListPath,
+      await tasks.GET(
+        new NextRequest(taskListUrl, { headers: ordinaryHeaders }),
+        params,
+      ),
+    ),
+  ).toMatchObject({ tasks: [{ id: taskId, prompt: "Review run data" }] });
+  const task =
+    await import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/route");
+  const taskPath = "/api/v1/ext/projects/{slug}/tasks/{taskId}";
+  const taskUrl = `${taskListUrl}/${taskId}`;
+  const taskParams = { params: Promise.resolve({ slug, taskId }) };
+
+  expect(
+    await assertExternalRead(
+      taskPath,
+      await task.GET(new NextRequest(taskUrl, { headers }), taskParams),
+    ),
+  ).toEqual(compactTask);
+  expect(
+    await assertExternalRead(
+      taskPath,
+      await task.GET(
+        new NextRequest(taskUrl, { headers: ordinaryHeaders }),
+        taskParams,
+      ),
+    ),
+  ).toMatchObject({ id: taskId, prompt: "Review run data" });
+  const emptyOrMissing = (projectSlug: string) =>
+    tasks.GET(
+      new NextRequest(
+        `http://localhost/api/v1/ext/projects/${projectSlug}/tasks`,
+        { headers },
+      ),
+      { params: Promise.resolve({ slug: projectSlug }) },
+    );
+
+  expect(
+    await assertExternalRead(taskListPath, await emptyOrMissing("install-b")),
+  ).toEqual({
+    items: [],
+    nextCursor: null,
+  });
+  const [archivedTasks, missingTasks] = await Promise.all([
+    emptyOrMissing("install-archive"),
+    emptyOrMissing("install-missing"),
+  ]);
+
+  expect(await assertExternalRead(taskListPath, archivedTasks, 404)).toEqual(
+    await assertExternalRead(taskListPath, missingTasks, 404),
+  );
+  const detailWithPaging = await task.GET(
+    new NextRequest(`${taskUrl}?limit=1`, { headers }),
+    taskParams,
+  );
+
+  expect(
+    await assertExternalRead(taskPath, detailWithPaging, 422),
+  ).toMatchObject({
+    code: "CONFIG",
+  });
+  expect(
+    (
+      await tasks.POST(
+        new NextRequest(taskListUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "Must not create" }),
+        }),
+        params,
+      )
+    ).status,
+  ).toBe(403);
+  await database.pool.query(
+    "UPDATE projects SET brain_enabled=true WHERE id IN ($1,$2)",
+    [a, b],
+  );
+  const { POST: brainProposal } =
+    await import("@/app/api/v1/ext/projects/[slug]/memory/proposals/route");
+  const { POST: knowledgeProposal } =
+    await import("@/app/api/v1/ext/knowledge/proposals/route");
+  const body = {
+    title: "Installation analyzer observation",
+    content: "Covered all visible active projects.",
+  };
+  const brain = await brainProposal(
+    new NextRequest(
+      "http://localhost/api/v1/ext/projects/install-a/memory/proposals",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ kind: "state", draft: body }),
+      },
+    ),
+    params,
+  );
+
+  expect(brain.status, await brain.clone().text()).toBe(201);
+  const embedding = createServer((request, response) => {
+    request.resume();
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ data: [{ index: 0, embedding: [1, 0, 0] }] }));
+  });
+
+  embedding.listen(0, "127.0.0.1");
+  try {
+    await once(embedding, "listening");
+    const address = embedding.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("Expected TCP embedding fixture");
+    await database.pool.query(
+      "UPDATE platform_runtime_settings SET embedding_base_url=$1,embedding_model='fixture',embedding_dimensions=3 WHERE id='singleton'",
+      [`http://127.0.0.1:${address.port}`],
+    );
+    const { GET: recall } =
+      await import("@/app/api/v1/ext/projects/[slug]/memory/route");
+    const recalled = await recall(
+      new NextRequest(
+        "http://localhost/api/v1/ext/projects/install-b/memory?q=observation",
+        { headers },
+      ),
+      { params: Promise.resolve({ slug: "install-b" }) },
+    );
+
+    expect(recalled.status, await recalled.clone().text()).toBe(200);
+    expect(await recalled.json()).toMatchObject({ items: [] });
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      embedding.close((error) => (error ? reject(error) : resolve())),
+    );
+    await database.pool.query(
+      "UPDATE platform_runtime_settings SET embedding_base_url=NULL,embedding_model=NULL,embedding_dimensions=NULL WHERE id='singleton'",
+    );
+  }
+  const knowledge = await knowledgeProposal(
+    new NextRequest("http://localhost/api/v1/ext/knowledge/proposals", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        idempotencyKey: randomUUID(),
+        content: {
+          change: "add",
+          owner: { kind: "project", projectId: a },
+          title: body.title,
+          assertion: body.content,
+          kind: "observation",
+          basis: "unknown",
+          evidence: [],
+          limitations: [],
+          missingEvidence: [],
+        },
+      }),
+    }),
+  );
+
+  expect(knowledge.status, await knowledge.clone().text()).toBe(201);
+  expect(await knowledge.json()).toMatchObject({ status: "pending" });
+  const { GET: searchKnowledge } =
+    await import("@/app/api/v1/ext/knowledge/route");
+
+  expect(
+    await (
+      await searchKnowledge(
+        new NextRequest(
+          `http://localhost/api/v1/ext/knowledge?ownerKind=project&ownerId=${a}`,
+          { headers },
+        ),
+      )
+    ).json(),
+  ).toMatchObject({ items: [] });
+  const proposed = await noteCommand.POST(
+    new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "create",
+        path: "/memories/notes/installation.md",
+        file_text: "Observe the two project runs.",
+        ifHash: null,
+        ifRevisionId: null,
+        requestKey: randomUUID(),
+      }),
+    }),
+  );
+
+  expect(proposed.status, JSON.stringify(await proposed.clone().json())).toBe(
+    202,
+  );
+  const { proposalId } = await proposed.json();
+
+  expect(
+    (
+      await database.pool.query(
+        "SELECT source_project_ids,source_restrictions FROM agent_memory_proposals WHERE id=$1",
+        [proposalId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      source_project_ids: [a, b].sort(),
+      source_restrictions: expect.arrayContaining(
+        [a, b].map((projectId) => ({ kind: "project_context", projectId })),
+      ),
+    },
+  ]);
+  const { decideVaultProposal } =
+    await import("@/lib/agent-memory-vault/review");
+  const { listProposalReviews } =
+    await import("@/lib/queries/knowledge-memory-reviews");
+  const { prepareHumanInstallationVault } =
+    await import("@/lib/agent-memory-vault/installation-access");
+  const { viewAgentMemory } = await import("@/lib/agent-memory-vault/view");
+  const { parseAgentMemoryView } =
+    await import("@/lib/agent-memory-vault/commands");
+  const listReviews = (reviewer: string) =>
+    listProposalReviews(db, reviewer, {
+      kind: "vault",
+      agentId: candidateId,
+      limit: 20,
+    });
+
+  expect((await listReviews(installationAdminId)).items).toContainEqual(
+    expect.objectContaining({ id: proposalId, allowed: ["accept", "reject"] }),
+  );
+  expect((await listReviews(launchUserId)).items).toEqual([]);
+  await expect(
+    decideVaultProposal(db, {
+      proposalId,
+      userId: installationAdminId,
+      expectedVersion: 1,
+      decision: "accept",
+      requestKey: randomUUID(),
+    }),
+  ).resolves.toMatchObject({ state: "accepted" });
+  const command = parseAgentMemoryView({
+    command: "view",
+    path: "/memories/notes/installation.md",
+  });
+  const view = (viewer: string) =>
+    viewAgentMemory(
+      db,
+      command,
+      prepareHumanInstallationVault({
+        userId: viewer,
+        agentId: candidateId,
+        bindingId: specialist.bindingId,
+        action: "read",
+      }),
+    );
+
+  await expect(view(installationAdminId)).resolves.toMatchObject({
+    kind: "note",
+    content: "Observe the two project runs.",
+  });
+  await expect(view(launchUserId)).resolves.toMatchObject({ kind: "note" });
+  await database.pool.query(
+    "UPDATE projects SET archived_at=clock_timestamp() WHERE id=$1",
+    [a],
+  );
+  await expect(view(launchUserId)).rejects.toMatchObject({
+    details: { reason: "agent_memory_unavailable" },
+  });
+  await expect(view(installationAdminId)).resolves.toMatchObject({
+    kind: "note",
+  });
+  await database.pool.query(
+    "UPDATE projects SET archived_at=NULL WHERE id=$1",
+    [a],
+  );
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [a, launchUserId],
+  );
+  await expect(view(launchUserId)).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "agent_memory_unavailable" },
+  });
+  expect(
+    await assertExternalRead("/api/v1/ext/projects", await list(), 409),
+  ).toMatchObject({ code: "PRECONDITION" });
+  await expect(
+    db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  const cron = await createCompanyCronSchedule(db, launchUserId, {
+    owner: configuration.owner,
+    specialistBindingId: specialist.bindingId,
+    cronExpr: "*/5 * * * *",
+    timezone: "UTC",
+    requestAtLaunch: "Inspect recent runs in active installation projects.",
+    enabled: true,
+    idempotencyKey: randomUUID(),
+  });
+  const eventSubscription = await createCompanyEventSchedule(db, launchUserId, {
+    owner: configuration.owner,
+    specialistBindingId: specialist.bindingId,
+    eventKinds: ["run.done"],
+    enabled: true,
+    idempotencyKey: randomUUID(),
+  });
+
+  await database.pool.query(
+    "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 minute' WHERE id=$1",
+    [cron.scheduleId],
+  );
+  await database.pool.query(
+    "UPDATE users SET must_change_password=true WHERE id=$1",
+    [launchUserId],
+  );
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
+  process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
+  try {
+    await runSchedulerTick({ jobKind: "agent_tick" });
+  } finally {
+    if (previousCap === undefined)
+      delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+    else process.env.MAISTER_MAX_CONCURRENT_AGENTS = previousCap;
+  }
+  const [cronRun] = (
+    await database.pool.query<{
+      id: string;
+      status: string;
+      principal: unknown;
+    }>(
+      "SELECT r.id,r.status,authority.principal FROM runs r JOIN agent_installation_run_authorities authority ON authority.run_id=r.id WHERE r.agent_schedule_id=$1",
+      [cron.scheduleId],
+    )
+  ).rows;
+
+  expect(cronRun?.principal).toEqual({ kind: "unattended", trigger: "cron" });
+  expect(cronRun?.status).toBe("Pending");
+  if (!cronRun) throw new Error("Scheduler did not retain an installation Run");
+  expect(
+    (
+      await database.pool.query(
+        "SELECT r.created_by_user_id, i.actor FROM runs r JOIN specialist_run_links link ON link.run_id=r.id JOIN specialist_input_revisions i ON (i.assignment_id,i.revision)=(link.assignment_id,link.input_revision) WHERE r.id=$1",
+        [cronRun.id],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      created_by_user_id: null,
+      actor: {
+        kind: "agent",
+        id: candidateId,
+        runId: cronRun.id,
+        attemptId: null,
+      },
+    },
+  ]);
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    cronRun.id,
+  ]);
+  try {
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, cronRun.id)),
+    ).resolves.toMatchObject({
+      installation: { principal: { kind: "unattended", trigger: "cron" } },
+    });
+    const scheduled = await db.transaction((tx) =>
+      retainCompanyAgentSessionCredential(tx, cronRun.id),
+    );
+    const { GET: getRun } = await import("@/app/api/v1/ext/runs/[runId]/route");
+    const cronHeaders = { authorization: `Bearer ${scheduled.secret}` };
+    const runIds = await Promise.all(
+      [a, b].map(async (source) => {
+        const runId = randomUUID();
+
+        await database.pool.query(
+          "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,started_at,ended_at) VALUES($1,$2,'flow','Done','fixture','fixture',now()-interval '1 minute',now())",
+          [runId, source],
+        );
+        const path = "/api/v1/ext/runs/{runId}";
+        const url = `http://localhost/api/v1/ext/runs/${runId}`;
+        const route = { params: Promise.resolve({ runId }) };
+
+        expect(
+          await assertExternalRead(
+            path,
+            await getRun(new NextRequest(url, { headers: cronHeaders }), route),
+          ),
+        ).toMatchObject({ id: runId, projectId: source, runKind: "flow" });
+        expect(
+          await assertExternalRead(
+            path,
+            await getRun(
+              new NextRequest(url, { headers: ordinaryHeaders }),
+              route,
+            ),
+          ),
+        ).toMatchObject({ id: runId, runnerId: null });
+
+        return runId;
+      }),
+    );
+    const { GET: getActivity } =
+      await import("@/app/api/v1/ext/runs/[runId]/activity/route");
+    const runId = runIds[0]!;
+
+    const eventId = randomUUID();
+    const eventType = "fixture.observation";
+
+    await database.pool.query(
+      "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,payload,occurred_at,ingest_disposition) VALUES($1,'manager',$1,$2,$3,'fixture',$4,now(),'accepted')",
+      [eventId, runId, eventType, { privateData: "Run event payload" }],
+    );
+    const activityPath = "/api/v1/ext/runs/{runId}/activity";
+    const activity = (id: string, requestHeaders: HeadersInit, query = "") =>
+      getActivity(
+        new NextRequest(
+          `http://localhost/api/v1/ext/runs/${id}/activity${query}`,
+          { headers: requestHeaders },
+        ),
+        { params: Promise.resolve({ runId: id }) },
+      );
+
+    expect(
+      await assertExternalRead(
+        activityPath,
+        await activity(runId, cronHeaders),
+      ),
+    ).toEqual({
+      items: [
+        {
+          id: eventId,
+          projectId: a,
+          slug,
+          runId,
+          type: eventType,
+          occurredAt: expect.any(String),
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(
+      await assertExternalRead(
+        activityPath,
+        await activity(runId, ordinaryHeaders),
+      ),
+    ).toMatchObject({
+      items: [],
+      hasMore: false,
+    });
+    await assertExternalRead(
+      activityPath,
+      await activity(randomUUID(), cronHeaders),
+      404,
+    );
+    await assertExternalRead(
+      activityPath,
+      await activity(runId, cronHeaders, "?sinceId=1"),
+      422,
+    );
+    const { GET: observatory } =
+      await import("@/app/api/v1/ext/observatory/summary/route");
+    const observatoryPath = "/api/v1/ext/observatory/summary";
+
+    await assertExternalRead(
+      observatoryPath,
+      await observatory(
+        new NextRequest(`http://localhost${observatoryPath}`, {
+          headers: ordinaryHeaders,
+        }),
+      ),
+      403,
+    );
+
+    for (const [slug, projectId] of [
+      ["install-a", a],
+      ["install-b", b],
+    ]) {
+      const aggregate = await observatory(
+        new NextRequest(
+          `http://localhost/api/v1/ext/observatory/summary?period=24h&slug=${slug}`,
+          { headers: cronHeaders },
+        ),
+      );
+
+      expect(await assertExternalRead(observatoryPath, aggregate)).toEqual({
+        items: [
+          {
+            projectId,
+            slug,
+            runCount: 1,
+            successCount: 1,
+            durationMs: 60000,
+          },
+        ],
+        nextCursor: null,
+      });
+    }
+    await expect(
+      db.transaction((tx) =>
+        captureInstallationProjects(
+          tx,
+          cronRun.id,
+          Array.from({ length: 256 }, () => randomUUID()),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    await expect(installationRunProjects(db, cronRun.id)).resolves.toEqual(
+      [a, b].sort(),
+    );
+    const scheduledProposal = await noteCommand.POST(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${scheduled.secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          command: "create",
+          path: "/memories/notes/cron.md",
+          file_text: "A scheduled observation.",
+          ifHash: null,
+          ifRevisionId: null,
+          requestKey: randomUUID(),
+        }),
+      }),
+    );
+
+    expect(scheduledProposal.status).toBe(202);
+    const { proposalId: cronProposal } = await scheduledProposal.json();
+
+    expect((await listReviews(installationAdminId)).items).toContainEqual(
+      expect.objectContaining({ id: cronProposal }),
+    );
+    await expect(
+      decideVaultProposal(db, {
+        proposalId: cronProposal,
+        userId: installationAdminId,
+        expectedVersion: 1,
+        decision: "accept",
+        requestKey: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ state: "accepted" });
+    expect(
+      (
+        await database.pool.query(
+          "SELECT source_project_ids,author->>'runId' AS author FROM agent_memory_revisions WHERE path='/memories/notes/cron.md'",
+        )
+      ).rows,
+    ).toEqual([{ source_project_ids: [a, b].sort(), author: cronRun.id }]);
+
+    const producingId = "rah:vault-installation-producer";
+    const producingDefinition = await resolveInstalledAgentDefinition(db, {
+      agentId: producingId,
+      packageInstallId: pin.packageInstallId,
+    });
+    const producingDigest = agentDefinitionSha256(producingDefinition.parsed);
+    const { specialist: producingBinding } =
+      await createCompanySpecialistBinding(
+        db,
+        installationAdminId,
+        producingId,
+        {
+          ...configuration,
+          definitionSha256: producingDigest,
+          idempotencyKey: randomUUID(),
+        },
+      );
+    const producingInput = await createSpecialistAssignment(
+      db,
+      installationAdminId,
+      {
+        ...assignmentInput,
+        destination: { kind: "inbox", userId: installationAdminId },
+        specialistBindingId: producingBinding.bindingId,
+        responsibleAgentId: producingId,
+        standingDefinition: {
+          ...pin,
+          agentId: producingId,
+          definition: producingDefinition.parsed,
+          definitionSha256: producingDigest,
+        },
+      },
+    );
+    const producing = await reserveCompanyAgentRun(
+      db,
+      installationAdminId,
+      {
+        ...request,
+        assignmentId: producingInput.id,
+        bindingId: producingBinding.bindingId,
+        bindingRevision: producingBinding.configRevision,
+      },
+      hosts,
+    );
+
+    await db
+      .update(runs)
+      .set({
+        agentChainDepth: 0,
+      })
+      .where(eq(runs.id, producing.runId));
+    await emitDomainEvent({
+      db,
+      companyId: configuration.owner.companyId,
+      runId: producing.runId,
+      parentRunId: null,
+      kind: "run.done",
+      actor: { type: "system", id: null },
+      payload: {
+        runId: producing.runId,
+        runKind: "agent",
+        flowId: null,
+        taskId: null,
+      },
+    });
+    const [event] = await db
+      .select()
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, producing.runId),
+          eq(domainEvents.kind, "run.done"),
+        ),
+      );
+
+    if (!event) throw new Error("Expected classified producing event");
+    const { dispatchCompanyAgentEvents } =
+      await import("../company-event-dispatch");
+
+    await database.pool.query(
+      "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
+    );
+    try {
+      await dispatchCompanyAgentEvents(db, [event]);
+    } finally {
+      await database.pool.query("DELETE FROM execution_host_pressure");
+    }
+    expect(
+      (
+        await database.pool.query(
+          "SELECT r.agent_chain_depth,authority.principal FROM runs r JOIN agent_installation_run_authorities authority ON authority.run_id=r.id WHERE r.agent_schedule_id=$1 AND r.trigger_event_id=$2",
+          [eventSubscription.scheduleId, event.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        agent_chain_depth: 1,
+        principal: { kind: "unattended", trigger: "domain_event" },
+      },
+    ]);
+    const exhausted = await reserveCompanyAgentRun(
+      db,
+      installationAdminId,
+      {
+        ...request,
+        assignmentId: (
+          await createSpecialistAssignment(db, installationAdminId, {
+            ...assignmentInput,
+            origin: { kind: "manual", interactionId: randomUUID() },
+            destination: { kind: "inbox", userId: installationAdminId },
+            specialistBindingId: producingBinding.bindingId,
+            responsibleAgentId: producingId,
+            standingDefinition: {
+              ...pin,
+              agentId: producingId,
+              definition: producingDefinition.parsed,
+              definitionSha256: producingDigest,
+            },
+          })
+        ).id,
+        bindingId: producingBinding.bindingId,
+        bindingRevision: producingBinding.configRevision,
+      },
+      hosts,
+    );
+
+    await db
+      .update(runs)
+      .set({ agentChainDepth: maxAgentChainDepth() })
+      .where(eq(runs.id, exhausted.runId));
+    await emitDomainEvent({
+      db,
+      companyId: configuration.owner.companyId,
+      runId: exhausted.runId,
+      parentRunId: null,
+      kind: "run.done",
+      actor: { type: "system", id: null },
+      payload: {
+        runId: exhausted.runId,
+        runKind: "agent",
+        flowId: null,
+        taskId: null,
+      },
+    });
+    const [exhaustedEvent] = await db
+      .select()
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, exhausted.runId),
+          eq(domainEvents.kind, "run.done"),
+        ),
+      );
+
+    if (!exhaustedEvent) throw new Error("Expected exhausted producing event");
+    await dispatchCompanyAgentEvents(db, [exhaustedEvent]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT outcome, reason_code FROM agent_trigger_attempts WHERE schedule_id=$1 AND trigger_event_id=$2",
+          [eventSubscription.scheduleId, exhaustedEvent.id],
+        )
+      ).rows,
+    ).toEqual([
+      { outcome: "suppressed", reason_code: "chain_depth_exhausted" },
+    ]);
+  } finally {
+    await database.pool.query(
+      "UPDATE users SET must_change_password=false WHERE id=$1",
+      [launchUserId],
+    );
+  }
+  const cronNote = parseAgentMemoryView({
+    command: "view",
+    path: "/memories/notes/cron.md",
+  });
+
+  await expect(
+    viewAgentMemory(
+      db,
+      cronNote,
+      prepareHumanInstallationVault({
+        userId: launchUserId,
+        agentId: candidateId,
+        bindingId: specialist.bindingId,
+        action: "read",
+      }),
+    ),
+  ).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { reason: "agent_memory_unavailable" },
+  });
+  const [retainedVault] = (
+    await database.pool.query<{ id: string }>(
+      "SELECT id FROM agent_memory_vaults WHERE company_id=$1 AND agent_id=$2",
+      [configuration.owner.companyId, candidateId],
+    )
+  ).rows;
+
+  if (!retainedVault)
+    throw new Error("Expected the retained installation vault");
+  const { seedLibrarianTurn } = await import("@/test-support/librarian-seed");
+  const { issueLibrarianTurnToken, scopesForLibrarianTurn } =
+    await import("@/lib/librarian/authority");
+  const { GET: librarianVaultView } =
+    await import("@/app/api/v1/ext/librarian/vaults/[vaultId]/view/route");
+
+  for (const [ownerId, expectedStatus] of [
+    [installationAdminId, 200],
+    [launchUserId, 404],
+  ] as const) {
+    const turnId = await seedLibrarianTurn(database.db, ownerId);
+    const { secret, tokenId } = await issueLibrarianTurnToken(
+      {
+        turnId,
+        ownerUserId: ownerId,
+        scopes: scopesForLibrarianTurn("owner_message"),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+      db,
+    );
+
+    await database.pool.query(
+      "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
+      [turnId, tokenId],
+    );
+    const get = (id: string) =>
+      librarianVaultView(
+        new NextRequest(
+          `http://localhost/api/v1/ext/librarian/vaults/${id}/view?path=${encodeURIComponent(cronNote.path)}`,
+          {
+            headers: { authorization: `Bearer ${secret}` },
+          },
+        ),
+        { params: Promise.resolve({ vaultId: id }) },
+      );
+    const reply = await get(retainedVault.id);
+
+    expect(reply.status).toBe(expectedStatus);
+    if (expectedStatus === 200)
+      expect(await reply.json()).toMatchObject({
+        content: "A scheduled observation.",
+      });
+    else
+      expect(await reply.json()).toEqual(
+        await (await get(randomUUID())).json(),
+      );
+  }
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), a, launchUserId],
+  );
+  const installationCredentialGuard = {
+    code: "23514",
+    constraint: "project_tokens_installation_binding_immutable",
+  };
+
+  await expect(
+    database.pool.query(
+      `UPDATE project_tokens SET scopes=scopes || '["runs:read"]'::jsonb
+       WHERE installation_run_id=$1 AND scopes='["activity:read"]'::jsonb`,
+      [run.runId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  const failed = await prepareUndispatchedAgentFailure(run.runId, {
+    db,
+    reason: "agent_dispatch_failed",
+  });
+
+  await db.transaction(failed.apply);
+  expect(
+    (
+      await database.pool.query<{
+        revoked: boolean;
+        revocation_reason: string;
+      }>(
+        `SELECT revoked_at IS NOT NULL AS revoked, revocation_reason
+         FROM project_tokens WHERE installation_run_id=$1`,
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual(
+    Array.from({ length: 3 }, () => ({
+      revoked: true,
+      revocation_reason: "revoked",
+    })),
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revocation_reason=NULL WHERE id=$1",
+      [refreshedToken.tokenId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revoked_at=NULL,revocation_reason=NULL WHERE id=$1",
+      [refreshedToken.tokenId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  await assertExternalRead("/api/v1/ext/projects", await list(), 401);
+  const retryOptions = await getAgentRetryOptions(db, run.runId, launchUserId);
+
+  expect(retryOptions).toMatchObject({
+    eligible: true,
+    selectedRunnerId: runnerId,
+  });
+  const retry = await acceptAgentRetry(db, run.runId, launchUserId, {
+    runnerId,
+    requestKey: randomUUID(),
+    previewFingerprint: retryOptions.previewFingerprint,
+  });
+
+  expect(retry).toMatchObject({
+    intentState: "launched",
+    runStatus: "Pending",
+  });
+  expect(
+    (
+      await database.pool.query(
+        `SELECT successor.knowledge_access, successor.knowledge_access=source.knowledge_access AS exact_capture
+         FROM runs source JOIN runs successor ON successor.retry_of_run_id=source.id WHERE source.id=$1`,
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      exact_capture: true,
+      knowledge_access: expect.objectContaining({
+        restrictions: expect.arrayContaining(
+          [a, b].map((projectId) => ({ kind: "project_context", projectId })),
+        ),
+      }),
+    },
+  ]);
+  if (!retry.runId) throw new Error("Expected a retained retry Run");
+  const retryRunId = retry.runId;
+
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    retryRunId,
+  ]);
+  const retryCredential = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, retryRunId),
+  );
+
+  headers.authorization = `Bearer ${retryCredential.secret}`;
+  await assertExternalRead("/api/v1/ext/projects", await list());
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [a]);
+  await expect(installationRunProjects(db, cronRun.id)).resolves.toEqual(
+    [a, b].sort(),
+  );
+  await expect(view(launchUserId)).rejects.toMatchObject({
+    details: { reason: "agent_memory_unavailable" },
+  });
+  await expect(view(installationAdminId)).resolves.toMatchObject({
+    kind: "note",
+  });
+  await updateCompanySpecialistBinding(
+    db,
+    installationAdminId,
+    candidateId,
+    specialist.bindingId,
+    {
+      ...configuration,
+      installationGrant: null,
+      expectedRevision: specialist.configRevision,
+      idempotencyKey: randomUUID(),
+      runnerId: null,
+      coordinatorFlowRevisionId: null,
+      executionPolicy: { preset: "supervised" },
+    },
+  );
+  expect((await list()).status).toBe(403);
 });

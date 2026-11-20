@@ -20,7 +20,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Home, Projects, Work, Activity, Inbox, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Execution host` / `Scheduler` / `Settings` are hidden (admin-only); the platform status pill/dot IS shown, without its link |
+| Global viewer / member | Home, Projects, Work, Activity, Inbox, Knowledge, Flow Studio, Observatory nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Execution host` / `Scheduler` / `Settings` are hidden (admin-only); the platform status pill/dot IS shown, without its link |
 | Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Execution host`, `Settings` | Hidden nav is convenience only; admin routes recheck authorization, and execution-host diagnostics reject before any detailed read |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -32,6 +32,7 @@ The rail is the primary navigation spine. Entry points / exits:
 - **Section nav** → `/` (the Desk — [`../desk.md`](../desk.md)), `/projects`
   (the portfolio), `/work` ([`../work.md`](../work.md)), `/activity`
   ([`../activity.md`](../activity.md)), `/inbox` ([`../inbox.md`](../inbox.md)),
+  `/knowledge` ([`../company-brain.md`](../company-brain.md)),
   `/studio` ([`../studio/README.md`](../studio/README.md)), `/observatory`, `/agents` (admin),
   `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
   `/admin/scheduler`, `/admin/execution-host`, `/settings`. The active section is resolved from the
@@ -50,7 +51,7 @@ See [`../README.md`](../README.md) for the global IA map.
 Expanded mode, top to bottom:
 
 1. **Section nav** — Home, Projects, Work, Activity (badge), Inbox (badge),
-   Flow Studio, Observatory, then the admin block
+   Knowledge, Flow Studio, Observatory, then the admin block
    (Agents, MCPs, Users, Execution host, Scheduler, Settings). **Two badges, two tones**
    (ADR-169 D7): the Inbox badge shows `decisions` in the **attention** tone
    (amber, `data-testid="inbox-nav-badge"`) and means "N things are blocked on
@@ -123,7 +124,7 @@ the async Server Component.
 Collapsed mode order:
 
 1. **Section icon stack** — Home, Projects, Work, Activity (badge), Inbox
-   (badge), Flow Studio, Observatory, then the admin
+   (badge), Knowledge, Flow Studio, Observatory, then the admin
    icons when allowed (Agents, MCPs, Users, Execution host, Scheduler, Settings). These packaged
    icons are the same destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run
@@ -215,3 +216,7 @@ labels), `gc` (TTL badges).
 ## Designed agent activity extension
 
 A separate Agents section shows every active agent-origin run, including Pending/parked and flow-driving runs. Physical workspace rows require a retained workspace and exclude runs already represented in Agents. Terminal operations leave the rail; repeated failures are grouped in Inbox. Expanded/collapsed/mobile share the population and accessible exact status. See [canonical behavior](../../system-analytics/agent-activity-history.md).
+
+## Neutral Reviews count
+
+Inbox has a neutral review badge alongside its amber decisions badge. Its accessible label identifies optional reviews. The existing attention connection updates it on visible review changes.

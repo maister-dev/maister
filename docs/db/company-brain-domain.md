@@ -186,7 +186,7 @@ Implemented internally in `knowledge-proposals.ts`: add/correct proposal submiss
 
 Implemented by main migration `0231_company_knowledge_events`. `domain_events.project_id` becomes nullable, `company_id` references the installation company, and an exclusive-owner CHECK preserves every legacy project row. Company knowledge and assignment metadata events carry no task/run FKs. Main `0242_company_run_terminal_events` also permits exact-owner company operational terminal and cleanup facts with a run FK and no task; see [domain-event constraints](domain-events.md). A company/kind/identity index supports owned invalidation. Publication appends its accepted change and outbox fact in the same transaction; confirmation/revocation appends its independent decision and invalidation likewise. Payloads contain owner, record ID, exact revision, change/decision ID and cause, with no assertion or source bytes. Replayed publication does not emit a second accepted-change event. All registered project consumers skip company-owned events before resolving project services, but dispatch advances their existing cursors. General project pulse/attention and agent trigger subscriptions exclude knowledge invalidation; native knowledge readers apply their own access policy.
 
-`runs.knowledge_access` has no synthetic backfill or empty default. A non-NULL value requires schemaVersion 1, a capturing/complete/unknown state, positive capture generation and a restrictions array. Later launch/read/derivation services own writing that server metadata. A migration cannot declare historical prompts source-free. The populated upgrade preserves all old run/event fields byte for byte and adds only explicit NULL metadata/ownership columns.
+`runs.knowledge_access` has no synthetic backfill or empty default. A non-NULL value requires a supported schema version, a capturing/complete/unknown state, positive capture generation and a restrictions array. Migration `0345_agent_memory_capture_v2` adds version 2 for exact vault revision references and preserves existing version 1 receipt bytes. Later launch/read/derivation services own writing that server metadata. A migration cannot declare historical prompts source-free.
 
 
 ## Native source access extension
@@ -223,3 +223,20 @@ no migration rewrites historical source metadata. Main
 `native_knowledge_source_restrictions(jsonb)` iterator with a small-row planner
 estimate; this estimate never truncates the actual array. See the [company runtime
 source contract](../system-analytics/specialist-runtime.md).
+
+## Installation binding and disclosure (Designed)
+
+Main migration 0347 extends `company_specialist_binding_revisions` and the
+current binding projection with a versioned `reach` discriminant. Missing
+historical values decode as `company_only`. Explicit installation scope
+records its reviewed authority, allowed operation keys and workspace mode
+none. Run execution snapshots distinguish the manual initiating user and
+grant-only agent actor. Existing snapshots keep their original bytes.
+
+Main migration 0348 extends the retained Run capture contract with exact vault
+revision restrictions. Capture is versioned and locked by source consumer
+and Run before disclosure. Archive and detach retain identity values for
+existing restrictions. A project that no longer resolves cannot turn a
+previously restricted note into an unrestricted note. The [specialist runtime
+contract](../system-analytics/specialist-runtime.md#installation-agent-authority-implemented--adr-211)
+owns live admission and capture bounds.

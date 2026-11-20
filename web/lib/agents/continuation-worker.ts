@@ -19,6 +19,11 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  agentContinuationBlocked,
+  agentContinuationSettlementReady,
+  recoverAgentContinuationSettlement,
+} from "./continuation-episode";
 import { startAgentSession } from "./launch";
 import { GENERATION_TURN_VARIANTS, OWNED_TURN_VARIANTS } from "./turn-variants";
 import { AgentPromptContinuationPending } from "./prompt-owner";
@@ -149,7 +154,13 @@ export function startAgentContinuationWorker(input: {
               and(
                 inArray(runs.runKind, ["agent", "scratch"]),
                 cursor ? gt(runs.id, cursor) : undefined,
+                sql`NOT ${agentContinuationBlocked(runs.id)}`,
                 or(
+                  and(
+                    eq(runs.runKind, "agent"),
+                    eq(runs.status, "Running"),
+                    agentContinuationSettlementReady(runs.id),
+                  ),
                   and(
                     eq(runs.runKind, "scratch"),
                     eq(runs.status, "Running"),
@@ -399,6 +410,16 @@ export function startAgentContinuationWorker(input: {
           redriveScratchContinuation(input.db, candidate.id, hosts);
           reason = null;
 
+          return;
+        }
+        if (
+          await recoverAgentContinuationSettlement(
+            input.db,
+            hosts,
+            candidate.id,
+          )
+        ) {
+          reason = null;
           return;
         }
         const [pause] =

@@ -201,7 +201,9 @@ function workRows(
            CASE WHEN c.status = 'pending' AND c.expires_at <= now() THEN 'expired' ELSE c.status END AS outcome,
            c.created_at, c.decided_at AS settled_at, c.target, NULL::jsonb AS result, c.segment_id,
            m.id AS attachment,
-           CASE WHEN ${eligible} THEN c.payload END AS confirmation,
+           CASE WHEN ${eligible} THEN c.payload || CASE WHEN c.effect_context IS NOT NULL
+             THEN jsonb_build_object('effectPreview',c.effect_context->>'preview') ELSE '{}'::jsonb END
+           END AS confirmation,
            c.target_revision, c.expires_at
       FROM librarian_cards c
       LEFT JOIN librarian_messages m ON m.id = c.message_id AND m.conversation_id = c.conversation_id AND m.segment_id = c.segment_id
@@ -411,7 +413,8 @@ async function presentRows(
       settledAt: row.settled_at,
       targets: targets.slice(0, 2),
     };
-    const proposal = librarianCardProposalSchema.safeParse(row.confirmation);
+    const { effectPreview, ...retainedProposal } = row.confirmation ?? {};
+    const proposal = librarianCardProposalSchema.safeParse(retainedProposal);
 
     if (
       row.source_kind === "card" &&
@@ -427,7 +430,11 @@ async function presentRows(
           ? "statement_proposal"
           : action === "memory_suggest"
             ? "memory_suggestion"
-            : "confirmation";
+            : action === "knowledge_proposal" ||
+                action === "brain_proposal" ||
+                action === "vault_edit"
+              ? action
+              : "confirmation";
 
       const hitlId = textAt(row.target, "hitlRequestId");
       const question = hitlId ? questionById.get(hitlId) : undefined;
@@ -444,6 +451,7 @@ async function presentRows(
             : {},
         targetRevision: row.target_revision,
         payload: proposal.data,
+        ...(typeof effectPreview === "string" && { effectPreview }),
         currentPrompt: task?.prompt ?? null,
         proposedPrompt:
           proposal.data.action === "statement_accept"
@@ -549,7 +557,7 @@ export async function readActionHistory(
           : null,
       };
     },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
+    { isolationLevel: "repeatable read" },
   );
 }
 

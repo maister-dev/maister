@@ -1,7 +1,11 @@
 import "server-only";
 
+import type { KnowledgeCardProposal } from "./knowledge-card-types";
+
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
+
+import { decideKnowledgeCard } from "./knowledge-card-effects";
 
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -92,7 +96,7 @@ async function assertCardTargetUnchanged(
 async function executeHumanAction(
   proposal: Exclude<
     LibrarianCardProposal,
-    { action: "statement_accept" | "memory_suggest" }
+    { action: "statement_accept" | "memory_suggest" } | KnowledgeCardProposal
   >,
   user: {
     id: string;
@@ -174,6 +178,15 @@ export async function decideLibrarianCard(
   db: Db = getDb(),
 ): Promise<LibrarianOperationResult> {
   const card = await loadOwnedCard(input.cardId, input.user.id, db);
+
+  if (
+    ["knowledge_proposal", "brain_proposal", "vault_edit"].includes(card.kind)
+  )
+    return decideKnowledgeCard(db, {
+      cardId: card.id,
+      userId: input.user.id,
+      decision: input.decision,
+    });
 
   if (card.target.projectId) {
     try {
@@ -269,6 +282,13 @@ export async function decideLibrarianCard(
   }
 
   const proposal = librarianCardProposalSchema.parse(card.payload);
+
+  if (
+    proposal.action === "knowledge_proposal" ||
+    proposal.action === "brain_proposal" ||
+    proposal.action === "vault_edit"
+  )
+    throw changed();
 
   if (
     proposal.action === "statement_accept" &&
