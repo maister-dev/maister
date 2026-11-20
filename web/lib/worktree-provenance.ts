@@ -7,6 +7,8 @@ import { execFile } from "node:child_process";
 
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../runtime/git-inspection-environment";
+
 import { atomicWriteText } from "@/lib/atomic";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import { MaisterError } from "@/lib/errors";
@@ -291,6 +293,7 @@ async function runGit(
 ): Promise<void> {
   await execFileAsync("git", ["-C", worktreePath, ...args], {
     signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+    env: gitInspectionEnvironment(),
   });
 }
 
@@ -341,7 +344,10 @@ async function assertManagedFilesExcluded(worktreePath: string): Promise<void> {
     await execFileAsync(
       "git",
       ["-C", worktreePath, "check-ignore", "-q", ".maister-managed/provenance"],
-      { signal: AbortSignal.timeout(GIT_TIMEOUT_MS) },
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        env: gitInspectionEnvironment(),
+      },
     );
   } catch (error) {
     throw new MaisterError(

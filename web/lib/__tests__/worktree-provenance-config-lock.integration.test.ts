@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { installWorktreeProvenance } from "@/lib/worktree-provenance";
 
@@ -45,12 +45,17 @@ describe("installWorktreeProvenance under git config lock contention", () => {
       void rm(lock, { force: true });
     }, 30);
 
-    await expect(
-      installWorktreeProvenance({
-        worktreePath: repo,
-        metadata: { runId: "run-lock-1" },
-      }),
-    ).resolves.toBeUndefined();
+    vi.stubEnv("GIT_DIR", path.join(repo, "missing-git-directory"));
+    try {
+      await expect(
+        installWorktreeProvenance({
+          worktreePath: repo,
+          metadata: { runId: "run-lock-1" },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
 
     const { stdout } = await execFileAsync("git", [
       "-C",

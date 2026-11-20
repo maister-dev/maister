@@ -27,6 +27,8 @@ import {
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
+import { gitInspectionEnvironment } from "../../../runtime/git-inspection-environment";
+
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
@@ -195,7 +197,7 @@ export async function ensureWorktreeGitExclude(
     const { stdout } = await execFileAsync(
       "git",
       ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
-      { cwd: worktreePath },
+      { cwd: worktreePath, env: gitInspectionEnvironment() },
     );
     const excludeRel = stdout.trim();
 
