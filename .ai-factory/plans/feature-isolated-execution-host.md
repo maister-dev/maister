@@ -89,6 +89,16 @@ Maintain one `execution-isolation-traceability.md` table following the existing 
 
 Use the dependencies in each phase and the gates below. A checked task requires its specified evidence. The P0 contract tasks may be drafted together, then ratified against the spike results. The performance budget approval still precedes P2.
 
+### Resume on another host
+
+Continue on `feature/isolated-execution-host` tracking the branch on `origin`. Fetch, preserve local work and fast-forward when possible. The branch should contain the Mac qualification checkpoint `44dd8ece9a8bf06071d1b95bcff746f2aa55bad8`. Use the current branch tip to pick up any later progress.
+
+Invoke `aif-implement @.ai-factory/plans/feature-isolated-execution-host.md` from the checkout root. The repository skill is at `.agents/skills/aif-implement/SKILL.md`. Use this plan, its linked contracts and its acceptance traceability as the portable task record. The recorded outcomes and fixtures travel with the branch. Make new qualification runs on the destination host and record their own evidence.
+
+Start on Ubuntu 24.04 with the unchecked P0 work and independent, ratified P1 work in T05, T06 and T08. T04.2, T04.3 and T07 were checked at the Mac checkpoint. Compare the current checklist before selecting a slice. Inspect real service identities, host versions and effective confinement on the qualification host. Distinguish the earlier disposable guest evidence from tests of the installed launcher and manager transport. Record capability or credential gaps as incomplete acceptance. P2 starts after the numerical P0 budgets have been approved. macOS-specific acceptance requires native evidence after the shared components land.
+
+Keep this checklist and the corresponding API, data and analytics contracts current. Follow RED → GREEN → REFACTOR for implementation. Record exact verification and mark tasks complete only when their acceptance criteria pass. Commit verified work by phase on this branch.
+
 ### Qualification evidence on the planning baseline
 
 | Area | Observed result | Remaining acceptance |
