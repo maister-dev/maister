@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import picomatch from "picomatch";
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../../runtime/git-inspection-environment";
+
 import { atomicWriteJson } from "@/lib/atomic";
 import { resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 
@@ -121,6 +123,7 @@ export async function touchedPaths(
     {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
+      env: gitInspectionEnvironment(),
     },
   );
 

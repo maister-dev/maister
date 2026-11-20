@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   EMPTY_TREE,
@@ -308,12 +308,17 @@ async function makeRepo(): Promise<Repo> {
 }
 
 describe("touchedPaths (tmp git repo)", () => {
-  it("returns the paths the range actually touched, repo-relative", async () => {
+  it("returns repo-relative touched paths despite inherited Git routing", async () => {
     const { repo, c0, c1 } = await makeRepo();
 
-    const touched = await touchedPaths(repo, c0, c1);
+    vi.stubEnv("GIT_DIR", join(repo, "missing-git-directory"));
+    try {
+      const touched = await touchedPaths(repo, c0, c1);
 
-    expect(touched.sort()).toEqual(["docs/readme.md", "src/a.ts"]);
+      expect(touched.sort()).toEqual(["docs/readme.md", "src/a.ts"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("returns [] for an empty range", async () => {
