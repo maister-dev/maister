@@ -28,6 +28,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { prepareAgentRunFinalization } from "./finalization";
+import { finishAgentContinuationOnPrompt } from "./continuation-episode";
 import {
   assertAgentExecutionQuiescent,
   assertAgentSessionBindingsQuiescent,
@@ -417,13 +418,19 @@ export async function admitAgentTurnPrompt(
       ref,
     },
     logicalOperationKey,
-    assertCommit: () =>
-      bindAgentTurnCommand(tx, {
+    assertCommit: async () => {
+      await finishAgentContinuationOnPrompt(
+        tx,
+        session.runId,
+        session.assignmentId,
+      );
+      await bindAgentTurnCommand(tx, {
         turn,
         hostKey: client.host.hostKey,
         incarnationId: session.incarnationId,
         logicalOperationKey,
-      }),
+      });
+    },
   };
 }
 

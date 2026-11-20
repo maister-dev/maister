@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, ne, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -386,6 +386,78 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
   await bindEventToIncarnation(tx, event, incarnation.id);
 }
 
+function ownedCheckpointReceipt(db: Db) {
+  return and(
+    eq(executionEvents.eventType, "session.command"),
+    eq(executionEvents.payloadSchema, "maister.session.command.v1"),
+    sql`${executionEvents.payload}->>'kind' = 'session.checkpoint'
+      AND ${executionEvents.payload}->>'phase' = 'completed'
+      AND ${executionEvents.payload}->>'status' = 'succeeded'
+      AND ${executionEvents.payload}->'result'->>'sessionId' = ${executionEvents.hostSessionId}`,
+    exists(
+      db
+        .select({ id: executionCommands.id })
+        .from(executionCommands)
+        .where(
+          and(
+            sql`${executionCommands.id} = ${executionEvents.payload}->>'commandId'`,
+            eq(executionCommands.kind, "session.checkpoint"),
+            eq(executionCommands.runId, executionEvents.runId),
+            eq(
+              executionCommands.executionAssignmentId,
+              executionEvents.executionAssignmentId,
+            ),
+            eq(
+              executionCommands.assignmentEpoch,
+              executionEvents.assignmentEpoch,
+            ),
+            eq(
+              executionCommands.executionHostId,
+              executionEvents.executionHostId,
+            ),
+            eq(
+              executionCommands.targetSessionId,
+              executionEvents.hostSessionId,
+            ),
+          ),
+        ),
+    ),
+  );
+}
+
+async function projectCheckpointReceipt(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  const [receipt] = await tx
+    .select({ id: executionEvents.id })
+    .from(executionEvents)
+    .where(and(eq(executionEvents.id, event.id), ownedCheckpointReceipt(tx)));
+  if (!receipt) return;
+
+  const [changed] = await tx
+    .update(runSessionIncarnations)
+    .set({
+      state: "checkpointed",
+      terminalReason: { reason: "checkpoint" },
+    })
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, event.runId),
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          event.executionAssignmentId!,
+        ),
+        eq(runSessionIncarnations.assignmentEpoch, event.assignmentEpoch!),
+        eq(runSessionIncarnations.executionHostId, event.executionHostId!),
+        eq(runSessionIncarnations.hostSessionId, event.hostSessionId!),
+        inArray(runSessionIncarnations.state, ["created", "active"]),
+      ),
+    )
+    .returning({ id: runSessionIncarnations.id });
+  if (changed) await bindEventToIncarnation(tx, event, changed.id);
+}
+
 /** Reconcile exact host exits even if their original projection cursor advanced. */
 export async function reconcileHistoricalAgentLifecycle(
   db: Db,
@@ -396,6 +468,7 @@ export async function reconcileHistoricalAgentLifecycle(
       .select({
         event: executionEvents,
         incarnationId: runSessionIncarnations.id,
+        incarnationState: runSessionIncarnations.state,
       })
       .from(runSessionIncarnations)
       .innerJoin(
@@ -431,28 +504,33 @@ export async function reconcileHistoricalAgentLifecycle(
         and(
           eq(runSessionIncarnations.runId, runId),
           ne(executionAssignments.state, "active"),
-          inArray(runSessionIncarnations.state, ["created", "active"]),
+          inArray(runSessionIncarnations.state, ["created", "active", "lost"]),
           eq(executionEvents.source, "host"),
           inArray(executionEvents.ingestDisposition, [
             "accepted",
             "stale_epoch",
           ]),
-          inArray(executionEvents.eventType, [
-            "session.exited",
-            "session.crashed",
-          ]),
+          or(
+            inArray(executionEvents.eventType, [
+              "session.exited",
+              "session.crashed",
+            ]),
+            ownedCheckpointReceipt(tx),
+          ),
         ),
       )
       .orderBy(asc(executionEvents.hostSequence), asc(executionEvents.id))
       .limit(32);
 
     let repaired = 0;
-    for (const { event, incarnationId } of rows) {
+    for (const { event, incarnationId, incarnationState } of rows) {
       const checkpointed =
-        event.eventType === "session.exited" &&
-        event.payload?.reason === "checkpoint";
-      // A historical checkpoint must be an ended row. It cannot occupy the
-      // logical session's open slot or change the current session binding.
+        (event.eventType === "session.command" ||
+          (event.eventType === "session.exited" &&
+            event.payload?.reason === "checkpoint")) &&
+        incarnationState !== "lost";
+      // A lost row was retired to permit a successor. Exact checkpoint
+      // evidence proves its exit without reopening the logical session slot.
       const changed = await tx
         .update(runSessionIncarnations)
         .set({
@@ -463,12 +541,15 @@ export async function reconcileHistoricalAgentLifecycle(
                 ? "checkpointed"
                 : "exited",
           endedAt: event.occurredAt,
-          terminalReason: event.payload ?? {},
+          terminalReason:
+            event.eventType === "session.command"
+              ? { reason: "checkpoint" }
+              : (event.payload ?? {}),
         })
         .where(
           and(
             eq(runSessionIncarnations.id, incarnationId),
-            inArray(runSessionIncarnations.state, ["created", "active"]),
+            eq(runSessionIncarnations.state, incarnationState),
           ),
         )
         .returning({ id: runSessionIncarnations.id });
@@ -485,6 +566,16 @@ export async function reconcileHistoricalAgentLifecycle(
 }
 
 async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
+  if (
+    event.eventType === "session.command" &&
+    event.payload?.kind === "session.checkpoint" &&
+    event.payload.phase === "completed" &&
+    event.payload.status === "succeeded"
+  ) {
+    if (await currentCanonicalAssignment(tx, event))
+      await projectCheckpointReceipt(tx, event);
+    return;
+  }
   if (
     event.eventType !== "session.created" &&
     event.eventType !== "session.exited" &&

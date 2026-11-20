@@ -164,7 +164,7 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 
 - **APR-02:** The frozen source witness admits historical v1 and new v2 ephemeral witnesses. Generation zero is a non-dispatchable source witness. Positive generations attest trusted materialization without replacing the original source. A legacy operational ephemeral continuation is refused with operational_legacy_baseline_unverifiable. Historical inspection and cancellation remain available.
-- **APR-05:** Record definitive refusal with its exact assignment, operation and cause before releasing preparation ownership. Identical replay is idempotent. A storage or cleanup error has its own cause. Settlement and restart recovery after refusal do not reacquire the preparation fence.
+- **APR-05:** Record definitive refusal with its exact assignment, operation and cause before releasing preparation ownership. The post-create integrity check also records a definitive refusal, bound to the exact claimed turn and incarnation. A retained refusal blocks create and prompt admission. The settlement owner retires that session and finalizes the failure. Stop remains available under its own authority. Storage and cleanup errors retain distinct causes. Settlement and restart recovery do not reacquire the preparation fence.
 - **APR-11:** On upgrade, a populated two-epoch Run converges through restart and either worker ordering. The repaired production Run remains terminal. Reconcile and report historical application and checkout evidence independently.
 
 
@@ -210,7 +210,7 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 | APR-12 | `operational-agent-lifecycle.md` | T5,T6,T14,T15 | IT-APR-12 | Implemented |
 
 
-## Operator recovery (Designed, [ADR-210](../decisions/adr-210.md))
+## Operator recovery ([ADR-214](../decisions/adr-214.md))
 
 Preparation, task-launch dispatch and cleanup, Pull and promotion, and project
 configuration publication and recovery share the common Git-directory fence.
@@ -229,7 +229,9 @@ SELECT r.id AS run_id, r.execution_assignment_id AS current_assignment,
        c.execution_assignment_id AS command_assignment, c.application_attempts,
        c.application_error->>'reason' AS application_reason,
        c.application_error->>'deferredSince' AS deferred_since,
-       c.application_next_retry_at
+       c.application_next_retry_at, e.assignment_epoch AS attention_epoch,
+       e.failure->>'reason' AS continuation_reason,
+       e.failure->>'blockedReason' AS settlement_blocker
 FROM runs AS r
 CROSS JOIN LATERAL (
   SELECT count(*) AS failures, max(p.updated_at) AS last_failure
@@ -245,14 +247,25 @@ LEFT JOIN LATERAL (
     AND c.application_state = 'pending' AND c.application_error IS NOT NULL
   ORDER BY c.updated_at, c.id LIMIT 1
 ) AS c ON true
+LEFT JOIN agent_continuation_episodes AS e
+  ON e.run_id = r.id AND e.state = 'attention'
 WHERE r.run_kind = 'agent' AND r.agent_kind = 'operational'
-  AND r.status = 'Running' AND (p.failures >= 2 OR c.id IS NOT NULL)
+  AND r.status = 'Running'
+  AND (p.failures >= 2 OR c.id IS NOT NULL OR e.run_id IS NOT NULL)
 ORDER BY p.failures DESC, r.id;
 ```
 
-Open the flagged Run and use Stop with current project recovery authority.
-For a proven undispatched resume, Abandoned releases the scheduler slot. Inspect
-the historical prompt owner and any retained checkout disposition separately.
+Open the flagged Run's Operation result. An attention record shows the
+original refusal, the latest settlement blocker and the assignment epoch.
+After restoring the host or obtaining the missing evidence, use Recheck
+execution with current project recovery authority. A stale observation
+conflicts. Each accepted recheck schedules one settlement attempt. The Run
+returns to attention if proof is still unavailable. The action records the
+operator and assignment epoch in a structured log. It cannot reopen preparation.
+
+Stop is available independently. For a proven undispatched resume, Abandoned
+releases the scheduler slot even if host inventory is unavailable. Inspect the
+historical prompt owner and any retained checkout disposition separately.
 A blocked checkout shows its typed reason. Confirm retained canonical exit or
 checkpoint facts and the scoped supervisor process-retirement observation
 before authorizing cleanup. Use the existing prompt application observation-token

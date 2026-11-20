@@ -2350,6 +2350,8 @@ paths:
         body). The cancel funnels through the same run-stop path as
         the session-auth surface; the returned `status` is the child's row state
         after the cancel was applied.
+        An undispatched project operational assignment can be cancelled without
+        host inventory. Historical evidence still gates checkout disposal.
 
         Writes a `token_audit_log` row with scope `runs:cancel` after success.
 
@@ -3103,6 +3105,9 @@ paths:
         personal token; the project is resolved from the run row and the
         owner's live role must allow `recoverRun` on every request. A run the
         owner cannot see answers exactly like a missing one (`404`).
+        An undispatched project operational assignment can be stopped without
+        host inventory. The response confirms logical cancellation. Historical
+        execution evidence still gates checkout disposal.
         `Idempotency-Key` is required for the librarian token. Stopping a run
         never touches the librarian turn that asked for it, and stopping the
         librarian's own response is the separate session route
@@ -11166,6 +11171,24 @@ components:
           enum:
             - pending
             - terminal
+        continuationAttention:
+          description: Present while a project operational Run awaits settlement evidence. The observation is an opaque concurrency token and confers no authority.
+          type: object
+          additionalProperties: false
+          required: [assignmentEpoch, reason, blockedReason, observation]
+          properties:
+            assignmentEpoch:
+              type: integer
+              minimum: 1
+            reason:
+              type: string
+              pattern: "^[a-z_]{1,128}$"
+            blockedReason:
+              type: string
+              pattern: "^[a-z_]{1,128}$"
+            observation:
+              type: string
+              pattern: "^[0-9a-f]{32}$"
         reportedOutcome:
           type: string
           nullable: true

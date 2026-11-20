@@ -303,6 +303,7 @@ authorized future-run setting with this distinction visible.
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 
 - **APR-06:** A project operational continuation episode persists the assignment, claim, attempts, due time and typed failure across restarts and automatic epoch rollover. Only one owner can admit preparation at a time. Allow five attempts with delays of 15, 30, 60 and 120 seconds. Definitive refusal skips these delays and leaves only settlement or cancellation eligible.
+- Settlement has a separate five-attempt budget. An exact new canonical lifecycle fact can wake attention with a quiescence blocker. An authorized operator can also schedule one settlement recheck for any blocker using the current Run observation. This recheck preserves both counters. Concurrent or stale observations conflict and cannot open a preparation episode.
 
 
 - A saved runner change MUST offer failed-run batch recovery without automatically accepting any item, enforced by attachment-save UI and the existing explicit retry API.

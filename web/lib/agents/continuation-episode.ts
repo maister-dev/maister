@@ -8,7 +8,7 @@ import type { OperationalProbeContext } from "./operational-diagnostics";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { assertHistoricalAgentAssignmentsQuiescent } from "./execution-quiescence";
@@ -16,12 +16,21 @@ import { advanceAgentPreparation } from "./preparation-ownership";
 import { operationalFailureDiagnostic } from "./operational-diagnostics";
 import {
   agentContinuationEpisodes as episodes,
+  agentIncidentOccurrences,
+  agentTurns,
   executionEvents,
   runs,
+  runSessionIncarnations,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import {
+  lockCurrentSessionAssignment,
+  staleSessionBinding,
+} from "@/lib/execution-host/session-binding";
+import { isFencedError } from "@/lib/execution-host/deliverer";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { recordAgentIncident } from "@/lib/runs/agent-incidents";
+import { notifyContinuationAttentionChanged } from "@/lib/runs/peek-wake";
 
 const log = pino({ name: "agent-continuation-episode" });
 const MAX_ATTEMPTS = 5;
@@ -32,16 +41,107 @@ type Identity = Pick<
   "runId" | "logicalKey" | "claimToken" | "assignmentId" | "assignmentEpoch"
 >;
 
+export const continuationObservation = sql<string>`md5(concat_ws(':',
+  ${episodes.runId}, ${episodes.logicalKey}, ${episodes.assignmentId},
+  ${episodes.assignmentEpoch}, extract(epoch from ${episodes.updatedAt})))`;
+
+export async function rearmAgentContinuationSettlement(
+  db: Db,
+  input: {
+    runId: string;
+    projectId: string;
+    userId: string;
+    observation: string;
+  },
+): Promise<void> {
+  const changed = await db.transaction(async (tx) => {
+    const [run] = await tx
+      .select({ assignmentId: runs.executionAssignmentId })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.id, input.runId),
+          eq(runs.projectId, input.projectId),
+          eq(runs.runKind, "agent"),
+          eq(runs.agentKind, "operational"),
+          eq(runs.status, "Running"),
+        ),
+      )
+      .for("update");
+    if (
+      !run?.assignmentId ||
+      !(await lockCurrentSessionAssignment(tx, {
+        runId: input.runId,
+        assignmentId: run.assignmentId,
+      }))
+    )
+      return undefined;
+
+    const [updated] = await tx
+      .update(episodes)
+      .set({
+        state: "settlement",
+        dueAt: sql`clock_timestamp()`,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          eq(episodes.runId, input.runId),
+          eq(episodes.state, "attention"),
+          sql`${continuationObservation} = ${input.observation}`,
+        ),
+      )
+      .returning({
+        assignmentEpoch: episodes.assignmentEpoch,
+        failure: episodes.failure,
+      });
+    if (updated) await notifyContinuationAttentionChanged(tx, input.runId);
+    return updated;
+  });
+  if (!changed)
+    throw new MaisterError("CONFLICT", "Continuation attention changed", {
+      details: {
+        reason: "agent_continuation_attention_stale",
+        runId: input.runId,
+      },
+    });
+  log.info(
+    {
+      runId: input.runId,
+      actorId: input.userId,
+      assignmentEpoch: changed.assignmentEpoch,
+      reason: changed.failure?.reason,
+      blockedReason: changed.failure?.blockedReason,
+    },
+    "agent-continuation-settlement-rearmed",
+  );
+  runEventWakeBus.wake(input.runId);
+}
+
 const newTeardownEvidence = sql`(
   ce.failure->>'blockedReason' = 'agent_execution_quiescence_unproven'
   AND EXISTS (
     SELECT 1 FROM ${executionEvents} AS evidence
     WHERE evidence.run_id = ce.run_id AND evidence.received_at > ce.updated_at
       AND evidence.source = 'host'
+      AND evidence.execution_assignment_id = coalesce(
+        ce.failure->>'blockedAssignmentId', evidence.execution_assignment_id)
       AND evidence.ingest_disposition IN ('accepted', 'stale_epoch')
+      AND EXISTS (
+        SELECT 1 FROM ${runSessionIncarnations} AS binding
+        WHERE binding.run_id = evidence.run_id
+          AND binding.execution_assignment_id = evidence.execution_assignment_id
+          AND binding.assignment_epoch = evidence.assignment_epoch
+          AND binding.execution_host_id = evidence.execution_host_id
+          AND binding.host_session_id = evidence.host_session_id
+      )
       AND (
         evidence.event_type IN ('session.exited', 'session.crashed') OR
-        (evidence.event_type = 'session.command' AND evidence.payload->>'kind' = 'session.checkpoint')
+        (evidence.event_type = 'session.command'
+          AND evidence.payload->>'kind' = 'session.checkpoint'
+          AND evidence.payload->>'phase' = 'completed'
+          AND evidence.payload->>'status' = 'succeeded'
+          AND evidence.payload->'result'->>'sessionId' = evidence.host_session_id)
       )
   )
 )`;
@@ -58,7 +158,7 @@ export function agentContinuationBlocked(
 }
 
 export function agentContinuationSettlementReady(
-  runId: typeof runs.id | typeof episodes.runId,
+  runId: typeof runs.id | string,
 ) {
   return sql`EXISTS (
     SELECT 1 FROM ${episodes} AS ce WHERE ce.run_id = ${runId}
@@ -72,6 +172,7 @@ export async function recoverAgentContinuationSettlement(
   db: Db,
   hosts: ExecutionHosts,
   runId: string,
+  expectedAssignmentId?: string,
 ): Promise<boolean> {
   const [ready] = await db
     .select({
@@ -87,6 +188,11 @@ export async function recoverAgentContinuationSettlement(
       ),
     );
   if (!ready?.assignmentId) return false;
+  if (
+    expectedAssignmentId !== undefined &&
+    ready.assignmentId !== expectedAssignmentId
+  )
+    throw staleSessionBinding(runId, expectedAssignmentId);
   const claim = await claimAgentContinuation(db, {
     runId,
     assignmentId: ready.assignmentId,
@@ -115,7 +221,7 @@ export async function claimAgentContinuation(
         row: episodes,
         sameClaim: sql<boolean>`${episodes.claimExpiresAt} > clock_timestamp()`,
         premature: sql<boolean>`${episodes.dueAt} > clock_timestamp()`,
-        evidenceAvailable: agentContinuationSettlementReady(episodes.runId),
+        evidenceAvailable: agentContinuationSettlementReady(input.runId),
       })
       .from(episodes)
       .where(and(eq(episodes.runId, input.runId), ne(episodes.state, "closed")))
@@ -181,6 +287,8 @@ export async function claimAgentContinuation(
         ),
       )
       .returning();
+    if (current.state === "attention")
+      await notifyContinuationAttentionChanged(tx, current.runId);
     return { ...updated, claimToken };
   });
 }
@@ -323,24 +431,244 @@ export async function recordAgentContinuationFailure(
   });
 }
 
-export async function finishAgentContinuation(
-  db: Db,
-  claim: Claim,
+/** Call inside prompt admission, after the Run and assignment are locked. */
+export async function finishAgentContinuationOnPrompt(
+  tx: Db,
+  runId: string,
+  assignmentId: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const owner = await lockCurrentSessionAssignment(tx, claim);
-    if (owner?.epoch !== claim.assignmentEpoch) return;
-    await tx
-      .update(episodes)
-      .set({
-        state: "closed",
-        claimToken: null,
-        claimExpiresAt: null,
-        dueAt: null,
-        updatedAt: sql`clock_timestamp()`,
-      })
-      .where(claimMatches(claim));
+  await assertAgentDispatchNotRefused(tx, runId);
+  await tx
+    .update(episodes)
+    .set({
+      state: "closed",
+      claimToken: null,
+      claimExpiresAt: null,
+      dueAt: null,
+      updatedAt: sql`clock_timestamp()`,
+    })
+    .where(
+      and(
+        eq(episodes.runId, runId),
+        eq(episodes.assignmentId, assignmentId),
+        inArray(episodes.state, ["eligible", "backoff", "claimed"]),
+      ),
+    );
+}
+
+export async function hasAgentContinuationSettlement(
+  tx: Db,
+  runId: string,
+): Promise<boolean> {
+  const [refusal] = await tx
+    .select({ runId: episodes.runId })
+    .from(episodes)
+    .where(
+      and(
+        eq(episodes.runId, runId),
+        inArray(episodes.state, ["settlement", "attention"]),
+      ),
+    );
+  return refusal !== undefined;
+}
+
+async function assertAgentDispatchNotRefused(
+  tx: Db,
+  runId: string,
+): Promise<void> {
+  if (await hasAgentContinuationSettlement(tx, runId))
+    throw new MaisterError(
+      "PRECONDITION",
+      "Agent dispatch is blocked by retained settlement",
+      {
+        details: { reason: "agent_continuation_settlement_pending", runId },
+      },
+    );
+}
+
+export async function assertAgentCreateNotRefused(
+  tx: Db,
+  runId: string,
+  assignmentId: string,
+): Promise<void> {
+  if (!(await lockCurrentSessionAssignment(tx, { runId, assignmentId })))
+    throw staleSessionBinding(runId, assignmentId);
+  await assertAgentDispatchNotRefused(tx, runId);
+}
+
+export async function recordAgentDispatchIntegrityFailure(
+  db: Db,
+  input: {
+    runId: string;
+    assignmentId: string;
+    turnId: string;
+    hostSessionId: string;
+  },
+  error: unknown,
+): Promise<boolean> {
+  const { failure, definitive } = classifyFailure(error);
+  if (!definitive || failure.reason !== "operational_integrity_refused")
+    return false;
+
+  return db.transaction(async (tx) => {
+    const assignment = await lockCurrentSessionAssignment(tx, input);
+    if (!assignment) throw staleSessionBinding(input.runId, input.assignmentId);
+
+    const [turn] = await tx
+      .select({ id: agentTurns.id })
+      .from(agentTurns)
+      .innerJoin(runs, eq(runs.id, agentTurns.runId))
+      .innerJoin(
+        runSessionIncarnations,
+        and(
+          eq(runSessionIncarnations.runSessionId, agentTurns.runSessionId),
+          eq(runSessionIncarnations.runId, input.runId),
+          eq(runSessionIncarnations.executionAssignmentId, assignment.id),
+          eq(runSessionIncarnations.assignmentEpoch, assignment.epoch),
+          eq(
+            runSessionIncarnations.executionHostId,
+            assignment.executionHostId,
+          ),
+          eq(runSessionIncarnations.hostSessionId, input.hostSessionId),
+        ),
+      )
+      .where(
+        and(
+          eq(runs.id, input.runId),
+          eq(runs.agentKind, "operational"),
+          sql`${runs.projectId} IS NOT NULL`,
+          eq(runs.status, "Running"),
+          eq(agentTurns.id, input.turnId),
+          eq(agentTurns.executionAssignmentId, assignment.id),
+          eq(agentTurns.assignmentEpoch, assignment.epoch),
+          eq(agentTurns.state, "claimed"),
+          sql`${agentTurns.commandId} IS NULL`,
+        ),
+      );
+    if (!turn) return false;
+    const [existing] = await tx
+      .select()
+      .from(episodes)
+      .where(and(eq(episodes.runId, input.runId), ne(episodes.state, "closed")))
+      .for("update");
+    if (existing?.state === "settlement" || existing?.state === "attention")
+      return true;
+
+    const state = {
+      state: "settlement" as const,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      preparationId: null,
+      firstFailureAt: sql`coalesce(${episodes.firstFailureAt}, clock_timestamp())`,
+      dueAt: sql`clock_timestamp()`,
+      claimToken: null,
+      claimExpiresAt: null,
+      failure: {
+        ...failure,
+        dispatch: {
+          assignmentId: assignment.id,
+          turnId: turn.id,
+          hostSessionId: input.hostSessionId,
+        },
+      },
+      updatedAt: sql`clock_timestamp()`,
+    };
+    if (existing) {
+      await tx
+        .update(episodes)
+        .set(state)
+        .where(
+          and(
+            eq(episodes.runId, input.runId),
+            eq(episodes.logicalKey, existing.logicalKey),
+          ),
+        );
+    } else {
+      await tx.insert(episodes).values({
+        ...state,
+        runId: input.runId,
+        logicalKey: `prompt-integrity:${turn.id}`,
+        firstFailureAt: sql`clock_timestamp()`,
+        attempts: 1,
+      });
+    }
+    log.info(
+      { ...input, assignmentEpoch: assignment.epoch, reason: failure.reason },
+      "agent-prompt-integrity-refusal-recorded",
+    );
+
+    return true;
   });
+}
+
+function continuationIncidentKey(runId: string, logicalKey: string): string {
+  return `continuation:${runId}:${logicalKey}`;
+}
+
+export async function findAgentContinuationIncident(
+  tx: Db,
+  runId: string,
+  logicalKey: string,
+  reason: string,
+): Promise<string | undefined> {
+  const [incident] = await tx
+    .select({ episodeId: agentIncidentOccurrences.episodeId })
+    .from(agentIncidentOccurrences)
+    .where(
+      and(
+        eq(
+          agentIncidentOccurrences.sourceFactKey,
+          continuationIncidentKey(runId, logicalKey),
+        ),
+        eq(agentIncidentOccurrences.fingerprint, reason),
+      ),
+    );
+  return incident?.episodeId;
+}
+
+async function recordAgentContinuationIncident(
+  tx: Db,
+  run: Pick<
+    Run,
+    "id" | "projectId" | "sourceAgentId" | "agentId" | "agentActivitySnapshot"
+  >,
+  logicalKey: string,
+  reason: string,
+  observedAt: Date,
+): Promise<void> {
+  const agentId = run.sourceAgentId ?? run.agentId;
+  if (!run.projectId || !agentId) return;
+  await recordAgentIncident(tx, {
+    projectId: run.projectId,
+    agentId,
+    runId: run.id,
+    channel: "execution_failure",
+    scopeKind: "infrastructure",
+    scopeKey:
+      run.agentActivitySnapshot?.comparisonScopes?.infrastructure ?? run.id,
+    sourceFactKey: continuationIncidentKey(run.id, logicalKey),
+    fingerprint: reason,
+    reasonCode: reason,
+    observedAt,
+  });
+}
+
+async function assertSettlementOwner(tx: Db, claim: Claim): Promise<void> {
+  const owner = await lockCurrentSessionAssignment(tx, claim);
+  if (owner?.epoch !== claim.assignmentEpoch)
+    throw staleSessionBinding(claim.runId, claim.assignmentId);
+
+  const [settlement] = await tx
+    .select({ runId: episodes.runId })
+    .from(episodes)
+    .where(
+      and(
+        claimMatches(claim),
+        eq(episodes.state, "settlement"),
+        sql`${episodes.claimExpiresAt} > clock_timestamp()`,
+      ),
+    );
+  if (!settlement) throw staleSessionBinding(claim.runId, claim.assignmentId);
 }
 
 export async function settleAgentContinuation(
@@ -355,25 +683,53 @@ export async function settleAgentContinuation(
       "Continuation settlement requires its persisted failure",
     );
   try {
+    await db.transaction((tx) => assertSettlementOwner(tx, claim));
+    const dispatch =
+      failure.dispatch?.assignmentId === claim.assignmentId
+        ? failure.dispatch
+        : undefined;
+    if (dispatch) {
+      const client = await executionHosts.forAssignment({
+        id: claim.assignmentId,
+      });
+      const sessions = await client.sessionsForRun();
+      if (
+        sessions.some(
+          (session) =>
+            session.status === "live" &&
+            session.sessionId === dispatch.hostSessionId,
+        )
+      )
+        await client.deleteSession(dispatch.hostSessionId, {
+          assertCommit: (tx) => assertSettlementOwner(tx, claim),
+        });
+    }
     await assertHistoricalAgentAssignmentsQuiescent(
       db,
       { id: claim.runId, executionAssignmentId: claim.assignmentId },
       executionHosts,
     );
-    const { finalizeAgentRun } = await import("./finalization");
-    await finalizeAgentRun(claim.runId, "Failed", {
+    await db.transaction((tx) => assertSettlementOwner(tx, claim));
+    const { prepareAgentRunFinalization } = await import("./finalization");
+    const prepared = await prepareAgentRunFinalization(claim.runId, "Failed", {
       db,
       executionHosts,
       expectedAssignmentId: claim.assignmentId,
-      reason: "agent_workspace_prepare_failed",
+      reason: dispatch
+        ? "agent_prompt_dispatch_failed"
+        : "agent_workspace_prepare_failed",
       causeReason: failure.reason,
       continuationFailure: {
         logicalKey: claim.logicalKey,
         claimToken: claim.claimToken,
         reasons: failure.reasons ?? [],
+        dispatchTurnId: dispatch?.turnId,
       },
     });
+    const result = await db.transaction(prepared.apply);
+    await prepared.afterCommit(result);
   } catch (error) {
+    if (isFencedError(error)) throw error;
     await db.transaction(async (tx) => {
       const owner = await lockCurrentSessionAssignment(tx, claim);
       if (owner?.epoch !== claim.assignmentEpoch) return;
@@ -385,12 +741,18 @@ export async function settleAgentContinuation(
           ? error.details.reason
           : "agent_continuation_settlement_failed";
       const exhausted = attempts >= MAX_ATTEMPTS;
+      const blockedAssignmentId =
+        isMaisterError(error) &&
+        typeof error.details?.assignmentId === "string" &&
+        error.details.assignmentId.length <= 256
+          ? error.details.assignmentId
+          : undefined;
       const [changed] = await tx
         .update(episodes)
         .set({
           state: exhausted ? "attention" : "settlement",
           settlementAttempts: attempts,
-          failure: { ...failure, blockedReason },
+          failure: { ...failure, blockedReason, blockedAssignmentId },
           claimToken: null,
           claimExpiresAt: null,
           dueAt: exhausted
@@ -398,29 +760,27 @@ export async function settleAgentContinuation(
             : sql`clock_timestamp() + ${RETRY_DELAYS[attempts - 1]} * interval '1 second'`,
           updatedAt: sql`clock_timestamp()`,
         })
-        .where(claimMatches(claim))
+        .where(
+          and(
+            claimMatches(claim),
+            sql`${episodes.claimExpiresAt} > clock_timestamp()`,
+          ),
+        )
         .returning({ runId: episodes.runId });
       if (!changed || !exhausted) return;
+      await notifyContinuationAttentionChanged(tx, claim.runId);
       const [run] = await tx
         .select()
         .from(runs)
         .where(eq(runs.id, claim.runId));
-      const agentId = run?.sourceAgentId ?? run?.agentId;
-      if (run?.projectId && agentId)
-        await recordAgentIncident(tx, {
-          projectId: run.projectId,
-          agentId,
-          runId: claim.runId,
-          channel: "execution_failure",
-          scopeKind: "infrastructure",
-          scopeKey:
-            run.agentActivitySnapshot?.comparisonScopes?.infrastructure ??
-            claim.runId,
-          sourceFactKey: `continuation:${claim.runId}:${claim.logicalKey}`,
-          fingerprint: failure.reason,
-          reasonCode: failure.reason,
-          observedAt: new Date(),
-        });
+      if (run)
+        await recordAgentContinuationIncident(
+          tx,
+          run,
+          claim.logicalKey,
+          failure.reason,
+          new Date(),
+        );
       log.warn(
         {
           runId: claim.runId,

@@ -3718,6 +3718,12 @@ export const agentContinuationEpisodes = pgTable(
       reason: string;
       reasons?: string[];
       blockedReason?: string;
+      blockedAssignmentId?: string;
+      dispatch?: {
+        assignmentId: string;
+        turnId: string;
+        hostSessionId: string;
+      };
     }>(),
     settlementAttempts: integer("settlement_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })

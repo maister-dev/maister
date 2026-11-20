@@ -6455,6 +6455,17 @@
   },
   "operationalAgents": {
     "title": "Operation result",
+    "continuationAttention": "Continuation needs attention",
+    "continuationGuidance": "The run is waiting for confirmation that execution ended. Check the execution host and the details below, then recheck. Use Stop to request cancellation. Checkout cleanup confirms earlier execution separately.",
+    "continuationRefused": "The run could not continue because the platform could not confirm the integrity of its checkout.",
+    "continuationRefusedGuidance": "Review the reason below and resolve the source or configuration issue before starting a new run.",
+    "continuationDetails": "Continuation details",
+    "continuationCause": "Continuation failure",
+    "continuationBlocker": "Settlement blocker",
+    "continuationEpoch": "Assignment epoch",
+    "continuationRecheck": "Recheck execution",
+    "continuationScheduled": "Execution recheck scheduled.",
+    "continuationStale": "The continuation state changed. Review the refreshed run.",
     "preparationFailed": "Workspace preparation failed. This is an infrastructure failure, not a task assessment.",
     "preparationRemediation": "Inspect the preparation details and resolve the reported problem before starting a new attempt.",
     "preparationDetails": "Preparation details",
@@ -6731,6 +6742,7 @@
       "cleanup": "Workspace cleanup needs attention",
       "authorization": "Access to the operation was denied",
       "qualification": "Task assessment could not be published",
+      "continuation": "Agent continuation failed",
       "execution": "Agent execution did not complete"
     },
     "remediation": {
@@ -6739,6 +6751,7 @@
       "cleanup": "Open the specific run, inspect preserved evidence and retry its workspace cleanup when the blocker is resolved.",
       "authorization": "Restore the required access, then preview a safe new attempt. Uncertain prior effects require reconciliation first.",
       "qualification": "Review the current task input and assessment evidence. Requalify changed or incomplete requests before delivery.",
+      "continuation": "Open the run to inspect the failure and any settlement blocker. If the run needs attention, recheck execution after resolving the blocker. Address the source or configuration issue before starting a new run.",
       "execution": "Inspect the failure stage and runner in the source run. A different runner is available only when a safe retry can be proved."
     },
     "triggerSource": {

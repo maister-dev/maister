@@ -418,8 +418,10 @@ export function startAgentContinuationWorker(input: {
             hosts,
             candidate.id,
           )
-        )
+        ) {
+          reason = null;
           return;
+        }
         const [pause] =
           candidate.status === "NeedsInput"
             ? await input.db

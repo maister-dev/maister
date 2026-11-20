@@ -6,7 +6,7 @@ import type {
   ExecutionAssignment,
   ExecutionCommand,
 } from "@/lib/db/schema";
-import type { ExecutionHosts } from "@/lib/execution-host";
+import type { BoundClient, ExecutionHosts } from "@/lib/execution-host";
 
 import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import pino from "pino";
@@ -33,7 +33,10 @@ import {
   projectCanonicalSessionLifecycle,
   reconcileHistoricalAgentLifecycle,
 } from "@/lib/execution-host/events/lifecycle-projector";
-import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
+import {
+  lockCurrentSessionAssignment,
+  staleSessionBinding,
+} from "@/lib/execution-host/session-binding";
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
 
 const log = pino({
@@ -473,6 +476,7 @@ export async function waitForAgentCancellationExecutionQuiescent(
   db: Db,
   run: AgentExecutionIdentity,
   deadline: number,
+  hosts?: ExecutionHosts,
 ): Promise<void> {
   for (;;) {
     const controller = new AbortController();
@@ -485,7 +489,7 @@ export async function waitForAgentCancellationExecutionQuiescent(
     );
 
     try {
-      await assertAgentCancellationExecutionQuiescent(db, run);
+      await assertAgentCancellationExecutionQuiescent(db, run, hosts);
 
       return;
     } catch (error) {
@@ -500,6 +504,43 @@ export async function waitForAgentCancellationExecutionQuiescent(
       controller.abort();
     }
   }
+}
+
+async function assertCurrentAgentTeardown(
+  tx: Db,
+  client: BoundClient,
+): Promise<void> {
+  const { id: assignmentId, runId, epoch } = client.assignment;
+  const owner = await lockCurrentSessionAssignment(tx, { runId, assignmentId });
+
+  if (owner?.epoch !== epoch) throw staleSessionBinding(runId, assignmentId);
+}
+
+export async function stopCurrentAgentExecution(
+  db: Db,
+  run: AgentExecutionIdentity,
+  hosts: ExecutionHosts,
+): Promise<boolean> {
+  if (!run.executionAssignmentId) return false;
+  const client = await hosts.forAssignment({ id: run.executionAssignmentId });
+  await db.transaction((tx) => assertCurrentAgentTeardown(tx, client));
+
+  let stopped = false;
+  for (const session of await client.sessionsForRun()) {
+    if (
+      session.status !== "live" ||
+      (session.assignmentId && session.assignmentId !== client.assignment.id) ||
+      (session.assignmentEpoch != null &&
+        session.assignmentEpoch !== client.assignment.epoch)
+    )
+      continue;
+    await client.deleteSession(session.sessionId, {
+      assertCommit: (tx) => assertCurrentAgentTeardown(tx, client),
+    });
+    stopped = true;
+  }
+
+  return stopped;
 }
 
 export async function assertHistoricalAgentAssignmentsQuiescent(

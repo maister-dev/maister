@@ -186,6 +186,12 @@ export type OperationalOutcome = {
   validation: "pending" | OperationalTerminal["validation"];
   validationDiagnostics?: OperationalValidationDiagnostic[];
   infrastructureFailure?: OperationalFailureDiagnostic;
+  continuationAttention?: {
+    assignmentEpoch: number;
+    reason: string;
+    blockedReason: string;
+    observation: string;
+  };
   integrity: "pending" | OperationalIntegrityVerdict;
   resultRevision: number | null;
   reportedResult: OperationalResult | null;

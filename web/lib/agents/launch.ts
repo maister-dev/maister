@@ -81,7 +81,6 @@ import {
   prepareAgentRunFinalization,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
-  type AgentFinalStatus,
 } from "./finalization";
 import {
   agentReadOnlyWorkdirPath,
@@ -157,8 +156,11 @@ import {
 } from "@/lib/agents/operational-context";
 import {
   claimAgentContinuation,
-  finishAgentContinuation,
+  assertAgentCreateNotRefused,
+  hasAgentContinuationSettlement,
+  recordAgentDispatchIntegrityFailure,
   recordAgentContinuationFailure,
+  recoverAgentContinuationSettlement,
   requireOperationalContinuationWitness,
   settleAgentContinuation,
 } from "@/lib/agents/continuation-episode";
@@ -3396,7 +3398,7 @@ export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
   opts: Omit<AgentFinalizeOptions, "db"> & { db?: Db } = {},
-): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
+): ReturnType<typeof finalizeAgentRunPrepared> {
   return finalizeAgentRunPrepared(runId, outcome, opts);
 }
 
@@ -4087,7 +4089,24 @@ async function dispatchStoredAgentTurn(
     specialistPlacementId,
   );
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
-  await assertOperationalDispatchIntegrity(db, turn.runId);
+  try {
+    await assertOperationalDispatchIntegrity(db, turn.runId);
+  } catch (error) {
+    if (
+      await recordAgentDispatchIntegrityFailure(
+        db,
+        {
+          runId: turn.runId,
+          assignmentId: execution.client.assignment.id,
+          turnId: turn.id,
+          hostSessionId: sessionId,
+        },
+        error,
+      )
+    )
+      return;
+    throw error;
+  }
   const handle = await execution.client.prompt(
     sessionId,
     { stepId: "agent", prompt: turn.prompt },
@@ -4159,6 +4178,8 @@ export async function startAgentSession(
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
       companyId: runs.companyId,
+      agentKind: runs.agentKind,
+      projectId: runs.projectId,
       status: runs.status,
     })
     .from(runs)
@@ -4167,6 +4188,20 @@ export async function startAgentSession(
     opts.assignmentId === undefined
       ? (source?.assignmentId ?? null)
       : opts.assignmentId;
+
+  if (
+    source?.agentKind === "operational" &&
+    source.projectId &&
+    expectedAssignmentId &&
+    source.status === "Running" &&
+    (await recoverAgentContinuationSettlement(
+      db,
+      executionHosts,
+      runId,
+      expectedAssignmentId,
+    ))
+  )
+    return;
 
   try {
     const drive = (signal?: AbortSignal) =>
@@ -4205,6 +4240,11 @@ export async function startAgentSession(
 
       return;
     }
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "agent_continuation_settlement_pending"
+    )
+      return;
     if (isTaskLaunchContention(err)) {
       log.info(
         {
@@ -4531,6 +4571,16 @@ async function driveAgentSession(
               },
             );
           },
+          run.agentKind === "operational" && run.projectId
+            ? {
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
+                  ),
+              }
+            : undefined,
         );
 
         await dispatchStoredAgentTurn(
@@ -5708,18 +5758,26 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
-          companyContext && effective.parsed.platformMcp
+          run.agentKind === "operational" && run.projectId
             ? {
-                bindCredentials: async (tx) =>
-                  appendFacade(
-                    (await retainCompanyAgentSessionCredential(tx, runId))
-                      .secret,
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
                   ),
               }
-            : undefined,
+            : companyContext && effective.parsed.platformMcp
+              ? {
+                  bindCredentials: async (tx) =>
+                    appendFacade(
+                      (await retainCompanyAgentSessionCredential(tx, runId))
+                        .secret,
+                    ),
+                }
+              : undefined,
         );
 
-        if (continuation) await finishAgentContinuation(_db, continuation);
         operationalSpawnStage = "prompt_dispatch";
         await dispatchStoredAgentTurn(
           _db,
@@ -6243,7 +6301,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.exited": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         // ADR-166 E-EH-11: the host evicted this session for a newer driver
@@ -6311,7 +6374,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.crashed": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         await finalizeAgentRun(args.runId, "Crashed", {

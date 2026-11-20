@@ -1,7 +1,9 @@
 import "server-only";
 
 import type { Client, Notification } from "pg";
+import type { Db } from "@/lib/execution-host/db";
 
+import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
@@ -24,6 +26,7 @@ const hintSchema = z
       "execution_events",
       "node_attempts",
       "run_messages",
+      "agent_continuation_episodes",
     ]),
     topic: z.enum(["summary", "execution", "transcript"]),
     runId: z.string().min(1).max(256),
@@ -34,6 +37,17 @@ const hintSchema = z
   .strict();
 
 export type PeekHint = z.infer<typeof hintSchema>;
+
+/** Publish only an authorized read-model invalidation after the owning transaction commits. */
+export async function notifyContinuationAttentionChanged(
+  tx: Pick<Db, "execute">,
+  runId: string,
+): Promise<void> {
+  await tx.execute(sql`SELECT pg_notify('maister_run_peek', jsonb_build_object(
+    'source', 'agent_continuation_episodes', 'topic', 'summary', 'runId', ${runId}::text,
+    'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
+  )::text)`);
+}
 type Subscriber = { notify: (hint: PeekHint) => void; lost: () => void };
 type Hub = {
   client: Client | null;

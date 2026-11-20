@@ -176,7 +176,7 @@ policy is unchanged. Acknowledgement is not general unseen activity.
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 
 - **APR-07:** The prompt owner rechecks the exact owner and turn before Run-level teardown and at terminal CAS. A superseded prompt settles its own application. Retained authorized result-resume ownership still applies through the result gate.
-- **APR-09:** Authorized Stop on a proven undispatched successor commits Abandoned, supersedes its claimed resume turn, releases its assignment, revokes Run tokens and emits one actor-attributed cancellation fact. This commit releases the scheduler slot while a predecessor may still need reconciliation. An observed live session or inconclusive current dispatch proof stays on the existing teardown path.
+- **APR-09:** Authorized Stop on a proven undispatched successor commits Abandoned, supersedes its claimed resume turn, releases its assignment, revokes Run tokens and emits one actor-attributed cancellation fact. The locked proof precedes any host inventory or teardown call. This commit releases the scheduler slot while a predecessor may still need reconciliation. Dispatched or inconclusive current assignments require exact current-owner teardown and canonical proof.
 - **APR-12:** Disposition waits for exact predecessor terminal evidence and fresh host process proof. It preserves bytes as required before removing only the Run-owned checkout and Git registration and releasing the adopted handle. Until then, checkout state stays retained and the disposition is diagnosable.
 
 

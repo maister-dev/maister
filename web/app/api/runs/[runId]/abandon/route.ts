@@ -181,6 +181,9 @@ export async function POST(
         ? await finalizeAgentRun(runId, "Abandoned", {
             db,
             reason: "user",
+            ...(run.agentKind === "operational"
+              ? { projectOperatorUserId: user.id }
+              : {}),
             closeAssignments: {
               kind: "user",
               actorId: actor.id,
@@ -222,15 +225,16 @@ export async function POST(
       );
     }
 
-    // Run is now Abandoned (terminal) — reclaim its per-node capability dirs.
-    const wsRows = await db
-      .select()
-      .from(workspaces)
-      .where(eq(workspaces.runId, runId));
-    const wtPath = wsRows[0]?.worktreePath;
+    // Operational disposition owns capability cleanup after historical teardown.
+    if (!(run.runKind === "agent" && run.agentKind === "operational")) {
+      const wsRows = await db
+        .select()
+        .from(workspaces)
+        .where(eq(workspaces.runId, runId));
+      const wtPath = wsRows[0]?.worktreePath;
 
-    if (wtPath) {
-      await cleanupRunMaterializations({ runId, worktreePath: wtPath, db });
+      if (wtPath)
+        await cleanupRunMaterializations({ runId, worktreePath: wtPath, db });
     }
 
     if (run.runKind !== "agent") {

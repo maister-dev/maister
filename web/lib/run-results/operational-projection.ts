@@ -11,7 +11,14 @@ import type { RunResultContract } from "@/lib/run-results/types";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 
-import { runs, runResults, tasks, projects } from "@/lib/db/schema";
+import {
+  agentContinuationEpisodes,
+  runs,
+  runResults,
+  tasks,
+  projects,
+} from "@/lib/db/schema";
+import { continuationObservation } from "@/lib/agents/continuation-episode";
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 
@@ -55,6 +62,11 @@ export async function inspectOperationalOutcomes(
       cleanup: runs.operationalCleanup,
       contract: runs.resultContract,
       value: runResults.value,
+      continuation: {
+        assignmentEpoch: agentContinuationEpisodes.assignmentEpoch,
+        failure: agentContinuationEpisodes.failure,
+        observation: continuationObservation,
+      },
     })
     .from(runs)
     .leftJoin(
@@ -62,6 +74,14 @@ export async function inspectOperationalOutcomes(
       and(
         eq(runResults.runId, runs.id),
         sql`${runResults.revision}::text = ${runs.operationalTerminal}->>'resultRevision'`,
+      ),
+    )
+    .leftJoin(
+      agentContinuationEpisodes,
+      and(
+        eq(agentContinuationEpisodes.runId, runs.id),
+        eq(agentContinuationEpisodes.state, "attention"),
+        eq(runs.status, "Running"),
       ),
     )
     .where(
@@ -117,6 +137,16 @@ export async function inspectOperationalOutcomes(
       row.id,
       {
         ...outcome,
+        ...(row.continuation?.failure?.blockedReason
+          ? {
+              continuationAttention: {
+                assignmentEpoch: row.continuation.assignmentEpoch,
+                reason: row.continuation.failure.reason,
+                blockedReason: row.continuation.failure.blockedReason,
+                observation: row.continuation.observation,
+              },
+            }
+          : {}),
         referenceLinks:
           outcome.reportedResult?.references.flatMap((reference) => {
             const href =

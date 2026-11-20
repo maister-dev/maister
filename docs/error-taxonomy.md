@@ -924,3 +924,5 @@ New routes use existing typed domain/auth codes with safe `details.reason` and l
 ## Operational preparation recovery (Designed)
 
 `PRECONDITION / operational_legacy_baseline_unverifiable` refuses a new continuation with an unverifiable historical ephemeral witness. `EXECUTOR_UNAVAILABLE / agent_execution_quiescence_unproven` still blocks dispatched cancellation and physical disposal when evidence is incomplete. `CONFLICT / operation_busy` on Pull reports repository ownership contention.
+
+`PRECONDITION / agent_continuation_settlement_pending` declines create or prompt admission when the Run already has a retained continuation failure. `CONFLICT / agent_continuation_attention_stale` means an operator's settlement recheck observation is no longer current. Refresh the Run and inspect its latest diagnosis before rechecking again.
