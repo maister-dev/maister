@@ -141,6 +141,20 @@ The checked-in benchmark at `ad86d0cfc` ran on native Ubuntu 24.04.5 x64, kernel
 
 `pnpm validate:contracts` passed the registered OpenAPI/AsyncAPI parser and schema checks, 18 contract tests and parity checks. The execution-isolation coverage validator separately passed all 13 rows. These checks preserve the Designed status of the outstanding wire and authority acceptance.
 
+A repeat at `3100f6b33` on the same Ubuntu and Node versions, with ordinary OS caches and without concurrent contract validation, measured **437.7/502.8 ms p50/p95** across 20 fresh-host launches and **442.2/513.5 ms** across 30 reused-host launches. The fresh-host test starts a new daemon and SQLite store per sample. It does not flush OS caches. The separate concurrent run remains evidence of observed timing variation on this host.
+
+#### Proposed P0 budgets awaiting owner approval
+
+| Release measurement | Proposed limit | Comparison |
+| --- | --- | --- |
+| Ubuntu 24.04 x64 synthetic ACP launch, fresh and reused host | 575 ms p50 / 650 ms p95 for each class | Quiet native x64 run. About 25% headroom over the higher observed percentile of each class after rounding. |
+| macOS ARM64 synthetic ACP launch, fresh and reused host | 160 ms p50 / 170 ms p95 for each class | Higher percentile across the documented native ARM64 runs, with about 25% headroom after rounding. |
+| Hosted Linux x64 web shards | 45 minutes per shard including cleanup and upload | Observed 30:46 and 36:27. Existing 60-minute hard limit applies. |
+| Hosted macOS Intel web lanes | 45 minutes per part including cleanup and upload | Observed 33:05–36:57. Existing 54-minute execution cutoff and six-minute cleanup/upload reserve apply. |
+| Hosted Linux runtime/supervisor and macOS aggregation | 3 minutes and 1 minute 15 seconds respectively, including cleanup and upload | Observed 2:00 and 0:47. |
+
+Use the checked-in 20 fresh-host and 30 reused-host sampling protocol on matched OS, runtime, workload and cache conditions. Repeat the hosted lanes on the release images and measure the enforced counterpart before claiming performance acceptance. The proposal has no approved or measured limits for additional classes or architectures. T01 and the P2 approval gate stay open.
+
 #### Ubuntu installed-service qualification attempt (2026-11-20)
 
 Ubuntu 24.04.5 LTS, kernel 6.8.0-149-generic, systemd 255.4-1ubuntu8.18, AppArmor 4.0.1really4.0.1-0ubuntu0.24.04.9 and Bubblewrap 0.9.0-1ubuntu0.3. AppArmor was enabled with unprivileged user namespace restriction set to 1. The host mounted cgroup v2 with `nsdelegate`. The shell used Node 24.16.0.
