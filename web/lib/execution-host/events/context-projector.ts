@@ -8,16 +8,18 @@ import type {
   ContextUsage,
 } from "../../../../runtime/acp-context";
 
-import { and, desc, eq, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import pino from "pino";
 
-import {
-  acpContextUpdateType,
-  decodeAcpContextUpdate,
-} from "../../../../runtime/acp-context";
+import { acpContextUpdateType } from "../../../../runtime/acp-context";
 
+import { advanceCompactionTranscriptRevision } from "./compaction-revisions";
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
-import { prepareSessionContent } from "./session-content";
+import {
+  isPrunedContextEvent,
+  prepareSessionContent,
+  readAcpContextUpdate,
+} from "./session-content";
 import { runEventWakeBus } from "./run-wake";
 
 import {
@@ -32,6 +34,14 @@ const log = pino({
 });
 
 const warnedMalformedUpdates = new Set<string>();
+const usageIdentity = [
+  runContextUsage.runId,
+  runContextUsage.executionHostId,
+  runContextUsage.assignmentId,
+  runContextUsage.assignmentEpoch,
+  runContextUsage.hostSessionId,
+  runContextUsage.nodeAttemptId,
+];
 
 type PhysicalSession = Pick<
   typeof runContextUsage.$inferInsert,
@@ -81,11 +91,16 @@ function boundToPhysicalSession(
   );
 }
 
+function sessionAndAttempt(nodeAttemptId: string | null): (string | null)[] {
+  return nodeAttemptId === null ? [null] : [null, nodeAttemptId];
+}
+
 async function writeUsage(
   tx: Db,
   observation: Observation,
   usage: ContextUsage | null,
   ownerAttemptId: string | null,
+  coverage?: { coverageIncomplete: true },
 ): Promise<void> {
   const {
     sequence,
@@ -99,30 +114,63 @@ async function writeUsage(
     observedAt: usage ? occurredAt : null,
     usageRunSequence: usage ? sequence : null,
     lastRunSequence: sequence,
+    ...coverage,
   };
 
   await tx
     .insert(runContextUsage)
     .values(
-      (ownerAttemptId ? [null, ownerAttemptId] : [null]).map(
-        (nodeAttemptId) => ({
-          ...physical,
-          nodeAttemptId,
-          ...fields,
-        }),
-      ),
+      sessionAndAttempt(ownerAttemptId).map((nodeAttemptId) => ({
+        ...physical,
+        nodeAttemptId,
+        ...fields,
+      })),
     )
     .onConflictDoUpdate({
-      target: [
-        runContextUsage.runId,
-        runContextUsage.executionHostId,
-        runContextUsage.assignmentId,
-        runContextUsage.assignmentEpoch,
-        runContextUsage.hostSessionId,
-        runContextUsage.nodeAttemptId,
-      ],
+      target: usageIdentity,
       set: fields,
       setWhere: lt(runContextUsage.lastRunSequence, sequence),
+    });
+}
+
+async function writeCompactionCounts(
+  tx: Db,
+  physical: PhysicalSession,
+  sequence: bigint,
+  attempts: ReadonlyArray<string | null>,
+  delta: { active: number; completed: number },
+): Promise<void> {
+  const {
+    runId,
+    executionHostId,
+    assignmentId,
+    assignmentEpoch,
+    hostSessionId,
+  } = physical;
+
+  await tx
+    .insert(runContextUsage)
+    .values(
+      attempts.map((nodeAttemptId) => ({
+        runId,
+        executionHostId,
+        assignmentId,
+        assignmentEpoch,
+        hostSessionId,
+        nodeAttemptId,
+        lastRunSequence: sequence,
+        compactionRunSequence: sequence,
+        activeCompactions: Math.max(0, delta.active),
+        completedCompactions: delta.completed,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: usageIdentity,
+      set: {
+        compactionRunSequence: sql`greatest(${runContextUsage.compactionRunSequence}, ${sequence})`,
+        activeCompactions: sql`${runContextUsage.activeCompactions} + ${delta.active}`,
+        completedCompactions: sql`${runContextUsage.completedCompactions} + ${delta.completed}`,
+      },
     });
 }
 
@@ -166,6 +214,12 @@ async function projectUsage(
             eq(runContextCompactions.compactionId, latest.compactionId),
           ),
         );
+      await advanceCompactionTranscriptRevision(
+        tx,
+        observation.runId,
+        latest.nodeAttemptId,
+        observation.sequence,
+      );
     }
   }
   await writeUsage(tx, observation, usage, observation.nodeAttemptId);
@@ -224,6 +278,10 @@ async function projectCompaction(
       .from(runContextCompactions)
       .where(and(physical, eq(runContextCompactions.status, "in_progress")))
       .limit(1);
+    const beforeUsage =
+      !overlapping && sample?.usedTokens != null && sample.sizeTokens != null
+        ? { used: sample.usedTokens, size: sample.sizeTokens }
+        : null;
 
     await tx.insert(runContextCompactions).values({
       ...scope,
@@ -233,20 +291,32 @@ async function projectCompaction(
       lastRunSequence: sequence,
       startedAt: update.status === "in_progress" ? occurredAt : null,
       endedAt: update.status === "in_progress" ? null : occurredAt,
-      beforeUsage:
-        !overlapping && sample?.usedTokens != null && sample.sizeTokens != null
-          ? { used: sample.usedTokens, size: sample.sizeTokens }
-          : null,
+      beforeUsage,
     });
+    if (beforeUsage)
+      await advanceCompactionTranscriptRevision(
+        tx,
+        scope.runId,
+        scope.nodeAttemptId,
+        sequence,
+      );
   }
-  if (update.status === "completed") {
-    await writeUsage(
-      tx,
-      observation,
-      null,
-      previous ? previous.nodeAttemptId : scope.nodeAttemptId,
-    );
-  }
+  const ownerAttemptId = previous
+    ? previous.nodeAttemptId
+    : scope.nodeAttemptId;
+  const completed = update.status === "completed";
+
+  if (completed) await writeUsage(tx, observation, null, ownerAttemptId);
+  await writeCompactionCounts(
+    tx,
+    scope,
+    sequence,
+    sessionAndAttempt(ownerAttemptId),
+    {
+      active: previous ? -1 : update.status === "in_progress" ? 1 : 0,
+      completed: completed ? 1 : 0,
+    },
+  );
 }
 
 async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
@@ -258,7 +328,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
     event.eventType === "session.exited" ||
     event.eventType === "session.crashed"
   ) {
-    await tx
+    const interrupted = await tx
       .update(runContextCompactions)
       .set({
         status: "interrupted",
@@ -271,7 +341,23 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
           eq(runContextCompactions.status, "in_progress"),
           lt(runContextCompactions.lastRunSequence, sequence),
         ),
-      );
+      )
+      .returning({ nodeAttemptId: runContextCompactions.nodeAttemptId });
+
+    if (interrupted.length > 0) {
+      const byAttempt = new Map<string | null, number>([
+        [null, interrupted.length],
+      ]);
+
+      for (const { nodeAttemptId } of interrupted)
+        if (nodeAttemptId !== null)
+          byAttempt.set(nodeAttemptId, (byAttempt.get(nodeAttemptId) ?? 0) + 1);
+      for (const [nodeAttemptId, count] of byAttempt)
+        await writeCompactionCounts(tx, physical, sequence, [nodeAttemptId], {
+          active: -count,
+          completed: 0,
+        });
+    }
 
     return;
   }
@@ -322,13 +408,14 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
     return;
   const raw = event.payload?.update;
 
+  const pruned = isPrunedContextEvent(event);
   const updateType = acpContextUpdateType(raw);
 
-  if (!updateType) return;
-  const update = decodeAcpContextUpdate(raw);
+  if (!pruned && !updateType) return;
+  const update = readAcpContextUpdate(event);
 
-  if (!update) {
-    if (!warnedMalformedUpdates.has(updateType)) {
+  if (!update && !pruned) {
+    if (updateType && !warnedMalformedUpdates.has(updateType)) {
       warnedMalformedUpdates.add(updateType);
       log.warn(
         { type: updateType, sequence: String(sequence) },
@@ -338,7 +425,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
 
     return;
   }
-  if (update.kind === "summary_chunk") return;
+  if (update?.kind === "summary_chunk") return;
   const nodeAttemptId =
     typeof event.payload?.nodeAttemptId === "string"
       ? event.payload.nodeAttemptId
@@ -375,12 +462,16 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
         : null,
   };
 
-  if (update.kind === "usage") {
+  if (pruned) {
+    await writeUsage(tx, observation, null, nodeAttemptId, {
+      coverageIncomplete: true,
+    });
+  } else if (update?.kind === "usage") {
     await projectUsage(tx, observation, {
       used: update.used,
       size: update.size,
     });
-  } else {
+  } else if (update?.kind === "compaction") {
     await projectCompaction(tx, observation, update);
   }
 }
@@ -396,6 +487,16 @@ export const canonicalContextProjector: ExecutionEventProjector = {
       : Promise.resolve(event),
   project: projectContext,
   afterCommit(events) {
+    for (const event of events)
+      if (isPrunedContextEvent(event))
+        log.info(
+          {
+            runId: event.runId,
+            eventId: event.id,
+            type: event.payload?.contextType,
+          },
+          "[FIX] context observation bytes pruned",
+        );
     const source = events.find(
       (event) =>
         acpContextUpdateType(event.payload?.update) ||

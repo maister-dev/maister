@@ -2555,16 +2555,22 @@ export async function startTestSupervisor(
             }
             const heldAt = Date.now();
             let refreshedUsage = false;
+            let completedCompaction = false;
+            let reportedAfterUsage = false;
+            const contextSignal = (
+              signal: "refresh" | "complete" | "after",
+            ): boolean =>
+              existsSync(
+                path.join(
+                  opts.stubCompat!.sessionsDir,
+                  `${rec.sessionId}.context-${signal}`,
+                ),
+              );
             const hold = setInterval(() => {
               if (
                 observesContext &&
                 !refreshedUsage &&
-                existsSync(
-                  path.join(
-                    opts.stubCompat!.sessionsDir,
-                    `${rec.sessionId}.context-refresh`,
-                  ),
-                )
+                contextSignal("refresh")
               ) {
                 refreshedUsage = true;
                 observe({
@@ -2573,14 +2579,16 @@ export async function startTestSupervisor(
                   size: 100000,
                 });
               }
+              const released =
+                existsSync(turnRelease) ||
+                Date.now() - heldAt > E2E_HOLD_TURN_BACKSTOP_MS;
+
               if (
-                !existsSync(turnRelease) &&
-                Date.now() - heldAt <= E2E_HOLD_TURN_BACKSTOP_MS
+                observesContext &&
+                !completedCompaction &&
+                (released || contextSignal("complete"))
               ) {
-                return;
-              }
-              clearInterval(hold);
-              if (observesContext) {
+                completedCompaction = true;
                 observe({
                   sessionUpdate: "compaction_update",
                   compactionId: "failed-context",
@@ -2600,6 +2608,20 @@ export async function startTestSupervisor(
                   ],
                 });
               }
+              if (
+                completedCompaction &&
+                !reportedAfterUsage &&
+                contextSignal("after")
+              ) {
+                reportedAfterUsage = true;
+                observe({
+                  sessionUpdate: "usage_update",
+                  used: 35000,
+                  size: 100000,
+                });
+              }
+              if (!released) return;
+              clearInterval(hold);
               complete(out);
               armExit();
             }, STUB_RELEASE_POLL_MS);

@@ -686,6 +686,75 @@ erDiagram
   persistent-agent message sent through the librarian's operator-message seam.
 - Exact DDL: [`../database-schema.md`](../database-schema.md#personal-librarian-tables-designed--adr-183188-migrations-01810188).
 
+### ACP context observations (Implemented — ADR-215)
+
+The numeric projections have a nullable exact-attempt FK. The session-wide usage
+row has a NULL attempt. The transcript revision is independent of physical
+session and covers either the entire run or an exact attempt. The
+[execution-host domain](execution-hosts-domain.md#retention) owns the logical
+incarnation join. See the [column and migration contract](../database-schema.md#acp-context-observations-implemented-adr-215).
+
+```mermaid
+erDiagram
+    RUNS ||--o{ RUN_CONTEXT_USAGE : "scope rows (CASCADE)"
+    RUNS ||--o{ RUN_CONTEXT_COMPACTIONS : "compaction lifecycle (CASCADE)"
+    RUNS ||--o{ RUN_CONTEXT_TRANSCRIPT_REVISIONS : "marker change clocks (CASCADE)"
+    NODE_ATTEMPTS o|--o{ RUN_CONTEXT_USAGE : "optional exact attempt (CASCADE)"
+    NODE_ATTEMPTS o|--o{ RUN_CONTEXT_COMPACTIONS : "optional exact attempt (CASCADE)"
+    NODE_ATTEMPTS o|--o| RUN_CONTEXT_TRANSCRIPT_REVISIONS : "optional exact-attempt clock (CASCADE)"
+    NODE_ATTEMPTS o|--o{ RUN_SESSION_INCARNATIONS : "create-associated context attempt (SET NULL)"
+
+    RUN_SESSION_INCARNATIONS {
+        text id PK
+        text context_node_attempt_id FK "nullable, indexed by run and attempt"
+        timestamp created_at "ordered among candidate bindings"
+    }
+
+    RUN_CONTEXT_USAGE {
+        text run_id FK
+        text execution_host_id
+        text assignment_id
+        integer assignment_epoch
+        text host_session_id
+        text node_attempt_id FK "nullable, NULLS NOT DISTINCT in physical-scope UNIQUE"
+        bigint used_tokens "nullable measurement"
+        bigint size_tokens "nullable measurement"
+        timestamp observed_at "nullable measurement"
+        bigint usage_run_sequence "nullable measurement"
+        bigint created_run_sequence "nullable creation evidence"
+        bigint last_run_sequence
+        boolean coverage_incomplete
+        integer active_compactions
+        integer completed_compactions
+        bigint compaction_run_sequence "nullable"
+    }
+
+    RUN_CONTEXT_COMPACTIONS {
+        text run_id PK, FK
+        text execution_host_id PK
+        text assignment_id PK
+        integer assignment_epoch PK
+        text host_session_id PK
+        text compaction_id PK
+        text node_attempt_id FK "nullable"
+        text status
+        bigint first_run_sequence
+        bigint last_run_sequence
+        timestamp started_at "nullable"
+        timestamp ended_at "nullable"
+        text command_id "nullable"
+        jsonb before_usage "nullable, used and size"
+        jsonb after_usage "nullable, used and size"
+    }
+
+    RUN_CONTEXT_TRANSCRIPT_REVISIONS {
+        text run_id FK
+        text node_attempt_id FK "nullable, NULLS NOT DISTINCT in scope UNIQUE"
+        bigint revision "positive, increments on mutation"
+        bigint last_run_sequence "high-water canonical sequence"
+    }
+```
+
 ## Constraints
 
 **Implemented (ADR-215).** A nullable `node_attempts.error_reason` can name one

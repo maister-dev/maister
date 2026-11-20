@@ -8,7 +8,9 @@ import { sql } from "drizzle-orm";
 type Evidence = Pick<CompactionMarker, "before" | "after">;
 
 export async function readCompactionEvidence(
-  db: Pick<Db, "execute">, runId: string, messageIds: readonly string[],
+  db: Pick<Db, "execute">,
+  runId: string,
+  messageIds: readonly string[],
 ): Promise<ReadonlyMap<string, Evidence>> {
   if (messageIds.length === 0) return new Map();
   const rows = await db.execute<{
@@ -22,11 +24,19 @@ export async function readCompactionEvidence(
       AND c.node_attempt_id IS NOT DISTINCT FROM m.node_attempt_id
       AND c.first_run_sequence::text = m.first_supervisor_event_id
     WHERE m.run_id = ${runId} AND m.projection_tool_key LIKE 'compaction:%'
-      AND m.id IN (${sql.join(messageIds.map((id) => sql`${id}`), sql`,`)})
+      AND m.id IN (${sql.join(
+        messageIds.map((id) => sql`${id}`),
+        sql`,`,
+      )})
   `);
 
-  return new Map(rows.rows.map((row) => [row.id, {
-    ...(row.before_usage ? { before: row.before_usage } : {}),
-    ...(row.after_usage ? { after: row.after_usage } : {}),
-  }]));
+  return new Map(
+    rows.rows.map((row) => [
+      row.id,
+      {
+        ...(row.before_usage ? { before: row.before_usage } : {}),
+        ...(row.after_usage ? { after: row.after_usage } : {}),
+      },
+    ]),
+  );
 }

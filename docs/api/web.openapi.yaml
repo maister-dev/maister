@@ -13543,10 +13543,13 @@ paths:
         states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
         stream cleanly after draining trailing events.
 
-        Canonical frames contain only `type`, `eventId`, `runSequence`,
-        `occurredAt`, and `hostSessionId`; they do not expose the host payload.
-        Designed context snapshots carry safe projections and are emitted without
-        an SSE id. The recipient must still hold the current run/source grant.
+        Canonical frames contain `type`, `eventId`, `runSequence`, `occurredAt`,
+        and `hostSessionId`. On a context opt-in stream, usage-only frames
+        also carry `contextUsageOnly: true`. These frames advance the durable
+        cursor and let clients skip transcript and run-detail invalidations.
+        Host payloads are excluded. `session.context_snapshot` carries safe
+        projected metadata without an SSE id. The recipient must still hold
+        the current run/source grant.
         See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
       parameters:
@@ -13567,7 +13570,7 @@ paths:
         - name: context
           in: query
           required: false
-          description: Opt in to id-less context snapshots with value 1.
+          description: Opt in to id-less context snapshots and the usage-only canonical frame hint with value 1.
           schema: { type: string, enum: ["1"] }
       responses:
         "200":
@@ -26937,6 +26940,8 @@ components:
         message represented by valid role-specific bounded content. Cumulative
         response exhaustion ends a page instead of producing previews. Tool
         previews preserve the tool name, status and argument/result summaries.
+        Oversized compaction markers preserve the lifecycle status and a summary
+        excerpt. Their preview metadata links to the same authorized download.
       properties:
         id: { type: string }
         role:
@@ -26954,7 +26959,7 @@ components:
               type: string
               description: Authorized attachment download of the complete record, bound to its current node attempt when applicable.
     ContextSnapshot:
-      description: Designed. Safe projected context metadata. Structurally equivalent to the run SSE snapshot.
+      description: Safe projected context metadata shared by authorized REST readers and run SSE.
       type: object
       additionalProperties: false
       required:
@@ -26969,7 +26974,22 @@ components:
         nodeAttemptId: { type: string, nullable: true }
         lifecycleSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
         contextSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
-        transcriptSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        transcriptSequence:
+          type: string
+          nullable: true
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+          description: Greatest canonical sequence recorded for a compaction marker or its display evidence in this transcript scope.
+        transcriptRevision:
+          type: string
+          nullable: true
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+          description: Monotonic revision for committed compaction marker and evidence changes in the whole-run or exact-attempt transcript.
+        bindingObservedAt:
+          type: string
+          nullable: true
+          format: date-time
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$'
+          description: Database observation time for physical selection, including an empty selection, with UTC microsecond precision. Used to compare different bindings. Does not advance SSE or trigger an event by itself.
         usage:
           type: object
           nullable: true

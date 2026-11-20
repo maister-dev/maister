@@ -6,19 +6,20 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { isAcpContextFailureReason } from "../../../../../runtime/acp-context-failure";
+
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { encodeJsonbSafe } from "@/lib/execution-host/events/jsonb-safe";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions } from "@/lib/queries/hitl";
 import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { readCompactionEvidence } from "@/lib/runs/compaction-evidence";
 import { readContextSnapshot } from "@/lib/runs/context-reader";
-import { isAcpContextFailureReason } from "../../../../../runtime/acp-context-failure";
-
 import { loadScratchTerminalCause } from "@/lib/runs/terminal-cause";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
@@ -403,12 +404,14 @@ export async function GET(
 
       return marker.kind === "compaction" ? [{ message, marker }] : [];
     });
+
     if (markers.length > 0) {
       const evidence = await readCompactionEvidence(
         getDb(),
         runId,
         markers.map(({ message }) => message.id),
       );
+
       try {
         if (run.projectId)
           await requireProjectAction(run.projectId, "readRepoFiles");
@@ -418,10 +421,9 @@ export async function GET(
           runId,
         );
         for (const { message, marker } of markers) {
-          message.content = JSON.stringify({
-            ...marker,
-            ...evidence.get(message.id),
-          });
+          message.content = JSON.stringify(
+            encodeJsonbSafe({ ...marker, ...evidence.get(message.id) }),
+          );
         }
       } catch (error) {
         if (!isMaisterError(error) || error.code !== "UNAUTHORIZED")

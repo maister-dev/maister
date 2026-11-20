@@ -1,18 +1,24 @@
 import type { CommandReceipt } from "@/lib/execution-host";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { expect, it } from "vitest";
 
+import { canonicalContextProjector } from "@/lib/execution-host/events/context-projector";
+import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
+import { projectExecutionEvents } from "@/lib/execution-host/events/projector";
+import { canonicalTranscriptProjector } from "@/lib/execution-host/events/transcript-projector";
+import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import {
   seedLocalHost,
   seedProjectRow,
   seedRun,
 } from "@/test-support/execution-host-seed";
 import {
+  applyMainMigration,
   declareCurrentTestDatabaseWriter,
   startMainPostgresTestDbUpTo,
 } from "@/test-support/pg-container";
@@ -172,6 +178,313 @@ it("upgrades a populated predecessor while preserving old attempt and transcript
         [runId],
       ),
     ).rejects.toMatchObject({ code: "23514" });
+  } finally {
+    await db.stop();
+  }
+}, 180_000);
+
+it("continues 0358 inline compactions with escaped IDs in their original markers", async () => {
+  const database = await startMainPostgresTestDbUpTo(
+    { databaseName: "acp_context_escaped_id_upgrade" },
+    "0358_acp_context",
+  );
+
+  try {
+    await declareCurrentTestDatabaseWriter(database);
+    const { db, pool } = database;
+    const { id: projectId } = await seedProjectRow(db);
+    const hostBootId = randomUUID();
+    const { id: hostId, hostKey } = await seedLocalHost(db, {
+      bootId: hostBootId,
+    });
+    const runId = await seedRun(db, { projectId });
+    const assignmentId = randomUUID();
+    const hostSessionId = randomUUID();
+    const streamId = randomUUID();
+    const projectors = [
+      canonicalContextProjector,
+      canonicalTranscriptProjector,
+    ];
+    const entries = [
+      {
+        adapterId: "compact-\uE000",
+        oldId: "compact-\uE000E",
+        messageId: randomUUID(),
+      },
+      {
+        adapterId: "compact-\uE000E",
+        oldId: "compact-\uE000EE",
+        messageId: randomUUID(),
+      },
+    ];
+
+    await pool.query(
+      `INSERT INTO execution_assignments(id,run_id,execution_host_id,epoch,state,placement_reason)
+       VALUES($1,$2,$3,1,'active','launch')`,
+      [assignmentId, runId, hostId],
+    );
+    await pool.query("UPDATE runs SET execution_assignment_id=$1 WHERE id=$2", [
+      assignmentId,
+      runId,
+    ]);
+    const ingest = async (
+      sequence: number,
+      update: Record<string, unknown>,
+    ): Promise<string> => {
+      const result = await ingestRuntimeEvent({
+        db,
+        executionHostId: hostId,
+        envelope: {
+          envelopeVersion: 1,
+          eventId: randomUUID(),
+          hostKey,
+          hostBootId,
+          streamId,
+          sequence: String(sequence),
+          runId,
+          assignmentId,
+          assignmentEpoch: 1,
+          hostSessionId,
+          eventType: "session.update",
+          occurredAt: "2026-11-20T12:00:00.000Z",
+          payloadSchema: "maister.session.update.v1",
+          payload: { update },
+        },
+      });
+
+      expect(result.disposition).toBe("accepted");
+      const { rows } = await pool.query<{ sequence: string }>(
+        "SELECT run_sequence::text AS sequence FROM execution_events WHERE id=$1",
+        [result.eventId],
+      );
+
+      return rows[0]!.sequence;
+    };
+    const scopeHash = createHash("sha256")
+      .update(JSON.stringify([hostId, assignmentId, 1, hostSessionId]))
+      .digest("hex");
+    const starts: string[] = [];
+
+    // Reproduce the 0358 projector output. It used the canonical JSONB
+    // representation of the adapter ID directly as its storage identity.
+    for (const [index, entry] of entries.entries()) {
+      const start = await ingest(index, {
+        sessionUpdate: "compaction_update",
+        compactionId: entry.adapterId,
+        status: "in_progress",
+      });
+      const oldIdHash = createHash("sha256").update(entry.oldId).digest("hex");
+
+      starts.push(start);
+      await pool.query(
+        `INSERT INTO run_context_compactions(
+           run_id,execution_host_id,assignment_id,assignment_epoch,host_session_id,
+           compaction_id,status,first_run_sequence,last_run_sequence,started_at,before_usage
+         ) VALUES($1,$2,$3,1,$4,$5,'in_progress',$6,$6,now(),'{"used":80,"size":100}')`,
+        [runId, hostId, assignmentId, hostSessionId, entry.oldId, start],
+      );
+      await pool.query(
+        `INSERT INTO run_messages(
+           id,run_id,role,content,sequence,first_supervisor_event_id,supervisor_event_id,projection_tool_key
+         ) VALUES($1,$2,'system',$3,$4,$5,$5,$6)`,
+        [
+          entry.messageId,
+          runId,
+          JSON.stringify({
+            v: 1,
+            kind: "compaction",
+            status: "in_progress",
+            summary: `Start ${index}`,
+          }),
+          index + 1,
+          start,
+          `compaction:${scopeHash}:${oldIdHash}`,
+        ],
+      );
+    }
+    await pool.query(
+      `INSERT INTO execution_event_consumers(consumer_name,run_id,last_run_sequence)
+       SELECT unnest($1::text[]),$2,$3
+       ON CONFLICT (consumer_name,run_id) DO UPDATE SET last_run_sequence=excluded.last_run_sequence`,
+      [
+        projectors.map(({ consumerName }) => consumerName),
+        runId,
+        starts.at(-1),
+      ],
+    );
+
+    await applyMainMigration(db, "0359_acp_context_projection_state");
+
+    const firstId = entries[0]!.adapterId;
+
+    await ingest(2, {
+      sessionUpdate: "compaction_summary_chunk",
+      compactionId: firstId,
+      content: { type: "text", text: " continued" },
+    });
+    const terminal = await ingest(3, {
+      sessionUpdate: "compaction_update",
+      compactionId: firstId,
+      status: "completed",
+    });
+
+    for (const projector of projectors)
+      await expect(
+        projectExecutionEvents({ db, projector, runId }),
+      ).resolves.toMatchObject({
+        poisoned: false,
+        deferred: false,
+        lastRunSequence: terminal,
+      });
+
+    const messages = await pool.query<{
+      id: string;
+      sequence: number;
+      first_supervisor_event_id: string;
+      supervisor_event_id: string;
+      content: string;
+    }>(
+      `SELECT id,sequence,first_supervisor_event_id,supervisor_event_id,content
+        FROM run_messages WHERE run_id=$1 ORDER BY sequence`,
+      [runId],
+    );
+
+    expect(
+      messages.rows.map(({ content, ...row }) => ({
+        ...row,
+        marker: parseScratchMessageContent("system", content),
+      })),
+    ).toEqual([
+      {
+        id: entries[0]!.messageId,
+        sequence: 1,
+        first_supervisor_event_id: starts[0],
+        supervisor_event_id: terminal,
+        marker: {
+          v: 1,
+          kind: "compaction",
+          status: "completed",
+          summary: "Start 0 continued",
+        },
+      },
+      {
+        id: entries[1]!.messageId,
+        sequence: 2,
+        first_supervisor_event_id: starts[1],
+        supervisor_event_id: starts[1],
+        marker: {
+          v: 1,
+          kind: "compaction",
+          status: "in_progress",
+          summary: "Start 1",
+        },
+      },
+    ]);
+    const counts = await pool.query(
+      `SELECT active_compactions,completed_compactions FROM run_context_usage WHERE run_id=$1`,
+      [runId],
+    );
+
+    expect(counts.rows).toEqual([
+      { active_compactions: 1, completed_compactions: 1 },
+    ]);
+    const lifecycle = await pool.query(
+      `SELECT compaction_id,status,before_usage,first_run_sequence,last_run_sequence
+       FROM run_context_compactions WHERE run_id=$1 ORDER BY first_run_sequence`,
+      [runId],
+    );
+
+    expect(lifecycle.rows).toEqual(
+      entries.map(({ adapterId }, index) => ({
+        compaction_id: adapterId,
+        status: index === 0 ? "completed" : "in_progress",
+        before_usage: { used: 80, size: 100 },
+        first_run_sequence: starts[index],
+        last_run_sequence: index === 0 ? terminal : starts[index],
+      })),
+    );
+  } finally {
+    await database.stop();
+  }
+}, 180_000);
+
+it("materializes existing observations, compaction counts and marker watermarks by scope", async () => {
+  const db = await startMainPostgresTestDbUpTo(
+    { databaseName: "acp_context_projection_upgrade" },
+    "0358_acp_context",
+  );
+
+  try {
+    await declareCurrentTestDatabaseWriter(db);
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+    const { id: projectId } = await seedProjectRow(db.db);
+
+    await seedRun(db.db, { id: runId, projectId, runKind: "flow" });
+    await db.pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type) VALUES($1,$2,'fixture','ai_coding')",
+      [attemptId, runId],
+    );
+    await db.pool.query(
+      `INSERT INTO run_context_usage(
+         run_id,execution_host_id,assignment_id,assignment_epoch,host_session_id,node_attempt_id,
+         used_tokens,size_tokens,observed_at,usage_run_sequence,last_run_sequence
+       ) VALUES($1,'host','assignment',1,'session',$2,80,100,now(),4,4)`,
+      [runId, attemptId],
+    );
+    await db.pool.query(
+      `INSERT INTO run_context_compactions(
+         run_id,execution_host_id,assignment_id,assignment_epoch,host_session_id,
+         node_attempt_id,compaction_id,status,first_run_sequence,last_run_sequence,started_at,ended_at
+       ) VALUES
+         ($1,'host','assignment',1,'session',$2,'first','completed',5,6,now(),now()),
+         ($1,'host','assignment',1,'session',NULL,'second','in_progress',7,7,now(),NULL)`,
+      [runId, attemptId],
+    );
+    await db.pool.query(
+      `INSERT INTO run_messages(id,run_id,node_attempt_id,role,content,sequence,supervisor_event_id,projection_tool_key)
+       VALUES($1,$2,$3,'system','{}',1,'6','compaction:first'),
+             ($4,$2,NULL,'system','{}',2,'7','compaction:second')`,
+      [randomUUID(), runId, attemptId, randomUUID()],
+    );
+
+    await applyMainMigration(db.db, "0359_acp_context_projection_state");
+
+    const counts = await db.pool.query(
+      `SELECT node_attempt_id,used_tokens,last_run_sequence,
+              active_compactions,completed_compactions,compaction_run_sequence
+        FROM run_context_usage WHERE run_id=$1 ORDER BY node_attempt_id NULLS FIRST`,
+      [runId],
+    );
+
+    expect(counts.rows).toEqual([
+      {
+        node_attempt_id: null,
+        used_tokens: null,
+        last_run_sequence: "0",
+        active_compactions: 1,
+        completed_compactions: 1,
+        compaction_run_sequence: "7",
+      },
+      {
+        node_attempt_id: attemptId,
+        used_tokens: "80",
+        last_run_sequence: "4",
+        active_compactions: 0,
+        completed_compactions: 1,
+        compaction_run_sequence: "6",
+      },
+    ]);
+    const revisions = await db.pool.query(
+      `SELECT node_attempt_id,revision,last_run_sequence FROM run_context_transcript_revisions
+       WHERE run_id=$1 ORDER BY node_attempt_id NULLS FIRST`,
+      [runId],
+    );
+
+    expect(revisions.rows).toEqual([
+      { node_attempt_id: null, revision: "1", last_run_sequence: "7" },
+      { node_attempt_id: attemptId, revision: "1", last_run_sequence: "6" },
+    ]);
   } finally {
     await db.stop();
   }

@@ -30,16 +30,23 @@ export async function readContextSnapshot(
 ): Promise<ContextSnapshot> {
   const selectedAttempt =
     nodeAttemptId !== null
-      ? sql`EXISTS (SELECT 1 FROM node_attempts n WHERE n.run_id = rs.run_id
-        AND n.id = ${nodeAttemptId}
-        AND EXISTS (SELECT 1 FROM run_context_usage u0
-          WHERE u0.run_id = n.run_id AND u0.node_attempt_id = n.id
+      ? sql`(i.context_node_attempt_id = ${nodeAttemptId}
+        OR EXISTS (SELECT 1 FROM run_context_usage u0
+          WHERE u0.run_id = i.run_id AND u0.node_attempt_id = ${nodeAttemptId}
             AND u0.host_session_id = i.host_session_id
             AND u0.execution_host_id = i.execution_host_id
             AND u0.assignment_id = i.execution_assignment_id
             AND u0.assignment_epoch = i.assignment_epoch))`
       : sql`i.host_session_id = rs.host_session_id
         AND i.execution_assignment_id = rs.execution_assignment_id`;
+  const usageScope =
+    nodeAttemptId === null
+      ? sql`u.node_attempt_id IS NULL`
+      : sql`u.node_attempt_id = ${nodeAttemptId}`;
+  const transcriptScope =
+    nodeAttemptId === null
+      ? sql`t.node_attempt_id IS NULL`
+      : sql`t.node_attempt_id = ${nodeAttemptId}`;
   const result = await db.execute<SnapshotRow>(sql`
     WITH selected AS (
       SELECT i.*, rs.runner_snapshot
@@ -47,46 +54,38 @@ export async function readContextSnapshot(
       JOIN run_session_incarnations i ON i.run_session_id = rs.id AND i.run_id = rs.run_id
       WHERE rs.run_id = ${runId} AND ${selectedAttempt}
       ORDER BY (i.state IN ('created','active','checkpointed')) DESC,
-        i.created_at DESC, i.id DESC
+        i.created_at DESC NULLS LAST, i.id DESC NULLS LAST
       LIMIT 1
     )
     SELECT i.run_session_id AS "runSessionId", i.id AS "incarnationId",
+      to_char(statement_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "bindingObservedAt",
       session_usage.created_run_sequence::text AS "lifecycleSequence",
-      GREATEST(u.last_run_sequence, c.last_sequence)::text AS "contextSequence",
-      t.last_sequence::text AS "transcriptSequence",
+      GREATEST(u.last_run_sequence, u.compaction_run_sequence)::text AS "contextSequence",
+      t.last_run_sequence::text AS "transcriptSequence",
+      t.revision::text AS "transcriptRevision",
       u.used_tokens::text AS used, u.size_tokens::text AS size,
       u.observed_at AS "observedAt", u.usage_run_sequence::text AS "usageSequence",
-      COALESCE(c.active,0) AS "activeCompactions", COALESCE(c.completed,0) AS "completedCompactions",
-      session_usage.created_run_sequence IS NOT NULL AS "hasCreatedEvent",
+      CASE WHEN i.state IN ('created','active','checkpointed') THEN COALESCE(u.active_compactions,0)
+        ELSE 0 END AS "activeCompactions",
+      COALESCE(u.completed_compactions,0) AS "completedCompactions",
+      session_usage.created_run_sequence IS NOT NULL
+        AND NOT session_usage.coverage_incomplete AS "hasCreatedEvent",
       i.runner_snapshot->>'adapter' AS adapter,
       i.runner_snapshot->>'providerKind' AS "providerKind",
       i.runner_snapshot->'env'->>'CLAUDE_CODE_MAX_CONTEXT_TOKENS' AS configured
-    FROM selected i
+    FROM (SELECT 1) scope
+    LEFT JOIN selected i ON TRUE
     LEFT JOIN run_context_usage u ON u.run_id = i.run_id
       AND u.execution_host_id = i.execution_host_id AND u.assignment_epoch = i.assignment_epoch
       AND u.assignment_id = i.execution_assignment_id AND u.host_session_id = i.host_session_id
-      AND u.node_attempt_id IS NOT DISTINCT FROM ${nodeAttemptId}::text
+      AND ${usageScope}
     LEFT JOIN run_context_usage session_usage ON session_usage.run_id = i.run_id
       AND session_usage.execution_host_id = i.execution_host_id
       AND session_usage.assignment_epoch = i.assignment_epoch
       AND session_usage.assignment_id = i.execution_assignment_id
       AND session_usage.host_session_id = i.host_session_id AND session_usage.node_attempt_id IS NULL
-    CROSS JOIN LATERAL (
-      SELECT count(*) FILTER (WHERE c.status = 'in_progress'
-        AND i.state IN ('created','active','checkpointed'))::int AS active,
-        count(*) FILTER (WHERE c.status = 'completed')::int AS completed,
-        max(c.last_run_sequence) AS last_sequence
-      FROM run_context_compactions c
-      WHERE c.run_id = i.run_id AND c.execution_host_id = i.execution_host_id
-        AND c.assignment_epoch = i.assignment_epoch AND c.assignment_id = i.execution_assignment_id
-        AND c.host_session_id = i.host_session_id
-        AND (${nodeAttemptId}::text IS NULL OR c.node_attempt_id = ${nodeAttemptId}::text)
-    ) c
-    CROSS JOIN LATERAL (
-      SELECT max(m.supervisor_event_id::bigint) AS last_sequence
-      FROM run_messages m WHERE m.run_id = i.run_id AND m.projection_tool_key LIKE 'compaction:%'
-        AND (${nodeAttemptId}::text IS NULL OR m.node_attempt_id = ${nodeAttemptId}::text)
-    ) t
+    LEFT JOIN run_context_transcript_revisions t ON t.run_id = ${runId}
+      AND ${transcriptScope}
   `);
   const row = result.rows[0];
 
@@ -96,9 +95,11 @@ export async function readContextSnapshot(
     nodeAttemptId,
     runSessionId: row?.runSessionId ?? null,
     incarnationId: row?.incarnationId ?? null,
+    bindingObservedAt: row?.bindingObservedAt ?? null,
     lifecycleSequence: row?.lifecycleSequence ?? null,
     contextSequence: row?.contextSequence ?? null,
     transcriptSequence: row?.transcriptSequence ?? null,
+    transcriptRevision: row?.transcriptRevision ?? null,
     usage:
       row?.used != null &&
       row.size != null &&

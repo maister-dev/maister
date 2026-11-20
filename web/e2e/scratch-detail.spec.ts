@@ -345,6 +345,7 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
     "SELECT host_session_id AS value FROM run_sessions WHERE run_id = $1",
     [runId],
   );
+
   // The page boot and the ready catch-up both read the current detail.
   await expect
     .poll(() => detailReads)
@@ -388,10 +389,9 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
   // The composer stays usable while the agent works.
   await expect(composer).toBeEditable();
 
-  // End the running turn: the queued message is dispatched as the next turn,
-  // so its row loses the badge.
+  // Observe compaction before the held prompt settles.
   writeFileSync(
-    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.turn-release`),
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-complete`),
     "",
   );
   await expect(context).toContainText("Not reported", { timeout: 30_000 });
@@ -410,45 +410,90 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
   await expect(compaction).toHaveCount(1);
   await compaction.click();
   await expect(page.getByText("Synthetic compaction summary")).toBeVisible();
-  const replay = await page.evaluate(async (id) => {
-    const abort = new AbortController();
-    const timeout = setTimeout(() => abort.abort(), 10_000);
+  const compactionSequence = await singleValue<string>(
+    `SELECT run_sequence::text AS value FROM execution_events
+       WHERE run_id = $1 AND ingest_disposition = 'accepted'
+         AND event_type = 'session.update'
+         AND payload->'update'->>'sessionUpdate' = 'compaction_update'
+         AND payload->'update'->>'compactionId' = 'e2e-context'
+         AND payload->'update'->>'status' = 'completed'`,
+    [runId],
+  );
 
-    try {
-      const response = await fetch(
-        `/api/runs/${id}/stream?context=1&lastEventId=0`,
-        {
-          signal: abort.signal,
-        },
-      );
+  if (!compactionSequence)
+    throw new Error("Completed compaction has no durable event sequence");
+  const replay = await page.evaluate(
+    async ({ id, sequence }) => {
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 10_000);
 
-      if (!response.ok || !response.body)
-        throw new Error("Context replay did not open");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let events = "";
+      try {
+        const response = await fetch(
+          `/api/runs/${id}/stream?context=1&lastEventId=0`,
+          {
+            signal: abort.signal,
+          },
+        );
 
-      while (
-        !events.includes('"type":"session.context_snapshot"') ||
-        !events.includes('"type":"session.command"')
-      ) {
-        const next = await reader.read();
+        if (!response.ok || !response.body)
+          throw new Error("Context replay did not open");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let events = "";
+        const targetObserved = (): boolean =>
+          events
+            .split("\n\n")
+            .slice(0, -1)
+            .some(
+              (frame) =>
+                frame.startsWith(`id: ${sequence}\n`) &&
+                frame.includes('"type":"session.update"'),
+            );
 
-        if (next.done) break;
-        events += decoder.decode(next.value, { stream: true });
+        while (
+          !events.includes('"type":"session.context_snapshot"') ||
+          !targetObserved()
+        ) {
+          const next = await reader.read();
+
+          if (next.done) break;
+          events += decoder.decode(next.value, { stream: true });
+        }
+
+        return {
+          snapshot: events.includes('"type":"session.context_snapshot"'),
+          targetObserved: targetObserved(),
+          summaryDisclosed: events.includes("Synthetic compaction summary"),
+        };
+      } finally {
+        clearTimeout(timeout);
+        abort.abort();
       }
+    },
+    { id: runId, sequence: compactionSequence },
+  );
 
-      return {
-        snapshot: events.includes('"type":"session.context_snapshot"'),
-        summaryDisclosed: events.includes("Synthetic compaction summary"),
-      };
-    } finally {
-      clearTimeout(timeout);
-      abort.abort();
-    }
-  }, runId);
+  expect(replay).toEqual({
+    snapshot: true,
+    targetObserved: true,
+    summaryDisclosed: false,
+  });
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-after`),
+    "",
+  );
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "35000",
+  );
+  await expect(page.getByText("After 35,000 / 100,000 tokens")).toBeVisible();
+  await expect(badge).toHaveText("Queued");
 
-  expect(replay).toEqual({ snapshot: true, summaryDisclosed: false });
+  // End the running turn so the queued message can be dispatched.
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.turn-release`),
+    "",
+  );
   await expect(page.getByTestId("scratch-delivery-badge")).toHaveCount(0, {
     timeout: 60_000,
   });

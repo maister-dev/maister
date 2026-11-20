@@ -41,8 +41,8 @@ export function ContextUsageMeter({
       <span>{t("label")}</span>
       <div
         aria-label={usage ? t("label") : undefined}
-        aria-valuemin={usage ? 0 : undefined}
         aria-valuemax={usage ? usage.size : undefined}
+        aria-valuemin={usage ? 0 : undefined}
         aria-valuenow={usage ? Math.min(usage.used, usage.size) : undefined}
         aria-valuetext={usage ? `${percentage} · ${tokenText}` : undefined}
         className={clsx(
@@ -70,11 +70,11 @@ export function ContextUsageMeter({
         {percentage ?? t("notReported")}
       </span>
       <span
-        className="inline-flex items-center gap-1 text-amber"
         aria-live="polite"
+        className="inline-flex items-center gap-1 text-amber"
       >
         {active ? (
-          <ArrowPathIcon className="size-3.5" aria-hidden="true" />
+          <ArrowPathIcon aria-hidden="true" className="size-3.5" />
         ) : null}
         {activity}
       </span>
@@ -89,7 +89,7 @@ export function ContextUsageMeter({
           size="sm"
           variant="ghost"
         >
-          <InformationCircleIcon className="size-4" aria-hidden="true" />
+          <InformationCircleIcon aria-hidden="true" className="size-4" />
         </Button>
         <Popover.Content className="rounded-md border border-line bg-paper p-3 shadow-lg">
           <Popover.Dialog

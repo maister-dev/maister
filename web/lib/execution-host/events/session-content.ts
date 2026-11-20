@@ -8,6 +8,10 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 
 import {
+  acpContextUpdateType,
+  decodeAcpContextUpdate,
+} from "../../../../runtime/acp-context";
+import {
   parseCommandEventPayloadV2,
   CommandEvidenceError,
 } from "../../../../runtime/command-evidence";
@@ -20,11 +24,34 @@ import { getRuntimeObjectForRun } from "../runtime-objects";
 import { openRuntimeObjectContent } from "../runtime-object-content";
 
 import { ExecutionEventProjectionError } from "./projector";
+import { decodeJsonbSafe } from "./jsonb-safe";
 import { projectionTransaction } from "./projection-transaction";
 import { projectRuntimeObject } from "./runtime-object-projector";
 
 import { executionEventStreams } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+
+const contentState = Symbol("sessionContentState");
+
+type PreparedSessionEvent = ExecutionEvent & {
+  [contentState]?: "hydrated" | "pruned_context";
+};
+
+export function isPrunedContextEvent(event: PreparedSessionEvent): boolean {
+  return event[contentState] === "pruned_context";
+}
+
+export function readAcpContextUpdate(event: PreparedSessionEvent) {
+  const raw = event.payload?.update;
+
+  if (!acpContextUpdateType(raw)) return null;
+
+  return decodeAcpContextUpdate(
+    event.source === "host" && event[contentState] !== "hydrated"
+      ? decodeJsonbSafe(raw)
+      : raw,
+  );
+}
 
 function corrupt(): ExecutionEventProjectionError {
   return new ExecutionEventProjectionError(
@@ -69,7 +96,7 @@ export async function prepareSessionContent(
   db: Db,
   event: ExecutionEvent,
   signal: AbortSignal,
-): Promise<ExecutionEvent> {
+): Promise<PreparedSessionEvent> {
   if (event.payload?.contentRef === undefined) return event;
   const parsed = SessionContentReferenceSchema.safeParse(
     event.payload.contentRef,
@@ -98,6 +125,23 @@ export async function prepareSessionContent(
     }),
   );
 
+  if (
+    loaded &&
+    (loaded.object.executionHostId !== event.executionHostId ||
+      loaded.object.executionAssignmentId !== event.executionAssignmentId ||
+      loaded.object.assignmentEpoch !== event.assignmentEpoch ||
+      loaded.object.generation !== reference.generation ||
+      loaded.object.sha256 !== reference.sha256 ||
+      loaded.object.sizeBytes !== BigInt(reference.sizeBytes))
+  )
+    throw corrupt();
+  if (
+    loaded?.object.state === "deleted" &&
+    event.eventType === "session.update" &&
+    acpContextUpdateType({ sessionUpdate: event.payload.contextType })
+  )
+    return { ...event, [contentState]: "pruned_context" };
+
   if (!loaded || loaded.object.state !== "available") {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
@@ -105,15 +149,6 @@ export async function prepareSessionContent(
       { details: { reason: "runtime_object_missing", eventId: event.id } },
     );
   }
-  if (
-    loaded.object.executionHostId !== event.executionHostId ||
-    loaded.object.executionAssignmentId !== event.executionAssignmentId ||
-    loaded.object.assignmentEpoch !== event.assignmentEpoch ||
-    loaded.object.generation !== reference.generation ||
-    loaded.object.sha256 !== reference.sha256 ||
-    loaded.object.sizeBytes !== BigInt(reference.sizeBytes)
-  )
-    throw corrupt();
   if (loaded.executionHost.kind !== "local_direct") {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
@@ -212,6 +247,7 @@ export async function prepareSessionContent(
 
     return {
       ...event,
+      [contentState]: "hydrated",
       payload,
       payloadSchema: reference.sourcePayloadSchema ?? event.payloadSchema,
       payloadBytes: reference.sizeBytes,

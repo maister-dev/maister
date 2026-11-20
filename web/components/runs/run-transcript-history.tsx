@@ -17,7 +17,10 @@ import { useTranslations } from "next-intl";
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
-import { latestContextSnapshot } from "@/lib/runs/context-snapshot";
+import {
+  contextTranscriptRevision,
+  latestContextSnapshot,
+} from "@/lib/runs/context-snapshot";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { useLatestRef } from "@/lib/use-latest-ref";
 
@@ -811,12 +814,24 @@ export function RunTranscriptHistory({
     boundPages,
   ]);
 
+  const transcriptRevision = contextTranscriptRevision(stream.context);
+  const attemptTranscriptRevision = contextTranscriptRevision(
+    stream.attemptContext,
+  );
+  const streamedAttemptId = stream.attemptContext?.nodeAttemptId;
+
   useEffect(() => {
-    if (stream.eventCount > 0) refreshRef.current();
+    if (
+      stream.eventCount > 0 ||
+      transcriptRevision !== null ||
+      attemptTranscriptRevision !== null
+    )
+      refreshRef.current();
   }, [
     stream.eventCount,
-    stream.context?.transcriptSequence,
-    stream.attemptContext?.transcriptSequence,
+    transcriptRevision,
+    attemptTranscriptRevision,
+    streamedAttemptId,
   ]);
 
   const navigate = useCallback(

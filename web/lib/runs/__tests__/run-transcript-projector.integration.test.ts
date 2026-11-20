@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { MAX_COMPACTION_SUMMARY_LENGTH } from "../../../../runtime/acp-context";
+
 import * as fullSchema from "@/lib/db/schema";
 import { coalesceSessionUpdates } from "@/lib/run-transcript/coalesce";
+import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import {
   getWholeRunTranscriptMessages,
   getRunNodeTranscript,
@@ -180,7 +183,10 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
     const type = parsed.type;
     const payload = Object.fromEntries(
       Object.entries(parsed).filter(
-        ([key]) => !["type", "monotonicId", "sessionName"].includes(key),
+        ([key]) =>
+          !["type", "monotonicId", "sessionName", "hostSessionId"].includes(
+            key,
+          ),
       ),
     );
 
@@ -194,6 +200,9 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
         source: "manager",
         sourceKey: `canonical-transcript:${runId}:${monotonicId}`,
         runId,
+        ...(typeof parsed.hostSessionId === "string"
+          ? { hostSessionId: parsed.hostSessionId }
+          : {}),
         eventType: type,
         payloadSchema: `maister.${type}.v1`,
         payload,
@@ -235,12 +244,14 @@ describe("projectRunTranscript", () => {
     const first = await getRunNodeTranscript(runId, "implement", {
       client: db,
     });
+
     expect(first?.messages.map(({ role }) => role)).toEqual([
       "assistant",
       "system",
       "assistant",
     ]);
     const marker = first!.messages[1]!;
+
     expect(JSON.parse(marker.content)).toMatchObject({
       kind: "compaction",
       status: "completed",
@@ -258,6 +269,7 @@ describe("projectRunTranscript", () => {
     const enriched = await getRunNodeTranscript(runId, "implement", {
       client: db,
     });
+
     expect(enriched?.messages.map(({ id }) => id)).toEqual(
       first?.messages.map(({ id }) => id),
     );
@@ -266,6 +278,92 @@ describe("projectRunTranscript", () => {
       status: "completed",
       summary: "Final summary",
     });
+  });
+
+  it("retains bounded Unicode summary text and projects the exit after it", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const hostSessionId = "compaction-unicode";
+    const prefix = "я".repeat(MAX_COMPACTION_SUMMARY_LENGTH - 1);
+    const update = (monotonicId: number, value: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "session.update",
+        hostSessionId,
+        nodeAttemptId: implAttemptId,
+        monotonicId,
+        update: { compactionId: "unicode", ...value },
+      });
+
+    await writeEvents(slug, runId, [
+      update(1, { sessionUpdate: "compaction_update", status: "in_progress" }),
+      update(2, {
+        sessionUpdate: "compaction_summary_chunk",
+        content: { type: "text", text: prefix },
+      }),
+      update(3, {
+        sessionUpdate: "compaction_summary_chunk",
+        content: { type: "text", text: "😀" },
+      }),
+      update(4, {
+        sessionUpdate: "compaction_summary_chunk",
+        content: { type: "text", text: "x" },
+      }),
+      update(5, {
+        sessionUpdate: "compaction_update",
+        compactionId: "legacy",
+        status: "in_progress",
+      }),
+    ]);
+    await projectRunTranscript(runId, { client: db });
+    const legacySummary = "Legacy content \uD83D";
+
+    // Reproduce a marker persisted before prospective Unicode-safe writes.
+    await db
+      .update(fullSchema.runMessages)
+      .set({
+        content: JSON.stringify({
+          v: 1,
+          kind: "compaction",
+          status: "in_progress",
+          summary: legacySummary,
+        }),
+      })
+      .where(
+        and(
+          eq(fullSchema.runMessages.runId, runId),
+          eq(fullSchema.runMessages.firstSupervisorEventId, "5"),
+        ),
+      );
+    await writeEvents(slug, runId, [
+      JSON.stringify({
+        type: "session.exited",
+        hostSessionId,
+        nodeAttemptId: implAttemptId,
+        monotonicId: 6,
+      }),
+      textLine(implAttemptId, 7, "After interruption"),
+    ]);
+    await projectRunTranscript(runId, { client: db });
+    const projected = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+
+    expect(projected?.messages).toHaveLength(3);
+    expect(JSON.parse(projected!.messages[0]!.content)).toMatchObject({
+      kind: "compaction",
+      status: "interrupted",
+      summary: prefix,
+    });
+    const legacy = parseScratchMessageContent(
+      "system",
+      projected!.messages[1]!.content,
+    );
+
+    expect(legacy).toMatchObject({
+      kind: "compaction",
+      status: "interrupted",
+      summary: legacySummary,
+    });
+    expect(projected!.messages[2]!.content).toBe("After interruption");
   });
 
   it("keeps text and tool coalescing stable across bounded projection quanta", async () => {

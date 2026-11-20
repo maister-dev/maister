@@ -8,10 +8,12 @@ export const ContextSnapshotSchema = z
     runId: z.string(),
     runSessionId: z.string().nullable(),
     incarnationId: z.string().nullable(),
+    bindingObservedAt: z.iso.datetime({ precision: 6 }).nullable().optional(),
     nodeAttemptId: z.string().nullable(),
     lifecycleSequence: sequence.nullable(),
     contextSequence: sequence.nullable(),
     transcriptSequence: sequence.nullable(),
+    transcriptRevision: sequence.nullable().optional(),
     usage: z
       .object({
         used: z.number().int().nonnegative(),
@@ -32,6 +34,12 @@ export const ContextSnapshotSchema = z
 
 export type ContextSnapshot = z.infer<typeof ContextSnapshotSchema>;
 
+export function contextTranscriptRevision(
+  snapshot: ContextSnapshot | null | undefined,
+): string | null {
+  return snapshot?.transcriptRevision ?? snapshot?.transcriptSequence ?? null;
+}
+
 function comparableSequence(value: string | null): bigint {
   return value === null ? -1n : BigInt(value);
 }
@@ -48,11 +56,18 @@ export function latestContextSnapshot(
   )
     return hydration;
   if (live.incarnationId !== hydration.incarnationId) {
+    if (live.bindingObservedAt && hydration.bindingObservedAt) {
+      return live.bindingObservedAt >= hydration.bindingObservedAt
+        ? live
+        : hydration;
+    }
+
     return comparableSequence(live.lifecycleSequence) >=
       comparableSequence(hydration.lifecycleSequence)
       ? live
       : hydration;
   }
+
   return comparableSequence(live.contextSequence) >=
     comparableSequence(hydration.contextSequence)
     ? live

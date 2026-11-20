@@ -66,11 +66,22 @@ export function acpContextUpdateType(
   );
 }
 
+/** Cap text in UTF-16 units without splitting a surrogate pair. */
+export function clipCompactionText(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const before = text.charCodeAt(limit - 1);
+  const after = text.charCodeAt(limit);
+  const splitsPair =
+    before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+
+  return text.slice(0, splitsPair ? limit - 1 : limit);
+}
+
 function textBlock(value: unknown): string {
   const block = object(value);
 
   return block?.type === "text" && typeof block.text === "string"
-    ? block.text.slice(0, MAX_COMPACTION_SUMMARY_LENGTH)
+    ? block.text
     : "";
 }
 
@@ -94,7 +105,12 @@ export function decodeAcpContextUpdate(
   }
   const id = update.compactionId;
 
-  if (typeof id !== "string" || !id || id.length > MAX_COMPACTION_ID_LENGTH)
+  if (
+    typeof id !== "string" ||
+    !id ||
+    id.length > MAX_COMPACTION_ID_LENGTH ||
+    /[\u0000\uD800-\uDFFF]/u.test(id)
+  )
     return null;
   if (update.sessionUpdate === "compaction_summary_chunk") {
     const text = textBlock(update.content);
@@ -117,15 +133,10 @@ export function decodeAcpContextUpdate(
     id,
     status,
     ...(Array.isArray(update.summary)
-      ? {
-          summary: update.summary
-            .map(textBlock)
-            .join("")
-            .slice(0, MAX_COMPACTION_SUMMARY_LENGTH),
-        }
+      ? { summary: update.summary.map(textBlock).join("") }
       : {}),
     ...(typeof update.error === "string"
-      ? { error: update.error.slice(0, 1024) }
+      ? { error: clipCompactionText(update.error, 1024) }
       : {}),
   };
 }

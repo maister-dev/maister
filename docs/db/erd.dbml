@@ -3016,6 +3016,18 @@ table run_context_compactions {
   }
 }
 
+table run_context_transcript_revisions {
+  run_id text [not null]
+  node_attempt_id text
+  revision bigint [not null]
+  last_run_sequence bigint [not null]
+
+  indexes {
+    (run_id, node_attempt_id) [name: 'run_context_transcript_revisions_scope_uq', unique]
+
+  }
+}
+
 table run_context_usage {
   run_id text [not null]
   execution_host_id text [not null]
@@ -3029,10 +3041,15 @@ table run_context_usage {
   usage_run_sequence bigint
   last_run_sequence bigint [not null]
   created_run_sequence bigint
+  coverage_incomplete boolean [not null, default: false]
+  active_compactions integer [not null, default: 0]
+  completed_compactions integer [not null, default: 0]
+  compaction_run_sequence bigint
 
   indexes {
     (run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, node_attempt_id) [name: 'run_context_usage_scope_uq', unique]
     (run_id, node_attempt_id, last_run_sequence) [name: 'run_context_usage_attempt_idx']
+
 
   }
 }
@@ -3164,6 +3181,7 @@ table run_session_incarnations {
   host_boot_id text
   acp_session_id text
   state text [not null]
+  context_node_attempt_id text
   origin text [not null]
   steering_supported boolean
   created_at "timestamp with time zone" [not null, default: `now()`]
@@ -3174,6 +3192,8 @@ table run_session_incarnations {
   indexes {
     (execution_host_id, host_session_id) [name: 'run_session_incarnations_host_session_uq', unique]
     run_session_id [name: 'run_session_incarnations_active_run_session_uq', unique]
+    (run_id, context_node_attempt_id, created_at, id) [name: 'run_session_incarnations_context_attempt_idx']
+    (run_id, state, created_at, id) [name: 'run_session_incarnations_current_context_idx']
   }
 }
 
@@ -5618,6 +5638,10 @@ ref run_context_compactions_run_id_runs_id_fk: run_context_compactions.run_id > 
 
 ref run_context_compactions_node_attempt_id_node_attempts_id_fk: run_context_compactions.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
+ref run_context_transcript_revisions_run_id_runs_id_fk: run_context_transcript_revisions.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_context_transcript_revisions_node_attempt_id_node_attempts_id_fk: run_context_transcript_revisions.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
 ref run_context_usage_run_id_runs_id_fk: run_context_usage.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_context_usage_node_attempt_id_node_attempts_id_fk: run_context_usage.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
@@ -5659,6 +5683,8 @@ ref run_session_incarnations_run_id_runs_id_fk: run_session_incarnations.run_id 
 ref run_session_incarnations_execution_assignment_id_execution_assignments_id_fk: run_session_incarnations.execution_assignment_id > execution_assignments.id [delete: set null, update: no action]
 
 ref run_session_incarnations_execution_host_id_execution_hosts_id_fk: run_session_incarnations.execution_host_id > execution_hosts.id [delete: restrict, update: no action]
+
+ref run_session_incarnations_context_node_attempt_id_node_attempts_id_fk: run_session_incarnations.context_node_attempt_id > node_attempts.id [delete: set null, update: no action]
 
 ref run_sessions_run_id_runs_id_fk: run_sessions.run_id > runs.id [delete: cascade, update: no action]
 

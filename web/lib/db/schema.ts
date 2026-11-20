@@ -5352,6 +5352,10 @@ export const runSessionIncarnations = pgTable(
         "deleted",
       ],
     }).notNull(),
+    contextNodeAttemptId: text("context_node_attempt_id").references(
+      (): AnyPgColumn => nodeAttempts.id,
+      { onDelete: "set null" },
+    ),
     origin: text("origin", { enum: ["native", "legacy_backfill"] }).notNull(),
     // ADR-182: this incarnation's `initialize` steering advertisement. NULL =
     // not observed (pre-contract rows, older hosts) and reads as unsupported.
@@ -5376,6 +5380,15 @@ export const runSessionIncarnations = pgTable(
     )
       .on(t.runSessionId)
       .where(sql`${t.state} IN ('created', 'active', 'checkpointed')`),
+    byContextAttempt: index("run_session_incarnations_context_attempt_idx")
+      .on(t.runId, t.contextNodeAttemptId, t.createdAt.desc(), t.id.desc())
+      .where(sql`${t.contextNodeAttemptId} IS NOT NULL`),
+    byCurrentContext: index("run_session_incarnations_current_context_idx").on(
+      t.runId,
+      sql`(${t.state} IN ('created', 'active', 'checkpointed')) DESC`,
+      t.createdAt.desc(),
+      t.id.desc(),
+    ),
   }),
 );
 
@@ -6991,6 +7004,10 @@ export const runContextUsage = pgTable(
     usageRunSequence: bigint("usage_run_sequence", { mode: "bigint" }),
     lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }).notNull(),
     createdRunSequence: bigint("created_run_sequence", { mode: "bigint" }),
+    coverageIncomplete: boolean("coverage_incomplete").notNull().default(false),
+    activeCompactions: integer("active_compactions").notNull().default(0),
+    completedCompactions: integer("completed_compactions").notNull().default(0),
+    compactionRunSequence: bigint("compaction_run_sequence", { mode: "bigint" }),
   },
   (t) => ({
     scope: unique("run_context_usage_scope_uq")
@@ -7018,10 +7035,39 @@ export const runContextUsage = pgTable(
          ${t.usageRunSequence} BETWEEN 0 AND ${t.lastRunSequence}))
       AND ${t.lastRunSequence} >= 0 AND ${t.assignmentEpoch} > 0`,
     ),
+    compactionCounts: check(
+      "run_context_usage_compaction_counts_check",
+      sql`${t.activeCompactions} >= 0 AND ${t.completedCompactions} >= 0
+        AND (${t.compactionRunSequence} IS NULL OR ${t.compactionRunSequence} >= 0)`,
+    ),
   }),
 );
 
 type ContextTokenPair = { used: number; size: number };
+
+export const runContextTranscriptRevisions = pgTable(
+  "run_context_transcript_revisions",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    // A NULL attempt is the rollup for the entire run, including node markers.
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
+    revision: bigint("revision", { mode: "bigint" }).notNull(),
+    lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }).notNull(),
+  },
+  (t) => ({
+    scope: unique("run_context_transcript_revisions_scope_uq")
+      .on(t.runId, t.nodeAttemptId)
+      .nullsNotDistinct(),
+    clock: check(
+      "run_context_transcript_revisions_clock_check",
+      sql`${t.revision} > 0 AND ${t.lastRunSequence} >= 0`,
+    ),
+  }),
+);
 
 export const runContextCompactions = pgTable(
   "run_context_compactions",

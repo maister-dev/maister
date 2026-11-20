@@ -9,17 +9,25 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
+import {
+  acpContextUpdateType,
+  clipCompactionText,
+  MAX_COMPACTION_SUMMARY_LENGTH,
+} from "../../../../runtime/acp-context";
+
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { ExecutionEventProjectionError } from "./projector";
 import { lockTranscriptState, transcriptStateId } from "./run-message-store";
-import { prepareTranscriptContent } from "./session-content";
 import {
-  decodeAcpContextUpdate,
-  MAX_COMPACTION_SUMMARY_LENGTH,
-} from "../../../../runtime/acp-context";
+  isPrunedContextEvent,
+  prepareTranscriptContent,
+  readAcpContextUpdate,
+} from "./session-content";
+import { decodeJsonbSafe, encodeJsonbSafe } from "./jsonb-safe";
+import { advanceCompactionTranscriptRevision } from "./compaction-revisions";
 import { runEventWakeBus } from "./run-wake";
-import { parseCompactionMarker } from "@/lib/run-transcript/compaction";
 
+import { parseCompactionMarker } from "@/lib/run-transcript/compaction";
 import {
   nodeAttempts,
   runMessages,
@@ -46,15 +54,16 @@ export const canonicalTranscriptProjector: ExecutionEventProjector = {
   prepare: prepareTranscriptContent,
   afterCommit(events) {
     const relevant = events.find((event) => {
-      const update = decodeAcpContextUpdate(event.payload?.update);
+      const type = acpContextUpdateType(event.payload?.update);
 
       return (
-        update?.kind === "compaction" ||
-        update?.kind === "summary_chunk" ||
+        type === "compaction_update" ||
+        type === "compaction_summary_chunk" ||
         event.eventType === "session.exited" ||
         event.eventType === "session.crashed"
       );
     });
+
     if (relevant) runEventWakeBus.wake(relevant.runId);
   },
   project: async (tx, event) => {
@@ -88,6 +97,59 @@ function compactionSessionPrefix(event: ExecutionEvent): string {
   ];
 
   return `compaction:${createHash("sha256").update(JSON.stringify(scope)).digest("hex")}:`;
+}
+
+// Both old and current marker writers serialize version, kind and status first.
+// Older summary text can contain JSON escapes for lone surrogates, so avoid
+// casting the whole row to jsonb just to find the still-open markers.
+const OPEN_COMPACTION_HEADER =
+  '{"v":1,"kind":"compaction","status":"in_progress"';
+
+async function interruptTranscriptCompactions(
+  tx: Db,
+  event: ExecutionEvent,
+  sequence: bigint,
+): Promise<void> {
+  const open = await tx
+    .select({
+      id: runMessages.id,
+      nodeAttemptId: runMessages.nodeAttemptId,
+      content: runMessages.content,
+    })
+    .from(runMessages)
+    .where(
+      and(
+        eq(runMessages.runId, event.runId),
+        sql`${runMessages.projectionToolKey} LIKE ${`${compactionSessionPrefix(event)}%`}`,
+        sql`starts_with(${runMessages.content}, ${OPEN_COMPACTION_HEADER})`,
+      ),
+    );
+  const attempts = new Set<string | null>();
+
+  for (const row of open) {
+    const marker = parseCompactionMarker(
+      decodeJsonbSafe(JSON.parse(row.content)),
+    );
+
+    if (marker?.status !== "in_progress") continue;
+    await tx
+      .update(runMessages)
+      .set({
+        content: JSON.stringify(
+          encodeJsonbSafe({ ...marker, status: "interrupted" }),
+        ),
+        supervisorEventId: sequence.toString(),
+      })
+      .where(eq(runMessages.id, row.id));
+    attempts.add(row.nodeAttemptId);
+  }
+  for (const attempt of attempts)
+    await advanceCompactionTranscriptRevision(
+      tx,
+      event.runId,
+      attempt,
+      sequence,
+    );
 }
 
 // 22P05 unsupported_character_value, 22P02 invalid_text_representation,
@@ -126,6 +188,7 @@ export async function projectTranscriptEvent(
   tx: Db,
   event: ExecutionEvent,
 ): Promise<boolean> {
+  if (isPrunedContextEvent(event)) return false;
   if (
     event.eventType !== "session.update" &&
     !RESET_EVENTS.has(event.eventType) &&
@@ -149,22 +212,8 @@ export async function projectTranscriptEvent(
       event.eventType === "session.crashed") &&
     event.hostSessionId &&
     event.runSequence !== null
-  ) {
-    await tx
-      .update(runMessages)
-      .set({
-        content: sql`jsonb_set(${runMessages.content}::jsonb,'{status}','"interrupted"')::text`,
-        supervisorEventId: event.runSequence.toString(),
-      })
-      .where(
-        and(
-          eq(runMessages.runId, event.runId),
-          sql`
-        CASE WHEN ${runMessages.projectionToolKey} LIKE ${`${compactionSessionPrefix(event)}%`}
-        THEN (${runMessages.content}::jsonb->>'status' = 'in_progress') ELSE false END`,
-        ),
-      );
-  }
+  )
+    await interruptTranscriptCompactions(tx, event, event.runSequence);
   const scratchBoundary =
     run.kind === "scratch" &&
     SCRATCH_BOUNDARY_EVENTS.has(event.eventType) &&
@@ -221,9 +270,7 @@ export async function projectTranscriptEvent(
     return false;
   }
   const context =
-    event.payload?.contextReplay === true
-      ? null
-      : decodeAcpContextUpdate(event.payload?.update);
+    event.payload?.contextReplay === true ? null : readAcpContextUpdate(event);
   const update =
     context?.kind === "compaction" || context?.kind === "summary_chunk"
       ? context
@@ -313,6 +360,7 @@ export async function projectTranscriptEvent(
       const [existing] = await tx
         .select({
           id: runMessages.id,
+          nodeAttemptId: runMessages.nodeAttemptId,
           content: runMessages.content,
           lastEventId: runMessages.supervisorEventId,
         })
@@ -324,16 +372,26 @@ export async function projectTranscriptEvent(
           ),
         )
         .limit(1);
-      const previous = existing
-        ? parseCompactionMarker(JSON.parse(existing.content))
-        : null;
 
       if (
         existing?.lastEventId &&
         BigInt(existing.lastEventId) >= event.runSequence
       )
         return false;
-      if (update.kind === "summary_chunk" && previous?.status !== "in_progress")
+      const stored: unknown = existing
+        ? decodeJsonbSafe(JSON.parse(existing.content))
+        : null;
+      const previous = parseCompactionMarker(stored);
+      const summaryAtLimit =
+        stored !== null &&
+        typeof stored === "object" &&
+        "summaryTruncated" in stored &&
+        stored.summaryTruncated === true;
+
+      if (
+        update.kind === "summary_chunk" &&
+        (previous?.status !== "in_progress" || summaryAtLimit)
+      )
         return false;
       if (
         previous &&
@@ -342,38 +400,55 @@ export async function projectTranscriptEvent(
         previous.status !== update.status
       )
         return false;
-      const marker: CompactionMarker = {
+      const summary =
+        update.kind === "summary_chunk"
+          ? (previous?.summary ?? "") + update.text
+          : update.summary;
+      const marker: CompactionMarker & { summaryTruncated?: true } = {
         ...previous,
         v: 1,
         kind: "compaction",
         status: update.kind === "compaction" ? update.status : "in_progress",
-        ...(update.kind === "summary_chunk"
+        ...(summary !== undefined
           ? {
-              summary: ((previous?.summary ?? "") + update.text).slice(
-                0,
+              summary: clipCompactionText(
+                summary,
                 MAX_COMPACTION_SUMMARY_LENGTH,
               ),
             }
-          : {
-              ...(update.summary !== undefined
-                ? { summary: update.summary }
-                : {}),
-              ...(update.error !== undefined ? { error: update.error } : {}),
-            }),
+          : {}),
+        ...(update.kind === "compaction" && update.error !== undefined
+          ? { error: update.error }
+          : {}),
+        ...((
+          summary === undefined
+            ? summaryAtLimit
+            : summary.length >= MAX_COMPACTION_SUMMARY_LENGTH
+        )
+          ? { summaryTruncated: true }
+          : {}),
       };
+      const content = JSON.stringify(encodeJsonbSafe(marker));
+
       if (existing) {
         await tx
           .update(runMessages)
           .set({
-            content: JSON.stringify(marker),
+            content,
             supervisorEventId: eventId,
           })
           .where(eq(runMessages.id, existing.id));
       } else {
         openTextSequence = null;
         openThoughtSequence = null;
-        await insert("system", JSON.stringify(marker), key);
+        await insert("system", content, key);
       }
+      await advanceCompactionTranscriptRevision(
+        tx,
+        event.runId,
+        existing ? existing.nodeAttemptId : nodeAttemptId,
+        event.runSequence,
+      );
       break;
     }
     case "text":

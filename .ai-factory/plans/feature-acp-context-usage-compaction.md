@@ -67,7 +67,7 @@ Source inspection used the installed artifacts corresponding to the lockfile. Th
 
 The ACP SDK 2.0.2 `/unstable` input contract is `usage_update { used, size, cost? }`, `compaction_update { compactionId, status, summary?, error? }` and `compaction_summary_chunk { compactionId, content }`. Usage projection reads only the token pair. Map known lifecycle statuses `in_progress | completed | failed | cancelled`. Retain and safely skip unfamiliar statuses at the projection boundary.
 
-The shared UI snapshot identifies its scope and carries `usage: { used, size, sizeSource, observedAt, sourceSequence } | null`, `activeCompactions`, `completedCompactions`, a safe window advisory and a projection watermark that advances even when a reset clears usage. Derive highlight from `activeCompactions > 0` within that scope. The safe snapshot carries no vendor-generated compaction ID or free text. Include session incarnation and selected attempt identity in the cache key. Use the projector’s existing `afterCommit` hook to wake the reader. Also wake on committed lifecycle binding or scope changes, even when context projection completed first. Choose the current session against canonical lifecycle evidence. Carry the selecting lifecycle sequence so a stale response from the old process cannot win on a reused logical session. Treat lifecycle, context and transcript sequence positions independently. Snapshot delivery sets no SSE ID, preserving the durable `Last-Event-ID` header and `lastEventId` query semantics, including header precedence. Verify an old detail response cannot overwrite a newer reset.
+The shared UI snapshot identifies its scope and carries `usage: { used, size, sizeSource, observedAt, sourceSequence } | null`, `activeCompactions`, `completedCompactions`, a safe window advisory and a projection watermark that advances even when a reset clears usage. Derive highlight from `activeCompactions > 0` within that scope. The safe snapshot carries no vendor-generated compaction ID or free text. Include session incarnation and selected attempt identity in the cache key. Use the projector’s existing `afterCommit` hook to wake the reader. Also wake on committed lifecycle binding or scope changes, even when context projection completed first. Choose the current session against canonical lifecycle evidence and carry the database observation time of that selection so an old response cannot replace a newer reset, including when the new process lacks a projected creation sequence. Compare numeric state within a binding and track committed transcript mutations independently. Snapshot delivery sets no SSE ID, preserving the durable `Last-Event-ID` header and `lastEventId` query semantics, including header precedence.
 
 | Adapter | Evidence and consequence |
 | --- | --- |
@@ -101,25 +101,7 @@ In tasks 2 and 10 run the real pinned binary over stdio against a controlled Cod
 | Run stream · `GET /api/runs/{runId}/stream`, `docs/api/async/web-runs.asyncapi.yaml` | Add a strictly typed id-less `session.context_snapshot` to the existing message union. Each snapshot identifies the run and selected scope, including logical session, incarnation and optional attempt, and carries nullable usage, nonnegative active/completed counts, safe advisory, and context projection sequence. Document bootstrap with no incarnation. Track the transcript consumer watermark independently of the context consumer. Encode canonical sequences as decimal strings. An id-less browser MessageEvent can inherit the preceding event ID. Discriminate by payload type before touching the replay cursor, general event count or retained history. Preserve ready, timeout, durable replay and `replay=0` behavior. Reauthorize on initial snapshot and before updates, including updates sent without a new canonical batch. |
 | Failure and DSL · `docs/api/supervisor.openapi.yaml`, `docs/error-taxonomy.md`, `docs/flow-dsl.md` | Specify rejection `details.reason` versus a successful RPC with a limit stop, compatibility when the reason is absent, and which outcome owns the reason. Reuse `TerminalCause.reason` for a matching terminal Run event. Use safe typed scratch metadata for a dialog that remains open and the server-side projectless read when applicable. Update the existing `publicErrorMetadata` whitelist and `loadScratchTerminalCause` where they currently drop the reason on the projectless path. Preserve the existing `MaisterError` code and versioned receipts. Specify accepted and rejected manifests plus the effective session/workspace on exhausted attempts. |
 
-The proposed AsyncAPI example below is the snapshot after usage at 41 and compaction start at 42. The independent transcript watermark can lag. `null` denotes an unobserved source sequence or usage sample. Initial hydration and SSE use the same snapshot schema. Older hosts that omit creation-time advisory evidence yield unknown provenance. The example belongs in the phase-0 AsyncAPI examples and contract tests.
-
-```json
-{
-  "type": "session.context_snapshot",
-  "runId": "54c27b5c-509a-41a3-a143-c429389e813d",
-  "runSessionId": "rs-1",
-  "incarnationId": "inc-1",
-  "nodeAttemptId": null,
-  "lifecycleSequence": "40",
-  "contextSequence": "42",
-  "transcriptSequence": "41",
-  "usage": { "used": 72000, "size": 100000, "sizeSource": "agent_reported", "observedAt": "2026-11-20T12:00:00Z", "sourceSequence": "41" },
-  "activeCompactions": 1,
-  "completedCompactions": 0,
-  "coverage": "from_incarnation_start",
-  "windowAdvisory": null
-}
-```
+The [Run AsyncAPI snapshot example](../../docs/api/async/web-runs.asyncapi.yaml) shows usage at sequence 41 and compaction start at 42. The transcript has committed a previous marker and its position still lags. `null` denotes an unobserved source sequence or usage sample. Initial hydration and SSE share the shape. Older hosts can omit creation-time advisory evidence.
 
 **Projection schema.** Task 3 must produce a column/constraint/index map; task 5 delivers it before reason writers or UI consumers. Use an additive latest-sample relation keyed by run, verified assignment/epoch, execution host, host session and optional attempt; use a NULLS NOT DISTINCT unique key (or equivalent partial unique pair) for the session-wide row. An attributed frame updates both scopes atomically with its consumer checkpoint. Keep usage nullable as an all-or-none tuple, enforce nonnegative safe `used`, positive safe `size`, and retain a distinct last-change sequence for resets. Index the run/attempt read. Link by verified physical identity even when the independently scheduled incarnation join is temporarily absent; once identity is available, the same row must become readable without another usage frame. A cross-run attempt or stale assignment never updates the current session. Capture exact command/attempt ownership at observation time.
 
@@ -227,6 +209,44 @@ The integrated application revision is `1a9c350fe`, using local integration head
 
   Run the pinned Claude and Codex adapters through MAIster in scratch and a Flow, exercise a real compaction where supported and capture a content-free receipt with adapter version, negotiated capabilities, usage before/after, marker ID/count and session identity. Record source/mock, real-adapter and provider-backed results separately. A fixture pass alone leaves the live acceptance row open. Classify Gemini/OpenCode/MiMo observations as observed or unreported in the tested configuration. Keep routine tests deterministic and separate from credentialed qualification.
 - [x] **15. Reconcile contracts and run release gates** (13–14). Update `docs/screens/runs/{scratch-run,flow-run,run-inspector,workbench}.md`, Studio/runner screens, internal analytics, `docs/configuration.md`, operator reference in both languages, error taxonomy and all changed OpenAPI/AsyncAPI examples from task 2. Recheck ADR and journal numbering against the integration head, verify generated migration snapshot and schema parity, and run `pnpm validate:docs`, `pnpm validate:contracts` and applicable public-doc checks. Close CTX-01 through CTX-10 against exact test names, commands, commit and pass results. Record the actual adapter build for live rows. Mark only the qualified scope Implemented. Record fixture/live evidence and remaining adapter limitations separately. Review event ordering, auth and session-selection changes after each fix cycle. No deployment or hosted dispatch is part of planning.
+
+### Review follow-up acceptance
+
+The release evidence above describes the original 0358 revision. The review
+fixes extend its acceptance at these boundaries.
+
+| Requirement | Focused regression acceptance |
+| --- | --- |
+| CTX-01 · Binding | A newly selected physical binding with no projected creation sequence immediately clears a preceding session’s reading and count. Late hydration and stream snapshots from the old binding preserve the new reset. A later selection can legitimately return to an older live named session. |
+| CTX-02 · Transcript | A marker accepts UTF-16 content that includes a split surrogate pair at the cap or characters that require safe JSONB storage. Replaying a terminal or enrichment keeps one marker and its original position. |
+| CTX-03 · Delivery and cost | Numeric counts and marker revisions use indexed scope reads. A marker edit under an older attempt or prior incarnation advances its scoped revision even when the canonical high-water sequence is unchanged. Run the transcript and numeric consumers in reverse order and observe the marker’s before/after evidence after both commits. The authorized subscriber refreshes without another ACP frame. Ordinary usage-only frames advance the cursor without a full run or transcript refresh. |
+| CTX-05 · Disclosure and preview | When a transcript page returns only a marker preview, its action opens the authorized full record for the exact attempt. Privacy tests wait for the exact canonical compaction frame and assert the private summary is absent from replay bytes. |
+| CTX-10 · Upgrade and retention | Apply 0359 on a populated 0358 database. Preserve marker IDs, order, receipts and projected usage. Backfill counts and revision clocks. A verified deleted context object advances the applicable projection and records partial numeric coverage where appropriate. Retryable unavailability and bad integrity retain their existing outcomes. |
+
+The migration regression `continues 0358 inline compactions with escaped IDs
+in their original markers` seeds two running compactions with distinct IDs
+that overlap under the old escape encoding. Before the repair, the terminal
+frame appended a third marker and left the original open. The same test
+passes with both original markers in order, the first enriched and
+completed, and one active and one completed lifecycle count.
+
+`pnpm validate:docs:all` passed the follow-up diagrams, links, coverage
+checks and regenerated database ERD. `pnpm validate:contracts` passed the
+OpenAPI and AsyncAPI schemas, 18 contract tests and generated-schema parity.
+The five PostgreSQL migration, session-binding, prompt-admission incarnation,
+steering transcript and scratch transcript suites passed all 26 cases,
+including `materializes existing observations, compaction counts and marker
+watermarks by scope`. Drizzle generation found no schema drift. All 26
+Playwright cases passed across scratch detail, scratch composer, Workbench
+and Run transcript history, including the authenticated setup. The scratch
+case verified idle usage, meter restoration and exact compaction replay
+privacy. The transcript and canonical ingest suites passed all 34 cases,
+including the retained Unicode marker, confirmed content tombstone and
+independent projection order regressions.
+All 9,227 web unit cases and 533 supervisor unit cases passed. The focused
+context snapshot selector, compaction preview action and shared run-stream
+controller suites passed all nine cases. Web, supervisor and MCP typechecks
+and the MCP build passed.
 
 ## Authorization and release checks
 

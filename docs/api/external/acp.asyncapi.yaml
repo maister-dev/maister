@@ -111,8 +111,9 @@ components:
             data: { type: object, additionalProperties: true }
     SessionUpdateNotification:
       description: |
-        Designed context handling. The unstable capability
-        clientCapabilities.session.compaction is an optional object.
+        Context updates use the unstable ACP 2.0.2 schema. The supervisor
+        advertises the optional clientCapabilities.session.compaction object
+        to the qualified Claude and Codex adapters.
         usage_update reports used and size, with optional cost.
         compaction_update carries compactionId, status and optional summary
         or error. compaction_summary_chunk carries compactionId and content.

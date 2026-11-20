@@ -8,8 +8,8 @@ Expose the agent’s reported context occupancy and compaction activity in scrat
 
 ## Domain entities
 
-- **Context reading** contains the latest valid used/size pair, canonical event time and source sequence in a physical session or exact node attempt.
-- **Compaction** is identified by its fenced physical session and ACP compaction ID. The transcript owns its private summary and bounded error detail.
+- **[Context reading](../db/runs-domain.md#acp-context-observations-implemented--adr-215)** contains the latest valid used/size pair, canonical event time and source sequence in a physical session or exact node attempt. The same numeric projection holds observed compaction counts and coverage.
+- **[Compaction](../db/runs-domain.md#acp-context-observations-implemented--adr-215)** is identified by its fenced physical session and ACP compaction ID. The transcript owns its private summary, bounded error detail and an independent revision for each exact attempt and the whole run.
 - **Failure reason** is `context_exhausted` for an input window limit or `max_output_tokens` for a response output cap. The associated error code remains `ACP_PROTOCOL`.
 
 ## State machine
@@ -26,9 +26,81 @@ Expose the agent’s reported context occupancy and compaction activity in scrat
 | Physical exit with open compaction | Remove live activity | Mark the observation interrupted. The adapter’s terminal status and error remain unknown. |
 | Invalid measurement, unknown status or conflicting terminal | Keep the valid reading | Warn with safe metadata and advance the projection cursor. |
 
+Each projector resolves a canonical reference independently. Ledger coverage
+describes available evidence for the selected physical scope.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Resolve
+    Resolve --> Apply: verified inline or referenced update
+    Resolve --> Retry: object missing or deletion unconfirmed
+    Resolve --> Pruned: verified context reference, exact object deleted
+    Resolve --> IntegrityFailure: identity or content mismatch
+    Retry --> Resolve: existing consumer retry
+    Apply --> Advance: accepted change or safely ignored frame
+    Pruned --> Advance: preserve coverage evidence within owning scope
+    Advance --> [*]
+```
+
+A confirmed deletion of a referenced usage or lifecycle update clears the
+affected reading as the consumer crosses that sequence. The physical session
+and its attempts report partial coverage, and the projection retains the
+incomplete flag on the exact attempt when attributed. Counts describe observed
+operations. A later valid sample can restore the reading while coverage remains
+partial. A deleted summary chunk
+limits available transcript detail and leaves numeric coverage unchanged.
+Consumers advance past malformed optional updates without changing the
+reading or marker and emit content-free diagnostics.
+
+During the 0358 → 0359 upgrade, the first accepted inline host frame
+identifies compactions whose adapter IDs were stored in JSONB-escaped form.
+The migration restores their keys so a summary chunk or completion updates
+the original marker and lifecycle record. This preserves the marker's ID,
+position and summary, even when two distinct adapter IDs differ only by an
+escape suffix. See the [database upgrade contract](../database-schema.md#acp-context-observations-implemented-adr-215).
+
 ## Process flows
 
-The supervisor advertises the optional capability for qualified adapters. It commits the ordinary ACP update to its outbox. After ingest, the context consumer owns numeric facts and the ordered transcript consumer owns marker content and ordering. Both use the same interpretation of ACP status and identity. Canonical stream notifications use the existing durable cursor. An id-less snapshot carries current selection and projection watermarks after the corresponding transactions commit.
+The supervisor advertises the optional capability for qualified adapters. It commits the ordinary ACP update to its outbox. The context consumer owns numeric facts. The ordered transcript consumer owns marker content and ordering. Both use the same interpretation of ACP status and identity.
+
+```mermaid
+sequenceDiagram
+    participant E as Accepted execution events
+    participant L as Lifecycle owner
+    participant C as Context consumer
+    participant T as Transcript consumer
+    participant S as Authorized snapshot reader
+    E->>S: Canonical frame with durable run sequence
+    par Physical selection
+        E->>L: Current incarnation evidence
+        L->>S: Wake after binding commits
+    and Numeric projection
+        E->>C: Usage or compaction update
+        C->>S: Wake after facts and any marker evidence revision commit
+    and Transcript projection
+        E->>T: Compaction marker or enrichment
+        T->>S: Wake after marker and revision commit
+    end
+    S-->>S: Hydrate current selection and independent clocks
+```
+
+Each branch can commit first. An accepted update can populate a fenced
+physical scope before the lifecycle owner binds it. Binding exposes those
+facts and switches away from the preceding incarnation. Resume-handshake
+history cannot restore its predecessor’s live reading or counts. Compare
+snapshots across bindings using the database observation time of the
+selection. When the newer physical process ends, the current selection can
+return to an older live named session. Compare numeric state within an
+incarnation using its context sequence.
+
+An opt-in run stream can attach `contextUsageOnly: true` to a canonical frame.
+It still advances the durable cursor. The client can skip unrelated
+transcript and detail refreshes from that frame. Id-less snapshots share the
+same connection. They independently carry the committed transcript revision
+so a later marker or before/after usage enrichment invalidates the
+corresponding transcript, even when the canonical frame already passed or
+the highest marker sequence stays fixed. Reconnect and REST hydration read
+the same projections and enforce current scope and source access.
 
 The horizontal meter shows a visible percent and band (green below 60%, amber below 85%, red from 85%). Unknown renders a neutral track and “Not reported”. While a compaction is in progress, an outline, glyph and localized text identify activity independently of color and usage validity. The details expose time, measured token counts, window provenance and observed completed count. Treat a Claude gateway with no usable configured window as advisory and preserve the agent-reported pair.
 
@@ -38,22 +110,23 @@ Scratch retains its typed failure after the turn settles. On input overflow the 
 
 ## Expectations
 
-- CTX-01: A gauge MUST read the validated pair, source sequence and time for its selected physical scope.
+- CTX-01: A gauge MUST read the validated pair, source sequence and time for its selected physical scope. A late snapshot from an older binding MUST leave the newer incarnation’s reading or reset intact.
 - CTX-02: A compaction ID MUST produce at most one marker and count at most once as a completed operation in that incarnation.
-- CTX-03: A projected snapshot MUST converge after reconnect without changing the canonical replay cursor.
+- CTX-03: A projected snapshot MUST converge after reconnect without changing the canonical replay cursor. A change to a marker or its displayed evidence MUST advance transcript invalidation independently of the active incarnation and numeric context sequence.
 - CTX-04: An active compaction MUST remain identifiable with color disabled and absent usage.
-- CTX-05: Only a current authorized transcript reader may receive a summary or adapter diagnostics.
+- CTX-05: Only a current authorized transcript reader may receive a summary or adapter diagnostics. An oversized summary MUST expose the existing authorized full-record action when a preview is returned.
 - CTX-06: Runner window guidance MUST preserve the readiness and launch verdict.
 - CTX-07: Each supported terminal limit MUST preserve its reason across prompt owner recovery.
 - CTX-08: An overflow retry with `workspace: keep` MUST retain its workspace and use a fresh ACP session.
 - CTX-09: Compaction MUST leave the existing guardrail evidence and duration deadline in force.
-- CTX-10: Migration MUST preserve prior receipts and transcript positions while allowing bounded replay to reconstruct available measurements.
+- CTX-10: Migration MUST preserve prior receipts and transcript positions while allowing bounded replay to reconstruct available measurements. A confirmed context tombstone MUST allow later events to project and preserve partial coverage for its numeric scope.
 
 ## Edge cases
 
-- Stale assignment or a late update from the previous physical process cannot update the current scope. A valid observation may precede lifecycle projection of the incarnation. A binding commit then makes the observation visible.
+- A stale assignment cannot update the current scope. A valid late update from the previous process can update retained evidence for that process. A missing creation sequence does not establish that the previous process is newer.
 - Two compactions may overlap. Ending one keeps the other highlighted. Compaction during a long-lived named session does not change the owning attempt.
-- A malformed optional update advances the projection cursor. A permanently uningestable envelope uses the event-plane skip ledger. A missing historical reference limits coverage and must not turn a count into a lifetime total.
+- The event-plane skip ledger handles permanently uningestable envelopes. An unavailable referenced object can still become readable and remains on the existing retry path. A confirmed tombstone is an accepted event with unavailable content and is handled by its projectors.
+- Summary and error bounds are in UTF-16 code units and preserve complete surrogate pairs when clipping. Transcript storage uses the existing reversible JSONB-safe codec. A compaction ID must fit its identifier bound in storage. Private text stays out of browser run notifications, logs and metrics.
 - The pinned Claude rejection combines a generic error kind with a specific terminal diagnostic. The pinned Codex overflow must be verified on the wire. A retry warning or prose in a transcript cannot establish a failure.
 
 ## Provider qualification

@@ -104,6 +104,176 @@ function event(
 }
 
 describe("runtime event ingestion", () => {
+  it("advances all context consumers past a confirmed content tombstone", async () => {
+    const evidenceRunId = randomUUID();
+    const evidenceAssignmentId = randomUUID();
+    const evidenceHostId = randomUUID();
+    const evidenceHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const commandId = randomUUID();
+    const objectId = randomUUID();
+    const hostSessionId = randomUUID();
+    const hostBootId = randomUUID();
+    const evidenceStreamId = randomUUID();
+    const sealedAt = "2026-09-04T00:00:00.000Z";
+    const sha256 = "a".repeat(64);
+
+    await testDatabase.pool.query(
+      "INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision) VALUES ($1,$2,'scratch','Running','scratch','context-retention')",
+      [evidenceRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO execution_hosts (id, host_key, kind, display_name, transport, retired_at) VALUES ($1,$2,'local_direct','context retirement fixture','{\"kind\":\"local_direct\"}',now())",
+      [evidenceHostId, evidenceHostKey],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason) VALUES ($1,$2,$3,1,'active','launch')",
+      [evidenceAssignmentId, evidenceRunId, evidenceHostId],
+    );
+    await testDatabase.pool.query(
+      "UPDATE runs SET execution_assignment_id=$1 WHERE id=$2",
+      [evidenceAssignmentId, evidenceRunId],
+    );
+    await testDatabase.pool.query(
+      `INSERT INTO execution_commands
+         (id, run_id, execution_assignment_id, execution_host_id, assignment_epoch, kind, payload, state, max_attempts)
+       VALUES ($1,$2,$3,$4,1,'session.create','{}','queued',3)`,
+      [commandId, evidenceRunId, evidenceAssignmentId, evidenceHostId],
+    );
+    await testDatabase.pool.query(
+      `INSERT INTO execution_runtime_objects
+         (id, run_id, execution_host_id, execution_assignment_id, assignment_epoch, kind, logical_name, mime_type, generation, retention_class, state, size_bytes, sha256, sealed_at, deleted_at)
+       VALUES ($1,$2,$3,$4,1,'raw_transcript','session-content.json','application/json',1,'run','deleted',10,$5,$6,$6)`,
+      [
+        objectId,
+        evidenceRunId,
+        evidenceHostId,
+        evidenceAssignmentId,
+        sha256,
+        sealedAt,
+      ],
+    );
+    const envelope = (sequence: number, overrides: Record<string, unknown>) =>
+      event(String(sequence), {
+        runId: evidenceRunId,
+        assignmentId: evidenceAssignmentId,
+        hostKey: evidenceHostKey,
+        streamId: evidenceStreamId,
+        hostBootId,
+        hostSessionId,
+        ...overrides,
+      });
+    const events = [
+      envelope(0, {
+        payload: {
+          update: { sessionUpdate: "usage_update", used: 90, size: 100 },
+        },
+      }),
+      envelope(1, {
+        payloadSchema: "maister.session.content.v2",
+        payload: {
+          sessionName: "default",
+          sourceMonotonicId: 1,
+          contextType: "compaction_update",
+          contentRef: {
+            schema: "maister.session-content.v2",
+            source: "session_update",
+            commandId,
+            hostSessionId,
+            firstFrame: 1,
+            frameCount: 1,
+            objectId,
+            kind: "raw_transcript",
+            logicalName: "session-content.json",
+            mimeType: "application/json",
+            generation: 1,
+            retentionClass: "run",
+            state: "available",
+            sizeBytes: 10,
+            sha256,
+            sealedAt,
+            expiresAt: null,
+          },
+        },
+      }),
+      envelope(2, {
+        payload: {
+          update: { sessionUpdate: "usage_update", used: 35, size: 100 },
+        },
+      }),
+    ];
+
+    for (const evidence of events.slice(0, 2)) {
+      expect(
+        (
+          await ingestRuntimeEvent({
+            db: testDatabase.db,
+            executionHostId: evidenceHostId,
+            envelope: evidence,
+          })
+        ).disposition,
+      ).toBe("accepted");
+    }
+    const { canonicalProjectors } = await import("../projection-runtime");
+    const consumers = canonicalProjectors.filter(({ consumerName }) =>
+      [
+        "canonical-context-v1",
+        "canonical-run-transcript-v2",
+        "canonical-artifact-projector-v1",
+      ].includes(consumerName),
+    );
+
+    expect(consumers).toHaveLength(3);
+    for (const projector of consumers) {
+      const result = await projectExecutionEvents({
+        db: testDatabase.db,
+        projector,
+        runId: evidenceRunId,
+      });
+
+      expect(result.projected).toBe(2);
+    }
+    const usage = () =>
+      testDatabase.pool.query(
+        "SELECT used_tokens::text, coverage_incomplete, completed_compactions FROM run_context_usage WHERE run_id=$1",
+        [evidenceRunId],
+      );
+
+    expect((await usage()).rows).toEqual([
+      {
+        used_tokens: null,
+        coverage_incomplete: true,
+        completed_compactions: 0,
+      },
+    ]);
+    expect(
+      (
+        await ingestRuntimeEvent({
+          db: testDatabase.db,
+          executionHostId: evidenceHostId,
+          envelope: events[2],
+        })
+      ).disposition,
+    ).toBe("accepted");
+    for (const projector of consumers) {
+      expect(
+        (
+          await projectExecutionEvents({
+            db: testDatabase.db,
+            projector,
+            runId: evidenceRunId,
+          })
+        ).projected,
+      ).toBe(1);
+    }
+    expect((await usage()).rows).toEqual([
+      {
+        used_tokens: "35",
+        coverage_incomplete: true,
+        completed_compactions: 0,
+      },
+    ]);
+  });
+
   it("projects exact usage before the incarnation binds and clears the sample once per compaction", async () => {
     const contextRunId = randomUUID();
     const contextHostId = randomUUID();
@@ -327,6 +497,103 @@ describe("runtime event ingestion", () => {
     );
 
     expect(repeatedId.rows).toEqual([{ count: 2 }]);
+
+    // Let transcript enrichment commit first. Later numeric evidence for an
+    // earlier source event must still invalidate this transcript snapshot.
+    const sourceCommandId = randomUUID();
+    const lateCompaction = {
+      sessionUpdate: "compaction_update",
+      compactionId: "\uE000".repeat(256),
+    };
+    const evidenceUpdates = [
+      { sessionUpdate: "usage_update", used: 81, size: 100 },
+      { ...lateCompaction, status: "in_progress" },
+      { ...lateCompaction, status: "completed" },
+      { sessionUpdate: "usage_update", used: 32, size: 100 },
+      {
+        ...lateCompaction,
+        status: "completed",
+        summary: [{ type: "text", text: "Late enrichment" }],
+      },
+    ];
+
+    for (const [index, update] of evidenceUpdates.entries()) {
+      const envelope = event(
+        String(updates.length + replayEvents.length + 1 + index),
+        {
+          runId: contextRunId,
+          assignmentId: contextAssignmentId,
+          hostBootId,
+          hostKey: contextHostKey,
+          streamId: contextStreamId,
+          hostSessionId: resumedHostSessionId,
+          payload: { sourceCommandId, update },
+        },
+      );
+
+      expect(
+        (
+          await ingestRuntimeEvent({
+            db: testDatabase.db,
+            executionHostId: contextHostId,
+            envelope,
+          })
+        ).disposition,
+      ).toBe("accepted");
+    }
+    const transcript = canonicalProjectors.find(
+      ({ consumerName }) => consumerName === "canonical-run-transcript-v2",
+    );
+
+    if (!transcript) throw new Error("transcript projector is missing");
+    await projectExecutionEvents({
+      db: testDatabase.db,
+      projector: transcript,
+      runId: contextRunId,
+    });
+    const revision = async () => {
+      const result = await testDatabase.pool.query<{
+        revision: string;
+        last_run_sequence: string;
+      }>(
+        "SELECT revision, last_run_sequence FROM run_context_transcript_revisions WHERE run_id=$1 AND node_attempt_id IS NULL",
+        [contextRunId],
+      );
+
+      expect(result.rows).toHaveLength(1);
+
+      return result.rows[0]!;
+    };
+    const before = await revision();
+
+    await projectExecutionEvents({
+      db: testDatabase.db,
+      projector,
+      runId: contextRunId,
+    });
+    expect(await revision()).toEqual({
+      revision: String(BigInt(before.revision) + 2n),
+      last_run_sequence: before.last_run_sequence,
+    });
+    const evidence = await testDatabase.pool.query(
+      "SELECT before_usage, after_usage FROM run_context_compactions WHERE run_id=$1 AND compaction_id=$2",
+      [contextRunId, lateCompaction.compactionId],
+    );
+
+    expect(evidence.rows).toEqual([
+      {
+        before_usage: { used: 81, size: 100 },
+        after_usage: { used: 32, size: 100 },
+      },
+    ]);
+    expect(
+      await readContextSnapshot(testDatabase.db, contextRunId),
+    ).toMatchObject({
+      incarnationId: resumedIncarnationId,
+      usage: { used: 32, size: 100 },
+      activeCompactions: 0,
+      completedCompactions: 2,
+    });
   });
 
   it("replays a canonical session exclusively from manager-owned event rows", async () => {

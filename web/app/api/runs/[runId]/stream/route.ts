@@ -2,12 +2,13 @@ import "server-only";
 
 import type { ExecutionEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
-
-import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
+import type { ContextSnapshot } from "@/lib/runs/context-snapshot";
 
 import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
+
+import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
 
 import {
   httpStatusForAuthz,
@@ -252,6 +253,26 @@ function canonicalRunEventStream(input: {
           // The client may have aborted while a database read completed.
         }
       };
+      const enqueueContext = (
+        snapshot: ContextSnapshot | null,
+        previousState: string,
+      ): string => {
+        if (!snapshot) return previousState;
+        // A newer observation is useful for selection, but alone changes no state.
+        const state = JSON.stringify({
+          ...snapshot,
+          bindingObservedAt: undefined,
+        });
+
+        if (state !== previousState) {
+          controller.enqueue(
+            encoder.encode(formatSyntheticSseEvent(JSON.stringify(snapshot))),
+          );
+          lastEventAt = Date.now();
+        }
+
+        return state;
+      };
 
       if (!input.replayEvents) {
         controller.enqueue(
@@ -292,24 +313,11 @@ function canonicalRunEventStream(input: {
             );
           }
           if (signal.aborted) break;
-          if (context) {
-            const json = JSON.stringify(context);
-
-            if (json !== lastContext) {
-              controller.enqueue(encoder.encode(formatSyntheticSseEvent(json)));
-              lastContext = json;
-              lastEventAt = Date.now();
-            }
-          }
-          if (attemptContext) {
-            const json = JSON.stringify(attemptContext);
-
-            if (json !== lastAttemptContext) {
-              controller.enqueue(encoder.encode(formatSyntheticSseEvent(json)));
-              lastAttemptContext = json;
-              lastEventAt = Date.now();
-            }
-          }
+          lastContext = enqueueContext(context, lastContext);
+          lastAttemptContext = enqueueContext(
+            attemptContext,
+            lastAttemptContext,
+          );
 
           for (const event of events) {
             const sequence = event.runSequence;

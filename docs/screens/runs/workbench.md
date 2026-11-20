@@ -218,7 +218,7 @@ then fences against a live promotion claim in both directions. Behavior:
 
 ## Context usage
 
-The node inspector’s transcript shows context for the selected attempt. Live compaction is highlighted with a glyph and text. The marker remains in transcript order and can show the summary to an authorized reader. See [ACP context observations](../../system-analytics/acp-context.md).
+The node inspector’s transcript shows context for the selected attempt. Live compaction is highlighted with a glyph and text. The marker remains in transcript order and can show the summary to an authorized reader. If the marker is previewed due to its size, the full-record action opens the authorized download for that attempt. See [ACP context observations](../../system-analytics/acp-context.md).
 
 ## Data & APIs
 
