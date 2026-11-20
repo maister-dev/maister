@@ -1,0 +1,69 @@
+#cloud-config
+# Use only as NoCloud user-data for a disposable Ubuntu guest.
+users: []
+ssh_pwauth: false
+ssh_deletekeys: false
+ssh_genkeytypes: []
+ssh_publish_hostkeys:
+  enabled: false
+runcmd:
+  - |
+    set -eux
+    exec >/dev/ttyS0 2>&1
+    echo 'MAISTER_P0_BEGIN'
+    uname -mrs
+    grep -E '^PRETTY_NAME=' /etc/os-release
+    systemd --version | head -1
+    test "$(cat /sys/module/apparmor/parameters/enabled)" = Y
+    test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+    test "$(stat -f -c '%T' /sys/fs/cgroup)" = cgroup2fs
+    systemctl is-active apparmor
+    echo kernel_controls=verified
+    for entry in manager:11030 supervisor:11031 workload:11032; do
+      name=${entry%:*}
+      uid=${entry#*:}
+      groupadd -g "$uid" "maister-$name"
+      useradd -u "$uid" -g "$uid" -M -s /usr/sbin/nologin "maister-$name"
+    done
+    for name in manager supervisor; do
+      dir="/var/lib/maister-p0-$name"
+      install -d -m 0700 -o "maister-$name" -g "maister-$name" "$dir"
+      printf fixture >"$dir/credential"
+      chmod 0600 "$dir/credential"
+      chown "maister-$name:maister-$name" "$dir/credential"
+    done
+    systemd-run --expand-environment=no --unit=maister-p0-manager --wait --collect --pipe -p User=maister-manager -p Group=maister-manager -p NoNewPrivileges=yes /bin/sh -ec 'test -r /var/lib/maister-p0-manager/credential; test ! -r /var/lib/maister-p0-supervisor/credential; echo manager_custody=verified'
+    systemd-run --expand-environment=no --unit=maister-p0-supervisor --wait --collect --pipe -p User=maister-supervisor -p Group=maister-supervisor -p NoNewPrivileges=yes /bin/sh -ec 'test -r /var/lib/maister-p0-supervisor/credential; test ! -r /var/lib/maister-p0-manager/credential; echo supervisor_custody=verified'
+    systemd-run --expand-environment=no --unit=maister-p0-launcher --wait --collect --pipe -p User=maister-supervisor -p Group=maister-supervisor -p SupplementaryGroups=maister-manager -p 'AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_SETPCAP' -p 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP' -p NoNewPrivileges=yes /usr/bin/setpriv --reuid=11032 --regid=11032 --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- /bin/sh -ec '
+      test "$(id -u)" = 11032
+      test "$(id -g)" = 11032
+      test "$(id -G)" = 11032
+      test ! -r /var/lib/maister-p0-supervisor/credential
+      test ! -r /var/lib/maister-p0-manager/credential
+      awk "/^Cap(Inh|Prm|Eff|Bnd|Amb):/ { if (\$2 != \"0000000000000000\") exit 1; n++ } END { if (n != 5) exit 1 }" /proc/self/status
+      grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/self/status
+      echo workload_identity_and_custody=verified
+    '
+    systemd-run --expand-environment=no --unit=maister-p0-cgroup --wait --collect --pipe -p User=maister-supervisor -p Group=maister-supervisor -p NoNewPrivileges=yes -p Delegate=yes -p DelegateSubgroup=resident /bin/sh -exc '
+      path=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)
+      test "${path##*/}" = resident
+      path=${path%/*}
+      test -z "$(cat "$path/cgroup.procs")"
+      ls -ld "$path"
+      cat "$path/cgroup.controllers"
+      echo "+cpu +memory +pids" >"$path/cgroup.subtree_control"
+      mkdir "$path/workload"
+      echo 16 >"$path/workload/pids.max"
+      echo 67108864 >"$path/workload/memory.max"
+      echo "20000 100000" >"$path/workload/cpu.max"
+      test "$(cat "$path/workload/pids.max")" = 16
+      test "$(cat "$path/workload/memory.max")" = 67108864
+      test "$(cat "$path/workload/cpu.max")" = "20000 100000"
+      echo delegated_limits=verified
+    '
+    if command -v bwrap >/dev/null; then bwrap --version; else echo bwrap=absent; fi
+    echo 'MAISTER_P0_END'
+power_state:
+  mode: poweroff
+  timeout: 90
+  condition: true
