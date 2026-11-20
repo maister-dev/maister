@@ -134,6 +134,7 @@ beforeAll(async () => {
     email: "agent-permission@test.local",
   });
   supervisor = await startRealSupervisor({
+    fixtureAdapters: ["claude", "codex"],
     fixtureArgs: [
       "--hang",
       "--lines",
@@ -210,7 +211,7 @@ async function seedAgent(input: {
   terminalBarrier?: string;
   stopReason?: string;
   failMessage?: string;
-  contextFailure?: "claude-input" | "claude-output";
+  contextFailure?: "claude-input" | "claude-output" | "codex-input";
   persistent?: boolean;
   permission?: boolean;
   hookTrip?: boolean;
@@ -236,6 +237,7 @@ async function seedAgent(input: {
 
   return seedAgentRun(db, {
     runtimeRoot: supervisor.runtimeRoot,
+    adapter: input.contextFailure === "codex-input" ? "codex" : "claude",
     definition: `---\nname: Researcher\ndescription: d\n${operational ? "kind: operational\ncompletion: {contract: operational_v1}\n" : ""}workspace: ${workspace}\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\n${scheduledRequest ? "  - cron\n" : ""}risk_tier: read_only\n${input.hookTrip ? `hooks:\n  repetition:\n    max: ${input.parallelPermission ? 2 : 1}\n` : ""}---\n${prompt}\n`,
     workspace,
     resultContract: operational ? null : contract,
@@ -4257,6 +4259,11 @@ describe("Agent owned prompts through the production launcher", () => {
     {
       name: "input overflow rejection",
       contextFailure: "claude-input" as const,
+      reason: "context_exhausted",
+    },
+    {
+      name: "Codex input overflow rejection",
+      contextFailure: "codex-input" as const,
       reason: "context_exhausted",
     },
     {

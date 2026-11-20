@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { ProcessIdentity } from "@/test-support/process-invocation";
 import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { TestRunnerAgent } from "@/lib/__tests__/runner-fixtures";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -119,6 +120,7 @@ beforeAll(async () => {
   });
   supervisor = await startRealSupervisor({
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
+    fixtureAdapters: ["claude", "codex"],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   resetRegistrarStateForTests();
@@ -148,6 +150,7 @@ afterAll(async () => {
 async function seedOwnerFlow(
   nodes: FlowYamlV1["nodes"],
   options: {
+    adapter?: TestRunnerAgent;
     engineMin?: string;
     installedPath?: string;
     scheduledRequest?: string;
@@ -170,6 +173,7 @@ async function seedOwnerFlow(
       nodes,
     },
     {
+      agent: options.adapter,
       repoPath,
       run: options.scheduledRequest
         ? {
@@ -2378,9 +2382,12 @@ describe("Flow prompt owners through the production graph driver", () => {
   );
   it.each([
     ["node", "claude-input", undefined, "context_exhausted"],
+    ["node", "codex-input", undefined, "context_exhausted"],
     ["node", "claude-output", undefined, "max_output_tokens"],
     ["ai_judgment", undefined, "max_tokens", "max_output_tokens"],
+    ["ai_judgment", "codex-input", undefined, "context_exhausted"],
     ["skill_check", "claude-input", undefined, "context_exhausted"],
+    ["skill_check", "codex-input", undefined, "context_exhausted"],
   ] as const)(
     "owner-flow-context: %s retains %s / %s as %s",
     async (owner, contextFailure, stopReason, reason) => {
@@ -2418,7 +2425,10 @@ describe("Flow prompt owners through the production graph driver", () => {
             transitions: { success: "done" },
           },
         ],
-        { engineMin: "3.13.0" },
+        {
+          engineMin: "3.13.0",
+          adapter: contextFailure === "codex-input" ? "codex" : "claude",
+        },
       );
       const { runId } = seed;
 
