@@ -170,6 +170,8 @@ The current account's transient systemd user unit used `Delegate=yes` and `Deleg
 
   - Flow mutation assertions now use the shared Git inspection environment. RED failed the real-repository touched-path check when the process inherited a different Git directory. GREEN passed all 25 mutation-check tests, including non-ASCII paths.
 
+  - The run-context write guard now uses the shared inspection environment for worktree detection and ignore checks. RED reproduced an incorrect safe result with ambient Git routing. GREEN passed all seven run-context integration cases with PostgreSQL on the current user's rootless Docker.
+
 ### P2 — Linux session isolation and access policy
 
 - [ ] **T09. Persist and resolve profiles.** In `web/lib/db/schema.ts`, generated migrations, `web/lib/acp-runners/`, `web/lib/runs/execution-policy.ts` and shared `runtime/` types, define ceiling/default, embedded runner access, project command override and immutable launch/session/command witnesses. Include tools/MCP, network mode/hosts, ports, RO/RW extra paths, credentials and per-MCP exposure, docker/nested-userns, approval/bypass and resource limits. All dangerous grants default off. Define explicit defaults for existing rows and SET/CLEAR/re-set behavior for optional values. Avoid rewriting old snapshots. Capture revisions and compare under locks on actual admission. Evidence is real-Postgres migration/round-trip and decision-table output.

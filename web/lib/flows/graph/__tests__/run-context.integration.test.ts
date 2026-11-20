@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { closeDb } from "@/lib/db/client";
 import { isRunContextWriteSafe } from "@/lib/flows/graph/run-context";
@@ -319,7 +319,12 @@ describe("isRunContextWriteSafe — P7 git-leak gate (ADR-103)", () => {
       "/dev/null",
     ]);
 
-    expect(await isRunContextWriteSafe(dir)).toBe(false);
+    vi.stubEnv("GIT_DIR", join(dir, "missing-git-directory"));
+    try {
+      expect(await isRunContextWriteSafe(dir)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("is safe (true) in a git worktree where .maister/ is excluded via info/exclude", async () => {

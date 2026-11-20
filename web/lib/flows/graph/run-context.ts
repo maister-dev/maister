@@ -13,6 +13,8 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../../runtime/git-inspection-environment";
+
 import { DEFAULT_OUTPUT_TRUNCATION, reduceLedger } from "../context";
 
 import { getGateResultsForRun } from "./gate-store";
@@ -204,7 +206,7 @@ export async function writeRunContext(args: {
 // verdicts) would surface in `git status` and the agent's `git add -A` / the
 // promoted diff, so the caller MUST skip the write. `git check-ignore` is ground
 // truth — it honors info/exclude (our run-start append) AND the repo's own
-// .gitignore / global excludes. Never throws; an indeterminate result inside a
+// .gitignore and repository-configured excludes. Never throws; an indeterminate result inside a
 // git tree fails closed to unsafe (skip), never to a thrown error.
 export async function isRunContextWriteSafe(
   worktreePath: string,
@@ -212,7 +214,7 @@ export async function isRunContextWriteSafe(
   const insideWorkTree = await execFileAsync(
     "git",
     ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"],
-    { cwd: worktreePath },
+    { cwd: worktreePath, env: gitInspectionEnvironment() },
   )
     .then(({ stdout }) => stdout.trim() === "true")
     .catch(() => false);
@@ -222,7 +224,7 @@ export async function isRunContextWriteSafe(
   return execFileAsync(
     "git",
     ["-C", worktreePath, "check-ignore", "-q", ".maister/run.json"],
-    { cwd: worktreePath },
+    { cwd: worktreePath, env: gitInspectionEnvironment() },
   )
     .then(() => true)
     .catch(() => false);
