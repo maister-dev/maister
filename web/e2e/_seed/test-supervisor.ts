@@ -2482,8 +2482,32 @@ export async function startTestSupervisor(
         // (do NOT auto-drive — the spec controls termination).
         if (rec.stub) {
           stubAppendPrompt(promptMatch[1], body);
-          const out = { stopReason: "end_turn" };
+          const out = {
+            stopReason:
+              typeof body.prompt === "string" &&
+              body.prompt.includes("e2e:context-output-limit")
+                ? "max_tokens"
+                : "end_turn",
+          };
+          const observesContext =
+            typeof body.prompt === "string" &&
+            body.prompt.includes("e2e:observe-context");
+          const observe = (update: Record<string, unknown>): void => {
+            emitOrQueue(rec, {
+              type: "session.update",
+              sessionId: rec.sessionId,
+              monotonicId: nextId(),
+              update,
+            });
+          };
           const armExit = (): void => {
+            // These Studio tests drive a second user turn on the same session.
+            if (
+              typeof body.prompt === "string" &&
+              body.prompt.includes("e2e:studio-keep-session") &&
+              rec.runKind === "scratch"
+            )
+              return;
             const releasePath = path.join(
               opts.stubCompat!.sessionsDir,
               `${rec.sessionId}.release`,
@@ -2516,8 +2540,39 @@ export async function startTestSupervisor(
               opts.stubCompat!.sessionsDir,
               `${rec.sessionId}.turn-release`,
             );
+
+            if (observesContext) {
+              observe({
+                sessionUpdate: "usage_update",
+                used: 72000,
+                size: 100000,
+              });
+              observe({
+                sessionUpdate: "compaction_update",
+                compactionId: "e2e-context",
+                status: "in_progress",
+              });
+            }
             const heldAt = Date.now();
+            let refreshedUsage = false;
             const hold = setInterval(() => {
+              if (
+                observesContext &&
+                !refreshedUsage &&
+                existsSync(
+                  path.join(
+                    opts.stubCompat!.sessionsDir,
+                    `${rec.sessionId}.context-refresh`,
+                  ),
+                )
+              ) {
+                refreshedUsage = true;
+                observe({
+                  sessionUpdate: "usage_update",
+                  used: 74000,
+                  size: 100000,
+                });
+              }
               if (
                 !existsSync(turnRelease) &&
                 Date.now() - heldAt <= E2E_HOLD_TURN_BACKSTOP_MS
@@ -2525,6 +2580,26 @@ export async function startTestSupervisor(
                 return;
               }
               clearInterval(hold);
+              if (observesContext) {
+                observe({
+                  sessionUpdate: "compaction_update",
+                  compactionId: "failed-context",
+                  status: "failed",
+                });
+                observe({
+                  sessionUpdate: "compaction_update",
+                  compactionId: "cancelled-context",
+                  status: "cancelled",
+                });
+                observe({
+                  sessionUpdate: "compaction_update",
+                  compactionId: "e2e-context",
+                  status: "completed",
+                  summary: [
+                    { type: "text", text: "Synthetic compaction summary" },
+                  ],
+                });
+              }
               complete(out);
               armExit();
             }, STUB_RELEASE_POLL_MS);

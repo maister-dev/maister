@@ -1546,6 +1546,7 @@ export type SessionEvent =
       sessionId: string;
       monotonicId: number;
       line: string;
+      contextUsageOnly?: true;
     }
   | {
       type: "session.update";

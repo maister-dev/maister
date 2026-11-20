@@ -112,6 +112,7 @@ describe("runtime event ingestion", () => {
     const contextStreamId = randomUUID();
     const hostBootId = randomUUID();
     const hostSessionId = randomUUID();
+
     await testDatabase.pool.query(
       "INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision) VALUES ($1,$2,'scratch','Running','scratch','context')",
       [contextRunId, projectId],
@@ -128,6 +129,7 @@ describe("runtime event ingestion", () => {
       "UPDATE runs SET execution_assignment_id=$1 WHERE id=$2",
       [contextAssignmentId, contextRunId],
     );
+    const sessionId = randomUUID();
     const updates = [
       { sessionUpdate: "usage_update", used: 72, size: 100 },
       { sessionUpdate: "usage_update", used: null, size: 100 },
@@ -177,6 +179,7 @@ describe("runtime event ingestion", () => {
           payload: { update },
         }),
       });
+
       expect(result.disposition).toBe("accepted");
       await projectExecutionEvents({
         db: testDatabase.db,
@@ -187,7 +190,6 @@ describe("runtime event ingestion", () => {
         expect(
           (await readContextSnapshot(testDatabase.db, contextRunId)).usage,
         ).toBeNull();
-        const sessionId = randomUUID();
 
         await testDatabase.pool.query(
           "INSERT INTO run_sessions(id,run_id,session_name,execution_assignment_id,host_session_id) VALUES($1,$2,'default',$3,$4)",
@@ -218,7 +220,113 @@ describe("runtime event ingestion", () => {
       "SELECT status, count(*)::int AS count FROM run_context_compactions WHERE run_id=$1 AND host_session_id=$2 GROUP BY status",
       [contextRunId, hostSessionId],
     );
+
     expect(ledger.rows).toEqual([{ status: "completed", count: 1 }]);
+
+    const resumedHostSessionId = randomUUID();
+    const resumedIncarnationId = randomUUID();
+
+    // The same logical session may resume its original ACP handle. Late frames
+    // and history replay from that context must leave the new reading unknown.
+    await testDatabase.pool.query(
+      "UPDATE run_session_incarnations SET acp_session_id='retained-acp',state='exited' WHERE host_session_id=$1",
+      [hostSessionId],
+    );
+    await testDatabase.pool.query(
+      "UPDATE run_sessions SET acp_session_id='retained-acp',host_session_id=$1 WHERE id=$2",
+      [resumedHostSessionId, sessionId],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO run_session_incarnations (id,run_session_id,run_id,execution_assignment_id,assignment_epoch,execution_host_id,host_session_id,acp_session_id,state,origin) VALUES($1,$2,$3,$4,1,$5,$6,'retained-acp','active','native')",
+      [
+        resumedIncarnationId,
+        sessionId,
+        contextRunId,
+        contextAssignmentId,
+        contextHostId,
+        resumedHostSessionId,
+      ],
+    );
+    const replayEvents = [
+      {
+        hostSessionId: resumedHostSessionId,
+        payload: { contextReplay: true, update: updates[0] },
+      },
+      { hostSessionId, payload: { update: updates[0] } },
+    ];
+
+    for (const [index, replay] of replayEvents.entries()) {
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: contextHostId,
+        envelope: event(String(updates.length + index), {
+          runId: contextRunId,
+          assignmentId: contextAssignmentId,
+          hostBootId,
+          hostKey: contextHostKey,
+          streamId: contextStreamId,
+          ...replay,
+        }),
+      });
+    }
+    await Promise.all(
+      [1, 2].map(() =>
+        projectExecutionEvents({
+          db: testDatabase.db,
+          projector,
+          runId: contextRunId,
+        }),
+      ),
+    );
+    expect(
+      await readContextSnapshot(testDatabase.db, contextRunId),
+    ).toMatchObject({
+      incarnationId: resumedIncarnationId,
+      usage: null,
+      activeCompactions: 0,
+      completedCompactions: 0,
+    });
+    const nextCompaction = event(String(updates.length + replayEvents.length), {
+      runId: contextRunId,
+      assignmentId: contextAssignmentId,
+      hostBootId,
+      hostKey: contextHostKey,
+      streamId: contextStreamId,
+      hostSessionId: resumedHostSessionId,
+      payload: {
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "first",
+          status: "completed",
+        },
+      },
+    });
+
+    for (const envelope of [nextCompaction, nextCompaction]) {
+      await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: contextHostId,
+        envelope,
+      });
+    }
+    await projectExecutionEvents({
+      db: testDatabase.db,
+      projector,
+      runId: contextRunId,
+    });
+    expect(
+      await readContextSnapshot(testDatabase.db, contextRunId),
+    ).toMatchObject({
+      incarnationId: resumedIncarnationId,
+      usage: null,
+      completedCompactions: 1,
+    });
+    const repeatedId = await testDatabase.pool.query(
+      "SELECT count(*)::int AS count FROM run_context_compactions WHERE run_id=$1 AND compaction_id='first'",
+      [contextRunId],
+    );
+
+    expect(repeatedId.rows).toEqual([{ count: 2 }]);
   });
 
   it("replays a canonical session exclusively from manager-owned event rows", async () => {

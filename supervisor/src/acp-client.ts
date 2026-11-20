@@ -4,11 +4,11 @@ import type {
   Writable as NodeWritable,
 } from "node:stream";
 import type { Logger } from "pino";
+import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
 
 import { randomUUID } from "node:crypto";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
-import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
 
 import { isNativeKnowledgeReadTool } from "../../runtime/knowledge-tool-effects";
 
@@ -289,6 +289,7 @@ function contextLimitReason(
     error.message.trim() === "Internal error: Prompt is too long"
   )
     return "context_exhausted";
+
   return undefined;
 }
 
@@ -509,6 +510,7 @@ export async function createAcpConnection(
 
   const lineEvent = (
     line: string,
+    contextUsageOnly?: true,
   ): Extract<SessionEvent, { type: "session.line" }> => {
     record.monotonicId += 1;
     logger.debug(
@@ -525,6 +527,7 @@ export async function createAcpConnection(
       sessionId,
       monotonicId: record.monotonicId,
       line,
+      ...(contextUsageOnly ? { contextUsageOnly } : {}),
     };
   };
   const emitLine = (line: string): void => {
@@ -1103,7 +1106,9 @@ export async function createAcpConnection(
       ) {
         args.publishTextFrame([lineEvent(line), updateEvent(params)]);
       } else {
-        emitLine(line);
+        if (params.update.sessionUpdate === "usage_update")
+          emitter.emit(SESSION_EVENT_CHANNEL, lineEvent(line, true));
+        else emitLine(line);
         await clientImpl.sessionUpdate(params);
       }
     },

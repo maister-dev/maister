@@ -15,9 +15,11 @@ import {
   acpContextUpdateType,
   decodeAcpContextUpdate,
 } from "../../../../runtime/acp-context";
+
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { prepareSessionContent } from "./session-content";
 import { runEventWakeBus } from "./run-wake";
+
 import {
   nodeAttempts,
   runContextUsage,
@@ -28,6 +30,8 @@ const log = pino({
   name: "context-projector",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+const warnedMalformedUpdates = new Set<string>();
 
 type PhysicalSession = Pick<
   typeof runContextUsage.$inferInsert,
@@ -151,6 +155,7 @@ async function projectUsage(
           isNull(runContextUsage.nodeAttemptId),
         ),
       );
+
     if (current?.sequence === latest.lastRunSequence) {
       await tx
         .update(runContextCompactions)
@@ -189,6 +194,7 @@ async function projectCompaction(
         { runId: scope.runId, sequence: String(sequence) },
         "conflicting ACP compaction status",
       );
+
     return;
   }
   if (previous && update.status === "in_progress") return;
@@ -218,6 +224,7 @@ async function projectCompaction(
       .from(runContextCompactions)
       .where(and(physical, eq(runContextCompactions.status, "in_progress")))
       .limit(1);
+
     await tx.insert(runContextCompactions).values({
       ...scope,
       compactionId: update.id,
@@ -265,16 +272,36 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
           lt(runContextCompactions.lastRunSequence, sequence),
         ),
       );
+
     return;
   }
   if (event.eventType === "session.created") {
+    const attemptId =
+      typeof event.payload?.nodeAttemptId === "string"
+        ? event.payload.nodeAttemptId
+        : null;
+    const [attempt] = attemptId
+      ? await tx
+          .select({ id: nodeAttempts.id })
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.id, attemptId),
+              eq(nodeAttempts.runId, physical.runId),
+            ),
+          )
+      : [];
+
     await tx
       .insert(runContextUsage)
-      .values({
-        ...physical,
-        lastRunSequence: sequence,
-        createdRunSequence: sequence,
-      })
+      .values(
+        (attempt ? [null, attempt.id] : [null]).map((nodeAttemptId) => ({
+          ...physical,
+          nodeAttemptId,
+          lastRunSequence: sequence,
+          createdRunSequence: sequence,
+        })),
+      )
       .onConflictDoNothing();
     await tx
       .update(runContextUsage)
@@ -285,6 +312,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
           isNull(runContextUsage.nodeAttemptId),
         ),
       );
+
     return;
   }
   if (
@@ -294,18 +322,20 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
     return;
   const raw = event.payload?.update;
 
-  if (!acpContextUpdateType(raw)) return;
+  const updateType = acpContextUpdateType(raw);
+
+  if (!updateType) return;
   const update = decodeAcpContextUpdate(raw);
 
   if (!update) {
-    log.debug(
-      {
-        runId: physical.runId,
-        type: acpContextUpdateType(raw),
-        sequence: String(sequence),
-      },
-      "ignored ACP context observation",
-    );
+    if (!warnedMalformedUpdates.has(updateType)) {
+      warnedMalformedUpdates.add(updateType);
+      log.warn(
+        { type: updateType, sequence: String(sequence) },
+        "ignored malformed ACP context observation",
+      );
+    }
+
     return;
   }
   if (update.kind === "summary_chunk") return;
@@ -313,6 +343,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
     typeof event.payload?.nodeAttemptId === "string"
       ? event.payload.nodeAttemptId
       : null;
+
   if (nodeAttemptId) {
     const [attempt] = await tx
       .select({ id: nodeAttempts.id })
@@ -329,6 +360,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
         { runId: physical.runId, sequence: String(sequence) },
         "invalid context attempt attribution",
       );
+
       return;
     }
   }
@@ -342,6 +374,7 @@ async function projectContext(tx: Db, event: ExecutionEvent): Promise<void> {
         ? event.payload.sourceCommandId
         : null,
   };
+
   if (update.kind === "usage") {
     await projectUsage(tx, observation, {
       used: update.used,
@@ -366,10 +399,13 @@ export const canonicalContextProjector: ExecutionEventProjector = {
     const source = events.find(
       (event) =>
         acpContextUpdateType(event.payload?.update) ||
+        event.payload?.contextType === "usage_update" ||
+        event.payload?.contextType === "compaction_update" ||
         event.eventType === "session.created" ||
         event.eventType === "session.crashed" ||
         event.eventType === "session.exited",
     );
+
     if (source) runEventWakeBus.wake(source.runId);
   },
 };

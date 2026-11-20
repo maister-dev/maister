@@ -14,8 +14,13 @@ export type AcpContextUpdate =
     }
   | { kind: "summary_chunk"; id: string; text: string };
 
-type AcpContextUpdateType =
-  "usage_update" | "compaction_update" | "compaction_summary_chunk";
+export const ACP_CONTEXT_UPDATE_TYPES = [
+  "usage_update",
+  "compaction_update",
+  "compaction_summary_chunk",
+] as const;
+
+type AcpContextUpdateType = (typeof ACP_CONTEXT_UPDATE_TYPES)[number];
 
 const MAX_COMPACTION_ID_LENGTH = 256;
 export const MAX_COMPACTION_SUMMARY_LENGTH = 64 * 1024;
@@ -56,11 +61,9 @@ export function acpContextUpdateType(
 ): AcpContextUpdateType | null {
   const type = object(value)?.sessionUpdate;
 
-  return type === "usage_update" ||
-    type === "compaction_update" ||
-    type === "compaction_summary_chunk"
-    ? type
-    : null;
+  return (
+    ACP_CONTEXT_UPDATE_TYPES.find((candidate) => candidate === type) ?? null
+  );
 }
 
 function textBlock(value: unknown): string {

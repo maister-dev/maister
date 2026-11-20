@@ -182,6 +182,10 @@ stateDiagram-v2
 | `Crashed` dialog on a `Failed` run | Frozen transcript with a `Failed` hint carrying the cause line; no Recover; queued rows read "Not sent" (Implemented) |
 | `Done` / `Abandoned` | Frozen transcript with Diff, Timeline, and Evidence available |
 
+## Context usage
+
+The composer shows the active session’s horizontal context bar and compaction activity. Its details control is keyboard reachable. The transcript shows an expandable compaction marker when the agent provides a summary. Input overflow pauses sends to that session. An output limit suggests a smaller follow-up. See [ACP context observations](../../system-analytics/acp-context.md).
+
 ## Data & APIs
 
 - `GET /api/scratch-runs/{runId}` loads run metadata, scratch metadata,

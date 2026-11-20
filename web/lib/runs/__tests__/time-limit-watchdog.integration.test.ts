@@ -12,6 +12,7 @@
 // contract either way. See "Seam decisions" in the tester report.
 
 import type { ExecutionHosts } from "@/lib/execution-host";
+import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
@@ -83,6 +84,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { MaisterError } from "@/lib/errors";
+import { ensureAssignment } from "@/lib/execution-host";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -363,13 +365,37 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
     expect((await getRun(capped.runId)).status).toBe("Failed");
   }, 60_000);
 
-  it("kills a run past maxDurationMinutes: deleteSession called, node Failed, run terminal Failed", async () => {
+  it("kills a run past maxDurationMinutes while a compaction is active", async () => {
     const acp = "acp-over";
     const { runId, supervisorSessionId } = await seedRunningNode({
       maxDurationMinutes: 10,
       // 30 minutes ago → well past the 10-minute cap.
       attemptStartedAt: new Date(Date.now() - 30 * 60_000),
       acpSessionId: acp,
+    });
+
+    const assignment = await ensureAssignment(
+      db as unknown as Db,
+      runId,
+      "legacy_backfill",
+      {
+        transport: fake.transport,
+      },
+    );
+    const runningAttempt = await getAttempt(runId);
+
+    await db.insert(schema.runContextCompactions).values({
+      runId,
+      executionHostId: assignment.executionHostId,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      hostSessionId: supervisorSessionId,
+      nodeAttemptId: runningAttempt.id,
+      compactionId: "slow-compaction",
+      status: "in_progress",
+      firstRunSequence: 10n,
+      lastRunSequence: 10n,
+      startedAt: new Date(),
     });
 
     listSessionsSpy.mockResolvedValue([
@@ -405,8 +431,7 @@ describe("time-limit watchdog — kill-on-cap (3B.1 / 3B.2)", () => {
 
     expect(attempt.status).toBe("Failed");
     expect(attempt.errorCode).not.toBeNull();
-    // ADR-166 D7: the terminal flip ends the run's driver generation in the
-    // same tx (the lazily placed legacy generation, here).
+    // ADR-166 D7: the terminal flip ends the run's driver generation in the same transaction.
     const assignments = await db
       .select({
         state: schema.executionAssignments.state,

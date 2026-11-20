@@ -1295,49 +1295,53 @@ export function RunTranscriptHistory({
       {!pages.length && !error ? (
         <p role="status">{t("loadingTranscript")}</p>
       ) : null}
-      {first?.hasEarlier ? (
-        <Button
-          className={controlClass}
-          data-testid="transcript-earlier"
-          isDisabled={loading !== null}
-          size="sm"
-          variant="outline"
-          onPress={() => navigateRef.current("earlier")}
-        >
-          {t("earlierMessages")}
-        </Button>
-      ) : null}
-      {loading ? (
-        <p data-testid="transcript-history-loading" role="status">
-          {t(
-            loading === "earlier"
-              ? "loadingEarlier"
-              : loading === "later"
-                ? "loadingLater"
-                : "loadingTranscript",
-          )}
-        </p>
-      ) : null}
-      {last?.projection.state === "pending" ? (
-        <p role="status">{t("projectionPending")}</p>
-      ) : null}
-      {last ? (
-        <ContextUsageMeter
-          snapshot={latestContextSnapshot(
-            last.context ?? null,
-            last.attemptId === null
-              ? (stream.context ?? null)
-              : stream.attemptContext?.nodeAttemptId === last.attemptId
-                ? stream.attemptContext
-                : null,
-          )}
-        />
-      ) : null}
-      {last?.projection.state === "caught_up" && messages.length === 0 ? (
-        <p>{t("emptyTranscript")}</p>
-      ) : null}
       <div className="grid min-w-0 grid-cols-1">
-        <div className="col-start-1 row-start-1 min-w-0">
+        <div className="col-start-1 row-start-1 min-w-0 space-y-3">
+          {first?.hasEarlier || last ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {first?.hasEarlier ? (
+                <Button
+                  className={controlClass}
+                  data-testid="transcript-earlier"
+                  isDisabled={loading !== null}
+                  size="sm"
+                  variant="outline"
+                  onPress={() => navigateRef.current("earlier")}
+                >
+                  {t("earlierMessages")}
+                </Button>
+              ) : null}
+              {last ? (
+                <ContextUsageMeter
+                  snapshot={latestContextSnapshot(
+                    last.context ?? null,
+                    last.attemptId === null
+                      ? (stream.context ?? null)
+                      : stream.attemptContext?.nodeAttemptId === last.attemptId
+                        ? stream.attemptContext
+                        : null,
+                  )}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {loading ? (
+            <p data-testid="transcript-history-loading" role="status">
+              {t(
+                loading === "earlier"
+                  ? "loadingEarlier"
+                  : loading === "later"
+                    ? "loadingLater"
+                    : "loadingTranscript",
+              )}
+            </p>
+          ) : null}
+          {last?.projection.state === "pending" ? (
+            <p role="status">{t("projectionPending")}</p>
+          ) : null}
+          {last?.projection.state === "caught_up" && messages.length === 0 ? (
+            <p>{t("emptyTranscript")}</p>
+          ) : null}
           <TranscriptView
             labels={labels}
             messages={messages}

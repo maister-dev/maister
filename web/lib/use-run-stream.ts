@@ -145,16 +145,18 @@ export function useRunStream(
             if (snapshot.data.nodeAttemptId === null) setContext(snapshot.data);
             else setAttemptContext(snapshot.data);
           }
+
           return;
         }
-        setEventCount((c) => c + 1);
-        if (retain) setEvents((cur) => [...cur, parsed]);
         const cursor = runStreamCursor(parsed, msg.lastEventId);
 
         if (cursor !== null) {
           lastEventIdRef.current = cursor;
           setLastEventId(cursor);
         }
+        if (parsed.contextUsageOnly === true) return;
+        setEventCount((c) => c + 1);
+        if (retain) setEvents((cur) => [...cur, parsed]);
       } catch {
         /* skip malformed */
       }

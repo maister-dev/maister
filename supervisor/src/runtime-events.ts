@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+import { ACP_CONTEXT_UPDATE_TYPES } from "../../runtime/acp-context";
 import { parseCommandEventPayloadV2 } from "../../runtime/command-evidence";
 
 /** Exact host-owned session payload; the reference event is availability evidence. */
@@ -62,6 +63,9 @@ const SessionContentPayloadSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    contextType: z.enum(ACP_CONTEXT_UPDATE_TYPES).optional(),
+    contextReplay: z.literal(true).optional(),
+    contextUsageOnly: z.literal(true).optional(),
     contentRef: SessionContentReferenceSchema,
   })
   .strict();
@@ -203,6 +207,12 @@ export const RuntimeEventEnvelopeSchema = z
         !parsed.success ||
         parsed.data.contentRef.hostSessionId !== value.hostSessionId ||
         parsed.data.contentRef.firstFrame !== parsed.data.sourceMonotonicId ||
+        (parsed.data.contextType !== undefined &&
+          value.eventType !== "session.update") ||
+        (parsed.data.contextUsageOnly === true &&
+          value.eventType !== "session.line") ||
+        (parsed.data.contextReplay === true &&
+          parsed.data.contextType === undefined) ||
         (parsed.data.sourceCommandId !== undefined &&
           parsed.data.sourceCommandId !== parsed.data.contentRef.commandId) ||
         (parsed.data.contentRef.sourcePayloadSchema ===

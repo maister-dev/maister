@@ -21,10 +21,10 @@ supported.
 
 ## Tables
 
-### ACP context observations (Designed, ADR-210)
+### ACP context observations (Implemented, ADR-210)
 
 `run_context_usage` holds a scope’s last measurement or its reset. Its key is
-`(run_id, execution_host_id, assignment_epoch, host_session_id, node_attempt_id)`.
+`(run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, node_attempt_id)`.
 The session-wide row has a NULL attempt and the key treats NULL as equal.
 An attributed update writes both rows in the projection cursor transaction.
 The pair `used_tokens` / `size_tokens`, `observed_at` and

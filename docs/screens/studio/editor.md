@@ -353,6 +353,10 @@ stateDiagram-v2
     CompileFallback --> Viewing: edit YAML until it parses
 ```
 
+## Context usage
+
+The assistant header shows the shared context bar for its active session. The conversation retains compaction markers and limit diagnostics. See [ACP context observations](../../system-analytics/acp-context.md).
+
 ## Data & APIs
 
 The local editor works against the local-package working-dir seam:

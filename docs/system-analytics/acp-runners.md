@@ -1,6 +1,6 @@
 # Platform ACP runner catalog domain
 
-See [designed window guidance](acp-context.md) for the non-blocking Claude-compatible provider advisory.
+See [context window guidance](acp-context.md) for the non-blocking Claude-compatible provider advisory.
 
 ## Purpose
 

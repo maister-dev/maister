@@ -1,6 +1,9 @@
 import "server-only";
 
+import type { ExecutionEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
+
+import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
 
 import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -154,10 +157,20 @@ async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
   return rows[0]?.runSequence ?? -1n;
 }
 
+type CanonicalRunEvent = Pick<
+  ExecutionEvent,
+  | "id"
+  | "runSequence"
+  | "eventType"
+  | "payload"
+  | "occurredAt"
+  | "hostSessionId"
+>;
+
 async function readCanonicalRunEvents(
   runId: string,
   afterSequence: bigint,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<CanonicalRunEvent[]> {
   const db = getDb() as unknown as Db;
 
   return db
@@ -182,8 +195,18 @@ async function readCanonicalRunEvents(
 }
 
 function canonicalBrowserEvent(
-  event: Record<string, unknown>,
+  event: CanonicalRunEvent,
+  context: boolean,
 ): Record<string, unknown> {
+  const { payload } = event;
+  const contextUsageOnly =
+    context &&
+    ((event.eventType === "session.update" &&
+      (payload?.contextType === "usage_update" ||
+        acpContextUpdateType(payload?.update) === "usage_update")) ||
+      (event.eventType === "session.line" &&
+        payload?.contextUsageOnly === true));
+
   return {
     type: event.eventType,
     eventId: event.id,
@@ -193,6 +216,7 @@ function canonicalBrowserEvent(
         ? event.occurredAt.toISOString()
         : String(event.occurredAt),
     hostSessionId: event.hostSessionId ?? null,
+    ...(contextUsageOnly ? { contextUsageOnly } : {}),
   };
 }
 
@@ -302,7 +326,7 @@ function canonicalRunEventStream(input: {
               encoder.encode(
                 formatSseEvent(
                   sequence.toString(),
-                  JSON.stringify(canonicalBrowserEvent(event)),
+                  JSON.stringify(canonicalBrowserEvent(event, input.context)),
                 ),
               ),
             );

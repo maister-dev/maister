@@ -1,6 +1,6 @@
 # ACP context observations
 
-**Status:** Designed ([ADR-210](../decisions/adr-210.md)).
+**Status:** Implemented in the platform. Provider-backed and browser qualification are tracked in the [acceptance evidence](../../.ai-factory/plans/feature-acp-context-usage-compaction.md). See [ADR-210](../decisions/adr-210.md).
 
 ## Purpose
 
@@ -34,6 +34,8 @@ The horizontal meter shows a visible percent and band (green below 60%, amber be
 
 Prompt settlement first classifies terminal adapter facts and keeps the original receipt and partial output. See [prompt lifecycle](execution-prompt-lifecycle.md) for owner reconciliation, [error taxonomy](../error-taxonomy.md) for reasons and [Flow DSL](../flow-dsl.md) for retry and rework.
 
+Scratch retains its typed failure after the turn settles. On input overflow the conversation pauses sends to the exhausted handle and preserves queued messages. The user starts a fresh session through the normal launch path. An output limit preserves the partial response and allows a smaller follow-up prompt. Agent and Flow terminal outcomes use the safe reason on the existing event. Gates and consensus verifier cells retain technical failure evidence alongside their own outcome records.
+
 ## Expectations
 
 - CTX-01: A gauge MUST read the validated pair, source sequence and time for its selected physical scope.
@@ -53,6 +55,31 @@ Prompt settlement first classifies terminal adapter facts and keeps the original
 - Two compactions may overlap. Ending one keeps the other highlighted. Compaction during a long-lived named session does not change the owning attempt.
 - A malformed optional update advances the projection cursor. A permanently uningestable envelope uses the event-plane skip ledger. A missing historical reference limits coverage and must not turn a count into a lifetime total.
 - The pinned Claude rejection combines a generic error kind with a specific terminal diagnostic. The pinned Codex overflow must be verified on the wire. A retry warning or prose in a transcript cannot establish a failure.
+
+## Provider qualification
+
+The credentialed fixture uses synthetic repositories and prompts. It verifies
+usage in scratch and Flow, scratch compaction count and one transcript marker
+through each pinned executable, the Supervisor outbox, PostgreSQL and the
+shared reader. Run it explicitly with local Claude and Codex authentication.
+
+```sh
+MAISTER_CONTEXT_PROVIDER_FIXTURE=1 pnpm --dir web exec vitest run --project integration lib/scratch-runs/__tests__/context-provider.integration.test.ts --maxWorkers=1 --reporter=verbose
+```
+
+| Adapter and configured model | Scratch before compaction | Scratch after compaction | Flow reading |
+| --- | --- | --- | --- |
+| Claude ACP 0.95.0, `claude-sonnet-4-6` | 25,755 / 200,000 | 10,093 / 200,000 | 25,778 / 200,000 |
+| Codex ACP 2.2.2, `gpt-6.1-terra` | 23,810 / 475,000 | No new usage in the immediate snapshot | 32,677 / 475,000 |
+
+Both pinned adapters emitted one native completion marker. For Codex, the
+immediate reset remains unknown until the adapter reports a new sample. The
+initial Codex probe using the workstation’s default model was refused by the
+provider. The qualifying test used an advertised model without editing the
+workstation’s global config. Gemini, OpenCode and MiMo keep their existing advertisements. A one-turn
+provider probe saw `12,100 / 200,000` from OpenCode 2.3.0 and an explicit
+`0 / 1,048,576` from MiMo 0.1.0. Gemini 0.68.0 refused session creation
+before it reported usage. A silent or unavailable adapter has no reading.
 
 ## Linked artifacts
 

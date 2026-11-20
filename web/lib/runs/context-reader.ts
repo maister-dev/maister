@@ -4,7 +4,9 @@ import type { Db } from "@/lib/execution-host/db";
 import type { ContextSnapshot } from "./context-snapshot";
 
 import { sql } from "drizzle-orm";
+
 import { claudeContextWindow } from "../../../runtime/acp-context";
+
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 
 type SnapshotRow = Omit<
@@ -30,12 +32,12 @@ export async function readContextSnapshot(
     nodeAttemptId !== null
       ? sql`EXISTS (SELECT 1 FROM node_attempts n WHERE n.run_id = rs.run_id
         AND n.id = ${nodeAttemptId}
-        AND (n.acp_session_id = i.acp_session_id
-          OR EXISTS (SELECT 1 FROM run_context_usage u0
-            WHERE u0.run_id = n.run_id AND u0.node_attempt_id = n.id
-              AND u0.host_session_id = i.host_session_id
-              AND u0.execution_host_id = i.execution_host_id
-              AND u0.assignment_id = i.execution_assignment_id)))`
+        AND EXISTS (SELECT 1 FROM run_context_usage u0
+          WHERE u0.run_id = n.run_id AND u0.node_attempt_id = n.id
+            AND u0.host_session_id = i.host_session_id
+            AND u0.execution_host_id = i.execution_host_id
+            AND u0.assignment_id = i.execution_assignment_id
+            AND u0.assignment_epoch = i.assignment_epoch))`
       : sql`i.host_session_id = rs.host_session_id
         AND i.execution_assignment_id = rs.execution_assignment_id`;
   const result = await db.execute<SnapshotRow>(sql`

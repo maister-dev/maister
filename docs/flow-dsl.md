@@ -509,7 +509,7 @@ nodes:
 
 ## Node `retry_policy` (Implemented)
 
-**Designed (ADR-210).** `on_reasons` requires `compat.engine_min >= 3.13.0`. Provide at least one nonempty selector list. The rule matches an explicit `on_errors` code or an explicit `on_reasons` match on `ACP_PROTOCOL`. The admitted reasons are `context_exhausted` and `max_output_tokens`. Reason-only rules inherit no broad code selector. Choose `workspace: keep` to retain changes. The retry starts fresh. Rework requesting `resume` on the attributable `context_exhausted` session selects `new_session` and records `session_fallback`. An output cap alone does not invalidate the prior context.
+**Implemented (ADR-210).** `on_reasons` requires `compat.engine_min >= 3.13.0`. Provide at least one nonempty selector list. The rule matches an explicit `on_errors` code or an explicit `on_reasons` match on `ACP_PROTOCOL`. The admitted reasons are `context_exhausted` and `max_output_tokens`. Reason-only rules inherit no broad code selector. Choose `workspace: keep` to retain changes. The retry starts fresh. Rework requesting `resume` on the attributable `context_exhausted` session selects `new_session` and records `session_fallback`. An output cap alone does not invalidate the prior context.
 
 **(Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An
 optional `retry_policy` on `ai_coding` / `cli` nodes auto-retries the node on
@@ -537,7 +537,16 @@ nodes:
   BEFORE each retry attempt; `rewind-to-node-checkpoint` resets to the pre-attempt
   checkpoint.
 
-On a failure whose `code ∈ on_errors` with attempts remaining, the engine applies
+For an input overflow, preserve the workspace and start a fresh session with:
+
+```yaml
+retry_policy:
+  attempts: 2
+  on_reasons: [context_exhausted]
+  workspace: keep
+```
+
+A matching code or typed reason with attempts remaining applies
 `workspace`, then appends a **fresh-session** attempt
 (`node_attempts.auto_retry = true`), respecting the global concurrency cap and
 never bypassing gates. Exhausting `attempts` ends in normal node failure plus a
@@ -547,7 +556,7 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 **Engine floor.** Declaring `retry_policy` (or the
 [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default)
 `session_policy` / `defaults`) requires `compat.engine_min >= 1.4.0`, else
-`CONFIG`; `MAISTER_ENGINE_VERSION` bumps `1.3.0 → 1.4.0` (see
+`CONFIG`. Reason selectors raise only their own feature floor to `3.13.0` (see
 [`configuration.md`](configuration.md) §Engine floors). Flows using none of
 these keys stay valid at any `engine_min`.
 

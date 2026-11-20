@@ -1,12 +1,6 @@
 import "server-only";
 
-import {
-  acpContextFailureReason,
-  promptContextFailureReason,
-  type AcpContextFailureReason,
-} from "../../../runtime/acp-context-failure";
-import type { PromptResult } from "@/lib/supervisor-client";
-
+import type { PromptResult } from "@/lib/execution-host";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
@@ -20,6 +14,12 @@ import type {
 
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  acpContextFailureReason,
+  promptContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../runtime/acp-context-failure";
 
 import {
   applyScratchPromptCompletion,

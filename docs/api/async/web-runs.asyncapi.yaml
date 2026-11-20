@@ -291,6 +291,10 @@ components:
         hostSessionId:
           type: string
           nullable: true
+        contextUsageOnly:
+          type: boolean
+          enum: [true]
+          description: On opt-in streams, preserve this frame's durable cursor without invalidating transcript or run detail.
       example:
         type: session.command
         eventId: 59d83570-19f7-4b80-9ab8-d65a22e4f244

@@ -145,6 +145,10 @@ stateDiagram-v2
     Disabled --> Ready: admin enables and readiness passes
 ```
 
+## Context window guidance
+
+A Claude runner using an Anthropic-compatible provider displays an advisory when its configured context window is missing or invalid. The advisory leaves readiness and launch eligibility intact. See [ACP runners](../system-analytics/acp-runners.md).
+
 ## Data & APIs
 
 - Read: `/api/admin/acp-runners` plus settings page server data.

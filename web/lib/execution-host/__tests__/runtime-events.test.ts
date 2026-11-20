@@ -46,6 +46,29 @@ describe("execution-host runtime event wire boundary", () => {
     ).toBe(false);
   });
 
+  it("preserves the bounded routing fields on a referenced context update", () => {
+    const content = RuntimeEventEnvelopeSchema.parse(
+      fixture("envelope.content-v2.valid.json"),
+    );
+
+    const result = RuntimeEventEnvelopeSchema.safeParse({
+      ...content,
+      payload: {
+        ...content.payload,
+        contextType: "compaction_update",
+        contextReplay: true,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      RuntimeEventEnvelopeSchema.safeParse({
+        ...content,
+        payload: { ...content.payload, contextType: "unbound_vendor_kind" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires the version and exact binding of a referenced session payload", () => {
     const content = RuntimeEventEnvelopeSchema.parse(
       fixture("envelope.content-v2.valid.json"),

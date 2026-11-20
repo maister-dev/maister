@@ -216,6 +216,10 @@ update reuses `sync`, and a PR finalize takes the promotion claim. The slot
 then fences against a live promotion claim in both directions. Behavior:
 [`../../system-analytics/workbench-git.md`](../../system-analytics/workbench-git.md).
 
+## Context usage
+
+The node inspector’s transcript shows context for the selected attempt. Live compaction is highlighted with a glyph and text. The marker remains in transcript order and can show the summary to an authorized reader. See [ACP context observations](../../system-analytics/acp-context.md).
+
 ## Data & APIs
 
 - Files: `GET /api/runs/{runId}/files` for tree data and RSC `?file=` reads
