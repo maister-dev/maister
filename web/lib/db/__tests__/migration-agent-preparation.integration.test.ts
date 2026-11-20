@@ -66,7 +66,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT to_jsonb(r)-ARRAY['task_launch_intent_id','knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent'] AS value FROM runs r WHERE id=$1",
+        "SELECT to_jsonb(r)-ARRAY['task_launch_intent_id','knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format'] AS value FROM runs r WHERE id=$1",
         [runId],
       )
     ).rows[0].value,
@@ -74,7 +74,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
   expect(
     (
       await database.pool.query(
-        "SELECT task_launch_intent_id,knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent FROM runs WHERE id=$1",
+        "SELECT task_launch_intent_id,knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format FROM runs WHERE id=$1",
         [runId],
       )
     ).rows[0],
@@ -84,6 +84,7 @@ it("DB01 populated upgrade and journal replay preserve historical run bytes with
     company_id: null,
     company_execution_snapshot: null,
     company_cancellation_intent: null,
+    agent_memory_hash_format: null,
   });
   expect(
     (

@@ -41,6 +41,15 @@ on every request of every turn through `requireProjectActionForUser`.
 | Project member / admin / owner | Same | Create, update, triage, launch and message work as the role allows; human-only actions (human HITL answers, promotion, discard) only by clicking a confirmation card, which runs through a session route under `requireProjectAction` |
 | Global admin | Only their own conversation — never another user's conversation, memory or snapshots | Same as their project roles; enables the librarian and selects its runner on [Settings → ACP runners](../settings-acp-runners.md) (`requireGlobalRole("admin")`) |
 
+The **Needs attention** section shows confirmation cards for knowledge
+proposals, Project Brain proposals and agent vault edits. Each card shows
+the target and proposed change, with the existing confirmation and reject
+actions. Confirmation submits a proposal for Brain or knowledge review, or
+applies a vault edit with the owner's current edit authority. A card with
+unavailable source material hides its preview and decision controls.
+[Librarian authority](../../system-analytics/librarian-authority.md#knowledge-and-agent-vault-authority-implemented--adr-213)
+defines the live checks.
+
 ## Navigation
 
 - **Entry:** the Librarian entry in the [top nav](top-nav.md), on every `(app)`
@@ -238,3 +247,12 @@ The [peek navigation contract](../../system-analytics/run-peek-navigation.md) ow
 ## Package 2 presentation (Implemented)
 
 Action history opens beside the conversation. The composer area keeps a compact cue for current confirmations or unresolved work. A changed HITL question or invalidated memory suggestion loses its confirm control and leaves the Attention count. Its receipt remains in Action history. Receipts with proven linkage appear on messages in the current segment.
+
+## Knowledge and vault confirmations (Implemented)
+
+Knowledge and agent vault reads follow the current owner's rights. New
+mutation cards show the exact target and complete effect. A proposed effect
+that exceeds the preview limit is refused before the card is created.
+A retained card with an incomplete preview has no confirm action. Owner
+confirmation commits a result or exposes a refusal through the existing card
+refresh.

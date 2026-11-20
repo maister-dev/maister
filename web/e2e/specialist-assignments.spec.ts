@@ -5,12 +5,15 @@ import path from "node:path";
 
 import { expect, test } from "@playwright/test";
 
+import { loadFixtures } from "./_seed/fixtures";
+
 test.use({ actionTimeout: 15000 });
 test.describe.configure({ mode: "serial" });
 
 let assignmentId: string;
 let otherAssignmentId: string;
 let outsiderSecret: string;
+let installationBindingId: string;
 const marker = randomUUID().slice(0, 8);
 const objective = `Inspect the staging runbook ${marker}`;
 const otherObjective = `Inspect the production runbook ${marker}`;
@@ -34,6 +37,7 @@ test.beforeAll(() => {
       marker,
       objective,
       otherObjective,
+      loadFixtures().users.member.id,
     ],
     { encoding: "utf8", env: { ...process.env, HOME: home } },
   );
@@ -47,11 +51,97 @@ test.beforeAll(() => {
     assignmentId: string;
     otherAssignmentId: string;
     outsiderSecret: string;
+    installationBindingId: string;
   };
 
   assignmentId = seeded.assignmentId;
   otherAssignmentId = seeded.otherAssignmentId;
   outsiderSecret = seeded.outsiderSecret;
+  installationBindingId = seeded.installationBindingId;
+});
+
+test("AV-06 administers installation reach and restores access to retained Memory", async ({
+  page,
+  context,
+  baseURL,
+  browser,
+}) => {
+  await context.addCookies([
+    { name: "NEXT_LOCALE", value: "en", url: baseURL! },
+  ]);
+  const configuration = `/settings/specialists?binding=${installationBindingId}`;
+  const edit = `${configuration}&edit=installation`;
+  const memoryPage = `${configuration}&tab=memory`;
+
+  await page.goto(memoryPage);
+  const memory = page.getByRole("region", { name: "Memory vault" });
+
+  await expect(memory.locator('a[href*="#knowledge-memory"]')).toHaveAttribute(
+    "href",
+    /kind=vault/,
+  );
+  await memory.getByRole("button", { name: "New note" }).click();
+  const note = page.getByRole("dialog", { name: "New note" });
+
+  await note
+    .getByRole("textbox", { name: "Vault path" })
+    .fill("/memories/index.md");
+  await note
+    .getByRole("textbox", { name: "Note Markdown" })
+    .fill("Retained installation note.");
+  await note.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(memory.getByText("Retained installation note.")).toBeVisible();
+
+  await page.goto(edit);
+  const form = page.locator("form").filter({
+    has: page.getByRole("heading", { name: "Edit installation binding" }),
+  });
+
+  await form.getByRole("checkbox", { name: "Installation reach" }).uncheck();
+  await form.getByRole("button", { name: "Save reviewed binding" }).click();
+  await expect(form.getByRole("status")).toHaveText("Reviewed binding saved.");
+  await page.goto(configuration);
+  await expect(page.getByRole("link", { name: "Memory vault" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Edit installation binding" }).click();
+  await form.getByRole("checkbox", { name: "Installation reach" }).check();
+  await form.getByRole("checkbox", { name: "Memory vault" }).check();
+  await form.getByRole("checkbox", { name: "agent_memory:read" }).check();
+  await form.getByRole("button", { name: "Save reviewed binding" }).click();
+  await expect(form.getByRole("status")).toHaveText("Reviewed binding saved.");
+  await page.getByRole("link", { name: "Memory vault" }).click();
+  await memory.getByRole("link", { name: "index.md" }).click();
+  await expect(memory.getByText("Retained installation note.")).toBeVisible();
+
+  const managerContext = await browser.newContext({
+    baseURL,
+    storageState: { cookies: [], origins: [] },
+  });
+
+  try {
+    await managerContext.addCookies([
+      { name: "NEXT_LOCALE", value: "en", url: baseURL! },
+    ]);
+    const manager = await managerContext.newPage();
+    const user = loadFixtures().users.member;
+
+    await manager.goto("/login");
+    await manager.locator('input[name="email"]').fill(user.email);
+    await manager.locator('input[name="password"]').fill(user.password);
+    await manager.locator('form button[type="submit"]').click();
+    await manager.waitForURL((url) => !url.pathname.startsWith("/login"));
+    await manager.goto(edit);
+    await expect(
+      manager.getByRole("heading", { name: "Review new specialist binding" }),
+    ).toBeVisible();
+    await expect(
+      manager.getByRole("checkbox", { name: "Installation reach" }),
+    ).toHaveCount(0);
+    await expect(
+      manager.getByRole("link", { name: "Edit installation binding" }),
+    ).toHaveCount(0);
+  } finally {
+    await managerContext.close();
+  }
 });
 
 test("E2E-CBU-02 lists, filters and opens accessible specialist work", async ({

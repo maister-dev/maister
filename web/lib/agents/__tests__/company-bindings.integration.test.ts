@@ -879,6 +879,102 @@ it("protects a reviewed coordinator Flow pin from removal and GC until the speci
   ).toBe(flow.id);
 });
 
+it("AV-06 requires an explicit admin installation grant and revokes it by exact binding revision", async () => {
+  const installationAdminId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
+    [installationAdminId, `${installationAdminId}@example.test`],
+  );
+  await createCompanyGrants(database.db, administratorId, {
+    principalKind: "user",
+    principalId: installationAdminId,
+    actions: ["specialists:read", "specialists:manage"],
+    idempotencyKey: randomUUID(),
+  });
+  const installationGrant = {
+    schemaVersion: 1,
+    reach: "active_projects",
+    scopes: ["projects:read", "agent_memory:read", "agent_memory:propose"],
+    memoryEnabled: true,
+  } as const;
+  const request: CompanyBindingCreate = {
+    ...input,
+    installationGrant: {
+      ...installationGrant,
+      scopes: [...installationGrant.scopes],
+    },
+    idempotencyKey: randomUUID(),
+  };
+
+  await expect(
+    createCompanySpecialistBinding(database.db, requesterId, agentId, request),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const created = (
+    await createCompanySpecialistBinding(
+      database.db,
+      installationAdminId,
+      agentId,
+      request,
+    )
+  ).specialist;
+
+  expect(created.installationGrant).toEqual(installationGrant);
+  const patch = {
+    ...request,
+    enabled: false,
+    runnerId: null,
+    executionPolicy: { preset: "supervised" as const },
+    coordinatorFlowRevisionId: null,
+    expectedRevision: created.configRevision,
+    installationGrant: null,
+    idempotencyKey: randomUUID(),
+  };
+
+  await expect(
+    updateCompanySpecialistBinding(
+      database.db,
+      requesterId,
+      agentId,
+      created.bindingId,
+      patch,
+    ),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  const revoked = (
+    await updateCompanySpecialistBinding(
+      database.db,
+      installationAdminId,
+      agentId,
+      created.bindingId,
+      patch,
+    )
+  ).specialist;
+
+  expect(revoked.installationGrant).toBeUndefined();
+  expect(
+    (
+      await getCompanySpecialistBindingRevision(
+        database.db,
+        installationAdminId,
+        agentId,
+        created.bindingId,
+        1,
+      )
+    ).snapshot.installationGrant,
+  ).toEqual(installationGrant);
+  await detachCompanySpecialistBinding(
+    database.db,
+    installationAdminId,
+    agentId,
+    created.bindingId,
+    {
+      expectedRevision: revoked.configRevision,
+      reason: "End installation grant fixture",
+      idempotencyKey: randomUUID(),
+    },
+  );
+});
+
 it("deduplicates simultaneous creation and preserves self-contained role history after explicit retirement and provider removal", async () => {
   const candidate = { ...input, idempotencyKey: randomUUID() };
   const results = await Promise.all([

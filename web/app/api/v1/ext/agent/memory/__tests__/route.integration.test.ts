@@ -45,6 +45,11 @@ let testDatabase: import("@/test-support/pg-container").StartedPostgresTestDb;
 vi.mock("@/lib/db/client", () => ({ getDb: () => testDatabase.db }));
 
 import { agentMemoryPath, hashAgentMemory } from "@/lib/agents/memory-store";
+import {
+  issueAgentRunToken,
+  issueProjectVaultNodeToken,
+} from "@/lib/agents/tokens";
+import { stageProjectFlowMemory } from "@/lib/agent-memory-vault/injection";
 import * as schemaModule from "@/lib/db/schema";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 import { seedRun } from "@/test-support/execution-host-seed";
@@ -82,6 +87,7 @@ beforeEach(async () => {
   runtimeRootMock.value = root;
   delete process.env.MAISTER_AGENT_MEMORY_MAX_CHARS;
   routeMocks.verifyToken.mockReset();
+  await testDatabase.pool.query("DELETE FROM agent_memory_cutover");
 
   await testDatabase.db.delete(schema.agentProjectLinks);
   await testDatabase.db.delete(schema.agents);
@@ -167,6 +173,211 @@ async function write(body: unknown) {
 
   return { status: res.status, body: (await res.json()) as any };
 }
+
+it("AV-04/15 binds commands to the credential's current run and holds external writes for review", async () => {
+  const commands = await import("../commands/route");
+  const { verifyToken } = await vi.importActual<
+    typeof import("@/lib/tokens/verify")
+  >("@/lib/tokens/verify");
+
+  await attach(true);
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+  await testDatabase.pool.query(
+    "UPDATE runs SET agent_id=$2, trigger_source='manual' WHERE id=$1",
+    [runId, AGENT_ID],
+  );
+  const issued = await issueAgentRunToken({
+    db: testDatabase.db,
+    runId,
+    projectId,
+    agentId: AGENT_ID,
+  });
+  const actor = await verifyToken(issued.secret, testDatabase.db);
+
+  routeMocks.verifyToken.mockResolvedValue(actor);
+  const send = (body: unknown) =>
+    commands.POST(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${issued.secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  const index = { command: "view", path: "/memories/index.md" };
+  const patches = {
+    command: "create",
+    path: index.path,
+    file_text: "retained",
+    ifHash: null,
+    ifRevisionId: null,
+    requestKey: "native-first",
+  };
+
+  expect((await send({ ...patches, agentId: "another:agent" })).status).toBe(
+    422,
+  );
+  expect((await send(patches)).status).toBe(200);
+  const get = await send(index);
+  const head = await get.json();
+
+  expect(get.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(head).toMatchObject({ kind: "note", content: "retained" });
+  const search = await import("../search/route");
+  const searchRequest = (query: string) =>
+    new NextRequest(
+      `http://localhost/api/v1/ext/agent/memory/search?${query}`,
+      { headers: { authorization: `Bearer ${issued.secret}` } },
+    );
+  const results = await search.GET(searchRequest("q=retain&limit=1"));
+
+  expect(results.status).toBe(200);
+  expect(results.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await results.json()).toMatchObject({
+    hits: [{ revisionId: head.revisionId }],
+  });
+  expect(
+    (await search.GET(searchRequest("q=retain&vaultId=another"))).status,
+  ).toBe(422);
+  const legacy = await GET(getRequest());
+
+  expect(await legacy.json()).toMatchObject({
+    content: "retained",
+    hash: head.hash,
+  });
+  await testDatabase.pool.query(
+    "UPDATE runs SET trigger_source='webhook' WHERE id=$1",
+    [runId],
+  );
+  const refused = await send({
+    ...patches,
+    requestKey: "native-webhook",
+    file_text: "external",
+    ifHash: head.hash,
+    ifRevisionId: head.revisionId,
+  });
+
+  expect(refused.status).toBe(202);
+  expect(await refused.json()).toMatchObject({
+    status: "pending",
+    proposalId: expect.any(String),
+  });
+  expect(await (await send(index)).json()).toMatchObject({
+    content: "retained",
+  });
+  routeMocks.verifyToken.mockResolvedValue({
+    ...actor,
+    boundRunId: randomUUID(),
+  });
+  expect((await send(index)).status).toBe(404);
+});
+
+it("AV-01 scopes sibling Flow credentials per acting persona and fences superseded attempts", async () => {
+  const commands = await import("../commands/route");
+  const { verifyToken } = await vi.importActual<
+    typeof import("@/lib/tokens/verify")
+  >("@/lib/tokens/verify");
+  const flowRunId = await seedRun(testDatabase.db, {
+    projectId,
+    runKind: "flow",
+  });
+  const peer = "mem-pkg:peer";
+
+  await attach(true);
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+  await testDatabase.pool.query(
+    `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
+      SELECT $2,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path FROM agents WHERE id=$1`,
+    [AGENT_ID, peer],
+  );
+  await testDatabase.pool.query(
+    "INSERT INTO agent_project_links(id,project_id,agent_id,enabled,memory_enabled) VALUES ($1,$2,$3,true,true)",
+    [randomUUID(), projectId, peer],
+  );
+  await testDatabase.pool.query(
+    "UPDATE runs SET trigger_source='manual', agent_id=$2 WHERE id=$1",
+    [flowRunId, AGENT_ID],
+  );
+  const makeAttempt = async (nodeId: string, selected: string, ordinal = 1) => {
+    const nodeAttemptId = randomUUID();
+
+    await testDatabase.pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,status,attempt) VALUES ($1,$2,$3,'ai_coding','Running',$4)",
+      [nodeAttemptId, flowRunId, nodeId, ordinal],
+    );
+    const staged = await stageProjectFlowMemory(testDatabase.db, {
+      runId: flowRunId,
+      agentId: selected,
+      nodeId,
+      nodeAttemptId,
+    });
+
+    expect(staged?.text).toContain("memory-protocol/v1");
+
+    return issueProjectVaultNodeToken({
+      db: testDatabase.db,
+      runId: flowRunId,
+      nodeAttemptId,
+      projectId,
+    });
+  };
+  const first = await makeAttempt("driver", AGENT_ID);
+  const second = await makeAttempt("peer", peer);
+  const sibling = await makeAttempt("driver-sibling", AGENT_ID);
+
+  routeMocks.verifyToken.mockImplementation((secret: string) =>
+    verifyToken(secret, testDatabase.db),
+  );
+  const call = (secret: string, args: unknown) =>
+    commands.POST(
+      new NextRequest("http://localhost/api/v1/ext/agent/memory/commands", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(args),
+      }),
+    );
+  const write = (secret: string, path: string, content: string) =>
+    call(secret, {
+      command: "create",
+      path,
+      file_text: content,
+      ifHash: null,
+      ifRevisionId: null,
+      requestKey: "flow-write",
+    });
+  const path = "/memories/index.md";
+  const results = await Promise.all([
+    write(first.secret, path, "driver only"),
+    write(second.secret, path, "peer only"),
+    write(
+      sibling.secret,
+      "/memories/notes/sibling.md",
+      "same driver, different note",
+    ),
+  ]);
+
+  expect(results.map(({ status }) => status)).toEqual([200, 200, 200]);
+  const inspect = (secret: string) => call(secret, { command: "view", path });
+
+  expect(await (await inspect(first.secret)).json()).toMatchObject({
+    content: "driver only",
+  });
+  expect(await (await inspect(second.secret)).json()).toMatchObject({
+    content: "peer only",
+  });
+  await makeAttempt("driver", AGENT_ID, 2);
+  expect((await inspect(first.secret)).status).toBe(404);
+  expect((await inspect(second.secret)).status).toBe(200);
+});
 
 describe("T-C8a / REQ-C8 — the write path fails closed on every authorization axis", () => {
   it("403 — the token is not an agent token", async () => {

@@ -65,6 +65,7 @@ const patchBodySchema = z
     canWriteBrain: z.boolean().optional(),
     // ADR-152: per-link agent-memory axis — a SEPARATE store from Brain.
     memoryEnabled: z.boolean().optional(),
+    memoryWritePolicy: z.enum(["auto", "review"]).optional(),
     // ADR-156: per-link cross-project reach grant. Rides THIS aggregating
     // PATCH — and therefore the same transaction and the same
     // `schedulesRevision` CAS predicate — so a stale editor cannot re-grant

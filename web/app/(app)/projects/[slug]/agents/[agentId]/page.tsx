@@ -28,6 +28,15 @@ import { ProjectAgentSettings } from "@/components/agents/project-agent-settings
 
 const querySchema = z
   .object({
+    memoryPath: z.string().min(1).max(512).optional(),
+    memoryCursor: z.string().min(1).max(2048).optional(),
+    memoryRevision: z.string().min(1).max(192).optional(),
+    memoryHistoryCursor: z.string().min(1).max(2048).optional(),
+    memorySearch: z.string().min(1).max(2000).optional(),
+    memoryTag: z.string().min(1).max(128).optional(),
+    memorySearchCursor: z.string().min(1).max(2048).optional(),
+    memoryTagCursor: z.string().min(1).max(2048).optional(),
+    memoryBacklinkCursor: z.string().min(1).max(2048).optional(),
     tab: z
       .enum(["history", "attempts", "memory", "definition", "settings"])
       .default("history"),
@@ -288,7 +297,8 @@ export default async function ProjectAgentPage({
           <AgentMemoryControl
             agentId={access.agentId}
             canEdit={access.canEditSettings}
-            slug={slug}
+            canRedact={access.actor.role === "admin"}
+            location={{ kind: "project", slug, projectId: access.projectId }}
           />
         ) : (
           <p className="text-sm text-mute">

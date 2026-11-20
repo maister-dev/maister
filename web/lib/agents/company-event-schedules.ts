@@ -37,7 +37,13 @@ export async function createCompanyEventSchedule(
     digest,
     "domain_event",
     async (tx, context) => {
-      if (input.enabled) {
+      if (input.enabled && context.role.installationGrant) {
+        if (!context.role.installationGrant.scopes.includes("runs:read"))
+          throw new MaisterError(
+            "UNAUTHORIZED",
+            "Enabled installation event work requires the reviewed runs:read scope",
+          );
+      } else if (input.enabled) {
         const grant = (
           await tx.execute(
             sql`SELECT id FROM company_grants WHERE company_id=${input.owner.companyId} AND principal_type='agent' AND principal_id=${context.role.agentId} AND action='assignments:read' AND revoked_at IS NULL FOR SHARE`,
@@ -54,7 +60,7 @@ export async function createCompanyEventSchedule(
           );
       }
       await tx.execute(
-        sql`INSERT INTO agent_schedules(id,agent_id,project_id,company_id,company_specialist_binding_id,company_flow_binding_id,company_config_revision,created_by,creation_key,creation_digest,trigger_type,event_match,enabled) VALUES(${context.sourceId},${context.role.agentId},NULL,${input.owner.companyId},${input.specialistBindingId},${input.coordinatorFlowBindingId},1,${context.actorId},${input.idempotencyKey},${digest},'event',${JSON.stringify({ kinds: input.eventKinds })}::jsonb,${input.enabled})`,
+        sql`INSERT INTO agent_schedules(id,agent_id,project_id,company_id,company_specialist_binding_id,company_flow_binding_id,company_config_revision,created_by,installation_review,creation_key,creation_digest,trigger_type,event_match,enabled) VALUES(${context.sourceId},${context.role.agentId},NULL,${input.owner.companyId},${input.specialistBindingId},${input.coordinatorFlowBindingId},1,${context.actorId},${context.installationReview}::jsonb,${input.idempotencyKey},${digest},'event',${JSON.stringify({ kinds: input.eventKinds })}::jsonb,${input.enabled})`,
       );
     },
   );

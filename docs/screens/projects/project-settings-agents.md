@@ -139,19 +139,13 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Brain access** (ADR-122) — two toggles: **canReadBrain** (gates
     `memory_recall`) and **canWriteBrain** (gates `memory_retain`, a separate
     write axis — read never grants write). Both default off.
-  - **Memory** (ADR-152 — Implemented) — a third toggle in the same section,
-    **`memoryEnabled`**, labelled explicitly as a **separate axis** from
-    `canWriteBrain`: it gates the agent's own private `memory.md`, not Project
-    Brain, and neither Brain axis implies it. Default off, seeded server-side on
-    attach from the effective definition's `memory:` field. For a **flow-bound
-    agent** (an effective definition declaring `flow:`) the toggle renders
-    **disabled with its reason shown** — "this agent drives a Flow; Flow runs do
-    not carry agent memory" — never hidden and never silently inert, because the
-    launch diverts to the agent-driven flow path and never reaches the prompt
-    seam. The disabled control is an affordance, not the boundary: `attachAgent`
-    lands `false` for a flow-bound agent regardless of its definition, and the
-    `PATCH` refuses an explicit `memoryEnabled: true` with `422 CONFIG`, so no
-    client can land a permanently inert `true`.
+  - **Memory** (ADR-210 — Implemented) controls this attachment's private vault
+    independently of Project Brain. On attach, the effective definition's
+    `memory:` field seeds `memoryEnabled`. The same control is available for a
+    Flow-driving attachment. Each eligible Flow session resolves memory from
+    its acting agent, giving an explicit node persona precedence over the Flow
+    Run's agent. The write policy controls immediate application or review.
+    External input requires review.
   - Close affordance: top-right **✕** (+ Esc + backdrop), `createPortal` to body
     (shared popup convention).
 
@@ -265,3 +259,7 @@ does not misreport a successful settings save as failed. See
 Each cron row has an optional multiline **Request at launch / Запрос при запуске** field, help and a normalized Unicode character counter. The maximum is 8000 code points after newline normalization and outer trimming. Invalid or overlong input disables Save and has localized feedback; the API independently validates it. Empty input serializes as explicit null, clearing a retained row. Reload preserves each schedule's independent value and stable ID. Request-only saves preserve cadence progress and use the existing schedulesRevision conflict feedback.
 
 The project Agents tab omits request text from client props unless the live reader has readRepoFiles, including after role revocation. The field changes future invocations, leaving definition, policy and already claimed input intact. Non-cron bindings cannot carry nonempty text. See the [input lifecycle](../../system-analytics/scheduled-agent-requests.md) for exact contracts and unsupported Flow consumers.
+
+## Agent memory tab
+
+The Memory tab lists the vault tree and immutable history. Open a separate editor for an authorized note. Revert adds a revision. Search and tag filters are kept in the URL. Select a note to inspect its aliases, outgoing links and backlinks. When the target is unavailable, the pointer remains as plain text. Global admins can redact an exact revision with a reason. A link opens the filtered Inbox for pending reviews.

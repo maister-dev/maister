@@ -28,6 +28,7 @@ import {
   type LibrarianOperationView,
   type LibrarianRelatedTaskView,
 } from "./read-models";
+import { visibleLibrarianTurnSources } from "./disclosed-context";
 
 import {
   librarianConversations,
@@ -312,10 +313,17 @@ export async function librarianMessageDtos(
     eventRows.map((event) => [event.id, event.occurredAt]),
   );
 
+  const disclosures = await visibleLibrarianTurnSources(
+    db,
+    ownerId,
+    rows.flatMap(({ turnId }) => (turnId ? [turnId] : [])),
+  );
+
   return rows.map((row) => {
     const masked =
       row.authorKind !== "owner" &&
-      row.sourceProjectIds.some((projectId) => !visibleIds.has(projectId));
+      (row.sourceProjectIds.some((projectId) => !visibleIds.has(projectId)) ||
+        Boolean(row.turnId && disclosures.get(row.turnId) === null));
     const update = row.updateId ? updateById.get(row.updateId) : null;
     const task = update?.taskId ? taskById.get(update.taskId) : null;
     const slug = task ? visibleSlugs.get(task.projectId) : null;
@@ -457,7 +465,7 @@ export async function readLibrarianIndicator(
 
       return conversation ? librarianIndicator(tx, conversation) : "none";
     },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
+    { isolationLevel: "repeatable read" },
   );
 }
 
@@ -542,7 +550,7 @@ export async function getLibrarianWorkView(
 
       return { ...common, ...work };
     },
-    { isolationLevel: "repeatable read", accessMode: "read only" },
+    { isolationLevel: "repeatable read" },
   );
 }
 
@@ -573,21 +581,22 @@ export async function getLibrarianConversationView(
   return {
     ...common,
     pendingCards: linkedWork.cards.filter((card) => eligible.has(card.id)),
-    cards: linkedWork.cards.map((card) =>
-      card.status === "pending" && !eligible.has(card.id)
-        ? {
-            ...card,
-            available: false,
-            payload: {},
-            target: {},
-            targetRevision: null,
-            currentPrompt: null,
-            proposedPrompt: null,
-            hitlPrompt: null,
-            runBranch: null,
-          }
-        : card,
-    ),
+    cards: linkedWork.cards.map((card) => {
+      if (card.status !== "pending" || eligible.has(card.id)) return card;
+      const { effectPreview: _effectPreview, ...unavailable } = card;
+
+      return {
+        ...unavailable,
+        available: false,
+        payload: {},
+        target: {},
+        targetRevision: null,
+        currentPrompt: null,
+        proposedPrompt: null,
+        hitlPrompt: null,
+        runBranch: null,
+      };
+    }),
     operationReceipts: linkedWork.operations,
     relatedWork: linkedWork.tasks,
     pendingOperations: linkedWork.operations.filter(

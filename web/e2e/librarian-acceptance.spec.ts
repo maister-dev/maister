@@ -1551,3 +1551,66 @@ test("E2E-L-12: a closed panel receives one honest task update", async ({
   await expect(card).toContainText("Clarification answered");
   await expect(card).not.toContainText("Deployed");
 });
+
+test("AV-07 confirms a Librarian Project Brain proposal as the owner", async ({
+  page,
+}) => {
+  const slug = loadFixtures().byKey.board.projectSlug;
+  const marker = `Confirmed Brain fact ${randomUUID()}`;
+
+  await withE2EDb(async (pool) => {
+    await pool.query("UPDATE projects SET brain_enabled=true WHERE slug=$1", [
+      slug,
+    ]);
+  });
+  const readProposal = () =>
+    withE2EDb(async (pool) => {
+      const { rows } = await pool.query(
+        "SELECT b.status,b.actor->>'id' AS actor,u.email FROM brain_proposals b LEFT JOIN users u ON u.id=b.actor->>'id' WHERE b.draft->>'title'=$1",
+        [marker],
+      );
+
+      return rows;
+    });
+
+  await page.goto("/");
+  await sendScript(
+    page,
+    [
+      {
+        tool: "memory_propose",
+        args: {
+          slug,
+          kind: "state",
+          draft: {
+            title: marker,
+            content: "The release workflow runs tests first.",
+          },
+          evidenceItemIds: [],
+          blastRadius: "low",
+          operationKey: randomUUID(),
+        },
+      },
+    ],
+    "Project Brain confirmation",
+  );
+  expect(await readProposal()).toEqual([]);
+  await page
+    .getByTestId("librarian-linked-work")
+    .getByRole("button", { name: /attention|need.*you/i })
+    .click();
+  const card = page
+    .getByTestId("librarian-card-pending")
+    .filter({ hasText: marker });
+
+  await expect(card).toContainText("Project Brain proposal");
+  await card.getByRole("button", { name: /confirm|accept/i }).click();
+  await expect.poll(readProposal).toEqual([
+    {
+      status: "pending",
+      actor: expect.any(String),
+      email: loadFixtures().adminEmail,
+    },
+  ]);
+  await expect(card).toHaveCount(0);
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent, ReactElement } from "react";
+import type { ReactElement } from "react";
 import type { KnowledgeDelivery } from "./knowledge-client";
 import type { KnowledgeRecordDto } from "@/lib/brain/knowledge-read-types";
 
@@ -16,99 +16,11 @@ import {
 } from "./knowledge-client";
 
 import { knowledgeMutationReceiptSchema } from "@/lib/brain/knowledge-write-types";
-import { MaisterError } from "@/lib/errors-core";
 import { useFeedback } from "@/components/feedback/feedback-provider";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 
 const fieldClass =
   "block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink";
-
-export function KnowledgeProposalDecision({
-  proposalId,
-  revision,
-}: {
-  proposalId: string;
-  revision: number;
-}): ReactElement {
-  const t = useTranslations("knowledge");
-  const router = useRouter();
-  const feedback = useFeedback();
-  const delivery = useRef<KnowledgeDelivery | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (busy) return;
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-
-    if (!(submitter instanceof HTMLButtonElement))
-      throw new MaisterError("CONFIG", "Select an explicit proposal decision");
-    const form = new FormData(event.currentTarget);
-    const input = {
-      expectedRevision: revision,
-      decision: submitter.value,
-      reason: String(form.get("reason") ?? ""),
-    };
-    const idempotencyKey = knowledgeDeliveryKey(delivery, input);
-
-    setBusy(true);
-    setError(null);
-    try {
-      await sendKnowledgeRequest(
-        `/api/knowledge/proposals/${encodeURIComponent(proposalId)}/decision`,
-        "POST",
-        { ...input, idempotencyKey },
-        knowledgeMutationReceiptSchema,
-      );
-      feedback.success({ message: t("title"), mutationId: idempotencyKey });
-      router.refresh();
-    } catch (failure) {
-      const message = t(knowledgeClientErrorKey(failure));
-
-      setError(message);
-      feedback.error({ message, mutationId: idempotencyKey });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form className="space-y-3" onSubmit={(event) => void submit(event)}>
-      <p className="text-sm text-mute">{t("publicationSeparate")}</p>
-      <label className="block text-sm">
-        {t("decisionReason")}
-        <textarea
-          required
-          aria-label={t("decisionReason")}
-          className={`${fieldClass} mt-1`}
-          disabled={busy}
-          maxLength={2000}
-          name="reason"
-          rows={3}
-        />
-      </label>
-      <div className="flex gap-3">
-        <Button isDisabled={busy} type="submit" value="accept">
-          {t(busy ? "busy" : "accept")}
-        </Button>
-        <Button
-          isDisabled={busy}
-          type="submit"
-          value="reject"
-          variant="secondary"
-        >
-          {t("reject")}
-        </Button>
-      </div>
-      {error ? (
-        <p className="text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </form>
-  );
-}
 
 export function KnowledgeConfirmation({
   record,

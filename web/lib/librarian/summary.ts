@@ -124,6 +124,7 @@ export async function writeLibrarianSummary(
       segmentId: librarianTurns.segmentId,
       conversationId: librarianTurns.conversationId,
       snapshotId: librarianTurns.contextSnapshotId,
+      knowledgeAccess: librarianTurns.knowledgeAccess,
     })
     .from(librarianTurns)
     .where(eq(librarianTurns.id, input.turnId));
@@ -187,6 +188,7 @@ export async function writeLibrarianSummary(
     fromSeq,
     toSeq,
     content,
+    knowledgeAccess: turn.knowledgeAccess,
     sourceProjectIds: [
       ...new Set(messages.flatMap((row) => row.sourceProjectIds)),
     ],

@@ -18,6 +18,7 @@ type NativeKnowledgeToken = Pick<
   | "project_id"
   | "company_id"
   | "company_run_id"
+  | "installation_run_id"
   | "bound_run_id"
   | "origin_kind"
   | "agent_id"
@@ -32,6 +33,7 @@ const BINDING_FIELDS = [
   "project_id",
   "company_id",
   "company_run_id",
+  "installation_run_id",
   "bound_run_id",
   "origin_kind",
   "agent_id",
@@ -47,7 +49,7 @@ export async function lockCurrentNativeKnowledgeToken(
   tx: SqlTransaction,
   tokenId: string,
 ): Promise<NativeKnowledgeToken> {
-  const query = sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,bound_run_id,origin_kind,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens
+  const query = sql`SELECT id,name,token_kind,owner_user_id,project_id,company_id,company_run_id,installation_run_id,bound_run_id,origin_kind,agent_id,scopes,knowledge_node_attempt_id FROM project_tokens
     WHERE id=${tokenId} AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())`;
   const observed = (await tx.execute(query)).rows[0] as
     NativeKnowledgeToken | undefined;

@@ -657,6 +657,7 @@ export default async function ProjectBoardPage({
               accept: tBrain("accept"),
               reject: tBrain("reject"),
               rejectReason: tBrain("rejectReason"),
+              reviewInInbox: tBrain("reviewInInbox"),
               emptyProposals: tBrain("emptyProposals"),
             }}
             memory={brainPanelData.memory}

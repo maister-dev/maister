@@ -5786,3 +5786,48 @@ Generated main `0259_specialist_context_revisions` adds immutable, attributed co
 Generated main `0260_specialist_context_credentials` admits `assignments:read` in the existing company token CHECK, retaining all standalone/Flow-node owner constraints and immutable credential guards. The issuer intersects its native scope set with the reviewed role limits; context reads still require the current exact Run/node appointment and inherited-source access. Existing token/input bytes are unchanged.
 
 Generated main `0261_specialist_context_mutation_credentials` adds `assignments:update` to the existing company credential CHECK while retaining the read scope and every previous standalone/Flow-node owner predicate. Existing credentials are not widened or rewritten. Current professional/initiator authority, exact input/context CAS and full execution source inheritance are enforced by context persistence. Business ownership epoch remains explicitly unknown until its recovery-owning slice.
+
+### Agent memory vault and cutover (Implemented — ADR-210)
+
+The [agent memory vault ERD and migration ledger](db/agents-domain.md#agent-memory-vault-implemented)
+own the relational model and upgrade constraints. The main lineage
+owns retained vault data independently of Brain. Existing
+`runs.agentMemoryHash` remains nullable and retains the legacy raw-file
+meaning through `agentMemoryHashFormat = legacy-file-v1`. New Run aggregates
+use `vault-manifest-v1` after application is acknowledged. An empty injection
+set has no hash. The [cutover contract](system-analytics/agent-memory.md#vault-ownership-writes-and-cutover-implemented--adr-210)
+defines how the operator verifies file contents before activating the new
+writer.
+Main migration `0354_agent_memory_import_owner` adds durable project and
+agent identity to note import receipts. It backfills only from an existing
+exact destination vault. An earlier inventory without that witness remains
+unclassified and the operator cannot resume it under an inferred owner.
+
+### Installation execution authority
+
+Main migration `0348_agent_installation_authority` retains a reviewed grant,
+principal and binding-revision digest per installation Run. It also adds the
+append-only `agent_installation_run_sources` relation keyed by Run and project
+identity. The source rows survive project and Run retention. Main migration
+`0349_agent_installation_credentials` binds the installation credential to that
+exact execution authority and preserves existing company credential guards.
+Main migration `0355_installation_credential_revocation` allows the terminal
+Run credential revocation witness to be written with its reason. The bound
+Run, owner and scopes remain immutable.
+Main migration `0353_agent_installation_schedule_reviews` retains the exact
+reviewed binding and reviewer witness on installation cron and event sources.
+Its admission guard verifies the reserved invocation and requires an exact
+unattended authority row at commit. Legacy company schedules retain their
+existing behavior. Installation schedules whose binding revision changes
+require a new review before admission can resume.
+
+### Librarian source capture and governed confirmations
+
+Main migration `0350_librarian_knowledge_capture` adds nullable versioned
+source capture to `librarian_turns`. Migration `0351_librarian_knowledge_cards`
+extends the card kind constraint with knowledge proposals, Brain proposals
+and vault edits and adds the exact target and source context used at
+confirmation. `0352_librarian_summary_knowledge_capture` retains the composed
+source union on each summary. Legacy turns, cards and summaries keep their
+existing payloads and permissions. The existing operation receipt remains
+the idempotent decision record.

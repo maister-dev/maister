@@ -36,6 +36,16 @@ import { assertReadOnlySessionEvidence } from "./runner-readonly-evidence";
 import { buildOperationalContract } from "./launch-contract";
 import { prepareCompanyDelegatedReservation } from "./company-delegated-reservation";
 import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
+import { retainInstallationRunAuthority } from "./installation-authority";
+import {
+  assertInstallationAppointment,
+  type SpecialistIntakePrincipal,
+} from "./installation-appointment";
+import {
+  captureInstallationProjects,
+  installationRunProjects,
+  installationRunSourceCapture,
+} from "./installation-source-capture";
 import { retryDigest, retryRefusal } from "./retry-guards";
 
 import { capabilityAgentSchema } from "@/lib/config.schema";
@@ -111,7 +121,7 @@ export async function reserveCompanyAgentRun(
 /** Reserve on the caller's transaction after host activation on a stable pooled database. */
 export async function reserveCompanyAgentRunInTransaction(
   tx: Db,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   input: CompanyAgentContextInput,
   hosts: ExecutionHosts,
   host: ExecutionHost,
@@ -119,11 +129,23 @@ export async function reserveCompanyAgentRunInTransaction(
 ): Promise<CompanyRunReservation> {
   assertCompanyTriggerAppointment(input.triggerSource, invocation);
   assertUpgradeMaintenanceAllows("run_admission");
-  const context = await prepareCompanyAgentContext(tx, userId, input);
+  const context = await prepareCompanyAgentContext(tx, principal, input);
+
+  if (
+    context.binding.snapshot.installationGrant &&
+    invocation &&
+    typeof principal === "string"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Installation admission requires a reviewed trigger appointment",
+    );
   const triggerReservation = invocation
     ? await assertCompanyTriggerReservation(
         tx,
-        userId,
+        typeof principal === "string"
+          ? principal
+          : principal.review.reviewer.actor.id,
         context,
         invocation,
         null,
@@ -132,16 +154,27 @@ export async function reserveCompanyAgentRunInTransaction(
     : null;
   const runId = triggerReservation?.runId ?? randomUUID();
 
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId: context.owner.companyId,
+      bindingId: context.binding.bindingId,
+      origin: context.assignment.origin,
+      runId,
+    });
+
   await insertCompanyAgentRun(tx, context, hosts, host, {
     runId,
     triggerSource: input.triggerSource,
     triggerReservation,
     scheduledRequest: context.input.snapshot.scheduledRequest,
+    ...(typeof principal !== "string" && {
+      installationAppointment: principal,
+    }),
   });
   const assignmentRevision =
     await activateInitialSpecialistAssignmentRunInTransaction(
       tx,
-      userId,
+      principal,
       context.assignment.id,
       {
         runId,
@@ -309,11 +342,33 @@ async function insertCompanyAgentRun(
     retryOfRunId?: string;
     parentRunId?: string;
     rootRunId?: string;
+    installationAppointment?: Exclude<SpecialistIntakePrincipal, string>;
   }>,
 ): Promise<void> {
   const { runId } = execution;
   const executionDataPlaneMode = executionDataPlaneModeForHost(host);
   const definition = context.effective.parsed;
+  const installationGrant = context.binding.snapshot.installationGrant;
+  const triggerSource = execution.triggerSource;
+
+  if (
+    installationGrant &&
+    (execution.parentRunId ||
+      triggerSource === "webhook" ||
+      (triggerSource !== "manual" && !execution.triggerReservation))
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "The installation binding requires manual or reviewed cron/event admission",
+    );
+  if (installationGrant && execution.retryOfRunId) {
+    const matched =
+      await tx.execute(sql`SELECT 1 FROM agent_installation_run_authorities
+      WHERE run_id=${execution.retryOfRunId} AND binding_id=${context.binding.bindingId}
+        AND binding_revision=${context.binding.revision} AND binding_digest=${context.binding.snapshotDigest} FOR SHARE`);
+
+    if (matched.rows.length !== 1) throw retryRefusal("retry_context_changed");
+  }
 
   const [runtime] = await tx
     .select()
@@ -348,6 +403,11 @@ async function insertCompanyAgentRun(
   });
   const snapshot = captureCompanyAgentExecution(context);
   const trigger = { source: execution.triggerSource };
+  // A replacement reserves the exact predecessor assignment and source capture.
+  const inheritedSourceCapture =
+    installationGrant && execution.retryOfRunId
+      ? await installationRunSourceCapture(tx, execution.retryOfRunId)
+      : undefined;
 
   await tx.insert(runs).values({
     id: runId,
@@ -366,7 +426,9 @@ async function insertCompanyAgentRun(
     status: "Pending",
     flowVersion: "agent",
     flowRevision: "manual",
-    createdByUserId: context.authority.actor.id,
+    createdByUserId: execution.installationAppointment
+      ? null
+      : context.authority.actor.id,
     parentRunId: execution.parentRunId,
     rootRunId: execution.rootRunId,
     triggerSource: execution.triggerSource,
@@ -390,7 +452,7 @@ async function insertCompanyAgentRun(
       },
     ),
     executionDataPlaneMode,
-    knowledgeAccess: {
+    knowledgeAccess: inheritedSourceCapture ?? {
       schemaVersion: 1,
       state: "complete",
       generation: 1,
@@ -404,6 +466,47 @@ async function insertCompanyAgentRun(
       ],
     },
   });
+  if (installationGrant) {
+    const principal =
+      triggerSource === "cron" || triggerSource === "domain_event"
+        ? { kind: "unattended" as const, trigger: triggerSource }
+        : { kind: "manual" as const, userId: context.authority.actor.id };
+
+    await retainInstallationRunAuthority(tx, {
+      runId,
+      bindingId: context.binding.bindingId,
+      revision: context.binding.revision,
+      snapshotDigest: context.binding.snapshotDigest,
+      grant: installationGrant,
+      principal,
+    });
+    const inheritedRunId =
+      execution.retryOfRunId ??
+      (execution.triggerReservation?.triggerEventId
+        ? (
+            await tx.execute<{
+              run_id: string | null;
+            }>(sql`SELECT run_id FROM domain_events
+        WHERE id=${execution.triggerReservation.triggerEventId} FOR SHARE`)
+          ).rows[0]?.run_id
+        : null);
+
+    if (inheritedRunId)
+      await captureInstallationProjects(
+        tx,
+        runId,
+        await installationRunProjects(tx, inheritedRunId),
+      );
+    log.info(
+      {
+        runId,
+        agentId: definition.id,
+        revision: context.binding.revision,
+        principal: principal.kind,
+      },
+      "installation agent principal retained",
+    );
+  }
   await tx.insert(runSessions).values({
     id: randomUUID(),
     ...defaultRunSessionValues(runId, resolution),

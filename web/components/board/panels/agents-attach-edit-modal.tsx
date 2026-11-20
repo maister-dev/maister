@@ -141,6 +141,9 @@ export function AttachEditModal({
   const [canReadBrain, setCanReadBrain] = useState(row.canReadBrain);
   const [canWriteBrain, setCanWriteBrain] = useState(row.canWriteBrain);
   const [memoryEnabled, setMemoryEnabled] = useState(row.memoryEnabled);
+  const [memoryWritePolicy, setMemoryWritePolicy] = useState(
+    row.memoryWritePolicy ?? "auto",
+  );
   // (ADR-156) Cross-project reach. The grant only applies to an ENABLED
   // attachment, so the control follows the LIVE `enabled` state above rather
   // than the persisted row: granting on an attachment the operator is switching
@@ -148,7 +151,7 @@ export function AttachEditModal({
   const [crossProjectReach, setCrossProjectReach] = useState(
     row.crossProjectReach,
   );
-  const flowBound = row.agent.flowRef !== null;
+  const sharesSession = row.agent.mode === "subagent";
   const reachInert = !enabled;
 
   function setConfigValue(key: string, value: unknown): void {
@@ -295,7 +298,7 @@ export function AttachEditModal({
         // (ADR-122) Fold the Brain grants into the SAME aggregating PATCH.
         canReadBrain,
         canWriteBrain,
-        ...(flowBound ? {} : { memoryEnabled }),
+        ...(sharesSession ? {} : { memoryEnabled, memoryWritePolicy }),
         // (ADR-156) Always sent, never conditionally omitted: an explicit value
         // both grants and revokes, so the saved state is exactly what the
         // operator sees. While the attachment is disabled the control is inert,
@@ -497,23 +500,35 @@ export function AttachEditModal({
             </label>
             <label
               className={`inline-flex items-center gap-2 font-mono text-[12px] ${
-                flowBound ? "text-mute" : "text-ink"
+                sharesSession ? "text-mute" : "text-ink"
               }`}
             >
               <input
-                checked={memoryEnabled && !flowBound}
+                checked={memoryEnabled && !sharesSession}
                 data-testid="memory-enabled"
-                disabled={flowBound}
+                disabled={sharesSession}
                 type="checkbox"
                 onChange={(event) => setMemoryEnabled(event.target.checked)}
               />
               {t("memoryToggle")}
             </label>
-            {/* D22: disabled WITH its reason — a hidden control teaches nothing
-                about the boundary it hides. */}
-            {flowBound ? (
+            {memoryEnabled && !sharesSession ? (
+              <label className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
+                <input
+                  checked={memoryWritePolicy === "review"}
+                  type="checkbox"
+                  onChange={(event) =>
+                    setMemoryWritePolicy(
+                      event.target.checked ? "review" : "auto",
+                    )
+                  }
+                />
+                {t("reviewMemoryWrites")}
+              </label>
+            ) : null}
+            {sharesSession ? (
               <p className="m-0 font-mono text-[11px] text-mute">
-                {t("memoryFlowBound")}
+                {t("memorySharedSession")}
               </p>
             ) : null}
           </section>

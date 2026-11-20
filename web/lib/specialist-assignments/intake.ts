@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { SpecialistIntakePrincipal } from "@/lib/agents/installation-appointment";
 import type { AssignmentOrigin } from "./types";
 import type {
   PrepareSpecialistIntake,
@@ -22,6 +23,7 @@ import {
 } from "./store";
 
 import { contentDigest } from "@/lib/evaluations/digest";
+import { assertInstallationAppointment } from "@/lib/agents/installation-appointment";
 import { MaisterError } from "@/lib/errors";
 
 const log = pino({
@@ -36,7 +38,7 @@ type SpecialistIntakeIdentity = Readonly<{
 }>;
 
 function intakeIdentity(
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   origin: AssignmentOrigin,
   request: SpecialistIntakeRequest,
 ): SpecialistIntakeIdentity {
@@ -52,7 +54,7 @@ function intakeIdentity(
     schemaVersion: 1,
     owner: parsed.data.owner,
     origin: source.data,
-    ...(source.data.kind === "manual" ? { userId } : {}),
+    ...(source.data.kind === "manual" ? { userId: principal } : {}),
     ...(source.data.kind === "task_comment"
       ? { specialistBindingId: parsed.data.specialistBindingId }
       : {}),
@@ -64,7 +66,7 @@ function intakeIdentity(
 
 async function loadIntakeReplay(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   identity: SpecialistIntakeIdentity,
 ): Promise<SpecialistIntakeReceipt | null> {
   const previous = (
@@ -87,23 +89,24 @@ async function loadIntakeReplay(
       );
     const assignment = await getSpecialistAssignmentInTransaction(
       tx,
-      userId,
+      principal,
       previous.assignment_id,
     );
     const input = await getSpecialistAssignmentInputInTransaction(
       tx,
-      userId,
+      principal,
       previous.assignment_id,
       previous.input_revision,
     );
 
-    await authorizeAssignment(
-      tx,
-      userId,
-      assignment.owner,
-      "assignments:submit",
-      input.snapshot.authoritySnapshot.executionPolicy,
-    );
+    if (typeof principal === "string")
+      await authorizeAssignment(
+        tx,
+        principal,
+        assignment.owner,
+        "assignments:submit",
+        input.snapshot.authoritySnapshot.executionPolicy,
+      );
     if (previous.request_digest !== identity.requestDigest)
       throw new MaisterError(
         "CONFLICT",
@@ -137,33 +140,47 @@ async function loadIntakeReplay(
 /** Inspect an existing currently authorized delivery without provider or host activation. */
 export async function inspectSpecialistIntakeReplayInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   origin: AssignmentOrigin,
   request: SpecialistIntakeRequest,
 ): Promise<SpecialistIntakeReceipt | null> {
-  const identity = intakeIdentity(userId, origin, request);
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId:
+        request.owner.kind === "company" ? request.owner.companyId : null,
+      bindingId: request.specialistBindingId,
+      origin,
+    });
+  const identity = intakeIdentity(principal, origin, request);
 
   await beginAssignmentTransaction(tx);
 
-  return loadIntakeReplay(tx, userId, identity);
+  return loadIntakeReplay(tx, principal, identity);
 }
 
 /** Source adapters own identity validation; this transaction owns canonical assignment deduplication. */
 export async function intakeSpecialistAssignmentInTransaction(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   origin: AssignmentOrigin,
   request: SpecialistIntakeRequest,
   prepare: PrepareSpecialistIntake,
 ): Promise<SpecialistIntakeReceipt> {
-  const identity = intakeIdentity(userId, origin, request);
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId:
+        request.owner.kind === "company" ? request.owner.companyId : null,
+      bindingId: request.specialistBindingId,
+      origin,
+    });
+  const identity = intakeIdentity(principal, origin, request);
   const { source, sourceKey, requestDigest } = identity;
 
   await beginAssignmentTransaction(tx);
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtextextended(${"specialist-intake:" + sourceKey},0))`,
   );
-  const previous = await loadIntakeReplay(tx, userId, identity);
+  const previous = await loadIntakeReplay(tx, principal, identity);
 
   if (previous) return previous;
   const prepared = await prepare(tx);
@@ -185,12 +202,12 @@ export async function intakeSpecialistAssignmentInTransaction(
     );
   const assignment = await createSpecialistAssignmentInTransaction(
     tx,
-    userId,
+    principal,
     prepared,
   );
   const input = await getSpecialistAssignmentInputInTransaction(
     tx,
-    userId,
+    principal,
     assignment.id,
     assignment.inputRevision,
   );

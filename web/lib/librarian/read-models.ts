@@ -1,7 +1,18 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  effectContextSchema,
+  isKnowledgeCardProposal,
+} from "./knowledge-card-types";
+import {
+  matchesGovernedCardEffect,
+  prepareKnowledgeCard,
+} from "./knowledge-card-effects";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -15,6 +26,8 @@ import {
   users,
   workspaces,
 } from "@/lib/db/schema";
+import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
+import { isMaisterError } from "@/lib/errors";
 import { librarianCardProposalSchema } from "@/lib/librarian/cards";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 import { renderStatementPrompt } from "@/lib/tasks/statement";
@@ -23,7 +36,8 @@ type Db = ReturnType<typeof getDb>;
 
 export type LibrarianCardView = {
   id: string;
-  kind: "statement_proposal" | "confirmation" | "memory_suggestion";
+  kind: typeof librarianCards.$inferSelect.kind;
+  effectPreview?: string;
   status: string;
   action: string;
   target: Record<string, string>;
@@ -203,48 +217,104 @@ export async function getLinkedWork(
     workspaceRows.map((workspace) => [workspace.runId, workspace]),
   );
   const hitlById = new Map(hitlRows.map((question) => [question.id, question]));
-  const cards = cardRows.map((card): LibrarianCardView => {
-    const parsed = librarianCardProposalSchema.safeParse(card.payload);
-    const task = card.target.taskId ? taskById.get(card.target.taskId) : null;
-    const projectId = card.target.projectId;
-    const available =
-      (card.kind === "memory_suggestion" && !projectId
-        ? true
-        : visibleById.has(projectId)) &&
-      (card.target.taskId
-        ? !!task
-        : card.target.runId
-          ? !!runById.get(card.target.runId)
-          : true);
+  const cards = await Promise.all(
+    cardRows.map(async (card): Promise<LibrarianCardView> => {
+      const parsed = librarianCardProposalSchema.safeParse(card.payload);
+      const task = card.target.taskId ? taskById.get(card.target.taskId) : null;
+      const projectId = card.target.projectId;
+      const effectContext = effectContextSchema.safeParse(card.effectContext);
+      const effects =
+        parsed.success && isKnowledgeCardProposal(parsed.data)
+          ? parsed.data
+          : null;
+      const effectAvailable =
+        effects && effectContext.success
+          ? await db.transaction(async (tx) => {
+              try {
+                if (card.status === "pending") {
+                  const prepared = await prepareKnowledgeCard(
+                    tx as unknown as ExecutionDb,
+                    ownerId,
+                    effects,
+                    effectContext.data.restrictions,
+                  );
 
-    return {
-      id: card.id,
-      kind: card.kind,
-      status:
-        card.status === "pending" && card.expiresAt <= new Date()
-          ? "expired"
-          : card.status,
-      action: parsed.success ? parsed.data.action : "unavailable",
-      target: available ? card.target : {},
-      targetRevision: available ? card.targetRevision : null,
-      payload: available ? card.payload : {},
-      currentPrompt: available && task ? task.prompt : null,
-      proposedPrompt:
-        available && parsed.success && parsed.data.action === "statement_accept"
-          ? renderStatementPrompt(parsed.data.statement)
-          : null,
-      hitlPrompt:
-        available && card.target.hitlRequestId
-          ? (hitlById.get(card.target.hitlRequestId)?.prompt ?? null)
-          : null,
-      runBranch:
-        available && card.target.runId
-          ? (workspaceByRunId.get(card.target.runId)?.branch ?? null)
-          : null,
-      available,
-      expiresAt: card.expiresAt.toISOString(),
-    };
-  });
+                  if (
+                    !matchesGovernedCardEffect(
+                      card,
+                      effectContext.data.preview,
+                      prepared,
+                    )
+                  )
+                    return false;
+                } else {
+                  await authorizeSourceRestrictions(
+                    tx,
+                    { kind: "user", userId: ownerId },
+                    effectContext.data.restrictions,
+                  );
+                }
+
+                return projectId ? visibleById.has(projectId) : true;
+              } catch (error) {
+                if (!isMaisterError(error)) throw error;
+
+                return false;
+              }
+            })
+          : false;
+      const newEffect = [
+        "knowledge_proposal",
+        "brain_proposal",
+        "vault_edit",
+      ].includes(card.kind);
+      const available = newEffect
+        ? effectAvailable
+        : (card.kind === "memory_suggestion" && !projectId
+            ? true
+            : visibleById.has(projectId)) &&
+          (card.target.taskId
+            ? !!task
+            : card.target.runId
+              ? !!runById.get(card.target.runId)
+              : true);
+
+      return {
+        id: card.id,
+        kind: card.kind,
+        status:
+          card.status === "pending" && card.expiresAt <= new Date()
+            ? "expired"
+            : card.status,
+        action: parsed.success ? parsed.data.action : "unavailable",
+        target: available ? card.target : {},
+        targetRevision: available ? card.targetRevision : null,
+        payload: available ? card.payload : {},
+        ...(effectAvailable &&
+          effectContext.success && {
+            effectPreview: effectContext.data.preview,
+          }),
+        currentPrompt: available && task ? task.prompt : null,
+        proposedPrompt:
+          available &&
+          parsed.success &&
+          parsed.data.action === "statement_accept"
+            ? renderStatementPrompt(parsed.data.statement)
+            : null,
+        hitlPrompt:
+          available && card.target.hitlRequestId
+            ? (hitlById.get(card.target.hitlRequestId)?.prompt ?? null)
+            : null,
+        runBranch:
+          available && card.target.runId
+            ? (workspaceByRunId.get(card.target.runId)?.branch ?? null)
+            : null,
+        available,
+        expiresAt: card.expiresAt.toISOString(),
+      };
+    }),
+  );
+  const cardsById = new Map(cards.map((card) => [card.id, card]));
   const operations = operationRows.map((operation): LibrarianOperationView => {
     const body = resultBody(operation.result);
     const runId = operation.target.runId ?? resultRunId(operation.result);
@@ -257,6 +327,9 @@ export async function getLinkedWork(
     const targetProjectId =
       operation.target.projectId ?? run?.projectId ?? task?.projectId ?? null;
     const available =
+      (typeof body?.cardId !== "string" ||
+        !body.effect ||
+        cardsById.get(body.cardId)?.available === true) &&
       (!taskId || !!task) &&
       (!runId || !!run) &&
       (targetProjectId === null || visibleById.has(targetProjectId)) &&

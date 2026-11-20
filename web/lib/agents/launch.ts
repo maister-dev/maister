@@ -33,6 +33,8 @@ import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
+
 import {
   admitAgentTurnPrompt,
   findInitialAgentPrompt,
@@ -231,6 +233,12 @@ import {
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
 import { readAgentMemory } from "@/lib/agents/memory-store";
+import { lockVaultCutover } from "@/lib/agent-memory-vault/cutover";
+import {
+  assertMemorySessionSources,
+  stageInstallationAgentMemory,
+  stageProjectAgentMemory,
+} from "@/lib/agent-memory-vault/injection";
 import {
   withAgentMaterializationLock,
   agentMaterializationWitnessPathsForRun,
@@ -3145,6 +3153,7 @@ export async function buildAgentPrompt(
   parsed: ParsedAgentDefinition,
   run: Record<string, any>,
   memory?: string | null,
+  vaultBlock?: string | null,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
   const scopeBlock = await projectScopeBlock(_db, run);
@@ -3164,7 +3173,8 @@ export async function buildAgentPrompt(
   if (configBlock) sections.push(configBlock);
   // ADR-152 D13: standing project knowledge belongs WITH standing config, and
   // the current ask comes after it.
-  if (memory) sections.push(memoryBlock(memory));
+  if (vaultBlock) sections.push(vaultBlock);
+  else if (memory) sections.push(memoryBlock(memory));
   if (taskBlock) sections.push(taskBlock);
   if (run.taskQualificationSnapshot?.role === "qualifier")
     sections.push(
@@ -4428,6 +4438,11 @@ async function driveAgentSession(
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
     await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    if (!agentTurn.commandId && !run.companyId)
+      await _db.transaction(async (tx: ExecutionDb) => {
+        if ((await lockVaultCutover(tx)) !== null)
+          await assertMemorySessionSources(tx, runId);
+      });
     if (agentTurn.commandId) {
       const [command] = await _db
         .select()
@@ -5274,32 +5289,77 @@ async function driveAgentSession(
         });
       }
 
-      // ADR-152: resolve + snapshot + stamp in one step, skipped wholesale on the
-      // override branch below (which discards `basePrompt` and would otherwise
-      // record provenance for a prompt that carried no memory).
       operationalSpawnStage = "prompt";
       if (usesStructuredKnowledgeContext(run))
         await assertNativeRunKnowledgeInputs(_db, runId);
-      const memoryText = companyContext
-        ? null
-        : await applyAgentMemoryForLaunch(
-            _db,
-            run,
-            project.slug as string,
-            overridePrompt != null,
-          );
+      const installationMemory =
+        companyContext?.installation && assignmentId && !agentTurn
+          ? await _db.transaction((tx: ExecutionDb) =>
+              stageInstallationAgentMemory(
+                tx,
+                assignmentId,
+                runId,
+                Boolean(run.acpSessionId),
+              ),
+            )
+          : null;
+      const memory = companyContext
+        ? { legacy: null, vault: installationMemory }
+        : await _db.transaction(async (tx: ExecutionDb) => {
+            if ((await lockVaultCutover(tx)) === null)
+              return {
+                legacy: await applyAgentMemoryForLaunch(
+                  tx,
+                  run,
+                  project.slug as string,
+                  overridePrompt != null,
+                ),
+                vault: null,
+              };
+            if (agentTurn) return { legacy: null, vault: null };
+            if (!assignmentId)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Agent memory requires an owned session",
+              );
+            const prepared = await stageProjectAgentMemory(
+              tx,
+              {
+                runId,
+                projectId: run.projectId as string,
+                agentId: run.agentId as string,
+                sessionKey: assignmentId,
+              },
+              Boolean(run.acpSessionId),
+            );
+
+            return {
+              legacy: null,
+              vault: prepared.mode === "vault" ? prepared.text : null,
+            };
+          });
       const basePrompt = companyContext
-        ? buildCompanyAgentPrompt(companyContext)
-        : await buildAgentPrompt(_db, effective.parsed, run, memoryText);
+        ? [buildCompanyAgentPrompt(companyContext), installationMemory]
+            .filter(Boolean)
+            .join("\n\n")
+        : await buildAgentPrompt(
+            _db,
+            effective.parsed,
+            run,
+            memory?.legacy,
+            memory?.vault,
+          );
+      const selectedPrompt =
+        overridePrompt === undefined
+          ? draftPayload
+            ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+            : basePrompt
+          : memory?.vault && !agentTurn
+            ? [memory.vault, overridePrompt].join("\n\n")
+            : overridePrompt;
       const completionPrompt = nativeFindingsCompletionPrompt(
         run.resultContract,
-        operationalCompletionPrompt(
-          run,
-          overridePrompt ??
-            (draftPayload
-              ? consensusAgentDraftPrompt(basePrompt, draftPayload)
-              : basePrompt),
-        ),
+        operationalCompletionPrompt(run, selectedPrompt),
       );
 
       // RD7: the agent's capability_profile.mcps resolve through the existing
@@ -5408,7 +5468,19 @@ async function driveAgentSession(
             `Agent Run ${runId} requires the MAIster MCP facade. Build it with pnpm --filter @maister/mcp build or set MAISTER_MCP_FACADE_COMMAND.`,
           );
 
-        return [facadeServer];
+        if (!companyContext?.installation) return [facadeServer];
+
+        return [
+          {
+            ...facadeServer,
+            env: {
+              ...facadeServer.env,
+              MAISTER_MCP_TOOLSET: "installation",
+              MAISTER_INSTALLATION_SCOPES:
+                companyContext.installation.scopes.join(","),
+            },
+          },
+        ];
       };
       const projectFacade =
         companyContext || !effective.parsed.platformMcp
@@ -5530,7 +5602,15 @@ async function driveAgentSession(
           // ephemeral token to the agent.
           mcpServers: [...profileMcpServers, ...projectFacade],
           // ADR-090 L1: none/repo_read agents run the whole session read-only.
-          readOnlySession: workspace !== "worktree",
+          readOnlySession:
+            workspace !== "worktree" && !companyContext?.installation,
+          ...(companyContext?.installation && {
+            enforcementProfile: installationEnforcementProfile(
+              effective.parsed.platformMcp
+                ? companyContext.installation.scopes
+                : [],
+            ),
+          }),
           agentKind: baseRun.agentKind ?? "code_delivery",
           // M34 lifecycle: a one-shot (non-persistent) agent has no driver that acts
           // on a bare end_turn — let the supervisor reap the session so the run

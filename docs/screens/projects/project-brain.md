@@ -123,3 +123,7 @@ Namespace: `brain.*` in `web/messages/en.json` and `web/messages/ru.json`.
 - [`docs/api/web.openapi.yaml`](../../api/web.openapi.yaml)
 - [`docs/api/external/operations.openapi.yaml`](../../api/external/operations.openapi.yaml)
 - [`docs/db/brain-domain.md`](../../db/brain-domain.md)
+
+## Proposal review (Implemented)
+
+Read authorized proposal and decision history here. Pending items link to the filtered Inbox review group.

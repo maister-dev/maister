@@ -26,6 +26,7 @@ import { ACTIVE_RUN_STATUSES } from "@/lib/queries/portfolio";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { getDb } from "@/lib/db/client";
 import { getUpdatesCount } from "@/lib/queries/updates";
+import { readProposalReviewCounter } from "@/lib/queries/knowledge-memory-reviews";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isMaisterError } from "@/lib/errors";
 import { requireActiveSession, requireActiveUserById } from "@/lib/authz";
@@ -56,7 +57,7 @@ const MAX_QUIET_MS = 5 * 60 * 1000;
  * connect-time snapshot carries an EMPTY `changed` because nothing moved — it
  * describes the state the page was already rendered from.
  */
-const ATTENTION_REGIONS = ["decisions", "work", "activity"] as const;
+const ATTENTION_REGIONS = ["decisions", "work", "activity", "reviews"] as const;
 
 export type AttentionRegion = (typeof ATTENTION_REGIONS)[number];
 
@@ -67,6 +68,8 @@ export interface AttentionTickEvent {
   occurredAt: string;
   decisions: number;
   updates: number;
+  reviews: number;
+  reviewVersion: string;
   changed: AttentionRegion[];
   projectIds: string[];
 }
@@ -106,6 +109,23 @@ function parseLastEventId(req: NextRequest): number | null {
  * not parse is no baseline at all: the stream never trusts half of one.
  */
 const COUNTER_PATTERN = /^(?:0|[1-9][0-9]{0,8})$/;
+const REVIEW_VERSION_PATTERN = /^[0-9a-f]{64}$/;
+
+function reviewBaseline(req: NextRequest) {
+  const params = new URL(req.url).searchParams;
+  const reviews = params.get("reviews");
+  const reviewVersion = params.get("reviewVersion");
+
+  if (
+    reviews !== null &&
+    reviewVersion !== null &&
+    COUNTER_PATTERN.test(reviews) &&
+    REVIEW_VERSION_PATTERN.test(reviewVersion)
+  )
+    return { reviews: Number(reviews), reviewVersion };
+
+  return null;
+}
 
 function parseBaseline(
   req: NextRequest,
@@ -273,6 +293,9 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   const resumeFrom = parseLastEventId(req);
   const baseline = resumeFrom === null ? null : parseBaseline(req);
+  const reviewSince = resumeFrom === null ? null : reviewBaseline(req);
+  const reviewCompatible =
+    new URL(req.url).searchParams.get("reviewProtocol") === "1";
   const encoder = new TextEncoder();
   const startedAt = Date.now();
 
@@ -285,6 +308,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       // every comparison. A reader's baseline counts as sent (D7).
       let sentDecisions = baseline?.decisions ?? -1;
       let sentUpdates = baseline?.updates ?? -1;
+      let sentReview = reviewSince;
       let sentDecisionSignature: string | null = null;
       let lastCounterCheckAt = 0;
       let lastChangeAt = Date.now();
@@ -305,14 +329,17 @@ export async function GET(req: NextRequest): Promise<Response> {
       const counters = async (): Promise<{
         decisions: number;
         updates: number;
+        reviews: number;
+        reviewVersion: string;
         decisionSignature: string;
       }> => {
         // `computeDecisionsQueue`, NOT the React-cached `getDecisionsQueue`: a
         // request-scoped memo would freeze this loop's counter at the value it
         // had when the connection opened.
-        const [queue, updates] = await Promise.all([
+        const [queue, updates, reviews] = await Promise.all([
           computeDecisionsQueue(user.id, user.role),
           getUpdatesCount(user.id, user.role),
+          readProposalReviewCounter(getDb(), user.id),
         ]);
 
         lastCounterCheckAt = Date.now();
@@ -320,6 +347,7 @@ export async function GET(req: NextRequest): Promise<Response> {
         return {
           decisions: queue.count,
           updates,
+          ...reviews,
           decisionSignature: queue.items
             .map((item) =>
               item.kind === "operational" && "aggregation" in item.operational
@@ -337,6 +365,8 @@ export async function GET(req: NextRequest): Promise<Response> {
         current: {
           decisions: number;
           updates: number;
+          reviews: number;
+          reviewVersion: string;
           decisionSignature: string;
         },
       ): void => {
@@ -346,6 +376,8 @@ export async function GET(req: NextRequest): Promise<Response> {
           occurredAt: new Date().toISOString(),
           decisions: current.decisions,
           updates: current.updates,
+          reviews: current.reviews,
+          reviewVersion: current.reviewVersion,
           // Fixed region order keeps the array deterministic and unique.
           changed: ATTENTION_REGIONS.filter((region) =>
             changed.includes(region),
@@ -365,6 +397,30 @@ export async function GET(req: NextRequest): Promise<Response> {
         sentDecisionSignature = current.decisionSignature;
         sentDecisions = current.decisions;
         sentUpdates = current.updates;
+        sentReview = {
+          reviews: current.reviews,
+          reviewVersion: current.reviewVersion,
+        };
+      };
+
+      const reviewChanged = (current: {
+        reviews: number;
+        reviewVersion: string;
+      }) => {
+        if (sentReview === null && !reviewCompatible) {
+          sentReview = {
+            reviews: current.reviews,
+            reviewVersion: current.reviewVersion,
+          };
+
+          return false;
+        }
+
+        return (
+          sentReview === null ||
+          sentReview.reviews !== current.reviews ||
+          sentReview.reviewVersion !== current.reviewVersion
+        );
       };
 
       try {
@@ -418,11 +474,14 @@ export async function GET(req: NextRequest): Promise<Response> {
             // A moved row changes what both cross-project surfaces render; the
             // decision queue only when its own count moved.
             emitTick(
-              (sentDecisionSignature === null ||
-                current.decisionSignature === sentDecisionSignature) &&
+              [
+                ...((sentDecisionSignature === null ||
+                  current.decisionSignature === sentDecisionSignature) &&
                 current.decisions === sentDecisions
-                ? ["work", "activity"]
-                : ["decisions", "work", "activity"],
+                  ? (["work", "activity"] as const)
+                  : (["decisions", "work", "activity"] as const)),
+                ...(reviewChanged(current) ? (["reviews"] as const) : []),
+              ],
               changed.map((row) => row.projectId),
               current,
             );
@@ -432,11 +491,13 @@ export async function GET(req: NextRequest): Promise<Response> {
 
             if (sentDecisionSignature === null)
               sentDecisionSignature = current.decisionSignature;
+            const movedReview = reviewChanged(current);
 
             if (
               current.decisionSignature !== sentDecisionSignature ||
               current.decisions !== sentDecisions ||
-              current.updates !== sentUpdates
+              current.updates !== sentUpdates ||
+              movedReview
             ) {
               // The watermark deliberately does NOT advance here: nothing was
               // scanned past it, and moving it to "now" would skip a row
@@ -449,6 +510,7 @@ export async function GET(req: NextRequest): Promise<Response> {
               )
                 moved.push("decisions");
               if (current.updates !== sentUpdates) moved.push("activity");
+              if (movedReview) moved.push("reviews");
               emitTick(moved, [], current);
               lastChangeAt = Date.now();
             } else {

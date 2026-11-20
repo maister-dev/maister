@@ -1,0 +1,1 @@
+ALTER TABLE "librarian_turns" ADD COLUMN "knowledge_access" jsonb;

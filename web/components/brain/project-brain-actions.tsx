@@ -2,11 +2,7 @@
 
 import type { ReactElement } from "react";
 
-import {
-  ArrowPathIcon,
-  CheckIcon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { useState } from "react";
 
 async function postJson(url: string, body: unknown = {}): Promise<void> {
@@ -35,18 +31,6 @@ interface SourceAllActionProps {
   slug: string;
   label: string;
   disabled: boolean;
-}
-
-interface ProposalActionProps {
-  slug: string;
-  proposalId: string;
-  canAccept: boolean;
-  canReject: boolean;
-  labels: {
-    accept: string;
-    reject: string;
-    rejectReason: string;
-  };
 }
 
 const actionClass =
@@ -137,88 +121,5 @@ export function BrainSourceReindexAllAction({
         </span>
       ) : null}
     </span>
-  );
-}
-
-export function BrainProposalReviewActions({
-  slug,
-  proposalId,
-  canAccept,
-  canReject,
-  labels,
-}: ProposalActionProps): ReactElement | null {
-  const [reason, setReason] = useState("");
-  const [pending, setPending] = useState<"accept" | "reject" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!canAccept && !canReject) return null;
-
-  async function conclude(action: "accept" | "reject"): Promise<void> {
-    setPending(action);
-    setError(null);
-
-    try {
-      await postJson(
-        `/api/projects/${encodeURIComponent(slug)}/brain/proposals/${encodeURIComponent(proposalId)}/conclusion`,
-        {
-          action,
-          ...(action === "reject" && reason.trim().length > 0
-            ? { reason: reason.trim() }
-            : {}),
-        },
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPending(null);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {canReject ? (
-        <label className="flex min-w-[220px] flex-col gap-1">
-          <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-            {labels.rejectReason}
-          </span>
-          <input
-            className="h-9 rounded-md border border-line bg-canvas px-2.5 text-[12px] text-ink outline-none"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </label>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        {canAccept ? (
-          <button
-            className={actionClass}
-            data-testid={`brain-proposal-accept-${proposalId}`}
-            disabled={pending !== null}
-            type="button"
-            onClick={() => void conclude("accept")}
-          >
-            <CheckIcon className="h-3.5 w-3.5" />
-            {labels.accept}
-          </button>
-        ) : null}
-        {canReject ? (
-          <button
-            className={actionClass}
-            data-testid={`brain-proposal-reject-${proposalId}`}
-            disabled={pending !== null}
-            type="button"
-            onClick={() => void conclude("reject")}
-          >
-            <XMarkIcon className="h-3.5 w-3.5" />
-            {labels.reject}
-          </button>
-        ) : null}
-      </div>
-      {error ? (
-        <span className="text-[11px] text-red-700" role="alert">
-          {error}
-        </span>
-      ) : null}
-    </div>
   );
 }

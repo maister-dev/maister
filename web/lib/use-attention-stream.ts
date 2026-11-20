@@ -30,7 +30,9 @@ export interface AttentionTickFrame {
   occurredAt: string;
   decisions: number;
   updates: number;
-  changed: Array<"decisions" | "work" | "activity">;
+  reviews?: number;
+  reviewVersion?: string;
+  changed: Array<"decisions" | "work" | "activity" | "reviews">;
   projectIds: string[];
 }
 
@@ -65,9 +67,14 @@ export interface AttentionStreamSince {
   cursor: string;
   decisions: number;
   updates: number;
+  reviews?: number;
+  reviewVersion?: string;
 }
 
-type Counters = Pick<AttentionTickFrame, "decisions" | "updates">;
+type Counters = Pick<
+  AttentionTickFrame,
+  "decisions" | "updates" | "reviews" | "reviewVersion"
+>;
 
 function streamUrl(
   origin: string,
@@ -76,12 +83,21 @@ function streamUrl(
 ): string {
   const url = new URL("/api/attention/stream", origin);
 
+  url.searchParams.set("reviewProtocol", "1");
+
   if (lastEventId !== null) {
     url.searchParams.set("lastEventId", lastEventId);
     // A baseline means something only beside the cursor it was read at.
     if (counters !== null) {
       url.searchParams.set("decisions", String(counters.decisions));
       url.searchParams.set("updates", String(counters.updates));
+      if (
+        counters.reviews !== undefined &&
+        counters.reviewVersion !== undefined
+      ) {
+        url.searchParams.set("reviews", String(counters.reviews));
+        url.searchParams.set("reviewVersion", counters.reviewVersion);
+      }
     }
   }
 
@@ -104,7 +120,12 @@ export function useAttentionStream(
   const countersRef = useRef<Counters | null>(
     since === undefined
       ? null
-      : { decisions: since.decisions, updates: since.updates },
+      : {
+          decisions: since.decisions,
+          updates: since.updates,
+          reviews: since.reviews,
+          reviewVersion: since.reviewVersion,
+        },
   );
   const lifecycleRef = useRef(initialRunStreamLifecycle);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,6 +188,9 @@ export function useAttentionStream(
           countersRef.current = {
             decisions: frame.decisions,
             updates: frame.updates,
+            reviews: frame.reviews ?? countersRef.current?.reviews,
+            reviewVersion:
+              frame.reviewVersion ?? countersRef.current?.reviewVersion,
           };
         }
       } catch {

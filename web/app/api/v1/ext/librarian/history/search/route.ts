@@ -2,9 +2,13 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { privateErrorResponse, privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
-import { searchLibrarianHistory } from "@/lib/librarian/history-search";
+import { isMaisterError } from "@/lib/errors";
+import { searchLibrarianHistoryForTurn } from "@/lib/librarian/history-search";
 import { handleExt } from "@/lib/tokens/ext-handler";
+
+const ENDPOINT = "GET /api/v1/ext/librarian/history/search";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const db = getDb();
@@ -13,7 +17,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     request,
     {
       scopeLabel: "librarian:history",
-      endpoint: "GET /api/v1/ext/librarian/history/search",
+      endpoint: ENDPOINT,
       method: "GET",
       admitLibrarian: true,
       allowGlobalActorWithoutProject: true,
@@ -27,9 +31,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         );
       const q = request.nextUrl.searchParams.get("q") ?? "";
 
-      return NextResponse.json(
-        await searchLibrarianHistory(context.actor.ownerUserId, q, db),
-      );
+      try {
+        return privateJson(
+          await searchLibrarianHistoryForTurn(context.actor.tokenId, q, db),
+        );
+      } catch (error) {
+        if (isMaisterError(error) && error.code === "CONFIG")
+          return privateJson({ code: error.code, message: error.message }, 422);
+
+        return privateErrorResponse(error, ENDPOINT);
+      }
     },
   );
 }

@@ -78,6 +78,13 @@
       "when": 1793667660307,
       "tag": "0011_proposal_source_access",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795099980000,
+      "tag": "0012_agent_memory_vectors",
+      "breakpoints": true
     }
   ]
 }

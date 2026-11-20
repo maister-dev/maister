@@ -3,6 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
+import { readVaultJson } from "@/lib/agent-memory-vault/http";
 import { getDb } from "@/lib/db/client";
 import { librarianTurns } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         kind: "card_propose",
         target: { route: "/api/v1/ext/librarian/cards" },
         parseBody: async (request) =>
-          librarianCardProposalSchema.parse(await request.json()),
+          librarianCardProposalSchema.parse(await readVaultJson(request)),
       },
       db,
     },
@@ -55,7 +56,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
 
       try {
-        const proposal = librarianCardProposalSchema.parse(await req.json());
+        const proposal = librarianCardProposalSchema.parse(
+          await readVaultJson(req),
+        );
         const [turn] = await db
           .select({
             conversationId: librarianTurns.conversationId,
@@ -77,6 +80,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             segmentId: turn.segmentId,
             ownerUserId: ctx.actor.ownerUserId,
             turnId: ctx.actor.librarianTurnId,
+            tokenId: ctx.actor.tokenId,
             proposal,
             recordCreated: async (tx, cardId) => {
               const receipt = { cardId, status: "pending" };

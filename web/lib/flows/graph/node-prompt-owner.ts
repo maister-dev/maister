@@ -22,6 +22,10 @@ import {
   finishSentinelOutput,
 } from "./node-output-stream";
 
+import {
+  assertMemorySessionSources,
+  settleMemoryInjection,
+} from "@/lib/agent-memory-vault/injection";
 import { assertNodePermissionContinuation } from "@/lib/execution-host/permission-handoff-source";
 import {
   nodeAttempts,
@@ -115,6 +119,7 @@ export async function admitNodePrompt(
   )
     throw new PromptOwnerInvariantError("node_admission_generation");
   await assertNodePermissionContinuation(tx, attempt, assignment);
+  await assertMemorySessionSources(tx, runId, attempt.id);
   const [binding] = await tx
     .select({ session: runSessions, incarnation: runSessionIncarnations })
     .from(runSessions)
@@ -295,6 +300,13 @@ export async function prepareNodePrompt(input: {
         .update(nodeAttempts)
         .set({ actionCompletion: completion })
         .where(eq(nodeAttempts.id, attempt.id));
+      if (outcome.state === "succeeded")
+        await settleMemoryInjection(
+          tx,
+          ref.runId,
+          ref.nodeAttemptId,
+          command.id,
+        );
       log.info(
         {
           runId: ref.runId,

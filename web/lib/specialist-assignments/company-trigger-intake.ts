@@ -21,6 +21,10 @@ import {
 import { getSpecialistAssignmentInTransaction } from "./store";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import {
+  resolveInstallationAppointment,
+  type InstallationAppointment,
+} from "@/lib/agents/installation-appointment";
 import { localHost } from "@/lib/execution-host";
 import { redactQueryError, queryErrorDiagnostics } from "@/lib/db/pg-error";
 import { MaisterError } from "@/lib/errors";
@@ -38,6 +42,7 @@ export type CompanyTriggerInvocation = Readonly<{
 type LoadCompanyTriggerInvocation = (
   tx: SqlTransaction,
   reservation: CompanyTriggerReservation,
+  appointment: InstallationAppointment | null,
 ) => Promise<CompanyTriggerInvocation>;
 const log = pino({
   name: "company-trigger-intake",
@@ -53,18 +58,23 @@ export async function reserveCompanyTriggerAssignment(
 ): Promise<SpecialistIntakeReceipt> {
   try {
     const retained = await db.transaction(async (tx) => {
-      const source = await loadInvocation(tx, invocation);
+      const appointment = await resolveInstallationAppointment(tx, invocation);
+      const source = await loadInvocation(tx, invocation, appointment);
 
-      for (const action of ["assignments:read", "assignments:submit"] as const)
-        await authorizeCompanyUserAction(
-          tx,
-          source.userId,
-          source.companyId,
-          action,
-        );
+      if (!appointment)
+        for (const action of [
+          "assignments:read",
+          "assignments:submit",
+        ] as const)
+          await authorizeCompanyUserAction(
+            tx,
+            source.userId,
+            source.companyId,
+            action,
+          );
       const replay = await inspectSpecialistIntakeReplayInTransaction(
         tx,
-        source.userId,
+        appointment ?? source.userId,
         source.origin,
         source.request,
       );
@@ -84,16 +94,18 @@ export async function reserveCompanyTriggerAssignment(
     const host = await localHost({ db, transport: hosts.transport });
 
     return await db.transaction(async (tx) => {
-      const source = await loadInvocation(tx, invocation);
+      const appointment = await resolveInstallationAppointment(tx, invocation);
+      const source = await loadInvocation(tx, invocation, appointment);
+      const principal = appointment ?? source.userId;
       const receipt = await intakeSpecialistAssignmentInTransaction(
         tx,
-        source.userId,
+        principal,
         source.origin,
         source.request,
         async (sourceTx) => {
           const prepared = await prepareCompanySpecialistAssignment(
             sourceTx,
-            source.userId,
+            principal,
             source.request,
             {
               origin: source.origin,
@@ -109,7 +121,7 @@ export async function reserveCompanyTriggerAssignment(
       if (receipt.duplicate) return receipt;
       await reserveCompanyAssignmentRunInTransaction(
         tx,
-        source.userId,
+        principal,
         receipt,
         source.triggerSource,
         hosts,
@@ -121,7 +133,7 @@ export async function reserveCompanyTriggerAssignment(
         ...receipt,
         assignment: await getSpecialistAssignmentInTransaction(
           tx,
-          source.userId,
+          principal,
           receipt.assignment.id,
         ),
       };

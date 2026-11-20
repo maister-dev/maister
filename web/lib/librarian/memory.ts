@@ -9,6 +9,7 @@ import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { getDb } from "@/lib/db/client";
 import {
   librarianContextSnapshots,
@@ -198,6 +199,25 @@ export async function assertMemoryTurnFence(
       {
         details: { reason: "generation_changed" },
       },
+    );
+  }
+  const capture = knowledgeAccessCaptureSchema
+    .nullable()
+    .safeParse(turn.knowledgeAccess);
+
+  // The conversation lock orders source capture and personal-memory writes.
+  // Personal memory can retain project visibility only.
+  if (
+    !capture.success ||
+    (capture.data !== null &&
+      (capture.data.state !== "complete" ||
+        capture.data.restrictions.length > 0))
+  ) {
+    log.warn({ turnId, ownerId }, "[FIX] personal memory source fenced");
+    throw new MaisterError(
+      "PRECONDITION",
+      "A turn with governed source context cannot write or suggest personal memory",
+      { details: { reason: "governed_memory_source" } },
     );
   }
 

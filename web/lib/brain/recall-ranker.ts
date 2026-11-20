@@ -20,6 +20,11 @@ export const RANKER_VERSION = "hybrid-v1";
 const RANK_WEIGHTS = { vector: 1.0, lexical: 0.25, confidence: 0.1 } as const;
 const INDEXED_CONFIDENCE = 1;
 
+/** The private vault adapter uses the same semantic and lexical weights. */
+export function hybridRelevance(semantic: SQL, lexical: SQL): SQL {
+  return sql`(${semantic}) * ${RANK_WEIGHTS.vector}::float8 + (${lexical}) * ${RANK_WEIGHTS.lexical}::float8`;
+}
+
 export type RecallRankerDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
@@ -35,6 +40,7 @@ export interface RecallQuery {
   limit: number;
   kinds?: BrainItemKind[];
   minConfidence?: number;
+  sourceClass?: "owned";
 }
 
 export interface RankedOwnedBrainItem {
@@ -166,7 +172,7 @@ export const pgVectorRecallRanker: RecallRanker = {
       },
     }));
     const indexed =
-      q.kinds && q.kinds.length > 0
+      q.sourceClass === "owned" || (q.kinds && q.kinds.length > 0)
         ? []
         : await rankIndexedChunks(db, {
             ...q,

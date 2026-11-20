@@ -378,6 +378,19 @@ function validateAttentionStreamContract(doc, file) {
         `visibility filter is asserted against it`,
     );
   }
+
+  const designedReviewFields =
+    Object.hasOwn(tick.properties ?? {}, "reviews") ||
+    Object.hasOwn(tick.properties ?? {}, "reviewVersion");
+  if (designedReviewFields) {
+    const reviews = tick.properties.reviews;
+    const version = tick.properties.reviewVersion;
+    if (reviews?.type !== "integer" || reviews?.minimum !== 0)
+      throw new Error(`${file}: AttentionTickEvent.reviews must be a non-negative integer`);
+    if (version?.type !== "string" || version?.pattern !== "^[0-9a-f]{64}$")
+      throw new Error(`${file}: AttentionTickEvent.reviewVersion must be an opaque SHA-256 value`);
+    assertEnumIncludes(tick.properties.changed.items, ["reviews"], `${file}: AttentionTickEvent.changed`);
+  }
   // Synthetic frames carry no SSE id and must never advance a replay cursor.
   const heartbeat = schemaFor(doc, "AttentionHeartbeatEvent", file);
   if (heartbeat.properties && "id" in heartbeat.properties) {

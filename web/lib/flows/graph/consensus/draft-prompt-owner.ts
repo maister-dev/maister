@@ -25,6 +25,10 @@ import {
 } from "./text";
 import { CONSENSUS_DRAFT_ARTIFACT_DEF } from "./artifact-defs";
 
+import {
+  assertMemorySessionSources,
+  settleMemoryInjection,
+} from "@/lib/agent-memory-vault/injection";
 import { prepareAgentRunFinalization } from "@/lib/agents/finalization";
 import {
   acknowledgeAgentMessage,
@@ -145,6 +149,7 @@ export async function admitConsensusDraftPrompt(
 
   if (!source || !run?.parentRunId)
     throw new PromptOwnerInvariantError("consensus_draft_admission_source");
+  await assertMemorySessionSources(tx, session.runId);
 
   return {
     owner: {
@@ -315,6 +320,13 @@ export async function prepareConsensusDraftPrompt(
       if (!application.finalized)
         throw new PromptOwnerInvariantError("consensus_draft_finalization");
       await acknowledgeAgentMessage(tx, ref, command.id);
+      if (outcome.state === "succeeded")
+        await settleMemoryInjection(
+          tx,
+          ref.runId,
+          ref.assignmentId,
+          command.id,
+        );
       log.info(
         {
           runId: ref.runId,

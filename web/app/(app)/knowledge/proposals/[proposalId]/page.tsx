@@ -12,7 +12,6 @@ import {
   KnowledgeUnavailable,
   knowledgePanelClass,
 } from "@/components/brain/knowledge-view";
-import { KnowledgeProposalDecision } from "@/components/brain/knowledge-decision-controls";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
@@ -29,6 +28,7 @@ export default async function KnowledgeProposalPage({
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("knowledge");
+  const tReviews = await getTranslations("inbox.reviews");
   const { proposalId } = await params;
   const principal = { kind: "user" as const, userId: user.id };
   const db = getDb();
@@ -115,10 +115,11 @@ export default async function KnowledgeProposalPage({
           {proposal.status === "pending" ? (
             <section className={knowledgePanelClass}>
               {actions.review ? (
-                <KnowledgeProposalDecision
-                  proposalId={proposal.id}
-                  revision={proposal.revision}
-                />
+                <Link
+                  href={`/inbox?${new URLSearchParams({ kind: "knowledge", proposalId: proposal.id })}#knowledge-memory`}
+                >
+                  {tReviews("link")}
+                </Link>
               ) : (
                 <p className="text-sm text-mute">{t("reviewUnavailable")}</p>
               )}

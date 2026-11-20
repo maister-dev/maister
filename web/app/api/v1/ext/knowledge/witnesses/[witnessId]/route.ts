@@ -24,5 +24,6 @@ export async function GET(
         await getKnowledgeWitness(getDb(), principal, witnessId),
       );
     },
+    { librarian: "read" },
   );
 }

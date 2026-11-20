@@ -273,3 +273,62 @@ erDiagram
   agent_schedules ||--o{ agent_trigger_attempts : "claim retains non-FK identity"
   agent_trigger_attempts ||--o| runs : "reserved launch receipt"
 ```
+
+## Agent memory vault (Implemented)
+
+The main lineage owns vault data and the lexical index. This relational model
+uses database-generated text UUIDs and UTC timestamps. Owner project and
+agent IDs are retained identity values. Live attachment matching is performed
+on the access path, so detaching cannot cascade to history. An installation
+vault uses the existing singleton company ID and the qualified catalog agent ID.
+
+```mermaid
+erDiagram
+    agent_memory_vaults ||--o{ agent_memory_notes : contains
+    agent_memory_vaults ||--o{ agent_memory_operations : records
+    agent_memory_notes ||--|{ agent_memory_revisions : versions
+    agent_memory_revisions ||--o| agent_memory_revision_payloads : contains
+    agent_memory_operations ||--o{ agent_memory_revisions : applies
+    agent_memory_operations ||--o{ agent_memory_operation_revisions : references
+    agent_memory_revisions ||--o{ agent_memory_operation_revisions : resolves
+    agent_memory_vaults ||--o{ agent_memory_injections : captures
+    agent_memory_vaults ||--o{ agent_memory_import_receipts : imports
+    agent_memory_operations ||--o| agent_memory_proposals : awaits
+    agent_memory_revisions ||--o{ agent_memory_tags : indexes
+    agent_memory_revisions ||--o{ agent_memory_links : indexes
+    agent_memory_revisions ||--o| agent_memory_search : indexes
+    agent_memory_revisions ||--o{ agent_memory_embeddings : projects
+```
+
+| Relation | Identity, fields and constraints | Retention and invalidation |
+| --- | --- | --- |
+| `agent_memory_vaults` | `id` PK, `agent_id` text, mutually exclusive `project_id` and `company_id` text, `generation` bigint default 0, nonnegative `note_count`, `content_chars`, `content_bytes` default 0, `created_at`. Partial unique keys over `(project_id, agent_id)` and `(company_id, agent_id)`. Company FK to `companies.id` restricts delete. | Project and catalog identities survive detach and retirement. The current reviewed attachment supplies enablement and policy. |
+| `agent_memory_notes` | `id` PK, `vault_id` FK, `path`, `head_revision_id`, `deleted_at` nullable. Unique `(vault_id,id)`. Active `(vault_id,path)` partial unique with deterministic byte order. The head FK to `revisions(vault_id,note_id,id)` is deferred to transaction commit. | Keep tombstones. New creation after a delete uses a new note ID. Reject active file and directory-prefix collisions under the vault row lock. |
+| `agent_memory_revisions` | `id` PK, `vault_id,note_id` composite FK, `parent_revision_id` nullable same-note FK, optional `operation_id` same-vault FK, `path`, `kind`, `content_sha256` nullable only for tombstones, `size_chars`, `size_bytes`, typed immutable `author` and `source_restrictions` JSON, sorted unique `source_project_ids` text array and `created_at`. Unique `(vault_id,note_id,id)`. At most one first revision and one child per predecessor. Index history by `(vault_id,note_id,created_at,id)`. | Immutable metadata. Both authoring Run/session and node-attempt identifiers are retained identity values so operational cleanup cannot erase provenance. Author JSON distinguishes human, librarian via human, agent session and operator import. |
+| `agent_memory_revision_payloads` | PK/FK `(vault_id,note_id,revision_id)`. `content` text holds the exact UTF-8 text. Tombstones carry no payload. | Immutable while present. Only the redaction transaction removes it, with the exact revision redaction record. |
+| `agent_memory_redactions` | PK/FK `(vault_id,note_id,revision_id)`. Current global admin ID, bounded reason, `created_at`. | Original metadata remains. The row denies derivative reads and future effects before projection cleanup. |
+| `agent_memory_operations`, `agent_memory_operation_revisions` | Operation PK `id`, unique `(vault_id,id)` and `(vault_id,principal_key,request_key)`, `command_kind`, canonical `command_digest`, `outcome`, and `created_at`. Reference row key `(vault_id,operation_id,role,ordinal)` and same-vault composite FKs to operation and `(vault_id,note_id,revision_id)`. Roles separate base and result. | Outcome receipt and revision pointers commit with the write. Diffs resolve from currently authorized payload references. |
+| `agent_memory_injections` | PK `id`, `vault_id`, retained `run_id`, nullable `node_attempt_id`, `session_key`, protocol version and hash, canonical ordered tree descriptor, optional same-vault index revision FK, descriptor digest, rendered size, `application_state`, application receipt ID, `created_at`. Unique `(run_id,session_key)`. | Immutable staged descriptor. Settlement changes only application fields. Only acknowledged application receipts enter the Run aggregate. |
+| `agent_memory_cutover`, `agent_memory_import_receipts` | Singleton `agent_memory_cutover` with positive generation on activation and activation timestamp, absent means before activation. Import receipt PK `id`, generation, source kind, canonical root-relative legacy identity, source digest and byte length, state, timestamps, optional `vault_id,note_id,revision_id` composite FK, and retained `run_id` for snapshots or `source_project_id,source_agent_id` for note owners. Unique `(generation,source_kind,source_identity)`. Run snapshot text is stored in a guarded import payload keyed by the receipt. | No SQL reads host files. Verified live owner, destination and digest authorize cleanup. Unmatched historical snapshots remain on disk. |
+| Tags, aliases, links, lexical search | `agent_memory_tags` and `agent_memory_aliases` key by exact source revision and canonical term. `agent_memory_links` keys by exact source revision and occurrence ordinal and stores the parsed target. `agent_memory_search` uses an exact revision composite key and generated `tsvector`, with a GIN index. All have a same-vault revision FK. | Rebuildable projections. Recheck current visible heads. Resolve aliases and backlinks against currently visible candidates. |
+| `agent_memory_proposals`, `agent_memory_proposal_payloads` | Same-vault operation FK, exact base refs, content-free change summaries, immutable source and author, and separately stored typed command. Index pending by `(vault_id,created_at,id)`. | Proposal quota is independent of live quota. Settlement retains the effect receipt. Exact-source redaction removes affected payloads and withdraws pending rows. |
+| `agent_memory_promotions` | Exact same-vault revision FK and operation FK, with the resulting governed proposal ID. | The witness resolves the vault payload under current source authority. |
+| `inbox_review_receipts` | Actor-scoped request key, digest and receipt ID. | A batch item commits this receipt with its domain decision. |
+| Brain `agent_memory_embeddings` | Rebuildable exact revision FK. Primary key `(vault_id,note_id,revision_id,model,dimensions,generation)`. Leases fence retryable work. | Optional Brain migration `0012` follows main. Search joins only the visible current head and configured generation. |
+
+Unless noted otherwise, FKs within retained vault history restrict deletes.
+Only rebuildable projections may cascade from their exact owners. Vault
+services acquire the vault row before changing the head, quota or generation.
+Positive and missing numbers use bounded integers at the command boundary.
+
+| Migration | Applied delta | Upgrade fixture and postcondition |
+| --- | --- | --- |
+| Main 0343 | Vaults, notes, revisions, payloads, redaction metadata, operations, injections and import/cutover tables. Add nullable `runs.agent_memory_hash_format` with accepted values `legacy-file-v1` and `vault-manifest-v1`. | Seed 0342 with enabled and disabled attachments, detached legacy inventory and a Run with raw hash. New history starts empty. Backfill the format only where the old hash is non-null. Preserve its bytes. |
+| Main 0344 | Deferred exact head FK, immutable revision and payload guards, and append-only/redaction transition guards. | A cross-vault or cross-note pointer, changed history or an unauthorized payload delete fails. Same-transaction real redaction succeeds. |
+| Main 0345 | Native source capture v2 permits exact vault revision references. | Existing v1 receipt bytes stay unchanged. A v1 receipt cannot include a vault revision reference. |
+| Main 0346 | Main tag/alias/link and lexical projections. | Existing heads are indexed by the resumable builder. Installing this migration needs no vector extension. |
+| Brain 0012 | Optional vault embedding projection keyed by the exact main revision. | Upgrading 0011 keeps existing Brain data and embeddings. The main-only database remains usable. |
+| Main 0347 | Project write policy default `auto`, immutable capture of external input and vault proposal/decision receipts. | Unknown historical execution provenance cannot authorize automatic writes. Existing settings retain their meaning. |
+| Main 0348–0349 | Reviewed installation reach, versioned execution principal and exact disclosure provenance. See the [company domain](company-brain-domain.md). | Legacy grant or historical execution gains no new scope. Provenance that cannot resolve remains unavailable. |
+| Main 0354 | Stable owner on note import receipts, backfilled from an exact retained destination when available. | A published receipt retains its original project and agent. An interrupted pre-upgrade inventory with no destination remains unclassified. |
+| Main 0355 | Permit one terminal `revoked` reason on installation Run credentials, including previously rotated credentials. | Run finalization retires the entire credential family. Recorded reasons, scope bindings and revocation remain protected against later changes that would restore access. |

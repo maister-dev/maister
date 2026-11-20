@@ -19,6 +19,7 @@ import {
   companyBindingUpdateSchema,
 } from "./company-binding-types";
 import {
+  assertInstallationGrantAdmin,
   buildCompanyBindingSnapshot,
   beginCompanyBindingTransaction,
   logCompanyBindingChange,
@@ -150,12 +151,19 @@ export async function updateCompanySpecialistBinding(
         specialist: companySpecialistDto(head, replay),
         duplicate: true,
       };
-    assertMutableBinding(
-      head,
-      await loadCompanyBindingRevision(tx, head, head.revision),
-      input.expectedRevision,
-    );
-    const snapshot = await buildCompanyBindingSnapshot(tx, agentId, input);
+    const previous = await loadCompanyBindingRevision(tx, head, head.revision);
+
+    assertMutableBinding(head, previous, input.expectedRevision);
+    if (previous.snapshot.installationGrant || input.installationGrant)
+      await assertInstallationGrantAdmin(tx, userId);
+    const installationGrant =
+      input.installationGrant === undefined
+        ? previous.snapshot.installationGrant
+        : input.installationGrant;
+    const snapshot = await buildCompanyBindingSnapshot(tx, agentId, {
+      ...input,
+      installationGrant,
+    });
     const next = { ...head, revision: head.revision + 1 };
 
     await tx.execute(
@@ -235,6 +243,8 @@ export async function detachCompanySpecialistBinding(
       );
 
       assertMutableBinding(head, previous, input.expectedRevision);
+      if (previous.snapshot.installationGrant)
+        await assertInstallationGrantAdmin(tx, userId);
       const next = { ...head, revision: head.revision + 1 };
       const detachedAt = new Date().toISOString();
 

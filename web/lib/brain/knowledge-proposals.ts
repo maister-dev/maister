@@ -47,6 +47,7 @@ import {
   authorizeKnowledgeRevisionRead,
 } from "./knowledge-restrictions";
 
+import { installationRunProjects } from "@/lib/agents/installation-source-capture";
 import { postgresTextSchema } from "@/lib/text-schema";
 import { ownerSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -419,7 +420,15 @@ export async function createKnowledgeProposalInTransaction(
     owner.data,
     actor,
   );
+  const installationProjectSources = !consumer?.runId
+    ? []
+    : await installationRunProjects(tx, consumer.runId);
   let restrictions = additionalKnowledgeRestrictions(owner.data, [
+    ...(input.inheritedRestrictions ?? []),
+    ...installationProjectSources.map((projectId) => ({
+      kind: "project_visibility" as const,
+      projectId,
+    })),
     ...(consumer?.capture.restrictions ?? []),
     ...links.flatMap(
       (link) => parseKnowledgeRestrictions(link.snapshot.restrictions) ?? [],

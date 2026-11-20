@@ -24,6 +24,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import knowledgeToolSchemas from "../../../../../runtime/knowledge-tool-input.schema.json";
 
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
+import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
 import { knowledgeReadPolicyCte } from "@/lib/brain/knowledge-query-policy";
 import { MaisterError } from "@/lib/errors";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
@@ -814,11 +815,14 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     "INSERT INTO brain_items(id,company_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'assertion','MCP retained record',$3,$4,0.3)",
     [recordId, companyId, query, randomUUID()],
   );
-  // Measure this exact reference independently of other retained qualification records.
+  // Measure this exact reference with the same transaction setup as the HTTP route.
   const queryTiming = await database.db.transaction(async (tx) => {
+    const principal = { kind: "token", tokenId: issued.tokenId } as const;
+
+    await lockKnowledgeReadConsumer(tx, principal);
     const identity = await resolveKnowledgePrincipal(
       tx,
-      { kind: "token", tokenId: issued.tokenId },
+      principal,
       "knowledge:read",
     );
     const result = await tx.execute(

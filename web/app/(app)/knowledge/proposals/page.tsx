@@ -31,6 +31,7 @@ export default async function KnowledgeProposalsPage({
 }): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("knowledge");
+  const tReviews = await getTranslations("inbox.reviews");
   const query = await searchParams;
   const input = knowledgeReviewPageQuery(query);
   const principal = { kind: "user" as const, userId: user.id };
@@ -44,6 +45,9 @@ export default async function KnowledgeProposalsPage({
   return (
     <>
       <KnowledgeHeader title={t("proposals")}>
+        <Link href="/inbox?kind=knowledge#knowledge-memory">
+          {tReviews("link")}
+        </Link>
         {proposalOwners.length > 0 ? (
           <Link href="/knowledge/proposals/new">{t("propose")}</Link>
         ) : null}

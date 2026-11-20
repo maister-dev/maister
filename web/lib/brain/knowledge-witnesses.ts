@@ -38,6 +38,27 @@ export async function getKnowledgeWitness(
   principal: KnowledgePrincipal,
   witnessId: string,
 ): Promise<KnowledgeWitnessDto> {
+  return (await readKnowledgeWitness(db, principal, witnessId)).witness;
+}
+
+/** Resolve the exact authorized capture for a promoted vault revision. */
+export async function getKnowledgeWitnessContent(
+  db: KnowledgeDatabase,
+  principal: KnowledgePrincipal,
+  witnessId: string,
+): Promise<string> {
+  const { content } = await readKnowledgeWitness(db, principal, witnessId);
+
+  if (content === null) throw unavailableKnowledgeReference();
+
+  return content;
+}
+
+async function readKnowledgeWitness(
+  db: KnowledgeDatabase,
+  principal: KnowledgePrincipal,
+  witnessId: string,
+): Promise<{ witness: KnowledgeWitnessDto; content: string | null }> {
   if (!postgresTextSchema.min(1).max(128).safeParse(witnessId).success)
     throw new MaisterError("CONFIG", "Invalid evidence witness identity");
   try {
@@ -47,7 +68,7 @@ export async function getKnowledgeWitness(
       const consumer = await lockKnowledgeReadConsumer(tx, principal);
 
       await resolveKnowledgePrincipal(tx, principal, "knowledge:read");
-      const inspection = await inspectKnowledgeWitness(
+      const inspection = await inspectKnowledgeWitnessCapture(
         tx,
         principal,
         witnessId,
@@ -59,20 +80,40 @@ export async function getKnowledgeWitness(
         restrictionsForKnowledgeAccess(inspection.access),
       );
 
-      return inspection.witness;
+      return inspection;
     });
   } catch (error) {
     throw redactQueryError(error);
   }
 }
 
-/** Return retained capture bytes only after current owner and inherited-source authorization. */
 export async function inspectKnowledgeWitness(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
   witnessId: string,
   access: KnowledgeAccessWalk = { visited: [], remaining: 256 },
 ): Promise<{ witness: KnowledgeWitnessDto; access: KnowledgeAccessWalk }> {
+  const result = await inspectKnowledgeWitnessCapture(
+    tx,
+    principal,
+    witnessId,
+    access,
+  );
+
+  return { witness: result.witness, access: result.access };
+}
+
+/** Return retained capture bytes only after current owner and inherited-source authorization. */
+async function inspectKnowledgeWitnessCapture(
+  tx: KnowledgeTransaction,
+  principal: KnowledgePrincipal,
+  witnessId: string,
+  access: KnowledgeAccessWalk = { visited: [], remaining: 256 },
+): Promise<{
+  witness: KnowledgeWitnessDto;
+  access: KnowledgeAccessWalk;
+  content: string | null;
+}> {
   const row = (
     await tx.execute(sql`
     SELECT w.id,w.source_version,w.content_sha256,w.selector,w.restrictions,w.capture_locator,w.captured_at,
@@ -94,8 +135,27 @@ export async function inspectKnowledgeWitness(
     content?: unknown;
     recordId?: unknown;
     revision?: unknown;
+    revisionId?: unknown;
   }>;
-  const content = typeof locator.content === "string" ? locator.content : null;
+  let content = typeof locator.content === "string" ? locator.content : null;
+
+  if (locator.kind === "vault_revision") {
+    const source = restrictions?.find(
+      (ref) =>
+        ref.kind === "agent_vault_revision_v1" &&
+        ref.revisionId === locator.revisionId,
+    );
+
+    if (source?.kind !== "agent_vault_revision_v1")
+      throw unavailableKnowledgeReference();
+    const result =
+      await tx.execute(sql`SELECT content FROM agent_memory_revision_payloads
+      WHERE (vault_id,note_id,revision_id)=(${source.vaultId},${source.noteId},${source.revisionId}) FOR SHARE`);
+
+    if (typeof result.rows[0]?.content !== "string")
+      throw unavailableKnowledgeReference();
+    content = result.rows[0].content;
+  }
 
   if (content !== null && sha256(content) !== row.content_sha256)
     throw new MaisterError(
@@ -127,7 +187,7 @@ export async function inspectKnowledgeWitness(
       "Stored evidence does not match its native inspection contract",
     );
 
-  return { witness: result.data, access: authorized };
+  return { witness: result.data, access: authorized, content };
 }
 
 async function witnessAvailability(
@@ -136,6 +196,8 @@ async function witnessAvailability(
   locator: Readonly<{ kind?: unknown; recordId?: unknown; revision?: unknown }>,
   content: string | null,
 ): Promise<KnowledgeWitnessDto["availability"]> {
+  if (locator.kind === "vault_revision")
+    return content === null ? "missing" : "available";
   if (locator.kind === "record" && typeof locator.recordId === "string") {
     const record = (
       await tx.execute(

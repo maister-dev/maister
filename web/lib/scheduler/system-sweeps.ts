@@ -25,6 +25,7 @@ import { runEventStreamHealthSweep } from "@/lib/execution-host/events/stream-he
 import { reportStrandedAgentTurns } from "@/lib/agents/stranded-turns";
 import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
+import { runMemoryIndexSweep } from "@/lib/agent-memory-vault/embedding-sweep";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import {
   ensureLocalExecutionDataPlane,
@@ -645,6 +646,18 @@ export async function runSystemSweep(
     errors.push(`brain reindex sweep failed: ${message}`);
     bundleErrors.push(`brain reindex sweep failed: ${message}`);
     log.error({ err: message }, "system_sweep brain reindex threw");
+  }
+
+  try {
+    const memoryIndex = await runMemoryIndexSweep(getDb());
+
+    log.debug(memoryIndex, "system_sweep memory index complete");
+  } catch (error) {
+    const code = error instanceof Error ? error.name : "UnknownError";
+
+    errors.push("memory index sweep failed");
+    bundleErrors.push("memory index sweep failed");
+    log.error({ code }, "system_sweep memory index threw");
   }
 
   const gc = await runGcBundle();

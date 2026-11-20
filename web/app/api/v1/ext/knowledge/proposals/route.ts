@@ -56,5 +56,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         receipt.duplicate ? 200 : 201,
       );
     },
+    { installation: true },
   );
 }

@@ -2,7 +2,12 @@
 
 ## Purpose
 
-**Agent memory** is a single small markdown file per `(agent, project)`
+The PostgreSQL vault stores current Markdown notes and immutable
+revisions. The Memory tab and session-bound MCP command use it after
+activation. Existing installations use the file behavior below until their
+operator completes the explicit cutover. [ADR-210](../decisions/adr-210.md)
+
+**Legacy agent memory** is a single Markdown file per `(agent, project)`
 attachment that a platform agent may read at launch and rewrite during a run.
 It is the agent's own durable cross-run scratch note — "what I learned about
 this project last time" — and it exists so a summoned agent
@@ -200,7 +205,188 @@ sequenceDiagram
     API-->>UI: 204 - idempotent when already absent
 ```
 
+### Vault ownership, writes and cutover (Implemented — ADR-210)
+
+A vault resolves from a current memory-enabled attachment and a stable owner
+key. For a project, the key is the project ID plus qualified agent ID. For
+an installation, it is the company ID plus qualified agent ID. History
+survives detach and catalog retirement. The [vault data
+contract](../db/agents-domain.md#agent-memory-vault-implemented) owns its storage
+constraints. The [external API](../api/external/operations.openapi.yaml) and
+[browser API](../api/web.openapi.yaml) own the command and response schemas.
+
+| State or operation | Guard | Result and owner |
+| --- | --- | --- |
+| Missing path → create | Both expected hash and revision are null. Destination is free, policy admits the writer, and quotas allow the new head. | Commit a note, first revision and receipt. A name reused after deletion gets a new note identity. |
+| Active → edit, insert or replace | Match the current revision and hash. Replace requires one literal match. Insert addresses the position after the 1-based line number, with zero for the start. | Append a revision and change only its head. Match and split lines on LF, preserve other bytes, and use the supplied insert text verbatim. |
+| Active → rename | Match the current revision and hash and verify the destination is unused. | Keep the note ID and append a path-change revision. |
+| Active → delete or clear | Match every current head in the bounded selection. For a virtual directory or vault clear, also match the vault generation. | Append tombstone revisions in one transaction. Directory paths and root are virtual. Root cannot be renamed or deleted through the MCP command. |
+| Retained revision → revert | Match the current head, require a readable payload on the exact selected revision, and validate the resulting path, content and quotas. | Append a new revision with its own author and inherited source restrictions. |
+| Mutation requires review | Policy forces review after authority and content validation. | Commit the proposed operation and its receipt, with no head or live quota change. Review completion uses the same CAS service. |
+| Active or historical → redacted | Current global administrator selects an exact revision and supplies a reason. | Record redaction and remove payload in one transaction with index and dependent access invalidation. If the revision is current, append a tombstone. The revision identity and hash remain. |
+| Inventoried → imported → verified | Operator quiesces all legacy writers and revokes or drains their credentials. Resolve owners using immutable IDs or an unambiguous current slug/catalog match. | Persist checksummed exact bytes and receipts. Files remain as rollback input until activation. Repeated import of the same inventory is a replay. |
+| Verified → active | All live notes resolve, every staged payload matches its receipt, and the maintenance process confirms writer quiescence. | Advance the durable cutover generation. New writes and token admission use the active generation. |
+| Active → cleaned | Explicit operator action checks the live generation, exact file identity and SHA-256 from its import receipt. | Remove the verified original and settle cleanup. An already absent file is a replay only for an imported and verified identity. |
+
+Before activation, take matched backups of the main database and legacy
+runtime data. Set `MAISTER_UPGRADE_MAINTENANCE` on the web processes, retire
+pre-vault binaries and drain legacy sessions before running `activate`.
+Keep the verified originals through activation and the first database write
+and read. After activation, vault revisions exist in PostgreSQL. Returning to
+a pre-vault binary requires restoring both parts of the pre-activation backup
+as one recovery point. That recovery point excludes subsequent vault edits.
+
+The vault namespace is NFC, case sensitive and rooted at `/memories`.
+Commands accept canonical virtual paths only. Relative paths, empty and dot
+segments, backslashes, percent escapes, URL/query/fragment syntax, control
+characters and non-scalar UTF-16 are invalid. File leaves end in `.md`.
+Directories are implicit parents. A file cannot also be a parent prefix.
+The limit is 512 UTF-8 bytes and 16 segments below the root. A directory page
+sorts by canonical UTF-8 path, and a note page binds to its exact revision.
+An immediate folder entry records one visible descendant as evidence for that
+folder. The generation still fences the visible subtree. Child note paths,
+hashes and bodies are disclosed through subsequent reads.
+Every cursor binds the vault, selection, kind and sort key. Offset into a
+long note is measured in UTF-16 code units and a page cannot split a
+surrogate pair.
+
+A command locks the current principal and provenance consumer first, then the
+cross-domain knowledge lock where applicable, the vault quota/generation row,
+and the affected note heads in ID order. Governed Librarian card preparation
+and confirmation hold a shared redaction fence before locking the card,
+vault, or source payload. Redaction takes the exclusive fence before its vault
+and dependent card changes. It invalidates dependent projections in the same
+transaction, and later reads recheck exact source access. No external provider or
+filesystem action runs under a vault write transaction. The service validates
+every CAS, authorization and resulting quota before modifying any head.
+
+An operation receipt is unique for the vault, author principal and request key.
+Its digest uses the UTF-8 encoding of the normalized command with recursively
+sorted object keys, preserving list order. Same digest replays the original
+permitted receipt. Distinct digest conflicts. A replay that would disclose
+content reapplies current read and source checks. A single-note CAS conflict
+carries the authorized current state. A multi-note conflict identifies only
+the authorized mismatched heads and includes a reload instruction.
+
+For launch, an attested Flow node persona takes precedence over the Run
+persona. An enabled attachment authorizes bounded protocol, visible
+`/memories/index.md` and a sorted path page delimited as untrusted data.
+Current source authorization applies to the index and path metadata, including
+ordinary project Runs. A fresh prompt omits an unreadable index and any
+unreadable paths. Project sessions without the governed source capture profile
+can read local project memory and legacy private imports. Governed revisions
+require a current source consumer for prompt delivery and on-demand access.
+The path page fits both the character limit and the
+remaining source capture budget. Omitted paths can be read through authorized,
+bounded vault views.
+Escape reserved markers in note bytes and path names for rendering only.
+Use the existing prompt application owner to stage the exact manifest before
+dispatch and settle applied or retired. An uncertain delivery keeps its staged
+manifest. Record a Run-level digest over applied descriptors in session-key
+order under the Run lock. Preserve prior receipts on a resumed context and
+reauthorize their sources before restore. A fresh context uses a new
+descriptor. A shared-session subagent definition has no independent vault
+credential.
+
+Legacy imports use the current ADR-152 encoder only for resolving original
+files. Reject symlinks, nonregular files, invalid UTF-8 and ambiguous owners.
+Move exact note bytes into the index only if they fit its cap. Otherwise use
+`/memories/notes/legacy.md` and create a small bounded index pointer. Preserve
+the original SHA-256, project ID and qualified agent ID in the import receipt.
+Import retries, activation and cleanup revalidate the path's current owner
+against the retained identity. A reused slug cannot adopt another vault's
+verified receipt. Snapshot evidence is separately
+classified as retained, missing or mismatched, using the Run ID and the
+historical hash. Cleanup of mismatched evidence is forbidden. Before
+activation the operator can restart the legacy writer with intact files.
+After activation, recover with a vault-compatible build or restore a
+consistent backup. Reimport cannot overwrite an activated head.
+
+### Current-head index and search
+
+Main migration `0346` adds exact-head tag, alias, heading, link and lexical
+projections. Updates share the revision transaction. The existing system
+sweep rebuilds missing heads in bounded batches without creating revisions.
+Unsafe reserved frontmatter in legacy content has a repair state. New invalid
+frontmatter is refused before a head change.
+
+English and Russian lexical search runs in the main database. Brain migration
+`0012` adds the optional vector projection. It uses the configured provider
+and only considers entries for the current head and provider generation.
+A worker checks the same witnesses when writing its leased result. Visibility
+checks precede candidate ranking and determine what contributes to tag counts,
+alias resolution and backlinks.
+
+### Project review and redaction
+
+The attachment's `memoryWritePolicy` defaults to `auto`. Changing it to
+`review` holds subsequent agent mutations. The launch witness can also force
+review after a policy change. Run lineage and retained input markers preserve
+external provenance from webhook delivery and task source links. Human saves
+remain governed by `editSettings`.
+
+A pending result returns HTTP `202` with an operation ID and proposal ID.
+Retries preserve the original receipt. Current reviewers see the exact
+selection and its proposed diff in Inbox. Acceptance repeats CAS, source and
+quota checks in the revision transaction. Admin redaction tombstones an
+active head, removes the payload and cancels dependent vault previews. Governed
+evidence points to an exact revision and refuses reads after redaction.
+
+**Vault expectations (Design and implementation):**
+
+- **AV-01, AV-12.** A mutation MUST compare revision and hash in the locked
+  head transaction before creating any revision.
+- **AV-02.** The prompt application receipt MUST bind the exact rendered
+  manifest and its attested session, including on parallel Flow sessions.
+- **AV-03.** The authorization service MUST enforce `readRepoFiles` on
+  project memory bodies and metadata, `editSettings` on human mutations, and
+  a current global admin for redaction.
+- **AV-09.** Index publication MUST compare the current head revision under
+  the vault lock before serving tags, links, terms or embeddings.
+- **AV-10.** The cutover generation MUST fence API writes until the operator
+  verifies import receipts and quiesces legacy writers.
+- **AV-14.** The disclosure service MUST record exact memory revision sources
+  before governed bytes leave a read, conflict, replay or prompt path. A
+  session that cannot retain those restrictions must conceal the governed
+  revision and refuse restore of a prior disclosure.
+- **AV-15.** The wire adapters MUST distinguish applied, pending, disabled,
+  stale and hidden outcomes using the canonical schemas.
+- **AV-16.** An exact redaction MUST deny derivatives and future effects
+  that depend on the redacted payload.
+- **AV-17.** A history revert MUST write a new revision through the same
+  command service used for normal edits.
+
+**Vault refusals (Implemented):**
+
+- Invalid path, command, insertion line, or configured cap uses
+  `CONFIG`. A stale head, conflicting destination or replay digest uses
+  `CONFLICT`. A disabled vault or absent verified cutover uses
+  `PRECONDITION` after target authorization.
+- An unauthorized source, foreign note, or hidden target follows the missing
+  resource response. An overflow in the disclosure receipt refuses the read
+  before bytes leave and retains the previous capture.
+- A storage or provider error leaves the last committed history intact.
+  Index-provider retries are bounded and keyed by exact revision and model.
+  The lexical index remains locally available. A configured vector error is
+  visible to the caller.
+
+### Installation vault (Implemented)
+
+The vault owner is the qualified agent and the installation company. Admins
+can edit and review. A non-admin needs current `specialists:read` plus
+access to every source project and any finer source restrictions. Each
+installation session proposal retains the union of projects disclosed up to
+the write, guarded links and base revision sources. The Memory tab and Inbox
+resolve the same company and agent identifiers from their URL filters.
+Directory generations describe the visible subtree selected by the request.
+A recursive mutation submits the original selected subtree generation and
+the exact complete set of member revisions for atomic revalidation.
+
 ## Expectations
+
+The ADR-152 expectations in this section apply to the pre-cutover file store.
+The vault section above governs writes, permissions, storage and prompt
+composition after activation.
 
 - `agent_project_links.memory_enabled` MUST be the only switch for the memory
   axis; no code path MUST let `can_read_brain` / `can_write_brain` imply it or
@@ -274,13 +460,14 @@ sequenceDiagram
 
 ## Edge cases
 
+These cases describe the legacy file store before activation.
+
 | Edge case | Behavior |
 |---|---|
 | File larger than the cap at launch | No MEMORY section, `log.warn` with `reason: "over_cap"`, launch proceeds. The file is NOT truncated or rewritten — only a write refuses. |
 | Path exists but is not a readable regular file (a directory, a bad mode) | No MEMORY section, `log.warn` with `reason: "unreadable"`, launch proceeds. Nothing throws. |
 | CAS loss | 409 `MaisterError("CONFLICT")` whose body carries the current `{content, hash}` so the agent can merge and retry. The agent's bytes are discarded, never partially merged. |
 | Two genuinely concurrent writers | The advisory lock serializes them: the second observes the first's committed bytes, loses the hash comparison, and gets the 409 with the winner's content. The atomic tmp+rename additionally guarantees the file is never a partial or interleaved write. Both halves are required — without the lock the compare-then-write is a check-then-act and BOTH writers succeed. |
-| A flow-bound agent whose definition says `memory: enabled` | `attachAgent` lands `memory_enabled = false` and `updateAgentLink` refuses an explicit `true` with `MaisterError("CONFIG")`. The axis can never be switched on for an attachment that structurally cannot use it, from the UI or from a direct `PATCH`. |
 | Owner `DELETE` racing an agent write | Refused. `DELETE` is a compare-and-delete under the same lock as the write CAS, so a clear holding a stale `ifHash` answers `409` with the content it would have destroyed. Exactly one of a racing clear and write wins; the loser always learns why. |
 | A memory file that tells the agent to do something | The injected block is bracketed by `BEGIN/END AGENT MEMORY` markers and explicitly framed as reference data, so a line that reads like a command is a note about a command. This narrows, but does not eliminate, the fact that an agent authors its own later prompt context — see ADR-152 D29 for the accepted residual risk. |
 | A directory (or any non-file) at the memory path on `DELETE` | Surfaces as an error rather than a `204`. Only `ENOENT`/`ENOTDIR` mean "already absent"; answering "cleared" while the path survives would be the same lie the read path already reports as `unreadable`. |
@@ -291,19 +478,18 @@ sequenceDiagram
 | Launch using `opts.overridePrompt` | Injects nothing and records nothing — no MEMORY section, no `memory-snapshot.md`, no `runs.agent_memory_hash`. The override discards the composed base prompt, so claiming provenance would be a lie. |
 | Session resume | Memory is injected at initial spawn only. `startAgentSession` is ALSO the resume entry point (hook_trip and idle-permission resumes call it), so the gate is explicit: a run with an `acp_session_id` resolves no memory, re-injects nothing, and — crucially — does NOT re-write `memory-snapshot.md` or re-stamp `runs.agent_memory_hash`, which would otherwise describe the last resume instead of what the agent started from. |
 | Provenance write fails (full disk, unwritable run dir, DB error) | The launch PROCEEDS with memory injected; the failure degrades to a `log.warn` carrying `reason: "provenance_write_failed"`. Memory must never block a launch, and the snapshot/stamp are evidence, not a precondition. |
-| Flow-bound agent | An effective definition declaring `flow:` diverts to the agent-driven flow path and produces a `run_kind='flow'` run that never reaches the prompt seam, so it carries no memory. The owner's Memory toggle renders disabled with that reason rather than hidden. |
+| Flow-bound agent before vault activation | The legacy file is not injected into a Flow prompt. After activation, the attested persona can use the vault. |
 | Agent id with no `:` reaching the store | `MaisterError("CONFIG")` — never a silent single-level path, which would let two different agents share a file. |
 | Run dir GC'd after 7 days | `memory-snapshot.md` is gone but `runs.agent_memory_hash` remains, so "what did this agent remember when it acted" stays answerable. |
 | Agent token revoked (link disabled or detached) | The write fails at the token layer as well as the memory gate — `revokeAgentProjectTokens` fires on both disable and detach. |
 
 ## Non-goals
 
-Embeddings, vector search, or any Project Brain ledger involvement —
-`memory_recall` / `memory_propose` are untouched · cross-project or
-cross-agent sharing · encryption · an autonomous consolidation job · memory for
-flow `ai_coding` nodes or scratch runs (`run_kind = 'agent'` only) · exposing
-memory in the assistant pulse · package-shipped seed templates · a
-`memory_read` MCP tool.
+Personal scratch-run memory, graph visualization, scheduled consolidation,
+package-shipped seed notes, and memory content in the assistant pulse are outside
+ADR-210. Project Brain owns its separate `memory_recall` and `memory_propose`
+semantics. Vault vector search uses optional Brain infrastructure and promotes
+notes through governed proposals that reference the exact source revision.
 
 ## Linked artifacts
 

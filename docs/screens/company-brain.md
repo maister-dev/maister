@@ -124,3 +124,7 @@ shared route skeleton and error boundary.
 - [Public guide](../../site-docs/guides/company-brain.md)
 - `web/e2e/company-brain.spec.ts` — native browser/session qualification;
   installed-package/live ACP qualification remains in its own lane.
+
+## Proposal review (Implemented)
+
+Read authorized proposal and decision history here. Pending items link to the filtered Inbox review group.

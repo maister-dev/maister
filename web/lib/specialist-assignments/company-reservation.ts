@@ -6,6 +6,7 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 import type { CompanyAgentContextInput } from "@/lib/agents/company-agent-context";
 import type { CompanyRunReservation } from "@/lib/agents/company-execution-types";
 import type { CompanyTriggerReservation } from "@/lib/agents/company-trigger-reservation";
+import type { SpecialistIntakePrincipal } from "@/lib/agents/installation-appointment";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 
 import {
@@ -20,7 +21,7 @@ import { MaisterError } from "@/lib/errors";
 /** Reuse the native standalone/graph constructor on the intake transaction after pooled host activation. */
 export async function reserveCompanyAssignmentRunInTransaction(
   tx: Db,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   receipt: SpecialistIntakeReceipt,
   triggerSource: CompanyAgentContextInput["triggerSource"],
   hosts: ExecutionHosts,
@@ -52,6 +53,11 @@ export async function reserveCompanyAssignmentRunInTransaction(
   >;
 
   if (specialist.revision.snapshot.definition.flow) {
+    if (typeof principal !== "string")
+      throw new MaisterError(
+        "PRECONDITION",
+        "Installation source appointments require a standalone specialist",
+      );
     const coordinator = await loadCompanyAssignmentCoordinator(
       tx,
       owner.companyId,
@@ -60,7 +66,7 @@ export async function reserveCompanyAssignmentRunInTransaction(
 
     reservation = await reserveCompanyFlowRunInTransaction(
       tx,
-      userId,
+      principal,
       {
         ...common,
         coordinatorBindingId: coordinator.head.id,
@@ -73,7 +79,7 @@ export async function reserveCompanyAssignmentRunInTransaction(
   } else
     reservation = await reserveCompanyAgentRunInTransaction(
       tx,
-      userId,
+      principal,
       common,
       hosts,
       host,

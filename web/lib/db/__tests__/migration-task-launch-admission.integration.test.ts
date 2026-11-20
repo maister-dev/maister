@@ -915,7 +915,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     const readHistory = async () => ({
       run: (
         await partial.pool.query(
-          "SELECT to_jsonb(r)-ARRAY['knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent'] value FROM runs r WHERE id=$1",
+          "SELECT to_jsonb(r)-ARRAY['knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format'] value FROM runs r WHERE id=$1",
           [command.runId],
         )
       ).rows[0].value,
@@ -927,7 +927,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       ).rows[0].value,
       token: (
         await partial.pool.query(
-          "SELECT to_jsonb(t)-ARRAY['bound_run_id','origin_kind','revocation_reason','company_id','company_run_id','knowledge_node_attempt_id'] value FROM project_tokens t WHERE id=$1",
+          "SELECT to_jsonb(t)-ARRAY['bound_run_id','origin_kind','revocation_reason','company_id','company_run_id','knowledge_node_attempt_id','installation_run_id'] value FROM project_tokens t WHERE id=$1",
           [tokenId],
         )
       ).rows[0].value,
@@ -952,7 +952,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     expect(
       (
         await partial.pool.query(
-          "SELECT knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent FROM runs WHERE id=$1",
+          "SELECT knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format FROM runs WHERE id=$1",
           [command.runId],
         )
       ).rows[0],
@@ -961,11 +961,12 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       company_id: null,
       company_execution_snapshot: null,
       company_cancellation_intent: null,
+      agent_memory_hash_format: null,
     });
     expect(
       (
         await partial.pool.query(
-          "SELECT bound_run_id,origin_kind,revocation_reason,company_id,company_run_id,knowledge_node_attempt_id FROM project_tokens WHERE id=$1",
+          "SELECT bound_run_id,origin_kind,revocation_reason,company_id,company_run_id,knowledge_node_attempt_id,installation_run_id FROM project_tokens WHERE id=$1",
           [tokenId],
         )
       ).rows[0],
@@ -976,6 +977,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       company_id: null,
       company_run_id: null,
       knowledge_node_attempt_id: null,
+      installation_run_id: null,
     });
     expect(
       (

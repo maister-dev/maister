@@ -1,10 +1,20 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { createHash } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
+
+import { lockLibrarianKnowledgeContext } from "./knowledge-authority";
+import {
+  isKnowledgeCardProposal,
+  knowledgeCardProposalSchemas,
+  effectContextSchema,
+} from "./knowledge-card-types";
+import { prepareKnowledgeCard } from "./knowledge-card-effects";
 
 import { requireProjectActionForUser, type ProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -24,10 +34,12 @@ import {
   projectForDraft,
 } from "@/lib/librarian/memory";
 import { taskStatementSchema } from "@/lib/tasks/statement";
+import { contentDigest } from "@/lib/evaluations/digest";
 
 type Db = ReturnType<typeof getDb>;
 
 export const librarianCardProposalSchema = z.discriminatedUnion("action", [
+  ...knowledgeCardProposalSchemas,
   z
     .object({
       action: z.literal("memory_suggest"),
@@ -157,6 +169,16 @@ export async function cardTarget(
   ownerUserId: string,
   db: Db,
 ): Promise<CardTarget> {
+  if (isKnowledgeCardProposal(proposal))
+    return db.transaction(async (tx) => {
+      const { target, revision } = await prepareKnowledgeCard(
+        tx as unknown as ExecutionDb,
+        ownerUserId,
+        proposal,
+      );
+
+      return { target, revision };
+    });
   if (proposal.action === "memory_suggest") {
     const [conversation] = await db
       .select({ contextEpoch: librarianConversations.contextEpoch })
@@ -289,11 +311,87 @@ export async function proposeLibrarianCard(
     ownerUserId: string;
     proposal: LibrarianCardProposal;
     turnId?: string;
+    tokenId?: string;
     recordCreated: (db: Db, cardId: string) => Promise<void>;
   },
   db: Db = getDb(),
 ): Promise<{ cardId: string; expiresAt: Date }> {
   const proposal = librarianCardProposalSchema.parse(input.proposal);
+
+  if (isKnowledgeCardProposal(proposal)) {
+    if (!input.tokenId)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "A current librarian confirmation token is required",
+      );
+    const tokenId = input.tokenId;
+    const expiresAt = new Date(Date.now() + cardTtlMinutes() * 60_000);
+
+    return db.transaction(async (tx) => {
+      const context = await lockLibrarianKnowledgeContext(
+        tx,
+        tokenId,
+        "librarian:cards",
+      );
+
+      if (
+        context.ownerId !== input.ownerUserId ||
+        context.turnId !== input.turnId ||
+        context.conversationId !== input.conversationId ||
+        context.segmentId !== input.segmentId
+      )
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "The confirmation does not belong to this turn",
+        );
+      const prepared = await prepareKnowledgeCard(
+        tx as unknown as ExecutionDb,
+        context.ownerId,
+        proposal,
+        context.capture.restrictions,
+      );
+      const effect = effectContextSchema.parse({
+        schemaVersion: 1,
+        turnId: context.turnId,
+        contextEpoch: context.contextEpoch,
+        restrictions: prepared.restrictions,
+        preview: prepared.preview,
+      });
+
+      if (Buffer.byteLength(JSON.stringify(effect.restrictions)) > 65536)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Confirmation source capture exceeds its bound",
+        );
+      const [created] = await tx
+        .insert(librarianCards)
+        .values({
+          conversationId: context.conversationId,
+          segmentId: context.segmentId,
+          kind: prepared.kind,
+          status: "pending",
+          target: prepared.target,
+          targetRevision: prepared.revision,
+          payload: proposal,
+          payloadDigest: contentDigest(proposal),
+          effectContext: effect,
+          requiresOwner: true,
+          expiresAt,
+        })
+        .returning({ id: librarianCards.id });
+
+      if (!created)
+        throw new MaisterError("CRASH", "The confirmation was not retained");
+      await input.recordCreated(tx as unknown as Db, created.id);
+      log.info(
+        { cardId: created.id, turnId: context.turnId, kind: prepared.kind },
+        "librarian confirmation retained",
+      );
+
+      return { cardId: created.id, expiresAt };
+    });
+  }
+
   const { target, revision } = await cardTarget(
     proposal,
     input.ownerUserId,
