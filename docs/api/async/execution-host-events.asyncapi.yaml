@@ -240,6 +240,13 @@ components:
               type: object
               description: Designed context observation variants travel in existing session.update payloads or through contentRef.
               additionalProperties: true
+            contextType:
+              type: string
+              enum: [usage_update, compaction_update, compaction_summary_chunk]
+              description: Optional safe routing hint for a referenced context update.
+            contextReplay:
+              type: boolean
+              description: True when a context frame arrives during the adapter resume handshake.
             steeringSupported:
               type: boolean
               description: |

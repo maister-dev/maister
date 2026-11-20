@@ -491,6 +491,13 @@ export async function createAcpConnection(
       sessionId,
       monotonicId: record.monotonicId,
       update: params.update,
+      ...(args.resumeSessionId &&
+      !record.acpSessionId &&
+      (params.update.sessionUpdate === "usage_update" ||
+        params.update.sessionUpdate === "compaction_update" ||
+        params.update.sessionUpdate === "compaction_summary_chunk")
+        ? { contextReplay: true as const }
+        : {}),
     };
   };
 

@@ -1549,6 +1549,7 @@ export type SessionEvent =
       sessionId: string;
       monotonicId: number;
       update: unknown;
+      contextReplay?: true;
     }
   | {
       type: "session.permission_request";

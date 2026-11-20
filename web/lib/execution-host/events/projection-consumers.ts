@@ -13,6 +13,7 @@ export const CANONICAL_PROJECTION_CONSUMERS = {
   artifact: "canonical-artifact-projector-v1",
   transcript: "canonical-run-transcript-v2",
   cost: "canonical-run-cost-v1",
+  context: "canonical-context-v1",
 } as const;
 
 export async function seedCanonicalProjectionConsumers(

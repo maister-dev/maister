@@ -26,7 +26,7 @@ describe("adapter registry", () => {
     });
   });
 
-  it("uses explicit no-FS ACP client capabilities for every adapter", () => {
+  it("advertises compaction only to Claude and Codex and preserves no-FS", () => {
     for (const adapter of [
       "claude",
       "codex",
@@ -39,6 +39,9 @@ describe("adapter registry", () => {
           readTextFile: false,
           writeTextFile: false,
         },
+        ...(["claude", "codex"].includes(adapter)
+          ? { session: { compaction: {} } }
+          : {}),
       });
     }
   });

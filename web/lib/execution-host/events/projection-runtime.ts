@@ -4,6 +4,7 @@ import type { ExecutionEventProjector } from "./projector";
 import type { ProjectionWorker } from "./projection-worker";
 
 import { canonicalLifecycleProjector } from "./lifecycle-projector";
+import { canonicalContextProjector } from "./context-projector";
 import { canonicalPromptProjector } from "./prompt-projector";
 import { canonicalRuntimeObjectProjector } from "./runtime-object-projector";
 import { canonicalTranscriptProjector } from "./transcript-projector";
@@ -23,6 +24,7 @@ export const canonicalProjectors: readonly ExecutionEventProjector[] = [
   canonicalArtifactProjector,
   canonicalTranscriptProjector,
   canonicalCostProjector,
+  canonicalContextProjector,
 ];
 
 declare global {

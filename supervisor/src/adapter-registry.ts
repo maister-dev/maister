@@ -8,6 +8,7 @@ export type AdapterRuntime = {
   readonly defaultArgs: readonly string[];
   readonly binaryOverrideEnv: string;
   readonly readOnlyCapable: boolean;
+  readonly contextCompaction: boolean;
   readonly readOnlySessionSmoke: "required" | "not_required";
   // ADR-130: cached live evidence that capability_guard enforcement is safe at the
   // ACP seam (requestPermission fires per write + carries a stable tool identity).
@@ -23,6 +24,7 @@ export type AdapterRuntime = {
 };
 
 export type AdapterClientCapabilities = {
+  readonly session?: { readonly compaction: Record<string, never> };
   readonly fs: {
     readonly readTextFile: false;
     readonly writeTextFile: false;
@@ -49,6 +51,7 @@ export type AdapterResumeAction =
 const ADAPTER_RUNTIMES = [
   {
     id: "claude",
+    contextCompaction: true,
     defaultBinary: "claude-agent-acp",
     defaultArgs: [],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CLAUDE",
@@ -61,6 +64,7 @@ const ADAPTER_RUNTIMES = [
   },
   {
     id: "codex",
+    contextCompaction: true,
     defaultBinary: "codex-acp",
     defaultArgs: [],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_CODEX",
@@ -73,6 +77,7 @@ const ADAPTER_RUNTIMES = [
   },
   {
     id: "gemini",
+    contextCompaction: false,
     defaultBinary: "gemini",
     defaultArgs: ["--acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_GEMINI",
@@ -85,6 +90,7 @@ const ADAPTER_RUNTIMES = [
   },
   {
     id: "opencode",
+    contextCompaction: false,
     defaultBinary: "opencode",
     defaultArgs: ["acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_OPENCODE",
@@ -97,6 +103,7 @@ const ADAPTER_RUNTIMES = [
   },
   {
     id: "mimo",
+    contextCompaction: false,
     defaultBinary: "mimo",
     defaultArgs: ["acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
@@ -150,13 +157,14 @@ export function resolveAdapterBinary(args: {
 export function clientCapabilitiesForAdapter(
   adapter: ExecutorAgent,
 ): AdapterClientCapabilities {
-  getAdapterRuntime(adapter);
+  const runtime = getAdapterRuntime(adapter);
 
   return {
     fs: {
       readTextFile: false,
       writeTextFile: false,
     },
+    ...(runtime.contextCompaction ? { session: { compaction: {} } } : {}),
   };
 }
 

@@ -179,7 +179,10 @@ export async function getRunNodeTranscript(
     // order. Every row in a node transcript carries a position, so the
     // coalesce is defensive only.
     .orderBy(
-      sql`coalesce(${runMessages.supervisorEventId}, '0')::bigint asc`,
+      sql`coalesce(
+        CASE WHEN ${runMessages.projectionToolKey} LIKE 'compaction:%'
+          THEN ${runMessages.firstSupervisorEventId} END,
+        ${runMessages.supervisorEventId}, '0')::bigint asc`,
       sql`(${runMessages.promptDispatchKey} is not null) asc`,
       asc(runMessages.sequence),
     );

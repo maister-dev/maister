@@ -1,10 +1,13 @@
 import type { ScratchMessageRole } from "@/lib/db/schema";
+import type { CompactionMarker } from "./compaction";
 
 import {
   parseNoProgressDiagnostics,
   type NoProgressDiagnostics,
 } from "@/lib/runs/no-progress-diagnostics";
 import { decodeJsonbSafe } from "@/lib/execution-host/events/jsonb-safe";
+import { decodeAcpContextUpdate } from "../../../runtime/acp-context";
+import { parseCompactionMarker } from "./compaction";
 import {
   FLOW_ASSISTANT_ACTION_FENCE,
   parseFlowActionResultPayload,
@@ -72,6 +75,7 @@ export type ScratchSystemPayload =
   | ScratchFlowActionResultPayload;
 
 export type ParsedScratchMessage =
+  | CompactionMarker
   | { kind: "text"; markdown: boolean; text: string }
   | { kind: "tool"; tool: ScratchToolPayload }
   | { kind: "thought"; text: string }
@@ -163,10 +167,6 @@ export function stripFlowAssistantActionFencesForDisplay(
     .trim();
 
   return normalized.length > 0 ? normalized : FLOW_ASSISTANT_ACTION_PLACEHOLDER;
-}
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function chunkText(content: unknown): string {
@@ -322,12 +322,9 @@ export function interpretScratchUpdate(
       };
     }
     case "usage_update": {
-      const used = numberOrNull(u.used);
-      const size = numberOrNull(u.size);
+      const usage = decodeAcpContextUpdate(u);
 
-      return used !== null && size !== null
-        ? { kind: "usage", used, size }
-        : null;
+      return usage?.kind === "usage" ? usage : null;
     }
     default:
       return null;
@@ -420,6 +417,11 @@ export function parseScratchMessageContent(
   const obj = asObject(parsed);
 
   if (obj && obj.v === 1) {
+    if (role === "system" && obj.kind === "compaction") {
+      const marker = parseCompactionMarker(obj);
+
+      if (marker) return marker;
+    }
     if (role === "tool" && obj.kind === "tool") {
       return { kind: "tool", tool: obj as unknown as ScratchToolPayload };
     }

@@ -207,6 +207,67 @@ async function writeEvents(_slug: string, runId: string, lines: string[]) {
 }
 
 describe("projectRunTranscript", () => {
+  it("retains one ordered compaction marker through streamed text and terminal enrichment", async () => {
+    const { runId, slug, implAttemptId } = await seed();
+    const compaction = (monotonicId: number, update: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "session.update",
+        monotonicId,
+        nodeAttemptId: implAttemptId,
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          ...update,
+        },
+      });
+
+    await writeEvents(slug, runId, [
+      textLine(implAttemptId, 1, "Before"),
+      compaction(2, { status: "in_progress" }),
+      compaction(3, {
+        sessionUpdate: "compaction_summary_chunk",
+        content: { type: "text", text: "Draft" },
+      }),
+      compaction(4, { status: "completed" }),
+      textLine(implAttemptId, 5, "After"),
+    ]);
+    await projectRunTranscript(runId, { client: db });
+    const first = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+    expect(first?.messages.map(({ role }) => role)).toEqual([
+      "assistant",
+      "system",
+      "assistant",
+    ]);
+    const marker = first!.messages[1]!;
+    expect(JSON.parse(marker.content)).toMatchObject({
+      kind: "compaction",
+      status: "completed",
+      summary: "Draft",
+    });
+
+    await writeEvents(slug, runId, [
+      compaction(6, {
+        status: "completed",
+        summary: [{ type: "text", text: "Final summary" }],
+      }),
+      compaction(7, { status: "failed", error: "Conflicting terminal" }),
+    ]);
+    await projectRunTranscript(runId, { client: db });
+    const enriched = await getRunNodeTranscript(runId, "implement", {
+      client: db,
+    });
+    expect(enriched?.messages.map(({ id }) => id)).toEqual(
+      first?.messages.map(({ id }) => id),
+    );
+    expect(JSON.parse(enriched!.messages[1]!.content)).toMatchObject({
+      kind: "compaction",
+      status: "completed",
+      summary: "Final summary",
+    });
+  });
+
   it("keeps text and tool coalescing stable across bounded projection quanta", async () => {
     const { runId, slug, implAttemptId } = await seed();
     const lines = Array.from({ length: 220 }, (_, index) => {

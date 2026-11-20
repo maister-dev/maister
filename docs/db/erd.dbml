@@ -1744,6 +1744,7 @@ table gate_results {
   prompt_ordinal integer [not null, default: 0]
   permission_resume jsonb
   verdict jsonb
+  prompt_failure_reason text
   input_artifact_refs jsonb
   output_artifact_ref text
   stale_from jsonb
@@ -1752,6 +1753,7 @@ table gate_results {
   ended_at "timestamp with time zone"
 
   indexes {
+
 
 
     run_id [name: 'gate_results_run_idx']
@@ -2180,6 +2182,7 @@ table node_attempts {
   vars jsonb [not null, default: `{}`]
   exit_code integer
   error_code text
+  error_reason text
   owner_user_id text
   base_ref text
   returned_commits text
@@ -2194,6 +2197,7 @@ table node_attempts {
 
   indexes {
     (run_id, node_id, attempt) [name: 'node_attempts_run_node_attempt_uq', unique]
+
 
 
 
@@ -2626,6 +2630,52 @@ table review_comments {
     parent_id [name: 'review_comments_parent_idx']
 
 
+
+  }
+}
+
+table run_context_compactions {
+  run_id text [not null]
+  execution_host_id text [not null]
+  assignment_id text [not null]
+  assignment_epoch integer [not null]
+  host_session_id text [not null]
+  node_attempt_id text
+  compaction_id text [not null]
+  status text [not null]
+  first_run_sequence bigint [not null]
+  last_run_sequence bigint [not null]
+  started_at "timestamp with time zone"
+  ended_at "timestamp with time zone"
+  command_id text
+  before_usage jsonb
+  after_usage jsonb
+
+  indexes {
+    (run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, compaction_id) [pk]
+    (run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, status) [name: 'run_context_compactions_status_idx']
+    (run_id, node_attempt_id) [name: 'run_context_compactions_attempt_idx']
+
+  }
+}
+
+table run_context_usage {
+  run_id text [not null]
+  execution_host_id text [not null]
+  assignment_id text [not null]
+  assignment_epoch integer [not null]
+  host_session_id text [not null]
+  node_attempt_id text
+  used_tokens bigint
+  size_tokens bigint
+  observed_at "timestamp with time zone"
+  usage_run_sequence bigint
+  last_run_sequence bigint [not null]
+  created_run_sequence bigint
+
+  indexes {
+    (run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, node_attempt_id) [name: 'run_context_usage_scope_uq', unique]
+    (run_id, node_attempt_id, last_run_sequence) [name: 'run_context_usage_attempt_idx']
 
   }
 }
@@ -5130,6 +5180,14 @@ ref review_comments_parent_id_review_comments_id_fk: review_comments.parent_id >
 ref review_comments_author_user_id_users_id_fk: review_comments.author_user_id > users.id [delete: set null, update: no action]
 
 ref review_comments_resolved_by_user_id_users_id_fk: review_comments.resolved_by_user_id > users.id [delete: set null, update: no action]
+
+ref run_context_compactions_run_id_runs_id_fk: run_context_compactions.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_context_compactions_node_attempt_id_node_attempts_id_fk: run_context_compactions.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref run_context_usage_run_id_runs_id_fk: run_context_usage.run_id > runs.id [delete: cascade, update: no action]
+
+ref run_context_usage_node_attempt_id_node_attempts_id_fk: run_context_usage.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
 ref run_cost_rollups_run_id_runs_id_fk: run_cost_rollups.run_id > runs.id [delete: cascade, update: no action]
 

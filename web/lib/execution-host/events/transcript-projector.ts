@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionEventProjector } from "./projector";
 import type { SQL } from "drizzle-orm";
+import type { CompactionMarker } from "@/lib/run-transcript/compaction";
 
 import { createHash, randomUUID } from "node:crypto";
 
@@ -12,6 +13,12 @@ import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { ExecutionEventProjectionError } from "./projector";
 import { lockTranscriptState, transcriptStateId } from "./run-message-store";
 import { prepareTranscriptContent } from "./session-content";
+import {
+  decodeAcpContextUpdate,
+  MAX_COMPACTION_SUMMARY_LENGTH,
+} from "../../../../runtime/acp-context";
+import { runEventWakeBus } from "./run-wake";
+import { parseCompactionMarker } from "@/lib/run-transcript/compaction";
 
 import {
   nodeAttempts,
@@ -37,6 +44,19 @@ const RESET_EVENTS = new Set([
 export const canonicalTranscriptProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.transcript,
   prepare: prepareTranscriptContent,
+  afterCommit(events) {
+    const relevant = events.find((event) => {
+      const update = decodeAcpContextUpdate(event.payload?.update);
+
+      return (
+        update?.kind === "compaction" ||
+        update?.kind === "summary_chunk" ||
+        event.eventType === "session.exited" ||
+        event.eventType === "session.crashed"
+      );
+    });
+    if (relevant) runEventWakeBus.wake(relevant.runId);
+  },
   project: async (tx, event) => {
     try {
       await projectTranscriptEvent(tx, event);
@@ -58,6 +78,17 @@ export const canonicalTranscriptProjector: ExecutionEventProjector = {
     }
   },
 };
+
+function compactionSessionPrefix(event: ExecutionEvent): string {
+  const scope = [
+    event.executionHostId,
+    event.executionAssignmentId,
+    event.assignmentEpoch,
+    event.hostSessionId,
+  ];
+
+  return `compaction:${createHash("sha256").update(JSON.stringify(scope)).digest("hex")}:`;
+}
 
 // 22P05 unsupported_character_value, 22P02 invalid_text_representation,
 // 22021 character_not_in_repertoire. None can succeed on a retry.
@@ -113,6 +144,27 @@ export async function projectTranscriptEvent(
   // (`librarian_messages`); its live tokens ride the run stream's canonical
   // events. A second copy in `run_messages` would outlive a history clear.
   if (run.kind === "librarian") return false;
+  if (
+    (event.eventType === "session.exited" ||
+      event.eventType === "session.crashed") &&
+    event.hostSessionId &&
+    event.runSequence !== null
+  ) {
+    await tx
+      .update(runMessages)
+      .set({
+        content: sql`jsonb_set(${runMessages.content}::jsonb,'{status}','"interrupted"')::text`,
+        supervisorEventId: event.runSequence.toString(),
+      })
+      .where(
+        and(
+          eq(runMessages.runId, event.runId),
+          sql`
+        CASE WHEN ${runMessages.projectionToolKey} LIKE ${`${compactionSessionPrefix(event)}%`}
+        THEN (${runMessages.content}::jsonb->>'status' = 'in_progress') ELSE false END`,
+        ),
+      );
+  }
   const scratchBoundary =
     run.kind === "scratch" &&
     SCRATCH_BOUNDARY_EVENTS.has(event.eventType) &&
@@ -168,7 +220,14 @@ export async function projectTranscriptEvent(
 
     return false;
   }
-  const update = interpretSessionUpdate(event.payload?.update);
+  const context =
+    event.payload?.contextReplay === true
+      ? null
+      : decodeAcpContextUpdate(event.payload?.update);
+  const update =
+    context?.kind === "compaction" || context?.kind === "summary_chunk"
+      ? context
+      : interpretSessionUpdate(event.payload?.update);
 
   if (!update) return false;
   if (event.runSequence === null)
@@ -246,6 +305,77 @@ export async function projectTranscriptEvent(
   };
 
   switch (update.kind) {
+    case "compaction":
+    case "summary_chunk": {
+      const key =
+        compactionSessionPrefix(event) +
+        createHash("sha256").update(update.id).digest("hex");
+      const [existing] = await tx
+        .select({
+          id: runMessages.id,
+          content: runMessages.content,
+          lastEventId: runMessages.supervisorEventId,
+        })
+        .from(runMessages)
+        .where(
+          and(
+            eq(runMessages.runId, event.runId),
+            eq(runMessages.projectionToolKey, key),
+          ),
+        )
+        .limit(1);
+      const previous = existing
+        ? parseCompactionMarker(JSON.parse(existing.content))
+        : null;
+
+      if (
+        existing?.lastEventId &&
+        BigInt(existing.lastEventId) >= event.runSequence
+      )
+        return false;
+      if (update.kind === "summary_chunk" && previous?.status !== "in_progress")
+        return false;
+      if (
+        previous &&
+        previous.status !== "in_progress" &&
+        update.kind === "compaction" &&
+        previous.status !== update.status
+      )
+        return false;
+      const marker: CompactionMarker = {
+        ...previous,
+        v: 1,
+        kind: "compaction",
+        status: update.kind === "compaction" ? update.status : "in_progress",
+        ...(update.kind === "summary_chunk"
+          ? {
+              summary: ((previous?.summary ?? "") + update.text).slice(
+                0,
+                MAX_COMPACTION_SUMMARY_LENGTH,
+              ),
+            }
+          : {
+              ...(update.summary !== undefined
+                ? { summary: update.summary }
+                : {}),
+              ...(update.error !== undefined ? { error: update.error } : {}),
+            }),
+      };
+      if (existing) {
+        await tx
+          .update(runMessages)
+          .set({
+            content: JSON.stringify(marker),
+            supervisorEventId: eventId,
+          })
+          .where(eq(runMessages.id, existing.id));
+      } else {
+        openTextSequence = null;
+        openThoughtSequence = null;
+        await insert("system", JSON.stringify(marker), key);
+      }
+      break;
+    }
     case "text":
       openThoughtSequence = null;
       if (openTextSequence === null)

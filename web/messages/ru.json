@@ -1,4 +1,13 @@
 {
+  "contextUsage": {
+    "in_progress": "Идёт сжатие контекста…",
+    "completed": "Контекст сжат",
+    "failed": "Не удалось сжать контекст",
+    "cancelled": "Сжатие контекста отменено",
+    "interrupted": "Сжатие контекста прервано",
+    "beforeTokens": "До сжатия {used, number} / {size, number} токенов",
+    "afterTokens": "После сжатия {used, number} / {size, number} токенов"
+  },
   "graphViewport": {
     "locate": "Найти узел",
     "fit": "Уместить граф",

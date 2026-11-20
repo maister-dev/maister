@@ -55,6 +55,58 @@ function createClient(): { client: BoundedAcpClient; messages: AnyMessage[] } {
 }
 
 describe("bounded ACP framed-source contract", () => {
+  it("keeps the prompt response reachable after malformed optional context frames", async () => {
+    const source = new PassThrough({ objectMode: true });
+    const stdin = new PassThrough();
+    const { client, messages } = createClient();
+    const onFailure = vi.fn();
+    const reader = boundedAcpStream({
+      source,
+      stdin,
+      client,
+      onFailure,
+      adapter: "codex",
+    }).readable.getReader();
+
+    try {
+      for (const update of [
+        { sessionUpdate: "usage_update", used: null, size: 100 },
+        {
+          sessionUpdate: "compaction_summary_chunk",
+          compactionId: "one",
+          content: {},
+        },
+        { sessionUpdate: "usage_update", used: 0, size: 100 },
+      ]) {
+        source.write(
+          Buffer.from(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: { sessionId: "context-test", update },
+            })}\n`,
+          ),
+        );
+      }
+      source.end(
+        Buffer.from(
+          '{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}\n',
+        ),
+      );
+
+      await expect(reader.read()).resolves.toMatchObject({
+        value: { result: { stopReason: "end_turn" } },
+      });
+      expect(messages).toHaveLength(1);
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+      source.destroy();
+      stdin.destroy();
+    }
+  });
+
   it.each([
     {
       label: "oversized identity",

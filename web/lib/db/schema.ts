@@ -6616,6 +6616,9 @@ export const nodeAttempts = pgTable(
     vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
     exitCode: integer("exit_code"),
     errorCode: text("error_code"),
+    errorReason: text("error_reason", {
+      enum: ["context_exhausted", "max_output_tokens"],
+    }),
     // M11b (ADR-030): takeover columns — populated ONLY on the human_review
     // node's takeover attempt. `owner_user_id` records the claiming user;
     // `base_ref`/`returned_commits`/`returned_diff` capture the raw
@@ -6689,6 +6692,10 @@ export const nodeAttempts = pgTable(
     actionResumeCheck: check(
       "node_attempts_action_resume_check",
       sql`${t.actionResume} IS NULL OR (jsonb_typeof(${t.actionResume}) = 'object' AND ${t.actionResume}->'version' = '1'::jsonb AND ((${t.actionResume}->>'kind' = 'clarification' AND jsonb_typeof(${t.actionResume}->'questionId')='string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId')='string' AND (${t.actionResume}->'answer'='null'::jsonb OR (jsonb_typeof(${t.actionResume}->'answer')='object' AND jsonb_typeof(${t.actionResume}->'answer'->'inputRevision')='number' AND ${t.actionResume}->'answer'->>'inputSha256' ~ '^[a-f0-9]{64}$' AND ${t.actionResume}->'answer'->>'receiptSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.actionResume}->'answer'->'checkpointCommandId')='string'))) OR (${t.actionResume}->>'kind' = 'interrupt' AND ${t.actionResume}->>'cause' IN ('operator', 'host_pressure')) OR (${t.actionResume}->>'kind' = 'orchestrator' AND (NOT (${t.actionResume} ? 'permissionResult') OR (jsonb_typeof(${t.actionResume}->'permissionResult') = 'object' AND ${t.actionResume}->'permissionResult'->'version' = '1'::jsonb AND ${t.actionResume}->'permissionResult'->>'kind' = 'permission_result' AND ${t.actionPromptOrdinal} > 0 AND ${t.actionResume}->'permissionResult'->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal} - 1) AND ${t.actionResume}->'permissionResult'->>'sourceCommandId' = ${t.actionResume}->>'sourceCommandId' AND ${t.actionResume}->'permissionResult'->>'sourceAssignmentId' = ${t.actionResume}->>'sourceAssignmentId' AND ${t.actionResume}->'permissionResult'->>'resumeSessionId' = ${t.actionResume}->>'resumeSessionId' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'assignmentId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'optionId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'permissionResult'->'sourceIncarnationId') = 'string'))) OR ((${t.actionResume}->>'kind' = 'permission' OR (${t.actionResume}->>'kind' = 'permission_continue' AND ${t.actionPromptOrdinal} > 0 AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string') OR (${t.actionResume}->>'kind' = 'permission_result' AND ${t.actionCompletion}->>'commandId' = ${t.actionResume}->>'sourceCommandId' AND jsonb_typeof(${t.actionResume}->'checkpointCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceIncarnationId') = 'string')) AND jsonb_typeof(${t.actionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.actionResume}->'optionId') = 'string')) AND jsonb_typeof(${t.actionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.actionResume}->'sourceAssignmentId') = 'string' AND ${t.actionResume}->>'assignmentId' = ${t.executionAssignmentId} AND ${t.actionResume}->'promptOrdinal' = to_jsonb(${t.actionPromptOrdinal}) AND jsonb_typeof(${t.actionResume}->'resumeSessionId') = 'string') IS TRUE`,
+    ),
+    contextFailureReasonCheck: check(
+      "node_attempts_context_failure_reason_check",
+      sql`${t.errorReason} IS NULL OR (${t.errorCode} = 'ACP_PROTOCOL' AND ${t.errorReason} IN ('context_exhausted', 'max_output_tokens')) IS TRUE`,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(
@@ -6814,6 +6821,9 @@ export const gateResults = pgTable(
     promptOrdinal: integer("prompt_ordinal").notNull().default(0),
     permissionResume: jsonb("permission_resume").$type<GatePermissionResume>(),
     verdict: jsonb("verdict").$type<GateVerdict>(),
+    promptFailureReason: text("prompt_failure_reason", {
+      enum: ["context_exhausted", "max_output_tokens"],
+    }),
     inputArtifactRefs: jsonb("input_artifact_refs").$type<string[]>(),
     outputArtifactRef: text("output_artifact_ref"),
     staleFrom: jsonb("stale_from").$type<string[]>(),
@@ -6828,12 +6838,125 @@ export const gateResults = pgTable(
       "gate_results_prompt_ordinal_check",
       sql`${t.promptOrdinal} >= 0`,
     ),
+    promptFailureReasonCheck: check(
+      "gate_results_context_failure_reason_check",
+      sql`${t.promptFailureReason} IS NULL OR ${t.promptFailureReason} IN ('context_exhausted', 'max_output_tokens')`,
+    ),
     permissionResumeCheck: check(
       "gate_results_permission_resume_check",
       sql`(${t.permissionResume} IS NULL AND ${t.promptOrdinal} = 0) OR (jsonb_typeof(${t.permissionResume}) = 'object' AND ${t.permissionResume}->'version' = '1'::jsonb AND ${t.kind} IN ('ai_judgment', 'skill_check') AND (((${t.permissionResume}->>'kind' = 'permission' OR (${t.permissionResume}->>'kind' = 'permission_continue' AND jsonb_typeof(${t.permissionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'checkpointCommandId') = 'string')) AND ${t.promptOrdinal} > 0) OR (${t.permissionResume}->>'kind' = 'permission_result' AND ${t.promptOrdinal} >= 0 AND jsonb_typeof(${t.permissionResume}->'inputCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'checkpointCommandId') = 'string' AND ${t.permissionResume}->>'verdictSha256' ~ '^[a-f0-9]{64}$')) AND ${t.permissionResume}->'promptOrdinal' = to_jsonb(${t.promptOrdinal}) AND ${t.permissionResume}->>'parentActionSha256' ~ '^[a-f0-9]{64}$' AND jsonb_typeof(${t.permissionResume}->'sourceCommandId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceAssignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceIncarnationId') = 'string' AND jsonb_typeof(${t.permissionResume}->'assignmentId') = 'string' AND jsonb_typeof(${t.permissionResume}->'resumeSessionId') = 'string' AND jsonb_typeof(${t.permissionResume}->'hitlRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'sourceRequestId') = 'string' AND jsonb_typeof(${t.permissionResume}->'optionId') = 'string') IS TRUE`,
     ),
     idxRun: index("gate_results_run_idx").on(t.runId),
     idxNodeAttempt: index("gate_results_node_attempt_idx").on(t.nodeAttemptId),
+  }),
+);
+
+// ADR-210: available before the independent lifecycle consumer binds an incarnation.
+const runContextIdentity = () => ({
+  runId: text("run_id")
+    .notNull()
+    .references(() => runs.id, { onDelete: "cascade" }),
+  executionHostId: text("execution_host_id").notNull(),
+  assignmentId: text("assignment_id").notNull(),
+  assignmentEpoch: integer("assignment_epoch").notNull(),
+  hostSessionId: text("host_session_id").notNull(),
+  nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+    onDelete: "cascade",
+  }),
+});
+
+export const runContextUsage = pgTable(
+  "run_context_usage",
+  {
+    ...runContextIdentity(),
+    usedTokens: bigint("used_tokens", { mode: "number" }),
+    sizeTokens: bigint("size_tokens", { mode: "number" }),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "date" }),
+    usageRunSequence: bigint("usage_run_sequence", { mode: "bigint" }),
+    lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }).notNull(),
+    createdRunSequence: bigint("created_run_sequence", { mode: "bigint" }),
+  },
+  (t) => ({
+    scope: unique("run_context_usage_scope_uq")
+      .on(
+        t.runId,
+        t.executionHostId,
+        t.assignmentId,
+        t.assignmentEpoch,
+        t.hostSessionId,
+        t.nodeAttemptId,
+      )
+      .nullsNotDistinct(),
+    byAttempt: index("run_context_usage_attempt_idx").on(
+      t.runId,
+      t.nodeAttemptId,
+      t.lastRunSequence,
+    ),
+    measurement: check(
+      "run_context_usage_measurement_check",
+      sql`
+      (num_nonnulls(${t.usedTokens}, ${t.sizeTokens}, ${t.observedAt}, ${t.usageRunSequence}) = 0 OR
+        (num_nonnulls(${t.usedTokens}, ${t.sizeTokens}, ${t.observedAt}, ${t.usageRunSequence}) = 4 AND
+         ${t.usedTokens} BETWEEN 0 AND 9007199254740991 AND
+         ${t.sizeTokens} BETWEEN 1 AND 9007199254740991 AND
+         ${t.usageRunSequence} BETWEEN 0 AND ${t.lastRunSequence}))
+      AND ${t.lastRunSequence} >= 0 AND ${t.assignmentEpoch} > 0`,
+    ),
+  }),
+);
+
+type ContextTokenPair = { used: number; size: number };
+
+export const runContextCompactions = pgTable(
+  "run_context_compactions",
+  {
+    ...runContextIdentity(),
+    compactionId: text("compaction_id").notNull(),
+    status: text("status", {
+      enum: ["in_progress", "completed", "failed", "cancelled", "interrupted"],
+    }).notNull(),
+    firstRunSequence: bigint("first_run_sequence", {
+      mode: "bigint",
+    }).notNull(),
+    lastRunSequence: bigint("last_run_sequence", { mode: "bigint" }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
+    commandId: text("command_id"),
+    beforeUsage: jsonb("before_usage").$type<ContextTokenPair>(),
+    afterUsage: jsonb("after_usage").$type<ContextTokenPair>(),
+  },
+  (t) => ({
+    identity: primaryKey({
+      name: "run_context_compactions_pk",
+      columns: [
+        t.runId,
+        t.executionHostId,
+        t.assignmentId,
+        t.assignmentEpoch,
+        t.hostSessionId,
+        t.compactionId,
+      ],
+    }),
+    byScopeStatus: index("run_context_compactions_status_idx").on(
+      t.runId,
+      t.executionHostId,
+      t.assignmentId,
+      t.assignmentEpoch,
+      t.hostSessionId,
+      t.status,
+    ),
+    byAttempt: index("run_context_compactions_attempt_idx").on(
+      t.runId,
+      t.nodeAttemptId,
+    ),
+    lifecycle: check(
+      "run_context_compactions_lifecycle_check",
+      sql`
+      ${t.assignmentEpoch} > 0 AND length(${t.compactionId}) BETWEEN 1 AND 256
+      AND ${t.firstRunSequence} BETWEEN 0 AND ${t.lastRunSequence}
+      AND ((${t.status} = 'in_progress' AND ${t.startedAt} IS NOT NULL AND ${t.endedAt} IS NULL)
+        OR (${t.status} IN ('completed', 'failed', 'cancelled', 'interrupted') AND ${t.endedAt} IS NOT NULL))`,
+    ),
   }),
 );
 

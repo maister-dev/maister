@@ -7,12 +7,15 @@ import { NextResponse } from "next/server";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { projectHitlAnswer } from "@/lib/hitl-answer-view";
 import { extractOptions } from "@/lib/queries/hitl";
+import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import { readCompactionEvidence } from "@/lib/runs/compaction-evidence";
 import { loadScratchTerminalCause } from "@/lib/runs/terminal-cause";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
@@ -383,6 +386,47 @@ export async function GET(
         (row: PendingHitlRow) => row.respondedAt === null,
       ) as PendingHitlRow | undefined) ?? null;
 
+    const messages = [...messageRows]
+      .sort(
+        (a: { sequence: number }, b: { sequence: number }) =>
+          a.sequence - b.sequence,
+      )
+      .map(publicMessage);
+    const markers = messages.flatMap((message) => {
+      if (message.role !== "system") return [];
+      const marker = parseScratchMessageContent("system", message.content);
+
+      return marker.kind === "compaction" ? [{ message, marker }] : [];
+    });
+    if (markers.length > 0) {
+      const evidence = await readCompactionEvidence(
+        getDb(), runId, markers.map(({ message }) => message.id),
+      );
+      try {
+        if (run.projectId)
+          await requireProjectAction(run.projectId, "readRepoFiles");
+        await assertRunKnowledgeDisclosure(
+          getDb(),
+          { kind: "user", userId: sessionUser.id },
+          runId,
+        );
+        for (const { message, marker } of markers) {
+          message.content = JSON.stringify({ ...marker, ...evidence.get(message.id) });
+        }
+      } catch (error) {
+        if (!isMaisterError(error) || error.code !== "UNAUTHORIZED")
+          throw error;
+        for (const { message, marker } of markers) {
+          message.content = JSON.stringify({
+            v: 1,
+            kind: "compaction",
+            status: marker.status,
+            ...evidence.get(message.id),
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
       run: {
         id: run.id,
@@ -417,12 +461,7 @@ export async function GET(
         lastAgentMessageAt: scratch.lastAgentMessageAt,
       },
       workspace: publicWorkspace(workspaceRows[0]),
-      messages: [...messageRows]
-        .sort(
-          (a: { sequence: number }, b: { sequence: number }) =>
-            a.sequence - b.sequence,
-        )
-        .map(publicMessage),
+      messages,
       attachments: attachmentRows.map(publicAttachment),
       terminalCause: await loadScratchTerminalCause(
         db,

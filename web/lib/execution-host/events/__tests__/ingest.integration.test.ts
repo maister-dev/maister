@@ -104,6 +104,97 @@ function event(
 }
 
 describe("runtime event ingestion", () => {
+  it("projects exact usage before the incarnation binds and clears the sample once per compaction", async () => {
+    const contextRunId = randomUUID();
+    const contextHostId = randomUUID();
+    const contextHostKey = `eh_${randomUUID().replace(/-/g, "")}`;
+    const contextAssignmentId = randomUUID();
+    const contextStreamId = randomUUID();
+    const hostBootId = randomUUID();
+    const hostSessionId = randomUUID();
+    await testDatabase.pool.query(
+      "INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision) VALUES ($1,$2,'scratch','Running','scratch','context')",
+      [contextRunId, projectId],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO execution_hosts (id, host_key, kind, display_name, transport, retired_at) VALUES ($1,$2,'local_direct','context fixture','{\"kind\":\"local_direct\"}',now())",
+      [contextHostId, contextHostKey],
+    );
+    await testDatabase.pool.query(
+      "INSERT INTO execution_assignments (id, run_id, execution_host_id, epoch, state, placement_reason) VALUES ($1,$2,$3,1,'active','launch')",
+      [contextAssignmentId, contextRunId, contextHostId],
+    );
+    await testDatabase.pool.query(
+      "UPDATE runs SET execution_assignment_id=$1 WHERE id=$2",
+      [contextAssignmentId, contextRunId],
+    );
+    const updates = [
+      { sessionUpdate: "usage_update", used: 72, size: 100 },
+      { sessionUpdate: "usage_update", used: null, size: 100 },
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: "first",
+        status: "in_progress",
+      },
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: "first",
+        status: "completed",
+      },
+      { sessionUpdate: "usage_update", used: 0, size: 100 },
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: "first",
+        status: "completed",
+      },
+    ];
+    const context = async () => {
+      return testDatabase.pool.query<{ used_tokens: string | null }>(
+        "SELECT used_tokens::text FROM run_context_usage WHERE run_id=$1 AND host_session_id=$2",
+        [contextRunId, hostSessionId],
+      );
+    };
+    const { canonicalProjectors } = await import("../projection-runtime");
+    const { projectExecutionEvents } = await import("../projector");
+    const projector = canonicalProjectors.find(
+      (value) => value.consumerName === "canonical-context-v1",
+    );
+
+    expect(projector).toBeDefined();
+    if (!projector) throw new Error("context projector is missing");
+    for (const [index, update] of updates.entries()) {
+      const result = await ingestRuntimeEvent({
+        db: testDatabase.db,
+        executionHostId: contextHostId,
+        envelope: event(String(index), {
+          runId: contextRunId,
+          assignmentId: contextAssignmentId,
+          hostBootId,
+          hostKey: contextHostKey,
+          streamId: contextStreamId,
+          hostSessionId,
+          payload: { update },
+        }),
+      });
+      expect(result.disposition).toBe("accepted");
+      await projectExecutionEvents({
+        db: testDatabase.db,
+        projector,
+        runId: contextRunId,
+      });
+      expect((await context()).rows).toEqual([
+        {
+          used_tokens: ["72", "72", "72", null, "0", "0"][index],
+        },
+      ]);
+    }
+    const ledger = await testDatabase.pool.query(
+      "SELECT status, count(*)::int AS count FROM run_context_compactions WHERE run_id=$1 AND host_session_id=$2 GROUP BY status",
+      [contextRunId, hostSessionId],
+    );
+    expect(ledger.rows).toEqual([{ status: "completed", count: 1 }]);
+  });
+
   it("replays a canonical session exclusively from manager-owned event rows", async () => {
     const canonicalRunId = randomUUID();
     const canonicalHostId = randomUUID();

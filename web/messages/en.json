@@ -1,4 +1,13 @@
 {
+  "contextUsage": {
+    "in_progress": "Compacting context…",
+    "completed": "Context compacted",
+    "failed": "Context compaction failed",
+    "cancelled": "Context compaction cancelled",
+    "interrupted": "Context compaction interrupted",
+    "beforeTokens": "Before {used, number} / {size, number} tokens",
+    "afterTokens": "After {used, number} / {size, number} tokens"
+  },
   "graphViewport": {
     "locate": "Locate a node",
     "fit": "Fit View",

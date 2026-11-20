@@ -176,6 +176,8 @@ function toRunActivityItem(
   const parsed = parseScratchMessageContent(message.role, message.content);
 
   switch (parsed.kind) {
+    case "compaction":
+      return null;
     case "text":
       return {
         id: message.id,
