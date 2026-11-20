@@ -1,6 +1,6 @@
 # Flow runner & session model domain
 
-The designed [context projection](acp-context.md) joins by physical incarnation and resets across process creation and resume.
+The [context projection](acp-context.md) joins by physical incarnation and resets across process creation and resume.
 
 > **Status: Implemented.** Decision:
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).

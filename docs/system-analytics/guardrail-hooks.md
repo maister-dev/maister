@@ -1,6 +1,6 @@
 # Guardrail / hook engine (ADR-108 — Implemented; `capability_guard` ADR-130 — Implemented)
 
-The designed [compaction lifecycle](acp-context.md) leaves guardrail evidence and the existing wall-clock deadline in force.
+The [compaction lifecycle](acp-context.md) leaves guardrail evidence and the existing wall-clock deadline in force.
 
 > Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)**. Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
 >

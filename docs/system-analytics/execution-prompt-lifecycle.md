@@ -1,6 +1,6 @@
 # Execution prompt lifecycle
 
-The designed [context limit outcome](acp-context.md) preserves successful method receipts with a limit stop, partial output and typed owner settlement.
+The [context limit outcome](acp-context.md) preserves successful method receipts with a limit stop, partial output and typed owner settlement.
 
 **Current preparation boundary:** [agent workspace preparation](agent-preparation.md) owns the implemented durable preparation claim, baseline, first-command handoff and shared physical disposal fence. The execution/result contracts below continue after that boundary. Local validation does not establish deployed or live-provider qualification.
 

@@ -70,7 +70,15 @@ it("upgrades a populated predecessor while preserving old attempt and transcript
     await db.pool.query(
       `INSERT INTO execution_commands(id,run_id,execution_assignment_id,execution_host_id,assignment_epoch,kind,target_session_id,max_attempts,state,completed_at,receipt_evidence)
        VALUES($1,$2,$3,$4,1,'session.checkpoint',$5,1,'succeeded',$6,$7)`,
-      [commandId, runId, assignmentId, hostId, hostSessionId, receipt.completedAt, receipt],
+      [
+        commandId,
+        runId,
+        assignmentId,
+        hostId,
+        hostSessionId,
+        receipt.completedAt,
+        receipt,
+      ],
     );
     const content = JSON.stringify({
       v: 1,
@@ -78,6 +86,7 @@ it("upgrades a populated predecessor while preserving old attempt and transcript
       used: 80,
       size: 100,
     });
+
     await db.pool.query(
       "INSERT INTO run_messages (id,run_id,node_attempt_id,role,content,sequence,first_supervisor_event_id,supervisor_event_id) VALUES($1,$2,$3,'system',$4,1,'4','5')",
       [messageId, runId, attemptId, content],
@@ -96,6 +105,7 @@ it("upgrades a populated predecessor while preserving old attempt and transcript
     const applied = readMigrationFiles({ migrationsFolder }).filter(
       ({ folderMillis }) => folderMillis <= cutoff,
     );
+
     await db.pool.query(
       "CREATE SCHEMA drizzle; CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint)",
     );

@@ -2,13 +2,12 @@ import type { ContextSnapshot } from "@/lib/runs/context-snapshot";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-
 import { NextIntlClientProvider } from "next-intl";
 import { expect, it } from "vitest";
 
-import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
-
 import en from "../../../messages/en.json";
+
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 
 it.each([
   [0, "0%", "bg-accent-4", 0],
@@ -45,6 +44,7 @@ it.each([
         locale: "en",
         messages: { contextUsage: en.contextUsage },
         timeZone: "UTC",
+        // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
         children: createElement(ContextUsageMeter, { snapshot }),
       }),
     );

@@ -1,6 +1,6 @@
 # Scratch runs domain
 
-The designed [context meter](acp-context.md) uses the current scratch incarnation. Summaries require current transcript-content authority.
+The [context meter](acp-context.md) uses the current scratch incarnation. Summaries require current transcript-content authority.
 
 ## Purpose
 
