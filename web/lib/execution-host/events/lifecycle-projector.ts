@@ -4,7 +4,7 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -23,6 +23,7 @@ import {
 } from "./projector";
 
 import {
+  executionAssignments,
   executionCommands,
   executionEvents,
   runSessionIncarnations,
@@ -383,6 +384,104 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
       .where(eq(runSessionIncarnations.id, incarnation.id));
   }
   await bindEventToIncarnation(tx, event, incarnation.id);
+}
+
+/** Reconcile exact host exits even if their original projection cursor advanced. */
+export async function reconcileHistoricalAgentLifecycle(
+  db: Db,
+  runId: string,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        event: executionEvents,
+        incarnationId: runSessionIncarnations.id,
+      })
+      .from(runSessionIncarnations)
+      .innerJoin(
+        executionAssignments,
+        eq(
+          executionAssignments.id,
+          runSessionIncarnations.executionAssignmentId,
+        ),
+      )
+      .innerJoin(
+        executionEvents,
+        and(
+          eq(executionEvents.runId, runSessionIncarnations.runId),
+          eq(
+            executionEvents.executionAssignmentId,
+            runSessionIncarnations.executionAssignmentId,
+          ),
+          eq(
+            executionEvents.assignmentEpoch,
+            runSessionIncarnations.assignmentEpoch,
+          ),
+          eq(
+            executionEvents.executionHostId,
+            runSessionIncarnations.executionHostId,
+          ),
+          eq(
+            executionEvents.hostSessionId,
+            runSessionIncarnations.hostSessionId,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(runSessionIncarnations.runId, runId),
+          ne(executionAssignments.state, "active"),
+          inArray(runSessionIncarnations.state, ["created", "active"]),
+          eq(executionEvents.source, "host"),
+          inArray(executionEvents.ingestDisposition, [
+            "accepted",
+            "stale_epoch",
+          ]),
+          inArray(executionEvents.eventType, [
+            "session.exited",
+            "session.crashed",
+          ]),
+        ),
+      )
+      .orderBy(asc(executionEvents.hostSequence), asc(executionEvents.id))
+      .limit(32);
+
+    let repaired = 0;
+    for (const { event, incarnationId } of rows) {
+      const checkpointed =
+        event.eventType === "session.exited" &&
+        event.payload?.reason === "checkpoint";
+      // A historical checkpoint must be an ended row. It cannot occupy the
+      // logical session's open slot or change the current session binding.
+      const changed = await tx
+        .update(runSessionIncarnations)
+        .set({
+          state:
+            event.eventType === "session.crashed"
+              ? "crashed"
+              : checkpointed
+                ? "checkpointed"
+                : "exited",
+          endedAt: event.occurredAt,
+          terminalReason: event.payload ?? {},
+        })
+        .where(
+          and(
+            eq(runSessionIncarnations.id, incarnationId),
+            inArray(runSessionIncarnations.state, ["created", "active"]),
+          ),
+        )
+        .returning({ id: runSessionIncarnations.id });
+      if (changed.length) {
+        repaired += 1;
+        log.info(
+          { runId, incarnationId, eventId: event.id },
+          "historical-session-incarnation-settled",
+        );
+      }
+    }
+    return repaired;
+  });
 }
 
 async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {

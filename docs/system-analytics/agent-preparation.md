@@ -199,12 +199,67 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 | APR-01 | `operational-agents.md` | T7,T8 | IT-APR-01 | Planned |
 | APR-02 | `agent-preparation.md` | T3,T7,T8 | IT-APR-02 | Implemented |
 | APR-03 | `execution-hosts.md` | T4,T6 | IT-APR-03 | Planned |
-| APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Planned |
+| APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Implemented |
 | APR-05 | `agent-preparation.md` | T2,T9 | IT-APR-05 | Planned |
 | APR-06 | `agent-retry.md` | T3,T10 | IT-APR-06 | Planned |
 | APR-07 | `operational-agent-lifecycle.md` | T11 | IT-APR-07 | Planned |
 | APR-08 | `agent-incidents.md` | T11,T12 | IT-APR-08 | Planned |
-| APR-09 | `operational-agent-lifecycle.md` | T2,T6,T11 | IT-APR-09 | Planned |
+| APR-09 | `operational-agent-lifecycle.md` | T2,T6,T11 | IT-APR-09 | Implemented |
 | APR-10 | `workbench-git.md` | T13 | E2E-APR-10 | Planned |
 | APR-11 | `agent-preparation.md` | T9,T12,T14,T15 | IT-APR-11 | Planned |
-| APR-12 | `operational-agent-lifecycle.md` | T5,T6,T14,T15 | IT-APR-12 | Planned |
+| APR-12 | `operational-agent-lifecycle.md` | T5,T6,T14,T15 | IT-APR-12 | Implemented |
+
+
+## Operator recovery (Designed, [ADR-210](../decisions/adr-210.md))
+
+Preparation, task-launch dispatch and cleanup, Pull and promotion, and project
+configuration publication and recovery share the common Git-directory fence.
+The preparation owner releases it after the handoff or a durable failure record.
+Retained child-process and orphan checks determine when a dead owner can be
+recovered. A continuation in settlement or attention has no preparation claim.
+
+Search from an authorized read-only database session. The failure count below
+reflects committed preparation rows. A failed secondary publication can leave
+only a log record.
+
+```sql
+SELECT r.id AS run_id, r.execution_assignment_id AS current_assignment,
+       r.operational_integrity_baseline->>'version' AS baseline_version,
+       p.failures, p.last_failure, c.id AS deferred_command,
+       c.execution_assignment_id AS command_assignment, c.application_attempts,
+       c.application_error->>'reason' AS application_reason,
+       c.application_error->>'deferredSince' AS deferred_since,
+       c.application_next_retry_at
+FROM runs AS r
+CROSS JOIN LATERAL (
+  SELECT count(*) AS failures, max(p.updated_at) AS last_failure
+  FROM agent_preparation_operations AS p
+  WHERE p.run_id = r.id AND p.phase = 'failed'
+) AS p
+LEFT JOIN LATERAL (
+  SELECT c.id, c.execution_assignment_id, c.application_attempts,
+         c.application_error, c.application_next_retry_at
+  FROM execution_commands AS c
+  WHERE c.run_id = r.id AND c.kind = 'session.prompt'
+    AND c.owner_kind = 'agent_turn' AND c.completion_applied_at IS NULL
+    AND c.application_state = 'pending' AND c.application_error IS NOT NULL
+  ORDER BY c.updated_at, c.id LIMIT 1
+) AS c ON true
+WHERE r.run_kind = 'agent' AND r.agent_kind = 'operational'
+  AND r.status = 'Running' AND (p.failures >= 2 OR c.id IS NOT NULL)
+ORDER BY p.failures DESC, r.id;
+```
+
+Open the flagged Run and use Stop with current project recovery authority.
+For a proven undispatched resume, Abandoned releases the scheduler slot. Inspect
+the historical prompt owner and any retained checkout disposition separately.
+A blocked checkout shows its typed reason. Confirm retained canonical exit or
+checkpoint facts and the scoped supervisor process-retirement observation
+before authorizing cleanup. Use the existing prompt application observation-token
+rearm for a poisoned application whose original receipt is still eligible.
+
+If the Run failed due to the legacy baseline policy, inspect its retained
+evidence and use the existing retry or relaunch action when admission permits
+a fresh Run. Check the cleanup receipt, Git worktree registration, exact path,
+and adopted workspace handle before reporting release. For an already-terminal
+Run, look up its exact ID because the discovery query selects Running rows.

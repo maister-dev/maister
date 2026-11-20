@@ -262,6 +262,7 @@ export type WorkbenchLifecycleDeps = {
   finalizeAgentRun: (args: {
     runId: string;
     reason: string;
+    projectOperatorUserId?: string;
   }) => Promise<{ finalized: boolean }>;
   cleanupAgentMaterializations: (args: {
     runId: string;
@@ -1917,6 +1918,7 @@ async function stopAgentAfterAuth(
   const finalize = await deps.finalizeAgentRun({
     runId,
     reason: "operator",
+    ...(ctx.viewerUserId ? { projectOperatorUserId: ctx.viewerUserId } : {}),
   });
 
   if (!finalize.finalized) {
@@ -2223,10 +2225,12 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     promoteNextPending: async () => {
       await promoteNextPending();
     },
-    finalizeAgentRun: async ({ runId, reason }) => {
+    finalizeAgentRun: async ({ runId, reason, projectOperatorUserId }) => {
       const { finalizeAgentRun } = await import("@/lib/agents/launch");
-      const { waitForAgentCancellationExecutionQuiescent } =
-        await import("@/lib/agents/execution-quiescence");
+      const {
+        lockUndispatchedAgentAssignment,
+        waitForAgentCancellationExecutionQuiescent,
+      } = await import("@/lib/agents/execution-quiescence");
       const [run] = await db()
         .select({
           id: runs.id,
@@ -2236,7 +2240,13 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
         .from(runs)
         .where(eq(runs.id, runId));
 
-      if (run?.agentKind === "operational")
+      const executionDb = db() as unknown as ExecutionDb;
+      const undispatched =
+        run?.agentKind === "operational" &&
+        (await executionDb.transaction((tx) =>
+          lockUndispatchedAgentAssignment(tx, run),
+        ));
+      if (run?.agentKind === "operational" && !undispatched)
         await waitForAgentCancellationExecutionQuiescent(
           db() as unknown as ExecutionDb,
           run,
@@ -2244,6 +2254,8 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
         );
       const result = await finalizeAgentRun(runId, "Abandoned", {
         reason,
+        projectOperatorUserId,
+        ...(undispatched ? ({ undispatchedCancellation: true } as const) : {}),
         closeAssignments: { kind: "system", reason: "run stopped by operator" },
         ...(run?.agentKind === "operational"
           ? { expectedAssignmentId: run.executionAssignmentId }

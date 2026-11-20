@@ -19,7 +19,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 
-import { and, eq, inArray, is, isNull } from "drizzle-orm";
+import { and, eq, inArray, is, isNull, ne, sql } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
@@ -47,6 +47,7 @@ import {
   assertAgentCancellationExecutionQuiescent,
   assertAgentCancellationBindingsQuiescent,
   readAgentDispatchEvidence,
+  lockUndispatchedAgentAssignment,
 } from "./execution-quiescence";
 
 import { applyAgentTerminalIncidents } from "@/lib/runs/agent-incidents";
@@ -58,6 +59,8 @@ import { getDb } from "@/lib/db/client";
 import {
   executionAssignments,
   agentPreparationOperations,
+  agentContinuationEpisodes,
+  agentTurns,
   actorIdentities,
   hitlRequests,
   projects,
@@ -159,6 +162,13 @@ export type AgentFinalizeOptions = {
   // reconcile crash carries its observer diagnosis there).
   causeReason?: string;
   closeOpenHitl?: boolean;
+  projectOperatorUserId?: string;
+  undispatchedCancellation?: true;
+  continuationFailure?: {
+    logicalKey: string;
+    claimToken: string;
+    reasons: string[];
+  };
   closeAssignments?: AgentAssignmentClose;
   // ADR-165 (T5.4): the completing turn's agent text, from which the public
   // result sentinel is extracted. Absent on every non-session caller (an
@@ -584,7 +594,8 @@ async function prepareAgentFinalization(
   if (
     preparedRun.agentKind === "operational" &&
     preparedRun.executionAssignmentId &&
-    !failureEvidence
+    !failureEvidence &&
+    !opts.undispatchedCancellation
   ) {
     try {
       if (outcome === "Abandoned" || opts.budgetTerminationId)
@@ -634,23 +645,25 @@ async function prepareAgentFinalization(
   }
   const operationalIntegrity =
     preparedRun.agentKind === "operational"
-      ? await inspectOperationalRun(_db, preparedRun).catch(
-          (error: unknown) => {
-            log.warn(
-              {
-                runId,
-                errorType: error instanceof Error ? error.name : "unknown",
-              },
-              "operational-final-integrity-unavailable",
-            );
+      ? opts.undispatchedCancellation
+        ? { verdict: "unchecked" as const, reasonCodes: [], changedPaths: [] }
+        : await inspectOperationalRun(_db, preparedRun).catch(
+            (error: unknown) => {
+              log.warn(
+                {
+                  runId,
+                  errorType: error instanceof Error ? error.name : "unknown",
+                },
+                "operational-final-integrity-unavailable",
+              );
 
-            return {
-              verdict: "indeterminate" as const,
-              reasonCodes: ["operational_integrity_probe_failed"],
-              changedPaths: [],
-            };
-          },
-        )
+              return {
+                verdict: "indeterminate" as const,
+                reasonCodes: ["operational_integrity_probe_failed"],
+                changedPaths: [],
+              };
+            },
+          )
       : null;
   const operationalDecision = operationalIntegrity
     ? operationalTerminalDecision({
@@ -823,6 +836,49 @@ async function prepareAgentFinalization(
           );
       }
     }
+    if (opts.continuationFailure) {
+      const [episode] = await tx
+        .select()
+        .from(agentContinuationEpisodes)
+        .where(
+          and(
+            eq(agentContinuationEpisodes.runId, runId),
+            eq(
+              agentContinuationEpisodes.logicalKey,
+              opts.continuationFailure.logicalKey,
+            ),
+            eq(
+              agentContinuationEpisodes.claimToken,
+              opts.continuationFailure.claimToken,
+            ),
+            eq(agentContinuationEpisodes.state, "settlement"),
+          ),
+        )
+        .for("update");
+      if (!episode || episode.assignmentId !== locked.assignmentId)
+        return { finalized: false };
+      if (episode.preparationId) {
+        const [receipt] = await tx
+          .select()
+          .from(agentPreparationOperations)
+          .where(
+            and(
+              eq(agentPreparationOperations.id, episode.preparationId),
+              eq(agentPreparationOperations.phase, "failed"),
+            ),
+          );
+        if (!receipt) return { finalized: false };
+        await assertAgentPreparationFailureOwner(tx, receipt);
+      }
+      if (!(await lockUndispatchedAgentAssignment(tx, preparedRun)))
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Continuation settlement requires an undispatched assignment",
+          {
+            details: { reason: "agent_execution_quiescence_unproven", runId },
+          },
+        );
+    }
     if (opts.expectedPreparation) {
       if (
         opts.expectedPreparation.operation.runId !== runId ||
@@ -845,7 +901,19 @@ async function prepareAgentFinalization(
         { details: { reason: "agent_terminal_status_inconsistent", runId } },
       );
     if (preparedRun.agentKind === "operational" && !failureEvidence) {
-      if (outcome === "Abandoned" || opts.budgetTerminationId)
+      if (opts.undispatchedCancellation) {
+        if (
+          outcome !== "Abandoned" ||
+          !(await lockUndispatchedAgentAssignment(tx, preparedRun))
+        )
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            "The current assignment admitted execution before cancellation",
+            {
+              details: { reason: "agent_execution_quiescence_unproven", runId },
+            },
+          );
+      } else if (outcome === "Abandoned" || opts.budgetTerminationId)
         await assertAgentCancellationBindingsQuiescent(tx, preparedRun);
       else
         await assertAgentSessionBindingsQuiescent(
@@ -1001,6 +1069,7 @@ async function prepareAgentFinalization(
             ...new Set([
               ...terminalDecision.reasonCodes,
               ...(opts.causeReason ? [opts.causeReason] : []),
+              ...(opts.continuationFailure?.reasons ?? []),
             ]),
           ],
           resultRevision,
@@ -1075,6 +1144,39 @@ async function prepareAgentFinalization(
 
     // ADR-166 D7: the terminal status ends the run's driver generation (a
     // Review child re-enters through a NEW generation on rework/re-message).
+    if (
+      (opts.undispatchedCancellation || opts.continuationFailure) &&
+      locked.assignmentId
+    ) {
+      await tx
+        .update(agentTurns)
+        .set({ state: "superseded", completedAt: endedAt, updatedAt: endedAt })
+        .where(
+          and(
+            eq(agentTurns.runId, runId),
+            eq(agentTurns.executionAssignmentId, locked.assignmentId),
+            eq(agentTurns.variant, "resume"),
+            eq(agentTurns.state, "claimed"),
+            isNull(agentTurns.commandId),
+          ),
+        );
+    }
+    if (preparedRun.agentKind === "operational")
+      await tx
+        .update(agentContinuationEpisodes)
+        .set({
+          state: "closed",
+          claimToken: null,
+          claimExpiresAt: null,
+          dueAt: null,
+          updatedAt: sql`clock_timestamp()`,
+        })
+        .where(
+          and(
+            eq(agentContinuationEpisodes.runId, runId),
+            ne(agentContinuationEpisodes.state, "closed"),
+          ),
+        );
     await releaseAssignmentForRun(tx, runId, "run_terminal");
 
     // D-M1 (ADR-182): a message behind the ending turn can never be
@@ -1211,6 +1313,12 @@ async function prepareAgentFinalization(
           : DOMAIN_KIND_BY_OUTCOME[outcome];
       let actor: DomainEventActor = { type: "agent", id: row.agentId };
 
+      if (
+        row.projectId &&
+        outcome === "Abandoned" &&
+        opts.projectOperatorUserId
+      )
+        actor = { type: "user", id: opts.projectOperatorUserId };
       if (row.companyId && opts.closeAssignments?.kind === "user") {
         const [human] = await tx
           .select()
@@ -1350,15 +1458,19 @@ async function prepareAgentFinalization(
       const { disposeOperationalRun } =
         await import("@/lib/gc/operational-disposition");
 
-      await disposeOperationalRun(runId, {
-        db: _db,
-        hosts: opts.executionHosts,
-      }).catch((error: unknown) =>
-        log.error(
-          { runId, errorType: error instanceof Error ? error.name : "unknown" },
-          "operational-cleanup-dispatch-deferred",
-        ),
-      );
+      if (!opts.undispatchedCancellation)
+        await disposeOperationalRun(runId, {
+          db: _db,
+          hosts: opts.executionHosts,
+        }).catch((error: unknown) =>
+          log.error(
+            {
+              runId,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+            "operational-cleanup-dispatch-deferred",
+          ),
+        );
       await promoteNextPending({ db: _db, pool: "agent" }).catch(
         (error: unknown) =>
           log.error(

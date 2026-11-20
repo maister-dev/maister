@@ -20,6 +20,9 @@ import {
   vi,
 } from "vitest";
 
+import { stat } from "node:fs/promises";
+import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
+import { reconcileHistoricalAgentLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { startAgentSession } from "@/lib/agents/launch";
 import {
   assertAgentExecutionQuiescent,
@@ -44,6 +47,10 @@ import {
   runSessionIncarnations,
   runs,
 } from "@/lib/db/schema";
+import {
+  mintAssignment,
+  releaseAssignmentForRun,
+} from "@/lib/execution-host/assignments";
 import { MaisterError } from "@/lib/errors";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { PromptOwnerSchema } from "@/lib/execution-host/prompt-owner-contract";
@@ -53,6 +60,7 @@ import {
   PromptOwnerDeferred,
 } from "@/lib/execution-host/prompt-owners";
 import { countLiveRuns } from "@/lib/scheduler";
+import { git } from "@/test-support/git-fixture";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import {
   createFakeExecutionHost,
@@ -265,6 +273,68 @@ async function expectSlotRetained(
   expect(await countLiveRuns(db as never, "agent")).toBe(occupied);
 }
 
+async function seedUndispatchedOperationalResume(
+  workspace: "worktree" | "repo_read" = "worktree",
+  holdHistoricalExit = false,
+) {
+  const runId = await seedAgentRun(db, {
+    runtimeRoot,
+    definition: `---\nname: Operator\ndescription: Recovery fixture\nkind: operational\ncompletion: {contract: operational_v1}\nmode: session\nworkspace: ${workspace}\n${workspace === "repo_read" ? "workspace_ref: main\n" : ""}triggers: [manual]\nrisk_tier: read_only\nplatform_mcp: false\n---\nPerform the controlled operation.`,
+    workspace,
+    resultContract: null,
+    operational: true,
+  });
+  const command = await detachPromptFromRun(runId);
+  const client = await hosts.forRun(runId);
+  expect(command.targetSessionId).toBeTruthy();
+  if (holdHistoricalExit) fake.holdIngest();
+  await client.checkpoint(command.targetSessionId!);
+  if (!holdHistoricalExit) await fake.waitForCanonicalEvents();
+  const [initial] = await db
+    .select()
+    .from(agentTurns)
+    .where(eq(agentTurns.runId, runId));
+
+  const resumed = await db.transaction(async (tx) => {
+    await tx
+      .update(agentTurns)
+      .set({
+        state: workspace === "repo_read" ? "applied" : "superseded",
+        completedAt: new Date(),
+      })
+      .where(eq(agentTurns.id, initial.id));
+    if (workspace === "repo_read")
+      await releaseAssignmentForRun(tx, runId, "parked");
+    const successor = await mintAssignment(tx, {
+      runId,
+      hostId: client.assignment.executionHostId,
+      reason: "resume",
+    });
+    const [turn] = await tx
+      .insert(agentTurns)
+      .values({
+        runId,
+        ordinal: initial.ordinal + 1,
+        variant: "resume",
+        logicalKey: "incident-resume",
+        prompt: initial.prompt,
+        state: "claimed",
+        executionAssignmentId: successor.id,
+        assignmentEpoch: successor.epoch,
+        runSessionId: initial.runSessionId,
+      })
+      .returning();
+    await tx
+      .update(runSessionIncarnations)
+      .set({ state: "active", endedAt: null, terminalReason: null })
+      .where(
+        eq(runSessionIncarnations.executionAssignmentId, client.assignment.id),
+      );
+    return { successor, turn };
+  });
+  return { runId, command, client, resumed };
+}
+
 describe("agent application quiescence", () => {
   it("applies the original successful result after more than six minutes of deferred teardown, including exit arriving during preparation", async () => {
     const command = await completedDetachedPrompt();
@@ -420,6 +490,133 @@ describe("agent application quiescence", () => {
         ),
     ).toHaveLength(0);
   });
+
+  it("IT-APR-09 Stop abandons a claimed resume without waiting for its historical checkpoint", async () => {
+    const { runId, client, resumed } =
+      await seedUndispatchedOperationalResume();
+    const occupied = await countLiveRuns(db as never, "agent");
+
+    expect(await client.sessionsForRun()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "live" })]),
+    );
+    expect(
+      await db
+        .select()
+        .from(executionCommands)
+        .where(
+          eq(executionCommands.executionAssignmentId, resumed.successor.id),
+        ),
+    ).toEqual([]);
+
+    await expect(
+      stopWorkbenchRun(runId, {
+        deps: {
+          ...depsFromOptions(undefined),
+          executionHosts: hosts,
+          requireActiveSession: async () => ({ id: "controlled-stop-user" }),
+          authorize: async () => undefined,
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      runStatus: "Abandoned",
+      supervisorStopped: false,
+    });
+    const [turn] = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.id, resumed.turn.id));
+    const [assignment] = await db
+      .select()
+      .from(executionAssignments)
+      .where(eq(executionAssignments.id, resumed.successor.id));
+    expect(turn.state).toBe("superseded");
+    expect(assignment.state).toBe("released");
+    expect(await countLiveRuns(db as never, "agent")).toBe(occupied - 1);
+    expect(
+      await db
+        .select({
+          actorType: domainEvents.actorType,
+          actorId: domainEvents.actorId,
+        })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, runId),
+            eq(domainEvents.kind, "run.abandoned"),
+          ),
+        ),
+    ).toEqual([{ actorType: "user", actorId: "controlled-stop-user" }]);
+  }, 30_000);
+
+  it("IT-APR-12 retains the abandoned checkout until historical evidence arrives", async () => {
+    const { runId } = await seedUndispatchedOperationalResume(
+      "repo_read",
+      true,
+    );
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const owner = run.operationalIntegrityBaseline?.owner;
+    if (!owner || !("repoPath" in owner))
+      throw new Error("expected frozen checkout");
+    const checkout = owner.cwd;
+    const stopped = await stopWorkbenchRun(runId, {
+      deps: {
+        ...depsFromOptions(undefined),
+        executionHosts: hosts,
+        requireActiveSession: async () => ({ id: "controlled-stop-user" }),
+        authorize: async () => undefined,
+      },
+    });
+    expect(stopped.runStatus).toBe("Abandoned");
+    expect(await disposeOperationalRun(runId, { db, hosts })).toBe("deferred");
+    expect(await stat(checkout)).toBeDefined();
+    expect(
+      await git(owner.repoPath, "worktree", "list", "--porcelain"),
+    ).toContain(checkout);
+    expect(fake.callsOf("releaseWorkspace")).toHaveLength(0);
+    await fake.releaseIngest();
+    await fake.waitForCanonicalEvents();
+    const [pending] = await db.select().from(runs).where(eq(runs.id, runId));
+    const due = pending.operationalCleanup?.dueAt;
+    if (!due) throw new Error("expected a durable disposition retry");
+    expect(
+      await disposeOperationalRun(runId, {
+        db,
+        hosts,
+        now: new Date(Date.parse(due) + 1),
+      }),
+    ).toBe("released");
+    await expect(stat(checkout)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      await git(owner.repoPath, "worktree", "list", "--porcelain"),
+    ).not.toContain(checkout);
+    expect(fake.callsOf("releaseWorkspace")).toHaveLength(1);
+    const [released] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(released.operationalCleanup).toMatchObject({
+      state: "released",
+      releasedAt: expect.any(String),
+    });
+  }, 45_000);
+
+  it("IT-APR-04 repairs an exact released predecessor after its projection cursor advanced", async () => {
+    const { runId, command, resumed } =
+      await seedUndispatchedOperationalResume();
+    expect(await reconcileHistoricalAgentLifecycle(db, runId)).toBe(1);
+    expect(await reconcileHistoricalAgentLifecycle(db, runId)).toBe(0);
+    const [incarnation] = await db
+      .select()
+      .from(runSessionIncarnations)
+      .where(
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          command.executionAssignmentId,
+        ),
+      );
+    expect(incarnation.state).toBe("checkpointed");
+    expect(incarnation.endedAt).toBeInstanceOf(Date);
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(run.executionAssignmentId).toBe(resumed.successor.id);
+  }, 30_000);
 
   it("operational Stop retains its owner until the exact delayed canonical exit commits", async () => {
     const runId = await seedAgentRun(db, {
