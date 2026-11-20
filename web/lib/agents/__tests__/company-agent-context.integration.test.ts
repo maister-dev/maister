@@ -18250,6 +18250,16 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         await (await get(randomUUID())).json(),
       );
   }
+  await database.pool.query("DELETE FROM projects WHERE id=$1", [a]);
+  await expect(installationRunProjects(db, cronRun.id)).resolves.toEqual(
+    [a, b].sort(),
+  );
+  await expect(view(launchUserId)).rejects.toMatchObject({
+    details: { reason: "agent_memory_unavailable" },
+  });
+  await expect(view(installationAdminId)).resolves.toMatchObject({
+    kind: "note",
+  });
   await updateCompanySpecialistBinding(
     db,
     installationAdminId,
