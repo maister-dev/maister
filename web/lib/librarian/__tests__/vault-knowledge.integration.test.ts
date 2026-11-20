@@ -101,9 +101,19 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     kind: "state",
     draft: { title: "Process fact", content: "Builds run before release." },
   };
-  const card = await submit(draft);
+  const cardKey = randomUUID();
+  const card = await submit(draft, cardKey);
   expect(card.status, JSON.stringify(await card.clone().json())).toBe(201);
   const { cardId } = await card.json();
+  expect(await (await submit(draft, cardKey)).json()).toMatchObject({ cardId });
+  expect(
+    (
+      await submit(
+        { ...draft, draft: { ...draft.draft, title: "Different fact" } },
+        cardKey,
+      )
+    ).status,
+  ).toBe(409);
   const count = async () =>
     (
       await database.pool.query<{ count: number }>(
@@ -125,13 +135,54 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       { cardId, user: { id: userId, role: "member" }, decision: "accept" },
       db,
     );
-  const receipt = await confirm();
+  await database.pool.query(`
+    CREATE FUNCTION fail_fixture_librarian_settlement() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NEW.kind='brain_proposal' AND NEW.status='accepted' THEN
+        RAISE EXCEPTION 'Fixture refused card settlement' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+    CREATE TRIGGER fail_fixture_librarian_settlement BEFORE UPDATE ON librarian_cards
+      FOR EACH ROW EXECUTE FUNCTION fail_fixture_librarian_settlement();`);
+  try {
+    await expect(confirm()).rejects.toThrow();
+    expect(await count()).toBe(0);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT status FROM librarian_cards WHERE id=$1",
+          [cardId],
+        )
+      ).rows,
+    ).toEqual([{ status: "pending" }]);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT id FROM librarian_operations WHERE idempotency_key=$1",
+          [`card:${cardId}`],
+        )
+      ).rows,
+    ).toEqual([]);
+  } finally {
+    await database.pool.query(
+      "DROP TRIGGER fail_fixture_librarian_settlement ON librarian_cards; DROP FUNCTION fail_fixture_librarian_settlement()",
+    );
+  }
+  const [receipt, replay] = await Promise.all([confirm(), confirm()]);
+  expect(replay).toEqual(receipt);
   const effect = receipt.body.effect as { kind: string; proposalId: string };
   expect(effect).toMatchObject({
     kind: "brain",
     proposalId: expect.any(String),
   });
-  expect(await confirm()).toEqual(receipt);
+  await expect(
+    decideLibrarianCard(
+      { cardId, user: { id: userId, role: "member" }, decision: "reject" },
+      db,
+    ),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
   expect(await count()).toBe(1);
   expect(
     (
@@ -141,6 +192,18 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       )
     ).rows,
   ).toEqual([{ status: "pending", actor: { type: "user", id: userId } }]);
+  const { captureKnowledgeSource } =
+    await import("@/lib/brain/knowledge-source-capture");
+  const { witness } = await captureKnowledgeSource(
+    db,
+    { kind: "user", userId },
+    {
+      owner: { kind: "project", projectId },
+      title: "Release audit",
+      content: "Release check uses automation.",
+      idempotencyKey: randomUUID(),
+    },
+  );
   const knowledge = await submit({
     action: "knowledge_proposal",
     content: {
@@ -149,8 +212,18 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       title: "Release observation",
       kind: "observation",
       assertion: "Release check uses automation.",
-      basis: "unknown",
-      evidence: [],
+      basis: "inferred",
+      evidence: [
+        {
+          relation: "supports",
+          reference: {
+            kind: "witness",
+            id: witness.id,
+            version: witness.sourceVersion!,
+            sha256: witness.sha256!,
+          },
+        },
+      ],
       missingEvidence: [],
       limitations: [],
     },
@@ -180,6 +253,57 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       )
     ).rows,
   ).toEqual([{ status: "pending", author: userId }]);
+  const admin = await seedActiveUser(db, { role: "admin" });
+  const { reviewKnowledgeProposal } =
+    await import("@/lib/brain/knowledge-proposals");
+  const accepted = await reviewKnowledgeProposal(db, {
+    proposalId: knowledgeEffect.proposalId,
+    principal: { kind: "user", userId: admin },
+    expectedRevision: 1,
+    decision: "accept",
+    reason: "Verified in test",
+    idempotencyKey: randomUUID(),
+  });
+  const { acceptedRecordId: recordId } = accepted;
+  if (!recordId) throw new Error("Expected a published record");
+  const [
+    { GET: record },
+    { GET: evidence },
+    { GET: conflicts },
+    { GET: witnessDetail },
+  ] = await Promise.all([
+    import("@/app/api/v1/ext/knowledge/[recordId]/route"),
+    import("@/app/api/v1/ext/knowledge/[recordId]/evidence/route"),
+    import("@/app/api/v1/ext/knowledge/[recordId]/conflicts/route"),
+    import("@/app/api/v1/ext/knowledge/witnesses/[witnessId]/route"),
+  ]);
+  const recordRequest = (suffix = "") =>
+    new NextRequest(
+      new URL(`/api/v1/ext/knowledge/${recordId}${suffix}`, url),
+      { headers },
+    );
+  const selector = { params: Promise.resolve({ recordId }) };
+  expect(await (await record(recordRequest(), selector)).json()).toMatchObject({
+    id: recordId,
+    revision: 1,
+  });
+  const evidencePage = await evidence(recordRequest("/evidence"), selector);
+  expect(evidencePage.status).toBe(200);
+  expect(JSON.stringify(await evidencePage.json())).toContain(witness.id);
+  expect(
+    await (await conflicts(recordRequest("/conflicts"), selector)).json(),
+  ).toMatchObject({ items: [] });
+  const witnessResponse = await witnessDetail(
+    new NextRequest(
+      new URL(`/api/v1/ext/knowledge/witnesses/${witness.id}`, url),
+      { headers },
+    ),
+    { params: Promise.resolve({ witnessId: witness.id }) },
+  );
+  expect(await witnessResponse.json()).toMatchObject({
+    id: witness.id,
+    excerpt: "Release check uses automation.",
+  });
 
   const agentId = "vault-fixture:librarian";
   await database.pool.query(
@@ -218,7 +342,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   const command = {
     command: "create",
     path: "/memories/notes/fact.md",
-    file_text: "Observed a release warning.",
+    file_text: "---\ntags: [release]\n---\nObserved a release warning.",
     ifRevisionId: null,
     ifHash: null,
     requestKey: randomUUID(),
@@ -232,6 +356,17 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     201,
   );
   const { cardId: vaultCardId } = await vaultCard.json();
+  const stale = await submit({
+    action: "vault_edit",
+    vaultId: vault.id,
+    command: {
+      ...command,
+      file_text: "An alternate finding.",
+      requestKey: randomUUID(),
+    },
+  });
+  expect(stale.status).toBe(201);
+  const { cardId: staleCardId } = await stale.json();
   const vaultReceipt = await decideLibrarianCard(
     {
       cardId: vaultCardId,
@@ -244,6 +379,24 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     kind: "vault",
     revisionIds: [expect.any(String)],
   });
+  await expect(
+    decideLibrarianCard(
+      {
+        cardId: staleCardId,
+        user: { id: userId, role: "member" },
+        decision: "accept",
+      },
+      db,
+    ),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT status FROM librarian_cards WHERE id=$1",
+        [staleCardId],
+      )
+    ).rows,
+  ).toEqual([{ status: "pending" }]);
   const note = await viewVault(
     new NextRequest(
       new URL(
@@ -258,6 +411,30 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     kind: "note",
     content: command.file_text,
   });
+  const [{ GET: search }, { GET: tags }, { GET: backlinks }] =
+    await Promise.all([
+      import("@/app/api/v1/ext/librarian/vaults/[vaultId]/search/route"),
+      import("@/app/api/v1/ext/librarian/vaults/[vaultId]/tags/route"),
+      import("@/app/api/v1/ext/librarian/vaults/[vaultId]/backlinks/route"),
+    ]);
+  const requests = [
+    [search, "search?tag=release"],
+    [tags, "tags"],
+    [backlinks, `backlinks?path=${encodeURIComponent(command.path)}`],
+  ] as const;
+  for (const [read, suffix] of requests) {
+    const projection = await read(
+      new NextRequest(
+        new URL(`/api/v1/ext/librarian/vaults/${vault.id}/${suffix}`, url),
+        { headers },
+      ),
+      { params: Promise.resolve({ vaultId: vault.id }) },
+    );
+    expect(
+      projection.status,
+      `${suffix}: ${await projection.clone().text()}`,
+    ).toBe(200);
+  }
   expect(
     (
       await database.pool.query(
@@ -298,7 +475,6 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   });
   expect(redactedCard.status).toBe(201);
   const { cardId: redactedCardId } = await redactedCard.json();
-  const admin = await seedActiveUser(db, { role: "admin" });
   const revisionId = (vaultReceipt.body.effect as { revisionIds: string[] })
     .revisionIds[0]!;
   const { redactMemoryRevision } =
@@ -361,4 +537,27 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     ),
   ).rejects.toMatchObject({ code: "PRECONDITION" });
   expect(await count()).toBe(1);
+
+  await addProjectMember(db, { projectId, userId, role: "member" });
+  const explainTurn = await seedLibrarianTurn(db, userId);
+  await database.pool.query(
+    "UPDATE librarian_turns SET variant='explain' WHERE id=$1",
+    [explainTurn],
+  );
+  const explain = await issueLibrarianTurnToken(
+    {
+      turnId: explainTurn,
+      ownerUserId: userId,
+      scopes: scopesForLibrarianTurn("explain"),
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    db,
+  );
+  await database.pool.query(
+    "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
+    [explainTurn, explain.tokenId],
+  );
+  headers.authorization = `Bearer ${explain.secret}`;
+  expect((await record(recordRequest(), selector)).status).toBe(200);
+  expect((await submit(draft)).status).toBe(403);
 });

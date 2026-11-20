@@ -389,7 +389,7 @@ Local P4 evidence: disposable PostgreSQL verifies current manual rights, permiss
 
 ### P5 — Librarian knowledge/vault reads and confirmed proposals
 
-- [ ] **T33 — Enable narrowly admitted librarian read tools.**
+- [x] **T33 — Enable narrowly admitted librarian read tools.**
   - Files: `web/types/token-scopes.ts`, both librarian toolset mirrors, `owned-ext-handler.ts`, `knowledge-access.ts`, knowledge read handlers, vault target resolver and `web/lib/librarian/` session profile/disclosure capture.
   - Admit `knowledge_search/get/evidence/witness_get/conflicts`, existing Brain reads and the explicit `agent_vault_*` read tools/routes from D6/D7 through active owner's live rights. No raw conversion of arbitrary bearer into user. Keep owner-message, read-only explain and tokenless summary modes explicit. Projectless installation reads apply D4/D5 source filters. Personal memory unchanged.
   - Tests: existing librarian authority/admission/visibility/profile/toolset tests plus positive knowledge/vault reads and missing/hidden equivalence. Logging: DEBUG tool/turn/target class and outcome only.
@@ -399,17 +399,17 @@ Local P4 evidence: disposable PostgreSQL verifies current manual rights, permiss
   - Files: `web/lib/librarian/cards.ts`, tool adapters, MCP registry/toolset, ext librarian cards route, operation payload/schema mirrors and confirmation UI/i18n.
   - Add discriminated knowledge-proposal, Brain fact/proposal and vault-command card types, including `agent_vault_propose_edit` dispatch. Freeze complete payload/diff/evidence/base/target/digest; show exact pending action. Projectless cards admit only separately authorized company knowledge/installation vault targets. Explain cannot propose. No effect before confirmation.
   - Tests: every tool creates one owner-bound card; raw mutation endpoints still deny librarian bypass; duplicate/changed-key handling, captured turn sources and hidden-target refusal. Keep new card types unadvertised until T35 can settle them. Logging: INFO card/turn/type/digest creation, no proposed body. Depends on: T24, T33.
-- [ ] **T35 — Execute confirmed effects atomically under owner's current rights.**
+- [x] **T35 — Execute confirmed effects atomically under owner's current rights.**
   - Files: `web/lib/librarian/card-decisions.ts`, operations/recovery/reset barriers and shared vault/Brain/knowledge transaction entry points.
   - Recheck live owner, source and target/CAS, then execute as human and settle card+operation+effect receipt+audit in one transaction. Vault edit applies with `editSettings`; installation needs admin; knowledge returns pending proposal, not publication; Brain returns owner-authorized proposal/item. No second confirmation for the same vault edit.
   - Tests: permission revoked after card, stale hash, source redacted while a card is open, repeated/opposite decision, cancellation/reset race, crash/rollback, same request different body and immutable author attribution. Accepted card must point to an actual durable effect and replay must respect current disclosure restrictions.
   - Logging: INFO owner-via-librarian effect receipt, WARN stale/denied; ERROR failed transaction without hidden content. Depends on: T34.
-- [ ] **T36 — Complete librarian UI acceptance and scope regression.**
+- [x] **T36 — Complete librarian UI acceptance and scope regression.**
   - Files: `web/e2e/librarian-acceptance.spec.ts`, `web/playwright.librarian.config.ts`, card/authority/operation/memory-boundary suites, librarian authority/docs/screens/API schemas.
   - Ask to record a project Brain fact → visible card → confirm → durable owner-attributed proposal/item. Cover knowledge pending review and vault apply, EN/RU, hidden project, stale rights and no pre-confirm effect. Preserve ADR-190 personal-memory paths and existing owner confirmation behavior.
   - Validation: separate librarian runner actually lists/executes the scenario; all P5 phase suites and docs/contracts green. Logging: validation output only. Depends on: T33–T35.
 
-Local P5 evidence: all 85 Librarian PostgreSQL integration tests passed across 15 suites. AV-08 observes the owner-bound knowledge and vault requests, the direct-write refusal, the no-effect-before-confirmation boundary, owner-attributed Brain and knowledge proposals, a vault edit, decision replay, permission revocation, and redaction of a captured source. The history-search redaction regression failed before filtering and passed afterward. The Librarian Playwright lane ran the real MCP facade with scripted ACP and passed the authenticated Brain confirmation journey (2 tests including setup). The complete installation authority dependency and the remaining decision interleavings are still tracked above.
+Local P5 evidence: 85 PostgreSQL tests across 15 Librarian suites and 15 browser cases (including authenticated setup) passed with the local supervisor and scripted ACP. AV-07/08 verify owner and Explain modes; the native knowledge record, evidence, witness and conflicts endpoints; vault view/search/backlinks/tags; hidden versus missing after revocation; and the three confirmation effect kinds. Repeated decisions, a changed idempotency key payload, concurrent confirmation, stale vault CAS, forced SQL settlement failure and subsequent retry preserve exactly one owner-attributed effect. Revoking membership or redacting a captured revision blocks the pending effect and removes its visible preview or history result. The history and installation-settings acceptance tests reproduced the regressions before their fixes.
 
 ### Final integration — Namespace integrity and release acceptance
 
