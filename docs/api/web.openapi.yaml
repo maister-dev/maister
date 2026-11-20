@@ -1807,6 +1807,13 @@ paths:
         one-off policy route; legacy runner/remap routes may remain compatibility
         wrappers. One invalid sub-section rejects the whole PATCH with no
         partial application.
+
+        (Designed — ADR-210) The project settings editor reads the command
+        override and its revision from the authorized server-side read model.
+        The same `editSettings` authority applies to the PATCH. Replacing or
+        clearing the override requires its current revision. A stale write
+        returns 409 and applies none of the aggregate update. A PATCH that
+        omits both command fields keeps their stored values and revision.
       operationId: patchProjectSettings
       parameters:
         - name: slug
@@ -1818,6 +1825,17 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/ProjectSettingsPatchBody" }
+            examples:
+              clearCommandAccess:
+                summary: Clear a command override to the platform default (Designed)
+                value: { commandAccessProfile: null, expectedCommandAccessRevision: 2 }
+              replaceCommandAccess:
+                summary: Replace the override and deny all network and port access (Designed)
+                value:
+                  expectedCommandAccessRevision: 2
+                  commandAccessProfile:
+                    network: { mode: none, allowedHosts: [] }
+                    hostPortGrants: []
       responses:
         "200":
           description: Project settings updated.
@@ -1831,6 +1849,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                staleCommandAccess:
+                  summary: Command override revision changed (Designed)
+                  value:
+                    code: CONFLICT
+                    message: Command access revision changed
+                    details: { reason: command_access_revision_changed, field: expectedCommandAccessRevision, layer: project }
         "422":
           description: Invalid aggregate settings body.
           content:
@@ -22902,7 +22927,7 @@ components:
       type: object
       additionalProperties: false
       required: [network, hostPortGrants, readOnlyPathGrants, writablePathGrants, limits]
-      properties:
+      properties: &executionCommandAccessProperties
         network:
           type: object
           additionalProperties: false
@@ -22934,6 +22959,17 @@ components:
             memoryBytes: { type: integer, minimum: 1, maximum: 9007199254740991 }
             processes: { type: integer, minimum: 1, maximum: 2147483647 }
             cpuMillicores: { type: integer, minimum: 1, maximum: 2147483647 }
+    ExecutionCommandAccessOverride:
+      x-implementation-status: Designed
+      type: object
+      nullable: true
+      additionalProperties: false
+      description: |
+        Null clears the override. An object replaces the stored override;
+        omitted fields inherit their platform default. An explicit empty grant
+        list denies that category. Supplied network or limit values replace
+        their whole group and must stay inside the platform ceiling.
+      properties: *executionCommandAccessProperties
     PlatformExecutionCeiling:
       type: object
       additionalProperties: false
@@ -27241,7 +27277,19 @@ components:
       type: object
       additionalProperties: false
       minProperties: 1
+      oneOf:
+        - required: [commandAccessProfile, expectedCommandAccessRevision]
+        - not:
+            anyOf:
+              - required: [commandAccessProfile]
+              - required: [expectedCommandAccessRevision]
       properties:
+        commandAccessProfile: { $ref: "#/components/schemas/ExecutionCommandAccessOverride" }
+        expectedCommandAccessRevision:
+          x-implementation-status: Designed
+          type: integer
+          minimum: 1
+          maximum: 2147483647
         taskQualificationPolicy:
           type: string
           enum: [legacy, required]
@@ -27410,6 +27458,13 @@ components:
       additionalProperties: false
       required: [ok, projectId]
       properties:
+        commandAccessProfile: { $ref: "#/components/schemas/ExecutionCommandAccessOverride" }
+        commandAccessRevision:
+          x-implementation-status: Designed
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Stored revision for an authorized command profile edit.
         taskQualificationPolicy:
           type: object
           additionalProperties: false

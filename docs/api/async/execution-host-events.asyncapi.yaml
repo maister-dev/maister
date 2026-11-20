@@ -53,6 +53,10 @@ channels:
           Content-Type: { type: string, const: text/event-stream }
           Last-Event-ID:
             $ref: "#/components/schemas/Sequence"
+          X-Maister-Runtime-Event-Version:
+            type: string
+            enum: ["1", "2"]
+            description: (Designed) Echoes the negotiated envelope ceiling before the first frame.
     subscribe:
       operationId: subscribeExecutionHostRuntimeEvents
       summary: Replay canonical host events after an exclusive stream cursor
@@ -70,8 +74,18 @@ channels:
         the last sequence written; the host never closes on backpressure or at
         a page boundary, only for `disconnect`, `floor`, `protocol` or
         `shutdown`. The manager commits and acknowledges once per batch.
+
+        (Designed — ADR-210) The manager selects envelope ceiling 2 with
+        `X-Maister-Runtime-Event-Version: 2` after both peers advertise v2
+        support. The same stream then delivers retained Run v1 and operation v2
+        messages in sequence. An omitted request header selects v1. If replay
+        would cross a v2 position for a v1 reader, refuse before opening SSE;
+        never skip, downcast or acknowledge the operation for that reader.
+        V2 emission requires a compatible active manager.
       message:
-        $ref: "#/components/messages/RuntimeEvent"
+        oneOf:
+          - $ref: "#/components/messages/RuntimeEvent"
+          - $ref: "#/components/messages/OperationEvent"
   /runtime-events/ack:
     publish:
       operationId: acknowledgeExecutionHostRuntimeEvents
@@ -86,6 +100,13 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/RuntimeEventEnvelope"
+    OperationEvent:
+      x-implementation-status: Designed
+      name: runtime.operation.event
+      title: Redacted durable operation-owned event envelope
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/OperationRuntimeEvent"
     RuntimeEventAck:
       name: runtime.event.ack
       title: Manager acknowledgement of contiguous persisted host events

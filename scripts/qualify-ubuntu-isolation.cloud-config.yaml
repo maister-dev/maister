@@ -1,5 +1,9 @@
 #cloud-config
 # Use only as NoCloud user-data for a disposable Ubuntu guest.
+# To exercise network isolation, supply the pinned Ubuntu package as
+# /opt/maister-p0/bubblewrap.deb, isolation-linux-bwrap.apparmor as
+# /opt/maister-p0/isolation.apparmor and qualify-ubuntu-bwrap.py as
+# /opt/maister-p0/probe.py using NoCloud write_files with encoding: b64.
 users: []
 ssh_pwauth: false
 ssh_deletekeys: false
@@ -61,7 +65,18 @@ runcmd:
       test "$(cat "$path/workload/cpu.max")" = "20000 100000"
       echo delegated_limits=verified
     '
-    if command -v bwrap >/dev/null; then bwrap --version; else echo bwrap=absent; fi
+    if test -f /opt/maister-p0/bubblewrap.deb; then
+      package=/opt/maister-p0/bubblewrap.deb
+      printf '%s  %s\n' 2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094 "$package" | sha256sum -c -
+      dpkg -i "$package"
+      /usr/bin/bwrap --version
+      apparmor_parser -r /opt/maister-p0/isolation.apparmor
+      python3 /opt/maister-p0/probe.py
+    elif command -v bwrap >/dev/null; then
+      bwrap --version
+    else
+      echo bwrap=absent
+    fi
     echo 'MAISTER_P0_END'
 power_state:
   mode: poweroff

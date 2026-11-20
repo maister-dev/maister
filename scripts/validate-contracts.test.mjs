@@ -89,6 +89,92 @@ test("CT-ISO-03 validates the operation contract alongside retained Run envelope
   assert.equal(acceptsOperation({ ...operation, runId: "other-run" }), false);
   assert.equal(acceptsOperation({ ...operation, envelopeVersion: 1 }), false);
   assert.equal(acceptsOperation({ ...operation, eventType: "workload.output" }), false);
+
+  const stream = events.channels["/runtime-events"];
+  const messages = stream.subscribe.message.oneOf;
+  assert.deepEqual(
+    messages.map(
+      ({ $ref }) => events.components.messages[$ref.split("/").at(-1)].payload.$ref,
+    ),
+    [
+      "#/components/schemas/RuntimeEventEnvelope",
+      "#/components/schemas/OperationRuntimeEvent",
+    ],
+  );
+  assert.ok(stream.bindings.http.headers["X-Maister-Runtime-Event-Version"]);
+  assert.deepEqual(
+    supervisor.paths["/runtime-events"].get.parameters.find(
+      ({ name }) => name === "X-Maister-Runtime-Event-Version",
+    )?.schema?.enum,
+    ["1", "2"],
+  );
+
+  const discovery = supervisor.paths["/capabilities"].get;
+  assert.equal(
+    discovery.parameters?.find(
+      ({ name }) => name === "X-Maister-Runtime-Event-Version",
+    )?.schema?.default,
+    "1",
+    "A legacy manager must remain on the v1 discovery contract",
+  );
+  const acceptsDiscovery = validator.getSchema(
+    "urn:maister:supervisor#/paths/~1capabilities/get/responses/200/content/application~1json/schema",
+  );
+  const acceptsLegacyDiscovery = validator.getSchema(
+    "urn:maister:supervisor#/components/schemas/ExecutionHostCapabilities",
+  );
+  const discoveryExample =
+    discovery.responses["200"].content["application/json"].examples;
+  const legacy = discoveryExample.legacy.value;
+  const negotiated = discoveryExample.negotiated.value;
+  assert.ok(
+    acceptsLegacyDiscovery(legacy),
+    JSON.stringify(acceptsLegacyDiscovery.errors),
+  );
+  assert.ok(acceptsDiscovery(legacy), JSON.stringify(acceptsDiscovery.errors));
+  assert.ok(acceptsDiscovery(negotiated), JSON.stringify(acceptsDiscovery.errors));
+  assert.equal(acceptsLegacyDiscovery(negotiated), false);
+  assert.equal(
+    acceptsDiscovery({
+      ...negotiated,
+      isolation: { ...negotiated.isolation, hostBootId: undefined },
+    }),
+    false,
+  );
+});
+
+test("the Designed project command profile pairs clear or replace with a revision", () => {
+  const web = readContract("../docs/api/web.openapi.yaml");
+  const validator = new Ajv({ strict: false, validateFormats: false });
+  validator.addSchema(web, "urn:maister:web");
+  const path = web.paths["/api/projects/{slug}/settings"].patch;
+  const schema = path.requestBody.content["application/json"].schema.$ref;
+  const accepts = validator.getSchema(`urn:maister:web${schema}`);
+  const examples = path.requestBody.content["application/json"].examples;
+
+  assert.ok(
+    accepts({ runnerId: "retained-client" }),
+    JSON.stringify(accepts.errors),
+  );
+  for (const { value } of Object.values(examples)) {
+    assert.ok(accepts(value), JSON.stringify(accepts.errors));
+  }
+  assert.equal(accepts({ commandAccessProfile: null }), false);
+  assert.equal(accepts({ expectedCommandAccessRevision: 2 }), false);
+  assert.equal(
+    accepts({
+      ...examples.replaceCommandAccess.value,
+      expectedCommandAccessRevision: 0,
+    }),
+    false,
+  );
+  assert.equal(
+    accepts({
+      commandAccessProfile: { cwd: "/example" },
+      expectedCommandAccessRevision: 2,
+    }),
+    false,
+  );
 });
 
 async function withBrokenLibrarianStream(mutate, callback) {

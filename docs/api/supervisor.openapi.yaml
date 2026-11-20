@@ -47,8 +47,8 @@ info:
     retirement is confirmed. Terminal receipt replay remains unchanged.
     The supported deployment is single-host and loopback. Repository/worktree
     material stays local until Stage C, but Stage B removes web access to the
-    supervisor runtime-data filesystem. Remote enrollment/authentication is
-    intentionally not part of this unauthenticated local contract. See
+    supervisor runtime-data filesystem. Local manager authentication applies
+    when a credential file is configured. This contract covers local transport. See
     [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
 
     **Stage B data plane (Implemented — ADR-167, 0.9.0).** `GET /capabilities`
@@ -173,16 +173,58 @@ paths:
       summary: Read additive Stage B execution-host capabilities (Implemented — ADR-167)
       description: |
         Read-only, host-derived capability document. The web registrar obtains
-        `hostKey` and `bootId` from `/health`, not this body; a 404 is the only
-        bounded legacy signal. Malformed or partial documents fail closed and
-        cannot select canonical runs. No request-body identifier is accepted.
+        `hostKey` and `bootId` from `/health`. A 404 is the bounded signal for
+        a host without Stage B. Malformed or partial documents fail closed.
+
+        (Designed — ADR-210) A request with envelope ceiling 2 announces a
+        manager that can decode Run v1 and operation v2. The host returns the
+        extended document only for that request and only when it supports v2.
+        A v1 document remains sufficient for Stage B and reports no isolation
+        capability. A manager must match the extended document's boot ID to
+        its authenticated health response before selecting any enforced class.
       operationId: getExecutionHostCapabilities
+      parameters:
+        - &runtimeEventVersionHeader
+          name: X-Maister-Runtime-Event-Version
+          in: header
+          required: false
+          x-implementation-status: Designed
+          schema: { type: string, enum: ["1", "2"], default: "1" }
+          description: |
+            Envelope ceiling supported by the caller. Discover v2 on
+            capabilities before requesting the mixed v1/v2 event stream.
+            Version 1 cannot resume across a retained operation event.
       responses:
         "200":
           description: Versioned features and fixed negotiated limits.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExecutionHostCapabilities" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExecutionHostCapabilities"
+                  - $ref: "#/components/schemas/ExecutionHostIsolationCapabilities"
+              examples:
+                legacy:
+                  value: &legacyHostCapabilitiesExample
+                    dataPlaneVersion: execution-host-data-plane.v1
+                    eventStream: true
+                    asyncPrompt: true
+                    runtimeObjects: true
+                    limits: { maxEventBytes: 1048576, maxObjectBytes: 26214400, maxReplayBatch: 500 }
+                negotiated:
+                  summary: Version 2 peer with an enforced Linux session class (Designed)
+                  value:
+                    dataPlane: *legacyHostCapabilitiesExample
+                    runtimeEventVersion: 2
+                    isolation:
+                      hostBootId: c1f5131a-7bbd-42c9-9e39-81286d724032
+                      platform: linux
+                      platformBuild: 6.8.0-147-generic
+                      driver: bwrap
+                      driverVersion: 0.9.0-1ubuntu0.3
+                      policyVersion: 1
+                      enforcedWorkloadClasses: [session]
+                      verifiedAt: "2026-11-19T10:00:00Z"
         "404":
           description: Legacy supervisor without the additive capability surface.
   /runtime-events:
@@ -208,20 +250,33 @@ paths:
         and closes by reason. The `409` refusals below are answered before any
         header is written.
       operationId: streamExecutionHostRuntimeEvents
+      x-negotiated-event-schema:
+        status: Designed
+        contract: async/execution-host-events.asyncapi.yaml#/channels/~1runtime-events/subscribe/message
       parameters:
         - name: Last-Event-ID
           in: header
           required: false
           schema: { $ref: "#/components/schemas/RuntimeEventSequence" }
           description: Exclusive decimal replay cursor; JSON numbers and leading zeroes are invalid.
+        - *runtimeEventVersionHeader
       responses:
         "200":
           description: "text/event-stream durable replay then live tail."
+          headers:
+            X-Maister-Runtime-Event-Version:
+              x-implementation-status: Designed
+              schema: { type: string, enum: ["1", "2"] }
+              description: Negotiated envelope ceiling for this connection.
           content:
             text/event-stream:
               schema: { $ref: "#/components/schemas/RuntimeEventEnvelope" }
         "409":
-          description: Invalid cursor, replay-floor loss, or stream identity conflict.
+          description: |
+            Invalid cursor, replay-floor loss, or stream identity conflict.
+            Under the Designed v2 protocol, a v1 request spanning operation
+            events fails before SSE with PRECONDITION and reason
+            runtime_event_version_required.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -4248,6 +4303,37 @@ components:
             maxEventBytes: { type: integer, enum: [1048576] }
             maxObjectBytes: { type: integer, enum: [26214400] }
             maxReplayBatch: { type: integer, enum: [500] }
+    ExecutionHostIsolationCapabilities:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [dataPlane, runtimeEventVersion, isolation]
+      properties:
+        dataPlane: { $ref: "#/components/schemas/ExecutionHostCapabilities" }
+        runtimeEventVersion: { type: integer, enum: [2] }
+        isolation:
+          oneOf:
+            - { $ref: "#/components/schemas/ExecutionHostIsolationEvidence" }
+            - { type: object, nullable: true, enum: [null] }
+          description: Null means there is no current boot-bound enforcement evidence.
+    ExecutionHostIsolationEvidence:
+      x-implementation-status: Designed
+      type: object
+      additionalProperties: false
+      required: [hostBootId, platform, platformBuild, driver, driverVersion, policyVersion, enforcedWorkloadClasses, verifiedAt]
+      properties:
+        hostBootId: { type: string, format: uuid }
+        platform: { type: string, enum: [linux, darwin] }
+        platformBuild: { type: string, minLength: 1, maxLength: 128 }
+        driver: { type: string, enum: [bwrap, seatbelt] }
+        driverVersion: { type: string, minLength: 1, maxLength: 128 }
+        policyVersion: { type: integer, minimum: 1, maximum: 2147483647 }
+        enforcedWorkloadClasses:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items: { type: string, enum: [session, cli, check, gate, requirement_probe, package_setup, diagnostic] }
+        verifiedAt: { type: string, format: date-time }
     RuntimeObjectReserveCommand:
       type: object
       additionalProperties: false

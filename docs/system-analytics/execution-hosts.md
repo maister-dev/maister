@@ -581,7 +581,12 @@ assignment fence. Requirement, install and diagnostic operations use an
 independent owner with their own host placement and epoch. Both use the
 host-global replay order. A v2 operation event advances the contiguous
 host ACK after its own domain commit. It never advances a Run cursor or
-applies a Run lifecycle event. See [Execution isolation](execution-isolation.md)
+applies a Run lifecycle event. A v2 manager advertises its envelope ceiling
+on authenticated discovery. It verifies that isolation evidence belongs to the
+boot reported by health, then requests the shared stream with the same version.
+An absent header selects v1. If a v1 reader would cross a retained v2 event,
+the host refuses before SSE so the shared acknowledgment floor cannot skip an
+operation. See [Execution isolation](execution-isolation.md)
 and the [migration design](../db/execution-hosts-domain.md#isolation-migration-design).
 
 | Kind                 | Route                            | Effect                                                                                                           | Duration     | Completion signal(s)                                                                                          |
