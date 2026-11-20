@@ -117,12 +117,13 @@ describe("captureCheckpoint (DD5)", () => {
 
     const tipBefore = (await git(wb.worktree, "rev-parse", "HEAD")).trim();
 
+    vi.stubEnv("GIT_DIR", join(wb.worktree, "missing-git-directory"));
     const { ref, sha } = await captureCheckpoint({
       worktreePath: wb.worktree,
       namespace: "checkpoints",
       runId: wb.runId,
       id: "attempt-1",
-    });
+    }).finally(() => vi.unstubAllEnvs());
 
     expect(ref).toBe(`refs/maister/checkpoints/${wb.runId}/attempt-1`);
     expect(checkpointRefName("checkpoints", wb.runId, "attempt-1")).toBe(ref);

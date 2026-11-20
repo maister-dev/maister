@@ -174,6 +174,8 @@ The native Ubuntu host also passed the synthetic relay fixture in `scripts/quali
 
   - The run-context write guard now uses the shared inspection environment for worktree detection and ignore checks. RED reproduced an incorrect safe result with ambient Git routing. GREEN passed all seven run-context integration cases with PostgreSQL on the current user's rootless Docker.
 
+  - Checkpoint capture, restore, ref cleanup and gate-chat baseline reads now use the shared Git environment. Capture retains an explicit scratch index and checkpoint identity. RED reproduced capture failure with ambient Git routing. GREEN passed 37 workspace-policy and gate-chat integration cases with rootless Docker. Repository-local executable configuration and publication policies still require T08 acceptance.
+
 ### P2 — Linux session isolation and access policy
 
 - [ ] **T09. Persist and resolve profiles.** In `web/lib/db/schema.ts`, generated migrations, `web/lib/acp-runners/`, `web/lib/runs/execution-policy.ts` and shared `runtime/` types, define ceiling/default, embedded runner access, project command override and immutable launch/session/command witnesses. Include tools/MCP, network mode/hosts, ports, RO/RW extra paths, credentials and per-MCP exposure, docker/nested-userns, approval/bypass and resource limits. All dangerous grants default off. Define explicit defaults for existing rows and SET/CLEAR/re-set behavior for optional values. Avoid rewriting old snapshots. Capture revisions and compare under locks on actual admission. Evidence is real-Postgres migration/round-trip and decision-table output.

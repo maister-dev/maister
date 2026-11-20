@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../runtime/git-inspection-environment";
+
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
@@ -844,7 +846,7 @@ export async function sendGateChatTurn(args: {
       "--verify",
       `${baselineRef}^{commit}`,
     ],
-    { timeout: GIT_TIMEOUT_MS },
+    { timeout: GIT_TIMEOUT_MS, env: gitInspectionEnvironment() },
   ).then(
     () => true,
     () => false,

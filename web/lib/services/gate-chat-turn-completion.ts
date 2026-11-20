@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../runtime/git-inspection-environment";
+
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -32,11 +34,7 @@ const log = pino({
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
 
-async function git(
-  worktreePath: string,
-  args: string[],
-  env?: NodeJS.ProcessEnv,
-): Promise<string> {
+async function git(worktreePath: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync(
       "git",
@@ -44,7 +42,7 @@ async function git(
       {
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: 16 * 1024 * 1024,
-        env: env ?? process.env,
+        env: gitInspectionEnvironment(),
       },
     );
 

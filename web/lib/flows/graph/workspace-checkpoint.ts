@@ -10,6 +10,8 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../../runtime/git-inspection-environment";
+
 import { MaisterError } from "@/lib/errors";
 import { runtimeRoot } from "@/lib/instance-config";
 
@@ -52,7 +54,7 @@ async function git(
       {
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: EXEC_MAX_BUFFER,
-        env: env ?? process.env,
+        env: env ?? gitInspectionEnvironment(),
       },
     );
 
@@ -126,10 +128,7 @@ export async function captureWorkspaceTree(
   );
   const tmpDir = await mkdtemp(path.join(tmpdir(), "maister-ck-index-"));
   const indexFile = path.join(tmpDir, "index");
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    GIT_INDEX_FILE: indexFile,
-  };
+  const env = gitInspectionEnvironment(indexFile);
 
   try {
     await copyFile(indexPath, indexFile);
@@ -172,7 +171,7 @@ export async function captureCheckpoint(args: {
         "-m",
         `maister checkpoint ${args.namespace}/${args.runId}/${args.id}`,
       ],
-      { ...process.env, ...CHECKPOINT_GIT_IDENT_ENV },
+      { ...gitInspectionEnvironment(), ...CHECKPOINT_GIT_IDENT_ENV },
     )
   ).trim();
 
@@ -310,6 +309,7 @@ export async function deleteChatCheckpoint(
     await execFileAsync("git", ["-C", worktreePath, "update-ref", "-d", ref], {
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: EXEC_MAX_BUFFER,
+      env: gitInspectionEnvironment(),
     });
     log.debug({ worktreePath, ref }, "[checkpoint] chat baseline deleted");
   } catch {
