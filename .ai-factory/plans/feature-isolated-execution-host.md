@@ -135,6 +135,12 @@ The Designed project settings PATCH now specifies omission, clear, replacement a
 
 **T04.3 [x] — Publish normative analytics and acceptance ownership.** Create the isolation analytics and traceability group described above. Fold every source requirement, the TDD ownership matrix and each P0 decision into expectations and edge cases. Run the coverage group and both spec validators in Designed state. Record coverage per requirement, including any blocked live qualification, in the P0 evidence.
 
+#### Ubuntu local ACP startup sample (2026-11-20)
+
+The checked-in benchmark at `ad86d0cfc` ran on native Ubuntu 24.04.5 x64, kernel 6.8.0-149-generic and Node 24.16.0, with installed dependencies, ordinary OS caches and concurrent contract validation. Fresh host first launch took **620.5/759.6 ms p50/p95** across 20 samples. New launches on a reused host took **712.9/968.2 ms p50/p95** across 30 samples after one warm-up. All 51 launches completed the synthetic ACP handshake and verified a 204 session stop. This fixture measures the current unconfined launch path with temporary state. Controlled cache, installed sandbox and hosted release-image timings remain open. Numerical P0 budgets still require owner approval.
+
+`pnpm validate:contracts` passed the registered OpenAPI/AsyncAPI parser and schema checks, 18 contract tests and parity checks. The execution-isolation coverage validator separately passed all 13 rows. These checks preserve the Designed status of the outstanding wire and authority acceptance.
+
 #### Ubuntu installed-service qualification attempt (2026-11-20)
 
 Ubuntu 24.04.5 LTS, kernel 6.8.0-149-generic, systemd 255.4-1ubuntu8.18, AppArmor 4.0.1really4.0.1-0ubuntu0.24.04.9 and Bubblewrap 0.9.0-1ubuntu0.3. AppArmor was enabled with unprivileged user namespace restriction set to 1. The host mounted cgroup v2 with `nsdelegate`. The shell used Node 24.16.0.
