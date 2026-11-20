@@ -17824,6 +17824,9 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     code: "PRECONDITION",
     details: { reason: "agent_memory_unavailable" },
   });
+  const staleRead = await list();
+  expect(staleRead.ok).toBe(false);
+  expect(await staleRead.json()).toMatchObject({ code: "PRECONDITION" });
   await expect(
     db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
   ).rejects.toMatchObject({ code: "PRECONDITION" });

@@ -11,9 +11,12 @@ import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { installationAgentGrantSchema } from "./installation-access-types";
+import { assertCurrentInstallationSources } from "./installation-source-capture";
 
 import { projectRolesForActions } from "@/lib/authz";
+import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { lockCurrentNativeKnowledgeToken } from "@/lib/brain/knowledge-token-lock";
+import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 
 const principal = z.discriminatedUnion("kind", [
@@ -127,6 +130,14 @@ export async function requireInstallationRunAuthority(
       await tx.execute(sql`SELECT 1 FROM users WHERE id=${owner.userId} AND account_status='active'
       AND NOT must_change_password FOR SHARE`);
     if (!user.rows.length) throw denied();
+    const assignmentGrants = await tx.execute(sql`
+      SELECT action FROM company_grants WHERE company_id=${current.data.company_id}
+        AND principal_type='user' AND principal_id=${owner.userId} AND revoked_at IS NULL
+        AND action IN ('assignments:read','assignments:update') FOR SHARE
+    `);
+    const actions = new Set(assignmentGrants.rows.map(({ action }) => action));
+    if (!actions.has("assignments:read") || !actions.has("assignments:update"))
+      throw denied();
   } else if (owner.trigger !== current.data.trigger_source) throw denied();
 
   return {
@@ -169,6 +180,26 @@ export async function requireInstallationCredential(
     !context.scopes.includes(scope)
   )
     throw denied();
+
+  // The native credential lock already serializes disclosure on this Run.
+  // Recheck its prior inputs before any adapter can read a new resource.
+  await assertCurrentInstallationSources(tx, context);
+  const [row] = (
+    await tx.execute(
+      sql`SELECT knowledge_access FROM runs WHERE id=${context.runId}`,
+    )
+  ).rows;
+  const capture = knowledgeAccessCaptureSchema.safeParse(row?.knowledge_access);
+  if (!capture.success || capture.data.state !== "complete")
+    throw new MaisterError(
+      "PRECONDITION",
+      "The installation execution source capture is unavailable",
+    );
+  await authorizeSourceRestrictions(
+    tx,
+    { kind: "execution", runId: context.runId, nodeAttemptId: null },
+    capture.data.restrictions,
+  );
 
   return context;
 }
