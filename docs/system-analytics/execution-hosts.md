@@ -907,6 +907,12 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-03:** Negative dispatch proof is scoped to Run, host, assignment and epoch. Under the same Run and assignment locks as command admission, a current create or prompt command, incarnation, ambiguous current handle or observed live session requires the dispatched execution path. Command retirement does not remove the dispatch witness.
+- **APR-04:** Historical incarnation repair joins retained canonical terminal evidence by exact Run, host, assignment, epoch and host session. Checkpoint command evidence also matches the owned command. Replay after projection cursor advance may settle only the original incarnation and never restore a current binding or reopen a closed incarnation.
+
+
 - **E-EH-01** — At most one non-retired `local_direct` execution host MUST
   exist. Enforced by: `execution_hosts_local_active_uq` partial unique index;
   the registrar policy under a `SELECT … FOR UPDATE` of the active row.

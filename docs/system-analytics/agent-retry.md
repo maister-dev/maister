@@ -300,6 +300,11 @@ authorized future-run setting with this distinction visible.
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-06:** A logical continuation episode persists the assignment, claim, attempts, due time and typed failure across restarts and automatic epoch rollover. Only one owner can admit preparation at a time. Allow five attempts with delays of 15, 30, 60 and 120 seconds. Definitive refusal skips these delays and leaves only settlement or cancellation eligible.
+
+
 - A saved runner change MUST offer failed-run batch recovery without automatically accepting any item, enforced by attachment-save UI and the existing explicit retry API.
 - Batch and single actions MUST share recipe validation, actor grants, task serialization and keyed receipts; generic replay MUST retain its positive pre-work evidence requirement.
 - A fresh assessment MUST bind current task/repository evidence and preserve original run/trigger history; active-work/current-assessment guards and final qualifier insertion enforce one active assessment.

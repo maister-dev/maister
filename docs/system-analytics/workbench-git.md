@@ -293,6 +293,11 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-10:** Pull contention returns HTTP 409 CONFLICT with details.reason operation_busy. The button displays a localized retry message. An actual fast-forward refusal keeps the divergence message.
+
+
 - Every git action MUST be admitted by exactly one predicate over `runs.status`,
   the open rework-claim `owner_user_id`, `workspaces.removed_at`, worktree
   presence, the lifecycle slot and the promotion claim; a parked status is the

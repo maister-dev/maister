@@ -2676,6 +2676,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RemoteActionResponse" }
               examples:
+                pulled:
+                  value: { ok: true }
                 pushed:
                   value:
                     ok: true
@@ -2702,10 +2704,21 @@ paths:
             `PRECONDITION` — invalid remote name/url, remote already exists
             (add), unknown remote (action), or the repo is not a git repo.
             Pull also refuses a different checked-out branch or local changes;
-            a failed fast-forward returns `CONFLICT`.
+            a failed fast-forward returns `CONFLICT`. A busy repository returns
+            `CONFLICT` with `details.reason: operation_busy`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                repository-busy:
+                  value:
+                    code: CONFLICT
+                    message: Repository mutation is in progress
+                    details: { reason: operation_busy }
+                fast-forward-refused:
+                  value:
+                    code: CONFLICT
+                    message: The current branch could not be fast-forwarded
         "422":
           description: Malformed body (neither a valid add nor a known `op`) (`CONFIG`).
           content:
@@ -2992,7 +3005,7 @@ paths:
                   description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
                 memoryEnabled:
                   type: boolean
-                  description: ADR-210 per-attachment vault enablement for the acting session agent or Flow persona. Brain permissions are independent.
+                  description: ADR-214 per-attachment vault enablement for the acting session agent or Flow persona. Brain permissions are independent.
                 memoryWritePolicy:
                   type: string
                   enum: [auto, review]
@@ -11239,7 +11252,11 @@ paths:
           same primitive).
         - **agent** → finalized to `Abandoned` via `finalizeAgentRun`
           (which also frees the agent pool slot); physical session teardown and
-          canonical exit evidence are required before terminal application.
+          canonical exit evidence are required for dispatched execution.
+          (Designed, ADR-214) An exact undispatched operational resume can be
+          abandoned atomically without waiting for predecessor disposition.
+          The success receipt reflects logical cancellation. Checkout release
+          requires independent canonical and scoped host retirement evidence.
 
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). Body is empty; run kind, project

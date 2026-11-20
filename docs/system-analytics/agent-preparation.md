@@ -161,6 +161,13 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-02:** The frozen source witness admits historical v1 and new v2 ephemeral witnesses. Generation zero is a non-dispatchable source witness. Positive generations attest trusted materialization without replacing the original source. A legacy operational ephemeral continuation is refused with operational_legacy_baseline_unverifiable. Historical inspection and cancellation remain available.
+- **APR-05:** Record definitive refusal with its exact assignment, operation and cause before releasing preparation ownership. Identical replay is idempotent. A storage or cleanup error has its own cause. Settlement and restart recovery after refusal do not reacquire the preparation fence.
+- **APR-11:** On upgrade, a populated two-epoch Run converges through restart and either worker ordering. The repaired production Run remains terminal. Reconcile and report historical application and checkout evidence independently.
+
+
 - TB01: real Postgres/Git driver-plus-continuation tests establish operation owners and actual interference; log ordering alone never establishes historical causation.
 - TB02: durable one-active-resource-owner constraints and token/epoch publication CAS make re-entry idempotent and prevent stale owners writing successor state.
 - TB03: stable cross-process physical exclusion plus verified child lifetime prevents destructive overlap across leases, epochs and restart; real-process regression covers manager SIGKILL during Git.
@@ -184,3 +191,20 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 - [ADR-201](../decisions/adr-201.md), [launch admission](task-launch-admission.md), [persistence](../db/task-launch-domain.md).
 - [Operational lifecycle](operational-agent-lifecycle.md), [execution prompt lifecycle](execution-prompt-lifecycle.md), [execution hosts](execution-hosts.md).
 - Implementation owners: `web/lib/agents/launch.ts`, `web/lib/agents/finalization.ts`, `web/lib/gc/operational-disposition.ts`, existing context/materialization lock and command/session owners.
+
+## Preparation recovery traceability
+
+| ID | Contract | Tasks | Primary test | Status |
+| --- | --- | --- | --- | --- |
+| APR-01 | `operational-agents.md` | T7,T8 | IT-APR-01 | Planned |
+| APR-02 | `agent-preparation.md` | T3,T7,T8 | IT-APR-02 | Planned |
+| APR-03 | `execution-hosts.md` | T4,T6 | IT-APR-03 | Planned |
+| APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Planned |
+| APR-05 | `agent-preparation.md` | T2,T9 | IT-APR-05 | Planned |
+| APR-06 | `agent-retry.md` | T3,T10 | IT-APR-06 | Planned |
+| APR-07 | `operational-agent-lifecycle.md` | T11 | IT-APR-07 | Planned |
+| APR-08 | `agent-incidents.md` | T11,T12 | IT-APR-08 | Planned |
+| APR-09 | `operational-agent-lifecycle.md` | T2,T6,T11 | IT-APR-09 | Planned |
+| APR-10 | `workbench-git.md` | T13 | E2E-APR-10 | Planned |
+| APR-11 | `agent-preparation.md` | T9,T12,T14,T15 | IT-APR-11 | Planned |
+| APR-12 | `operational-agent-lifecycle.md` | T5,T6,T14,T15 | IT-APR-12 | Planned |

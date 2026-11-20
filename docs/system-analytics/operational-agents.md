@@ -84,6 +84,11 @@ original prompt after new guidance is shipped.
 
 ## Expectations
 
+### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
+
+- **APR-01:** An operational ephemeral checkout uses version 2 integrity. Capture HEAD, HEAD reflog, Git directory, index, source, exact owned refs and worktree config. The common Git configuration digest covers core, extensions, index, feature, checkout, sparseCheckout, filter, diff, merge, submodule, alias, protocol, url, hooks and active include directives. Retain entry order and bytes. Foreign refs and Publish tracking configuration do not affect the witness.
+
+
 - **OPA-01:** The definition parser, registry and Studio preserve kind independently of mode/workspace/completion and symmetrically handle SET, CLEAR and re-SET.
 - **OPA-02:** Legacy/null/omitted kind retains existing Review/promotion/result behavior, enforced by default resolution and code-delivery integration regression.
 - **OPA-03:** Permission policy, token scopes, isolation and admission remain independent of kind, enforced at existing launch/host/HITL gates.

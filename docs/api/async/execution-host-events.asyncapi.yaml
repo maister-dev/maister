@@ -3,6 +3,10 @@ info:
   title: MAIster execution-host canonical event stream
   version: "1.0.0"
   description: |
+    (Designed, ADR-214) Historical lifecycle reconciliation uses existing
+    canonical envelopes. A terminal event must match the original Run,
+    assignment, epoch, host and session. Checkpoint command evidence matches
+    the owned command separately. Historical replay does not rebind the Run.
     Implemented Stage B local-direct host-global event delivery. The execution host
     owns private files and its durable SQLite outbox; the manager owns canonical
     redacted event metadata after at-least-once delivery. This contract is

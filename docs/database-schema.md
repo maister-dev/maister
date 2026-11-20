@@ -5831,3 +5831,7 @@ confirmation. `0352_librarian_summary_knowledge_capture` retains the composed
 source union on each summary. Legacy turns, cards and summaries keep their
 existing payloads and permissions. The existing operation receipt remains
 the idempotent decision record.
+
+## Operational continuation recovery (Designed)
+
+Migration 0356 extends the offline-compatible baseline check to v2 ephemeral witnesses while retaining frozen v1 JSON and existing Run kinds. Migration 0357 adds an episode keyed by Run and logical continuation. It records assignment, epoch, preparation, bounded attempts, due time, failure and lease. See [Agent workspace preparation](system-analytics/agent-preparation.md).
