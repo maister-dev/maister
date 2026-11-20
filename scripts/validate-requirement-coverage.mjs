@@ -78,6 +78,23 @@ export const COVERAGE_GROUPS = {
     implementationPhases: /^T(?:[4-9]|1[0-8])$/,
     testRoots: ["web", "supervisor", "mcp"],
   },
+  "operational-preparation-recovery": {
+    label: "Operational preparation recovery",
+    planPath: ".ai-factory/plans/feature-operational-preparation-recovery.md",
+    documents: [
+      "operational-agents.md",
+      "agent-preparation.md",
+      "execution-hosts.md",
+      "agent-retry.md",
+      "operational-agent-lifecycle.md",
+      "agent-incidents.md",
+      "workbench-git.md",
+    ],
+    prefixes: ["APR"],
+    matrixPath: "docs/system-analytics/agent-preparation.md",
+    implementationPhases: /^T(?:[2-9]|1[0-5])$/,
+    testRoots: ["web", "supervisor"],
+  },
   m51: {
     label: "M51",
     planPath: ".ai-factory/plans/feature-m51-see-everything.md",

@@ -578,6 +578,12 @@ describe("operational disposition through existing lifecycle owners", () => {
   it("refuses rematerialization of a changed context checkout on continuation", async () => {
     const seeded = await seed("worktree", undefined, 1);
     const current = await row(seeded.runId);
+    expect(current.operationalIntegrityBaseline).toMatchObject({
+      version: 1,
+      contextMounts: [
+        { baseline: { version: 2, resourceKind: "ephemeral_checkout" } },
+      ],
+    });
 
     await db
       .update(agentProjectLinks)

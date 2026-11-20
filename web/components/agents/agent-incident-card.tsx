@@ -23,7 +23,19 @@ function causeKey(
   | "cleanup"
   | "authorization"
   | "qualification"
+  | "continuation"
   | "execution" {
+  if (
+    [
+      "operational_integrity_refused",
+      "operational_legacy_baseline_unverifiable",
+      "operational_preparation_identity_changed",
+      "operational_context_baseline_missing",
+      "agent_continuation_attempts_exhausted",
+      "prompt_owner_invariant",
+    ].includes(reason)
+  )
+    return "continuation";
   if (reason === "project_comment_input_too_large") return "input";
   if (
     [
@@ -225,7 +237,7 @@ export function AgentIncidentCard({
                 {episode.representativeRunId ? (
                   <Link
                     className={button}
-                    href={`/runs/${episode.representativeRunId}`}
+                    href={`/runs/${episode.representativeRunId}${causeKey(episode.reasonCode) === "continuation" ? "#operation-result" : ""}`}
                   >
                     {t("openDiagnosticRun")}
                   </Link>

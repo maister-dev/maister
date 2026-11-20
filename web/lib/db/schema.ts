@@ -2750,7 +2750,13 @@ export const runs = pgTable(
     ),
     operationalBaselineCheck: check(
       "runs_operational_baseline_check",
-      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR (${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND ${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
+      sql`${t.operationalIntegrityBaseline} IS NULL OR ((${t.agentKind} = 'operational' OR (${t.runKind}='agent' AND ${t.agentKind}='code_delivery' AND ${t.taskLaunchIntentId} IS NOT NULL) OR (${t.runKind}='flow' AND ${t.companyId} IS NOT NULL AND ${t.projectId} IS NULL AND ${t.agentKind} IS NULL AND ${t.agentWorkspace}='none' AND ${t.companyExecutionSnapshot}->>'schemaVersion'='2' AND ${t.resultContract}->>'kind'='flow_export' AND ${t.resultContract}->'required'='true'::jsonb)) AND jsonb_typeof(${t.operationalIntegrityBaseline}) = 'object' AND (
+        (${t.operationalIntegrityBaseline}->'version' = '1'::jsonb AND
+          (${t.agentKind} = 'operational' OR NOT jsonb_path_exists(${t.operationalIntegrityBaseline}, '$.contextMounts[*].baseline ? (@.version == 2)')))
+        OR (${t.agentKind} = 'operational' AND operational_ephemeral_baseline_v2_valid(${t.operationalIntegrityBaseline}))
+      )
+      AND NOT jsonb_path_exists(${t.operationalIntegrityBaseline}, '$.contextMounts[*].baseline ? (@.version != 1 && @.version != 2)')
+      AND operational_nested_baselines_valid(${t.operationalIntegrityBaseline}->'contextMounts') AND jsonb_typeof(${t.operationalIntegrityBaseline}->'generation') = 'number' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'source') = 'array' AND jsonb_typeof(${t.operationalIntegrityBaseline}->'platform') = 'array' AND pg_column_size(${t.operationalIntegrityBaseline}) <= 16777216) IS TRUE`,
     ),
     companyCancellationIntentCheck: check(
       "runs_company_cancellation_intent_check",
@@ -3671,6 +3677,98 @@ export const agentPreparationOperations = pgTable(
     ),
   }),
 );
+export const AGENT_CONTINUATION_STATES = [
+  "eligible",
+  "claimed",
+  "backoff",
+  "settlement",
+  "attention",
+  "closed",
+] as const;
+
+export const agentContinuationEpisodes = pgTable(
+  "agent_continuation_episodes",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    logicalKey: text("logical_key").notNull(),
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => executionAssignments.id, { onDelete: "restrict" }),
+    assignmentEpoch: integer("assignment_epoch").notNull(),
+    preparationId: text("preparation_id").references(
+      () => agentPreparationOperations.id,
+      { onDelete: "restrict" },
+    ),
+    state: text("state", { enum: AGENT_CONTINUATION_STATES }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    firstFailureAt: timestamp("first_failure_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    dueAt: timestamp("due_at", { withTimezone: true, mode: "date" }),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    failure: jsonb("failure").$type<{
+      code: string;
+      reason: string;
+      reasons?: string[];
+      blockedReason?: string;
+      blockedAssignmentId?: string;
+      dispatch?: {
+        assignmentId: string;
+        turnId: string;
+        hostSessionId: string;
+      };
+    }>(),
+    settlementAttempts: integer("settlement_attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.runId, t.logicalKey] }),
+    oneOpen: uniqueIndex("agent_continuation_open_run_uq")
+      .on(t.runId)
+      .where(sql`${t.state} <> 'closed'`),
+    due: index("agent_continuation_due_idx")
+      .on(t.dueAt, t.runId)
+      .where(sql`${t.state} IN ('backoff','settlement')`),
+    stateCheck: check(
+      "agent_continuation_state_check",
+      inLiteralList(t.state, AGENT_CONTINUATION_STATES),
+    ),
+    shapeCheck: check(
+      "agent_continuation_shape_check",
+      sql`(length(${t.logicalKey}) BETWEEN 1 AND 256
+        AND ${t.assignmentEpoch} > 0
+        AND ${t.attempts} BETWEEN 0 AND 5
+        AND ${t.settlementAttempts} BETWEEN 0 AND 5
+        AND ((${t.claimToken} IS NULL) = (${t.claimExpiresAt} IS NULL))
+        AND (${t.state} <> 'claimed' OR ${t.claimToken} IS NOT NULL)
+        AND (${t.state} IN ('claimed','settlement') OR ${t.claimToken} IS NULL)
+        AND ((${t.state} IN ('backoff','settlement')) = (${t.dueAt} IS NOT NULL))
+        AND (${t.state} NOT IN ('backoff','settlement','attention') OR ${t.failure} IS NOT NULL)
+        AND (${t.failure} IS NULL OR (
+          jsonb_typeof(${t.failure}) = 'object'
+          AND ${t.failure}->>'code' ~ '^[A-Z_]{1,64}$'
+          AND ${t.failure}->>'reason' ~ '^[a-z_]{1,128}$'
+          AND pg_column_size(${t.failure}) <= 4096
+        ) IS TRUE)) IS TRUE`,
+    ),
+  }),
+);
+
+export type AgentContinuationEpisode =
+  typeof agentContinuationEpisodes.$inferSelect;
+
 export type ExecutionCommand = typeof executionCommands.$inferSelect;
 
 // --- Evaluation Lab (M46, ADR-142..145) ------------------------------------

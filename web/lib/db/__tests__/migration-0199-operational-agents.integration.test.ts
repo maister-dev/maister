@@ -62,7 +62,7 @@ beforeAll(async () => {
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
   await declareCurrentTestDatabaseWriter(database);
   // Current-writer controls exercise domain guards, not the obsolete-binary floor.
-  await database.pool.query("SET maister.agent_preparation_writer='v1'");
+  await database.pool.query("SET maister.agent_preparation_writer='v2'");
 }, 180_000);
 
 afterAll(async () => {

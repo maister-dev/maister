@@ -942,3 +942,7 @@ Operational definitions separate kind, execution mode, workspace access and appr
 ## Designed extension
 
 The [agent activity and qualification contract](agent-activity-history.md) defines the accepted follow-up; current behavior above remains Implemented until its owning phase is qualified.
+
+## Operational preparation recovery (Designed)
+
+Operational continuation uses the frozen Run definition and the durable preparation admission rules in [Agent workspace preparation](agent-preparation.md).

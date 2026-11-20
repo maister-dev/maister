@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import pino from "pino";
+
 import {
   tryAcquireMaterializationLock,
   releaseMaterializationLock,
@@ -35,6 +37,11 @@ import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence
 import { runtimeRoot } from "@/lib/runtime-root";
 import { isFencedError } from "@/lib/execution-host/deliverer";
 import { MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "agent-preparation-workspace",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export type PreparationWorkspaceFence = {
   run: <T>(effect: () => Promise<T>) => Promise<T>;
@@ -107,6 +114,7 @@ export async function recordAgentPreparationFailure(
 
 /** Repository fences retain registered orphan Git groups; plain trees spawn no Git. */
 export async function acquirePreparationWorkspace(input: {
+  runId?: string;
   repoPath: string | null;
   cwd: string;
   resourceKind: string;
@@ -118,9 +126,16 @@ export async function acquirePreparationWorkspace(input: {
         "Repository preparation requires an actual repository owner",
         { details: { reason: "operational_preparation_repository_required" } },
       );
+    const startedAt = performance.now();
     const fence = await acquireRepositoryMutationFence(input.repoPath);
+    const acquiredAt = performance.now();
+    const fields = { runId: input.runId, resourceKind: input.resourceKind };
     let released = false;
 
+    log.info(
+      { ...fields, acquireMs: Math.round(acquiredAt - startedAt) },
+      "agent-preparation-repository-fence-acquired",
+    );
     return {
       run: fence.run,
       release: async () => {
@@ -128,6 +143,10 @@ export async function acquirePreparationWorkspace(input: {
         released = true;
         try {
           await fence.release();
+          log.info(
+            { ...fields, heldMs: Math.round(performance.now() - acquiredAt) },
+            "agent-preparation-repository-fence-released",
+          );
         } catch (error) {
           fence.retain();
           throw error;

@@ -30,7 +30,8 @@ import { runEventWakeBus } from "./events/run-wake";
 import { commandSignals } from "./signals";
 import { TERMINAL_COMMAND_STATES } from "./types";
 
-import { executionCommands } from "@/lib/db/schema";
+import { executionCommands, runs } from "@/lib/db/schema";
+import { recordAgentIncident } from "@/lib/runs/agent-incidents";
 import { MaisterError } from "@/lib/errors";
 import { isApplicationStopping } from "@/lib/server-lifecycle";
 
@@ -365,6 +366,107 @@ function serviceFailure(error: unknown): boolean {
   return false;
 }
 
+const OPERATIONAL_SERVICE_RETRY_LIMIT = 10;
+const OPERATIONAL_SERVICE_RETRY_WINDOW_MS = 15 * 60 * 1000;
+
+async function recordOperationalServiceRetry(input: {
+  db: Db;
+  claim: PromptOwnerClaim;
+  diagnostic: CommandApplicationError;
+}): Promise<PromptOwnerApplicationResult | null> {
+  const command = input.claim.command;
+  if (command.ownerKind !== "agent_turn") return null;
+  return projectionTransaction(input.db, async (tx) => {
+    const [run] = await tx
+      .select({
+        row: runs,
+        timestampMs: sql<number>`extract(epoch from clock_timestamp()) * 1000`,
+      })
+      .from(runs)
+      .where(eq(runs.id, command.runId))
+      .for("no key update");
+    if (run?.row.agentKind !== "operational" || !run.row.projectId) return null;
+
+    const now = Number(run.timestampMs);
+    const history = command.applicationError;
+    const prior = Date.parse(
+      history?.serviceRetryStartedAt ?? history?.deferredSince ?? "",
+    );
+    const first = Number.isFinite(prior) ? Math.min(prior, now) : now;
+    const attempt = (history?.serviceRetryAttempts ?? 0) + 1;
+    const deadline = first + OPERATIONAL_SERVICE_RETRY_WINDOW_MS;
+    const exhausted =
+      attempt >= OPERATIONAL_SERVICE_RETRY_LIMIT || now >= deadline;
+    const diagnostic: CommandApplicationError = {
+      ...input.diagnostic,
+      serviceRetryStartedAt: new Date(first).toISOString(),
+      serviceRetryAttempts: attempt,
+      ...(exhausted
+        ? {
+            reason: "operational_prompt_service_exhausted",
+            classification: "exhausted",
+          }
+        : {}),
+    };
+    const [changed] = await tx
+      .update(executionCommands)
+      .set({
+        applicationState: exhausted ? "poisoned" : "pending",
+        applicationClaimOwner: null,
+        applicationClaimExpiresAt: null,
+        applicationNextRetryAt: exhausted
+          ? null
+          : new Date(
+              Math.min(
+                deadline,
+                now + Math.min(120_000, 5_000 * 2 ** (attempt - 1)),
+              ),
+            ),
+        applicationError: diagnostic,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(
+        and(
+          claimPredicate(input.claim),
+          sql`${executionCommands.applicationClaimExpiresAt} > clock_timestamp()`,
+        ),
+      )
+      .returning({ id: executionCommands.id });
+    if (!changed) return "deferred";
+    if (!exhausted) return "deferred";
+
+    const { projectId, sourceAgentId, agentId, agentActivitySnapshot } =
+      run.row;
+    const sourceId = sourceAgentId ?? agentId;
+    if (projectId && sourceId)
+      await recordAgentIncident(tx, {
+        projectId,
+        agentId: sourceId,
+        runId: command.runId,
+        channel: "execution_failure",
+        scopeKind: "infrastructure",
+        scopeKey:
+          agentActivitySnapshot?.comparisonScopes?.infrastructure ??
+          command.runId,
+        sourceFactKey: `prompt-service:${command.id}:${first}`,
+        fingerprint: diagnostic.reason,
+        reasonCode: diagnostic.reason,
+        observedAt: new Date(now),
+      });
+    log.warn(
+      {
+        commandId: command.id,
+        runId: command.runId,
+        attempt,
+        first,
+        cause: diagnostic.causeReason,
+      },
+      "operational-prompt-service-retry-exhausted",
+    );
+    return "poisoned";
+  });
+}
+
 async function recordServiceRetry(input: {
   db: Db;
   claim: PromptOwnerClaim;
@@ -385,7 +487,10 @@ async function recordServiceRetry(input: {
     },
   );
 
-  return recordPendingApplication({ ...input, diagnostic, retryMs: 5_000 });
+  return (
+    (await recordOperationalServiceRetry({ ...input, diagnostic })) ??
+    recordPendingApplication({ ...input, diagnostic, retryMs: 5_000 })
+  );
 }
 
 function preparationTimedOut(error: unknown): boolean {
@@ -686,6 +791,13 @@ export async function applyClaimedPromptOwner(input: {
         },
       );
 
+      if (BOUNDED_AGENT_DEFERRALS.has(String(error.details?.causeCode))) {
+        const bounded = await recordOperationalServiceRetry({
+          ...input,
+          diagnostic,
+        });
+        if (bounded) return bounded;
+      }
       return recordPendingApplication({
         ...input,
         diagnostic,
@@ -792,6 +904,11 @@ export async function applyClaimedPromptOwner(input: {
             },
           );
 
+          const bounded = await recordOperationalServiceRetry({
+            ...input,
+            diagnostic: pending,
+          });
+          if (bounded) return bounded;
           return recordPendingApplication({
             ...input,
             diagnostic: pending,

@@ -19,6 +19,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { MaisterError } from "@/lib/errors";
 import {
   addProjectRemote,
@@ -399,6 +400,15 @@ describe("POST/GET/PATCH/DELETE /api/projects/[slug]/remotes (route, integration
 
     await writeFile(join(source, "lesson.md"), "new\n");
     await git(source, ["commit", "-am", "update"]);
+    await withRepositoryMutationFence(clone, async () => {
+      const busy = await pull();
+      expect(busy.status).toBe(409);
+      expect(await busy.json()).toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "operation_busy" },
+      });
+      expect(await readFile(join(clone, "lesson.md"), "utf8")).toBe("old\n");
+    });
     const updated = await pull();
 
     expect(updated.status).toBe(200);

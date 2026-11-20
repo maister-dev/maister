@@ -156,6 +156,8 @@ export async function rearmPromptApplication(input: {
       reason: "prompt_owner_rearmed",
       recoveryRequestedAt: new Date().toISOString(),
       previousAttempts: row.attempts,
+      serviceRetryAttempts: 0,
+      serviceRetryStartedAt: new Date().toISOString(),
       recoveryOrigin:
         row.error?.recoveryOrigin ??
         (row.error ? promptApplicationFailureSnapshot(row.error) : undefined),

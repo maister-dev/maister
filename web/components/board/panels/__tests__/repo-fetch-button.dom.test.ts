@@ -137,6 +137,11 @@ describe("repository update feedback", () => {
     [409, { code: "CONFLICT" }, copy.pullConflict],
     [
       409,
+      { code: "CONFLICT", details: { reason: "operation_busy" } },
+      "The repository is busy with another operation. Try again shortly.",
+    ],
+    [
+      409,
       { code: "PRECONDITION", details: { reason: "dirty_worktree" } },
       copy.pullDirty,
     ],

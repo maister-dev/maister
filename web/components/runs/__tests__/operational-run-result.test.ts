@@ -31,6 +31,51 @@ const invalid: OperationalOutcome = {
 };
 
 it.each([
+  ["en", en, "Continuation needs attention", "Recheck execution"],
+  ["ru", ru, "Продолжение требует внимания", "Проверить исполнение"],
+] as const)(
+  "renders the settlement diagnosis and gates the action in %s",
+  (locale, messages, heading, action) => {
+    const render = (canAct: boolean): string =>
+      renderToStaticMarkup(
+        createElement(NextIntlClientProvider, {
+          locale,
+          messages,
+          timeZone: "UTC",
+          // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
+          children: createElement(OperationalRunResult, {
+            runId: "run",
+            canAct,
+            outcome: {
+              ...invalid,
+              state: "pending",
+              effectiveOutcome: null,
+              validation: "pending",
+              resultRevision: null,
+              reasonCodes: [],
+              continuationAttention: {
+                assignmentEpoch: 2,
+                reason: "operational_integrity_refused",
+                blockedReason: "session_process_owner_unconfirmed",
+                observation: "a".repeat(32),
+              },
+            },
+          }),
+        }),
+      );
+    const member = render(true);
+    const viewer = render(false);
+    for (const html of [member, viewer]) {
+      expect(html).toContain(heading);
+      expect(html).toContain("session_process_owner_unconfirmed");
+      expect(html).not.toContain(messages.operationalAgents.awaitingResult);
+    }
+    expect(member).toContain(action);
+    expect(viewer).not.toContain(action);
+  },
+);
+
+it.each([
   {
     locale: "en",
     messages: en,

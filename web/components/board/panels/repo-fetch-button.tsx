@@ -67,7 +67,13 @@ export function RepoFetchButton({
         ) {
           fail(t("pullDirty"));
         } else if (data?.code === "CONFLICT") {
-          fail(t("pullConflict"));
+          fail(
+            t(
+              data.details?.reason === "operation_busy"
+                ? "pullBusy"
+                : "pullConflict",
+            ),
+          );
         } else if (data?.code === "EXECUTOR_UNAVAILABLE") {
           fail(t("pullUnavailable"));
         } else {

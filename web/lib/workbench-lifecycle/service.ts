@@ -262,7 +262,9 @@ export type WorkbenchLifecycleDeps = {
   finalizeAgentRun: (args: {
     runId: string;
     reason: string;
-  }) => Promise<{ finalized: boolean }>;
+    projectOperatorUserId?: string;
+    executionHosts?: ExecutionHosts;
+  }) => Promise<{ finalized: boolean; supervisorStopped?: boolean }>;
   cleanupAgentMaterializations: (args: {
     runId: string;
     worktreePath: string;
@@ -1910,14 +1912,20 @@ async function stopAgentAfterAuth(
     requireActionAllowed(ctx, "stop");
   }
 
-  // finalizeAgentRun flips status + nulls acpSessionId + frees the agent pool
-  // slot, but it does NOT delete the supervisor session — kill it here.
-  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
+  const operational = ctx.run.agentKind === "operational";
+  const stoppedBeforeFinalization =
+    !operational && (await stopLiveSupervisorSession(ctx, deps));
 
   const finalize = await deps.finalizeAgentRun({
     runId,
     reason: "operator",
+    ...(operational ? { executionHosts: deps.executionHosts } : {}),
+    ...(operational && ctx.viewerUserId
+      ? { projectOperatorUserId: ctx.viewerUserId }
+      : {}),
   });
+  const supervisorStopped =
+    finalize.supervisorStopped ?? stoppedBeforeFinalization;
 
   if (!finalize.finalized) {
     const current = await deps.loadContext(runId);
@@ -2223,34 +2231,21 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     promoteNextPending: async () => {
       await promoteNextPending();
     },
-    finalizeAgentRun: async ({ runId, reason }) => {
+    finalizeAgentRun: async ({
+      runId,
+      reason,
+      projectOperatorUserId,
+      executionHosts,
+    }) => {
       const { finalizeAgentRun } = await import("@/lib/agents/launch");
-      const { waitForAgentCancellationExecutionQuiescent } =
-        await import("@/lib/agents/execution-quiescence");
-      const [run] = await db()
-        .select({
-          id: runs.id,
-          agentKind: runs.agentKind,
-          executionAssignmentId: runs.executionAssignmentId,
-        })
-        .from(runs)
-        .where(eq(runs.id, runId));
 
-      if (run?.agentKind === "operational")
-        await waitForAgentCancellationExecutionQuiescent(
-          db() as unknown as ExecutionDb,
-          run,
-          performance.now() + 5_000,
-        );
-      const result = await finalizeAgentRun(runId, "Abandoned", {
+      return finalizeAgentRun(runId, "Abandoned", {
+        db: db() as unknown as ExecutionDb,
+        executionHosts,
         reason,
+        projectOperatorUserId,
         closeAssignments: { kind: "system", reason: "run stopped by operator" },
-        ...(run?.agentKind === "operational"
-          ? { expectedAssignmentId: run.executionAssignmentId }
-          : {}),
       });
-
-      return { finalized: result.finalized };
     },
     cleanupAgentMaterializations: async ({ runId, worktreePath }) => {
       const { cleanupRunMaterializations } =

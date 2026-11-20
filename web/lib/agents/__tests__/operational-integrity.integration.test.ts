@@ -137,6 +137,64 @@ afterEach(async () => {
 });
 
 describe("operational source integrity", () => {
+  it("IT-APR-01 scopes a detached linked checkout to its owned source and Git settings", async () => {
+    const origin = join(root, "origin.git");
+    await exec("git", ["init", "--bare", origin]);
+    await git("remote", "add", "origin", origin);
+    await git("push", "origin", "main");
+    const checkout = join(root, "linked");
+    await git("worktree", "add", "--detach", checkout, "HEAD");
+    const config = join(cwd, ".git", "included-config");
+    await git("config", "include.path", config);
+    await writeFile(
+      config,
+      '[diff "fixture"]\n\twordRegex = one\n\twordRegex = two\n',
+    );
+    const frozen = await captureOperationalBaseline(
+      checkout,
+      "ephemeral_checkout",
+    );
+    const baseline = await captureOperationalGeneration(checkout, frozen, []);
+
+    await git("branch", "maister/sibling");
+    await git("update-ref", "refs/maister/archive/sibling", "HEAD");
+    await git("config", "branch.maister/sibling.remote", "origin");
+    await git("config", "branch.maister/sibling.merge", "refs/heads/main");
+    await git("commit", "-qm", "remote update", "--allow-empty");
+    await git("push", "origin", "main");
+    await git("fetch", "origin");
+
+    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+      verdict: "clean",
+      reasonCodes: [],
+    });
+    expect(frozen.version).toBe(2);
+    await writeFile(
+      config,
+      '[diff "fixture"]\n\twordRegex = two\n\twordRegex = one\n',
+    );
+    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+      verdict: "changed",
+      reasonCodes: ["operational_history_changed"],
+    });
+    await writeFile(
+      config,
+      '[diff "fixture"]\n\twordRegex = one\n\twordRegex = two\n',
+    );
+    const currentFileMode = (
+      await exec("git", ["-C", cwd, "config", "core.fileMode"])
+    ).stdout.trim();
+    await git(
+      "config",
+      "core.fileMode",
+      currentFileMode === "true" ? "false" : "true",
+    );
+    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+      verdict: "changed",
+      reasonCodes: ["operational_history_changed"],
+    });
+  });
+
   it("prepares real Claude package skills without changing source gitignore or index and still refuses unowned writes", async () => {
     const materializationCwd = await realpath(cwd);
     const bundle = join(root, "bundle");

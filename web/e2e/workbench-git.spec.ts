@@ -159,3 +159,44 @@ test.describe("run git panel (ADR-181)", () => {
     ).toBeVisible();
   });
 });
+
+for (const [locale, label, expected] of [
+  [
+    "en",
+    "Pull from origin",
+    "The repository is busy with another operation. Try again shortly.",
+  ],
+  [
+    "ru",
+    "Обновить из origin",
+    "В репозитории выполняется другая операция. Повторите попытку чуть позже.",
+  ],
+] as const) {
+  test(`E2E-APR-10 shows repository contention on project Files in ${locale}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const { projectSlug } = loadFixtures().byKey.workbenchGit;
+    await page
+      .context()
+      .addCookies([{ name: "NEXT_LOCALE", value: locale, url: baseURL! }]);
+    await page.route(
+      `**/api/projects/${projectSlug}/remotes`,
+      async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        await route.fulfill({
+          status: 409,
+          json: {
+            code: "CONFLICT",
+            details: { reason: "operation_busy" },
+          },
+        });
+      },
+    );
+    await page.goto(`/projects/${projectSlug}?tab=repo`);
+    await page.getByRole("button", { name: label }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: expected }).first(),
+    ).toBeVisible();
+  });
+}

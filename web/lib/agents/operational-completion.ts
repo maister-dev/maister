@@ -9,7 +9,9 @@ import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 export function operationalTerminalDecision(input: {
   requested: AgentTerminalOutcome;
   result: AgentResultDecision;
-  integrity: OperationalIntegrityResult;
+  integrity:
+    | OperationalIntegrityResult
+    | { verdict: "unchecked"; reasonCodes: string[] };
   contract?: OperationalCompletion["contract"];
 }): Omit<
   OperationalTerminal,

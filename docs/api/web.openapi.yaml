@@ -2676,6 +2676,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RemoteActionResponse" }
               examples:
+                pulled:
+                  value: { ok: true }
                 pushed:
                   value:
                     ok: true
@@ -2702,10 +2704,21 @@ paths:
             `PRECONDITION` — invalid remote name/url, remote already exists
             (add), unknown remote (action), or the repo is not a git repo.
             Pull also refuses a different checked-out branch or local changes;
-            a failed fast-forward returns `CONFLICT`.
+            a failed fast-forward returns `CONFLICT`. A busy repository returns
+            `CONFLICT` with `details.reason: operation_busy`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                repository-busy:
+                  value:
+                    code: CONFLICT
+                    message: Repository mutation is in progress
+                    details: { reason: operation_busy }
+                fast-forward-refused:
+                  value:
+                    code: CONFLICT
+                    message: The current branch could not be fast-forwarded
         "422":
           description: Malformed body (neither a valid add nor a known `op`) (`CONFIG`).
           content:
@@ -2992,7 +3005,7 @@ paths:
                   description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
                 memoryEnabled:
                   type: boolean
-                  description: ADR-210 per-attachment vault enablement for the acting session agent or Flow persona. Brain permissions are independent.
+                  description: ADR-214 per-attachment vault enablement for the acting session agent or Flow persona. Brain permissions are independent.
                 memoryWritePolicy:
                   type: string
                   enum: [auto, review]
@@ -10907,6 +10920,9 @@ paths:
 
         No new `MaisterError` code (ADR-008 closed union): not-found → 404
         `PRECONDITION`; non-abandonable status → 409 `PRECONDITION`.
+        An undispatched project operational assignment can be abandoned without
+        host inventory. Historical evidence is checked by checkout disposition
+        after the actor-attributed cancellation commits.
       operationId: abandonRun
       parameters:
         - name: runId
@@ -11226,7 +11242,7 @@ paths:
       description: |
         Stops a live run without deleting its worktree, dispatching on
         `runs.run_kind` (allow-listed `flow | scratch | agent`; an unknown kind
-        is refused with `PRECONDITION`). In every kind the route resolves the
+        is refused with `PRECONDITION`). When applicable the route resolves the
         live supervisor session from the run's active `run_sessions.acp_session_id`
         via `listSessions()` and calls `deleteSession(sessionId)` when found, then
         clears live ACP/current-step handles.
@@ -11239,7 +11255,12 @@ paths:
           same primitive).
         - **agent** → finalized to `Abandoned` via `finalizeAgentRun`
           (which also frees the agent pool slot); physical session teardown and
-          canonical exit evidence are required before terminal application.
+          canonical exit evidence are required for dispatched execution.
+          An exact undispatched project operational resume can be
+          abandoned atomically without reading host inventory or waiting for
+          predecessor disposition.
+          The success receipt reflects logical cancellation. Checkout release
+          requires independent canonical and scoped host retirement evidence.
 
         Requires project membership at `member` or above
         (`requireProjectAction("recoverRun")`). Body is empty; run kind, project
@@ -19071,6 +19092,76 @@ paths:
           description: Run not found or not visible.
         "409": &a5
           description: Wrong run kind, stale reason/revision or conflicting lifecycle intent.
+  /api/runs/{runId}/operational/continuation/retry:
+    post:
+      operationId: recheckOperationalContinuation
+      summary: Recheck an operational continuation in attention
+      description: |
+        Requires an active browser session and current recoverRun authority in the Run's project.
+        The observation identifies the attention state displayed in the Run. A consumed or stale
+        observation returns CONFLICT / agent_continuation_attention_stale. An accepted request
+        schedules one settlement check and preserves both attempt counters. It does not prepare a
+        checkout or dispatch an agent. If proof is still incomplete, the Run returns to attention.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [observation]
+              properties:
+                observation:
+                  type: string
+                  pattern: "^[0-9a-f]{32}$"
+      responses:
+        "202":
+          description: One settlement check is durably scheduled.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [scheduled]
+                properties:
+                  scheduled:
+                    type: boolean
+                    enum: [true]
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409":
+          description: The observed continuation attention has changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [code, message, details]
+                properties:
+                  code:
+                    type: string
+                    enum: [CONFLICT]
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: false
+                    required: [reason]
+                    properties:
+                      reason:
+                        type: string
+                        enum: [agent_continuation_attention_stale]
+
   /api/runs/{runId}/operational/cleanup/retry:
     post:
       operationId: retryOperationalCleanup
@@ -28437,6 +28528,24 @@ components:
           enum:
             - pending
             - terminal
+        continuationAttention:
+          description: Present while a project operational Run awaits settlement evidence. The observation is an opaque concurrency token and confers no authority.
+          type: object
+          additionalProperties: false
+          required: [assignmentEpoch, reason, blockedReason, observation]
+          properties:
+            assignmentEpoch:
+              type: integer
+              minimum: 1
+            reason:
+              type: string
+              pattern: "^[a-z_]{1,128}$"
+            blockedReason:
+              type: string
+              pattern: "^[a-z_]{1,128}$"
+            observation:
+              type: string
+              pattern: "^[0-9a-f]{32}$"
         reportedOutcome:
           type: string
           nullable: true

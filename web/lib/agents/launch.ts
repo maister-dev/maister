@@ -81,7 +81,6 @@ import {
   prepareAgentRunFinalization,
   type AgentFinalizeOptions,
   type AgentTerminalOutcome,
-  type AgentFinalStatus,
 } from "./finalization";
 import {
   agentReadOnlyWorkdirPath,
@@ -155,6 +154,16 @@ import {
   inspectOperationalRun,
   inspectOperationalContexts,
 } from "@/lib/agents/operational-context";
+import {
+  claimAgentContinuation,
+  assertAgentCreateNotRefused,
+  hasAgentContinuationSettlement,
+  recordAgentDispatchIntegrityFailure,
+  recordAgentContinuationFailure,
+  recoverAgentContinuationSettlement,
+  requireOperationalContinuationWitness,
+  settleAgentContinuation,
+} from "@/lib/agents/continuation-episode";
 import {
   captureOperationalBaseline,
   captureOperationalGeneration,
@@ -3389,7 +3398,7 @@ export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
   opts: Omit<AgentFinalizeOptions, "db"> & { db?: Db } = {},
-): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
+): ReturnType<typeof finalizeAgentRunPrepared> {
   return finalizeAgentRunPrepared(runId, outcome, opts);
 }
 
@@ -4080,7 +4089,24 @@ async function dispatchStoredAgentTurn(
     specialistPlacementId,
   );
   await waitForPromptIncarnation(db, execution.client, sessionId, signal);
-  await assertOperationalDispatchIntegrity(db, turn.runId);
+  try {
+    await assertOperationalDispatchIntegrity(db, turn.runId);
+  } catch (error) {
+    if (
+      await recordAgentDispatchIntegrityFailure(
+        db,
+        {
+          runId: turn.runId,
+          assignmentId: execution.client.assignment.id,
+          turnId: turn.id,
+          hostSessionId: sessionId,
+        },
+        error,
+      )
+    )
+      return;
+    throw error;
+  }
   const handle = await execution.client.prompt(
     sessionId,
     { stepId: "agent", prompt: turn.prompt },
@@ -4152,6 +4178,8 @@ export async function startAgentSession(
       resultContract: runs.resultContract,
       knowledgeAccess: runs.knowledgeAccess,
       companyId: runs.companyId,
+      agentKind: runs.agentKind,
+      projectId: runs.projectId,
       status: runs.status,
     })
     .from(runs)
@@ -4160,6 +4188,20 @@ export async function startAgentSession(
     opts.assignmentId === undefined
       ? (source?.assignmentId ?? null)
       : opts.assignmentId;
+
+  if (
+    source?.agentKind === "operational" &&
+    source.projectId &&
+    expectedAssignmentId &&
+    source.status === "Running" &&
+    (await recoverAgentContinuationSettlement(
+      db,
+      executionHosts,
+      runId,
+      expectedAssignmentId,
+    ))
+  )
+    return;
 
   try {
     const drive = (signal?: AbortSignal) =>
@@ -4198,6 +4240,11 @@ export async function startAgentSession(
 
       return;
     }
+    if (
+      isMaisterError(err) &&
+      err.details?.reason === "agent_continuation_settlement_pending"
+    )
+      return;
     if (isTaskLaunchContention(err)) {
       log.info(
         {
@@ -4437,7 +4484,34 @@ async function driveAgentSession(
   if (agentTurn) {
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-    await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    try {
+      await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    } catch (error) {
+      if (
+        run.agentKind !== "operational" ||
+        !run.projectId ||
+        agentTurn.variant !== "resume" ||
+        agentTurn.commandId ||
+        !isMaisterError(error) ||
+        error.details?.reason !== "prompt_owner_invariant"
+      )
+        throw error;
+      const claim = await claimAgentContinuation(_db, {
+        runId,
+        assignmentId: execution.client.assignment.id,
+        logicalKey: agentTurn.logicalKey,
+      });
+      if (!claim) return;
+      if (claim.state === "settlement") {
+        await settleAgentContinuation(_db, hosts, claim);
+      } else {
+        await recordAgentContinuationFailure(_db, claim, error, null, {
+          runId,
+          stage: "resume_source",
+        });
+      }
+      return;
+    }
     if (!agentTurn.commandId && !run.companyId)
       await _db.transaction(async (tx: ExecutionDb) => {
         if ((await lockVaultCutover(tx)) !== null)
@@ -4497,6 +4571,16 @@ async function driveAgentSession(
               },
             );
           },
+          run.agentKind === "operational" && run.projectId
+            ? {
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
+                  ),
+              }
+            : undefined,
         );
 
         await dispatchStoredAgentTurn(
@@ -4718,6 +4802,8 @@ async function driveAgentSession(
     : null;
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
+  let continuation: Awaited<ReturnType<typeof claimAgentContinuation>> = null;
+  let handedOff = false;
   let preparationCommit: string | null = null;
   const packageCapture: {
     current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
@@ -4739,7 +4825,10 @@ async function driveAgentSession(
       assignmentId
     ) {
       const [assignment] = await _db
-        .select({ epoch: executionAssignments.epoch })
+        .select({
+          epoch: executionAssignments.epoch,
+          placementReason: executionAssignments.placementReason,
+        })
         .from(executionAssignments)
         .where(eq(executionAssignments.id, assignmentId));
 
@@ -4747,6 +4836,25 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
+      if (
+        run.agentKind === "operational" &&
+        run.projectId &&
+        (assignment?.placementReason !== "launch" ||
+          (agentTurn !== undefined && agentTurn !== null))
+      ) {
+        continuation = await claimAgentContinuation(_db, {
+          runId,
+          assignmentId,
+          logicalKey: agentTurn?.logicalKey ?? `prepare:${assignmentId}`,
+        });
+        if (!continuation) return;
+        if (continuation.state === "settlement") {
+          const settlement = continuation;
+          continuation = null;
+          return await settleAgentContinuation(_db, hosts, settlement);
+        }
+        requireOperationalContinuationWitness(run.operationalIntegrityBaseline);
+      }
       const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
@@ -4786,6 +4894,17 @@ async function driveAgentSession(
       : originalError;
 
     packageCapture.current = null;
+    if (continuation && !handedOff) {
+      if (isFencedError(error)) throw error;
+      await recordAgentContinuationFailure(
+        _db,
+        continuation,
+        error,
+        preparation,
+        { ...preparationContext, stage: operationalSpawnStage },
+      );
+      return;
+    }
     if (
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
@@ -5238,6 +5357,7 @@ async function driveAgentSession(
             cwd,
             preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
+              legacyEphemeral: run.agentKind !== "operational",
               context: {
                 ...preparationContext,
                 stage: "baseline",
@@ -5583,6 +5703,7 @@ async function driveAgentSession(
           phase: "handed_off",
           turnId: ownedTurn.id,
         });
+        handedOff = true;
         await preparation.release();
       }
 
@@ -5637,15 +5758,24 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
-          companyContext && effective.parsed.platformMcp
+          run.agentKind === "operational" && run.projectId
             ? {
-                bindCredentials: async (tx) =>
-                  appendFacade(
-                    (await retainCompanyAgentSessionCredential(tx, runId))
-                      .secret,
+                assertCommit: (tx) =>
+                  assertAgentCreateNotRefused(
+                    tx,
+                    runId,
+                    execution.client.assignment.id,
                   ),
               }
-            : undefined,
+            : companyContext && effective.parsed.platformMcp
+              ? {
+                  bindCredentials: async (tx) =>
+                    appendFacade(
+                      (await retainCompanyAgentSessionCredential(tx, runId))
+                        .secret,
+                    ),
+                }
+              : undefined,
         );
 
         operationalSpawnStage = "prompt_dispatch";
@@ -5659,6 +5789,7 @@ async function driveAgentSession(
         );
       });
     } catch (originalError) {
+      if (continuation && !handedOff) throw originalError;
       const err = packageCapture.current
         ? await releaseTaskAgentCaptureAfterFailure(
             packageCapture.current,
@@ -6170,7 +6301,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.exited": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         // ADR-166 E-EH-11: the host evicted this session for a newer driver
@@ -6238,7 +6374,12 @@ export async function consumeAgentSession(args: {
       }
       case "session.crashed": {
         if (
-          await agentSessionHasOwnedPrompt(args.db, args.runId, args.sessionId)
+          (await agentSessionHasOwnedPrompt(
+            args.db,
+            args.runId,
+            args.sessionId,
+          )) ||
+          (await hasAgentContinuationSettlement(args.db, args.runId))
         )
           return;
         await finalizeAgentRun(args.runId, "Crashed", {

@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
+import { notifyContinuationAttentionChanged } from "@/lib/runs/peek-wake";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
 const session = vi.hoisted(() => ({ user: null as SessionUser | null }));
 let database: StartedPostgresTestDb;
@@ -165,6 +166,15 @@ it("IT-PKD-08 IT-PKD-09 IT-PKD-10: one framed stream isolates selected ticks, di
       kind: "summary",
     });
     expect(received).toContainEqual({ type: "peek.changed" });
+    await database.db.transaction((tx) =>
+      notifyContinuationAttentionChanged(tx, child),
+    );
+    expect(await frame(reader)).toEqual({
+      type: "run.changed",
+      runId: child,
+      kind: "summary",
+    });
+    expect(await frame(reader)).toEqual({ type: "peek.changed" });
     await seedRun(child);
     expect(await frame(reader)).toEqual({ type: "peek.changed" });
     await database.pool.query("DELETE FROM project_members WHERE user_id=$1", [

@@ -24,9 +24,10 @@ export function OperationalRunResult({
   const router = useRouter();
   const feedback = useFeedback();
   const [busy, setBusy] = useState(false);
+  const attention = outcome.continuationAttention;
 
   async function mutate(
-    path: "acknowledge" | "cleanup/retry",
+    path: "acknowledge" | "cleanup/retry" | "continuation/retry",
     body: Record<string, string | number>,
     successMessage: string,
   ): Promise<void> {
@@ -44,7 +45,12 @@ export function OperationalRunResult({
       );
 
       if (!response.ok) {
-        feedback.error({ message: t("actionFailed"), mutationId });
+        const stale = path === "continuation/retry" && response.status === 409;
+        feedback.error({
+          message: t(stale ? "continuationStale" : "actionFailed"),
+          mutationId,
+        });
+        if (stale) router.refresh();
 
         return;
       }
@@ -64,6 +70,24 @@ export function OperationalRunResult({
       data-testid="operational-result"
     >
       <OperationalOutcomeDetails outcome={outcome} />
+      {canAct && attention ? (
+        <Button
+          className="mt-3"
+          isDisabled={busy}
+          size="sm"
+          variant="secondary"
+          onClick={() =>
+            void mutate(
+              "continuation/retry",
+              { observation: attention.observation },
+              t("continuationScheduled"),
+            )
+          }
+        >
+          <ArrowPathIcon aria-hidden="true" className="size-4" />
+          {t("continuationRecheck")}
+        </Button>
+      ) : null}
       {outcome.cleanup?.evidenceIds.length ? (
         <details>
           <summary>{t("evidence")}</summary>
@@ -155,14 +179,41 @@ export function OperationalOutcomeDetails({
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const reported = outcome.reportedResult;
+  const attention = outcome.continuationAttention;
+  const integrityRefused = outcome.reasonCodes.some(
+    (reason) =>
+      reason === "operational_integrity_refused" ||
+      reason === "operational_legacy_baseline_unverifiable",
+  );
 
   return (
     <>
       <h2 className="text-lg font-semibold">{t("title")}</h2>
       <p data-testid="operational-outcome" role="status">
-        {t(outcome.effectiveOutcome ?? "pending")}
+        {t(
+          attention
+            ? "continuationAttention"
+            : (outcome.effectiveOutcome ?? "pending"),
+        )}
       </p>
-      {reported ? (
+      {attention ? (
+        <div className="my-3 space-y-2">
+          <p>{t("continuationGuidance")}</p>
+          <details>
+            <summary>{t("continuationDetails")}</summary>
+            <dl className="my-2 space-y-1 text-sm">
+              <dt>{t("continuationCause")}</dt>
+              <dd className="break-words font-mono">{attention.reason}</dd>
+              <dt>{t("continuationBlocker")}</dt>
+              <dd className="break-words font-mono">
+                {attention.blockedReason}
+              </dd>
+              <dt>{t("continuationEpoch")}</dt>
+              <dd>{attention.assignmentEpoch}</dd>
+            </dl>
+          </details>
+        </div>
+      ) : reported ? (
         <>
           <p>{reported.summary}</p>
           {outcome.successful && reported.counts.attempted === 0 ? (
@@ -231,6 +282,11 @@ export function OperationalOutcomeDetails({
               {JSON.stringify(outcome.infrastructureFailure, null, 2)}
             </pre>
           </details>
+        </div>
+      ) : integrityRefused ? (
+        <div className="my-3 space-y-2">
+          <p>{t("continuationRefused")}</p>
+          <p>{t("continuationRefusedGuidance")}</p>
         </div>
       ) : (
         <p>
