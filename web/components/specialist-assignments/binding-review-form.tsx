@@ -144,9 +144,9 @@ export function BindingReviewForm({
           <input
             required
             className="mt-1 block w-full rounded border border-line px-3 py-2"
+            defaultValue={editing?.agentId}
             maxLength={128}
             name="agentId"
-            defaultValue={editing?.agentId}
             readOnly={Boolean(editing)}
           />
         </label>
@@ -155,8 +155,8 @@ export function BindingReviewForm({
         <fieldset className="space-y-3">
           <label className="flex items-center gap-2">
             <input
-              type="checkbox"
               checked={installation}
+              type="checkbox"
               onChange={(event) => setInstallation(event.target.checked)}
             />
             {t("installationGrant")}
@@ -168,8 +168,8 @@ export function BindingReviewForm({
               </p>
               <label className="flex items-center gap-2">
                 <input
-                  type="checkbox"
                   checked={vault}
+                  type="checkbox"
                   onChange={(event) => setVault(event.target.checked)}
                 />
                 {t("installationMemory")}
@@ -181,14 +181,14 @@ export function BindingReviewForm({
                     className="flex items-center gap-2 text-sm"
                   >
                     <input
-                      type="checkbox"
-                      name="installationScope"
-                      value={scope}
                       defaultChecked={
                         editing?.grant?.scopes.includes(scope) ??
                         scope === "projects:read"
                       }
                       disabled={!vault && scope.startsWith("agent_memory:")}
+                      name="installationScope"
+                      type="checkbox"
+                      value={scope}
                     />
                     <code>{scope}</code>
                   </label>

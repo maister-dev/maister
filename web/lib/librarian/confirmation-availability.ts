@@ -3,6 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { librarianConversations } from "@/lib/db/schema";
 import type { CardTarget, LibrarianCardProposal } from "./cards";
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 import { and, eq, gt, inArray, notExists, sql } from "drizzle-orm";
 
@@ -17,7 +18,6 @@ import {
   effectContextSchema,
 } from "./knowledge-card-types";
 import { prepareKnowledgeCard } from "./knowledge-card-effects";
-import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import { memoryContentDigest } from "./memory";
 
 import {
@@ -253,6 +253,7 @@ export async function readEligibleConfirmationIds(
   for (const { card, proposal } of candidates) {
     if (isKnowledgeCardProposal(proposal)) {
       const context = effectContextSchema.safeParse(card.effectContext);
+
       if (
         !context.success ||
         owner.contextEpoch !== context.data.contextEpoch ||
@@ -267,6 +268,7 @@ export async function readEligibleConfirmationIds(
           proposal,
           context.data.restrictions,
         );
+
         if (matchesFrozenCardTarget(card, prepared)) eligible.push(card.id);
       } catch (error) {
         if (!isMaisterError(error)) throw error;
@@ -280,6 +282,7 @@ export async function readEligibleConfirmationIds(
       currentAccess,
       forgotten,
     );
+
     if (target && matchesFrozenCardTarget(card, target)) eligible.push(card.id);
   }
 

@@ -85,9 +85,9 @@ export default async function InboxPage({
       <div className="mb-8">
         <ProposalReviews
           key={JSON.stringify([reviewFilters, proposalId])}
-          page={reviews}
           filters={reviewFilters}
           initial={initialReview}
+          page={reviews}
         />
       </div>
       {decisions === 0 &&

@@ -47,6 +47,7 @@ export function projectVisibilityReadPolicy(
   if (identity.kind === "agent") return sql`${project}=${identity.projectId}`;
   if (identity.kind !== "user") return sql`false`;
   const user = identity.user;
+
   if (user.role === "admin" && identity.boundProjectId === null)
     return sql`true`;
   const roles = sql.join(
@@ -101,6 +102,7 @@ export function vaultRevisionReferenceQuery(
       ON (v.binding_id,v.revision)=(b.id,b.revision)
     WHERE b.company_id=vault.company_id AND b.agent_id=vault.agent_id AND b.detached_at IS NULL
       AND v.snapshot->'installationGrant'->>'reach'='active_projects' FOR SHARE OF b,v)`;
+
   return sql`
     SELECT revision.source_project_ids, revision.source_restrictions, vault.company_id IS NOT NULL AS installation
     FROM agent_memory_revisions revision

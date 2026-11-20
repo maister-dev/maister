@@ -63,10 +63,12 @@ export async function updateSpecialistBinding(
 ): Promise<Receipt> {
   const { id } = await requireActiveSession();
   const parsed = specialistUpdate.safeParse(value);
+
   if (!parsed.success) return { ok: false, code: "CONFIG" };
 
   try {
     const { agentId, bindingId, binding } = parsed.data;
+
     await updateCompanySpecialistBinding(
       getDb(),
       id,

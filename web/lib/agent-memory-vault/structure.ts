@@ -30,6 +30,7 @@ export function memoryLookupKey(value: string): string {
 
 function frontmatter(source: string) {
   const start = /^---\r?\n/.exec(source);
+
   if (!start) return { tags: [], aliases: [], body: source };
   const remaining = source.slice(start[0].length);
   const end = /^---[ \t]*(?:\r?\n|$)/m.exec(remaining);
@@ -61,6 +62,7 @@ function frontmatter(source: string) {
 
   function list(key: "tags" | "aliases"): string[] {
     const seq = doc.get(key, true);
+
     if (seq === undefined) return [];
     if (!isSeq(seq) || seq.items.length > maxMetadataItems) throw invalidYaml();
     const values = new Map<string, string>();
@@ -110,6 +112,7 @@ function linkFrom(raw: string): MemoryLink {
 
   for (const entity of entityForms) {
     const parts = entity.match.exec(target);
+
     if (!parts) continue;
     if (
       entity.kind === "repo" &&
@@ -166,6 +169,7 @@ export function parseMemoryStructure(source: string): MemoryStructure {
       continue;
     }
     const heading = /^ {0,3}#{1,6}[ \t]+(.+?)\s*#*\s*$/.exec(line)?.[1];
+
     if (heading && headings.size < 512) headings.add(memoryLookupKey(heading));
     for (const [, raw] of line.matchAll(
       /(?<!\\)\[\[([^\[\]\r\n]{1,512})\]\]/g,

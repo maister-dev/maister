@@ -17,6 +17,7 @@ export async function visibleLibrarianCapture(
 ): Promise<readonly KnowledgeAccessRestriction[] | null> {
   if (capture === null) return [];
   const checked = knowledgeAccessCaptureSchema.safeParse(capture);
+
   if (!checked.success || checked.data.state !== "complete") return null;
   try {
     await authorizeSourceRestrictions(
@@ -24,9 +25,11 @@ export async function visibleLibrarianCapture(
       { kind: "user", userId: ownerId },
       checked.data.restrictions,
     );
+
     return checked.data.restrictions;
   } catch (error) {
     if (!isMaisterError(error)) throw error;
+
     return null;
   }
 }
@@ -40,6 +43,7 @@ export async function visibleLibrarianTurnSources(
   const result = new Map<string, readonly KnowledgeAccessRestriction[] | null>(
     turnIds.map((id) => [id, null]),
   );
+
   if (turnIds.length === 0) return result;
   const selected = await tx
     .select({
@@ -57,6 +61,7 @@ export async function visibleLibrarianTurnSources(
         inArray(librarianTurns.id, [...result.keys()]),
       ),
     );
+
   for (const turn of selected) {
     result.set(
       turn.id,

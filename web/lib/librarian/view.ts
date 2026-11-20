@@ -28,6 +28,7 @@ import {
   type LibrarianOperationView,
   type LibrarianRelatedTaskView,
 } from "./read-models";
+import { visibleLibrarianTurnSources } from "./disclosed-context";
 
 import {
   librarianConversations,
@@ -53,8 +54,6 @@ import {
 } from "@/lib/work/stage";
 
 // ADR-185 / web.openapi.yaml: explicit DTO projections — never a row.
-
-import { visibleLibrarianTurnSources } from "./disclosed-context";
 
 export type LibrarianIndicatorState =
   "none" | "running" | "unread" | "action_required";
@@ -319,6 +318,7 @@ export async function librarianMessageDtos(
     ownerId,
     rows.flatMap(({ turnId }) => (turnId ? [turnId] : [])),
   );
+
   return rows.map((row) => {
     const masked =
       row.authorKind !== "owner" &&

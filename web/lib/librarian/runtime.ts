@@ -70,7 +70,6 @@ import {
 } from "@/lib/db/schema";
 import { createExecutionHosts } from "@/lib/execution-host";
 import { isMaisterError } from "@/lib/errors";
-
 import { canonicalKnowledgeRestrictions } from "@/lib/brain/knowledge-disclosure";
 import { knowledgeRestrictionsSchema } from "@/lib/company/types";
 
@@ -261,9 +260,11 @@ async function prepareStart(
       ref.userId,
       turn.knowledgeAccess,
     );
+
     if (priorRestrictions === null)
       return { refused: true, reason: "source_access_changed" };
     let currentRestrictions = priorRestrictions;
+
     if (turn.variant === "summary" && message.authorKind !== "owner") {
       const source = message.turnId
         ? (
@@ -279,6 +280,7 @@ async function prepareStart(
           projectId,
         })),
       });
+
       if (!source || !projects)
         return { refused: true, reason: "source_access_changed" };
       currentRestrictions = [...priorRestrictions, ...source, ...projects];
@@ -354,6 +356,7 @@ async function prepareStart(
         (id) => retrieved.sourceSummaries.get(id) ?? [],
       ),
     ]);
+
     if (
       !knowledgeRestrictionsSchema.safeParse(restrictions).success ||
       Buffer.byteLength(JSON.stringify(restrictions)) > 65536

@@ -33,6 +33,7 @@ async function seedInstallationBinding(
   const source = resolve(
     `e2e/.runtime/specialist-home-${marker}/installation-source`,
   );
+
   await cp(resolve("test-fixtures/rah-native"), source, { recursive: true });
   await writeFile(
     join(source, "maister-agents/installation-observer.md"),
@@ -43,6 +44,7 @@ async function seedInstallationBinding(
     version: `rah/installation-${marker}`,
     db,
   });
+
   await trustPackageRevision({ packageInstallId: installed.id, db });
   const grants = await createCompanyGrants(db, adminId, {
     principalKind: "user",
@@ -76,6 +78,7 @@ async function seedInstallationBinding(
       },
     },
   );
+
   return specialist.bindingId;
 }
 
@@ -124,6 +127,7 @@ async function main(): Promise<void> {
       adminId,
       marker,
     );
+
     await createCompanyGrants(db, adminId, {
       principalKind: "user",
       principalId: managerId,

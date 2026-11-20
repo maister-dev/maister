@@ -384,6 +384,7 @@ export async function retainCompanyAgentSessionCredential(
     sql`SELECT id FROM runs WHERE id=${runId} FOR NO KEY UPDATE`,
   );
   const installation = await requireInstallationRunAuthority(tx, runId);
+
   if (installation) {
     const { secret, prefix, hash } = generateToken();
     const tokenId = randomUUID();

@@ -33,6 +33,7 @@ const redactionInput = z.strictObject({
 
 export function parseMemoryRedaction(input: unknown) {
   const parsed = redactionInput.safeParse(input);
+
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid vault redaction request");
 
@@ -94,6 +95,7 @@ export async function redactMemoryRevision(
         ),
       )
       .for("share");
+
     if (!admin)
       throw new MaisterError(
         "UNAUTHORIZED",
@@ -111,6 +113,7 @@ export async function redactMemoryRevision(
           eq(redactions.requestKey, input.requestKey),
         ),
       );
+
     if (prior) {
       if (prior.revisionId !== revisionId || prior.reason !== input.reason)
         throw new MaisterError(
@@ -124,6 +127,7 @@ export async function redactMemoryRevision(
       .select()
       .from(revisions)
       .where(eq(revisions.id, revisionId));
+
     if (!revision || revision.contentSha256 === null) throw unavailableMemory();
     const vault = await lockVault(tx, revision.vaultId);
     const [existing] = await tx
@@ -136,6 +140,7 @@ export async function redactMemoryRevision(
           eq(redactions.revisionId, revision.id),
         ),
       );
+
     if (existing)
       throw new MaisterError(
         "CONFLICT",
@@ -152,6 +157,7 @@ export async function redactMemoryRevision(
         reason: input.reason,
       })
       .returning({ id: redactions.id });
+
     if (!record)
       throw new MaisterError("CRASH", "Redaction receipt was not stored");
 
@@ -175,6 +181,7 @@ export async function redactMemoryRevision(
 
     return { revisionId, redactionId: record.id };
   });
+
   log.info({ ...receipt, userId }, "memory revision redacted");
 
   return receipt;

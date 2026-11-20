@@ -12,6 +12,7 @@ import type {
 } from "./store";
 
 import { createHash, randomUUID } from "node:crypto";
+
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
@@ -69,6 +70,7 @@ const promotionInput = z.strictObject({
 
 export function parseMemoryPromotion(input: unknown) {
   const parsed = promotionInput.safeParse(input);
+
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid memory promotion request");
 
@@ -91,6 +93,7 @@ async function ensureWitness(
     WHERE o.source_id=${sourceId} AND o.content_sha256=${source.contentSha256} AND w.selector='vault:revision'
       AND o.project_id IS NOT DISTINCT FROM ${owner.projectId} AND o.company_id IS NOT DISTINCT FROM ${owner.companyId}
   `);
+
   if (previous.rows[0]) return previous.rows[0].id;
   const locator = { kind: "vault_revision", revisionId: source.revisionId };
   const result = await tx.execute<{ id: string }>(sql`
@@ -103,6 +106,7 @@ async function ensureWitness(
     SELECT id,${source.revisionId},${source.contentSha256},'vault:revision',${JSON.stringify([source])}::jsonb,${JSON.stringify(locator)}::jsonb
     FROM observation RETURNING id
   `);
+
   if (!result.rows[0])
     throw new MaisterError("CRASH", "Vault evidence witness was not retained");
 
@@ -117,6 +121,7 @@ function sourceOwner(vault: Vault): Owner {
 
 function attribution(access: VaultAccess): KnowledgeAttribution {
   const author = access.actor;
+
   if (author.kind === "agent_session")
     return {
       kind: "agent",
@@ -152,6 +157,7 @@ async function authorizePromotionNote(
           nodeAttemptId: null,
         }
       : principal;
+
   await authorizeSourceRestrictions(tx, inspection, [source]);
 
   return source;
@@ -176,6 +182,7 @@ export async function promoteMemory(
       await authorizeKnowledge(tx, principal, target, "knowledge:propose");
     const vault = await lockVault(tx, access.vaultId);
     const author = attribution(access);
+
     if (input.target.kind === "brain") {
       if (target.kind !== "project") throw unavailableMemory();
       await assertProjectBrainEnabled(tx, target.projectId);
@@ -185,11 +192,13 @@ export async function promoteMemory(
           principal.tokenId,
           "memory:propose",
         );
+
         if (!context.scopes.includes("agent_memory:read"))
           throw unavailableMemory();
         const decision =
           await tx.execute(sql`SELECT id FROM projects p WHERE p.id=${target.projectId}
           AND p.archived_at IS NULL AND ${installationProjectAccess(context, sql`p.id`, "writeBrain")} FOR SHARE`);
+
         if (!decision.rows.length) throw unavailableMemory();
       } else if (vault.companyId) {
         await authorizeKnowledge(tx, principal, target, "knowledge:propose");
@@ -199,6 +208,7 @@ export async function promoteMemory(
         const grant =
           await tx.execute(sql`SELECT 1 FROM agent_project_links WHERE project_id=${target.projectId}
           AND agent_id=${author.id} AND enabled AND can_write_brain FOR SHARE`);
+
         if (!grant.rows.length)
           throw new MaisterError(
             "UNAUTHORIZED",
@@ -220,6 +230,7 @@ export async function promoteMemory(
           eq(operations.requestKey, input.requestKey),
         ),
       );
+
     if (prior) {
       if (prior.operation.commandDigest !== digest || !prior.promotion)
         throw new MaisterError(
@@ -245,8 +256,10 @@ export async function promoteMemory(
     const current = (await loadActiveHeads(tx, vault.id)).find(
       ({ revision }) => revision.path === input.path,
     )?.revision;
+
     if (!current) throw unavailableMemory();
     const source = await authorizePromotionNote(tx, access, principal, current);
+
     if (
       source.revisionId !== input.ifRevisionId ||
       source.contentSha256 !== input.ifHash
@@ -282,6 +295,7 @@ export async function promoteMemory(
       ).id;
     } else {
       const assertion = await readVaultPayload(tx, current);
+
       proposalId = (
         await createKnowledgeProposalInTransaction(tx, {
           kind: "knowledge_add",
@@ -325,6 +339,7 @@ export async function promoteMemory(
 
     return { status: "pending" as const, operationId, proposalId };
   });
+
   log.info(
     {
       operationId: result.operationId,

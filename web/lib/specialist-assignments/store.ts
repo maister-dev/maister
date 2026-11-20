@@ -549,6 +549,7 @@ export async function createSpecialistAssignmentInTransaction(
     destination.data,
   );
   let captured = restrictions.data;
+
   if (typeof principal === "string") {
     await authorizeAssignment(
       tx,
@@ -562,6 +563,7 @@ export async function createSpecialistAssignmentInTransaction(
       { kind: "user", userId: principal },
       restrictions.data,
     );
+
     for (const reference of objectiveInput.data.inputRefs)
       access = await inspectKnowledgeEvidenceReference(
         tx,

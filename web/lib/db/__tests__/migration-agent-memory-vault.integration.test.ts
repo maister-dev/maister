@@ -214,6 +214,7 @@ it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", asy
   const previous = await mkdtemp(join(tmpdir(), "maister-brain-previous-"));
   const brain = "./lib/db/brain-migrations";
   const migrationsTable = "__drizzle_brain_migrations";
+
   try {
     const journal = JSON.parse(
       await readFile(join(brain, "meta", "_journal.json"), "utf8"),
@@ -225,9 +226,11 @@ it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", asy
     const through = journal.entries.findIndex(
       ({ tag }) => tag === "0011_proposal_source_access",
     );
+
     if (through < 0)
       throw new Error("The previous Brain migration baseline is missing");
     const entries = journal.entries.slice(0, through + 1);
+
     await mkdir(join(previous, "meta"));
     await writeFile(
       join(previous, "meta", "_journal.json"),
@@ -241,6 +244,7 @@ it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", asy
     await migrate(fixture.db, { migrationsFolder: previous, migrationsTable });
     const project = await seedProject(fixture.db);
     const itemId = randomUUID();
+
     await fixture.pool.query(
       "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'state_fact','Legacy fact','Retained Brain content',$3,0.9)",
       [itemId, project, legacyHash],
@@ -249,6 +253,7 @@ it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", asy
       "SELECT to_jsonb(item) AS retained FROM brain_items item WHERE id=$1",
       [itemId],
     );
+
     expect(
       (
         await fixture.pool.query(

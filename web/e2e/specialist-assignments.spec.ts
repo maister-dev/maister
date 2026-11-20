@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
+
 import { loadFixtures } from "./_seed/fixtures";
 
 test.use({ actionTimeout: 15000 });
@@ -71,14 +72,17 @@ test("AV-06 administers installation reach and restores access to retained Memor
   const configuration = `/settings/specialists?binding=${installationBindingId}`;
   const edit = `${configuration}&edit=installation`;
   const memoryPage = `${configuration}&tab=memory`;
+
   await page.goto(memoryPage);
   const memory = page.getByRole("region", { name: "Memory vault" });
+
   await expect(memory.locator('a[href*="#knowledge-memory"]')).toHaveAttribute(
     "href",
     /kind=vault/,
   );
   await memory.getByRole("button", { name: "New note" }).click();
   const note = page.getByRole("dialog", { name: "New note" });
+
   await note
     .getByRole("textbox", { name: "Vault path" })
     .fill("/memories/index.md");
@@ -92,6 +96,7 @@ test("AV-06 administers installation reach and restores access to retained Memor
   const form = page.locator("form").filter({
     has: page.getByRole("heading", { name: "Edit installation binding" }),
   });
+
   await form.getByRole("checkbox", { name: "Installation reach" }).uncheck();
   await form.getByRole("button", { name: "Save reviewed binding" }).click();
   await expect(form.getByRole("status")).toHaveText("Reviewed binding saved.");
@@ -111,12 +116,14 @@ test("AV-06 administers installation reach and restores access to retained Memor
     baseURL,
     storageState: { cookies: [], origins: [] },
   });
+
   try {
     await managerContext.addCookies([
       { name: "NEXT_LOCALE", value: "en", url: baseURL! },
     ]);
     const manager = await managerContext.newPage();
     const user = loadFixtures().users.member;
+
     await manager.goto("/login");
     await manager.locator('input[name="email"]').fill(user.email);
     await manager.locator('input[name="password"]').fill(user.password);

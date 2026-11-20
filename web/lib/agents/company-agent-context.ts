@@ -28,11 +28,11 @@ import {
 import { resolveAgentConfig } from "./config";
 import { resolveInstalledAgentDefinition } from "./effective";
 import { buildOperationalContract } from "./launch-contract";
+import { assertInstallationAppointment } from "./installation-appointment";
 
 import { knowledgeRevisionSchema } from "@/lib/brain/knowledge-types";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
-import { assertInstallationAppointment } from "./installation-appointment";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import {

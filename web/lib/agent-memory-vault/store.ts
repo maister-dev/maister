@@ -396,6 +396,7 @@ export async function visibleVaultDirectory(
   revisions: readonly VaultRevision[],
 ) {
   const visible: VaultRevision[] = [];
+
   for (const revision of revisions)
     if (
       isUnderMemoryPath(path, revision.path) &&
@@ -449,6 +450,7 @@ async function planTree(
     directory,
     targets.map(({ revision }) => revision),
   );
+
   if (
     generation !== command.ifGeneration ||
     expected.size !== command.heads.length ||
@@ -489,6 +491,7 @@ async function planTree(
   const occupied = active.filter(({ note }) =>
     isUnderMemoryPath(command.new_path, note.path),
   );
+
   for (const item of occupied)
     await requireRevisionRead(db, access, item.revision);
   if (occupied.length > 0)
@@ -628,6 +631,7 @@ async function retentionSources(
   contents: readonly (string | null)[],
 ) {
   const derived = [];
+
   for (const content of contents)
     if (content !== null && access.resolveLinkSources)
       derived.push(await access.resolveLinkSources(db, content));
@@ -757,6 +761,7 @@ export async function tombstoneRedactedHead(
   redactionId: string,
 ): Promise<void> {
   const head = await readHead(tx, vault.id, revision.noteId);
+
   if (head.revision.id !== revision.id) return;
   const operationId = randomUUID();
 
@@ -811,6 +816,7 @@ async function replay(
 ): Promise<VaultApplied | VaultPending> {
   if (operation.outcome === "pending") {
     const proposal = await findVaultProposal(db, access.vaultId, operation.id);
+
     if (!proposal || proposal.state === "redacted") throw unavailableMemory();
     const bases = await vaultProposalBases(db, access.vaultId, operation.id);
 
@@ -880,6 +886,7 @@ export async function previewVaultMutation(
     "ifGeneration" in command
       ? await planTree(tx, access, vault, command, active)
       : await planOne(tx, access, command, active);
+
   if ("status" in plan)
     throw new MaisterError("CONFLICT", "Memory changed before confirmation");
   await checkPaths(tx, access, active, plan);

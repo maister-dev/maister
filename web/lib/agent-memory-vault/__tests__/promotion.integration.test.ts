@@ -70,6 +70,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
       prepare,
       agentMemoryVaultLimits(),
     );
+
     if (saved.status !== "applied")
       throw new Error("Expected project vault source to apply");
     const note = saved.affected[0]!;
@@ -86,6 +87,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
       parseMemoryPromotion(input),
       prepare,
     );
+
     expect(
       await promoteMemory(
         db.db,
@@ -131,6 +133,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
       }),
       agentMemoryVaultLimits(),
     );
+
     if (pending.status !== "pending")
       throw new Error("Expected a vault review proposal");
     const reviewPage = await listProposalReviews(db.db, admin, { limit: 20 });
@@ -159,6 +162,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
       vaultDecision,
       { ...vaultDecision, id: "missing-proposal", requestKey: "inbox-missing" },
     ]);
+
     expect(batch.results).toMatchObject([
       { status: "applied", replayed: false },
       { status: "unavailable", receiptId: null },

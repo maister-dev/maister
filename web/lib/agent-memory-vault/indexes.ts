@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { memoryLookupKey, parseMemoryStructure } from "./structure";
+
 import { isMaisterError } from "@/lib/errors";
 
 const log = pino({

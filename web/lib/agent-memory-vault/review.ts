@@ -50,6 +50,7 @@ export async function lockVaultReview(
       AND (p.id IS NOT NULL OR revision.snapshot->'installationGrant'->>'reach'='active_projects')
   `)
   ).rows[0];
+
   if (!owner) throw unavailableMemory();
 
   try {
@@ -69,6 +70,7 @@ export async function lockVaultReview(
             reviewer: access,
             enabled: memoryEnabled,
           }));
+
     await lockVault(tx, owner.vault_id);
     const [proposal] = await tx
       .select()
@@ -80,6 +82,7 @@ export async function lockVaultReview(
         ),
       )
       .for("update");
+
     if (
       !proposal ||
       proposal.state === "redacted" ||
@@ -132,6 +135,7 @@ export async function readVaultProposalCommand(
         eq(payloads.proposalId, proposal.id),
       ),
     );
+
   if (!payload) throw unavailableMemory();
 
   return parseAgentMemoryMutation(payload.command);
@@ -159,6 +163,7 @@ export async function decideVaultProposalInTransaction(
     input.userId,
   );
   const state = input.decision === "accept" ? "accepted" : "rejected";
+
   if (proposal.state === state)
     return {
       state,
@@ -195,6 +200,7 @@ export async function decideVaultProposalInTransaction(
       }),
       agentMemoryVaultLimits(),
     );
+
     if (applied.status !== "applied")
       throw new MaisterError(
         "CONFLICT",

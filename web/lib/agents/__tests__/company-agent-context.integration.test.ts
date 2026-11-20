@@ -17442,6 +17442,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
   const { hosts } = await fakeExecutionHosts(database.db);
   const db: Db = database.db;
   const launchUserId = randomUUID();
+
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
     [launchUserId, `${launchUserId}@example.test`],
@@ -17459,6 +17460,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     idempotencyKey: randomUUID(),
   });
   const installationAdminId = randomUUID();
+
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
     [installationAdminId, `${installationAdminId}@example.test`],
@@ -17469,6 +17471,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     agentId: candidateId,
     packageInstallId: pin.packageInstallId,
   });
+
   await createCompanyGrants(db, installationAdminId, {
     principalKind: "user",
     principalId: installationAdminId,
@@ -17519,6 +17522,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     },
   );
   const runnerId = randomUUID();
+
   await db.insert(platformAcpRunners).values({
     id: runnerId,
     adapter: "claude",
@@ -17562,6 +17566,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     string,
     string,
   ];
+
   for (const [id, name] of [
     [a, "install-a"],
     [b, "install-b"],
@@ -17600,9 +17605,11 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       new NextRequest("http://localhost/api/v1/ext/projects", { headers }),
     );
   const initial = await list();
+
   expect(initial.status).toBe(200);
   const ids = (body: { items: { id: string }[] }) =>
     body.items.map(({ id }) => id);
+
   expect(ids(await initial.json())).toContain(a);
   await expect(installationRunProjects(db, run.runId)).resolves.toContain(a);
   await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
@@ -17620,6 +17627,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
   const slug = "install-a";
   const taskListUrl = `http://localhost/api/v1/ext/projects/${slug}/tasks`;
   const params = { params: Promise.resolve({ slug }) };
+
   expect(
     (await tasks.GET(new NextRequest(taskListUrl, { headers }), params)).status,
   ).toBe(200);
@@ -17658,6 +17666,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     ),
     params,
   );
+
   expect(brain.status, await brain.clone().text()).toBe(201);
   const embedding = createServer((request, response) => {
     request.resume();
@@ -17665,10 +17674,12 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       .writeHead(200, { "content-type": "application/json" })
       .end(JSON.stringify({ data: [{ index: 0, embedding: [1, 0, 0] }] }));
   });
+
   embedding.listen(0, "127.0.0.1");
   try {
     await once(embedding, "listening");
     const address = embedding.address();
+
     if (!address || typeof address === "string")
       throw new Error("Expected TCP embedding fixture");
     await database.pool.query(
@@ -17684,6 +17695,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       ),
       params,
     );
+
     expect(recalled.status, await recalled.clone().text()).toBe(200);
     expect(await recalled.json()).toMatchObject({ items: [] });
   } finally {
@@ -17714,10 +17726,12 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       }),
     }),
   );
+
   expect(knowledge.status, await knowledge.clone().text()).toBe(201);
   expect(await knowledge.json()).toMatchObject({ status: "pending" });
   const { GET: searchKnowledge } =
     await import("@/app/api/v1/ext/knowledge/route");
+
   expect(
     await (
       await searchKnowledge(
@@ -17742,10 +17756,12 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       }),
     }),
   );
+
   expect(proposed.status, JSON.stringify(await proposed.clone().json())).toBe(
     202,
   );
   const { proposalId } = await proposed.json();
+
   expect(
     (
       await database.pool.query(
@@ -17769,6 +17785,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       agentId: candidateId,
       limit: 20,
     });
+
   expect((await listReviews(installationAdminId)).items).toContainEqual(
     expect.objectContaining({ id: proposalId, allowed: ["accept", "reject"] }),
   );
@@ -17797,6 +17814,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         action: "read",
       }),
     );
+
   await expect(view(installationAdminId)).resolves.toMatchObject({
     kind: "note",
     content: "Observe the two project runs.",
@@ -17825,6 +17843,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     details: { reason: "agent_memory_unavailable" },
   });
   const staleRead = await list();
+
   expect(staleRead.ok).toBe(false);
   expect(await staleRead.json()).toMatchObject({ code: "PRECONDITION" });
   await expect(
@@ -17846,6 +17865,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     enabled: true,
     idempotencyKey: randomUUID(),
   });
+
   await database.pool.query(
     "UPDATE agent_schedules SET next_fire_at=clock_timestamp()-interval '1 minute' WHERE id=$1",
     [cron.scheduleId],
@@ -17855,6 +17875,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     [launchUserId],
   );
   const previousCap = process.env.MAISTER_MAX_CONCURRENT_AGENTS;
+
   process.env.MAISTER_MAX_CONCURRENT_AGENTS = "1";
   try {
     await runSchedulerTick({ jobKind: "agent_tick" });
@@ -17873,6 +17894,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       [cron.scheduleId],
     )
   ).rows;
+
   expect(cronRun?.principal).toEqual({ kind: "unattended", trigger: "cron" });
   expect(cronRun?.status).toBe("Pending");
   if (!cronRun) throw new Error("Scheduler did not retain an installation Run");
@@ -17911,6 +17933,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     const runIds = await Promise.all(
       [a, b].map(async (source) => {
         const runId = randomUUID();
+
         await database.pool.query(
           "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,started_at,ended_at) VALUES($1,$2,'flow','Done','fixture','fixture',now()-interval '1 minute',now())",
           [runId, source],
@@ -17925,12 +17948,14 @@ it("AV-06 reserves an installation Run and intersects current project authority 
             )
           ).status,
         ).toBe(200);
+
         return runId;
       }),
     );
     const { GET: getActivity } =
       await import("@/app/api/v1/ext/runs/[runId]/activity/route");
     const runId = runIds[0]!;
+
     expect(
       (
         await getActivity(
@@ -17944,6 +17969,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     ).toBe(200);
     const { GET: observatory } =
       await import("@/app/api/v1/ext/observatory/summary/route");
+
     for (const [slug, projectId] of [
       ["install-a", a],
       ["install-b", b],
@@ -17954,6 +17980,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
           { headers: cronHeaders },
         ),
       );
+
       expect(aggregate.status).toBe(200);
       expect((await aggregate.json()).items).toEqual([
         expect.objectContaining({
@@ -17993,8 +18020,10 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         }),
       }),
     );
+
     expect(scheduledProposal.status).toBe(202);
     const { proposalId: cronProposal } = await scheduledProposal.json();
+
     expect((await listReviews(installationAdminId)).items).toContainEqual(
       expect.objectContaining({ id: cronProposal }),
     );
@@ -18059,6 +18088,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       },
       hosts,
     );
+
     await db
       .update(runs)
       .set({
@@ -18088,9 +18118,11 @@ it("AV-06 reserves an installation Run and intersects current project authority 
           eq(domainEvents.kind, "run.done"),
         ),
       );
+
     if (!event) throw new Error("Expected classified producing event");
     const { dispatchCompanyAgentEvents } =
       await import("../company-event-dispatch");
+
     await database.pool.query(
       "INSERT INTO execution_host_pressure(execution_host_id,pressured_since) SELECT id,now() FROM execution_hosts WHERE kind='local_direct' AND retired_at IS NULL ON CONFLICT DO NOTHING",
     );
@@ -18137,6 +18169,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       },
       hosts,
     );
+
     await db
       .update(runs)
       .set({ agentChainDepth: maxAgentChainDepth() })
@@ -18164,6 +18197,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
           eq(domainEvents.kind, "run.done"),
         ),
       );
+
     if (!exhaustedEvent) throw new Error("Expected exhausted producing event");
     await dispatchCompanyAgentEvents(db, [exhaustedEvent]);
     expect(
@@ -18186,6 +18220,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     command: "view",
     path: "/memories/notes/cron.md",
   });
+
   await expect(
     viewAgentMemory(
       db,
@@ -18207,6 +18242,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       [configuration.owner.companyId, candidateId],
     )
   ).rows;
+
   if (!retainedVault)
     throw new Error("Expected the retained installation vault");
   const { seedLibrarianTurn } = await import("@/test-support/librarian-seed");
@@ -18214,6 +18250,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     await import("@/lib/librarian/authority");
   const { GET: librarianVaultView } =
     await import("@/app/api/v1/ext/librarian/vaults/[vaultId]/view/route");
+
   for (const [ownerId, expectedStatus] of [
     [installationAdminId, 200],
     [launchUserId, 404],
@@ -18228,6 +18265,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       },
       db,
     );
+
     await database.pool.query(
       "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
       [turnId, tokenId],
@@ -18243,6 +18281,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         { params: Promise.resolve({ vaultId: id }) },
       );
     const reply = await get(retainedVault.id);
+
     expect(reply.status).toBe(expectedStatus);
     if (expectedStatus === 200)
       expect(await reply.json()).toMatchObject({

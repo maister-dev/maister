@@ -48,6 +48,7 @@ export async function currentMemoryEmbeddingProfile(db: Db) {
     embeddingDimensions,
     embeddingApiKeyRef,
   } = settings;
+
   if (!embeddingBaseUrl || !embeddingModel || !embeddingDimensions)
     throw new MaisterError(
       "CONFIG",
@@ -56,6 +57,7 @@ export async function currentMemoryEmbeddingProfile(db: Db) {
   const available = await db.execute<{ ready: boolean }>(sql`
     SELECT to_regclass('agent_memory_embeddings') IS NOT NULL AS ready
   `);
+
   if (available.rows[0]?.ready !== true)
     throw new MaisterError(
       "PRECONDITION",

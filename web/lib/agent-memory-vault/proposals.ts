@@ -50,6 +50,7 @@ export async function retainVaultProposal(
         eq(proposals.state, "pending"),
       ),
     );
+
   if (pending >= input.maxPending)
     throw new MaisterError("CONFIG", "Pending vault proposal limit reached");
   await tx.insert(operations).values({
@@ -72,6 +73,7 @@ export async function retainVaultProposal(
       sourceRestrictions: input.sourceRestrictions,
     })
     .returning({ id: proposals.id });
+
   if (!proposal)
     throw new MaisterError("CRASH", "Vault proposal was not stored");
   await tx

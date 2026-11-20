@@ -29,6 +29,7 @@ export function knowledgeOwnerActionPolicy(
 ): SQL {
   if (identity.kind === "installation_agent") {
     const context = identity.installation;
+
     if (
       (action !== "knowledge:read" && action !== "knowledge:propose") ||
       !context.scopes.includes(action)

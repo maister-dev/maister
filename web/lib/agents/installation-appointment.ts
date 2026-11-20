@@ -29,6 +29,7 @@ export const installationScheduleReviewSchema = z.strictObject({
 const retainedInstallationAppointment = Symbol(
   "retainedInstallationAppointment",
 );
+
 export type InstallationAppointment = Readonly<{
   [retainedInstallationAppointment]: SqlTransaction;
   companyId: string;
@@ -67,6 +68,7 @@ export async function resolveInstallationAppointment(
     FOR SHARE OF source,head,revision,attempt
   `);
   const row = result.rows[0];
+
   if (!row || (row.grant === null && row.installation_review === null))
     return null;
   const parsed = z
@@ -93,6 +95,7 @@ export async function resolveInstallationAppointment(
       captured_source_revision: z.number(),
     })
     .safeParse(row);
+
   if (!parsed.success) throw appointmentUnavailable();
   const source = parsed.data;
   const review = source.installation_review;
@@ -101,6 +104,7 @@ export async function resolveInstallationAppointment(
     revision: source.revision,
     snapshotSha256: source.snapshot_digest,
   };
+
   if (
     contentDigest(binding) !== contentDigest(review.binding) ||
     contentDigest(binding) !== contentDigest(source.captured_binding) ||

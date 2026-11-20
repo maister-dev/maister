@@ -3,7 +3,6 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { installationToolNames } from "../../runtime/installation-agent-tools";
-
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
 import agentMemorySchema from "../../runtime/agent-memory.schema.json";
@@ -58,6 +57,7 @@ const vaultIndexRoutes = {
   memory_backlinks: "backlinks",
   memory_tags: "tags",
 } as const;
+
 type VaultIndexTool = keyof typeof vaultIndexRoutes;
 
 function isVaultIndexTool(name: string): name is VaultIndexTool {
@@ -1785,6 +1785,7 @@ function resolveRouting(
         )
         .parse(args);
       const params = new URLSearchParams();
+
       for (const [key, value] of Object.entries(
         selection as Record<string, unknown>,
       ))

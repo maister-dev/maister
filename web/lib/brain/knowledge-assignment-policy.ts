@@ -109,6 +109,7 @@ function companyEventInputReadPolicy(
   digest: SQL,
 ): SQL {
   const installation = identity.kind === "installation_agent";
+
   if (
     installation
       ? !identity.installation.scopes.includes("runs:read")

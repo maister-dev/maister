@@ -238,15 +238,25 @@ describe("T-C2b / REQ-C2 — the attach-time memory default is applied SERVER-si
     const fx = await seedAttachable({ memory: "enabled", flow: "mem-flow" });
 
     try {
-      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, testDatabase.db);
-      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(true);
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+        true,
+      );
       for (const memoryEnabled of [false, true]) {
-        await updateAgentLink({
-          projectId: fx.projectId,
-          agentId: fx.agentId,
-          patch: { memoryEnabled },
-        }, testDatabase.db);
-        expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(memoryEnabled);
+        await updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            patch: { memoryEnabled },
+          },
+          testDatabase.db,
+        );
+        expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+          memoryEnabled,
+        );
       }
     } finally {
       await rm(fx.pkgRoot, { force: true, recursive: true });
@@ -257,13 +267,23 @@ describe("T-C2b / REQ-C2 — the attach-time memory default is applied SERVER-si
     const fx = await seedAttachable({ memory: "enabled", mode: "subagent" });
 
     try {
-      await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, testDatabase.db);
-      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(false);
-      await expect(updateAgentLink({
-        projectId: fx.projectId,
-        agentId: fx.agentId,
-        patch: { memoryEnabled: true },
-      }, testDatabase.db)).rejects.toMatchObject({ code: "CONFIG" });
+      await attachAgent(
+        { projectId: fx.projectId, agentId: fx.agentId },
+        testDatabase.db,
+      );
+      expect((await linkRow(fx.projectId, fx.agentId))?.memoryEnabled).toBe(
+        false,
+      );
+      await expect(
+        updateAgentLink(
+          {
+            projectId: fx.projectId,
+            agentId: fx.agentId,
+            patch: { memoryEnabled: true },
+          },
+          testDatabase.db,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG" });
     } finally {
       await rm(fx.pkgRoot, { force: true, recursive: true });
     }

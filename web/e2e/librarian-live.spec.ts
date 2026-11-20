@@ -247,6 +247,7 @@ test("AV-07-live: real adapter prepares a governed Brain confirmation", async ({
 }) => {
   const slug = loadFixtures().byKey.board.projectSlug;
   const title = `Fixture release order ${randomUUID().slice(0, 8)}`;
+
   await withE2EDb(async (pool) => {
     await pool.query("UPDATE projects SET brain_enabled=true WHERE slug=$1", [
       slug,
@@ -263,6 +264,7 @@ test("AV-07-live: real adapter prepares a governed Brain confirmation", async ({
   const card = page
     .getByTestId("librarian-card-pending")
     .filter({ hasText: title });
+
   await expect(card).toContainText("Project Brain proposal");
   const proposed = () =>
     withE2EDb(
@@ -274,6 +276,7 @@ test("AV-07-live: real adapter prepares a governed Brain confirmation", async ({
           )
         ).rows,
     );
+
   expect(await proposed()).toEqual([]);
   await card.getByRole("button", { name: /confirm|accept/i }).click();
   await expect

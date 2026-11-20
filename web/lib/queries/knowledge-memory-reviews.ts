@@ -5,6 +5,7 @@ import type { KnowledgePrincipalIdentity } from "@/lib/brain/knowledge-access";
 import type { Db } from "@/lib/execution-host/db";
 
 import { createHash } from "node:crypto";
+
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -70,6 +71,7 @@ const cursorSchema = z.strictObject({
   at: z.iso.datetime({ offset: true }),
 });
 const namespace = "maister.inbox.proposal-reviews.v1";
+
 export type ReviewKind = z.infer<typeof kinds>;
 export type ReviewFilter = z.infer<typeof filters>;
 export type ReviewSelector = z.infer<typeof reviewSelector>;
@@ -89,6 +91,7 @@ type ReviewRow = Readonly<{
 
 function validate<T>(candidate: unknown, schema: z.ZodType<T>): T {
   const parsed = schema.safeParse(candidate);
+
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid Inbox review selection");
 
@@ -138,6 +141,7 @@ async function reviewPolicy(tx: Db, userId: string) {
     principal,
     "knowledge:review",
   );
+
   if (actor.kind !== "user") throw unavailableMemory();
   const ready = await isBrainSchemaApplied(tx);
   const knowledge = ready
@@ -211,6 +215,7 @@ export async function listProposalReviews(
     cursor === undefined
       ? null
       : validate(parseCursorPayload(namespace, cursor), cursorSchema);
+
   if (page && page.scope !== scope)
     throw new MaisterError(
       "CONFIG",
@@ -255,6 +260,7 @@ export async function readProposalReviewMetadata(
     await tx.execute<ReviewRow>(sql`${policy} SELECT ${columns} FROM current_reviews
     WHERE kind=${selection.kind} AND id=${selection.id}`)
   ).rows;
+
   if (!row) throw unavailableMemory();
 
   return { ...reviewItem(row), projectId: row.project_id };
@@ -269,6 +275,7 @@ export async function readProposalReviewCounter(db: Db, userId: string) {
          string_agg(jsonb_build_array(kind,id,version,title,allowed)::text,E'\\n' ORDER BY kind,id),''),'UTF8')),'hex') AS "reviewVersion"
       FROM current_reviews`)
     ).rows;
+
     if (!row) throw new MaisterError("CRASH", "Review counter was unavailable");
 
     return row;

@@ -28,6 +28,7 @@ async function projectContext(tx: Db, vault: Vault) {
 
 function repoHref(project: ProjectLinkContext, link: MemoryLink) {
   const entered = project.repo_url ? URL.parse(project.repo_url) : null;
+
   if (
     !entered ||
     entered.protocol !== "https:" ||
@@ -42,6 +43,7 @@ function repoHref(project: ProjectLinkContext, link: MemoryLink) {
       : entered.hostname === "gitlab.com"
         ? "-/blob"
         : null;
+
   if (!route) return null;
   const branch = encodeURIComponent(project.main_branch);
   const path = link.target.split("/").map(encodeURIComponent).join("/");
@@ -52,6 +54,7 @@ function repoHref(project: ProjectLinkContext, link: MemoryLink) {
 
 function sameProjectTaskNumber(project: ProjectLinkContext, target: string) {
   const parts = /^(.+)-([1-9][0-9]*)$/.exec(target);
+
   if (!parts || project.task_key !== parts[1]) return null;
   const value = Number(parts[2]);
 
@@ -71,6 +74,7 @@ export async function makeMemoryEntityResolver(
     if (!project || !userId) return null;
     if (link.kind === "task") {
       const number = sameProjectTaskNumber(project, link.target);
+
       if (number === null) return null;
       const result = await tx.execute(
         sql`SELECT 1 FROM tasks WHERE project_id=${project.id} AND number=${number}`,
@@ -94,11 +98,13 @@ export async function makeMemoryEntityResolver(
     const { rows } = await tx.execute<{ ready: boolean }>(
       sql`SELECT to_regclass('brain_items') IS NOT NULL AS ready`,
     );
+
     if (rows[0]?.ready !== true) return null;
 
     try {
       const revision =
         link.fragment === null ? undefined : Number(link.fragment);
+
       await readKnowledgeRecord(
         tx,
         { kind: "user", userId },

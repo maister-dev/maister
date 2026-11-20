@@ -1,7 +1,11 @@
 import "server-only";
 
+import type { KnowledgeCardProposal } from "./knowledge-card-types";
+
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
+
+import { decideKnowledgeCard } from "./knowledge-card-effects";
 
 import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -29,9 +33,6 @@ import { promoteRun } from "@/lib/runs/promote";
 import { rememberAcceptedSuggestion } from "@/lib/librarian/memory";
 import { respondToHitl } from "@/lib/services/hitl";
 import { acceptStatement } from "@/lib/tasks/statement";
-import { decideKnowledgeCard } from "./knowledge-card-effects";
-import type { KnowledgeCardProposal } from "./knowledge-card-types";
-
 import { discardWorkbench } from "@/lib/workbench-lifecycle/service";
 
 type Db = ReturnType<typeof getDb>;
@@ -177,6 +178,7 @@ export async function decideLibrarianCard(
   db: Db = getDb(),
 ): Promise<LibrarianOperationResult> {
   const card = await loadOwnedCard(input.cardId, input.user.id, db);
+
   if (
     ["knowledge_proposal", "brain_proposal", "vault_edit"].includes(card.kind)
   )
@@ -280,6 +282,7 @@ export async function decideLibrarianCard(
   }
 
   const proposal = librarianCardProposalSchema.parse(card.payload);
+
   if (
     proposal.action === "knowledge_proposal" ||
     proposal.action === "brain_proposal" ||

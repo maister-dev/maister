@@ -84,8 +84,10 @@ export async function retrieveLibrarianContext(
     string,
     readonly KnowledgeAccessRestriction[]
   >();
+
   for (const row of historyRows) {
     const restrictions = row.turnId ? disclosures.get(row.turnId) : undefined;
+
     if (restrictions?.length) sourceMessages.set(row.id, restrictions);
   }
   const visibleHistory = historyRows.filter(
@@ -131,6 +133,7 @@ export async function retrieveLibrarianContext(
       input.ownerId,
       row.knowledgeAccess,
     );
+
     if (sources === null) {
       dropped += 1;
       continue;
@@ -241,6 +244,7 @@ export async function retrieveLibrarianContext(
       ),
     )
     .limit(1);
+
   return {
     history,
     summaries,

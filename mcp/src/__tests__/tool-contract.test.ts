@@ -717,6 +717,7 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
             })
           : bodySchema(op);
     const bodyProps = implementedEntries(body?.properties ?? {});
+
     if (toolName === "agent_vault_propose_edit") delete bodyProps.action;
     const bodyRequired = (body?.required ?? []).filter((name) =>
       Object.hasOwn(bodyProps, name),

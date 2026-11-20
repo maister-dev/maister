@@ -445,6 +445,7 @@ async function handleInstallationExt(
   db: ExecutionDb,
 ): Promise<NextResponse> {
   let response: NextResponse;
+
   if (!adapter || !actor.scopes.includes(adapter.scope)) {
     response = NextResponse.json(
       {
@@ -462,6 +463,7 @@ async function handleInstallationExt(
         error.details?.reason === "installation_resource_unavailable"
           ? 404
           : httpStatusForExtCode(error.code);
+
       response = NextResponse.json(
         { code: error.code, message: error.message },
         { status, headers: { "Cache-Control": "private, no-store" } },

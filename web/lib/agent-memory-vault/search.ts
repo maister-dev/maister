@@ -59,6 +59,7 @@ export async function searchMemory(
   const embedding = requestedProfile
     ? (await requestedProfile.client.embed([request.q]))[0]
     : undefined;
+
   if (requestedProfile && !embedding)
     throw new MaisterError(
       "EMBEDDING_UNAVAILABLE",
@@ -68,10 +69,12 @@ export async function searchMemory(
     const access = await prepare(tx);
     const vault = await lockVault(tx, access.vaultId);
     const visible = await visibleMemoryHeads(tx, access);
+
     if (visible.length === 0) return { hits: [], nextCursor: null };
     const profile = requestedProfile
       ? await currentMemoryEmbeddingProfile(tx)
       : null;
+
     if (profile?.generation !== requestedProfile?.generation)
       throw new MaisterError(
         "CONFLICT",
@@ -139,6 +142,7 @@ export async function searchMemory(
       nextCursor: page.nextCursor,
     };
   });
+
   log.debug(
     {
       mode: request.mode,

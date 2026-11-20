@@ -1,10 +1,20 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { createHash } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
+
+import { lockLibrarianKnowledgeContext } from "./knowledge-authority";
+import {
+  isKnowledgeCardProposal,
+  knowledgeCardProposalSchemas,
+  effectContextSchema,
+} from "./knowledge-card-types";
+import { prepareKnowledgeCard } from "./knowledge-card-effects";
 
 import { requireProjectActionForUser, type ProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -24,16 +34,7 @@ import {
   projectForDraft,
 } from "@/lib/librarian/memory";
 import { taskStatementSchema } from "@/lib/tasks/statement";
-
-import { lockLibrarianKnowledgeContext } from "./knowledge-authority";
-import {
-  isKnowledgeCardProposal,
-  knowledgeCardProposalSchemas,
-  effectContextSchema,
-} from "./knowledge-card-types";
-import { prepareKnowledgeCard } from "./knowledge-card-effects";
 import { contentDigest } from "@/lib/evaluations/digest";
-import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -316,6 +317,7 @@ export async function proposeLibrarianCard(
   db: Db = getDb(),
 ): Promise<{ cardId: string; expiresAt: Date }> {
   const proposal = librarianCardProposalSchema.parse(input.proposal);
+
   if (isKnowledgeCardProposal(proposal)) {
     if (!input.tokenId)
       throw new MaisterError(
@@ -331,6 +333,7 @@ export async function proposeLibrarianCard(
         tokenId,
         "librarian:cards",
       );
+
       if (
         context.ownerId !== input.ownerUserId ||
         context.turnId !== input.turnId ||
@@ -354,6 +357,7 @@ export async function proposeLibrarianCard(
         restrictions: prepared.restrictions,
         preview: prepared.preview,
       });
+
       if (Buffer.byteLength(JSON.stringify(effect.restrictions)) > 65536)
         throw new MaisterError(
           "PRECONDITION",
@@ -375,6 +379,7 @@ export async function proposeLibrarianCard(
           expiresAt,
         })
         .returning({ id: librarianCards.id });
+
       if (!created)
         throw new MaisterError("CRASH", "The confirmation was not retained");
       await input.recordCreated(tx as unknown as Db, created.id);

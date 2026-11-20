@@ -152,6 +152,7 @@ export async function updateCompanySpecialistBinding(
         duplicate: true,
       };
     const previous = await loadCompanyBindingRevision(tx, head, head.revision);
+
     assertMutableBinding(head, previous, input.expectedRevision);
     if (previous.snapshot.installationGrant || input.installationGrant)
       await assertInstallationGrantAdmin(tx, userId);

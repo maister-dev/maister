@@ -17,7 +17,6 @@ import { useEffect, useState } from "react";
 
 import { AgentMemoryNavigation } from "./agent-memory-navigation";
 import { AgentMemoryRedact } from "./agent-memory-redact";
-
 import {
   buildVaultCommand,
   displayIssue,
@@ -308,8 +307,8 @@ export function AgentMemoryControl({
         <AgentMemoryNavigation
           api={api}
           href={href}
-          path={path}
           note={page.kind === "note"}
+          path={path}
           version={version}
         />
       ) : null}

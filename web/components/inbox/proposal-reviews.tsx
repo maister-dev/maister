@@ -163,8 +163,10 @@ export function ProposalReviews({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ items }),
       });
+
       if (!response.ok) {
         setFailure(true);
+
         return;
       }
       const body = (await response.json()) as {
@@ -189,9 +191,9 @@ export function ProposalReviews({
 
   return (
     <section
-      id="knowledge-memory"
       aria-label={t("title")}
       className="min-w-0 space-y-3"
+      id="knowledge-memory"
     >
       <h2 className="m-0 text-sm font-bold text-ink">{t("title")}</h2>
       <nav aria-label={t("filter")} className="flex flex-wrap gap-3 text-sm">
@@ -203,8 +205,8 @@ export function ProposalReviews({
         </Link>
         {kinds.map((kind) => (
           <Link
-            aria-current={filters.kind === kind ? "page" : undefined}
             key={kind}
+            aria-current={filters.kind === kind ? "page" : undefined}
             href={href({ ...scoped, kind })}
           >
             {t(`kind.${kind}`)}
@@ -218,17 +220,17 @@ export function ProposalReviews({
         <>
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              isDisabled={!enabled("accept")}
               size="sm"
               variant="secondary"
-              isDisabled={!enabled("accept")}
               onPress={() => void decide("accept")}
             >
               {t("accept")}
             </Button>
             <Button
+              isDisabled={!enabled("reject")}
               size="sm"
               variant="secondary"
-              isDisabled={!enabled("reject")}
               onPress={() => void decide("reject")}
             >
               {t("reject")}
@@ -241,9 +243,9 @@ export function ProposalReviews({
             <label className="grid max-w-lg gap-1 text-sm">
               {t(needsReason ? "requiredReason" : "reason")}
               <Input
+                maxLength={2000}
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                maxLength={2000}
               />
             </label>
           ) : null}
@@ -252,14 +254,15 @@ export function ProposalReviews({
               const key = rowKey(row);
 
               return (
-                <li className="flex flex-wrap items-center gap-3 p-3" key={key}>
+                <li key={key} className="flex flex-wrap items-center gap-3 p-3">
                   <label className="flex min-w-0 items-center gap-2">
                     <input
-                      type="checkbox"
                       checked={selected.includes(key)}
                       disabled={busy}
+                      type="checkbox"
                       onChange={(event) => {
                         const checked = event.target.checked;
+
                         setSelected((current) =>
                           checked
                             ? [...current, key]
@@ -296,7 +299,7 @@ export function ProposalReviews({
           ) : null}
         </>
       ) : (
-        <p role="status" className="text-sm text-mute">
+        <p className="text-sm text-mute" role="status">
           {t("empty")}
         </p>
       )}
@@ -317,8 +320,8 @@ export function ProposalReviews({
       {preview ? (
         <ReviewPreview
           key={`${preview.kind}:${preview.id}`}
-          source={preview}
           close={() => setPreview(null)}
+          source={preview}
         />
       ) : null}
     </section>

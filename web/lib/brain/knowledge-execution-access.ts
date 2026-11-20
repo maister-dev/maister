@@ -7,7 +7,6 @@ import type { KnowledgePrincipal } from "./knowledge-types";
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
-import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import { assertNativeWorkspaceMode } from "./knowledge-workspace-policy";
 import { resolveKnowledgePrincipal } from "./knowledge-access";
 import { currentKnowledgeNodeAttemptPolicy } from "./knowledge-node-policy";
@@ -18,6 +17,7 @@ import {
   unavailableKnowledgeReference,
 } from "./knowledge-restrictions";
 
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 import { FINDINGS_CONTRACT } from "@/lib/run-results/findings-contract";
@@ -176,6 +176,7 @@ export async function assertNativeRunKnowledgeInputsInTransaction(
     ...mounts,
   ]);
   const installation = await requireInstallationRunAuthority(tx, runId);
+
   await recordKnowledgeDisclosure(
     tx,
     { runId, capture: capture.data },
@@ -241,6 +242,7 @@ export async function recordNativeRunSourcesInTransaction(
     ...restrictions,
   ]);
   const installation = await requireInstallationRunAuthority(tx, runId);
+
   await recordKnowledgeDisclosure(
     tx,
     { runId, capture: capture.data },

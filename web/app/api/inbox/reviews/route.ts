@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     const user = await requireActiveSession();
     const params = new URL(request.url).searchParams;
     const raw = Object.fromEntries(params);
+
     if (params.size !== Object.keys(raw).length)
       throw new MaisterError("CONFIG", "Repeated Inbox review filter");
 

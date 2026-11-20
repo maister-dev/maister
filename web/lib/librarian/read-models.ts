@@ -1,7 +1,15 @@
 import "server-only";
 
+import type { Db as ExecutionDb } from "@/lib/execution-host/db";
+
 import { desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  effectContextSchema,
+  isKnowledgeCardProposal,
+} from "./knowledge-card-types";
+import { prepareKnowledgeCard } from "./knowledge-card-effects";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -15,14 +23,8 @@ import {
   users,
   workspaces,
 } from "@/lib/db/schema";
-import {
-  effectContextSchema,
-  isKnowledgeCardProposal,
-} from "./knowledge-card-types";
-import { prepareKnowledgeCard } from "./knowledge-card-effects";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { isMaisterError } from "@/lib/errors";
-import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 import { librarianCardProposalSchema } from "@/lib/librarian/cards";
 import { getVisibleProjects } from "@/lib/queries/visible-projects";
 import { renderStatementPrompt } from "@/lib/tasks/statement";

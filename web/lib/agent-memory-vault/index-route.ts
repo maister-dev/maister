@@ -60,9 +60,11 @@ const tagsQuery = z.strictObject(paging);
 function parseQuery<T>(request: Request, schema: z.ZodType<T>): T {
   const params = new URL(request.url).searchParams;
   const query = Object.fromEntries(params);
+
   if (Object.keys(query).length !== params.size)
     throw new MaisterError("CONFIG", "Repeated memory query parameter");
   const parsed = schema.safeParse(query);
+
   if (!parsed.success)
     throw new MaisterError("CONFIG", "Invalid memory index query");
 

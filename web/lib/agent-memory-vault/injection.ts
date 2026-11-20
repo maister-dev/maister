@@ -19,8 +19,6 @@ import {
   ensureInstallationVault,
   seesEveryProject,
 } from "./installation-access";
-import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
-import { installationRunProjects } from "@/lib/agents/installation-source-capture";
 import { MEMORY_INDEX } from "./paths";
 import { ensureProjectVault } from "./project-access";
 import {
@@ -36,6 +34,8 @@ import {
   readVaultRevision,
 } from "./store";
 
+import { installationRunProjects } from "@/lib/agents/installation-source-capture";
+import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import {
   recordNativeRunSourcesInTransaction,
   resolveRunKnowledgePrincipal,
@@ -309,12 +309,14 @@ export async function stageInstallationAgentMemory(
   const active = await tx.execute(sql`SELECT id FROM runs WHERE id=${runId}
     AND execution_assignment_id=${sessionKey} FOR NO KEY UPDATE`);
   const authority = await requireInstallationRunAuthority(tx, runId);
+
   if (active.rows.length !== 1 || !authority)
     throw new MaisterError(
       "PRECONDITION",
       "Current run does not own the installation memory session",
     );
   const revealed = await installationRunProjects(tx, runId);
+
   if (!(await seesEveryProject(tx, authority, revealed)))
     throw new MaisterError(
       "PRECONDITION",
@@ -364,6 +366,7 @@ async function stageVaultSession(
         eq(injections.sessionKey, session.sessionKey),
       ),
     );
+
   if (existing) {
     if (
       existing.vaultId !== vaultId ||
@@ -380,6 +383,7 @@ async function stageVaultSession(
     ({ revision }) => revision,
   );
   const visible: VaultRevision[] = [];
+
   for (const head of heads) if (await allows(head)) visible.push(head);
   const indexHead = visible.find((head) => head.path === MEMORY_INDEX);
   const index = indexHead ? await readVaultPayload(tx, indexHead) : null;
@@ -462,6 +466,7 @@ export async function assertMemorySessionSources(
           installation.memoryEnabled &&
           installation.scopes.includes("agent_memory:read")
         : Boolean(await enabledAttachment(db, owner.projectId, owner.agentId));
+
     if (!enabled)
       throw new MaisterError(
         "PRECONDITION",

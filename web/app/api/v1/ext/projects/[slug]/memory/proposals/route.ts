@@ -121,6 +121,7 @@ export async function POST(
         scope: "memory:propose",
         work: async ({ tokenId }) => {
           const parsed = proposalBodySchema.safeParse(await readVaultJson(req));
+
           if (!parsed.success)
             throw new MaisterError("CONFIG", "Invalid Brain proposal");
           const proposal = await proposeInstallationBrain(db, tokenId, slug, {

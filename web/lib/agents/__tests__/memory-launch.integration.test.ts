@@ -316,6 +316,7 @@ it("AV-10 imports and verifies originals once, fences activation and cleans only
   );
   const postCutoverPath = "/memories/notes/post-cutover.md";
   const postCutoverContent = "New content resides in PostgreSQL.";
+
   await expect(
     applyVaultMutation(
       db,
@@ -343,8 +344,10 @@ it("AV-10 imports and verifies originals once, fences activation and cleans only
   const restartedPool = new Pool({
     connectionString: testDatabase.databaseUrl,
   });
+
   try {
     const reopened = drizzle(restartedPool, { schema: schemaModule });
+
     await expect(
       viewAgentMemory(
         reopened,

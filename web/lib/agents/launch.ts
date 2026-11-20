@@ -1,7 +1,5 @@
 import "server-only";
 
-import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
-
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
 import type {
@@ -34,6 +32,8 @@ import path from "node:path";
 
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pino from "pino";
+
+import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
 
 import {
   admitAgentTurnPrompt,

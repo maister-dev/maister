@@ -127,12 +127,12 @@ export function AgentMemoryNavigation({
         <Input
           key={q}
           aria-label={t("searchNotes")}
-          name="q"
-          maxLength={2000}
           defaultValue={q}
+          maxLength={2000}
+          name="q"
           placeholder={t("searchNotes")}
         />
-        <Button type="submit" size="sm" variant="secondary">
+        <Button size="sm" type="submit" variant="secondary">
           {t("search")}
         </Button>
         {q || tag ? <Link href={href(path)}>{t("resetFilters")}</Link> : null}

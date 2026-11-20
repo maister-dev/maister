@@ -4,9 +4,10 @@ import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
+import { generateToken } from "../lib/tokens/secret";
+
 import { loadFixtures } from "./_seed/fixtures";
 import { withE2EDb } from "./_seed/db";
-import { generateToken } from "../lib/tokens/secret";
 
 // Inbox card redesign: the full-bleed, project-grouped /inbox surface rendering
 // the unified 3-tier HitlCard, plus the canonical `decisions` badge fan-out
@@ -119,15 +120,23 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
 
   expect(pending.status()).toBe(202);
   const receipt = (await pending.json()) as { proposalId: string };
-  const authorized = await page.request.get(`/api/inbox/reviews?${new URLSearchParams({ kind: "vault", projectId, agentId })}`);
+  const authorized = await page.request.get(
+    `/api/inbox/reviews?${new URLSearchParams({ kind: "vault", projectId, agentId })}`,
+  );
 
-  expect(await authorized.json()).toMatchObject({ items: [{ id: receipt.proposalId }] });
+  expect(await authorized.json()).toMatchObject({
+    items: [{ id: receipt.proposalId }],
+  });
 
   await expect(reviews).toHaveText(String(reviewBefore + 1), {
     timeout: 45_000,
   });
   await expect(decisions).toHaveText(before!);
-  const preview = page.waitForResponse((response) => response.url().endsWith(`/api/inbox/reviews/vault/${receipt.proposalId}`), { timeout: 30_000 });
+  const preview = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/inbox/reviews/vault/${receipt.proposalId}`),
+    { timeout: 30_000 },
+  );
 
   await group.getByRole("button", { name: "View proposal" }).click();
   expect((await preview).ok()).toBe(true);
@@ -138,13 +147,17 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Close proposal" }).click();
   await group.getByRole("checkbox", { name: pathname }).check();
-  const settled = page.waitForResponse("**/api/inbox/reviews/decisions", { timeout: 30_000 });
+  const settled = page.waitForResponse("**/api/inbox/reviews/decisions", {
+    timeout: 30_000,
+  });
 
   await group.getByRole("button", { name: "Accept selected" }).click();
   expect((await settled).ok()).toBe(true);
   await expect(group.getByText("Accepted", { exact: false })).toBeVisible();
-  if (reviewBefore === 0) await expect(reviews).toHaveCount(0, { timeout: 45_000 });
-  else await expect(reviews).toHaveText(String(reviewBefore), { timeout: 45_000 });
+  if (reviewBefore === 0)
+    await expect(reviews).toHaveCount(0, { timeout: 45_000 });
+  else
+    await expect(reviews).toHaveText(String(reviewBefore), { timeout: 45_000 });
   await expect(decisions).toHaveText(before!);
   await withE2EDb(async (pool) => {
     const evidence = await pool.query(

@@ -115,6 +115,7 @@ function reviewBaseline(req: NextRequest) {
   const params = new URL(req.url).searchParams;
   const reviews = params.get("reviews");
   const reviewVersion = params.get("reviewVersion");
+
   if (
     reviews !== null &&
     reviewVersion !== null &&

@@ -28,8 +28,9 @@ export const knowledgeCardProposalSchemas = [
   }),
 ] as const;
 
-const proposal = z.discriminatedUnion("action", knowledgeCardProposalSchemas);
-export type KnowledgeCardProposal = z.infer<typeof proposal>;
+export type KnowledgeCardProposal = z.output<
+  (typeof knowledgeCardProposalSchemas)[number]
+>;
 
 export function isKnowledgeCardProposal(value: {
   action: string;

@@ -19,7 +19,10 @@ import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { agents, agentProjectLinks, runs } = schemaModule as unknown as Record<string, any>;
+const { agents, agentProjectLinks, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 type Db = any;
 
@@ -208,14 +211,21 @@ export async function resolveFlowBoundAgent(args: {
   }
 
   if (parsed.mode === "subagent") {
-    const [attachment] = await _db.select({ memoryEnabled: agentProjectLinks.memoryEnabled })
-      .from(agentProjectLinks).where(and(
-        eq(agentProjectLinks.projectId, projectId),
-        eq(agentProjectLinks.agentId, args.agentId),
-      ));
+    const [attachment] = await _db
+      .select({ memoryEnabled: agentProjectLinks.memoryEnabled })
+      .from(agentProjectLinks)
+      .where(
+        and(
+          eq(agentProjectLinks.projectId, projectId),
+          eq(agentProjectLinks.agentId, args.agentId),
+        ),
+      );
 
     if (attachment?.memoryEnabled === true)
-      throw new MaisterError("PRECONDITION", "A shared subagent session cannot hold an independent vault credential");
+      throw new MaisterError(
+        "PRECONDITION",
+        "A shared subagent session cannot hold an independent vault credential",
+      );
     if (args.executorAgent !== "claude") {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",

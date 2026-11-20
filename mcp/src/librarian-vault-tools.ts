@@ -144,6 +144,7 @@ export function librarianVaultRoute(
       ? "/api/v1/ext/librarian/vaults"
       : `/api/v1/ext/librarian/vaults/${encodeURIComponent(String(id))}/${name.slice("agent_vault_".length)}`;
   const selection = new URLSearchParams();
+
   for (const [key, value] of Object.entries(rest))
     if (value !== undefined) selection.set(key, String(value));
 

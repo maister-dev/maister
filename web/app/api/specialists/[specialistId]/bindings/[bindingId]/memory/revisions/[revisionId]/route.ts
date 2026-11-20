@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { InstallationVaultRoute } from "@/lib/agent-memory-vault/installation-route";
+
 import { withInstallationVault } from "@/lib/agent-memory-vault/installation-route";
 import { vaultRevisionDetail } from "@/lib/agent-memory-vault/history";
 import { privateJson } from "@/lib/api/private-json";

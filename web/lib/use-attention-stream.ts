@@ -189,7 +189,8 @@ export function useAttentionStream(
             decisions: frame.decisions,
             updates: frame.updates,
             reviews: frame.reviews ?? countersRef.current?.reviews,
-            reviewVersion: frame.reviewVersion ?? countersRef.current?.reviewVersion,
+            reviewVersion:
+              frame.reviewVersion ?? countersRef.current?.reviewVersion,
           };
         }
       } catch {

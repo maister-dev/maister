@@ -104,7 +104,7 @@ export default async function SpecialistsSettings({
         </ul>
       </div>
       {selected && (installation || installationCandidate) ? (
-        <nav className="flex gap-4 text-sm" aria-label={t("installationGrant")}>
+        <nav aria-label={t("installationGrant")} className="flex gap-4 text-sm">
           <a
             className="underline"
             href={`?binding=${encodeURIComponent(selected.bindingId)}`}
@@ -134,8 +134,8 @@ export default async function SpecialistsSettings({
       installation.installationGrant?.memoryEnabled ? (
         <AgentMemoryControl
           agentId={installation.id}
-          canRedact={user.role === "admin"}
           canEdit={user.role === "admin"}
+          canRedact={user.role === "admin"}
           location={{
             kind: "installation",
             companyId,
@@ -146,9 +146,9 @@ export default async function SpecialistsSettings({
       {installationCandidate && query.edit === "installation" ? (
         <BindingReviewForm
           key={installationCandidate.configRevision}
+          canGrantInstallation
           bindingKind="specialist"
           companyId={companyId}
-          canGrantInstallation
           editing={{
             agentId: installationCandidate.id,
             bindingId: installationCandidate.bindingId,
@@ -235,8 +235,8 @@ export default async function SpecialistsSettings({
         <div className="grid gap-4 md:grid-cols-2">
           <BindingReviewForm
             bindingKind="specialist"
-            companyId={companyId}
             canGrantInstallation={canGrantInstallation}
+            companyId={companyId}
             example={{
               packageInstallId: "",
               packageRevision: "",

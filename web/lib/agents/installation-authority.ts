@@ -85,6 +85,7 @@ export async function requireInstallationRunAuthority(
       sql`SELECT 1 FROM agent_installation_run_authorities WHERE run_id=${runId}`,
     )
   ).rows[0];
+
   if (!observed) return null;
   const result = await tx.execute(sql`
     SELECT r.id,r.agent_id,r.company_id,r.trigger_source,r.created_by_user_id,b.id AS binding_id,b.revision AS binding_revision,
@@ -115,11 +116,13 @@ export async function requireInstallationRunAuthority(
     FOR SHARE OF b,v,catalog,pin
   `);
   const current = retained.safeParse(result.rows[0]);
+
   if (!current.success) throw denied();
   const { grant, captured_grant: captured, principal: owner } = current.data;
   const scopes = captured.scopes.filter((scope) =>
     grant.scopes.includes(scope),
   );
+
   if (owner.kind === "manual") {
     if (
       current.data.created_by_user_id !== owner.userId ||
@@ -129,6 +132,7 @@ export async function requireInstallationRunAuthority(
     const user =
       await tx.execute(sql`SELECT 1 FROM users WHERE id=${owner.userId} AND account_status='active'
       AND NOT must_change_password FOR SHARE`);
+
     if (!user.rows.length) throw denied();
     const assignmentGrants = await tx.execute(sql`
       SELECT action FROM company_grants WHERE company_id=${current.data.company_id}
@@ -136,6 +140,7 @@ export async function requireInstallationRunAuthority(
         AND action IN ('assignments:read','assignments:update') FOR SHARE
     `);
     const actions = new Set(assignmentGrants.rows.map(({ action }) => action));
+
     if (!actions.has("assignments:read") || !actions.has("assignments:update"))
       throw denied();
   } else if (owner.trigger !== current.data.trigger_source) throw denied();
@@ -158,6 +163,7 @@ export async function requireInstallationCredential(
   scope: InstallationAgentScope,
 ) {
   const token = await lockCurrentNativeKnowledgeToken(tx, tokenId);
+
   if (
     token.project_id !== null ||
     !token.company_id ||
@@ -173,6 +179,7 @@ export async function requireInstallationCredential(
     tx,
     token.company_run_id,
   );
+
   if (
     !context ||
     context.companyId !== token.company_id ||
@@ -190,6 +197,7 @@ export async function requireInstallationCredential(
     )
   ).rows;
   const capture = knowledgeAccessCaptureSchema.safeParse(row?.knowledge_access);
+
   if (!capture.success || capture.data.state !== "complete")
     throw new MaisterError(
       "PRECONDITION",

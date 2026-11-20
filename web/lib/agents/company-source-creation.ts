@@ -19,9 +19,9 @@ import {
   lockCompanyFlowBindingConfiguration,
   loadCompanyFlowBindingRevision,
 } from "./company-flow-bindings";
+import { installationScheduleReviewSchema } from "./installation-appointment";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
-import { installationScheduleReviewSchema } from "./installation-appointment";
 import { MaisterError } from "@/lib/errors";
 
 export type CompanySourceConfigurationInput = Readonly<{
@@ -190,6 +190,7 @@ export async function createCompanyScheduleSource(
         );
     }
     let installationReview: string | null = null;
+
     if (input.enabled) {
       if (!role.definition.triggers.includes(declaredTrigger))
         throw new MaisterError(
@@ -216,6 +217,7 @@ export async function createCompanyScheduleSource(
         input.owner.companyId,
         "assignments:update",
       );
+
       if (role.installationGrant) {
         installationReview = JSON.stringify(
           installationScheduleReviewSchema.parse({

@@ -23,6 +23,7 @@ const log = pino({
 });
 const perTick = 12;
 const maxAttempts = 5;
+
 type Profile = Awaited<ReturnType<typeof currentMemoryEmbeddingProfile>>;
 type Claim = {
   vault_id: string;
@@ -108,6 +109,7 @@ async function settleVector(
   return db.transaction(async (tx) => {
     await lockVault(tx, claim.vault_id);
     const liveProfile = await currentMemoryEmbeddingProfile(tx);
+
     if (liveProfile.generation !== profile.generation) return false;
     const { rows } = await tx.execute(sql`
       UPDATE agent_memory_embeddings e
@@ -133,6 +135,7 @@ async function retryVector(
 ) {
   const code = isMaisterError(error) ? error.code : "CRASH";
   const poisoned = claim.attempts >= maxAttempts;
+
   await db.execute(sql`
     UPDATE agent_memory_embeddings e
     SET state=${poisoned ? "poisoned" : "pending"},
@@ -155,17 +158,21 @@ export async function runMemoryIndexSweep(
   db: Db,
 ): Promise<{ indexed: number; embedded: number; failed: number }> {
   const indexed = await reindexLegacyVaultHeads(db);
+
   if (!memoryEmbeddingsEnabled()) return { indexed, embedded: 0, failed: 0 };
   const profile = await currentMemoryEmbeddingProfile(db);
 
   await enqueueCurrentHeads(db, profile);
   let embedded = 0;
   let failed = 0;
+
   for (let item = 0; item < perTick; item++) {
     const claim = await claimCurrentHead(db, profile);
+
     if (!claim) break;
     try {
       const values = (await profile.client.embed([claim.content]))[0];
+
       if (!values)
         throw new MaisterError(
           "EMBEDDING_UNAVAILABLE",

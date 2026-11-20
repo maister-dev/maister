@@ -60,8 +60,10 @@ type CallsiteTuple = readonly [
 
 type Authority = Readonly<{ authority: string; lifetime: string }>;
 const vaultCutoverAuthority: Authority = {
-  authority: "Vault operator CLI with the configured legacy root and a current database administrator for mutations",
-  lifetime: "One dry-run, import, activation or separately authorized cleanup invocation during vault cutover",
+  authority:
+    "Vault operator CLI with the configured legacy root and a current database administrator for mutations",
+  lifetime:
+    "One dry-run, import, activation or separately authorized cleanup invocation during vault cutover",
 };
 
 function classified(
@@ -103,12 +105,36 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Resolve the configured legacy root at the operator import boundary. Source reads use only confined inventory or retained receipt paths.",
       [
         ["importLegacyAgentMemory", "node:fs/promises.realpath", "stat"],
-        ["importLegacyAgentMemory", "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText", "wrapper"],
-        ["inventory", "lib/agent-memory-vault/legacy-source.ts#legacyDirectories", "wrapper"],
-        ["inventory", "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText", "wrapper"],
-        ["importSource", "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText", "wrapper"],
-        ["activate", "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText", "wrapper"],
-        ["cleanup", "lib/agent-memory-vault/legacy-source.ts#cleanupLegacyMemoryText", "wrapper"],
+        [
+          "importLegacyAgentMemory",
+          "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText",
+          "wrapper",
+        ],
+        [
+          "inventory",
+          "lib/agent-memory-vault/legacy-source.ts#legacyDirectories",
+          "wrapper",
+        ],
+        [
+          "inventory",
+          "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText",
+          "wrapper",
+        ],
+        [
+          "importSource",
+          "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText",
+          "wrapper",
+        ],
+        [
+          "activate",
+          "lib/agent-memory-vault/legacy-source.ts#readLegacyMemoryText",
+          "wrapper",
+        ],
+        [
+          "cleanup",
+          "lib/agent-memory-vault/legacy-source.ts#cleanupLegacyMemoryText",
+          "wrapper",
+        ],
       ],
       vaultCutoverAuthority,
     ),
@@ -133,7 +159,13 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "scripts/import-agent-memory-vault.ts",
       "operator-import",
       "Operator command takes only the configured legacy root. Database activation and verified receipts gate cleanup.",
-      [["main", "lib/agent-memory-vault/import-legacy.ts#importLegacyAgentMemory", "wrapper"]],
+      [
+        [
+          "main",
+          "lib/agent-memory-vault/import-legacy.ts#importLegacyAgentMemory",
+          "wrapper",
+        ],
+      ],
       vaultCutoverAuthority,
     ),
     ...classified(

@@ -90,6 +90,7 @@ export async function prepareKnowledgeCard(
   inherited: readonly KnowledgeAccessRestriction[] = [],
 ): Promise<Prepared> {
   const principal = { kind: "user", userId } as const;
+
   await authorizeSourceRestrictions(tx, principal, inherited);
 
   if (proposal.action === "vault_edit") {
@@ -139,6 +140,7 @@ export async function prepareKnowledgeCard(
       principal,
       "knowledge:read",
     );
+
     if (user.kind !== "user") throw changed();
     const roles = sql.join(
       projectRolesForActions(["writeBrain"]).map((role) => sql`${role}`),
@@ -151,6 +153,7 @@ export async function prepareKnowledgeCard(
           WHERE m.user_id=${userId} AND m.project_id=p.id AND m.role IN (${roles}) FOR SHARE)) FOR SHARE
     `)
     ).rows;
+
     if (!project) throw changed();
     const evidence = await tx.execute<{ id: string }>(sql`
       SELECT id FROM brain_items WHERE project_id=${project.id}
@@ -158,6 +161,7 @@ export async function prepareKnowledgeCard(
         AND status='active' AND visibility='owner_grants' AND coalesce(source_restrictions,'[]'::jsonb)='[]'::jsonb
         AND (expires_at IS NULL OR expires_at>transaction_timestamp()) FOR SHARE
     `);
+
     if (evidence.rows.length !== new Set(proposal.evidenceItemIds).size)
       throw changed();
 
@@ -177,8 +181,10 @@ export async function prepareKnowledgeCard(
   const content = proposal.content;
   let input: Omit<CreateKnowledgeProposalInput, "idempotencyKey">;
   let restrictions = [...inherited];
+
   if (content.change === "add") {
     const { change: _change, owner, ...draft } = content;
+
     input = { kind: "knowledge_add", owner, principal, draft };
   } else {
     const { change: _change, recordId, expectedRevision, ...draft } = content;
@@ -197,11 +203,13 @@ export async function prepareKnowledgeCard(
       SELECT project_id,company_id,current_revision FROM brain_items WHERE id=${recordId} FOR SHARE
     `)
     ).rows;
+
     if (!record || record.current_revision !== expectedRevision)
       throw changed();
     const owner = record.project_id
       ? { kind: "project" as const, projectId: record.project_id }
       : { kind: "company" as const, companyId: record.company_id! };
+
     input = {
       kind: "knowledge_correct",
       owner,
@@ -214,6 +222,7 @@ export async function prepareKnowledgeCard(
   }
   await authorizeKnowledge(tx, principal, input.owner, "knowledge:propose");
   let walk = { visited: [] as readonly string[], remaining: 256 };
+
   for (const evidence of input.draft.evidence)
     walk = await inspectKnowledgeEvidenceReference(
       tx,
@@ -263,6 +272,7 @@ export async function decideKnowledgeCard(
       .select({ conversationId: librarianCards.conversationId })
       .from(librarianCards)
       .where(eq(librarianCards.id, input.cardId));
+
     if (!locator) throw changed();
     const [conversation] = await tx
       .select()
@@ -275,6 +285,7 @@ export async function decideKnowledgeCard(
       .where(eq(librarianCards.id, input.cardId))
       .for("update");
     const context = effectContextSchema.safeParse(card?.effectContext);
+
     if (
       !card ||
       !context.success ||
@@ -289,12 +300,14 @@ export async function decideKnowledgeCard(
       .from(librarianTurns)
       .where(eq(librarianTurns.id, context.data.turnId))
       .for("share");
+
     if (!turn || !["running", "completed"].includes(turn.status))
       throw changed();
     const principal: KnowledgePrincipal = {
       kind: "user",
       userId: input.userId,
     };
+
     await resolveKnowledgePrincipal(tx, principal, "knowledge:read");
     await authorizeSourceRestrictions(tx, principal, context.data.restrictions);
     if (card.target.projectId)
@@ -309,6 +322,7 @@ export async function decideKnowledgeCard(
         "knowledge:read",
       );
     const key = `card:${card.id}`;
+
     if (card.status === "accepted" && input.decision === "accept") {
       const [effect] = (
         await tx.execute<{ result: LibrarianOperationResult }>(sql`
@@ -316,6 +330,7 @@ export async function decideKnowledgeCard(
           AND status='succeeded' FOR SHARE
       `)
       ).rows;
+
       if (!effect) throw changed();
       if (card.target.vaultId)
         await resolveLibrarianVault(
@@ -334,6 +349,7 @@ export async function decideKnowledgeCard(
     const proposal = knowledgeCardProposalSchemas
       .map((schema) => schema.safeParse(card.payload))
       .find((entry) => entry.success)?.data;
+
     if (
       !proposal ||
       !isKnowledgeCardProposal(proposal) ||
@@ -346,6 +362,7 @@ export async function decideKnowledgeCard(
       proposal,
       context.data.restrictions,
     );
+
     if (
       card.targetRevision !== prepared.revision ||
       contentDigest(card.target) !== contentDigest(prepared.target)
@@ -378,9 +395,11 @@ export async function decideKnowledgeCard(
       },
       lockedDb,
     );
+
     if (operation.reused) throw changed();
     let effect: Record<string, unknown>;
     let effectRestrictions = context.data.restrictions;
+
     if (prepared.kind === "vault_edit" && proposal.action === "vault_edit") {
       const result = await applyVaultMutationInTransaction(
         tx,
@@ -401,6 +420,7 @@ export async function decideKnowledgeCard(
         }),
         agentMemoryVaultLimits(),
       );
+
       if (result.status !== "applied")
         throw new MaisterError("CONFLICT", "Memory changed after confirmation");
       effect = {
@@ -438,6 +458,7 @@ export async function decideKnowledgeCard(
         actor: { type: "user", id: input.userId },
         sourceRestrictions: prepared.restrictions,
       });
+
       effect = { kind: "brain", proposalId: result.id };
     } else if (prepared.kind === "knowledge_proposal") {
       const result = await createKnowledgeProposalInTransaction(tx, {
@@ -445,6 +466,7 @@ export async function decideKnowledgeCard(
         idempotencyKey: key,
         inheritedRestrictions: prepared.restrictions,
       });
+
       effect = { kind: "knowledge", proposalId: result.id };
     } else throw changed();
     const receipt = {
@@ -456,6 +478,7 @@ export async function decideKnowledgeCard(
         effect,
       },
     };
+
     await tx
       .update(librarianCards)
       .set({

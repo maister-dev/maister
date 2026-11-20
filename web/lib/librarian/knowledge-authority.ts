@@ -32,8 +32,10 @@ export async function lockLibrarianKnowledgeContext(
   const parsedLocator = z
     .object({ conversation_id: z.string() })
     .safeParse(locators);
+
   if (!parsedLocator.success) throw librarianReadDenied();
   const locator = parsedLocator.data;
+
   await tx.execute(
     sql`SELECT id FROM librarian_conversations WHERE id=${locator.conversation_id} FOR NO KEY UPDATE`,
   );
@@ -61,8 +63,10 @@ export async function lockLibrarianKnowledgeContext(
       knowledge_access: z.unknown(),
     })
     .safeParse(row);
+
   if (!parsed.success) throw librarianReadDenied();
   const current = parsed.data;
+
   if (scope === "librarian:cards" && current.variant !== "owner_message")
     throw librarianReadDenied();
   const capture = knowledgeAccessCaptureSchema.safeParse(
@@ -73,6 +77,7 @@ export async function lockLibrarianKnowledgeContext(
       restrictions: [],
     },
   );
+
   if (!capture.success || capture.data.state !== "complete")
     throw new MaisterError(
       "PRECONDITION",

@@ -51,6 +51,7 @@ export async function resolveLibrarianVault(
     WHERE v.id=${vaultId}
   `)
   ).rows;
+
   if (!target) throw unavailableMemory();
 
   try {
@@ -69,6 +70,7 @@ export async function resolveLibrarianVault(
             action,
           })(tx)
         : null;
+
     if (!access || access.vaultId !== vaultId) throw unavailableMemory();
 
     return { access, target };
@@ -106,6 +108,7 @@ export function prepareLibrarianVault(
         const restrictions: KnowledgeAccessRestriction[] = target.project_id
           ? [{ kind: "project_context", projectId: target.project_id }]
           : [];
+
         for (const revision of revisions) {
           if (revision.contentSha256)
             restrictions.push({
@@ -149,6 +152,7 @@ export async function listLibrarianVaults(
     const after = cursor
       ? cursorContract.safeParse(parseCursorPayload(namespace, cursor))
       : null;
+
     if (after && (!after.success || after.data.owner !== ownerId))
       throw new MaisterError(
         "CONFIG",
@@ -175,6 +179,7 @@ export async function listLibrarianVaults(
       ) ${after?.success ? sql`AND v.id COLLATE "C">${after.data.after}` : sql``}
       ORDER BY v.id COLLATE "C" LIMIT ${limit + 1}
     `);
+
     await recordKnowledgeDisclosure(
       tx,
       { runId: null, librarianTurnId: turnId, capture },

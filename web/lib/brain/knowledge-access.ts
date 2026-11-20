@@ -1,7 +1,6 @@
 import "server-only";
 
 import type { InstallationRunAuthority } from "@/lib/agents/installation-authority";
-
 import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyExecutionSnapshot } from "@/lib/agents/company-execution-types";
 import type { CompanyAction, Owner } from "@/lib/company/types";
@@ -10,15 +9,15 @@ import type { KnowledgeAttribution } from "./record-types";
 import type { SessionUser } from "@/lib/authz";
 
 import { sql } from "drizzle-orm";
+
+import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
+import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
+
 import {
   installationProjectAccess,
   requireInstallationCredential,
   requireInstallationRunAuthority,
 } from "@/lib/agents/installation-authority";
-
-import { resolveKnowledgeRunIdentity } from "./knowledge-run-identity";
-import { lockCurrentNativeKnowledgeToken } from "./knowledge-token-lock";
-
 import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-credential-owner";
 import { lockLibrarianKnowledgeContext } from "@/lib/librarian/knowledge-authority";
 import { projectRolesForActions } from "@/lib/authz";
@@ -180,6 +179,7 @@ export async function resolveKnowledgePrincipal(
       principal.nodeAttemptId === null
         ? await requireInstallationRunAuthority(tx, principal.runId)
         : null;
+
     if (installation) return installationKnowledgeIdentity(installation);
     const resolved = await resolveKnowledgeRunIdentity(
       tx,
@@ -206,6 +206,7 @@ export async function resolveNativeTokenPrincipal(
   action: CompanyAction,
 ): Promise<KnowledgePrincipalIdentity> {
   const token = await lockCurrentNativeKnowledgeToken(tx, tokenId);
+
   if (
     token.installation_run_id !== null &&
     token.installation_run_id !== undefined
@@ -307,6 +308,7 @@ export async function authorizeKnowledge(
 
   if (identity.kind === "installation_agent") {
     const context = identity.installation;
+
     if (
       (action !== "knowledge:read" && action !== "knowledge:propose") ||
       !context.scopes.includes(action)
@@ -339,6 +341,7 @@ export async function authorizeKnowledge(
       const allowed =
         await tx.execute(sql`SELECT id FROM projects p WHERE p.id=${owner.projectId}
         AND p.archived_at IS NULL AND p.brain_enabled AND ${installationProjectAccess(context, sql`p.id`, projectAction)} FOR SHARE`);
+
       if (!allowed.rows.length)
         throw new MaisterError(
           "UNAUTHORIZED",

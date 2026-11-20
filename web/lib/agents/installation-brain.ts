@@ -31,6 +31,7 @@ async function requireBrainProject(
   action: "memory:read" | "memory:propose",
 ) {
   const context = await requireInstallationCredential(tx, tokenId, action);
+
   await assertBrainSchemaApplied(tx);
   const [project] = (
     await tx.execute<{ id: string }>(sql`
@@ -38,6 +39,7 @@ async function requireBrainProject(
       AND ${installationProjectAccess(context, sql`p.id`, action === "memory:read" ? "readBrain" : "writeBrain")} FOR SHARE
   `)
   ).rows;
+
   if (!project)
     throw new MaisterError("PRECONDITION", "Resource unavailable", {
       details: { reason: "installation_resource_unavailable" },
@@ -75,6 +77,7 @@ export async function recallInstallationBrain(
         sourceClass: "owned",
       })
     ).filter((hit) => hit.tier === "owned");
+
     await captureInstallationProjects(tx, context.runId, [projectId]);
     await writeBrainSnapshot(tx, {
       projectId,
@@ -114,6 +117,7 @@ export async function proposeInstallationBrain(
       slug,
       "memory:propose",
     );
+
     if (draft.evidenceItemIds.length > 64)
       throw new MaisterError(
         "CONFIG",
@@ -125,6 +129,7 @@ export async function proposeInstallationBrain(
         AND status='active' AND visibility='owner_grants' AND coalesce(source_restrictions,'[]'::jsonb)='[]'::jsonb
         AND (expires_at IS NULL OR expires_at>transaction_timestamp()) FOR SHARE
     `);
+
     if (evidence.rows.length !== new Set(draft.evidenceItemIds).size)
       throw new MaisterError(
         "PRECONDITION",
@@ -144,6 +149,7 @@ export async function proposeInstallationBrain(
         projectId: id,
       })),
     ];
+
     await authorizeSourceRestrictions(tx, principal, sourceRestrictions);
 
     return createBrainProposal(tx, {

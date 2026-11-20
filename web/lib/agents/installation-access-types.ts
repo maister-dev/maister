@@ -20,6 +20,7 @@ export const INSTALLATION_AGENT_SCOPES = [
 ] as const satisfies readonly InstallationScope[];
 
 const scope = z.enum(INSTALLATION_AGENT_SCOPES);
+
 export const installationFacadeTools = INSTALLATION_SCOPE_TOOLS;
 export const installationAgentGrantSchema = z
   .strictObject({

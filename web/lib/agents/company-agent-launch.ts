@@ -129,6 +129,7 @@ export async function reserveCompanyAgentRunInTransaction(
   assertCompanyTriggerAppointment(input.triggerSource, invocation);
   assertUpgradeMaintenanceAllows("run_admission");
   const context = await prepareCompanyAgentContext(tx, principal, input);
+
   if (
     context.binding.snapshot.installationGrant &&
     invocation &&
@@ -151,6 +152,7 @@ export async function reserveCompanyAgentRunInTransaction(
       )
     : null;
   const runId = triggerReservation?.runId ?? randomUUID();
+
   if (typeof principal !== "string")
     assertInstallationAppointment(tx, principal, {
       companyId: context.owner.companyId,
@@ -347,6 +349,7 @@ async function insertCompanyAgentRun(
   const definition = context.effective.parsed;
   const installationGrant = context.binding.snapshot.installationGrant;
   const triggerSource = execution.triggerSource;
+
   if (
     installationGrant &&
     (execution.parentRunId ||
@@ -362,6 +365,7 @@ async function insertCompanyAgentRun(
       await tx.execute(sql`SELECT 1 FROM agent_installation_run_authorities
       WHERE run_id=${execution.retryOfRunId} AND binding_id=${context.binding.bindingId}
         AND binding_revision=${context.binding.revision} AND binding_digest=${context.binding.snapshotDigest} FOR SHARE`);
+
     if (matched.rows.length !== 1) throw retryRefusal("retry_context_changed");
   }
 
@@ -461,6 +465,7 @@ async function insertCompanyAgentRun(
       triggerSource === "cron" || triggerSource === "domain_event"
         ? { kind: "unattended" as const, trigger: triggerSource }
         : { kind: "manual" as const, userId: context.authority.actor.id };
+
     await retainInstallationRunAuthority(tx, {
       runId,
       bindingId: context.binding.bindingId,
@@ -479,6 +484,7 @@ async function insertCompanyAgentRun(
         WHERE id=${execution.triggerReservation.triggerEventId} FOR SHARE`)
           ).rows[0]?.run_id
         : null);
+
     if (inheritedRunId)
       await captureInstallationProjects(
         tx,

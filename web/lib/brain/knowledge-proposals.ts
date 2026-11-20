@@ -1,7 +1,5 @@
 import "server-only";
 
-import { installationRunProjects } from "@/lib/agents/installation-source-capture";
-
 import type { KnowledgeAccessRestriction, Owner } from "@/lib/company/types";
 import type { KnowledgeAttribution } from "./record-types";
 import type {
@@ -49,6 +47,7 @@ import {
   authorizeKnowledgeRevisionRead,
 } from "./knowledge-restrictions";
 
+import { installationRunProjects } from "@/lib/agents/installation-source-capture";
 import { postgresTextSchema } from "@/lib/text-schema";
 import { ownerSchema } from "@/lib/company/types";
 import { contentDigest } from "@/lib/evaluations/digest";

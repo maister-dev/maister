@@ -21,6 +21,7 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     const projectId = await seedProject(fixture.db);
     const admin = await seedActiveUser(fixture.db, { role: "admin" });
     const member = await seedActiveUser(fixture.db, { role: "member" });
+
     await fixture.pool.query(
       "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
     );
@@ -146,6 +147,7 @@ it("AV-04 holds external input as one pending proposal across retries and a late
       async () => access,
       limits,
     );
+
     if (followup.status !== "pending")
       throw new Error("Expected a dependent proposal");
     const redact = {

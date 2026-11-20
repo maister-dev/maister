@@ -371,6 +371,7 @@ export async function authorizeKnowledgeRecordRead(
       principal,
       "knowledge:read",
     );
+
     if (
       identity.kind === "installation_agent" &&
       identity.installation.principal.kind === "manual"
@@ -378,6 +379,7 @@ export async function authorizeKnowledgeRecordRead(
       const initiatingGrant =
         await tx.execute(sql`SELECT id FROM brain_record_grants WHERE record_id=${id}
         AND principal_type='user' AND principal_id=${identity.installation.principal.userId} AND action='knowledge:read' AND revoked_at IS NULL FOR SHARE`);
+
       if (!initiatingGrant.rows.length) throw unavailableKnowledgeReference();
     }
     if (!grant) throw unavailableKnowledgeReference();

@@ -2,6 +2,7 @@ import type { VaultAccess } from "../store";
 
 import { createServer } from "node:http";
 import { once } from "node:events";
+
 import { expect, it, vi } from "vitest";
 
 import { parseAgentMemoryMutation } from "../commands";
@@ -33,6 +34,7 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
     await onEmbed(input[0]!);
     if (input[0] === "fail") {
       response.writeHead(503).end();
+
       return;
     }
     response.writeHead(200, { "content-type": "application/json" }).end(
@@ -43,9 +45,11 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
       }),
     );
   });
+
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
+
   if (!address || typeof address === "string")
     throw new Error("Expected TCP embedding fixture");
   vi.stubEnv("MAISTER_AGENT_MEMORY_VECTOR_ENABLED", "1");
@@ -68,6 +72,7 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
     };
     const prepare = async () => access;
     const path = "/memories/index.md";
+
     async function apply(input: Record<string, unknown>) {
       const result = await applyVaultMutation(
         fixture.db,
@@ -75,6 +80,7 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
         prepare,
         agentMemoryVaultLimits(),
       );
+
       if (result.status !== "applied")
         throw new Error("Expected applied fixture write");
 
@@ -137,17 +143,38 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
       nextCursor: null,
     });
 
-    const withdrawn = await apply({ command: "create", path, file_text: "withdrawn-vector",
-      ifRevisionId: null, ifHash: null, requestKey: "vector-withdraw" });
+    const withdrawn = await apply({
+      command: "create",
+      path,
+      file_text: "withdrawn-vector",
+      ifRevisionId: null,
+      ifHash: null,
+      requestKey: "vector-withdraw",
+    });
     const admin = await seedActiveUser(fixture.db, { role: "admin" });
 
-    await fixture.pool.query("INSERT INTO agent_memory_cutover(generation) VALUES (1)");
+    await fixture.pool.query(
+      "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+    );
     onEmbed = async (text) => {
-      if (text === "withdrawn-vector") await redactMemoryRevision(fixture.db, admin, withdrawn.revisionId,
-        { reason: "Withdraw exact source", requestKey: "redact-vector" });
+      if (text === "withdrawn-vector")
+        await redactMemoryRevision(fixture.db, admin, withdrawn.revisionId, {
+          reason: "Withdraw exact source",
+          requestKey: "redact-vector",
+        });
     };
-    expect(await runMemoryIndexSweep(fixture.db)).toMatchObject({ embedded: 0, failed: 0 });
-    expect((await fixture.pool.query("SELECT revision_id FROM agent_memory_embeddings WHERE revision_id=$1", [withdrawn.revisionId])).rows).toEqual([]);
+    expect(await runMemoryIndexSweep(fixture.db)).toMatchObject({
+      embedded: 0,
+      failed: 0,
+    });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT revision_id FROM agent_memory_embeddings WHERE revision_id=$1",
+          [withdrawn.revisionId],
+        )
+      ).rows,
+    ).toEqual([]);
 
     const failing = await apply({
       command: "create",
@@ -157,6 +184,7 @@ it("AV-09 reads the active vector generation, fences an in-flight stale head, an
       ifHash: null,
       requestKey: "vector-fails",
     });
+
     expect(await runMemoryIndexSweep(fixture.db)).toMatchObject({
       embedded: 0,
       failed: 1,

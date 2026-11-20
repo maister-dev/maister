@@ -19,6 +19,7 @@ import {
 } from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => database.db }));
 
 beforeAll(async () => {
@@ -37,6 +38,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   const db = database.db;
   const userId = await seedActiveUser(db);
   const projectId = await seedProject(db);
+
   await addProjectMember(db, { projectId, userId, role: "member" });
   await database.pool.query(
     "UPDATE projects SET brain_enabled=true WHERE id=$1",
@@ -52,6 +54,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     },
     db,
   );
+
   await database.pool.query(
     "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
     [turnId, tokenId],
@@ -61,9 +64,11 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     "content-type": "application/json",
   };
   const url = new URL("http://localhost/api/v1/ext/knowledge");
+
   url.searchParams.set("ownerKind", "project");
   url.searchParams.set("ownerId", projectId);
   const response = await get(new NextRequest(url, { headers }));
+
   expect(response.status, JSON.stringify(await response.clone().json())).toBe(
     200,
   );
@@ -75,6 +80,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       body: "{}",
     }),
   );
+
   expect(direct.status).toBe(403);
   const { POST: cards } =
     await import("@/app/api/v1/ext/librarian/cards/route");
@@ -103,8 +109,10 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   };
   const cardKey = randomUUID();
   const card = await submit(draft, cardKey);
+
   expect(card.status, JSON.stringify(await card.clone().json())).toBe(201);
   const { cardId } = await card.json();
+
   expect(await (await submit(draft, cardKey)).json()).toMatchObject({ cardId });
   expect(
     (
@@ -121,6 +129,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
         [projectId],
       )
     ).rows[0]?.count;
+
   expect(await count()).toBe(0);
   expect((await getLinkedWork(userId, db)).cards).toContainEqual(
     expect.objectContaining({
@@ -135,6 +144,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       { cardId, user: { id: userId, role: "member" }, decision: "accept" },
       db,
     );
+
   await database.pool.query(`
     CREATE FUNCTION fail_fixture_librarian_settlement() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -171,8 +181,10 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     );
   }
   const [receipt, replay] = await Promise.all([confirm(), confirm()]);
+
   expect(replay).toEqual(receipt);
   const effect = receipt.body.effect as { kind: string; proposalId: string };
+
   expect(effect).toMatchObject({
     kind: "brain",
     proposalId: expect.any(String),
@@ -228,6 +240,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       limitations: [],
     },
   });
+
   expect(knowledge.status, JSON.stringify(await knowledge.clone().json())).toBe(
     201,
   );
@@ -244,6 +257,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     kind: string;
     proposalId: string;
   };
+
   expect(knowledgeEffect.kind).toBe("knowledge");
   expect(
     (
@@ -265,6 +279,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     idempotencyKey: randomUUID(),
   });
   const { acceptedRecordId: recordId } = accepted;
+
   if (!recordId) throw new Error("Expected a published record");
   const [
     { GET: record },
@@ -283,11 +298,13 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       { headers },
     );
   const selector = { params: Promise.resolve({ recordId }) };
+
   expect(await (await record(recordRequest(), selector)).json()).toMatchObject({
     id: recordId,
     revision: 1,
   });
   const evidencePage = await evidence(recordRequest("/evidence"), selector);
+
   expect(evidencePage.status).toBe(200);
   expect(JSON.stringify(await evidencePage.json())).toContain(witness.id);
   expect(
@@ -300,12 +317,14 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     ),
     { params: Promise.resolve({ witnessId: witness.id }) },
   );
+
   expect(await witnessResponse.json()).toMatchObject({
     id: witness.id,
     excerpt: "Release check uses automation.",
   });
 
   const agentId = "vault-fixture:librarian";
+
   await database.pool.query(
     `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
     VALUES($1,'vault-fixture','fixture','git','Vault fixture','Vault fixture','none','session','["manual"]','read_only','/tmp/vault-fixture.md')`,
@@ -324,6 +343,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       [projectId, agentId],
     )
   ).rows;
+
   if (!vault) throw new Error("Expected a vault fixture");
   const { GET: vaultList } =
     await import("@/app/api/v1/ext/librarian/vaults/route");
@@ -332,6 +352,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   const visibleVaults = await vaultList(
     new NextRequest(new URL("/api/v1/ext/librarian/vaults", url), { headers }),
   );
+
   expect((await visibleVaults.json()).items).toContainEqual(
     expect.objectContaining({ id: vault.id, ownerKind: "project" }),
   );
@@ -352,6 +373,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     vaultId: vault.id,
     command,
   });
+
   expect(vaultCard.status, JSON.stringify(await vaultCard.clone().json())).toBe(
     201,
   );
@@ -365,6 +387,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       requestKey: randomUUID(),
     },
   });
+
   expect(stale.status).toBe(201);
   const { cardId: staleCardId } = await stale.json();
   const vaultReceipt = await decideLibrarianCard(
@@ -375,6 +398,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     },
     db,
   );
+
   expect(vaultReceipt.body.effect).toMatchObject({
     kind: "vault",
     revisionIds: [expect.any(String)],
@@ -407,6 +431,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     ),
     { params: Promise.resolve({ vaultId: vault.id }) },
   );
+
   expect(await note.json()).toMatchObject({
     kind: "note",
     content: command.file_text,
@@ -422,6 +447,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     [tags, "tags"],
     [backlinks, `backlinks?path=${encodeURIComponent(command.path)}`],
   ] as const;
+
   for (const [read, suffix] of requests) {
     const projection = await read(
       new NextRequest(
@@ -430,6 +456,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       ),
       { params: Promise.resolve({ vaultId: vault.id }) },
     );
+
     expect(
       projection.status,
       `${suffix}: ${await projection.clone().text()}`,
@@ -452,8 +479,10 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     await import("@/lib/librarian/conversation");
   const { searchLibrarianHistory } =
     await import("@/lib/librarian/history-search");
+
   await db.transaction(async (tx) => {
     const { conversation, segment } = await lockOwnerConversation(tx, userId);
+
     await appendConversationMessage(tx, {
       conversationId: conversation.id,
       segmentId: segment.id,
@@ -473,12 +502,14 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
       content: "Investigate the release warning.",
     },
   });
+
   expect(redactedCard.status).toBe(201);
   const { cardId: redactedCardId } = await redactedCard.json();
   const revisionId = (vaultReceipt.body.effect as { revisionIds: string[] })
     .revisionIds[0]!;
   const { redactMemoryRevision } =
     await import("@/lib/agent-memory-vault/redaction");
+
   await redactMemoryRevision(db, admin, revisionId, {
     requestKey: randomUUID(),
     reason: "Acceptance fixture",
@@ -505,6 +536,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     },
     db,
   );
+
   await database.pool.query(
     "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
     [laterTurnId, later.tokenId],
@@ -516,6 +548,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     draft: { title: "Another fact", content: "Tests are required." },
   });
   const { cardId: revokedCardId } = await revokedCard.json();
+
   await database.pool.query(
     "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
     [projectId, userId],
@@ -524,6 +557,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
 
   url.searchParams.set("ownerId", randomUUID());
   const missing = await get(new NextRequest(url, { headers }));
+
   expect(denied.status).toBe(missing.status);
   expect(await denied.json()).toEqual(await missing.json());
   await expect(
@@ -540,6 +574,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
 
   await addProjectMember(db, { projectId, userId, role: "member" });
   const explainTurn = await seedLibrarianTurn(db, userId);
+
   await database.pool.query(
     "UPDATE librarian_turns SET variant='explain' WHERE id=$1",
     [explainTurn],
@@ -553,6 +588,7 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
     },
     db,
   );
+
   await database.pool.query(
     "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
     [explainTurn, explain.tokenId],

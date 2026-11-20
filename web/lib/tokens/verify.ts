@@ -192,6 +192,7 @@ export async function verifyToken(
   const companyId: string | null = row.company_id ?? null;
 
   const isInstallation = typeof row.installation_run_id === "string";
+
   if (companyId !== null) {
     if (
       tokenKind !== "agent" ||
@@ -209,11 +210,13 @@ export async function verifyToken(
         d,
         row.company_run_id,
       );
+
       if (isInstallation) {
         const manualUser =
           installation?.principal.kind === "manual"
             ? installation.principal.userId
             : null;
+
         if (
           !installation ||
           row.installation_run_id !== row.company_run_id ||

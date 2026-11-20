@@ -75,6 +75,7 @@ export async function loadCompanyAgentSessionContext(
       { details: { reason: "company_agent_runtime_unavailable" } },
     );
   const installation = await requireInstallationRunAuthority(tx, runId);
+
   if (installation) await assertCurrentInstallationSources(tx, installation);
   const owner = await requireCompanyKnowledgeRunOwner(tx, runId);
 

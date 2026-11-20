@@ -75,18 +75,18 @@ export function AgentMemoryRedact({
                 <label className="grid gap-1">
                   {t("redactReason")}
                   <Input
+                    disabled={busy}
+                    maxLength={1024}
                     value={reason}
                     onChange={(event) => setReason(event.target.value)}
-                    maxLength={1024}
-                    disabled={busy}
                   />
                 </label>
                 {failed ? <p role="alert">{t("loadError")}</p> : null}
               </Modal.Body>
               <Modal.Footer>
                 <Button
-                  variant="danger"
                   isDisabled={busy || !reason.trim()}
+                  variant="danger"
                   onPress={() => void submit()}
                 >
                   {t("redact")}

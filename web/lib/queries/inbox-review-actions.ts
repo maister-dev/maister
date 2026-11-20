@@ -7,6 +7,7 @@ import type {
 import type { Db } from "@/lib/execution-host/db";
 
 import { createHash } from "node:crypto";
+
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -46,6 +47,7 @@ const log = pino({
   name: "inbox-proposal-review",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
 type Result = Readonly<{
   status: "applied" | "rejected" | "conflict" | "unavailable" | "refused";
   replayed: boolean;
@@ -131,12 +133,13 @@ export async function getProposalReviewDetail(
   selection: ReviewSelector,
 ) {
   return db.transaction(async (tx) => {
-    const { projectId, createdAt, ...item } = await readProposalReviewMetadata(
-      tx,
-      userId,
-      selection,
-    );
+    const {
+      projectId,
+      createdAt: _createdAt,
+      ...item
+    } = await readProposalReviewMetadata(tx, userId, selection);
     const principal = { kind: "user", userId } as const;
+
     if (selection.kind === "vault")
       return { ...item, ...(await vaultPreview(tx, selection, userId)) };
     if (selection.kind === "knowledge") {
@@ -191,6 +194,7 @@ async function authorizeBrainDecision(
     { kind: "user", userId },
     "knowledge:review",
   );
+
   if (actor.kind !== "user") throw unavailableMemory();
   const [head] = (
     await tx.execute<{ id: string; slug: string }>(sql`
@@ -198,11 +202,13 @@ async function authorizeBrainDecision(
     WHERE b.id=${item.id} AND p.archived_at IS NULL FOR SHARE OF p
   `)
   ).rows;
+
   if (!head) throw unavailableMemory();
   const proposal = await getBrainProposal(tx, head.id, item.id, {
     type: "user",
     id: userId,
   });
+
   if (actor.user.role !== "admin") {
     const catalog = ["rule", "skill", "flow"].includes(proposal.kind);
     const actions =
@@ -217,6 +223,7 @@ async function authorizeBrainDecision(
     );
     const result = await tx.execute(sql`SELECT 1 FROM project_members
       WHERE user_id=${userId} AND project_id=${head.id} AND role IN (${roles}) FOR SHARE`);
+
     if (!result.rows.length) throw unavailableMemory();
   }
 
@@ -238,6 +245,7 @@ async function settle(
   const digest = createHash("sha256")
     .update(canonicalCommandJson(item))
     .digest("hex");
+
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["inbox-review", userId, item.requestKey])},0))`,
   );
@@ -256,6 +264,7 @@ async function settle(
     item.kind === "brain"
       ? await authorizeBrainDecision(tx, userId, item)
       : null;
+
   if (item.kind === "vault" && prior)
     await lockVaultReview(tx, item.id, userId);
   if (item.kind === "knowledge") {
@@ -309,6 +318,7 @@ async function settle(
     .insert(receipts)
     .values({ userId, requestKey: item.requestKey, digest })
     .returning({ id: receipts.id });
+
   if (!record)
     throw new MaisterError("CRASH", "Inbox review receipt was not stored");
 

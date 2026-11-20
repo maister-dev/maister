@@ -27,6 +27,7 @@ function query<T>(request: Request, schema: z.ZodType<T>) {
   const params = new URL(request.url).searchParams;
   const entries = Object.fromEntries(params);
   const selection = schema.safeParse(entries);
+
   if (!selection.success || Object.keys(entries).length !== params.size)
     throw new MaisterError("CONFIG", "Invalid librarian vault selection");
 
@@ -72,6 +73,7 @@ export function librarianVaultReader(
       async ({ actor }) => {
         const { vaultId } = await route.params;
         const prepare = prepareLibrarianVault(actor.tokenId, vaultId);
+
         if (resource !== "view")
           return privateJson(
             await memoryIndexReaders[resource](request, prepare),

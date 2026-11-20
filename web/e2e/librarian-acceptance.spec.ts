@@ -1557,6 +1557,7 @@ test("AV-07 confirms a Librarian Project Brain proposal as the owner", async ({
 }) => {
   const slug = loadFixtures().byKey.board.projectSlug;
   const marker = `Confirmed Brain fact ${randomUUID()}`;
+
   await withE2EDb(async (pool) => {
     await pool.query("UPDATE projects SET brain_enabled=true WHERE slug=$1", [
       slug,
@@ -1571,6 +1572,7 @@ test("AV-07 confirms a Librarian Project Brain proposal as the owner", async ({
 
       return rows;
     });
+
   await page.goto("/");
   await sendScript(
     page,
@@ -1600,16 +1602,15 @@ test("AV-07 confirms a Librarian Project Brain proposal as the owner", async ({
   const card = page
     .getByTestId("librarian-card-pending")
     .filter({ hasText: marker });
+
   await expect(card).toContainText("Project Brain proposal");
   await card.getByRole("button", { name: /confirm|accept/i }).click();
-  await expect
-    .poll(readProposal)
-    .toEqual([
-      {
-        status: "pending",
-        actor: expect.any(String),
-        email: loadFixtures().adminEmail,
-      },
-    ]);
+  await expect.poll(readProposal).toEqual([
+    {
+      status: "pending",
+      actor: expect.any(String),
+      email: loadFixtures().adminEmail,
+    },
+  ]);
   await expect(card).toHaveCount(0);
 });

@@ -25,6 +25,7 @@ export async function installationRunProjects(
   const result =
     await tx.execute(sql`SELECT project_id FROM agent_installation_run_sources WHERE run_id=${runId}
     ORDER BY project_id COLLATE "C" LIMIT ${maximumSources + 1}`);
+
   if (
     result.rows.length > maximumSources ||
     result.rows.some((row) => typeof row.project_id !== "string")
@@ -47,6 +48,7 @@ export async function captureInstallationProjects(
   const handle = await tx.execute(
     sql`SELECT run_id FROM agent_installation_run_authorities WHERE run_id=${runId} FOR UPDATE`,
   );
+
   if (handle.rows.length !== 1)
     throw new MaisterError(
       "PRECONDITION",
@@ -54,6 +56,7 @@ export async function captureInstallationProjects(
     );
   const prior = await installationRunProjects(tx, runId);
   const combined = new Set([...prior, ...projectIds]);
+
   if (
     combined.size > maximumSources ||
     [...combined].some(
@@ -83,6 +86,7 @@ export async function assertCurrentInstallationSources(
   context: InstallationRunAuthority,
 ): Promise<void> {
   const ids = await installationRunProjects(tx, context.runId);
+
   if (!ids.length) return;
   const allowed =
     await tx.execute(sql`SELECT id FROM projects WHERE id IN (${sql.join(
@@ -90,6 +94,7 @@ export async function assertCurrentInstallationSources(
       sql`, `,
     )})
     AND archived_at IS NULL AND ${installationProjectAccess(context, sql`projects.id`, "readBoard")} FOR SHARE`);
+
   if (allowed.rows.length !== ids.length)
     throw new MaisterError(
       "PRECONDITION",

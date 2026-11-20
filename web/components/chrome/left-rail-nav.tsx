@@ -206,8 +206,8 @@ function LeftRailNavBody({
               {reviewsBadge ? (
                 <CollapsedRailBadge
                   badge={reviewsBadge}
-                  sectionId="reviews"
                   second={shownBadge !== null}
+                  sectionId="reviews"
                 />
               ) : null}
             </Link>

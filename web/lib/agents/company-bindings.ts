@@ -238,6 +238,7 @@ export async function buildCompanyBindingSnapshot(
     effective.parsed.config,
     input.configuration,
   );
+
   if (input.installationGrant) {
     assertInstallationAgentDefinition(effective.parsed);
     if (input.coordinatorFlowRevisionId !== null)
@@ -317,6 +318,7 @@ export async function assertInstallationGrantAdmin(
   const result =
     await tx.execute(sql`SELECT 1 FROM users WHERE id=${userId} AND account_status='active'
     AND role='admin' AND NOT must_change_password FOR SHARE`);
+
   if (!result.rows.length) {
     log.warn(
       { userId, reason: "installation_grant_admin_required" },

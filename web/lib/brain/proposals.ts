@@ -573,6 +573,7 @@ export async function concludeBrainProposal(
           sql`SELECT updated_at::text AS version FROM brain_proposals WHERE id=${current.id}`,
         )
       ).rows;
+
       if (version?.version !== input.expectedVersion)
         throw new MaisterError(
           "CONFLICT",

@@ -3,8 +3,10 @@ import "server-only";
 import type { InstallationAgentScope } from "./installation-access-types";
 import type { InstallationRunAuthority } from "./installation-authority";
 import type { Db } from "@/lib/execution-host/db";
+import type { TokenActor } from "@/lib/tokens/verify";
 
 import { createHash } from "node:crypto";
+
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -16,25 +18,17 @@ import { captureInstallationProjects } from "./installation-source-capture";
 
 import { privateJson } from "@/lib/api/private-json";
 import { getDb } from "@/lib/db/client";
-import type { TokenActor } from "@/lib/tokens/verify";
 import { MaisterError } from "@/lib/errors";
 import { parseCursorPayload, signCursorPayload } from "@/lib/keyset-cursor";
 
-const resources = z.enum([
-  "projects",
-  "tasks",
-  "runs",
-  "activity",
-  "observatory",
-]);
-export type InstallationResource = z.infer<typeof resources>;
 export const installationResourceScope = {
   projects: "projects:read",
   tasks: "tasks:read",
   runs: "runs:read",
   activity: "activity:read",
   observatory: "observatory:read",
-} as const satisfies Record<InstallationResource, InstallationAgentScope>;
+} as const satisfies Record<string, InstallationAgentScope>;
+export type InstallationResource = keyof typeof installationResourceScope;
 const identity = z
   .string()
   .min(1)
@@ -59,6 +53,7 @@ const cursorSchema = z.strictObject({
 });
 const namespace = "maister.installation.read.v1";
 const intervals = { "24h": "24 hours", "7d": "7 days", "30d": "30 days" };
+
 type Query = z.infer<typeof selection>;
 type Row = { id: string; projectId: string; slug: string };
 
@@ -115,6 +110,7 @@ export async function readInstallationResource(
 ) {
   const input = Object.fromEntries(params);
   const validated = selection.safeParse(input);
+
   if (
     !validated.success ||
     params.size !== Object.keys(input).length ||
@@ -123,6 +119,7 @@ export async function readInstallationResource(
   )
     throw new MaisterError("CONFIG", "Invalid installation read selection");
   const { cursor, ...query } = validated.data;
+
   return db.transaction(async (tx) => {
     const context = await requireInstallationCredential(
       tx,
@@ -136,6 +133,7 @@ export async function readInstallationResource(
       cursor === undefined
         ? null
         : cursorSchema.safeParse(parseCursorPayload(namespace, cursor));
+
     if (after && (!after.success || after.data.scope !== scope))
       throw new MaisterError(
         "CONFIG",
@@ -159,7 +157,9 @@ export async function readInstallationResource(
 
     return {
       items:
-        resource === "observatory" ? page.map(({ id, ...row }) => row) : page,
+        resource === "observatory"
+          ? page.map(({ id: _id, ...row }) => row)
+          : page,
       nextCursor:
         last && rows.length > query.limit
           ? signCursorPayload(namespace, { scope, after: last.id })
@@ -177,6 +177,7 @@ export function installationReadAdapter(
     scope: installationResourceScope[resource],
     async work(actor: TokenActor) {
       const params = new URL(request.url).searchParams;
+
       for (const [key, value] of Object.entries(target)) {
         if (params.has(key))
           throw new MaisterError(
@@ -191,6 +192,7 @@ export function installationReadAdapter(
         resource,
         params,
       );
+
       if (target.id || (target.slug && resource === "projects")) {
         if (!page.items[0])
           throw new MaisterError("PRECONDITION", "Resource unavailable", {

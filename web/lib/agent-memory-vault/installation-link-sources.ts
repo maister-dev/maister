@@ -66,6 +66,7 @@ async function noteLink(
     ORDER BY (path=${path}) DESC, note_id LIMIT 2
   `);
   const [first, second] = result.rows;
+
   if (!first || (second && first.path !== path) || !first.heading) return empty;
   const revision = await readVaultRevision(
     tx,
@@ -73,6 +74,7 @@ async function noteLink(
     first.note_id,
     first.revision_id,
   );
+
   if (!(await context.canRead(tx, revision))) return empty;
 
   return {
@@ -93,10 +95,12 @@ async function entityLink(
   }
   if (link.kind === "task" || link.kind === "run") {
     const scope = link.kind === "task" ? "tasks:read" : "runs:read";
+
     if (context.authority && !context.authority.scopes.includes(scope))
       throw unavailableMemory();
     const split = link.target.lastIndexOf("-");
     const taskNumber = Number(link.target.slice(split + 1));
+
     if (link.kind === "task" && !Number.isSafeInteger(taskNumber))
       throw unavailableMemory();
     const target =
@@ -110,6 +114,7 @@ async function entityLink(
       WHERE p.archived_at IS NULL AND ${projectPolicy(context, sql`p.id`)} FOR SHARE OF p
     `)
     ).rows;
+
     if (!row) throw unavailableMemory();
     const access = await authorizeSourceRestrictions(
       tx,
@@ -135,6 +140,7 @@ async function entityLink(
       FOR SHARE OF item,p
     `)
     ).rows;
+
     if (
       !row ||
       (context.authority && !context.authority.scopes.includes("memory:read"))
@@ -185,6 +191,7 @@ export async function installationLinkSources(
       link.kind === "note"
         ? await noteLink(tx, context, link)
         : await entityLink(tx, context, link);
+
     projects.push(...source.projectIds);
     restrictions.push(...source.restrictions);
   }

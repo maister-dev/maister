@@ -42,6 +42,7 @@ export async function searchLibrarianHistory(
       "PRECONDITION",
       "history query must contain 1 to 200 characters",
     );
+
   return db.transaction((tx) => findVisibleHistory(tx, ownerId, q), {
     isolationLevel: "repeatable read",
   });
@@ -67,6 +68,7 @@ async function findVisibleHistory(tx: Db, ownerId: string, query: string) {
   const hits: HistoryHit[] = [];
   const batchSize = 32;
   let before: bigint | undefined;
+
   while (hits.length < 21) {
     const candidates = await tx
       .select({
@@ -100,6 +102,7 @@ async function findVisibleHistory(tx: Db, ownerId: string, query: string) {
       ownerId,
       candidates.flatMap(({ turnId }) => (turnId ? [turnId] : [])),
     );
+
     for (const row of candidates) {
       if (
         row.authorKind !== "owner" &&

@@ -515,8 +515,8 @@ export function AttachEditModal({
             {memoryEnabled && !sharesSession ? (
               <label className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
                 <input
-                  type="checkbox"
                   checked={memoryWritePolicy === "review"}
+                  type="checkbox"
                   onChange={(event) =>
                     setMemoryWritePolicy(
                       event.target.checked ? "review" : "auto",

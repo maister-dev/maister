@@ -122,84 +122,95 @@ type HumanProjectVaultInput = Readonly<{
   action: VaultProjectAction;
 }>;
 
-async function authorizeHumanProjectVault(db: Db, input: HumanProjectVaultInput) {
-    await requireVaultActive(db);
-    const [user] = await db
-      .select({ role: users.role })
-      .from(users)
+async function authorizeHumanProjectVault(
+  db: Db,
+  input: HumanProjectVaultInput,
+) {
+  await requireVaultActive(db);
+  const [user] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(
+      and(
+        eq(users.id, input.userId),
+        eq(users.accountStatus, "active"),
+        eq(users.mustChangePassword, false),
+      ),
+    )
+    .for("share");
+
+  if (!user) throw new MaisterError("UNAUTHORIZED", "Current user required");
+  const [project] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.slug, input.slug), isNull(projects.archivedAt)))
+    .for("share");
+
+  if (!project) throw unavailableMemory();
+  if (user.role !== "admin") {
+    const [membership] = await db
+      .select({ role: projectMembers.role })
+      .from(projectMembers)
       .where(
         and(
-          eq(users.id, input.userId),
-          eq(users.accountStatus, "active"),
-          eq(users.mustChangePassword, false),
+          eq(projectMembers.projectId, project.id),
+          eq(projectMembers.userId, input.userId),
+          inArray(
+            projectMembers.role,
+            projectRolesForActions(["readRepoFiles", input.action]),
+          ),
         ),
       )
       .for("share");
 
-    if (!user) throw new MaisterError("UNAUTHORIZED", "Current user required");
-    const [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.slug, input.slug), isNull(projects.archivedAt)))
-      .for("share");
+    if (!membership)
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Current project rights do not permit this vault operation",
+      );
+  }
 
-    if (!project) throw unavailableMemory();
-    if (user.role !== "admin") {
-      const [membership] = await db
-        .select({ role: projectMembers.role })
-        .from(projectMembers)
-        .where(
-          and(
-            eq(projectMembers.projectId, project.id),
-            eq(projectMembers.userId, input.userId),
-            inArray(
-              projectMembers.role,
-              projectRolesForActions(["readRepoFiles", input.action]),
-            ),
-          ),
-        )
-        .for("share");
-
-      if (!membership)
-        throw new MaisterError(
-          "UNAUTHORIZED",
-          "Current project rights do not permit this vault operation",
-        );
-    }
   return project;
 }
 
-function humanProjectVaultAccess(userId: string, projectId: string, vaultId: string): VaultAccess {
-    return {
-      vaultId,
-      principalKey: `user:${userId}`,
-      actor: { kind: "human", userId: userId },
-      sourceProjectIds: [projectId],
-      sourceRestrictions: [],
-      writeAdmission: "apply",
-      async canRead(tx, revision) {
-        if (!withinProject(revision, projectId)) return false;
-        try {
-          await authorizeSourceRestrictions(
-            tx,
-            { kind: "user", userId: userId },
-            humanReadRestrictions(revision),
-          );
+function humanProjectVaultAccess(
+  userId: string,
+  projectId: string,
+  vaultId: string,
+): VaultAccess {
+  return {
+    vaultId,
+    principalKey: `user:${userId}`,
+    actor: { kind: "human", userId: userId },
+    sourceProjectIds: [projectId],
+    sourceRestrictions: [],
+    writeAdmission: "apply",
+    async canRead(tx, revision) {
+      if (!withinProject(revision, projectId)) return false;
+      try {
+        await authorizeSourceRestrictions(
+          tx,
+          { kind: "user", userId: userId },
+          humanReadRestrictions(revision),
+        );
 
-          return true;
-        } catch (error) {
-          if (isMaisterError(error) && error.code === "PRECONDITION")
-            return false;
-          throw error;
-        }
-      },
-      capture: async () => {},
-    };
+        return true;
+      } catch (error) {
+        if (isMaisterError(error) && error.code === "PRECONDITION")
+          return false;
+        throw error;
+      }
+    },
+    capture: async () => {},
+  };
 }
 
-export function prepareHumanProjectVault(input: HumanProjectVaultInput): PrepareVaultAccess {
+export function prepareHumanProjectVault(
+  input: HumanProjectVaultInput,
+): PrepareVaultAccess {
   return async (db) => {
     const project = await authorizeHumanProjectVault(db, input);
+
     await requireEnabledAttachment(db, project.id, input.agentId);
     const vaultId = await ensureProjectVault(db, project.id, input.agentId);
 
@@ -207,13 +218,35 @@ export function prepareHumanProjectVault(input: HumanProjectVaultInput): Prepare
   };
 }
 
-export async function authorizeRetainedProjectVaultReview(db: Db, input: Omit<HumanProjectVaultInput, "action">, vaultId: string) {
-  const project = await authorizeHumanProjectVault(db, { ...input, action: "editSettings" });
-  const [attachment] = await db.select({ enabled: agentProjectLinks.enabled, memoryEnabled: agentProjectLinks.memoryEnabled })
-    .from(agentProjectLinks).where(and(eq(agentProjectLinks.projectId, project.id), eq(agentProjectLinks.agentId, input.agentId))).for("share");
+export async function authorizeRetainedProjectVaultReview(
+  db: Db,
+  input: Omit<HumanProjectVaultInput, "action">,
+  vaultId: string,
+) {
+  const project = await authorizeHumanProjectVault(db, {
+    ...input,
+    action: "editSettings",
+  });
+  const [attachment] = await db
+    .select({
+      enabled: agentProjectLinks.enabled,
+      memoryEnabled: agentProjectLinks.memoryEnabled,
+    })
+    .from(agentProjectLinks)
+    .where(
+      and(
+        eq(agentProjectLinks.projectId, project.id),
+        eq(agentProjectLinks.agentId, input.agentId),
+      ),
+    )
+    .for("share");
+
   if (!attachment) throw unavailableMemory();
 
-  return { reviewer: humanProjectVaultAccess(input.userId, project.id, vaultId), enabled: attachment.enabled && attachment.memoryEnabled };
+  return {
+    reviewer: humanProjectVaultAccess(input.userId, project.id, vaultId),
+    enabled: attachment.enabled && attachment.memoryEnabled,
+  };
 }
 
 export function prepareProjectExecutionVault(
@@ -284,6 +317,7 @@ export function prepareProjectExecutionVault(
     let writeAdmission: Awaited<
       ReturnType<typeof executionVaultWriteAdmission>
     > = "apply";
+
     if (action === "agent_memory:write") {
       const [frozen] = await db
         .select({ id: agentMemoryInjections.id })

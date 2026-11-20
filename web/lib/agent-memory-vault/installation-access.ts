@@ -37,14 +37,17 @@ export async function ensureInstallationVault(
       .from(vaults)
       .where(and(eq(vaults.companyId, companyId), eq(vaults.agentId, agentId)));
   const [existing] = await query();
+
   if (existing) return existing.id;
   const [created] = await tx
     .insert(vaults)
     .values({ companyId, agentId })
     .onConflictDoNothing()
     .returning({ id: vaults.id });
+
   if (created) return created.id;
   const [concurrent] = await query();
+
   if (!concurrent)
     throw new MaisterError("CRASH", "Installation vault owner is unavailable");
 
@@ -74,6 +77,7 @@ export function prepareInstallationExecutionVault(
   return async (tx) => {
     await requireVaultActive(tx);
     const context = await requireInstallationCredential(tx, tokenId, action);
+
     if (!context.memoryEnabled)
       throw new MaisterError(
         "PRECONDITION",
@@ -85,6 +89,7 @@ export function prepareInstallationExecutionVault(
       context.agentId,
     );
     const runProjects = await installationRunProjects(tx, context.runId);
+
     if (!(await seesEveryProject(tx, context, runProjects)))
       throw unavailableMemory();
     const principal = {
@@ -138,6 +143,7 @@ export function prepareInstallationExecutionVault(
               ]
             : [],
         );
+
         await captureInstallationProjects(
           db,
           context.runId,
@@ -201,6 +207,7 @@ export function prepareHumanInstallationVault(
       tx,
       input,
     );
+
     if (!memoryEnabled)
       throw new MaisterError(
         "PRECONDITION",
@@ -221,6 +228,7 @@ export async function authorizeHumanInstallationVault(
     { kind: "user", userId: input.userId },
     "knowledge:read",
   );
+
   if (actor.kind !== "user") throw unavailableMemory();
   const result = await tx.execute<{
     company_id: string;
@@ -233,6 +241,7 @@ export async function authorizeHumanInstallationVault(
         AND v.snapshot->'installationGrant'->>'reach'='active_projects' FOR SHARE OF b,v
     `);
   const binding = result.rows[0];
+
   if (!binding) throw unavailableMemory();
   if (actor.user.role !== "admin")
     await authorizeCompanyUserAction(
@@ -267,6 +276,7 @@ export async function authorizeHumanInstallationVault(
               sql`, `,
             )}) AND p.archived_at IS NULL
             FOR SHARE OF p,m`);
+
         if (sources.rows.length !== new Set(revision.sourceProjectIds).size)
           return false;
       }
@@ -300,5 +310,6 @@ export async function authorizeHumanInstallationVault(
         content,
       ),
   };
+
   return { access, memoryEnabled: binding.memory_enabled };
 }

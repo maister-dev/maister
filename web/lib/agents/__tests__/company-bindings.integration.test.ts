@@ -881,6 +881,7 @@ it("protects a reviewed coordinator Flow pin from removal and GC until the speci
 
 it("AV-06 requires an explicit admin installation grant and revokes it by exact binding revision", async () => {
   const installationAdminId = randomUUID();
+
   await database.pool.query(
     "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'admin','active')",
     [installationAdminId, `${installationAdminId}@example.test`],

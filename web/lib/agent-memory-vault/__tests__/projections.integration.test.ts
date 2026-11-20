@@ -203,6 +203,7 @@ it("AV-07 commits projections with their exact head, updates alias resolution an
     }),
     create("/memories/notes/referrer.md", "[[Run guide]]", "concurrent-create"),
   ]);
+
   expect(moved.status).toBe("applied");
   expect(
     await listMemoryBacklinks(

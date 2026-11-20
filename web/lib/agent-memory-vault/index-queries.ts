@@ -70,12 +70,14 @@ export function pageIndexItems<T>(
   const parsed = request.cursor
     ? indexCursor.safeParse(parseCursorPayload(cursorNamespace, request.cursor))
     : null;
+
   if (parsed && (!parsed.success || parsed.data.scope !== scope))
     throw new MaisterError(
       "CONFIG",
       "Memory cursor does not match this selection",
     );
   const cursor = parsed?.success ? parsed.data : null;
+
   if (cursor && cursor.generation !== generation)
     throw new MaisterError("CONFLICT", "Memory index changed while paging");
   const offset = cursor?.offset ?? 0;
@@ -131,6 +133,7 @@ function exactVisibleMatch(
   target: string,
 ): IndexRow | undefined {
   const exact = indexes.find((entry) => entry.path === lookupNotePath(target));
+
   if (exact) return exact;
   const key = memoryLookupKey(target.replace(/\.md$/, ""));
   const possible = indexes.filter(
@@ -254,6 +257,7 @@ export async function listMemoryBacklinks(
     const ownIndex = indexes.find(
       ({ revision_id }) => revision_id === target.id,
     );
+
     if (request.includeStructure && ownIndex) {
       const ownLinks = await tx.execute<MemoryLink>(sql`
         SELECT raw,kind,target,fragment FROM agent_memory_note_links
