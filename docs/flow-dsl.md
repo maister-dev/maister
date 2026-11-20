@@ -100,8 +100,8 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.12.0` (operational agents retain their 3.9.0 package floor;
-native evidence findings require 3.11.0). Graph packages remain
+host engine is `3.13.0`. Operational agents retain their 3.9.0 package floor,
+and native evidence findings require 3.11.0. Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
 

@@ -100,6 +100,51 @@ async function seedRun(
   return id;
 }
 
+async function seedProjectedUsage(
+  runId: string,
+  usage: NonNullable<TranscriptPage["usage"]>,
+  nodeAttemptId: string | null = null,
+): Promise<void> {
+  const hostId = randomUUID();
+  const assignmentId = randomUUID();
+  const hostSessionId = randomUUID();
+  const sessionId = randomUUID();
+
+  await database.pool.query(
+    `INSERT INTO execution_hosts(id,host_key,kind,display_name,transport,retired_at)
+     VALUES($1,$2,'local_direct','Peek fixture','{"kind":"local_direct"}',now())`,
+    [hostId, `eh_${hostId.replaceAll("-", "")}`],
+  );
+  await database.pool.query(
+    `INSERT INTO execution_assignments(id,run_id,execution_host_id,epoch,state,placement_reason)
+     VALUES($1,$2,$3,1,'active','launch')`,
+    [assignmentId, runId, hostId],
+  );
+  await database.pool.query(
+    `INSERT INTO run_sessions(id,run_id,session_name,execution_assignment_id,host_session_id)
+     VALUES($1,$2,'default',$3,$4)`,
+    [sessionId, runId, assignmentId, hostSessionId],
+  );
+  await database.pool.query(
+    `INSERT INTO run_session_incarnations(id,run_session_id,run_id,execution_assignment_id,assignment_epoch,execution_host_id,host_session_id,state,origin)
+     VALUES($1,$2,$3,$4,1,$5,$6,'active','native')`,
+    [randomUUID(), sessionId, runId, assignmentId, hostId, hostSessionId],
+  );
+  await database.pool.query(
+    `INSERT INTO run_context_usage(run_id,execution_host_id,assignment_id,assignment_epoch,host_session_id,node_attempt_id,used_tokens,size_tokens,observed_at,usage_run_sequence,last_run_sequence)
+     VALUES($1,$2,$3,1,$4,$5,$6,$7,now(),11,11)`,
+    [
+      runId,
+      hostId,
+      assignmentId,
+      hostSessionId,
+      nodeAttemptId,
+      usage.used,
+      usage.size,
+    ],
+  );
+}
+
 async function requestChildren(anchor: string, query = ""): Promise<Response> {
   return childrenGet(
     new NextRequest(`http://localhost/api/runs/${anchor}/children${query}`),
@@ -890,7 +935,7 @@ describe("authorized descendant projections", () => {
     ).toBe(403);
   });
 
-  it("IT-PKD-06: usage remains independent of page windows and ignores newer non-usage JSON", async () => {
+  it("IT-PKD-06: projected usage remains independent of page windows and legacy JSON", async () => {
     const { GET } = await import("../../transcript/route");
     const get = (query: string) =>
       GET(
@@ -901,7 +946,7 @@ describe("authorized descendant projections", () => {
       );
 
     for (const [sequence, content] of [
-      [1, JSON.stringify({ kind: "usage", used: 12, size: 100 })],
+      [1, JSON.stringify({ kind: "usage", used: 99, size: 100 })],
       [2, JSON.stringify({ kind: "info", note: '"kind" "usage"' })],
       [3, '{"kind":"usage"broken}'],
     ] as const)
@@ -915,6 +960,8 @@ describe("authorized descendant projections", () => {
           new Date(1700000000000 + sequence),
         ],
       );
+    expect((await (await get("")).json()).usage).toBeNull();
+    await seedProjectedUsage(child, { used: 12, size: 100 });
     const page = await (await get("")).json();
 
     expect(page.usage).toEqual({ used: 12, size: 100 });
@@ -969,6 +1016,7 @@ describe("authorized descendant projections", () => {
       "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'work','ai_coding',1,'Failed')",
       [attempt, child],
     );
+    await seedProjectedUsage(child, { used: 45, size: 100 }, attempt);
     for (const [sequence, event, prompt, content, role] of [
       [1, "10", "dispatch", "prompt", "user"],
       [2, "10", null, "reply", "assistant"],
@@ -1026,15 +1074,21 @@ describe("authorized descendant projections", () => {
       availability: "ready",
       nodes: [{ id: "work", status: "Failed", attempt: 1 }],
     });
+    const nextAttempt = randomUUID();
+
     await database.pool.query(
       "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES($1,$2,'work','ai_coding',2,'Running')",
-      [randomUUID(), child],
+      [nextAttempt, child],
     );
     const changed = await get(`limit=2&before=${page.beforeCursor}`);
 
     expect(changed.status).toBe(409);
     expect((await changed.json()).reason).toBe("transcript_attempt_changed");
     expect((await download(`?attempt=${attempt}`)).status).toBe(409);
+    expect(await (await get("limit=2")).json()).toMatchObject({
+      attemptId: nextAttempt,
+      usage: null,
+    });
     await database.pool.query("UPDATE flows SET manifest=$1 WHERE id=$2", [
       { ...manifest, compat: { engine_max: "1.0.0" } },
       flowId,
