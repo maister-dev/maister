@@ -708,9 +708,13 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     }
     const body =
       toolName === "librarian_card_propose"
-        ? deref({ $ref: "#/components/schemas/LibrarianCardProposal" })
+        ? deref<JsonSchema>({
+            $ref: "#/components/schemas/LibrarianCardProposal",
+          })
         : toolName === "agent_vault_propose_edit"
-          ? deref({ $ref: "#/components/schemas/LibrarianVaultEditInput" })
+          ? deref<JsonSchema>({
+              $ref: "#/components/schemas/LibrarianVaultEditInput",
+            })
           : bodySchema(op);
     const bodyProps = implementedEntries(body?.properties ?? {});
     if (toolName === "agent_vault_propose_edit") delete bodyProps.action;

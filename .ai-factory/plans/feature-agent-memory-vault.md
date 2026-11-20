@@ -3,7 +3,7 @@
 Branch: `feature/agent-memory-vault`
 Created: 2026-11-17
 Base inspected: `b06e641d28fd8ef50ce1cacff4030f935c113301` (also local `master`)
-Status: In progress.
+Status: Implementation and local cutover complete. Integrated qualification remains open in T38.
 
 ## Settings
 
@@ -423,6 +423,7 @@ Local P5 evidence: 85 PostgreSQL tests across 15 Librarian suites and 15 browser
   - Execute the acceptance matrix below against isolated real Postgres and supported local supervisor/MCP seams. Reuse real facade routes for authorization; fake ACP is acceptable for deterministic prompt transport but must be labeled. Run targeted real adapter/MCP smoke with configured credentials before claiming adapter qualification. Review every fix cycle for data leaks, scope bypass, stale identity, event-ordering and lock races; rerun affected gates after a fix.
   - Validation: all required suites run, green with exact commands and exit status; distinguish local evidence from hosted CI/live provider acceptance. No production dispatch or remote mutation is implied. Logging: bounded test diagnostics only. Depends on: T37.
   - Verified locally in Node 24: `vitest run --project unit --maxWorkers 3` in Web passed 9,196 tests. MCP passed 529 unit and 19 stdio tests. Supervisor passed 525 unit and 405 integration tests. Disposable PostgreSQL passed the affected attention stream (21), protected-evidence regression (20), Librarian suites (85), and the installation scope scenario. Authenticated Playwright passed Memory, Inbox, and installation settings with setup (4), and the dedicated Librarian lane passed 15 with scripted ACP and the real MCP facade. The final complete Web integration gate is tracked here separately from the focused suites.
+  - `pnpm --filter maister-web typecheck`, `pnpm --filter @maister/mcp typecheck`, `pnpm validate:docs` and `pnpm validate:contracts` passed. The MCP typecheck caught a reference type in the contract test; the resolved schema type and focused contract rerun are green.
   - Live adapter evidence: `MAISTER_LIBRARIAN_QUALIFY_ADAPTER=claude pnpm --filter maister-web test:e2e:librarian librarian-live.spec.ts --grep AV-07-live` reached the real Claude ACP `prompt` method. Claude Code returned `ACP_PROTOCOL` with an account hold, before it could make the MCP call. The authenticated setup passed and the live acceptance test failed. No hosted CI execution or production deployment is claimed.
 - [x] **T39 — Verify release cutover and compatibility on disposable data.**
   - Files: import/cutover integration fixtures, compatibility tests and canonical deployment/configuration docs.
