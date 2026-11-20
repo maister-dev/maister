@@ -157,6 +157,12 @@ authorization, cap, retry and fencing assertions remain required.
   for historical C2 owners; they are not a manual grant or an alternative current
   task-launch reservation.
 
+## Pending wait continuations (Designed)
+
+Use queued-at time and the existing priority pools, while retaining the original run start for accounting. Both Pending-to-Running entry points hold the scheduler lock before cap counting and recheck the stop fence, host, workspace, project and sibling constraints.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - [Launch admission](task-launch-admission.md), [preparation](agent-preparation.md),

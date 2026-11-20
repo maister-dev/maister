@@ -923,6 +923,12 @@ agent-token server state; none can appear in the body. The strict body is
 Schema. A human-only answer of `agent_question` requires a session responder or
 a global personal token with exact `hitl:respond:human`; `*` is insufficient.
 
+## Project signals and CI correlation (Designed)
+
+Require an exact waits:signal project-token grant and a project/run/occurrence match. Idempotency is scoped to the authenticated source and wait. Commit the receipt and audit before acceptance. Replay validates content, token and ownership first. A CI lookup returns only the exact callback address and refuses ambiguous generations. Project tokens cannot control waits, policy or finalization.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - ADRs: [ADR-045](../decisions.md#adr-045) (external_check enforcement via review

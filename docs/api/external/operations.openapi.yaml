@@ -152,6 +152,363 @@ tags:
       proposal and confirmation cards, explicit personal memory, and search
       over the owner's own conversation history.
 paths:
+  /api/v1/ext/runs/{runId}/waits/{waitId}/signal:
+    post:
+      operationId: deliverFlowWaitSignal
+      summary: Designed — Record an authenticated Flow wait signal
+      description: Requires a project token carrying the exact waits:signal scope. A bounded wait with head binding
+        also requires headSha. Retry requires the original canonical body and key. A stale delivery never
+        resolves the wait.
+      security: &a4
+        - projectToken: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: &a1
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: waitId
+          in: path
+          required: true
+          schema: *a1
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Trimmed key for the authenticated source and wait.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - name
+                - outcome
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                outcome:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                headSha: &a5
+                  type: string
+                  pattern: ^(?:[0-9a-f]{40}|[0-9a-f]{64})$
+                payload:
+                  description: Bounded JSON value accepted by the pinned manifest payload schema.
+            example:
+              name: build
+              outcome: passed
+              headSha: "1111111111111111111111111111111111111111"
+              payload:
+                tests: 21
+      responses:
+        "200":
+          description: Current application state for the identical delivery.
+          content:
+            application/json:
+              schema: &a2
+                type: object
+                additionalProperties: false
+                required:
+                  - receiptId
+                  - waitId
+                  - disposition
+                  - application
+                properties:
+                  receiptId: *a1
+                  waitId: *a1
+                  disposition:
+                    type: string
+                    enum:
+                      - accepted
+                      - duplicate
+                  application:
+                    type: string
+                    enum:
+                      - pending
+                      - applied
+                      - not_applied
+              example:
+                receiptId: delivery-1
+                waitId: wait-1
+                disposition: duplicate
+                application: applied
+        "202":
+          description: The delivery committed and is queued for resolution.
+          content:
+            application/json:
+              schema: *a2
+              example:
+                receiptId: delivery-1
+                waitId: wait-1
+                disposition: accepted
+                application: pending
+        "400":
+          description: Malformed JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFIG
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFIG
+                message: Malformed JSON
+        "401": &a3
+          description: This operation requires the specified grant
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - UNAUTHORIZED
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: UNAUTHORIZED
+                message: This operation requires the specified grant
+        "403": *a3
+        "404": &a6
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - NOT_FOUND
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: NOT_FOUND
+                message: Resource not found
+        "409":
+          description: wait_key_conflict, wait_closed or wait_wrong_head.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFLICT
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFLICT
+                message: The wait request conflicts with current state
+                details:
+                  reason: wait_wrong_head
+        "413":
+          description: The signal exceeds 32768 UTF-8 bytes
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFIG
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFIG
+                message: The signal exceeds 32768 UTF-8 bytes
+        "422": &a7
+          description: Invalid wait request
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFIG
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFIG
+                message: Invalid wait request
+  /api/v1/ext/projects/{slug}/waits/callback:
+    get:
+      operationId: findFlowWaitCallback
+      summary: Designed — Find the callback for one approved publication
+      description: Uses the project token issuer and reviewed publication. Repeated natural keys require
+        independently verified provider execution identity or the originally supplied callback.
+      security: *a4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: *a1
+        - name: signal
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: ref
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: headSha
+          in: query
+          required: true
+          schema: *a5
+        - name: providerExecutionId
+          in: query
+          required: false
+          schema: *a1
+      responses:
+        "200":
+          description: Exact owned callback tuple.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - runId
+                  - waitId
+                properties:
+                  runId: *a1
+                  waitId: *a1
+              example:
+                runId: run-1
+                waitId: wait-1
+        "401": *a3
+        "403": *a3
+        "404": *a6
+        "409":
+          description: Callback address is ambiguous
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFLICT
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFLICT
+                message: Callback address is ambiguous
+                details:
+                  reason: wait_callback_ambiguous
+        "422": *a7
   /api/v1/ext/projects/{slug}/tasks:
     post:
       tags: [tasks]

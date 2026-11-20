@@ -1126,6 +1126,62 @@ paths:
                       runId: "run-abc"
                       commandEpoch: 1
                       hostEpoch: 2
+  /workspaces/{id}/head:
+    post:
+      tags: [execution-host]
+      summary: Designed (ADR-215) — Observe an exact adopted workspace HEAD
+      operationId: observeWaitWorkspaceHead
+      description: |
+        Apply the ADR-166 fence without advancing the host high-water from
+        a released wait epoch. Require the exact wait witness, current
+        assignment identity and an active workspace handle. Return a
+        path-free observation. This operation cannot start an executor or
+        mutate a ref.
+      parameters:
+        - $ref: "#/components/parameters/ExecutionWorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command, fence, payload]
+              additionalProperties: false
+              properties:
+                command:
+                  type: object
+                  required: [id, kind, issuedAt]
+                  additionalProperties: false
+                  properties:
+                    id: { type: string, format: uuid }
+                    kind: { type: string, enum: [workspace.observe_head] }
+                    issuedAt: { type: string, format: date-time }
+                fence: { $ref: "#/components/schemas/CommandFence" }
+                payload:
+                  type: object
+                  required: [waitId, workspaceGeneration]
+                  additionalProperties: false
+                  properties:
+                    waitId: { type: string, minLength: 1 }
+                    workspaceGeneration: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Current commit for the observed workspace witness.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [headSha]
+                additionalProperties: false
+                properties:
+                  headSha: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+              example:
+                headSha: "1111111111111111111111111111111111111111"
+        "409":
+          description: Fence, wait witness or workspace no longer applies.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/{id}:
     get:
       tags: [execution-host]

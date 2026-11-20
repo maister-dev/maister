@@ -402,6 +402,12 @@ E1–E12 invariants.)
   retried on the next watchdog tick (the run is NEVER marked `Failed` until the
   session is confirmed stopped; a `404` proceeds).
 
+## Autonomous completion axis (Designed)
+
+The default is off, including legacy or malformed snapshots. A project admin configures eligible CI sources and limits, and an approved Flow pins the actual gates, review and CI. The launch grant freezes the effective authority. Current project settings, the live global admin switch, MAISTER_AUTO_PROMOTION and the per-run or study hold can narrow it. Recheck inside the effect claim. Removing a hold cannot restore authority that was absent at launch.
+
+Default limits on a fresh opt-in are low risk, confidence at least 0.90, at most 10 changed files and 300 additions plus deletions. Preserve the hard deny list and stricter project or manifest bounds. Reversal proof requires the actual actor and exact completed decision.
+
 ## Linked artifacts
 
 - ADRs: [ADR-095](../decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship);

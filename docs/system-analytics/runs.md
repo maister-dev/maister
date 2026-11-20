@@ -1534,6 +1534,14 @@ wake. The final idle handoff claims capacity under the scheduler lock, changes
 only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
 `NeedsInputIdle` with `resume_requested_at`. It must not call ACP permission
 resume or depend on supervisor availability.
+## Flow condition waits and autonomous completion (Designed)
+
+Waiting owns a retained workspace but no executor slot. Resolution enters Pending with the original host, a new queue timestamp and an exact continuation. Admission increments the assignment epoch and retains the original run start. Stop enters Review and invalidates the wake. Abandon closes the wait or queued wake.
+
+ADR-208 attributes the open wait and later admission delay to duration outside execution. ADR-216 counts only realized Done or classified Failed. With a revoked grant, stale evidence or a hold, leave an actionable Review.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — every placement CAS re-entry (launch, resume, recover, wait-resume, rework return, node interrupt) mints an `execution_assignments` epoch, and a driver whose command is fenced yields without writing run state.

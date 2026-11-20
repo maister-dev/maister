@@ -330,6 +330,12 @@ describes that attempt (UX-07A–C).
 - **Scratch run merge guard** — `assertEvidenceReady(runId, "merge")` is vacuously ready
   (no flow gates); this is future-proofing, not the AC's merge-refuse coverage.
 
+## Evidence bound to the delivered head (Designed)
+
+The code lane requires strict gate passes, current trusted CI, a passing reviewed AI verdict within the approved risk and confidence thresholds and a bounded base-to-HEAD diff. Match each producer attempt to the candidate, base and publication generation. Override, supersession, stale source, policy revocation, unsupported base drift, renamed deny-listed path and unmeasurable diff each refuse machine delivery.
+
+See [the governing contract](execution-policy.md).
+
 ## Linked artifacts
 
 - **ADR:** [ADR-048](../decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)

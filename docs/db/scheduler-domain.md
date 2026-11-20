@@ -196,3 +196,12 @@ erDiagram
   [ADR-139](../decisions.md#adr-139-project-automations--one-time-task-launch-reservation-and-truthful-agent-binding-telemetry).
 - Implemented: [ADR-134](../decisions.md#adr-134-observatory-agentization-and-commit-provenance).
 - Implemented: [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking).
+
+## Flow wait and delivery ownership (Designed)
+
+The scheduler owns one bounded due scan ordered by next due instant and
+ID and a separate CI scan over approved publication generations. Run
+admission resumes a queued wait using the original run/host and its
+assigned queue time.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

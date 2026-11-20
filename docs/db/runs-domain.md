@@ -991,3 +991,24 @@ Operational runs freeze `agent_kind` and `result_contract`; integrity generation
 ## Peek paging and push hints (Implemented)
 
 Migration 0211 adds three bounded page-order indexes; 0212 adds transactional advisory notification triggers on existing canonical tables. No entities, columns or lifecycle transitions are added. Exact indexes, sources and upgrade gates: [peek data contract](../system-analytics/run-peek-data.md).
+
+## Flow wait and delivery ownership (Designed)
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ RUN_WAITS : owns
+    RUNS ||--o{ RUN_WAITS : suspends
+    NODE_ATTEMPTS ||--o| RUN_WAITS : binds
+    RUN_WAITS ||--o{ RUN_WAIT_DELIVERIES : receives
+    RUN_WAITS ||--o{ RUN_WAIT_ACTIONS : audits
+    RUNS ||--o{ RUN_PUBLICATIONS : publishes
+    RUNS ||--o{ RUN_AUTONOMOUS_DECISIONS : records
+    RUN_AUTONOMOUS_DECISIONS ||--o{ RUN_AUTONOMOUS_REVERSALS : verifies
+```
+
+An exact project/run/attempt tuple owns the wait. The open occurrence and
+its Pending continuation retain the workspace. Reserved publications bind
+the attempt at activation. A logical wake and first result share the
+resolution transaction.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

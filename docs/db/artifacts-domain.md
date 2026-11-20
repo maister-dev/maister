@@ -130,3 +130,11 @@ Artifact validity and required-evidence roles survive every locator replacement;
 structured result transport remains a distinct contract. These changes are
 forward additions after 0136; the current consolidated ERD still describes the
 implemented schema.
+
+## Flow wait and delivery ownership (Designed)
+
+The inline `wait-result` evidence row binds to one exact `node_attempts`
+ID. Its content digest is immutable on replay. Scope raw payload and
+derived presentation to the same project and source guards.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

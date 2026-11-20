@@ -1007,6 +1007,12 @@ Preserve `MaisterError`/`SupervisorError` conventions. Add a strict reason union
 | X-EH-27 | A health sample fetched before a refusal commits | the delete matches `pressured_since <= sampledAt`; the refusal's record survives (`held`) | R-M2 |
 | X-EH-28 | The sweep dies or throws between the record delete and the drain; or the local host is re-registered | the next sample on which the host admits new work drains both pools | R-M5 |
 
+## Released wait assignment (Designed)
+
+For the latest released wait epoch, the exact workspace head read requires the same host, project, run, workspace generation, wait occurrence and epoch. Superseded or non-wait epochs are fenced. Read-only admission grants no mutation or slot. The manager rechecks the witness before committing the wait result.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - Decision: [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces);

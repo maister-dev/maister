@@ -2155,3 +2155,60 @@ outside the node's declared rework targets.
 The compiler rejects auto-pass, notify-only, safe-forward, takeover, implicit
 node-id/prompt matching, missing artifacts, and unbounded cycles. Runtime
 forces the human pause; decision answers re-enter only the declared target.
+
+## Durable wait and publication nodes (Designed)
+
+A project Flow can await a condition with engine minimum 3.13.0. Put the
+condition selector in `on` and declare every result in `transitions`.
+A wait's positive integer `timeout` is in seconds. For a timer, `on.after`
+is a positive integer or `on.until` is an RFC 3339 instant. This example
+runs the normal completion path after sixty seconds and gives timeout and
+cancellation their own edges.
+
+```yaml
+compat: { engine_min: "3.13.0" }
+nodes:
+  - id: delay
+    type: wait
+    on: { kind: timer, after: 60 }
+    timeout: 120
+    transitions: { elapsed: done, timeout: on_timeout, cancelled: on_cancel }
+```
+
+| Selector | Additional fields | Outcome keys |
+| --- | --- | --- |
+| `timer` | Exactly one of `after`, `until` | elapsed, timeout, cancelled |
+| `comment` | Optional `actor` with `type` and `id` | commented, timeout, cancelled |
+| `run` | `run_id`; exactly one of direct child/parent proof or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
+| `signal` | `name`, finite `outcomes`, optional `payload_schema`, optional `bind: head_sha` | declared keys, timeout, cancelled; stale if bound |
+| `ci` | `publication` node ID, `transport` (push/pull), required `checks`, declared `issuer` and push `name` | success, failure, cancelled, timeout, stale |
+| `pr` | `publication` node ID with a PR receipt | merged, closed, conflict, timeout, cancelled, stale |
+
+Missing timeout or cancellation routes, an undeclared signal outcome, a
+remote schema reference or a cycle without a bounded rework declaration
+are configuration errors. The resolver freezes the current input and graph
+revision. Rework creates a fresh occurrence. The attempt's wait-result
+is bounded data and includes provenance. It cannot supply command input or
+interpolation syntax.
+
+Engine minimum 3.14.0 adds `publish` with PR mode absent, draft or ready,
+plus CI and PR wait selectors. A provider wait must reference the successful
+publication on its current path. Engine minimum 3.15.0 adds explicit
+terminal failure targets such as `{ end: failed, reason: wait_timeout }`.
+The existing `failed` node ID remains valid as a string target.
+
+See [waits](system-analytics/waits.md) for precedence, authority and resume
+semantics and [execution policy](system-analytics/execution-policy.md) for
+completion grants and refusal behavior.
+
+Other valid `on` values (with outcome routes as listed above) include
+`{ kind: comment, actor: { type: user, id: reviewer-1 } }`,
+`{ kind: run, run_id: run-1, relation_id: relation-1 }`,
+`{ kind: signal, name: build, outcomes: [pass, fail], bind: head_sha }`,
+`{ kind: ci, publication: publish, transport: pull, checks: [test], issuer: github-main }`
+and `{ kind: pr, publication: publish }`. Phase B examples require 3.14.0.
+
+Refused variants include a timer with both `after` and `until`, a comment
+restricted to an unknown actor kind, a self-referencing run, a signal
+declaring the engine-owned `timeout` result, a CI declaration with an empty
+check list, and a PR wait referencing a publication that omits a PR.

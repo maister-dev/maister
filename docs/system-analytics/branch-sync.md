@@ -251,6 +251,12 @@ Sync and rebase never rewrite an existing PR body.
 - **Duration runaway** (30 min continuous `Running`) → W5 sweep kills session, aborts,
   `failed`, returns to `Review`.
 
+## Conflict observed by a PR wait (Designed)
+
+An exact publication-generation conflict routes through ADR-141 with bounded rework. The captured continuation survives the sync-returned Review. Republish and recheck new SHA evidence. An arbitrary sync return cannot attest completed review.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - ADRs: [ADR-140](../decisions.md#adr-140-pr-lifecycle-tracking),

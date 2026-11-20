@@ -187,6 +187,623 @@ tags:
       one durable conversation, its turns and cards, personal memory, reset and
       history deletion, the conversation SSE stream, and the admin enablement.
 paths:
+  /api/runs/{runId}/waits/{waitId}:
+    get:
+      operationId: getFlowWait
+      summary: Designed — Read wait and authorized receipt metadata
+      security: &a3
+        - sessionCookie: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: &a1
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: waitId
+          in: path
+          required: true
+          schema: *a1
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+      responses:
+        "200":
+          description: Current wait with private no-store caching.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - id
+                  - status
+                  - version
+                  - condition
+                  - deadline
+                  - allowedActions
+                  - deliveries
+                  - nextCursor
+                properties:
+                  id: *a1
+                  status: &a5
+                    type: string
+                    enum:
+                      - reserved
+                      - parking
+                      - open
+                      - resolved
+                      - closed
+                  version: &a4
+                    type: integer
+                    minimum: 0
+                  condition:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - kind
+                    properties:
+                      kind:
+                        type: string
+                        enum:
+                          - timer
+                          - comment
+                          - run
+                          - signal
+                          - ci
+                          - pr
+                      label:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                  deadline: &a2
+                    type: string
+                    format: date-time
+                  dueAt: *a2
+                  allowedActions:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - deliver_signal
+                        - resolve_now
+                        - extend
+                        - cancel
+                  result:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - outcome
+                      - source
+                      - redacted
+                    properties:
+                      outcome:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                      source:
+                        type: string
+                        enum:
+                          - timer
+                          - comment
+                          - run
+                          - signal
+                          - provider
+                          - operator
+                      redacted:
+                        type: boolean
+                      data:
+                        description: Content conditioned on current source visibility.
+                  deliveries:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - status
+                        - receivedAt
+                      properties:
+                        id: *a1
+                        status:
+                          type: string
+                          enum:
+                            - accepted
+                            - duplicate
+                            - stale
+                            - rejected
+                        receivedAt: *a2
+                  nextCursor:
+                    type: string
+                    nullable: true
+              example:
+                id: wait-1
+                status: open
+                version: 1
+                condition:
+                  kind: signal
+                  label: build
+                deadline: 2026-11-20T12:00:00Z
+                allowedActions:
+                  - deliver_signal
+                  - resolve_now
+                  - extend
+                  - cancel
+                deliveries: []
+                nextCursor: null
+        "401": &a7
+          description: This operation requires the specified grant
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - UNAUTHORIZED
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: UNAUTHORIZED
+                message: This operation requires the specified grant
+        "404": &a8
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - NOT_FOUND
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: NOT_FOUND
+                message: Resource not found
+        "422": &a6
+          description: Invalid wait request
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFIG
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFIG
+                message: Invalid wait request
+  /api/runs/{runId}/waits/{waitId}/actions:
+    post:
+      operationId: operateFlowWait
+      summary: Designed — Operate one Flow wait
+      security: *a3
+      description: Session, same-origin and operateWait required. Bearer or mixed identity is refused. Resolve-now
+        carries override provenance. Manual signal is queued for the resolver.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+        - name: waitId
+          in: path
+          required: true
+          schema: *a1
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Trimmed key for the authenticated source and wait.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required:
+                    - action
+                    - expectedVersion
+                    - reason
+                    - signal
+                  properties:
+                    action:
+                      type: string
+                      enum:
+                        - deliver_signal
+                    expectedVersion: *a4
+                    reason:
+                      type: string
+                      minLength: 1
+                      maxLength: 1024
+                    signal:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - name
+                        - outcome
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                        outcome:
+                          type: string
+                          minLength: 1
+                          maxLength: 64
+                        headSha: &a9
+                          type: string
+                          pattern: ^(?:[0-9a-f]{40}|[0-9a-f]{64})$
+                        payload:
+                          description: Bounded JSON value accepted by the pinned manifest payload schema.
+                - type: object
+                  additionalProperties: false
+                  required:
+                    - action
+                    - expectedVersion
+                    - reason
+                    - outcome
+                  properties:
+                    action:
+                      type: string
+                      enum:
+                        - resolve_now
+                    expectedVersion: *a4
+                    reason:
+                      type: string
+                      minLength: 1
+                      maxLength: 1024
+                    outcome:
+                      type: string
+                      minLength: 1
+                      maxLength: 64
+                - type: object
+                  additionalProperties: false
+                  required:
+                    - action
+                    - expectedVersion
+                    - reason
+                    - deadline
+                  properties:
+                    action:
+                      type: string
+                      enum:
+                        - extend
+                    expectedVersion: *a4
+                    reason:
+                      type: string
+                      minLength: 1
+                      maxLength: 1024
+                    deadline: *a2
+                - type: object
+                  additionalProperties: false
+                  required:
+                    - action
+                    - expectedVersion
+                    - reason
+                  properties:
+                    action:
+                      type: string
+                      enum:
+                        - cancel
+                    expectedVersion: *a4
+                    reason:
+                      type: string
+                      minLength: 1
+                      maxLength: 1024
+              discriminator:
+                propertyName: action
+            example:
+              action: extend
+              expectedVersion: 1
+              reason: Provider maintenance
+              deadline: 2026-11-20T13:00:00Z
+      responses:
+        "200":
+          description: Action applied or identical action replay.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - actionReceiptId
+                  - version
+                  - state
+                properties:
+                  actionReceiptId: *a1
+                  version: *a4
+                  state: *a5
+                  outcome:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+              example:
+                actionReceiptId: action-1
+                version: 2
+                state: open
+        "202":
+          description: The delivery committed and is queued for resolution.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - receiptId
+                  - waitId
+                  - disposition
+                  - application
+                properties:
+                  receiptId: *a1
+                  waitId: *a1
+                  disposition:
+                    type: string
+                    enum:
+                      - accepted
+                      - duplicate
+                  application:
+                    type: string
+                    enum:
+                      - pending
+                      - applied
+                      - not_applied
+              example:
+                receiptId: delivery-1
+                waitId: wait-1
+                disposition: accepted
+                application: pending
+        "400": *a6
+        "401": *a7
+        "403": *a7
+        "404": *a8
+        "409":
+          description: The wait request conflicts with current state
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFLICT
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFLICT
+                message: The wait request conflicts with current state
+                details:
+                  reason: wait_version_changed
+        "413": *a6
+        "422": *a6
+  /api/admin/autonomous-completion:
+    patch:
+      operationId: updateAutonomousCompletion
+      summary: Designed — Set the live platform autonomous-completion switch
+      security: *a3
+      description: Global admin session required. The new revision is visible to the next decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - expectedRevision
+                - enabled
+              properties:
+                expectedRevision: *a4
+                enabled:
+                  type: boolean
+            example:
+              expectedRevision: 2
+              enabled: false
+      responses:
+        "200":
+          description: Committed switch state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - revision
+                  - enabled
+                properties:
+                  revision: *a4
+                  enabled:
+                    type: boolean
+              example:
+                revision: 3
+                enabled: false
+        "401": *a7
+        "403": *a7
+        "409":
+          description: Settings revision changed
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - CONFLICT
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: CONFLICT
+                message: Settings revision changed
+                details:
+                  reason: autonomy_revision_changed
+        "422": *a6
+  /api/runs/{runId}/autonomous-decisions/{decisionId}/reverts:
+    post:
+      operationId: recordAutonomousDeliveryRevert
+      summary: Designed — Record a verified reversal of a completed autonomous delivery
+      security: *a3
+      description: Requires a session with promoteRun. The server independently verifies the delivered change,
+        reachable reversal, and actual human actor.
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: *a1
+        - name: decisionId
+          in: path
+          required: true
+          schema: *a1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - revertSha
+              properties:
+                revertSha: *a9
+            example:
+              revertSha: "2222222222222222222222222222222222222222"
+      responses:
+        "200":
+          description: Identical reversal already recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - receiptId
+                properties:
+                  receiptId: *a1
+              example:
+                receiptId: revert-1
+        "201":
+          description: Reversal recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - receiptId
+                properties:
+                  receiptId: *a1
+              example:
+                receiptId: revert-1
+        "401": *a7
+        "403": *a7
+        "404": *a8
+        "409":
+          description: The delivery reversal could not be verified
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - PRECONDITION
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  details:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+              example:
+                code: PRECONDITION
+                message: The delivery reversal could not be verified
+                details:
+                  reason: autonomy_revert_unverified
+        "422": *a6
   /api/projects/{slug}/agents/{agentId}/runs:
     get:
       operationId: getProjectAgentHistory
@@ -29978,6 +30595,21 @@ components:
       additionalProperties: false
       minProperties: 1
       properties:
+        autonomousCompletion:
+          type: object
+          additionalProperties: false
+          required: [expectedRevision, enabled]
+          description: Designed (ADR-216). Project admin session grant. This revision does not widen any retained launch snapshot.
+          properties:
+            expectedRevision: { type: integer, minimum: 0 }
+            enabled: { type: boolean }
+            riskMax: { type: string, enum: [low, medium, high] }
+            confidenceMin: { type: number, minimum: 0, maximum: 1 }
+            changedFilesMax: { type: integer, minimum: 1 }
+            changedLinesMax: { type: integer, minimum: 1 }
+            approvedCiSources:
+              type: array
+              items: { type: string, minLength: 1 }
         taskQualificationPolicy:
           type: string
           enum: [legacy, required]
