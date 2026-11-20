@@ -133,6 +133,20 @@ components:
             update:
               sessionUpdate: "agent_message_chunk"
               content: { type: "text", text: "Working on it..." }
+        - name: context-usage
+          summary: Designed usage observation on the existing update lane.
+          payload:
+            type: session.update
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 5
+            update: { sessionUpdate: usage_update, used: 72000, size: 100000 }
+        - name: context-compaction
+          summary: Designed completion-only observation from a capable adapter.
+          payload:
+            type: session.update
+            sessionId: "5f3a8a2b-7e34-4f6d-9d2c-1d4e5f6a7b8c"
+            monotonicId: 6
+            update: { sessionUpdate: compaction_update, compactionId: example-1, status: completed }
         - name: model-advisory
           summary: |
             Supervisor-synthesized informational update (ADR-076). Emitted when

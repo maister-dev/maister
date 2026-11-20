@@ -236,6 +236,12 @@ until the matching forward Drizzle migration exists.
 
 ## Retention
 
+The designed [context projection](../database-schema.md#acp-context-observations-designed-adr-210)
+joins retained events to physical incarnation identity. Rebuild safe
+measurements from retained valid events only. Preserve partial coverage when a
+history range has been pruned. The existing canonical cursor claim and repair
+path fence context projection transactions.
+
 The existing age-only command/receipt pruning is incomplete (AB-10).
 The [Designed retirement protocol](../system-analytics/execution-prompt-lifecycle.md#command-retirement-and-bounded-retry-policy-designed)
 requires terminal ACK, owner disposition, terminal run/delivery holds and grace,

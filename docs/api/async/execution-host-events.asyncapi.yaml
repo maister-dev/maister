@@ -232,6 +232,14 @@ components:
             acpSessionId:
               type: [string, 'null']
               description: Terminal resume handle; null when ACP initialization never completed.
+            windowAdvisory:
+              type: string
+              enum: [window_unverified]
+              description: Designed. Optional safe diagnostic on session creation. Absence conveys no advisory evidence.
+            update:
+              type: object
+              description: Designed context observation variants travel in existing session.update payloads or through contentRef.
+              additionalProperties: true
             steeringSupported:
               type: boolean
               description: |

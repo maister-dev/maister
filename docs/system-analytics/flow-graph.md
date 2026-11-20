@@ -1,5 +1,7 @@
 # Flow graph domain
 
+See [designed context limits and recovery](acp-context.md) for reason-aware retry and session attribution.
+
 ## Purpose
 
 The **flow graph** domain is the execution-model foundation: a validated **node

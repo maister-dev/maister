@@ -249,6 +249,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-207](#adr-207-task-completion-after-a-confirmed-pull-request-merge) | Task completion after a confirmed pull-request merge | Accepted | 2026-11-15 |
 | [ADR-208](#adr-208-run-duration-and-execution-time) | Run duration and execution time | Accepted | 2026-11-15 |
 | [ADR-209](#adr-209-active-sidebar-membership-by-attention-reason) | Active sidebar membership by attention reason | Accepted | 2026-11-15 |
+| [ADR-210](#adr-210-acp-context-observations-and-overflow-recovery) | ACP context observations and overflow recovery | Accepted | 2026-11-20 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2402,5 +2403,14 @@ Full record: [`decisions/adr-208.md`](decisions/adr-208.md)
 **Date:** 2026-11-15
 
 Full record: [`decisions/adr-209.md`](decisions/adr-209.md)
+
+---
+
+### ADR-210: ACP context observations and overflow recovery
+
+**Status:** Accepted
+**Date:** 2026-11-20
+
+Full record: [`decisions/adr-210.md`](decisions/adr-210.md)
 
 ---

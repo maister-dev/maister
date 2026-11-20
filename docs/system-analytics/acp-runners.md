@@ -1,5 +1,7 @@
 # Platform ACP runner catalog domain
 
+See [designed window guidance](acp-context.md) for the non-blocking Claude-compatible provider advisory.
+
 ## Purpose
 
 The platform ACP runner catalog is the admin-owned, host-scoped registry of

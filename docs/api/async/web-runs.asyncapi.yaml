@@ -67,6 +67,7 @@ channels:
           - $ref: "#/components/messages/CanonicalRunEvent"
           - $ref: "#/components/messages/SessionStreamReady"
           - $ref: "#/components/messages/SessionStreamTimeout"
+          - $ref: "#/components/messages/ContextSnapshot"
   /api/runs/{runId}/peek/stream:
     parameters:
       runId:
@@ -90,6 +91,11 @@ channels:
 
 components:
   messages:
+    ContextSnapshot:
+      name: session.context_snapshot
+      summary: Designed — safe context projection sent without an SSE id.
+      payload:
+        $ref: "#/components/schemas/ContextSnapshotEvent"
     RunPeekReady:
       name: RunPeekReady
       payload:
@@ -129,6 +135,62 @@ components:
       payload:
         $ref: "#/components/schemas/SessionStreamTimeoutEvent"
   schemas:
+    ContextSnapshotEvent:
+      type: object
+      additionalProperties: false
+      required:
+        [type, runId, runSessionId, incarnationId, nodeAttemptId, lifecycleSequence,
+         contextSequence, transcriptSequence, usage, activeCompactions,
+         completedCompactions, coverage, windowAdvisory]
+      properties:
+        type: { type: string, const: session.context_snapshot }
+        runId: { type: string, format: uuid }
+        runSessionId: { type: [string, "null"] }
+        incarnationId: { type: [string, "null"] }
+        nodeAttemptId: { type: [string, "null"] }
+        lifecycleSequence: { $ref: "#/components/schemas/NullableContextSequence" }
+        contextSequence: { $ref: "#/components/schemas/NullableContextSequence" }
+        transcriptSequence: { $ref: "#/components/schemas/NullableContextSequence" }
+        usage:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [used, size, sizeSource, observedAt, sourceSequence]
+              properties:
+                used: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                size: { type: integer, minimum: 1, maximum: 9007199254740991 }
+                sizeSource: { type: string, enum: [agent_reported] }
+                observedAt: { type: string, format: date-time }
+                sourceSequence: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        activeCompactions: { type: integer, minimum: 0 }
+        completedCompactions: { type: integer, minimum: 0 }
+        coverage: { type: string, enum: [from_incarnation_start, partial] }
+        windowAdvisory:
+          type: [string, "null"]
+          enum: [window_unverified, null]
+      example:
+        type: session.context_snapshot
+        runId: 54c27b5c-509a-41a3-a143-c429389e813d
+        runSessionId: rs-1
+        incarnationId: inc-1
+        nodeAttemptId: null
+        lifecycleSequence: "40"
+        contextSequence: "42"
+        transcriptSequence: "41"
+        usage:
+          used: 72000
+          size: 100000
+          sizeSource: agent_reported
+          observedAt: "2026-11-20T12:00:00Z"
+          sourceSequence: "41"
+        activeCompactions: 1
+        completedCompactions: 0
+        coverage: from_incarnation_start
+        windowAdvisory: null
+    NullableContextSequence:
+      type: [string, "null"]
+      pattern: "^(0|[1-9][0-9]{0,18})$"
     RunPeekReady:
       type: object
       additionalProperties: false

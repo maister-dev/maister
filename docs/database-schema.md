@@ -21,6 +21,33 @@ supported.
 
 ## Tables
 
+### ACP context observations (Designed, ADR-210)
+
+`run_context_usage` holds a scope’s last measurement or its reset. Its key is
+`(run_id, execution_host_id, assignment_epoch, host_session_id, node_attempt_id)`.
+The session-wide row has a NULL attempt and the key treats NULL as equal.
+An attributed update writes both rows in the projection cursor transaction.
+The pair `used_tokens` / `size_tokens`, `observed_at` and
+`usage_run_sequence` is all present or all NULL. Use bigint for sequences
+and range checks for safe integers in token counts. `last_run_sequence`
+advances at reset. Reads by run and attempt use a scope index.
+
+`run_context_compactions` gives the same physical identity one row per
+bounded `compaction_id`, with nullable attempt attribution, source
+sequences and lifecycle timestamps. A start uses the actual start event.
+The terminal may exist without a start. `interrupted` denotes physical exit
+without an adapter terminal. The status index supports active and completed
+counts, and the run/attempt index supports ledger reads and historical display.
+Transcript content stays in `run_messages`.
+
+Run deletion cascades both projections. Bind to the activated incarnation by
+physical identity, even when activation projects after the measurement.
+Reject cross-run attempt attribution at the projector boundary. Preserve
+old `node_attempts`, `gate_results` and receipts during upgrade. Add
+nullable bounded `node_attempts.error_reason` and gate technical outcome
+fields. Existing scratch, agent and consensus evidence store safe reason tokens
+in their bounded outcome metadata.
+
 ### Installation company and authority (Implemented storage)
 
 Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Native knowledge reads enforce record-specific restrictions; session-only administrator grant list/create/revoke and native review HTTP are implemented locally in [Company Brain](system-analytics/company-brain.md). Main `0232_company_grant_requests` adds nullable `creationKey`/`creationDigest`, `revocationKey`/`revocationDigest`, `revokedBy` and `revocationReason` to the existing grants, preserving legacy NULL metadata. A partial creation-receipt unique index and immutable policy/revocation trigger guard exact deliveries. Brain `0011_proposal_source_access` adds bounded nullable `sourceRestrictions` and a server-derived `sourceAclKey` to proposals, partitions canonical input deduplication by source access and freezes submitted/settled authority snapshots. Logical dependency references never obstruct project deletion; company-owned history survives deletion of an originating project.

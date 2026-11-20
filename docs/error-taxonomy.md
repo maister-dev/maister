@@ -685,6 +685,8 @@ sets; command/run/object IDs belong in logs, not unbounded metric labels.
 
 ## Construction
 
+**Designed (ADR-210).** `ACP_PROTOCOL` can carry `details.reason: context_exhausted` for terminal input-window overflow or `max_output_tokens` for a response cap. A resolved ACP prompt at its output cap retains its receipt and partial output. The prompt owner derives the domain failure from the terminal stop reason. Older and ambiguous errors retain their existing code and generic presentation.
+
 ```ts
 new MaisterError(code, message);
 new MaisterError(code, message, { cause: originalError });

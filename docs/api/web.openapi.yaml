@@ -13513,6 +13513,8 @@ paths:
 
         Canonical frames contain only `type`, `eventId`, `runSequence`,
         `occurredAt`, and `hostSessionId`; they do not expose the host payload.
+        Designed context snapshots carry safe projections and are emitted without
+        an SSE id. The recipient must still hold the current run/source grant.
         See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
       parameters:
@@ -24132,6 +24134,38 @@ components:
             fullContentHref:
               type: string
               description: Authorized attachment download of the complete record, bound to its current node attempt when applicable.
+    ContextSnapshot:
+      description: Designed. Safe projected context metadata. Structurally equivalent to the run SSE snapshot.
+      type: object
+      additionalProperties: false
+      required:
+        [type, runId, runSessionId, incarnationId, nodeAttemptId, lifecycleSequence,
+         contextSequence, transcriptSequence, usage, activeCompactions,
+         completedCompactions, coverage, windowAdvisory]
+      properties:
+        type: { type: string, enum: [session.context_snapshot] }
+        runId: { type: string, format: uuid }
+        runSessionId: { type: string, nullable: true }
+        incarnationId: { type: string, nullable: true }
+        nodeAttemptId: { type: string, nullable: true }
+        lifecycleSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        contextSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        transcriptSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        usage:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [used, size, sizeSource, observedAt, sourceSequence]
+          properties:
+            used: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            size: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            sizeSource: { type: string, enum: [agent_reported] }
+            observedAt: { type: string, format: date-time }
+            sourceSequence: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        activeCompactions: { type: integer, minimum: 0 }
+        completedCompactions: { type: integer, minimum: 0 }
+        coverage: { type: string, enum: [from_incarnation_start, partial] }
+        windowAdvisory: { type: string, nullable: true, enum: [window_unverified, null] }
     RunTranscriptPage:
       description: |
         Each portion contains at most 200 records and 389120 serialized UTF-8
@@ -24185,6 +24219,7 @@ components:
             size:
               type: integer
               minimum: 0
+        context: { $ref: "#/components/schemas/ContextSnapshot" }
         attemptId:
           type: string
           nullable: true
@@ -29499,6 +29534,7 @@ components:
           terminalCause,
         ]
       properties:
+        context: { $ref: "#/components/schemas/ContextSnapshot" }
         terminalCause:
           type: object
           nullable: true

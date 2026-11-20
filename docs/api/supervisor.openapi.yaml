@@ -5308,6 +5308,11 @@ components:
         must match independently acquired receipt and canonical-event evidence.
     CommandReceiptV2:
       x-implementation-status: Designed
+      description: |
+        For a prompt rejection the existing terminal.error.details object may
+        carry the allow-listed reason context_exhausted or max_output_tokens
+        with ACP_PROTOCOL. A resolved max_tokens prompt retains its successful
+        receipt shape, sealed partial output and stopReason.
       type: object
       additionalProperties: false
       required: [receiptVersion, commandId, kind, hostKey, runId, assignmentId, assignmentEpoch, hostSessionId, requestSchema, requestSha256, phase, httpStatus, receivedAt, terminal]

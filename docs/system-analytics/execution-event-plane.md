@@ -1,5 +1,7 @@
 # Execution event plane
 
+[ACP context observations](acp-context.md) are a designed consumer of accepted session events.
+
 **Status:** Implemented canonical Postgres authority, bounded referenced output, retained outbox/file accounting and autonomous projection (AB-01–04). The S1 release gate is in progress; durable command-owner reconciliation is Implemented — the prompt-owner recovery worker and the two continuation workers run in the production web boot (ADR-176).
 
 ## Purpose

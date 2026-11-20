@@ -1,0 +1,60 @@
+# ACP context observations
+
+**Status:** Designed ([ADR-210](../decisions/adr-210.md)).
+
+## Purpose
+
+Expose the agent’s reported context occupancy and compaction activity in scratch, Studio, Run detail and the workbench inspector. Preserve typed prompt limit outcomes through settlement and recovery.
+
+## Domain entities
+
+- **Context reading** contains the latest valid used/size pair, canonical event time and source sequence in a physical session or exact node attempt.
+- **Compaction** is identified by its fenced physical session and ACP compaction ID. The transcript owns its private summary and bounded error detail.
+- **Failure reason** is `context_exhausted` for an input window limit or `max_output_tokens` for a response output cap. The associated error code remains `ACP_PROTOCOL`.
+
+## State machine
+
+| Observation in accepted sequence order | Reading | Lifecycle and transcript |
+| --- | --- | --- |
+| Fresh or resumed process becomes current | Unknown on the new scope until a fresh valid measurement | Start with zero observed live compactions. History replay remains historical. |
+| Valid usage with a nonnegative safe integer and positive safe size | Replace the pair, even when usage decreases or exceeds size | Use it as before/after evidence only when its ownership and relationship to the compaction are unambiguous. |
+| Live `in_progress` | Keep the current reading | Start one marker and highlight while any in-scope live ID remains active. |
+| Summary chunk | Keep the current reading | Enrich its marker. An orphan chunk cannot establish activity. |
+| Live `completed` | Clear any pre-compaction reading until a later valid sample | Set the terminal and add one completed operation. Completion-only is valid and has unknown start. |
+| `failed` or `cancelled` | Keep the current reading | Set the terminal with zero additional completed operations. |
+| Enrichment for the same terminal | Keep the current reading | Update the existing marker, preserving creation order and count. A full terminal summary replaces streamed text. |
+| Physical exit with open compaction | Remove live activity | Mark the observation interrupted. The adapter’s terminal status and error remain unknown. |
+| Invalid measurement, unknown status or conflicting terminal | Keep the valid reading | Warn with safe metadata and advance the projection cursor. |
+
+## Process flows
+
+The supervisor advertises the optional capability for qualified adapters. It commits the ordinary ACP update to its outbox. After ingest, the context consumer owns numeric facts and the ordered transcript consumer owns marker content and ordering. Both use the same interpretation of ACP status and identity. Canonical stream notifications use the existing durable cursor. An id-less snapshot carries current selection and projection watermarks after the corresponding transactions commit.
+
+The horizontal meter shows a visible percent and band (green below 60%, amber below 85%, red from 85%). Unknown renders a neutral track and “Not reported”. While a compaction is in progress, an outline, glyph and localized text identify activity independently of color and usage validity. The details expose time, measured token counts, window provenance and observed completed count. Treat a Claude gateway with no usable configured window as advisory and preserve the agent-reported pair.
+
+Prompt settlement first classifies terminal adapter facts and keeps the original receipt and partial output. See [prompt lifecycle](execution-prompt-lifecycle.md) for owner reconciliation, [error taxonomy](../error-taxonomy.md) for reasons and [Flow DSL](../flow-dsl.md) for retry and rework.
+
+## Expectations
+
+- CTX-01: A gauge MUST read the validated pair, source sequence and time for its selected physical scope.
+- CTX-02: A compaction ID MUST produce at most one marker and count at most once as a completed operation in that incarnation.
+- CTX-03: A projected snapshot MUST converge after reconnect without changing the canonical replay cursor.
+- CTX-04: An active compaction MUST remain identifiable with color disabled and absent usage.
+- CTX-05: Only a current authorized transcript reader may receive a summary or adapter diagnostics.
+- CTX-06: Runner window guidance MUST preserve the readiness and launch verdict.
+- CTX-07: Each supported terminal limit MUST preserve its reason across prompt owner recovery.
+- CTX-08: An overflow retry with `workspace: keep` MUST retain its workspace and use a fresh ACP session.
+- CTX-09: Compaction MUST leave the existing guardrail evidence and duration deadline in force.
+- CTX-10: Migration MUST preserve prior receipts and transcript positions while allowing bounded replay to reconstruct available measurements.
+
+## Edge cases
+
+- Stale assignment or a late update from the previous physical process cannot update the current scope. A valid observation may precede lifecycle projection of the incarnation. A binding commit then makes the observation visible.
+- Two compactions may overlap. Ending one keeps the other highlighted. Compaction during a long-lived named session does not change the owning attempt.
+- A malformed optional update advances the projection cursor. A permanently uningestable envelope uses the event-plane skip ledger. A missing historical reference limits coverage and must not turn a count into a lifetime total.
+- The pinned Claude rejection combines a generic error kind with a specific terminal diagnostic. The pinned Codex overflow must be verified on the wire. A retry warning or prose in a transcript cannot establish a failure.
+
+## Linked artifacts
+
+- [ADR-210](../decisions/adr-210.md), [sessions](sessions.md), [event plane](execution-event-plane.md), [scratch](scratch-runs.md), [guardrails](guardrail-hooks.md), [runners](acp-runners.md)
+- [Run SSE](../api/async/web-runs.asyncapi.yaml), [ACP wire](../api/external/acp.asyncapi.yaml), [REST](../api/web.openapi.yaml), [database schema](../database-schema.md)
