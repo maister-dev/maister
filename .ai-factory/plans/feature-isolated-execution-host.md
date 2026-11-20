@@ -135,6 +135,12 @@ The Designed project settings PATCH now specifies omission, clear, replacement a
 
 **T04.3 [x] — Publish normative analytics and acceptance ownership.** Create the isolation analytics and traceability group described above. Fold every source requirement, the TDD ownership matrix and each P0 decision into expectations and edge cases. Run the coverage group and both spec validators in Designed state. Record coverage per requirement, including any blocked live qualification, in the P0 evidence.
 
+#### Ubuntu installed-service qualification attempt (2026-11-20)
+
+Ubuntu 24.04.5 LTS, kernel 6.8.0-149-generic, systemd 255.4-1ubuntu8.18, AppArmor 4.0.1really4.0.1-0ubuntu0.24.04.9 and Bubblewrap 0.9.0-1ubuntu0.3. AppArmor was enabled with unprivileged user namespace restriction set to 1. The host mounted cgroup v2 with `nsdelegate`. The shell used Node 24.16.0.
+
+Systemd reported zero installed MAIster unit files. The service lookup returned `LoadState=not-found` and `ActiveState=inactive` for both units. Of the checked service account names, only `maister` (UID/GID 1002) resolved. Non-interactive sudo required a password. Effective AppArmor policy, cgroup delegation, credential custody, authenticated installed transport and supervisor workload launch/stop/restart remain unverified. The earlier disposable guest results remain the primitive evidence for T03 and T05.
+
 ### P1 — Independently shippable host hardening
 
 - [ ] **T05. Deployment wiring and identity split.** Update `deploy/{maister-web.service,maister-supervisor.service,maister.env.example}`, `.env.example` and `docs/deployment.md`. Separate web, host/proxy and unprivileged workload identities and credential ownership. Select a minimal audited identity-switch mechanism at the host launcher, with no residual supplementary groups/privileges in the workload. Use exact canonical shared repo roots, restricted group/ACL and scoped `safe.directory`. Keep runtime root and service envs private. Qualify permissions using actual service UIDs. Cover the single-user Linux/macOS local path. Inspect Dockerfile and actual `compose{,.production,.public}.yml` mounts and environments for each changed dependency, document unsupported container topologies in getting-started/configuration, and validate restart/upgrade with a drained host. Log identity roles and diagnostic classes.
