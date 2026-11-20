@@ -1,3 +1,5 @@
+import type { CommandAccessOverride } from "../runs/isolation-command-access";
+
 import type { StandInspectionAppointment } from "@/lib/stand-operations/scheduled-inspection-types";
 import type {
   AssignmentWorkDefinition,
@@ -416,6 +418,12 @@ export const projects = pgTable(
     taskQualificationOverride: text(
       "task_qualification_override",
     ).$type<TaskQualificationMode>(),
+    commandAccessProfile: jsonb(
+      "command_access_profile",
+    ).$type<CommandAccessOverride>(),
+    commandAccessRevision: integer("command_access_revision")
+      .notNull()
+      .default(1),
     configExportRevision: bigint("config_export_revision", { mode: "bigint" })
       .notNull()
       .default(sql`0`),
@@ -480,6 +488,10 @@ export const projects = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
   },
   (t) => [
+    check(
+      "projects_command_access_revision_positive",
+      sql`${t.commandAccessRevision} > 0`,
+    ),
     check(
       "projects_task_qualification_policy_check",
       sql`${t.taskQualificationBaseline} IN ('legacy','required') AND (${t.taskQualificationOverride} IS NULL OR ${t.taskQualificationOverride} IN ('legacy','required'))`,

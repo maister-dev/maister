@@ -2531,6 +2531,8 @@ table project_tokens {
 table projects {
   task_qualification_baseline text [not null, default: 'legacy']
   task_qualification_override text
+  command_access_profile jsonb
+  command_access_revision integer [not null, default: 1]
   config_export_revision bigint [not null, default: `0`]
   id text [pk, not null]
   slug text [not null, unique]

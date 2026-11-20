@@ -5563,6 +5563,13 @@ maximum is one; its lifetime and shutdown belong to the
 
 ## Project configuration persistence (Implemented — ADR-194)
 
+Migration `0343_project_command_access` adds nullable
+`projects.command_access_profile` (JSONB) and positive integer
+`projects.command_access_revision` (default 1). Existing projects inherit
+the platform policy. An empty grant list in a stored override remains an
+explicit denial. These columns provide storage for the planned revision-checked
+settings write and admission capture.
+
 `projects.config_export_revision` is bigint NOT NULL DEFAULT 0 with a nonnegative
 CHECK. It is an optimistic content revision, never a persistence-status flag.
 Wire values are decimal strings. A BEFORE UPDATE trigger advances it for

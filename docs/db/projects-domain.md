@@ -369,6 +369,13 @@ erDiagram
     }
 ```
 
+Migration `0343_project_command_access` adds nullable
+`projects.command_access_profile` (JSONB) and positive integer
+`projects.command_access_revision` (default 1). Existing projects inherit
+the platform policy. An empty grant list in a stored override remains an
+explicit denial. These columns provide storage for the planned revision-checked
+settings write and admission capture.
+
 `projects.config_export_revision` is a monotonic nonnegative bigint, default 0,
 not persistence provenance. All new evidence FKs restrict deletion. Active-state
 partial uniqueness, immutable snapshot guards and lifecycle CHECKs are specified

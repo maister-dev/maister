@@ -4,6 +4,13 @@
 
 **Designed.** The planning base is Postgres migration `0342_domain_event_run_pr_merged` and host SQLite `user_version=17`. Reserve 0343 and the next available migrations for policy and owner changes. Recheck the generated journal and SQLite version at implementation. [ADR-210](../decisions/adr-210.md)
 
+Migration `0343_project_command_access` adds nullable
+`projects.command_access_profile` (JSONB) and positive integer
+`projects.command_access_revision` (default 1). Existing projects inherit
+the platform policy. An empty grant list in a stored override remains an
+explicit denial. These columns provide storage for the planned revision-checked
+settings write and admission capture.
+
 | Record | Required storage invariant |
 | --- | --- |
 | Platform ceiling and command default | Standalone singleton with a singleton-key check, versioned policy JSON and positive CAS revision. A first boot with no runner resolves secure defaults. |

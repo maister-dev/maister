@@ -31,3 +31,7 @@ const commandAccessSchema = z.strictObject({
 export const commandAccessOverrideSchema = commandAccessSchema
   .partial()
   .nullable();
+
+export type CommandAccessOverride = NonNullable<
+  z.infer<typeof commandAccessOverrideSchema>
+>;
