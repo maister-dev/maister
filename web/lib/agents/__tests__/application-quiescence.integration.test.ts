@@ -6,6 +6,7 @@ import type { PromptResult } from "@/lib/supervisor-client";
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -20,7 +21,6 @@ import {
   vi,
 } from "vitest";
 
-import { stat, writeFile } from "node:fs/promises";
 import { POST as stopRunRoute } from "@/app/api/runs/[runId]/stop/route";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { reconcileHistoricalAgentLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
@@ -32,6 +32,7 @@ import {
 } from "@/lib/agents/continuation-episode";
 import { startAgentSession } from "@/lib/agents/launch";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import {
   inspectOperationalRun,
   operationalWorkspace,
@@ -59,6 +60,7 @@ import {
   domainEvents,
   executionAssignments,
   executionCommands,
+  projectTokens,
   runResults,
   runSessionIncarnations,
   runs,
@@ -552,6 +554,15 @@ describe("agent application quiescence", () => {
       true,
     );
     const occupied = await countLiveRuns(db as never, "agent");
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    if (!run.projectId || !run.agentId)
+      throw new Error("expected a project agent Run owner");
+    const { tokenId } = await issueAgentRunToken({
+      db,
+      runId,
+      projectId: run.projectId,
+      agentId: run.agentId,
+    });
 
     expect(await client.sessionsForRun()).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "live" })]),
@@ -587,6 +598,12 @@ describe("agent application quiescence", () => {
       .where(eq(executionAssignments.id, resumed.successor.id));
     expect(turn.state).toBe("superseded");
     expect(assignment.state).toBe("released");
+    expect(
+      await db
+        .select({ revokedAt: projectTokens.revoked_at })
+        .from(projectTokens)
+        .where(eq(projectTokens.id, tokenId)),
+    ).toEqual([{ revokedAt: expect.any(Date) }]);
     expect(await countLiveRuns(db as never, "agent")).toBe(occupied - 1);
     expect(
       await db
@@ -1055,6 +1072,181 @@ describe("agent application quiescence", () => {
     45_000,
   );
 
+  it("IT-APR-11 publishes one terminal transition when Stop races a latched refusal", async () => {
+    const { runId, resumed } =
+      await seedUndispatchedOperationalResume("repo_read");
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const checkout = run.operationalIntegrityBaseline?.owner?.cwd;
+    if (!checkout) throw new Error("expected frozen checkout");
+    await writeFile(join(checkout, "foreign"), "Changed source before resume");
+    await startAgentSession(runId, { db, executionHosts: hosts });
+
+    await Promise.allSettled([
+      recoverAgentContinuationSettlement(db, hosts, runId),
+      stopRunRoute(
+        new Request(`http://localhost/api/runs/${runId}/stop`, {
+          method: "POST",
+        }),
+        { params: Promise.resolve({ runId }) },
+      ),
+    ]);
+
+    const [settled] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(["Abandoned", "Failed"]).toContain(settled.status);
+    const [turn] = await db
+      .select()
+      .from(agentTurns)
+      .where(eq(agentTurns.id, resumed.turn.id));
+    expect(turn.state).toBe("superseded");
+    const terminalEvents = await db
+      .select({ kind: domainEvents.kind })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.runId, runId),
+          sql`${domainEvents.kind} IN ('run.abandoned', 'run.failed')`,
+        ),
+      );
+    expect(terminalEvents).toEqual([
+      {
+        kind: settled.status === "Abandoned" ? "run.abandoned" : "run.failed",
+      },
+    ]);
+    expect(
+      await db
+        .select()
+        .from(executionCommands)
+        .where(
+          eq(executionCommands.executionAssignmentId, resumed.successor.id),
+        ),
+    ).toHaveLength(0);
+  }, 30_000);
+
+  it("IT-APR-06 the worker advances due work while another Run is in backoff", async () => {
+    const waiting = await seedUndispatchedOperationalResume();
+    const claim = await claimAgentContinuation(db, {
+      runId: waiting.runId,
+      assignmentId: waiting.resumed.successor.id,
+      logicalKey: waiting.resumed.turn.logicalKey,
+    });
+    if (!claim) throw new Error("expected first continuation claim");
+    await recordAgentContinuationFailure(
+      db,
+      claim,
+      new MaisterError("CONFLICT", "Repository is busy", {
+        details: { reason: "operation_busy" },
+      }),
+      null,
+      { runId: waiting.runId },
+    );
+    await db
+      .update(agentContinuationEpisodes)
+      .set({
+        dueAt: sql`clock_timestamp() + interval '10 minutes'`,
+      })
+      .where(eq(agentContinuationEpisodes.runId, waiting.runId));
+
+    const due = await seedUndispatchedOperationalResume("repo_read");
+    const [run] = await db.select().from(runs).where(eq(runs.id, due.runId));
+    const checkout = run.operationalIntegrityBaseline?.owner?.cwd;
+    if (!checkout) throw new Error("expected frozen checkout");
+    await writeFile(join(checkout, "foreign"), "Changed due source");
+
+    const worker = startAgentContinuationWorker({ db, executionHosts: hosts });
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [settled] = await db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, due.runId));
+            return settled.status;
+          },
+          { timeout: 8_000 },
+        )
+        .toBe("Failed");
+    } finally {
+      await worker.stop();
+    }
+    const [paused] = await db
+      .select()
+      .from(agentContinuationEpisodes)
+      .where(eq(agentContinuationEpisodes.runId, waiting.runId));
+    expect(paused).toMatchObject({ state: "backoff", attempts: 1 });
+    expect(
+      await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(
+          eq(
+            agentPreparationOperations.assignmentId,
+            waiting.resumed.successor.id,
+          ),
+        ),
+    ).toHaveLength(0);
+  }, 30_000);
+
+  it("IT-APR-11 parks settlement with one incident until historical exit evidence arrives", async () => {
+    const { runId, resumed } = await seedUndispatchedOperationalResume(
+      "repo_read",
+      true,
+    );
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const checkout = run.operationalIntegrityBaseline?.owner?.cwd;
+    if (!checkout) throw new Error("expected frozen checkout");
+    await writeFile(join(checkout, "foreign"), "Changed retained source");
+    await startAgentSession(runId, { db, executionHosts: hosts });
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await expect(
+        recoverAgentContinuationSettlement(db, hosts, runId),
+      ).rejects.toMatchObject({
+        code: "EXECUTOR_UNAVAILABLE",
+        details: { reason: "agent_execution_quiescence_unproven" },
+      });
+      if (attempt < 5) {
+        await db
+          .update(agentContinuationEpisodes)
+          .set({
+            dueAt: sql`clock_timestamp() - interval '1 millisecond'`,
+          })
+          .where(eq(agentContinuationEpisodes.runId, runId));
+      }
+    }
+    const [attention] = await db
+      .select()
+      .from(agentContinuationEpisodes)
+      .where(eq(agentContinuationEpisodes.runId, runId));
+    expect(attention).toMatchObject({
+      state: "attention",
+      settlementAttempts: 5,
+    });
+    await recoverAgentContinuationSettlement(db, hosts, runId);
+    expect(
+      await db
+        .select()
+        .from(agentIncidentOccurrences)
+        .where(eq(agentIncidentOccurrences.runId, runId)),
+    ).toHaveLength(1);
+
+    await fake.releaseIngest();
+    await fake.waitForCanonicalEvents();
+    expect(await recoverAgentContinuationSettlement(db, hosts, runId)).toBe(
+      true,
+    );
+    const [settled] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(settled.status).toBe("Failed");
+    expect(
+      await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(
+          eq(agentPreparationOperations.assignmentId, resumed.successor.id),
+        ),
+    ).toHaveLength(1);
+  }, 30_000);
+
   it("operational Stop retains its owner until the exact delayed canonical exit commits", async () => {
     const runId = await seedAgentRun(db, {
       runtimeRoot,
@@ -1214,7 +1406,7 @@ describe("agent application quiescence", () => {
     ).toEqual([{ state: "exited" }]);
   });
 
-  it("an absent host session and successful delete do not release an unconfirmed execution", async () => {
+  it("IT-APR-03 an absent host session and successful delete do not release an unconfirmed execution", async () => {
     const command = await detachedPrompt();
     const occupied = await countLiveRuns(db as never, "agent");
     const session = fake.sessions.get(command.targetSessionId!);

@@ -3,11 +3,6 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 
-import {
-  agentContinuationBlocked,
-  agentContinuationSettlementReady,
-  recoverAgentContinuationSettlement,
-} from "./continuation-episode";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -24,6 +19,11 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  agentContinuationBlocked,
+  agentContinuationSettlementReady,
+  recoverAgentContinuationSettlement,
+} from "./continuation-episode";
 import { startAgentSession } from "./launch";
 import { GENERATION_TURN_VARIANTS, OWNED_TURN_VARIANTS } from "./turn-variants";
 import { AgentPromptContinuationPending } from "./prompt-owner";
