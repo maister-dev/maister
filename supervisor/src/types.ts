@@ -771,6 +771,8 @@ export const REASON_TOKENS = [
   "steer_unsupported",
   "steer_no_active_turn",
   "steer_timeout",
+  "context_exhausted",
+  "max_output_tokens",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];

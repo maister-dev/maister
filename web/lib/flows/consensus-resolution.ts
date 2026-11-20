@@ -1,3 +1,8 @@
+import {
+  isAcpContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../runtime/acp-context-failure";
+
 // The consensus-resolution HITL schema: ONE typed shape and ONE tolerant
 // decoder shared by the runtime writer, the response validator, the rerun
 // resolver and the inbox card. Client-safe on purpose (no server-only, no
@@ -58,6 +63,7 @@ export type ConsensusResolutionTechnicalFailure = Readonly<{
   targetParticipantId: string;
   parseStatus: string;
   errorCode: string;
+  errorReason?: AcpContextFailureReason;
   targetSlot?: number;
 }>;
 
@@ -202,6 +208,10 @@ function decodeTechnicalFailures(
             targetParticipantId,
             parseStatus,
             errorCode,
+            ...(errorCode === "ACP_PROTOCOL" &&
+            isAcpContextFailureReason(item.errorReason)
+              ? { errorReason: item.errorReason }
+              : {}),
             ...optional("targetSlot", targetSlot),
           },
         ]

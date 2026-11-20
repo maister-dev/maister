@@ -1,5 +1,7 @@
 import "server-only";
 
+import { promptContextFailureReason } from "../../../../runtime/acp-context-failure";
+
 import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
@@ -381,6 +383,7 @@ export async function decodeNodePromptCompletion(input: {
     outcome.state === "succeeded" && outcome.response.stopReason === "end_turn";
   const errorCode =
     outcome.state === "succeeded" ? "ACP_PROTOCOL" : outcome.error.code;
+  const errorReason = promptContextFailureReason(outcome);
 
   if (!ok && !isMaisterErrorCode(errorCode))
     throw new PromptOwnerInvariantError("node_terminal_error_code");
@@ -395,6 +398,7 @@ export async function decodeNodePromptCompletion(input: {
       vars: {},
       ...(input.acpSessionId ? { acpSessionId: input.acpSessionId } : {}),
       ...(!ok && isMaisterErrorCode(errorCode) ? { errorCode } : {}),
+      ...(!ok && errorReason ? { errorReason } : {}),
     },
     originalOutput: finishSentinelOutput(sentinel, maxBytes),
   };

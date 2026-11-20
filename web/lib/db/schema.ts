@@ -6982,6 +6982,7 @@ export type ArtifactLocator =
       // P0-5: consensus evidence stays in existing artifact locator JSON.
       partial?: boolean;
       stopReason?: string;
+      errorReason?: import("../../../runtime/acp-context-failure").AcpContextFailureReason;
       reason?: string;
       truncated?: boolean;
       textBounds?: ArtifactTextBounds;
@@ -7194,6 +7195,7 @@ export type ConsensusRoundDisagreementStorage =
       rows: ConsensusRoundDisagreement[];
       truncated: boolean;
       textBounds?: ArtifactTextBounds;
+      errorReason?: import("../../../runtime/acp-context-failure").AcpContextFailureReason;
     };
 
 export const consensusRoundVerdicts = pgTable(

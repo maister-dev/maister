@@ -6,7 +6,7 @@ import type { ScratchCreateOwner } from "@/lib/execution-host/create-owner-contr
 import type { OwnedCreateContinuation } from "@/lib/execution-host/create-continuation";
 import type { ScratchExecution } from "./events";
 import type { ScratchPromptOwner } from "./prompt-owner";
-import type { PromptResult } from "@/lib/execution-host";
+import type { ScratchPromptResult } from "./prompt-owner";
 
 import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
@@ -302,7 +302,7 @@ export async function dispatchOwnedScratchCreatePrompt(
   owner: ScratchCreateOwner,
   sessionId: string,
   continuation: ScratchCreateContinuation,
-): Promise<PromptResult | null> {
+): Promise<ScratchPromptResult | null> {
   if (!continuation.payload) return null;
   const result = await sendScratchPromptAndProjectEvents({
     db,
@@ -313,7 +313,7 @@ export async function dispatchOwnedScratchCreatePrompt(
     owner: promptOwner(owner, continuation),
   });
 
-  if (owner.variant === "package_scratch") {
+  if (owner.variant === "package_scratch" && result.stopReason === "end_turn") {
     const { postProcessRecoveredPackageTurn } = await import("./service");
 
     await postProcessRecoveredPackageTurn(db, owner.scratchRunId, owner);

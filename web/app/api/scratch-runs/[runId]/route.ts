@@ -17,6 +17,8 @@ import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { readCompactionEvidence } from "@/lib/runs/compaction-evidence";
 import { readContextSnapshot } from "@/lib/runs/context-reader";
+import { isAcpContextFailureReason } from "../../../../../runtime/acp-context-failure";
+
 import { loadScratchTerminalCause } from "@/lib/runs/terminal-cause";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
@@ -299,6 +301,8 @@ function publicErrorMetadata(
     causeCode?: unknown;
   } | null;
 
+  if (isAcpContextFailureReason(metadata?.reason))
+    return { reason: metadata.reason };
   if (metadata?.cause === "host_pressure") return { cause: "host_pressure" };
   if (metadata?.reason === "scratch_dispatch_unknown")
     return { reason: "scratch_dispatch_unknown" };
@@ -475,6 +479,7 @@ export async function GET(
         runId,
         run.status,
         scratch.errorCode,
+        scratch.errorMetadata?.reason,
       ),
       capabilityProfile: publicCapabilityProfile(profileRows[0]),
       pendingHitl: pendingHitl

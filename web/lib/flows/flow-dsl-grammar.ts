@@ -171,6 +171,10 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 - gate \`kind\`: command_check | skill_check | ai_judgment | artifact_required | external_check | human_review
 - gate \`mode\`: blocking | advisory
 - \`rework.workspacePolicies\` / \`retry_policy.workspace\`: keep | rewind-to-node-checkpoint | fresh-attempt
+- \`retry_policy\`: total attempts, one or both nonempty selector lists (OR), and workspace.
+  \`on_errors\`: SPAWN | EXECUTOR_UNAVAILABLE | CHECKPOINT | ACP_PROTOCOL (engine 1.4.0+).
+  \`on_reasons\`: context_exhausted | max_output_tokens (engine 3.13.0+).
+  To retry an overflow in a fresh session and keep files, set \`on_reasons: [context_exhausted]\` and \`workspace: keep\`.
 - consensus \`rounds.mode\`: single_pass | iterate
 - consensus \`on_no_consensus\`: escalate
 - \`enforcement\` per-class mode: strict | instruct | off

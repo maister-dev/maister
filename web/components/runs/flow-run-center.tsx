@@ -19,6 +19,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
+import { ContextLimitMessage } from "@/components/runs/context-limit-message";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import {
   NodeTranscriptPanel,
@@ -247,6 +248,7 @@ function AttemptRows({
             />
             <AttemptFailure
               errorCode={attempt.errorCode}
+              errorReason={attempt.errorReason}
               exitCode={attempt.exitCode}
               labels={labels.failure}
               status={attempt.status}
@@ -274,12 +276,18 @@ function GateRows({
     <ResultSection testId="flow-run-node-gates" title={labels.gates}>
       <CompactRows>
         {gates.map((gate) => (
-          <CompactRow
-            key={`${gate.attempt}:${gate.gateId}:${gate.status}`}
-            meta={`${gate.kind} | ${gate.mode} | ${gate.status}`}
-            title={gate.gateId}
-            tone={gate.status === "failed" ? "danger" : "default"}
-          />
+          <div key={`${gate.attempt}:${gate.gateId}:${gate.status}`}>
+            <CompactRow
+              meta={`${gate.kind} | ${gate.mode} | ${gate.status}`}
+              title={gate.gateId}
+              tone={gate.status === "failed" ? "danger" : "default"}
+            />
+            {gate.status === "failed" && gate.promptFailureReason ? (
+              <p className="text-sm text-danger">
+                <ContextLimitMessage reason={gate.promptFailureReason} />
+              </p>
+            ) : null}
+          </div>
         ))}
       </CompactRows>
     </ResultSection>

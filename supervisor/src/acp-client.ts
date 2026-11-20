@@ -8,6 +8,7 @@ import type { Logger } from "pino";
 import { randomUUID } from "node:crypto";
 
 import * as acp from "@agentclientprotocol/sdk/unstable";
+import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
 
 import { isNativeKnowledgeReadTool } from "../../runtime/knowledge-tool-effects";
 
@@ -259,6 +260,38 @@ function withTimeout<T>(
   });
 }
 
+function contextLimitReason(
+  adapter: ExecutorAgent,
+  error: unknown,
+): AcpContextFailureReason | undefined {
+  if (!(error instanceof acp.RequestError) || error.code !== -32603)
+    return undefined;
+  const data = error.data;
+  const kind =
+    data && typeof data === "object" && "errorKind" in data
+      ? data.errorKind
+      : undefined;
+
+  if (
+    adapter === "codex" &&
+    data &&
+    typeof data === "object" &&
+    "codexErrorInfo" in data &&
+    data.codexErrorInfo === "contextWindowExceeded"
+  )
+    return "context_exhausted";
+  if (adapter !== "claude") return undefined;
+  if (kind === "max_output_tokens") return "max_output_tokens";
+
+  // Claude ACP 0.95 shares invalid_request across unrelated provider errors.
+  if (
+    (kind === "invalid_request" || kind === undefined) &&
+    error.message.trim() === "Internal error: Prompt is too long"
+  )
+    return "context_exhausted";
+  return undefined;
+}
+
 export function classifyAcpMethodError(args: {
   adapter: ExecutorAgent;
   method: AcpMethod;
@@ -266,6 +299,22 @@ export function classifyAcpMethodError(args: {
   sessionId?: string;
 }): SupervisorError {
   if (isSupervisorError(args.err)) return args.err;
+
+  const reason =
+    args.method === "prompt"
+      ? contextLimitReason(args.adapter, args.err)
+      : undefined;
+
+  if (reason) {
+    const message =
+      reason === "context_exhausted"
+        ? "Agent context window exhausted"
+        : "Agent reached its output token limit";
+
+    return new SupervisorError("ACP_PROTOCOL", message, {
+      details: { reason },
+    });
+  }
 
   const rawMessage = errorText(args.err);
   const lower = rawMessage.toLowerCase();

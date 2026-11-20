@@ -21,6 +21,9 @@ import {
 } from "@/components/scratch/scratch-transcript";
 import { ScratchComposer } from "@/components/scratch/scratch-composer";
 import { ScratchPermissionPanel } from "@/components/scratch/scratch-permission-panel";
+import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
+
+import { ContextLimitMessage } from "@/components/runs/context-limit-message";
 import {
   TerminalCauseNotice,
   type TerminalCauseLabels,
@@ -849,6 +852,15 @@ export function ScratchConversation({
         </p>
       ) : null}
 
+      {isAcpContextFailureReason(detail?.scratch.errorMetadata?.reason) ? (
+        <p
+          className="mx-4 mt-3 text-sm text-danger"
+          role="status"
+          data-testid="scratch-context-limit"
+        >
+          <ContextLimitMessage reason={detail.scratch.errorMetadata.reason} />
+        </p>
+      ) : null}
       {!compact ? (
         <div className="border-t border-line-soft px-4 pt-2">
           <ContextUsageMeter snapshot={context} />
@@ -860,7 +872,12 @@ export function ScratchConversation({
         catalog={commandCatalog}
         compact={compact}
         deliveryNotice={canSendWhileBusy(status) ? deliveryNotice : null}
-        disabledReason={sendDisabledReason}
+        disabledReason={
+          sendDisabledReason ??
+          (detail?.scratch.errorMetadata?.reason === "context_exhausted"
+            ? t("contextExhaustedCompose")
+            : null)
+        }
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}

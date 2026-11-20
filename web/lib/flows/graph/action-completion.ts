@@ -26,6 +26,7 @@ export type FlowActionCompletion = Readonly<{
       | "stdout"
       | "vars"
       | "errorCode"
+      | "errorReason"
       | "exitCode"
       | "acpSessionId"
       | "reason"
@@ -55,12 +56,21 @@ export async function persistLocalActionCompletion<
         nodeOutputMaxBytes(),
       )
     : { kind: "absent" };
-  const { ok, stdout, vars, errorCode, exitCode, acpSessionId } = input.result;
+  const { ok, stdout, vars, errorCode, errorReason, exitCode, acpSessionId } =
+    input.result;
   const completion: FlowActionCompletion = {
     version: 1,
     commandId: null,
     promptOrdinal: 0,
-    result: { ok, stdout, vars, errorCode, exitCode, acpSessionId },
+    result: {
+      ok,
+      stdout,
+      vars,
+      errorCode,
+      errorReason,
+      exitCode,
+      acpSessionId,
+    },
     originalOutput,
   };
   const rows = await input.db

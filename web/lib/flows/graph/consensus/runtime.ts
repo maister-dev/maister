@@ -1036,6 +1036,20 @@ function completedSynthesisText(
     const stopReason =
       evidence.kind === "incomplete" ? evidence.stopReason : null;
 
+    const errorReason =
+      evidence.kind === "incomplete" ? evidence.errorReason : undefined;
+
+    if (errorReason)
+      throw new MaisterError(
+        "ACP_PROTOCOL",
+        "Consensus synthesis reached an ACP context limit",
+        {
+          details: {
+            reason: errorReason,
+            recovery: "consensus_synthesis_incomplete",
+          },
+        },
+      );
     log.error(
       {
         nodeId,

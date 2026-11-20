@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AcpContextFailureReason } from "../../../../runtime/acp-context-failure";
+
 import type { GateDef } from "@/lib/config.schema";
 import type { ArtifactKind, GateResult, GateVerdict } from "@/lib/db/schema";
 import type { ExecutionFlowContext as FlowContext } from "../types";
@@ -96,6 +98,7 @@ export type GateRunResult = {
   // true if no blocking gate failed (the node may proceed to finish).
   ok: boolean;
   blockingFailedGateId?: string;
+  blockingFailureReason?: AcpContextFailureReason;
   // ADR-166 E-EH-11: a gate's agent turn came back `assignment_fenced` — a
   // newer driver generation owns the run. No verdict was recorded; the caller
   // MUST yield without writing node or run state.
@@ -126,6 +129,8 @@ export async function runNodeGates(
   ctx: GateRunContext,
 ): Promise<GateRunResult> {
   let blockingFailedGateId: string | undefined;
+  let blockingFailureReason: AcpContextFailureReason | undefined;
+  let routingFailureReason: AcpContextFailureReason | undefined;
   // M38 (ADR-103): when the node routes on a verdict, the verdict-producing gate
   // is routing-input — it never sets blockingFailedGateId, and its calibrated
   // verdict is surfaced to the caller for the `decide` table.
@@ -157,7 +162,7 @@ export async function runNodeGates(
   const latestByGate = new Map(existingRows.map((row) => [row.gateId, row]));
 
   for (const gate of node.gates) {
-    const verdictSink: { verdict?: GateVerdict } = {};
+    const verdictSink: GatePromptEvidence = {};
     let status: Awaited<ReturnType<typeof runOneGate>>;
 
     if (gate.id === crashRecovery?.evaluation.gateId) beforeCrashedGate = false;
@@ -183,6 +188,7 @@ export async function runNodeGates(
           throw new PromptOwnerInvariantError(
             "gate_crash_recovery_prefix_open",
           );
+        verdictSink.errorReason = prior.promptFailureReason ?? undefined;
         status = prior.status === "overridden" ? "passed" : prior.status;
         if (prior.verdict && prior.verdict.verdict !== "unparseable")
           verdictSink.verdict = prior.verdict;
@@ -209,6 +215,8 @@ export async function runNodeGates(
     const isVerdictGate =
       gate.kind === "ai_judgment" || gate.kind === "skill_check";
 
+    if (verdictRouting && isVerdictGate)
+      routingFailureReason = verdictSink.errorReason;
     if (verdictRouting && isVerdictGate && verdictSink.verdict !== undefined) {
       routedVerdict = verdictSink.verdict;
     }
@@ -272,6 +280,7 @@ export async function runNodeGates(
       !routingInputWithVerdict
     ) {
       blockingFailedGateId = gate.id;
+      blockingFailureReason = verdictSink.errorReason;
       // Keep running the remaining gates so all verdicts are recorded for the
       // attempt, but the node will not finish (caller aborts).
     }
@@ -289,6 +298,7 @@ export async function runNodeGates(
   // blocking path does. (verifyDecideAndOnMismatch guarantees exactly one
   // verdict gate on a from:verdict node, so this find is always defined.)
   if (verdictRouting && routedVerdict === undefined && !blockingFailedGateId) {
+    blockingFailureReason = routingFailureReason;
     blockingFailedGateId = node.gates.find(
       (g) => g.kind === "ai_judgment" || g.kind === "skill_check",
     )?.id;
@@ -297,6 +307,7 @@ export async function runNodeGates(
   return {
     ok: blockingFailedGateId === undefined,
     blockingFailedGateId,
+    ...(blockingFailureReason ? { blockingFailureReason } : {}),
     verdict: routedVerdict,
   };
 }
@@ -339,6 +350,11 @@ async function runGateStepGuarded<T>(
   }
 }
 
+type GatePromptEvidence = {
+  verdict?: GateVerdict;
+  errorReason?: AcpContextFailureReason;
+};
+
 async function runOneGate(
   gate: GateDef,
   node: CompiledNode,
@@ -351,7 +367,7 @@ async function runOneGate(
   // M38 (ADR-103): a mutable sink the ai_judgment/skill_check arm writes the
   // parsed verdict into, so `runNodeGates` can surface it for a `decide` table
   // WITHOUT a gate_results re-read. Undefined for callers that don't route.
-  verdictSink?: { verdict?: GateVerdict },
+  verdictSink?: GatePromptEvidence,
 ): Promise<"passed" | "failed" | "skipped" | "pending" | "fenced"> {
   const base = {
     runId: loaded.run.id,
@@ -557,6 +573,9 @@ async function runOneGate(
         )
           verdictSink.verdict = evaluation.verdict;
 
+        if (verdictSink)
+          verdictSink.errorReason = evaluation.promptFailureReason ?? undefined;
+
         return evaluation.status === "failed" ? "failed" : "passed";
       }
       // skill_check runs a slash command (best-effort, no capability scoping —
@@ -660,6 +679,9 @@ async function runOneGate(
         verdictSink
       )
         verdictSink.verdict = applied.verdict;
+
+      if (verdictSink)
+        verdictSink.errorReason = applied.promptFailureReason ?? undefined;
 
       return applied.status;
     }

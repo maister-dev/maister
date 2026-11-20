@@ -24,6 +24,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import {
   ScratchPromptQuarantined,
   waitForScratchPrompt,
+  type ScratchPromptResult,
   type ScratchPromptOwner,
 } from "./prompt-owner";
 import { admitFrozenScratchPrompt } from "./prompt-intent";
@@ -47,7 +48,6 @@ import {
 } from "@/lib/scratch-runs/transcript";
 import {
   type PromptContentBlock,
-  type PromptResult,
   type SupervisorEvent,
 } from "@/lib/execution-host";
 import {
@@ -1179,7 +1179,7 @@ type ScratchPromptSend = {
 
 export async function sendScratchPromptAndProjectEvents(
   args: ScratchPromptSend,
-): Promise<PromptResult> {
+): Promise<ScratchPromptResult> {
   try {
     return await sendAndProjectScratchPrompt(args);
   } catch (err) {
@@ -1210,7 +1210,7 @@ export async function sendScratchPromptAndProjectEvents(
 
 async function sendAndProjectScratchPrompt(
   args: ScratchPromptSend,
-): Promise<PromptResult> {
+): Promise<ScratchPromptResult> {
   const db = args.db ?? getDb();
   const execution =
     args.execution ?? (await bindScratchExecution(db, args.runId));
@@ -1222,7 +1222,7 @@ async function sendAndProjectScratchPrompt(
     execution,
   });
 
-  let promptResult: PromptResult;
+  let promptResult: ScratchPromptResult;
 
   try {
     const owner = args.owner;
@@ -1259,13 +1259,12 @@ async function sendAndProjectScratchPrompt(
       },
     );
 
-    await waitForScratchPrompt(
+    promptResult = (await waitForScratchPrompt(
       db,
       execution.client,
       handle.commandId,
       args.signal,
-    );
-    promptResult = { stopReason: "end_turn", meta: null };
+    )) ?? { stopReason: "end_turn", meta: null };
   } finally {
     consumer.abort.abort();
     await consumer.done;

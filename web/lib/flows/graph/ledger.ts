@@ -230,6 +230,8 @@ export async function markNodeFailed(
   nodeAttemptId: string,
   args: {
     errorCode: MaisterErrorCode;
+    errorReason?: import("../../../../runtime/acp-context-failure").AcpContextFailureReason;
+    acpSessionId?: string;
     stdout?: string | null;
     exitCode?: number;
     // ADR-162: set by the structured-output seam when the contract had already
@@ -248,6 +250,9 @@ export async function markNodeFailed(
       stdout: truncate(args.stdout),
       exitCode: args.exitCode ?? null,
       errorCode: args.errorCode,
+      errorReason:
+        args.errorCode === "ACP_PROTOCOL" ? (args.errorReason ?? null) : null,
+      ...(args.acpSessionId ? { acpSessionId: args.acpSessionId } : {}),
       ...(args.outputContract ? { outputContract: args.outputContract } : {}),
       endedAt: new Date(),
     })
@@ -292,6 +297,7 @@ export async function latestAttemptForNode(
   attempt: number;
   checkpointRef: string | null;
   acpSessionId: string | null;
+  errorReason: NodeAttempt["errorReason"];
   // ADR-118: the current rework epoch baseline (NULL ⇒ 0).
   reworkBaseline: number | null;
 } | null> {
@@ -302,6 +308,7 @@ export async function latestAttemptForNode(
     attempt: number;
     checkpointRef: string | null;
     acpSessionId: string | null;
+    errorReason: NodeAttempt["errorReason"];
     reworkBaseline: number | null;
   }> = await d
     .select({
@@ -309,6 +316,7 @@ export async function latestAttemptForNode(
       attempt: nodeAttempts.attempt,
       checkpointRef: nodeAttempts.checkpointRef,
       acpSessionId: nodeAttempts.acpSessionId,
+      errorReason: nodeAttempts.errorReason,
       reworkBaseline: nodeAttempts.reworkBaseline,
     })
     .from(nodeAttempts)

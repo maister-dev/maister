@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  isAcpContextFailureReason,
+  promptContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../../../runtime/acp-context-failure";
+
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
@@ -123,6 +129,7 @@ export type ConsensusSynthesisEvidence =
       synthesisId: string;
       text: string;
       stopReason: string | null;
+      errorReason?: AcpContextFailureReason;
       truncated?: boolean;
       textBounds?: ConsensusTextBounds;
       inputTextBounds?: ConsensusTextBounds;
@@ -190,6 +197,9 @@ export async function loadConsensusSynthesis(input: {
       synthesisId: input.synthesisId,
       text: locator.text,
       stopReason: meta.stopReason,
+      ...(isAcpContextFailureReason(locator.errorReason)
+        ? { errorReason: locator.errorReason }
+        : {}),
       ...metadata,
     };
 
@@ -465,6 +475,10 @@ export async function prepareConsensusPrompt(input: {
       },
       "consensus-text-truncated",
     );
+  const errorReason =
+    retained.droppedBytes === 0
+      ? promptContextFailureReason(outcome)
+      : undefined;
   const { ok, errorCode, result } = consensusTurnVerdict(
     outcome,
     retained,
@@ -532,6 +546,7 @@ export async function prepareConsensusPrompt(input: {
                   }
                 : {}),
               stopReason: consensusTurnStopReason(outcome),
+              ...(errorReason ? { errorReason } : {}),
             },
             validity: "current",
             visibility: "internal",
@@ -570,6 +585,7 @@ export async function prepareConsensusPrompt(input: {
           ? { inputTextBounds: inputEvidence.textBounds }
           : {}),
         ...(errorCode ? { errorCode } : {}),
+        ...(errorReason ? { errorReason } : {}),
       });
 
       // The lock above excludes another owner; only the runtime's unpaid

@@ -5,6 +5,8 @@ import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
+import { acpContextFailureReason } from "../../../runtime/acp-context-failure";
+
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
@@ -2005,6 +2007,13 @@ async function runNewSession(
       vars: nodeCompletion?.vars ?? {},
       durationMs: Date.now() - startedAt,
       errorCode,
+      errorReason:
+        errorCode === "ACP_PROTOCOL"
+          ? (nodeCompletion?.errorReason ??
+            (promptResult.stopReason === "max_tokens"
+              ? "max_output_tokens"
+              : undefined))
+          : undefined,
       acpSessionId: session.acpSessionId,
       sessionFallback,
     };
@@ -2066,6 +2075,19 @@ async function runNewSession(
         sessionFallback,
       };
     }
+    const errorReason = acpContextFailureReason(err);
+
+    if (errorReason && session)
+      return {
+        ok: false,
+        stdout: consumer?.snapshot() ?? "",
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "ACP_PROTOCOL",
+        errorReason,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
     throw err;
   } finally {
     if (session && !fenced && !continuationPending) {

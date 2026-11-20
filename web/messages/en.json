@@ -1392,6 +1392,7 @@
       "Abandoned": "Abandoned"
     },
     "hostPaused": "Paused by the execution host — send again when it recovers",
+    "contextExhaustedCompose": "Start a fresh session to send another message.",
     "dispatchUnknown": "Delivery of this turn is unknown after a restart. Stop this run and start a new run.",
     "turnQuarantined": "The last turn's result could not be stored, so it ended without one. Send a new message to continue."
   },
@@ -3194,6 +3195,8 @@
       "reasonLabel": "Reason",
       "unknownReason": "No further detail was recorded.",
       "reasons": {
+        "context_exhausted": "The agent ran out of context. Retry in a fresh session, choose a runner with a larger context window, or set this runner’s actual context window.",
+        "max_output_tokens": "The response reached the agent’s output limit. Split the requested output into smaller parts.",
         "agent_turn_lost": "The execution host restarted and lost the agent's turn.",
         "turn_lost": "The execution host restarted and lost the agent's turn.",
         "session_crashed": "The agent process crashed.",

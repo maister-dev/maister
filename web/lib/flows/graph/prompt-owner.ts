@@ -516,7 +516,13 @@ export const flowPromptOwnerAdapter = definePromptOwnerAdapter(
         )
           return "superseded";
         if (passed) await markGatePassed(evaluation.id, verdict!, tx);
-        else await markGateFailed(evaluation.id, verdict!, tx);
+        else
+          await markGateFailed(
+            evaluation.id,
+            verdict!,
+            tx,
+            completion!.errorReason,
+          );
         log.info(
           {
             runId: ref.runId,

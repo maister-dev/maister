@@ -5,6 +5,11 @@ import type { GateVerdict } from "@/lib/db/schema";
 import type { PromptOwnerOutcome } from "@/lib/execution-host/prompt-owners";
 import type { FlowOwnerRef } from "./prompt-owner-authority";
 
+import {
+  promptContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../../runtime/acp-context-failure";
+
 import { eq } from "drizzle-orm";
 
 import { compileManifest } from "./compile";
@@ -24,6 +29,7 @@ export type GatePromptCompletion = Readonly<{
   gateKind: "ai_judgment" | "skill_check";
   status: "passed" | "failed";
   verdict: GateVerdict;
+  errorReason?: AcpContextFailureReason;
 }>;
 
 /** Decode the full verified output with the evaluation's manifest and
@@ -50,6 +56,7 @@ export async function decodeGatePromptCompletion(input: {
 
   if (!node || !gate || gate.kind !== gateKind)
     throw new PromptOwnerInvariantError("gate_owner_definition_missing");
+  const errorReason = promptContextFailureReason(outcome);
   let output = emptyGateOutput();
 
   if (outcome.state === "succeeded") {
@@ -84,7 +91,7 @@ export async function decodeGatePromptCompletion(input: {
       : null;
   let verdict: GateVerdict = parsed ?? {
     verdict: "unparseable",
-    reasons: [output.evidence],
+    reasons: errorReason ? [] : [output.evidence],
   };
   let passed = parsed !== null && node.decide?.from === "verdict";
 
@@ -101,5 +108,6 @@ export async function decodeGatePromptCompletion(input: {
     gateKind,
     status: passed ? "passed" : "failed",
     verdict,
+    ...(errorReason ? { errorReason } : {}),
   };
 }

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
+
 import type {
   TerminalCause,
   TerminalCauseStatus,
@@ -113,6 +115,7 @@ export async function loadScratchTerminalCause(
   runId: string,
   status: string,
   errorCode: string | null,
+  errorReason?: unknown,
 ): Promise<TerminalCause | null> {
   if (!isTerminalCauseStatus(status)) return null;
   const cause = await loadRunTerminalCause(db, runId, status);
@@ -120,6 +123,13 @@ export async function loadScratchTerminalCause(
   if (cause || status === "Abandoned") return cause;
 
   return errorCode !== null && isMaisterErrorCode(errorCode)
-    ? { code: errorCode, source: "scratch" }
+    ? {
+        code: errorCode,
+        source: "scratch",
+        ...(errorCode === "ACP_PROTOCOL" &&
+        isAcpContextFailureReason(errorReason)
+          ? { reason: errorReason }
+          : {}),
+      }
     : null;
 }

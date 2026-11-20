@@ -313,13 +313,19 @@ export async function authorizeGatePermissionResume(
 }
 
 function verdictDigest(
-  evaluation: Pick<GateResult, "status" | "verdict">,
+  evaluation: Pick<GateResult, "status" | "verdict"> & {
+    promptFailureReason?: GateResult["promptFailureReason"];
+    errorReason?: GateResult["promptFailureReason"];
+  },
 ): string {
+  const reason = evaluation.promptFailureReason ?? evaluation.errorReason;
+
   return createHash("sha256")
     .update(
       canonicalCommandJson({
         status: evaluation.status,
         verdict: evaluation.verdict,
+        ...(reason ? { reason } : {}),
       }),
     )
     .digest("hex");
@@ -369,6 +375,7 @@ export async function authorizeGatePermissionResult(
     .set({
       status: prepared.completion.status,
       verdict: prepared.completion.verdict,
+      promptFailureReason: prepared.completion.errorReason ?? null,
       endedAt: new Date(),
       permissionResume: {
         version: 1,

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { promptContextFailureReason } from "../../../../../runtime/acp-context-failure";
+
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { PromptOwnerAdmission } from "@/lib/execution-host/ledger";
@@ -239,6 +241,10 @@ export async function prepareConsensusDraftPrompt(
     retained.droppedBytes === 0;
   const partial = text.trim().length > 0 && !complete;
   const stopReason = consensusTurnStopReason(outcome);
+  const errorReason =
+    retained.droppedBytes === 0
+      ? promptContextFailureReason(outcome)
+      : undefined;
 
   if (partial)
     log.warn(
@@ -261,7 +267,9 @@ export async function prepareConsensusDraftPrompt(
     complete ? "Done" : "Failed",
     {
       db,
-      ...(complete ? {} : { reason: "consensus_draft_incomplete" }),
+      ...(complete
+        ? {}
+        : { reason: errorReason ?? "consensus_draft_incomplete" }),
     },
   );
   let application: AgentFinalizationApplication = { finalized: false };
@@ -298,7 +306,7 @@ export async function prepareConsensusDraftPrompt(
                     reason:
                       retained.droppedBytes > 0
                         ? "output_cap_exceeded"
-                        : "consensus_draft_incomplete",
+                        : (errorReason ?? "consensus_draft_incomplete"),
                     ...(retained.droppedBytes > 0
                       ? { truncated: true, textBounds: outputBounds }
                       : {}),

@@ -1,3 +1,5 @@
+import type { AcpContextFailureReason } from "../../../../../runtime/acp-context-failure";
+
 import type {
   ConsensusDraftEvidence,
   ConsensusVerdictEvidence,
@@ -14,6 +16,7 @@ export type ConsensusTechnicalFailure = Readonly<{
   targetParticipantId: string;
   parseStatus: string;
   errorCode: string;
+  errorReason?: AcpContextFailureReason;
 }>;
 
 export type ConsensusRoundCritique = Readonly<{
@@ -125,6 +128,7 @@ export function technicalConsensusFailures(
       targetParticipantId: verdict.targetParticipantId,
       parseStatus: verdict.parseStatus,
       errorCode: verdict.errorCode ?? verdict.parseStatus,
+      ...(verdict.errorReason ? { errorReason: verdict.errorReason } : {}),
     }));
 }
 

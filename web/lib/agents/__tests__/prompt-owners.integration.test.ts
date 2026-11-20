@@ -210,6 +210,7 @@ async function seedAgent(input: {
   terminalBarrier?: string;
   stopReason?: string;
   failMessage?: string;
+  contextFailure?: "claude-input" | "claude-output";
   persistent?: boolean;
   permission?: boolean;
   hookTrip?: boolean;
@@ -4248,7 +4249,21 @@ describe("Agent owned prompts through the production launcher", () => {
     60_000 + 2 * KILLED_CLAIM_WAIT_MS,
   );
   it.each([
-    { name: "non-end-turn response", stopReason: "max_tokens" },
+    {
+      name: "non-end-turn response",
+      stopReason: "max_tokens",
+      reason: "max_output_tokens",
+    },
+    {
+      name: "input overflow rejection",
+      contextFailure: "claude-input" as const,
+      reason: "context_exhausted",
+    },
+    {
+      name: "output limit rejection",
+      contextFailure: "claude-output" as const,
+      reason: "max_output_tokens",
+    },
     {
       name: "adapter request failure",
       failMessage: "fixture adapter rejected the original prompt",
@@ -4266,7 +4281,8 @@ describe("Agent owned prompts through the production launcher", () => {
   ])(
     "owner-agent-initial settles $name and stops its exact session",
     async (failure) => {
-      const runId = await seedAgent({ bytes: 0, ...failure });
+      const { reason, ...fixture } = failure;
+      const runId = await seedAgent({ bytes: 0, ...fixture });
 
       startDriver(runId);
       await expect
@@ -4322,6 +4338,10 @@ describe("Agent owned prompts through the production launcher", () => {
         );
 
       expect(events).toHaveLength(1);
+      if (reason)
+        expect(events[0].payload).toMatchObject({
+          cause: { code: "ACP_PROTOCOL", reason },
+        });
       const sessions = await createExecutionHosts({ db })
         .local()
         .listSessions();

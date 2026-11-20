@@ -299,6 +299,43 @@ async function killAtDialogTransition(
 }
 
 describe("Scratch prompt owners through the production service", () => {
+  it.each([
+    [{ contextFailure: "claude-input" }, "context_exhausted"],
+    [{ contextFailure: "claude-output" }, "max_output_tokens"],
+    [{ stopReason: "max_tokens" }, "max_output_tokens"],
+  ] as const)(
+    "scratch context limit %j is retained as %s without a second prompt",
+    async (fixture, reason) => {
+      const runId = await launch(
+        `fixture-output:${JSON.stringify({ bytes: 0, ...fixture })}`,
+      );
+      const [scratch] = await db
+        .select()
+        .from(schema.scratchRuns)
+        .where(eq(schema.scratchRuns.runId, runId));
+
+      expect(scratch).toMatchObject({
+        dialogStatus: "WaitingForUser",
+        activePromptIntent: null,
+        errorCode: "ACP_PROTOCOL",
+        errorMetadata: { reason },
+      });
+      expect(await promptCommands(runId)).toMatchObject([
+        { applicationState: "applied" },
+      ]);
+      if (reason === "context_exhausted") {
+        await expect(
+          sendScratchUserMessage({
+            runId,
+            body: { content: "do not send", attachments: [] },
+          }),
+        ).rejects.toMatchObject({ code: "ACP_PROTOCOL", details: { reason } });
+        expect(await promptCommands(runId)).toHaveLength(1);
+      }
+    },
+    90_000,
+  );
+
   it("a delayed empty create handoff preserves a legacy Running turn and its unknown-delivery notice", async () => {
     const runId = await launch("");
     const hosts = createExecutionHosts({ db: db as unknown as Db });

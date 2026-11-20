@@ -90,7 +90,10 @@ export type ScratchDetail = {
     // turn's prompt was quarantined with no terminal evidence.
     errorMetadata?: {
       cause?: "host_pressure";
-      reason?: "prompt_terminal_conflict" | "scratch_dispatch_unknown";
+      reason?:
+        | "prompt_terminal_conflict"
+        | "scratch_dispatch_unknown"
+        | import("../../../runtime/acp-context-failure").AcpContextFailureReason;
       causeCode?: string;
     } | null;
   };

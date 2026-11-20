@@ -558,6 +558,20 @@ class LifecycleAgent {
         params,
         JSON.parse(fixtureLine.slice("fixture-output:".length)),
       );
+      if (spec.contextFailure === "claude-input")
+        throw acp.RequestError.internalError(
+          { errorKind: "invalid_request" },
+          "Prompt is too long",
+        );
+      if (spec.contextFailure === "claude-output")
+        throw acp.RequestError.internalError(
+          { errorKind: "max_output_tokens" },
+          "Synthetic output limit",
+        );
+      if (spec.contextFailure === "codex-input")
+        throw new acp.RequestError(-32603, "Synthetic context limit", {
+          codexErrorInfo: "contextWindowExceeded",
+        });
       if (spec.failMessage)
         throw new acp.RequestError(-32603, spec.failMessage);
       if (spec.usageTokens) {
