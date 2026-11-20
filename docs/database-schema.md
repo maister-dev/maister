@@ -5807,6 +5807,12 @@ append-only `agent_installation_run_sources` relation keyed by Run and project
 identity. The source rows survive project and Run retention. Main migration
 `0349_agent_installation_credentials` binds the installation credential to that
 exact execution authority and preserves existing company credential guards.
+Main migration `0353_agent_installation_schedule_reviews` retains the exact
+reviewed binding and reviewer witness on installation cron and event sources.
+Its admission guard verifies the reserved invocation and requires an exact
+unattended authority row at commit. Legacy company schedules retain their
+existing behavior. Installation schedules whose binding revision changes
+require a new review before admission can resume.
 
 ### Librarian source capture and governed confirmations
 

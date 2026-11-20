@@ -116,8 +116,8 @@ BEGIN
     JOIN company_specialist_binding_revisions r ON r.binding_id=b.id AND r.revision=b.revision
     JOIN package_installs p ON p.id=b.package_install_id AND p.package_status='Installed' AND p.trust_status IN ('trusted','trusted_by_policy')
     JOIN agents role ON role.id=b.agent_id AND role.enabled AND role.quarantined_at IS NULL
-    JOIN users u ON u.id=s->'authority'->'actor'->>'id' AND u.account_status='active' AND NOT u.must_change_password
-    JOIN company_grants g ON g.company_id=a.company_id AND g.principal_type='user' AND g.principal_id=u.id AND g.action='assignments:update' AND g.revoked_at IS NULL
+    LEFT JOIN users u ON u.id=s->'authority'->'actor'->>'id' AND u.account_status='active' AND NOT u.must_change_password
+    LEFT JOIN company_grants g ON g.company_id=a.company_id AND g.principal_type='user' AND g.principal_id=u.id AND g.action='assignments:update' AND g.revoked_at IS NULL
     WHERE a.id=s->'assignment'->>'id' AND a.company_id=NEW.company_id AND a.project_id IS NULL
       AND (
         (a.status='queued' AND NEW.retry_of_run_id IS NULL)
@@ -140,8 +140,40 @@ BEGIN
       AND a.input_revision=i.revision AND i.digest=s->'assignment'->>'inputSha256'
       AND b.id=s->'specialistBinding'->>'id' AND b.revision::numeric=(s->'specialistBinding'->>'revision')::numeric
       AND r.snapshot_digest=s->'specialistBinding'->>'snapshotSha256'
-      AND b.agent_id=NEW.source_agent_id AND NEW.agent_id=NEW.source_agent_id AND NEW.created_by_user_id=u.id
-      AND g.id=s->'authority'->'witness'->>'authorityId' AND g.revision::numeric=(s->'authority'->'witness'->>'revision')::numeric
+      AND b.agent_id=NEW.source_agent_id AND NEW.agent_id=NEW.source_agent_id
+      AND (
+        (NEW.created_by_user_id=u.id AND g.id=s->'authority'->'witness'->>'authorityId'
+          AND to_jsonb(g.revision)=s->'authority'->'witness'->'revision'
+          AND (NOT (r.snapshot ? 'installationGrant') OR NEW.trigger_source='manual' OR NEW.retry_of_run_id IS NOT NULL))
+        OR (
+          s->'schemaVersion'='1'::jsonb AND NEW.run_kind='agent' AND NEW.agent_workspace='none'
+          AND NEW.parent_run_id IS NULL AND NEW.retry_of_run_id IS NULL AND NEW.created_by_user_id IS NULL
+          AND r.snapshot ? 'installationGrant' AND NEW.trigger_source IN ('cron','domain_event')
+          AND a.requester=jsonb_build_object('kind','agent','id',NEW.agent_id,'runId',NEW.id,'attemptId',NULL)
+          AND i.actor=a.requester
+          AND EXISTS (
+            SELECT 1 FROM agent_trigger_attempts attempt
+            JOIN agent_schedules source ON source.id=attempt.schedule_id AND source.company_id=NEW.company_id AND source.project_id IS NULL
+            WHERE attempt.reserved_run_id=NEW.id AND attempt.schedule_id=NEW.agent_schedule_id
+              AND attempt.company_id=NEW.company_id AND attempt.project_id IS NULL
+              AND attempt.source_agent_id=NEW.agent_id AND attempt.outcome IS NULL
+              AND attempt.trigger_source=NEW.trigger_source AND attempt.trigger_event_id IS NOT DISTINCT FROM NEW.trigger_event_id
+              AND source.enabled AND source.stand_inspection IS NULL AND source.company_flow_binding_id IS NULL
+              AND source.company_specialist_binding_id=b.id AND source.agent_id=b.agent_id
+              AND source.installation_review->'reviewer'=s->'authority'
+              AND source.installation_review->'binding'=s->'specialistBinding'
+              AND attempt.binding_snapshot->'specialistBinding'=s->'specialistBinding'
+              AND attempt.binding_snapshot->'sourceRevision'=to_jsonb(source.company_config_revision)
+              AND ((NEW.trigger_source='cron' AND source.trigger_type='cron'
+                  AND a.origin=jsonb_build_object('kind','schedule','scheduleId',source.id,'triggerAttemptId',attempt.id)
+                  AND attempt.scheduled_request_snapshot=NEW.scheduled_request_snapshot)
+                OR (NEW.trigger_source='domain_event' AND source.trigger_type='event'
+                  AND a.origin=jsonb_build_object('kind','event','subscriptionId',source.id,'eventId',attempt.trigger_event_id::text)
+                  AND r.snapshot->'installationGrant'->'scopes' ? 'runs:read'))
+            FOR SHARE OF attempt,source
+          )
+        )
+      )
       AND coalesce(NEW.agent_config,'{}'::jsonb)=r.snapshot->'effectiveConfiguration'
       AND NEW.execution_policy=r.snapshot->'executionPolicy'
       AND NEW.agent_activity_snapshot->>'agentId'=b.agent_id

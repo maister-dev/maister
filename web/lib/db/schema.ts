@@ -1356,6 +1356,7 @@ export const agentSchedules = pgTable(
     projectSourceReview: jsonb(
       "project_source_review",
     ).$type<ProjectSourceReview>(),
+    installationReview: jsonb("installation_review"),
     // ADR-151: `mention` rows carry no cron and no event_match — both shape
     // CHECKs are `<>`-guarded, and the column itself has no value CHECK, so
     // the third value needed no migration.

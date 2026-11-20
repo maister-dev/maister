@@ -539,6 +539,7 @@ table agent_schedules {
   creation_key text
   creation_digest text
   project_source_review jsonb
+  installation_review jsonb
   trigger_type text [not null]
   stand_inspection jsonb
   request_at_launch text

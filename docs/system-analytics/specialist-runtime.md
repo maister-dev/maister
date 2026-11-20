@@ -396,7 +396,14 @@ Manual execution records the initiating user ID. The live authority on
 each operation is the frozen allow-list intersected with the current
 installation grant and that user's current project, company and exact-source
 rights. A reviewed cron/event reserves a Run as the agent principal and
-records the administrator's appointment as provenance. Unattended operations
+uses the schedule review as provenance. The review binds the enabled source
+to the exact specialist revision and retains the reviewer's authorization at
+configuration time. Fresh cron and event intake records the agent as the
+assignment actor and leaves the Run's initiating user unset. Account changes
+for the schedule reviewer do not affect that admission. A binding revision
+change invalidates the schedule review. Event intake also requires
+`runs:read` and rechecks the producing Run's classified source closure and
+chain depth. Unattended operations
 intersect the frozen list with the current installation grant and the
 destination/source conditions. Ordinary company Runs continue to resolve
 through the company-only principal contract. Exact reviewed binding drift

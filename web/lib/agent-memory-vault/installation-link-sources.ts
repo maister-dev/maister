@@ -92,6 +92,9 @@ async function entityLink(
     return projectSources(context.priorProjects);
   }
   if (link.kind === "task" || link.kind === "run") {
+    const scope = link.kind === "task" ? "tasks:read" : "runs:read";
+    if (context.authority && !context.authority.scopes.includes(scope))
+      throw unavailableMemory();
     const split = link.target.lastIndexOf("-");
     const taskNumber = Number(link.target.slice(split + 1));
     if (link.kind === "task" && !Number.isSafeInteger(taskNumber))

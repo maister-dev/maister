@@ -57,8 +57,10 @@ export function projectVisibilityReadPolicy(
     ? sql`AND m.project_id=${identity.boundProjectId}`
     : sql``;
 
-  return sql`EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=${project}
-    AND m.user_id=${user.id} AND m.role IN (${roles}) ${bound} FOR SHARE)`;
+  return sql`EXISTS (SELECT 1 FROM project_members m JOIN projects visibility_project
+      ON visibility_project.id=m.project_id AND visibility_project.archived_at IS NULL
+    WHERE m.project_id=${project} AND m.user_id=${user.id} AND m.role IN (${roles}) ${bound}
+    FOR SHARE OF m,visibility_project)`;
 }
 
 /** A role cannot read another role's private notes merely through a shared company/project grant. */

@@ -38,6 +38,10 @@ import { prepareCompanyDelegatedReservation } from "./company-delegated-reservat
 import { assertStandaloneCompanyAgentDefinition } from "./company-agent-definition";
 import { retainInstallationRunAuthority } from "./installation-authority";
 import {
+  assertInstallationAppointment,
+  type SpecialistIntakePrincipal,
+} from "./installation-appointment";
+import {
   captureInstallationProjects,
   installationRunProjects,
 } from "./installation-source-capture";
@@ -116,7 +120,7 @@ export async function reserveCompanyAgentRun(
 /** Reserve on the caller's transaction after host activation on a stable pooled database. */
 export async function reserveCompanyAgentRunInTransaction(
   tx: Db,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   input: CompanyAgentContextInput,
   hosts: ExecutionHosts,
   host: ExecutionHost,
@@ -124,11 +128,22 @@ export async function reserveCompanyAgentRunInTransaction(
 ): Promise<CompanyRunReservation> {
   assertCompanyTriggerAppointment(input.triggerSource, invocation);
   assertUpgradeMaintenanceAllows("run_admission");
-  const context = await prepareCompanyAgentContext(tx, userId, input);
+  const context = await prepareCompanyAgentContext(tx, principal, input);
+  if (
+    context.binding.snapshot.installationGrant &&
+    invocation &&
+    typeof principal === "string"
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Installation admission requires a reviewed trigger appointment",
+    );
   const triggerReservation = invocation
     ? await assertCompanyTriggerReservation(
         tx,
-        userId,
+        typeof principal === "string"
+          ? principal
+          : principal.review.reviewer.actor.id,
         context,
         invocation,
         null,
@@ -136,17 +151,27 @@ export async function reserveCompanyAgentRunInTransaction(
       )
     : null;
   const runId = triggerReservation?.runId ?? randomUUID();
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId: context.owner.companyId,
+      bindingId: context.binding.bindingId,
+      origin: context.assignment.origin,
+      runId,
+    });
 
   await insertCompanyAgentRun(tx, context, hosts, host, {
     runId,
     triggerSource: input.triggerSource,
     triggerReservation,
     scheduledRequest: context.input.snapshot.scheduledRequest,
+    ...(typeof principal !== "string" && {
+      installationAppointment: principal,
+    }),
   });
   const assignmentRevision =
     await activateInitialSpecialistAssignmentRunInTransaction(
       tx,
-      userId,
+      principal,
       context.assignment.id,
       {
         runId,
@@ -314,6 +339,7 @@ async function insertCompanyAgentRun(
     retryOfRunId?: string;
     parentRunId?: string;
     rootRunId?: string;
+    installationAppointment?: Exclude<SpecialistIntakePrincipal, string>;
   }>,
 ): Promise<void> {
   const { runId } = execution;
@@ -390,7 +416,9 @@ async function insertCompanyAgentRun(
     status: "Pending",
     flowVersion: "agent",
     flowRevision: "manual",
-    createdByUserId: context.authority.actor.id,
+    createdByUserId: execution.installationAppointment
+      ? null
+      : context.authority.actor.id,
     parentRunId: execution.parentRunId,
     rootRunId: execution.rootRunId,
     triggerSource: execution.triggerSource,

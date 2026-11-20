@@ -54,7 +54,8 @@ export function assignmentInputReadPolicy(
       OR (${companyWorkInputReadPolicy(identity, assignmentId, revision, digest)})
       OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
   if (identity.kind === "installation_agent")
-    return sql`specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text)`;
+    return sql`(specialist_run_has_input(${identity.actor.runId},(${assignmentId})::text,(${revision})::integer,(${digest})::text)
+      OR (${companyEventInputReadPolicy(identity, assignmentId, revision, digest)}))`;
 
   return sql`EXISTS (
     SELECT 1 FROM specialist_assignments source_assignment
@@ -99,12 +100,24 @@ function companyWorkInputReadPolicy(
 
 /** An event appointment may share only the producing Run's classified source closure under an explicit current read grant and reviewed limit. */
 function companyEventInputReadPolicy(
-  identity: Extract<KnowledgePrincipalIdentity, { kind: "company_agent" }>,
+  identity: Extract<
+    KnowledgePrincipalIdentity,
+    { kind: "company_agent" | "installation_agent" }
+  >,
   assignmentId: SQL,
   revision: SQL,
   digest: SQL,
 ): SQL {
-  if (!identity.actionLimits.includes("assignments:read")) return sql`false`;
+  const installation = identity.kind === "installation_agent";
+  if (
+    installation
+      ? !identity.installation.scopes.includes("runs:read")
+      : !identity.actionLimits.includes("assignments:read")
+  )
+    return sql`false`;
+  const companyId = installation
+    ? identity.installation.companyId
+    : identity.companyId;
 
   return sql`EXISTS (
     SELECT 1 FROM runs recipient
@@ -119,16 +132,20 @@ function companyEventInputReadPolicy(
     JOIN specialist_input_revisions original ON original.assignment_id=${assignmentId}
       AND original.revision::text=(${revision})::text AND original.digest=${digest}
     JOIN specialist_assignments original_owner ON original_owner.id=original.assignment_id AND original_owner.company_id=recipient.company_id AND original_owner.project_id IS NULL
-    JOIN company_grants sharing ON sharing.company_id=recipient.company_id AND sharing.principal_type='agent'
-      AND sharing.principal_id=${identity.actor.id} AND sharing.action='assignments:read' AND sharing.revoked_at IS NULL
-    WHERE recipient.id=${identity.actor.runId} AND recipient.company_id=${identity.companyId} AND recipient.project_id IS NULL
+    ${
+      installation
+        ? sql``
+        : sql`JOIN company_grants sharing ON sharing.company_id=recipient.company_id AND sharing.principal_type='agent'
+      AND sharing.principal_id=${identity.actor.id} AND sharing.action='assignments:read' AND sharing.revoked_at IS NULL`
+    }
+    WHERE recipient.id=${identity.actor.runId} AND recipient.company_id=${companyId} AND recipient.project_id IS NULL
       AND recipient.trigger_source='domain_event' AND requested.origin->>'kind'='event'
       AND (recipient.retry_of_run_id IS NULL OR company_event_retry_still_authorized(recipient.id))
       AND requested.origin->>'subscriptionId'=invocation.schedule_id AND requested.origin->>'eventId'=event.id::text
       AND producing.knowledge_access->>'state'='complete'
       AND producing.knowledge_access->'restrictions' @> jsonb_build_array(jsonb_build_object(
         'kind','assignment_input','assignmentId',original.assignment_id,'inputRevision',original.revision,'inputSha256',original.digest))
-    FOR SHARE OF recipient,appointment,requested,invocation,event,producing,original,original_owner,sharing
+    FOR SHARE OF recipient,appointment,requested,invocation,event,producing,original,original_owner${installation ? sql`` : sql`,sharing`}
   )`;
 }
 

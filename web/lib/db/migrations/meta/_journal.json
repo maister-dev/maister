@@ -2444,6 +2444,13 @@
       "when": 1795113328330,
       "tag": "0352_librarian_summary_knowledge_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 353,
+      "version": "7",
+      "when": 1795113783642,
+      "tag": "0353_agent_installation_schedule_reviews",
+      "breakpoints": true
     }
   ]
 }

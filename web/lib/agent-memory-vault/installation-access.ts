@@ -265,7 +265,7 @@ export async function authorizeHumanInstallationVault(
             AND m.user_id=${input.userId} WHERE p.id IN (${sql.join(
               revision.sourceProjectIds.map((id) => sql`${id}`),
               sql`, `,
-            )})
+            )}) AND p.archived_at IS NULL
             FOR SHARE OF p,m`);
         if (sources.rows.length !== new Set(revision.sourceProjectIds).size)
           return false;

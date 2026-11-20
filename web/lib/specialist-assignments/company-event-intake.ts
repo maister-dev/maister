@@ -6,6 +6,7 @@ import type { ExecutionHosts } from "@/lib/execution-host";
 import type { CompanyTriggerReservation } from "@/lib/agents/company-trigger-reservation";
 import type { SpecialistIntakeReceipt } from "./intake-types";
 import type { CompanyTriggerInvocation } from "./company-trigger-intake";
+import type { InstallationAppointment } from "@/lib/agents/installation-appointment";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -40,6 +41,7 @@ const eventInvocationSchema = z.object({
 async function loadCompanyEventInvocation(
   tx: SqlTransaction,
   invocation: CompanyTriggerReservation,
+  appointment: InstallationAppointment | null,
 ): Promise<CompanyTriggerInvocation> {
   const parsed = eventInvocationSchema.safeParse(
     (
@@ -79,11 +81,17 @@ async function loadCompanyEventInvocation(
         details: { reason: "company_event_kind_mismatch" },
       },
     );
-  await assertCompanyRunReadAccessInTransaction(
-    tx,
-    source.created_by,
-    source.source_run_id,
-  );
+  if (appointment && !appointment.scopes.includes("runs:read"))
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "Installation event admission requires the runs:read grant",
+    );
+  if (!appointment)
+    await assertCompanyRunReadAccessInTransaction(
+      tx,
+      source.created_by,
+      source.source_run_id,
+    );
 
   return {
     userId: source.created_by,

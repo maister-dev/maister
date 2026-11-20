@@ -41,6 +41,13 @@ export default async function SpecialistsSettings({
       ? selected
       : null;
   const canGrantInstallation = canManage && user.role === "admin";
+  const installationCandidate =
+    canGrantInstallation &&
+    selected?.detachedAt === null &&
+    selected.workspace === "none" &&
+    selected.coordinatorFlowRevisionId === null
+      ? selected
+      : null;
 
   const inspectors = canManage
     ? page.items.filter(
@@ -96,15 +103,15 @@ export default async function SpecialistsSettings({
           ))}
         </ul>
       </div>
-      {installation ? (
+      {selected && (installation || installationCandidate) ? (
         <nav className="flex gap-4 text-sm" aria-label={t("installationGrant")}>
           <a
             className="underline"
-            href={`?binding=${encodeURIComponent(installation.bindingId)}`}
+            href={`?binding=${encodeURIComponent(selected.bindingId)}`}
           >
             {t("configuration")}
           </a>
-          {installation.installationGrant?.memoryEnabled ? (
+          {installation?.installationGrant?.memoryEnabled ? (
             <a
               className="underline"
               href={`?binding=${encodeURIComponent(installation.bindingId)}&tab=memory`}
@@ -112,10 +119,10 @@ export default async function SpecialistsSettings({
               {t("installationMemory")}
             </a>
           ) : null}
-          {canGrantInstallation ? (
+          {installationCandidate ? (
             <a
               className="underline"
-              href={`?binding=${encodeURIComponent(installation.bindingId)}&edit=installation`}
+              href={`?binding=${encodeURIComponent(installationCandidate.bindingId)}&edit=installation`}
             >
               {t("editInstallationBinding")}
             </a>
@@ -136,27 +143,27 @@ export default async function SpecialistsSettings({
           }}
         />
       ) : null}
-      {installation && canGrantInstallation && query.edit === "installation" ? (
+      {installationCandidate && query.edit === "installation" ? (
         <BindingReviewForm
-          key={installation.configRevision}
+          key={installationCandidate.configRevision}
           bindingKind="specialist"
           companyId={companyId}
           canGrantInstallation
           editing={{
-            agentId: installation.id,
-            bindingId: installation.bindingId,
-            revision: installation.configRevision,
-            grant: installation.installationGrant,
+            agentId: installationCandidate.id,
+            bindingId: installationCandidate.bindingId,
+            revision: installationCandidate.configRevision,
+            grant: installationCandidate.installationGrant,
           }}
           example={{
-            packageInstallId: installation.packageInstallId,
-            packageRevision: installation.packageRevision,
-            definitionSha256: installation.definitionSha256,
-            enabled: installation.enabled,
-            configuration: installation.configuration,
-            grantActions: installation.grantActions,
-            runnerId: installation.runnerId,
-            executionPolicy: installation.executionPolicy,
+            packageInstallId: installationCandidate.packageInstallId,
+            packageRevision: installationCandidate.packageRevision,
+            definitionSha256: installationCandidate.definitionSha256,
+            enabled: installationCandidate.enabled,
+            configuration: installationCandidate.configuration,
+            grantActions: installationCandidate.grantActions,
+            runnerId: installationCandidate.runnerId,
+            executionPolicy: installationCandidate.executionPolicy,
             coordinatorFlowRevisionId: null,
           }}
         />

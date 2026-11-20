@@ -3,6 +3,7 @@ import "server-only";
 import type { CompanyAgentExecutionSnapshot } from "./company-agent-execution-types";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { CompanyUserAuthority } from "@/lib/company/authority";
+import type { SpecialistIntakePrincipal } from "./installation-appointment";
 import type {
   AssignmentInputRevision,
   SpecialistAssignment,
@@ -31,6 +32,7 @@ import { buildOperationalContract } from "./launch-contract";
 import { knowledgeRevisionSchema } from "@/lib/brain/knowledge-types";
 import { inspectKnowledgeEvidenceReference } from "@/lib/brain/knowledge-reference";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { assertInstallationAppointment } from "./installation-appointment";
 import { contentDigest } from "@/lib/evaluations/digest";
 import { MaisterError } from "@/lib/errors";
 import {
@@ -76,7 +78,7 @@ export type CompanyAgentContext = CompanySpecialistContext;
 /** Re-run inside admission's transaction; a previously returned context never authorizes a later effect. */
 export async function prepareCompanySpecialistContext(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   value: unknown,
   lock = lockCompanyAssignmentForExecution,
 ): Promise<CompanySpecialistContext> {
@@ -100,7 +102,7 @@ export async function prepareCompanySpecialistContext(
     },
     "company agent preflight started",
   );
-  const authority = await lock(tx, userId, request);
+  const authority = await lock(tx, principal, request);
   const { binding, effective } = await prepareCompanySpecialistRole(
     tx,
     request,
@@ -115,12 +117,12 @@ export async function prepareCompanySpecialistContext(
     );
   const assignment = await getSpecialistAssignmentInTransaction(
     tx,
-    userId,
+    principal,
     request.assignmentId,
   );
   const input = await getSpecialistAssignmentInputInTransaction(
     tx,
-    userId,
+    principal,
     request.assignmentId,
     request.inputRevision,
   );
@@ -136,12 +138,13 @@ export async function prepareCompanySpecialistContext(
       "Assignment execution policy differs from the reviewed specialist policy; review and update the requested authority before admission",
       { details: { reason: "company_assignment_policy_mismatch" } },
     );
-  for (const reference of input.snapshot.objectiveInput.inputRefs)
-    await inspectKnowledgeEvidenceReference(
-      tx,
-      { kind: "user", userId },
-      reference,
-    );
+  if (typeof principal === "string")
+    for (const reference of input.snapshot.objectiveInput.inputRefs)
+      await inspectKnowledgeEvidenceReference(
+        tx,
+        { kind: "user", userId: principal },
+        reference,
+      );
 
   if (
     standing.agentId !== definition.id ||
@@ -248,47 +251,52 @@ export async function prepareCompanySpecialistRole(
 /** Lock the business owner before any configuration, matching assignment transition order. */
 export async function lockCompanyAssignmentForExecution(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   request: CompanyAgentContextInput,
 ): Promise<CompanyUserAuthority> {
-  return lockCompanyExecutionHead(tx, userId, request, "queued");
+  return lockCompanyExecutionHead(tx, principal, request, "queued");
 }
 
 export async function lockCompanyReplacementForExecution(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   request: CompanyAgentContextInput,
 ): Promise<CompanyUserAuthority> {
+  if (typeof principal !== "string") throw unavailableAssignment();
   await authorizeCompanyUserAction(
     tx,
-    userId,
+    principal,
     request.companyId,
     "assignments:recover",
   );
 
-  return lockCompanyExecutionHead(tx, userId, request, "active");
+  return lockCompanyExecutionHead(tx, principal, request, "active");
 }
 
 async function lockCompanyExecutionHead(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   request: CompanyAgentContextInput,
   status: "queued" | "active",
 ): Promise<CompanyUserAuthority> {
   await beginAssignmentTransaction(tx);
 
-  await authorizeCompanyUserAction(
-    tx,
-    userId,
-    request.companyId,
-    "assignments:read",
-  );
-  const authority = await authorizeCompanyUserAction(
-    tx,
-    userId,
-    request.companyId,
-    "assignments:update",
-  );
+  if (typeof principal === "string")
+    await authorizeCompanyUserAction(
+      tx,
+      principal,
+      request.companyId,
+      "assignments:read",
+    );
+  const authority =
+    typeof principal === "string"
+      ? await authorizeCompanyUserAction(
+          tx,
+          principal,
+          request.companyId,
+          "assignments:update",
+        )
+      : principal.review.reviewer;
   const owned = (
     await tx.execute(
       sql`SELECT id FROM specialist_assignments WHERE id=${request.assignmentId} AND company_id=${request.companyId} AND project_id IS NULL FOR UPDATE`,
@@ -304,6 +312,12 @@ async function lockCompanyExecutionHead(
 
   if (head.company_id !== request.companyId || head.project_id !== null)
     throw unavailableAssignment();
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId: head.company_id,
+      bindingId: head.specialist_binding_id,
+      origin: head.origin,
+    });
   if (
     head.status !== status ||
     head.input_revision !== request.inputRevision ||
@@ -321,10 +335,10 @@ async function lockCompanyExecutionHead(
 /** Re-run inside admission; standalone sessions may not discard a declared coordinator. */
 export async function prepareCompanyAgentContext(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   value: unknown,
 ): Promise<CompanyAgentContext> {
-  const context = await prepareCompanySpecialistContext(tx, userId, value);
+  const context = await prepareCompanySpecialistContext(tx, principal, value);
 
   return requireStandaloneContext(context);
 }

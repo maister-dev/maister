@@ -21,6 +21,7 @@ import {
 } from "./company-flow-bindings";
 
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import { installationScheduleReviewSchema } from "./installation-appointment";
 import { MaisterError } from "@/lib/errors";
 
 export type CompanySourceConfigurationInput = Readonly<{
@@ -34,6 +35,7 @@ export type CompanySourceWriteContext = Readonly<{
   sourceId: string;
   actorId: string;
   role: CompanySpecialistBindingSnapshot;
+  installationReview: string | null;
 }>;
 type WriteCompanySource = (
   tx: SqlTransaction,
@@ -120,9 +122,12 @@ export async function createCompanyScheduleSource(
         "CONFLICT",
         "The selected professional role is owned by another company",
       );
-    const role = (
-      await loadCompanyBindingRevision(tx, roleHead, roleHead.revision)
-    ).snapshot;
+    const reviewed = await loadCompanyBindingRevision(
+      tx,
+      roleHead,
+      roleHead.revision,
+    );
+    const role = reviewed.snapshot;
 
     if (role.detachedAt !== null)
       throw new MaisterError(
@@ -140,6 +145,12 @@ export async function createCompanyScheduleSource(
       runnerId: role.runnerId,
       executionPolicy: role.executionPolicy,
       coordinatorFlowRevisionId: role.coordinatorFlowRevisionId,
+      ...(role.installationGrant && {
+        installationGrant: {
+          ...role.installationGrant,
+          scopes: [...role.installationGrant.scopes],
+        },
+      }),
       idempotencyKey: input.idempotencyKey,
     });
     if (
@@ -178,6 +189,7 @@ export async function createCompanyScheduleSource(
           { details: { reason: "company_flow_binding_disabled" } },
         );
     }
+    let installationReview: string | null = null;
     if (input.enabled) {
       if (!role.definition.triggers.includes(declaredTrigger))
         throw new MaisterError(
@@ -191,21 +203,41 @@ export async function createCompanyScheduleSource(
           "Enable the reviewed specialist before enabling its source",
           { details: { reason: "company_binding_disabled" } },
         );
-      for (const action of [
-        "assignments:read",
-        "assignments:submit",
-        "assignments:update",
-      ] as const)
+      for (const action of ["assignments:read", "assignments:submit"] as const)
         await authorizeCompanyUserAction(
           tx,
           userId,
           input.owner.companyId,
           action,
         );
+      const admission = await authorizeCompanyUserAction(
+        tx,
+        userId,
+        input.owner.companyId,
+        "assignments:update",
+      );
+      if (role.installationGrant) {
+        installationReview = JSON.stringify(
+          installationScheduleReviewSchema.parse({
+            schemaVersion: 1,
+            binding: {
+              id: reviewed.bindingId,
+              revision: reviewed.revision,
+              snapshotSha256: reviewed.snapshotDigest,
+            },
+            reviewer: admission,
+          }),
+        );
+      }
     }
     const id = randomUUID();
 
-    await writeSource(tx, { sourceId: id, actorId: authority.actor.id, role });
+    await writeSource(tx, {
+      sourceId: id,
+      actorId: authority.actor.id,
+      role,
+      installationReview,
+    });
 
     return {
       scheduleId: id,

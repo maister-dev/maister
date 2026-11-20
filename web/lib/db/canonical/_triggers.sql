@@ -15,6 +15,7 @@ CREATE TRIGGER company_retry_replacement_guard BEFORE INSERT OR UPDATE ON public
 CREATE TRIGGER company_retry_scope_guard BEFORE INSERT ON public.agent_retry_intents FOR EACH ROW EXECUTE FUNCTION check_company_retry_scope();
 CREATE TRIGGER project_specialist_replacement_guard BEFORE INSERT OR UPDATE ON public.agent_retry_intents FOR EACH ROW WHEN (((new.project_id IS NOT NULL) AND (new.recipe ? 'replacement'::text))) EXECUTE FUNCTION guard_project_specialist_replacement_retry();
 CREATE TRIGGER agent_schedule_scope_guard BEFORE INSERT OR DELETE OR UPDATE ON public.agent_schedules FOR EACH ROW EXECUTE FUNCTION guard_agent_schedule_scope();
+CREATE TRIGGER agent_schedules_installation_review_guard BEFORE INSERT OR UPDATE OF installation_review ON public.agent_schedules FOR EACH ROW EXECUTE FUNCTION guard_installation_schedule_review();
 CREATE TRIGGER scheduled_stand_source_guard BEFORE INSERT OR UPDATE ON public.agent_schedules FOR EACH ROW EXECUTE FUNCTION guard_scheduled_stand_source();
 CREATE TRIGGER agent_trigger_attempt_identity_guard BEFORE UPDATE ON public.agent_trigger_attempts FOR EACH ROW EXECUTE FUNCTION guard_agent_trigger_attempt_identity();
 CREATE TRIGGER agent_trigger_project_review_reference BEFORE INSERT ON public.agent_trigger_attempts FOR EACH ROW EXECUTE FUNCTION guard_project_reviewed_trigger_insert();
@@ -102,6 +103,7 @@ CREATE TRIGGER run_messages_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public
 CREATE CONSTRAINT TRIGGER run_results_operational_receipt AFTER INSERT OR DELETE OR UPDATE ON public.run_results DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_operational_terminal_result();
 CREATE TRIGGER run_results_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_results FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('summary', 'run_id,revision,validity,schema_ref,schema_version,value,value_bytes,invalid_reason,first_collected_at');
 CREATE TRIGGER run_sessions_consensus_binding BEFORE INSERT OR UPDATE OF runner_id, session_name ON public.run_sessions FOR EACH ROW EXECUTE FUNCTION guard_consensus_child_runner_binding();
+CREATE CONSTRAINT TRIGGER agent_installation_schedule_run_authority AFTER INSERT ON public.runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION check_installation_schedule_run_authority();
 CREATE TRIGGER agent_memory_capture_webhook_run AFTER INSERT OR UPDATE OF trigger_source ON public.runs FOR EACH ROW EXECUTE FUNCTION agent_memory_capture_external_source();
 CREATE TRIGGER agent_memory_run_hash_format BEFORE INSERT OR UPDATE OF agent_memory_hash, agent_memory_hash_format ON public.runs FOR EACH ROW EXECUTE FUNCTION agent_memory_set_hash_format();
 CREATE TRIGGER project_replacement_event_insert BEFORE INSERT ON public.runs FOR EACH ROW WHEN (((new.company_id IS NULL) AND (new.trigger_event_id IS NOT NULL) AND (new.retry_of_run_id IS NOT NULL))) EXECUTE FUNCTION guard_project_replacement_event_run();

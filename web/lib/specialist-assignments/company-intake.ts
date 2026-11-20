@@ -28,6 +28,10 @@ import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
+import {
+  assertInstallationAppointment,
+  type SpecialistIntakePrincipal,
+} from "@/lib/agents/installation-appointment";
 import { MaisterError } from "@/lib/errors";
 import { resolveFlowExportContract } from "@/lib/run-results/flow-export";
 
@@ -136,21 +140,28 @@ function assignmentResult(
 
 export async function prepareCompanySpecialistAssignment(
   tx: SqlTransaction,
-  userId: string,
+  principal: SpecialistIntakePrincipal,
   request: CompanyAssignmentRequest,
   invocation: CompanyAssignmentInvocation,
 ): Promise<PreparedSpecialistAssignment> {
-  for (const action of [
-    "assignments:read",
-    "assignments:submit",
-    "assignments:update",
-  ] as const)
-    await authorizeCompanyUserAction(
-      tx,
-      userId,
-      request.owner.companyId,
-      action,
-    );
+  if (typeof principal !== "string")
+    assertInstallationAppointment(tx, principal, {
+      companyId: request.owner.companyId,
+      bindingId: request.specialistBindingId,
+      origin: invocation.origin,
+    });
+  else
+    for (const action of [
+      "assignments:read",
+      "assignments:submit",
+      "assignments:update",
+    ] as const)
+      await authorizeCompanyUserAction(
+        tx,
+        principal,
+        request.owner.companyId,
+        action,
+      );
   const specialist = await loadCompanyAssignmentSpecialist(tx, request);
   const snapshot = specialist.revision.snapshot;
   const effective = await resolveInstalledAgentDefinition(tx, {

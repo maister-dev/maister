@@ -881,6 +881,7 @@ async function seedRetainedStandalone(): Promise<void> {
   ]);
   const {
     companyCancellationIntent: _newCancellationColumn,
+    agentMemoryHashFormat: _newMemoryHashFormat,
     ...legacyRunColumns
   } = getTableColumns(runs);
   const [retainedRun] = await database.db
