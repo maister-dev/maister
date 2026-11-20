@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The PostgreSQL project vault stores current Markdown notes and immutable
+The PostgreSQL vault stores current Markdown notes and immutable
 revisions. The Memory tab and session-bound MCP command use it after
 activation. Existing installations use the file behavior below until their
 operator completes the explicit cutover. [ADR-210](../decisions/adr-210.md)
@@ -228,6 +228,14 @@ constraints. The [external API](../api/external/operations.openapi.yaml) and
 | Verified → active | All live notes resolve, every staged payload matches its receipt, and the maintenance process confirms writer quiescence. | Advance the durable cutover generation. New writes and token admission use the active generation. |
 | Active → cleaned | Explicit operator action checks the live generation, exact file identity and SHA-256 from its import receipt. | Remove the verified original and settle cleanup. An already absent file is a replay only for an imported and verified identity. |
 
+Before activation, take matched backups of the main database and legacy
+runtime data. Set `MAISTER_UPGRADE_MAINTENANCE` on the web processes, retire
+pre-vault binaries and drain legacy sessions before running `activate`.
+Keep the verified originals through activation and the first database write
+and read. After activation, vault revisions exist in PostgreSQL. Returning to
+a pre-vault binary requires restoring both parts of the pre-activation backup
+as one recovery point. That recovery point excludes subsequent vault edits.
+
 The vault namespace is NFC, case sensitive and rooted at `/memories`.
 Commands accept canonical virtual paths only. Relative paths, empty and dot
 segments, backslashes, percent escapes, URL/query/fragment syntax, control
@@ -348,6 +356,10 @@ evidence points to an exact revision and refuses reads after redaction.
 
 ## Expectations
 
+The ADR-152 expectations in this section apply to the pre-cutover file store.
+The vault section above governs writes, permissions, storage and prompt
+composition after activation.
+
 - `agent_project_links.memory_enabled` MUST be the only switch for the memory
   axis; no code path MUST let `can_read_brain` / `can_write_brain` imply it or
   be implied by it, and a write MUST require BOTH the `agent_memory:write`
@@ -419,6 +431,8 @@ evidence points to an exact revision and refuses reads after redaction.
   (REQ-C12, Implemented)
 
 ## Edge cases
+
+These cases describe the legacy file store before activation.
 
 | Edge case | Behavior |
 |---|---|

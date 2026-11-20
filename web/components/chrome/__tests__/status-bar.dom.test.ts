@@ -80,7 +80,7 @@ describe("status bar stream ownership", () => {
     ).toBe("Reconnecting");
     expect(eventSource).toHaveBeenCalledOnce();
     expect(eventSource).toHaveBeenCalledWith(
-      "http://localhost:3000/api/attention/stream",
+      "http://localhost:3000/api/attention/stream?reviewProtocol=1",
     );
   });
 });

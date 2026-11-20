@@ -28,6 +28,7 @@ import {
 } from "vitest";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 
 import {
   parseAgentDefinition,
@@ -40,7 +41,10 @@ import {
 } from "@/lib/agents/launch";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { agentMemoryPath, hashAgentMemory } from "@/lib/agents/memory-store";
-import { parseAgentMemoryMutation } from "@/lib/agent-memory-vault/commands";
+import {
+  parseAgentMemoryMutation,
+  parseAgentMemoryView,
+} from "@/lib/agent-memory-vault/commands";
 import {
   stageProjectAgentMemory,
   settleMemoryInjection,
@@ -50,8 +54,12 @@ import {
   type LegacyMemoryImportCommand,
 } from "@/lib/agent-memory-vault/import-legacy";
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
-import { ensureProjectVault } from "@/lib/agent-memory-vault/project-access";
+import {
+  ensureProjectVault,
+  prepareHumanProjectVault,
+} from "@/lib/agent-memory-vault/project-access";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
+import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import * as schemaModule from "@/lib/db/schema";
 import { seedLocalHost } from "@/test-support/execution-host-seed";
@@ -282,7 +290,76 @@ it("AV-10 imports and verifies originals once, fences activation and cleans only
     code: "PRECONDITION",
   });
   await writeMemory(legacyText);
+  await testDatabase.pool.query(
+    "UPDATE runs SET status='Running' WHERE id=$1",
+    [missing.runId],
+  );
+  await expect(command("activate")).rejects.toMatchObject({
+    code: "PRECONDITION",
+  });
+  await testDatabase.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
+    missing.runId,
+  ]);
   await command("activate");
+  await expect(
+    testDatabase.pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,agent_memory_hash) VALUES($1,$2,'agent','Pending','agent','manual',$3)",
+      [randomUUID(), projectId, rawHash],
+    ),
+  ).rejects.toMatchObject({
+    code: "23514",
+    constraint: "agent_memory_run_writer_required",
+  });
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET memory_enabled=true WHERE project_id=$1 AND agent_id=$2",
+    [projectId, AGENT_ID],
+  );
+  const postCutoverPath = "/memories/notes/post-cutover.md";
+  const postCutoverContent = "New content resides in PostgreSQL.";
+  await expect(
+    applyVaultMutation(
+      db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: postCutoverPath,
+        file_text: postCutoverContent,
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: randomUUID(),
+      }),
+      prepareHumanProjectVault({
+        userId: actor,
+        slug: SLUG,
+        agentId: AGENT_ID,
+        action: "editSettings",
+      }),
+      agentMemoryVaultLimits(),
+    ),
+  ).resolves.toMatchObject({ status: "applied" });
+  expect(await readFile(agentMemoryPath(SLUG, AGENT_ID), "utf8")).toBe(
+    legacyText,
+  );
+
+  const restartedPool = new Pool({
+    connectionString: testDatabase.databaseUrl,
+  });
+  try {
+    const reopened = drizzle(restartedPool, { schema: schemaModule });
+    await expect(
+      viewAgentMemory(
+        reopened,
+        parseAgentMemoryView({ command: "view", path: postCutoverPath }),
+        prepareHumanProjectVault({
+          userId: actor,
+          slug: SLUG,
+          agentId: AGENT_ID,
+          action: "readRepoFiles",
+        }),
+      ),
+    ).resolves.toMatchObject({ kind: "note", content: postCutoverContent });
+  } finally {
+    await restartedPool.end();
+  }
   await command("cleanup");
   await command("cleanup");
   await expect(readFile(agentMemoryPath(SLUG, AGENT_ID))).rejects.toMatchObject(

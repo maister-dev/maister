@@ -1,6 +1,16 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { createHash, randomUUID } from "node:crypto";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -194,5 +204,77 @@ it("AV-10 installs the vault on a fresh main-only database", async () => {
     ]);
   } finally {
     await fresh.stop();
+  }
+}, 180_000);
+
+it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", async () => {
+  const fixture = await startMainPostgresTestDb({
+    databaseName: "agent_memory_brain_upgrade",
+  });
+  const previous = await mkdtemp(join(tmpdir(), "maister-brain-previous-"));
+  const brain = "./lib/db/brain-migrations";
+  const migrationsTable = "__drizzle_brain_migrations";
+  try {
+    const journal = JSON.parse(
+      await readFile(join(brain, "meta", "_journal.json"), "utf8"),
+    ) as {
+      version: string;
+      dialect: string;
+      entries: Array<{ tag: string }>;
+    };
+    const through = journal.entries.findIndex(
+      ({ tag }) => tag === "0011_proposal_source_access",
+    );
+    if (through < 0)
+      throw new Error("The previous Brain migration baseline is missing");
+    const entries = journal.entries.slice(0, through + 1);
+    await mkdir(join(previous, "meta"));
+    await writeFile(
+      join(previous, "meta", "_journal.json"),
+      JSON.stringify({ ...journal, entries }),
+    );
+    await Promise.all(
+      entries.map(({ tag }) =>
+        copyFile(join(brain, `${tag}.sql`), join(previous, `${tag}.sql`)),
+      ),
+    );
+    await migrate(fixture.db, { migrationsFolder: previous, migrationsTable });
+    const project = await seedProject(fixture.db);
+    const itemId = randomUUID();
+    await fixture.pool.query(
+      "INSERT INTO brain_items(id,project_id,kind,title,content,content_hash,confidence) VALUES($1,$2,'state_fact','Legacy fact','Retained Brain content',$3,0.9)",
+      [itemId, project, legacyHash],
+    );
+    const before = await fixture.pool.query(
+      "SELECT to_jsonb(item) AS retained FROM brain_items item WHERE id=$1",
+      [itemId],
+    );
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT to_regclass('agent_memory_embeddings') AS cache",
+        )
+      ).rows,
+    ).toEqual([{ cache: null }]);
+    await migrate(fixture.db, { migrationsFolder: brain, migrationsTable });
+    await migrate(fixture.db, { migrationsFolder: brain, migrationsTable });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT to_jsonb(item) AS retained FROM brain_items item WHERE id=$1",
+          [itemId],
+        )
+      ).rows,
+    ).toEqual(before.rows);
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT count(*)::int AS entries FROM agent_memory_embeddings",
+        )
+      ).rows,
+    ).toEqual([{ entries: 0 }]);
+  } finally {
+    await rm(previous, { recursive: true, force: true });
+    await fixture.stop();
   }
 }, 180_000);

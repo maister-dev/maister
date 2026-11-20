@@ -413,18 +413,22 @@ Local P5 evidence: 85 PostgreSQL tests across 15 Librarian suites and 15 browser
 
 ### Final integration — Namespace integrity and release acceptance
 
-- [ ] **T37 — Reconcile ADR/migration allocation against integration base.**
+- [x] **T37 — Reconcile ADR/migration allocation against integration base.**
   - Files: only colliding new ADR/index/status references and new migration SQL/journal/snapshots/schema; affected prose and tests.
   - After an authorized rebase, re-read base maxima, allocate unique numbers and grep all numeric/prose references. Never renumber historical ADRs or rewrite migrations applied durably. Re-derive shared CHECK constraints from current schema, preserve migration order main→Brain and regenerate ERD.
   - Validation: newest snapshot exists; `db:generate` clean; real migration fresh/upgrade fixtures; ADR anchor/bijection and docs gates. Logging: validation output with old/new allocation map only. Depends on: T24, T32, T36.
+  - Verified against local `master` at `b06e641d2`: existing main/Brain journals are unchanged prefixes. Main extends 0342 with 0343–0353 and a current Drizzle snapshot; the SQL-only Brain lineage extends 0011 with 0012. `db:generate` produced no changes. Fresh main and Brain and seeded main upgrade tests passed. The generated ERD and ADR anchor/bijection checks passed.
 - [ ] **T38 — Execute integrated acceptance and adversarial regression gates.**
   - Files: affected integration/E2E and contract tests; only fixes directly necessary for this feature.
   - Execute the acceptance matrix below against isolated real Postgres and supported local supervisor/MCP seams. Reuse real facade routes for authorization; fake ACP is acceptable for deterministic prompt transport but must be labeled. Run targeted real adapter/MCP smoke with configured credentials before claiming adapter qualification. Review every fix cycle for data leaks, scope bypass, stale identity, event-ordering and lock races; rerun affected gates after a fix.
   - Validation: all required suites run, green with exact commands and exit status; distinguish local evidence from hosted CI/live provider acceptance. No production dispatch or remote mutation is implied. Logging: bounded test diagnostics only. Depends on: T37.
-- [ ] **T39 — Verify release cutover and compatibility on disposable data.**
+  - Verified locally in Node 24: `vitest run --project unit --maxWorkers 3` in Web passed 9,196 tests. MCP passed 529 unit and 19 stdio tests. Supervisor passed 525 unit and 405 integration tests. Disposable PostgreSQL passed the affected attention stream (21), protected-evidence regression (20), Librarian suites (85), and the installation scope scenario. Authenticated Playwright passed Memory, Inbox, and installation settings with setup (4), and the dedicated Librarian lane passed 15 with scripted ACP and the real MCP facade. The final complete Web integration gate is tracked here separately from the focused suites.
+  - Live adapter evidence: `MAISTER_LIBRARIAN_QUALIFY_ADAPTER=claude pnpm --filter maister-web test:e2e:librarian librarian-live.spec.ts --grep AV-07-live` reached the real Claude ACP `prompt` method. Claude Code returned `ACP_PROTOCOL` with an account hold, before it could make the MCP call. The authenticated setup passed and the live acceptance test failed. No hosted CI execution or production deployment is claimed.
+- [x] **T39 — Verify release cutover and compatibility on disposable data.**
   - Files: import/cutover integration fixtures, compatibility tests and canonical deployment/configuration docs.
   - Rehearse old state → import → verify → cutover → new writes → restart → cleanup using the existing tests' fixtures. Observe the version fence, preserved historical receipts, lease/runner retirement and filesystem state. Verify backup/rollback boundaries and refusal of unsupported binaries or uncaptured sources.
   - Validation: `pnpm validate:docs`, contract checks, all phase gates and release acceptance. Record any provider/hosted qualification separately with its actual execution result. Logging: migration receipts and validation output only. Depends on: T38.
+  - Local compatibility witness: 22 PostgreSQL cases passed for main upgrade/fresh, Brain 0011→0012 with a retained record, and memory launch/import. The focused cutover rerun additionally refused activation while a legacy Run was active and rejected a post-cutover Run without the current writer format. It verified a new note on a fresh DB connection, unchanged legacy bytes before cleanup, and repeatable cleanup of verified originals only. The operator runbook records the matched database/runtime backup and restoration boundary. Live adapter qualification remains tracked in T38.
 
 ## TDD execution and test ownership
 

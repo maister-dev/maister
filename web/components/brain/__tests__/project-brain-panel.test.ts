@@ -216,7 +216,7 @@ describe("ProjectBrainPanel", () => {
     );
   });
 
-  it("renders source index actions and proposal review actions without auto_publish", () => {
+  it("keeps source index actions and links pending proposals to Inbox review", () => {
     const html = render();
 
     expect(html).toContain('data-testid="brain-source-reindex-source-1"');
@@ -224,27 +224,13 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain(
       "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md",
     );
-    expect(html).toContain('data-testid="brain-proposal-accept-proposal-1"');
-    expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
-    expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
-    expect(html).toContain('data-testid="brain-proposal-reject-proposal-2"');
-    expect(html).toContain("Reason");
-    expect(html).not.toContain("auto_publish");
-  });
-
-  it("hides catalog accept actions when the user can only reject and accept projections", () => {
-    const html = render({
-      canAcceptCatalog: false,
-      canAcceptProjection: true,
-      canReject: true,
-    });
-
-    expect(html).not.toContain(
-      'data-testid="brain-proposal-accept-proposal-1"',
+    expect(html).toContain(
+      "/inbox?kind=brain&amp;proposalId=proposal-1#knowledge-memory",
     );
-    expect(html).toContain('data-testid="brain-proposal-reject-proposal-1"');
-    expect(html).toContain('data-testid="brain-proposal-accept-proposal-2"');
-    expect(html).toContain('data-testid="brain-proposal-reject-proposal-2"');
+    expect(html).toContain(
+      "/inbox?kind=brain&amp;proposalId=proposal-2#knowledge-memory",
+    );
+    expect(html).not.toMatch(/brain-proposal-(?:accept|reject)-/);
   });
 
   it("shows the search prompt instead of memory results for an empty query", () => {
