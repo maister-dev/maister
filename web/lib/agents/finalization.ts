@@ -1161,7 +1161,7 @@ async function prepareAgentFinalization(
           ),
         );
     }
-    if (preparedRun.agentKind === "operational")
+    if (preparedRun.agentKind === "operational" && preparedRun.projectId)
       await tx
         .update(agentContinuationEpisodes)
         .set({

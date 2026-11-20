@@ -34,6 +34,7 @@ type Limits = {
   maxBytes?: number;
   maxProbeMs?: number;
   context?: OperationalProbeContext;
+  legacyEphemeral?: boolean;
 };
 type ProbeLimitAxis = "time" | "bytes" | "entries" | "worktree_config_bytes";
 type ProbeLimitDetails = {
@@ -163,10 +164,41 @@ function logProbeFailure(
   );
 }
 
+const OPERATIONAL_CONFIG_SECTIONS = new Set([
+  "core",
+  "extensions",
+  "index",
+  "feature",
+  "checkout",
+  "sparsecheckout",
+  "filter",
+  "diff",
+  "merge",
+  "submodule",
+  "alias",
+  "protocol",
+  "url",
+  "hooks",
+]);
+
+function scopedOperationalConfig(config: string): string[] {
+  return config.split("\0").filter((entry) => {
+    const key = entry.split("\n", 1)[0].toLowerCase();
+    const section = key.split(".", 1)[0];
+
+    return (
+      OPERATIONAL_CONFIG_SECTIONS.has(section) ||
+      key === "include.path" ||
+      (section === "includeif" && key.endsWith(".path"))
+    );
+  });
+}
+
 async function captureTree(
   cwd: string,
   resourceKind: OperationalResourceKind,
   limits: Limits,
+  refScope?: readonly string[] | "detect_detached",
 ): Promise<Tree> {
   const candidate = path.resolve(cwd);
   const rootInfo = await probeOperation("lstat", () => lstat(candidate));
@@ -329,6 +361,16 @@ async function captureTree(
 
     return result.stdout;
   };
+  const detectedBranch =
+    refScope === "detect_detached"
+      ? await git(["rev-parse", "--abbrev-ref", "HEAD"])
+      : null;
+  const scopedRefs =
+    refScope === "detect_detached"
+      ? detectedBranch?.trim() === "HEAD"
+        ? []
+        : undefined
+      : refScope;
   const [
     head,
     branch,
@@ -340,13 +382,25 @@ async function captureTree(
     localConfig,
   ] = await Promise.all([
     git(["rev-parse", "--verify", "HEAD"]),
-    git(["rev-parse", "--abbrev-ref", "HEAD"]),
+    detectedBranch ?? git(["rev-parse", "--abbrev-ref", "HEAD"]),
     git(["ls-files", "--stage", "-v", "-z"]),
     git(["ls-files", "--stage", "-z"]),
     git(["reflog", "show", "--format=%H:%gD", "HEAD"]),
     git(["rev-parse", "--absolute-git-dir"]),
-    git(["for-each-ref", "--format=%(refname) %(objectname)"]),
-    git(["config", "--local", "--null", "--list"]),
+    scopedRefs?.length === 0
+      ? Promise.resolve("")
+      : git([
+          "for-each-ref",
+          "--format=%(refname) %(objectname)",
+          ...(scopedRefs ?? []),
+        ]),
+    git([
+      "config",
+      "--local",
+      ...(scopedRefs ? ["--includes"] : []),
+      "--null",
+      "--list",
+    ]),
   ]);
 
   let worktreeConfigDigest: string | null = null;
@@ -401,6 +455,10 @@ async function captureTree(
       throw error;
   }
 
+  const wkConfig =
+    scopedRefs && worktreeConfigDigest
+      ? await git(["config", "--worktree", "--includes", "--null", "--list"])
+      : "";
   return {
     source,
     head: head.trim(),
@@ -412,8 +470,14 @@ async function captureTree(
       await probeOperation("realpath", () => realpath(gitDirectory.trim())),
     ),
     gitConfigDigest: digest(
-      canonicalCommandJson({ localConfig, worktreeConfigDigest }),
+      scopedRefs
+        ? canonicalCommandJson([
+            scopedOperationalConfig(localConfig),
+            scopedOperationalConfig(wkConfig),
+          ])
+        : canonicalCommandJson({ localConfig, worktreeConfigDigest }),
     ),
+    ...(scopedRefs ? { worktreeConfigDigest } : {}),
     refs: refsText
       .trim()
       .split("\n")
@@ -422,7 +486,8 @@ async function captureTree(
         const [ref, sha] = line.split(" ");
 
         return { ref, sha };
-      }),
+      })
+      .filter(({ ref }) => !scopedRefs || scopedRefs.includes(ref)),
   };
 }
 
@@ -432,12 +497,20 @@ export async function captureOperationalBaseline(
   limits: Limits = {},
 ): Promise<OperationalIntegrityBaseline> {
   try {
+    const source = await captureTree(
+      cwd,
+      resourceKind,
+      limits,
+      resourceKind === "ephemeral_checkout" && !limits.legacyEphemeral
+        ? "detect_detached"
+        : undefined,
+    );
     return {
-      version: 1,
+      version: source.worktreeConfigDigest !== undefined ? 2 : 1,
       generation: 0,
       resourceKind,
       capturedAt: new Date().toISOString(),
-      ...(await captureTree(cwd, resourceKind, limits)),
+      ...source,
       platform: [],
     };
   } catch (error) {
@@ -509,7 +582,9 @@ export async function captureOperationalGeneration(
     )
   )
     throw probeError("operational_materialization_conflict");
-  const tree = await captureTree(cwd, baseline.resourceKind, {});
+  const ownedRefs =
+    baseline.version === 2 ? baseline.refs.map(({ ref }) => ref) : undefined;
+  const tree = await captureTree(cwd, baseline.resourceKind, {}, ownedRefs);
   const expected = expectedEntries(baseline);
   const changed = changedEntries(expected, tree.source);
   const owned = new Set(ownedPaths);
@@ -543,6 +618,10 @@ export async function captureOperationalGeneration(
     tree.gitIdentity !== baseline.gitIdentity ||
     (baseline.gitConfigDigest !== undefined &&
       tree.gitConfigDigest !== baseline.gitConfigDigest) ||
+    (ownedRefs &&
+      (tree.worktreeConfigDigest !== baseline.worktreeConfigDigest ||
+        canonicalCommandJson(tree.refs) !==
+          canonicalCommandJson(baseline.refs))) ||
     tree.indexContentDigest !== baseline.indexContentDigest ||
     changed.some((entry) => !allowed(entry))
   ) {
@@ -562,14 +641,20 @@ export async function verifyOperationalIntegrity(
   baseline: OperationalIntegrityBaseline | null,
   refEvidence: readonly OperationalRefEvidence[] = [],
 ): Promise<OperationalIntegrityResult> {
-  if (!baseline || baseline.version !== 1 || baseline.generation < 1)
+  if (
+    !baseline ||
+    (baseline.version !== 1 && baseline.version !== 2) ||
+    baseline.generation < 1
+  )
     return {
       verdict: "indeterminate",
       reasonCodes: ["operational_baseline_missing"],
       changedPaths: [],
     };
   try {
-    const tree = await captureTree(cwd, baseline.resourceKind, {});
+    const ownedRefs =
+      baseline.version === 2 ? baseline.refs.map(({ ref }) => ref) : undefined;
+    const tree = await captureTree(cwd, baseline.resourceKind, {}, ownedRefs);
     const changedPaths = changedEntries(
       expectedEntries(baseline),
       tree.source,
@@ -582,6 +667,8 @@ export async function verifyOperationalIntegrity(
       tree.branch !== baseline.branch ||
       tree.historyDigest !== baseline.historyDigest ||
       tree.gitIdentity !== baseline.gitIdentity ||
+      (baseline.version === 2 &&
+        tree.worktreeConfigDigest !== baseline.worktreeConfigDigest) ||
       (baseline.gitConfigDigest !== undefined &&
         tree.gitConfigDigest !== baseline.gitConfigDigest)
     )
@@ -600,16 +687,19 @@ export async function verifyOperationalIntegrity(
     ].some(
       (ref) =>
         before.get(ref) !== after.get(ref) &&
-        !refEvidence.some(
-          (evidence) =>
-            evidence.ref === ref &&
-            (evidence.kind === "allocated"
-              ? !before.has(ref) && after.get(ref) === evidence.sha
-              : before.get(ref) === evidence.sha && !after.has(ref)),
-        ),
+        (baseline.version === 2 ||
+          !refEvidence.some(
+            (evidence) =>
+              evidence.ref === ref &&
+              (evidence.kind === "allocated"
+                ? !before.has(ref) && after.get(ref) === evidence.sha
+                : before.get(ref) === evidence.sha && !after.has(ref)),
+          )),
     );
 
-    if (foreignConflict && reasonCodes.length === 0)
+    if (foreignConflict && baseline.version === 2)
+      reasonCodes.push("operational_owned_refs_changed");
+    else if (foreignConflict && reasonCodes.length === 0)
       reasonCodes.push("operational_repository_conflict");
     const conflicted =
       baseline.resourceKind === "shared_repository" ||

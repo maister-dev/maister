@@ -20,7 +20,7 @@ import {
   vi,
 } from "vitest";
 
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { reconcileHistoricalAgentLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
 import { startAgentSession } from "@/lib/agents/launch";
@@ -39,6 +39,8 @@ import {
   stopAgentPromptSession,
 } from "@/lib/agents/prompt-owner";
 import {
+  agentContinuationEpisodes,
+  agentPreparationOperations,
   agentTurns,
   domainEvents,
   executionAssignments,
@@ -617,6 +619,48 @@ describe("agent application quiescence", () => {
     const [run] = await db.select().from(runs).where(eq(runs.id, runId));
     expect(run.executionAssignmentId).toBe(resumed.successor.id);
   }, 30_000);
+
+  it("IT-APR-05 latches a definitive refusal and settles without a second preparation", async () => {
+    const { runId, resumed } =
+      await seedUndispatchedOperationalResume("repo_read");
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    const owner = run.operationalIntegrityBaseline?.owner;
+    expect(run.operationalIntegrityBaseline?.version).toBe(2);
+    if (!owner) throw new Error("expected frozen checkout owner");
+    await writeFile(
+      join(owner.cwd, "new-source.ts"),
+      "A foreign source mutation",
+    );
+    await startAgentSession(runId, { db, executionHosts: hosts });
+    const attempts = await db
+      .select()
+      .from(agentPreparationOperations)
+      .where(eq(agentPreparationOperations.assignmentId, resumed.successor.id));
+    expect(attempts).toHaveLength(1);
+    const [episode] = await db
+      .select()
+      .from(agentContinuationEpisodes)
+      .where(eq(agentContinuationEpisodes.runId, runId));
+    expect(episode).toMatchObject({
+      state: "settlement",
+      failure: { reason: "operational_integrity_refused" },
+    });
+
+    await startAgentSession(runId, { db, executionHosts: hosts });
+    const [terminal] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(terminal.status).toBe("Failed");
+    expect(terminal.operationalTerminal?.reasonCodes).toContain(
+      "operational_source_changed",
+    );
+    expect(
+      await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(
+          eq(agentPreparationOperations.assignmentId, resumed.successor.id),
+        ),
+    ).toHaveLength(1);
+  }, 45_000);
 
   it("operational Stop retains its owner until the exact delayed canonical exit commits", async () => {
     const runId = await seedAgentRun(db, {

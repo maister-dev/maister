@@ -101,7 +101,7 @@ export type OperationalIntegrityEntry = {
 };
 
 export type OperationalIntegrityBaseline = {
-  version: 1;
+  version: 1 | 2;
   generation: number;
   resourceKind: OperationalResourceKind;
   capturedAt: string;
@@ -112,6 +112,7 @@ export type OperationalIntegrityBaseline = {
   historyDigest: string | null;
   gitIdentity: string | null;
   gitConfigDigest?: string | null;
+  worktreeConfigDigest?: string | null;
   refs: Array<{ ref: string; sha: string }>;
   source: OperationalIntegrityEntry[];
   platform: OperationalIntegrityEntry[];

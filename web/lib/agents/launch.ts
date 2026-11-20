@@ -156,6 +156,13 @@ import {
   inspectOperationalContexts,
 } from "@/lib/agents/operational-context";
 import {
+  claimAgentContinuation,
+  finishAgentContinuation,
+  recordAgentContinuationFailure,
+  requireOperationalContinuationWitness,
+  settleAgentContinuation,
+} from "@/lib/agents/continuation-episode";
+import {
   captureOperationalBaseline,
   captureOperationalGeneration,
 } from "@/lib/agents/operational-integrity";
@@ -4437,7 +4444,34 @@ async function driveAgentSession(
   if (agentTurn) {
     const execution = await bindAgentExecution(hosts, runId, assignmentId);
 
-    await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    try {
+      await assertAgentResumeTurn(_db, agentTurn, execution.client.assignment);
+    } catch (error) {
+      if (
+        run.agentKind !== "operational" ||
+        !run.projectId ||
+        agentTurn.variant !== "resume" ||
+        agentTurn.commandId ||
+        !isMaisterError(error) ||
+        error.details?.reason !== "prompt_owner_invariant"
+      )
+        throw error;
+      const claim = await claimAgentContinuation(_db, {
+        runId,
+        assignmentId: execution.client.assignment.id,
+        logicalKey: agentTurn.logicalKey,
+      });
+      if (!claim) return;
+      if (claim.state === "settlement") {
+        await settleAgentContinuation(_db, hosts, claim);
+      } else {
+        await recordAgentContinuationFailure(_db, claim, error, null, {
+          runId,
+          stage: "resume_source",
+        });
+      }
+      return;
+    }
     if (!agentTurn.commandId && !run.companyId)
       await _db.transaction(async (tx: ExecutionDb) => {
         if ((await lockVaultCutover(tx)) !== null)
@@ -4718,6 +4752,8 @@ async function driveAgentSession(
     : null;
   let preparation: Awaited<ReturnType<typeof openAgentPreparation>> | null =
     null;
+  let continuation: Awaited<ReturnType<typeof claimAgentContinuation>> = null;
+  let handedOff = false;
   let preparationCommit: string | null = null;
   const packageCapture: {
     current: Awaited<ReturnType<typeof captureTaskAgentPackage>> | null;
@@ -4739,7 +4775,10 @@ async function driveAgentSession(
       assignmentId
     ) {
       const [assignment] = await _db
-        .select({ epoch: executionAssignments.epoch })
+        .select({
+          epoch: executionAssignments.epoch,
+          placementReason: executionAssignments.placementReason,
+        })
         .from(executionAssignments)
         .where(eq(executionAssignments.id, assignmentId));
 
@@ -4747,6 +4786,25 @@ async function driveAgentSession(
         ...preparationContext,
         ...(assignment ? { assignmentEpoch: assignment.epoch } : {}),
       };
+      if (
+        run.agentKind === "operational" &&
+        run.projectId &&
+        (assignment?.placementReason !== "launch" ||
+          (agentTurn !== undefined && agentTurn !== null))
+      ) {
+        continuation = await claimAgentContinuation(_db, {
+          runId,
+          assignmentId,
+          logicalKey: agentTurn?.logicalKey ?? `prepare:${assignmentId}`,
+        });
+        if (!continuation) return;
+        if (continuation.state === "settlement") {
+          const settlement = continuation;
+          continuation = null;
+          return await settleAgentContinuation(_db, hosts, settlement);
+        }
+        requireOperationalContinuationWitness(run.operationalIntegrityBaseline);
+      }
       const ownedWorkspace = run.taskLaunchIntentId
         ? await taskAgentPreparationWorkspace(_db, run)
         : await operationalWorkspace(_db, run);
@@ -4786,6 +4844,17 @@ async function driveAgentSession(
       : originalError;
 
     packageCapture.current = null;
+    if (continuation && !handedOff) {
+      if (isFencedError(error)) throw error;
+      await recordAgentContinuationFailure(
+        _db,
+        continuation,
+        error,
+        preparation,
+        { ...preparationContext, stage: operationalSpawnStage },
+      );
+      return;
+    }
     if (
       (run.agentKind !== "operational" && !run.taskLaunchIntentId) ||
       isFencedError(error) ||
@@ -5238,6 +5307,7 @@ async function driveAgentSession(
             cwd,
             preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
+              legacyEphemeral: run.agentKind !== "operational",
               context: {
                 ...preparationContext,
                 stage: "baseline",
@@ -5583,6 +5653,7 @@ async function driveAgentSession(
           phase: "handed_off",
           turnId: ownedTurn.id,
         });
+        handedOff = true;
         await preparation.release();
       }
 
@@ -5648,6 +5719,7 @@ async function driveAgentSession(
             : undefined,
         );
 
+        if (continuation) await finishAgentContinuation(_db, continuation);
         operationalSpawnStage = "prompt_dispatch";
         await dispatchStoredAgentTurn(
           _db,
@@ -5659,6 +5731,7 @@ async function driveAgentSession(
         );
       });
     } catch (originalError) {
+      if (continuation && !handedOff) throw originalError;
       const err = packageCapture.current
         ? await releaseTaskAgentCaptureAfterFailure(
             packageCapture.current,

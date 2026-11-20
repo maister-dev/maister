@@ -3717,6 +3717,7 @@ export const agentContinuationEpisodes = pgTable(
       code: string;
       reason: string;
       reasons?: string[];
+      blockedReason?: string;
     }>(),
     settlementAttempts: integer("settlement_attempts").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
