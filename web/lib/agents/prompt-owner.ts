@@ -819,6 +819,38 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       ref.variant !== "persistent_message"
     )
       throw new PromptOwnerInvariantError("agent_variant_not_implemented");
+    const [current] = await db
+      .select({
+        assignmentId: runs.executionAssignmentId,
+        agentKind: runs.agentKind,
+        projectId: runs.projectId,
+      })
+      .from(runs)
+      .where(eq(runs.id, ref.runId));
+    if (
+      current?.agentKind === "operational" &&
+      current.projectId &&
+      current.assignmentId !== ref.assignmentId
+    ) {
+      const historical = await db.transaction((tx) =>
+        lockAgentPermissionResult(tx, ref.runId, command.id),
+      );
+      if (!historical)
+        return {
+          apply: async (tx) => {
+            if (
+              await lockAgentBinding(
+                tx,
+                ref,
+                command.targetSessionId,
+                command.id,
+              )
+            )
+              throw new PromptOwnerDeferred("agent_finalization_pending");
+            return supersedeAgentMessage(tx, ref, command.id);
+          },
+        };
+    }
     const maxBytes = nodeOutputMaxBytes();
     let sentinel = emptySentinelOutput();
 

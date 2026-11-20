@@ -3,6 +3,11 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 
+import {
+  agentContinuationBlocked,
+  agentContinuationSettlementReady,
+  recoverAgentContinuationSettlement,
+} from "./continuation-episode";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -149,7 +154,13 @@ export function startAgentContinuationWorker(input: {
               and(
                 inArray(runs.runKind, ["agent", "scratch"]),
                 cursor ? gt(runs.id, cursor) : undefined,
+                sql`NOT ${agentContinuationBlocked(runs.id)}`,
                 or(
+                  and(
+                    eq(runs.runKind, "agent"),
+                    eq(runs.status, "Running"),
+                    agentContinuationSettlementReady(runs.id),
+                  ),
                   and(
                     eq(runs.runKind, "scratch"),
                     eq(runs.status, "Running"),
@@ -401,6 +412,14 @@ export function startAgentContinuationWorker(input: {
 
           return;
         }
+        if (
+          await recoverAgentContinuationSettlement(
+            input.db,
+            hosts,
+            candidate.id,
+          )
+        )
+          return;
         const [pause] =
           candidate.status === "NeedsInput"
             ? await input.db

@@ -1249,7 +1249,12 @@ async function prepareAgentFinalization(
       status: terminalStatus,
       endedAt,
       transitionId: terminalTransitionId,
-      reason: opts.causeReason ?? opts.reason,
+      reason: opts.continuationFailure
+        ? opts.reason
+        : (opts.causeReason ?? opts.reason),
+      ...(opts.continuationFailure
+        ? { continuationFailureReason: opts.causeReason }
+        : {}),
       terminal: operationalTerminal,
       reported:
         referenceDecision.kind === "valid" && operationalContract

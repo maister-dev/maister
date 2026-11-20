@@ -201,9 +201,9 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 | APR-03 | `execution-hosts.md` | T4,T6 | IT-APR-03 | Planned |
 | APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Implemented |
 | APR-05 | `agent-preparation.md` | T2,T9 | IT-APR-05 | Implemented |
-| APR-06 | `agent-retry.md` | T3,T10 | IT-APR-06 | Planned |
-| APR-07 | `operational-agent-lifecycle.md` | T11 | IT-APR-07 | Planned |
-| APR-08 | `agent-incidents.md` | T11,T12 | IT-APR-08 | Planned |
+| APR-06 | `agent-retry.md` | T3,T10 | IT-APR-06 | Implemented |
+| APR-07 | `operational-agent-lifecycle.md` | T11 | IT-APR-07 | Implemented |
+| APR-08 | `agent-incidents.md` | T11,T12 | IT-APR-08 | Implemented |
 | APR-09 | `operational-agent-lifecycle.md` | T2,T6,T11 | IT-APR-09 | Implemented |
 | APR-10 | `workbench-git.md` | T13 | E2E-APR-10 | Planned |
 | APR-11 | `agent-preparation.md` | T9,T12,T14,T15 | IT-APR-11 | Planned |

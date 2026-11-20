@@ -283,7 +283,7 @@ uses the same attention refresh mechanism; no timer/poll-based data fetching.
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 
-- **APR-08:** Operational prompt-owner service recovery escalates once after ten failed attempts or 15 minutes. Exact stale-owner settlement takes precedence. The poisoned application retains the original receipt and reason. An authorized observation-token rearm starts a fresh budget.
+- **APR-08:** Project operational prompt-owner service recovery escalates once after ten failed attempts or 15 minutes. Exact stale-owner settlement takes precedence. The poisoned application retains the original receipt and reason. An authorized observation-token rearm starts a fresh budget.
 
 
 - **UX-04:** 1,000 identical failures produce one card with correct distinct-run count; after acknowledgement they produce no new unread/actionable item until a new cause/episode. Two independent causes remain distinguishable inside one card; other agents/projects and both readers remain isolated. No Task rows are inserted. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).

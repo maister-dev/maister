@@ -145,6 +145,8 @@ export type CommandApplicationFailure = Readonly<{
 export type CommandApplicationError = CommandApplicationFailure &
   Readonly<{
     deferredSince?: string;
+    serviceRetryStartedAt?: string;
+    serviceRetryAttempts?: number;
     recoveryRequestedAt?: string;
     previousAttempts?: number;
     recoveryOrigin?: CommandApplicationFailure;

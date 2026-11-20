@@ -351,11 +351,20 @@ export async function disposeOperationalRun(
     const assignment = await getLatestAssignment(db, runId);
     const client = assignment ? await hosts.forAssignment(assignment) : null;
 
-    await assertTerminalAgentCleanupExecutionQuiescent(
-      db,
-      { id: runId, executionAssignmentId: assignment?.id ?? null },
-      hosts,
-    );
+    if (run.runKind === "agent") {
+      await assertTerminalAgentCleanupExecutionQuiescent(
+        db,
+        { id: runId, executionAssignmentId: assignment?.id ?? null },
+        hosts,
+      );
+    } else if (
+      client &&
+      (await client.sessionsForRun()).some(
+        (session) => session.status === "live",
+      )
+    ) {
+      throw cleanupError("operational_execution_not_quiescent");
+    }
     const context = await operationalWorkspace(db, run);
     if (workspace && context.ownerKind !== "project")
       throw cleanupError("company_workspace_unexpected_repository");

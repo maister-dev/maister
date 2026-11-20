@@ -146,25 +146,29 @@ export async function claimAgentContinuation(
       return inserted ? { ...inserted, claimToken } : null;
     }
     const settling =
-      current.state === "settlement" ||
-      current.state === "attention" ||
-      current.attempts >= MAX_ATTEMPTS;
+      current.state === "settlement" || current.state === "attention";
+    const attemptsSpent = !settling && current.attempts >= MAX_ATTEMPTS;
+    const enteringSettlement = settling || attemptsSpent;
     const [updated] = await tx
       .update(episodes)
       .set({
         assignmentId: owner.id,
         assignmentEpoch: owner.epoch,
         ...(current.assignmentId === owner.id ? {} : { preparationId: null }),
-        state: settling ? "settlement" : "claimed",
-        dueAt: settling ? sql`clock_timestamp()` : null,
+        state: enteringSettlement ? "settlement" : "claimed",
+        dueAt: enteringSettlement ? sql`clock_timestamp()` : null,
         claimToken,
         claimExpiresAt,
-        attempts: settling ? current.attempts : current.attempts + 1,
-        ...(settling
+        attempts: enteringSettlement ? current.attempts : current.attempts + 1,
+        ...(attemptsSpent
           ? {
-              failure: current.failure ?? {
-                code: "SPAWN",
+              firstFailureAt: sql`coalesce(${episodes.firstFailureAt}, clock_timestamp())`,
+              failure: {
+                code: current.failure?.code ?? "SPAWN",
                 reason: "agent_continuation_attempts_exhausted",
+                reasons: current.failure
+                  ? [current.failure.reason, ...(current.failure.reasons ?? [])]
+                  : [],
               },
             }
           : {}),

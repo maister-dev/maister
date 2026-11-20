@@ -299,6 +299,7 @@ export type AgentTerminalIncidentInput = {
   endedAt: Date;
   transitionId: string;
   reason: string | undefined;
+  continuationFailureReason?: string;
   terminal: Run["operationalTerminal"];
   reported: OperationalResult | null;
 };
@@ -386,6 +387,7 @@ export function classifyAgentTerminalFailure(
         ? "evidence_unavailable"
         : null;
   const platformReason =
+    input.continuationFailureReason ??
     safetyReason ??
     terminalCauseReason(input.reason) ??
     input.terminal?.reasonCodes[0] ??

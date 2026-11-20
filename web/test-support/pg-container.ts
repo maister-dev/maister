@@ -648,9 +648,19 @@ export async function declareCurrentTestDatabaseWriter(
       "Initialize fixture writer capabilities before concurrent pool use",
     );
 
-  database.pool.options.onConnect = declareWriterCapability;
-  if (database.pool.totalCount > 0)
-    await declareWriterCapability(database.pool);
+  const {
+    rows: [capabilities],
+  } = await database.pool.query<{ continuationEpisodes: boolean }>(
+    "SELECT to_regclass('public.agent_continuation_episodes') IS NOT NULL AS \"continuationEpisodes\"",
+  );
+  const declare = async (client: Pick<ClientBase, "query">): Promise<void> => {
+    await declareWriterCapability(client);
+    if (!capabilities.continuationEpisodes)
+      await client.query("SET maister.agent_preparation_writer='v1'");
+  };
+
+  database.pool.options.onConnect = declare;
+  await declare(database.pool);
 }
 
 // Apply a single main-lineage migration by tag, one statement at a time. Suits

@@ -8,7 +8,7 @@ import type { RunResultContract } from "@/lib/run-results/types";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -21,9 +21,22 @@ import {
 } from "vitest";
 
 import { stat, writeFile } from "node:fs/promises";
+import { POST as stopRunRoute } from "@/app/api/runs/[runId]/stop/route";
 import { disposeOperationalRun } from "@/lib/gc/operational-disposition";
 import { reconcileHistoricalAgentLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
+import {
+  claimAgentContinuation,
+  recordAgentContinuationFailure,
+  recoverAgentContinuationSettlement,
+  settleAgentContinuation,
+} from "@/lib/agents/continuation-episode";
 import { startAgentSession } from "@/lib/agents/launch";
+import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
+import {
+  inspectOperationalRun,
+  operationalWorkspace,
+} from "@/lib/agents/operational-context";
+import { captureOperationalBaseline } from "@/lib/agents/operational-integrity";
 import {
   assertAgentExecutionQuiescent,
   waitForAgentCancellationExecutionQuiescent,
@@ -40,6 +53,7 @@ import {
 } from "@/lib/agents/prompt-owner";
 import {
   agentContinuationEpisodes,
+  agentIncidentOccurrences,
   agentPreparationOperations,
   agentTurns,
   domainEvents,
@@ -57,11 +71,14 @@ import { MaisterError } from "@/lib/errors";
 import { stopRuntimeEventConsumers } from "@/lib/execution-host/events/consumer";
 import { PromptOwnerSchema } from "@/lib/execution-host/prompt-owner-contract";
 import { applyPromptOwner } from "@/lib/execution-host/prompt-owner-application";
+import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import {
   createPromptOwnerRegistry,
   PromptOwnerDeferred,
 } from "@/lib/execution-host/prompt-owners";
 import { countLiveRuns } from "@/lib/scheduler";
+import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
+import { addDetachedWorktree } from "@/lib/worktree";
 import { git } from "@/test-support/git-fixture";
 import { seedAgentRun } from "@/test-support/agent-run-seed";
 import {
@@ -83,6 +100,12 @@ const previousWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
 const previousRuntimeRoot = process.env.MAISTER_RUNTIME_ROOT;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
+  requireActiveSession: async () => ({ id: "controlled-stop-user" }),
+  requireActiveUserById: async (id: string) => ({ id }),
+  requireProjectActionForUser: vi.fn(),
+}));
 
 const definition = `---\nname: Researcher\ndescription: d\nworkspace: none\nmode: session\nplatform_mcp: false\ntriggers:\n  - manual\nrisk_tier: read_only\n---\nResearch the repository\n`;
 const resultContract: RunResultContract = {
@@ -278,6 +301,7 @@ async function expectSlotRetained(
 async function seedUndispatchedOperationalResume(
   workspace: "worktree" | "repo_read" = "worktree",
   holdHistoricalExit = false,
+  beforeLaunch?: (runId: string) => Promise<void>,
 ) {
   const runId = await seedAgentRun(db, {
     runtimeRoot,
@@ -286,6 +310,7 @@ async function seedUndispatchedOperationalResume(
     resultContract: null,
     operational: true,
   });
+  await beforeLaunch?.(runId);
   const command = await detachPromptFromRun(runId);
   const client = await hosts.forRun(runId);
   expect(command.targetSessionId).toBeTruthy();
@@ -494,8 +519,10 @@ describe("agent application quiescence", () => {
   });
 
   it("IT-APR-09 Stop abandons a claimed resume without waiting for its historical checkpoint", async () => {
-    const { runId, client, resumed } =
-      await seedUndispatchedOperationalResume();
+    const { runId, client, resumed } = await seedUndispatchedOperationalResume(
+      "worktree",
+      true,
+    );
     const occupied = await countLiveRuns(db as never, "agent");
 
     expect(await client.sessionsForRun()).not.toEqual(
@@ -510,16 +537,14 @@ describe("agent application quiescence", () => {
         ),
     ).toEqual([]);
 
-    await expect(
-      stopWorkbenchRun(runId, {
-        deps: {
-          ...depsFromOptions(undefined),
-          executionHosts: hosts,
-          requireActiveSession: async () => ({ id: "controlled-stop-user" }),
-          authorize: async () => undefined,
-        },
+    const response = await stopRunRoute(
+      new Request(`http://localhost/api/runs/${runId}/stop`, {
+        method: "POST",
       }),
-    ).resolves.toMatchObject({
+      { params: Promise.resolve({ runId }) },
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
       ok: true,
       runStatus: "Abandoned",
       supervisorStopped: false,
@@ -645,6 +670,10 @@ describe("agent application quiescence", () => {
       state: "settlement",
       failure: { reason: "operational_integrity_refused" },
     });
+    if ("kind" in owner) throw new Error("expected project checkout owner");
+    await expect(
+      withRepositoryMutationFence(owner.repoPath, async () => "released"),
+    ).resolves.toBe("released");
 
     await startAgentSession(runId, { db, executionHosts: hosts });
     const [terminal] = await db.select().from(runs).where(eq(runs.id, runId));
@@ -654,6 +683,17 @@ describe("agent application quiescence", () => {
     );
     expect(
       await db
+        .select({ reason: agentIncidentOccurrences.reasonCode })
+        .from(agentIncidentOccurrences)
+        .where(
+          and(
+            eq(agentIncidentOccurrences.runId, runId),
+            eq(agentIncidentOccurrences.channel, "operational_terminal"),
+          ),
+        ),
+    ).toEqual([{ reason: "operational_integrity_refused" }]);
+    expect(
+      await db
         .select()
         .from(agentPreparationOperations)
         .where(
@@ -661,6 +701,324 @@ describe("agent application quiescence", () => {
         ),
     ).toHaveLength(1);
   }, 45_000);
+
+  it("IT-APR-02 refuses a frozen v1 checkout once before opening preparation", async () => {
+    const { runId, resumed } = await seedUndispatchedOperationalResume(
+      "repo_read",
+      false,
+      async (id) => {
+        const [seeded] = await db.select().from(runs).where(eq(runs.id, id));
+        const context = await operationalWorkspace(db, seeded);
+        if (context.ownerKind !== "project")
+          throw new Error("expected project checkout allocation");
+        const { cwd, repoPath, projectSlug } = context;
+        await addDetachedWorktree({
+          projectRepoPath: repoPath,
+          worktreePath: cwd,
+          committish: "main",
+        });
+        const baseline = await captureOperationalBaseline(
+          cwd,
+          "ephemeral_checkout",
+          {
+            legacyEphemeral: true,
+          },
+        );
+        await db
+          .update(runs)
+          .set({
+            operationalIntegrityBaseline: {
+              ...baseline,
+              owner: { cwd, repoPath, projectSlug },
+            },
+          })
+          .where(eq(runs.id, id));
+      },
+    );
+    const [before] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(before.operationalIntegrityBaseline?.version).toBe(1);
+    expect(await inspectOperationalRun(db, before)).toMatchObject({
+      verdict: "clean",
+    });
+    await startAgentSession(runId, { db, executionHosts: hosts });
+    expect(await recoverAgentContinuationSettlement(db, hosts, runId)).toBe(
+      true,
+    );
+    await startAgentSession(runId, { db, executionHosts: hosts });
+
+    const [after] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(after).toMatchObject({
+      status: "Failed",
+      operationalIntegrityBaseline: before.operationalIntegrityBaseline,
+    });
+    expect(after.operationalTerminal?.reasonCodes).toContain(
+      "operational_legacy_baseline_unverifiable",
+    );
+    expect(
+      await db
+        .select()
+        .from(agentPreparationOperations)
+        .where(
+          eq(agentPreparationOperations.assignmentId, resumed.successor.id),
+        ),
+    ).toHaveLength(0);
+  }, 45_000);
+
+  it("IT-APR-06 persists bounded, exclusive continuation admission across callers", async () => {
+    const { runId, resumed, client } =
+      await seedUndispatchedOperationalResume();
+    let input = {
+      runId,
+      assignmentId: resumed.successor.id,
+      logicalKey: resumed.turn.logicalKey,
+    };
+    const busy = new MaisterError("CONFLICT", "busy", {
+      details: { reason: "operation_busy" },
+    });
+    for (let i = 1; i <= 5; i++) {
+      const claims = await Promise.all([
+        claimAgentContinuation(db, input),
+        claimAgentContinuation(db, input),
+      ]);
+      const admitted = claims.filter((candidate) => candidate !== null);
+      expect(admitted).toHaveLength(1);
+      expect(admitted[0].attempts).toBe(i);
+      if (i === 2) {
+        // The worker dies before recording a failure. An expired claim spent its attempt.
+        await db
+          .update(agentContinuationEpisodes)
+          .set({
+            claimExpiresAt: sql`clock_timestamp() - interval '1 millisecond'`,
+          })
+          .where(eq(agentContinuationEpisodes.runId, runId));
+        const successor = await db.transaction((tx) =>
+          mintAssignment(tx, {
+            runId,
+            hostId: client.assignment.executionHostId,
+            reason: "resume",
+          }),
+        );
+        const [before] = await db
+          .select()
+          .from(agentContinuationEpisodes)
+          .where(eq(agentContinuationEpisodes.runId, runId));
+        await recordAgentContinuationFailure(db, admitted[0], busy, null, {
+          runId,
+        });
+        expect(
+          await db
+            .select()
+            .from(agentContinuationEpisodes)
+            .where(eq(agentContinuationEpisodes.runId, runId)),
+        ).toEqual([before]);
+        input = { ...input, assignmentId: successor.id };
+        continue;
+      }
+      await recordAgentContinuationFailure(db, admitted[0], busy, null, {
+        runId,
+      });
+      if (i < 5) {
+        expect(await claimAgentContinuation(db, input)).toBeNull();
+        await db
+          .update(agentContinuationEpisodes)
+          .set({ dueAt: sql`clock_timestamp() - interval '1 millisecond'` })
+          .where(eq(agentContinuationEpisodes.runId, runId));
+      }
+    }
+    const settlement = await claimAgentContinuation(db, input);
+    expect(settlement).toMatchObject({ state: "settlement", attempts: 5 });
+    expect(settlement?.failure?.reason).toBe(
+      "agent_continuation_attempts_exhausted",
+    );
+    if (!settlement) throw new Error("expected continuation settlement");
+    await settleAgentContinuation(db, hosts, settlement);
+    expect(await claimAgentContinuation(db, input)).toBeNull();
+    expect(
+      await db
+        .select({ reason: agentIncidentOccurrences.reasonCode })
+        .from(agentIncidentOccurrences)
+        .where(eq(agentIncidentOccurrences.runId, runId)),
+    ).toEqual([{ reason: "agent_continuation_attempts_exhausted" }]);
+  }, 30_000);
+
+  it("IT-APR-07 settles a historical prompt without opening its undispatched successor", async () => {
+    const { runId, command, resumed } =
+      await seedUndispatchedOperationalResume();
+    await expect(
+      applyPromptOwner({
+        db,
+        owners: agentPromptOwners,
+        commandId: command.id,
+        signal: AbortSignal.timeout(5_000),
+      }),
+    ).resolves.toBe("superseded");
+    const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+    expect(run).toMatchObject({
+      status: "Running",
+      executionAssignmentId: resumed.successor.id,
+    });
+    const [retained] = await db
+      .select()
+      .from(executionCommands)
+      .where(eq(executionCommands.id, command.id));
+    expect(retained).toMatchObject({
+      applicationState: "superseded",
+      completionAppliedAt: null,
+      applicationNextRetryAt: null,
+    });
+  }, 30_000);
+
+  it.each([
+    { limit: "age", ageMinutes: 16, priorAttempts: 0 },
+    { limit: "count", ageMinutes: 1, priorAttempts: 9 },
+  ])(
+    "IT-APR-08 exhausts the prompt service budget by $limit without spending ordinary attempts",
+    async ({ ageMinutes, priorAttempts }) => {
+      const { command, runId } = await seedUndispatchedOperationalResume();
+      const owners = createPromptOwnerRegistry([
+        {
+          ...agentPromptOwner,
+          prepare: async () => {
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "test host unavailable",
+              {
+                details: { reason: "agent_execution_quiescence_unproven" },
+              },
+            );
+          },
+        },
+      ]);
+      await db
+        .update(executionCommands)
+        .set({
+          applicationError: {
+            phase: "prepare",
+            reason: "prompt_owner_service_retry",
+            deferredSince: new Date(
+              Date.now() - ageMinutes * 60 * 1000,
+            ).toISOString(),
+            serviceRetryAttempts: priorAttempts,
+          },
+        })
+        .where(eq(executionCommands.id, command.id));
+      await expect(
+        applyPromptOwner({
+          db,
+          owners,
+          commandId: command.id,
+          signal: AbortSignal.timeout(5_000),
+        }),
+      ).resolves.toBe("poisoned");
+      const [retained] = await db
+        .select()
+        .from(executionCommands)
+        .where(eq(executionCommands.id, command.id));
+      expect(retained).toMatchObject({
+        applicationState: "poisoned",
+        applicationNextRetryAt: null,
+        applicationAttempts: 0,
+        applicationError: {
+          reason: "operational_prompt_service_exhausted",
+          serviceRetryAttempts: priorAttempts + 1,
+        },
+      });
+      expect(
+        await db
+          .select({ reason: agentIncidentOccurrences.reasonCode })
+          .from(agentIncidentOccurrences)
+          .where(eq(agentIncidentOccurrences.runId, runId)),
+      ).toEqual([{ reason: "operational_prompt_service_exhausted" }]);
+    },
+    30_000,
+  );
+
+  it.each(["historical-prompt-first", "continuation-first"] as const)(
+    "IT-APR-11 converges after an owner handoff in %s ordering",
+    async (order) => {
+      const { runId, command, resumed } =
+        await seedUndispatchedOperationalResume("repo_read");
+      const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+      const checkout = run.operationalIntegrityBaseline?.owner?.cwd;
+      if (!checkout) throw new Error("expected frozen checkout");
+      await writeFile(join(checkout, "foreign"), "Changed retained source");
+      const occupied = await countLiveRuns(db as never, "agent");
+      const settleOriginalPrompt = async () => {
+        const worker = startPromptOwnerWorker({
+          db,
+          owners: agentPromptOwners,
+        });
+        try {
+          await expect
+            .poll(
+              async () => {
+                const [retained] = await db
+                  .select()
+                  .from(executionCommands)
+                  .where(eq(executionCommands.id, command.id));
+                return retained.applicationState;
+              },
+              { timeout: 8_000 },
+            )
+            .toBe("superseded");
+        } finally {
+          await worker.stop();
+        }
+      };
+
+      if (order === "historical-prompt-first") await settleOriginalPrompt();
+      await startAgentSession(runId, { db, executionHosts: hosts });
+
+      // A newly bound driver uses the persisted settlement, without reopening Git ownership.
+      const restarted = (await fakeExecutionHosts(db, { fake })).hosts;
+      const worker = startAgentContinuationWorker({
+        db,
+        executionHosts: restarted,
+      });
+      try {
+        await expect
+          .poll(
+            async () => {
+              const [settled] = await db
+                .select()
+                .from(runs)
+                .where(eq(runs.id, runId));
+              return settled.status;
+            },
+            { timeout: 8_000 },
+          )
+          .toBe("Failed");
+      } finally {
+        await worker.stop();
+      }
+      if (order === "continuation-first") await settleOriginalPrompt();
+      await startAgentSession(runId, { db, executionHosts: restarted });
+
+      const [settled] = await db.select().from(runs).where(eq(runs.id, runId));
+      expect(settled.status).toBe("Failed");
+      expect(await countLiveRuns(db as never, "agent")).toBe(occupied - 1);
+      expect(
+        await db
+          .select()
+          .from(executionCommands)
+          .where(
+            and(
+              eq(executionCommands.executionAssignmentId, resumed.successor.id),
+              eq(executionCommands.kind, "session.create"),
+            ),
+          ),
+      ).toHaveLength(0);
+      expect(
+        await db
+          .select()
+          .from(agentPreparationOperations)
+          .where(
+            eq(agentPreparationOperations.assignmentId, resumed.successor.id),
+          ),
+      ).toHaveLength(1);
+    },
+    45_000,
+  );
 
   it("operational Stop retains its owner until the exact delayed canonical exit commits", async () => {
     const runId = await seedAgentRun(db, {

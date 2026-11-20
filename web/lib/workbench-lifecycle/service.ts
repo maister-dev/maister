@@ -1918,7 +1918,9 @@ async function stopAgentAfterAuth(
   const finalize = await deps.finalizeAgentRun({
     runId,
     reason: "operator",
-    ...(ctx.viewerUserId ? { projectOperatorUserId: ctx.viewerUserId } : {}),
+    ...(ctx.run.agentKind === "operational" && ctx.viewerUserId
+      ? { projectOperatorUserId: ctx.viewerUserId }
+      : {}),
   });
 
   if (!finalize.finalized) {
