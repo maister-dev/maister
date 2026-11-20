@@ -22,6 +22,7 @@ import {
   confirmProjectConfiguration,
 } from "../service";
 import { cleanupConfigOperation, pruneConfigReviews } from "../cleanup";
+import { verifyConfigCommit } from "../git-publication";
 import { recoverProjectConfigurations } from "../reconcile";
 import {
   findConfigOperation,
@@ -101,6 +102,31 @@ async function ready(projectId: string): Promise<string> {
 }
 
 const authorized = async (): Promise<void> => {};
+
+it("verifies the original reviewed commit when a local alternate object is configured", async () => {
+  const { projectId, repo } = await seed();
+  const identity = { id: await ready(projectId), projectId, actorUserId };
+  const receipt = await confirmProjectConfiguration(
+    database.db,
+    identity,
+    authorized,
+  );
+  const operation = await findConfigOperation(database.db, identity);
+
+  if (!receipt.committedSha || !operation)
+    throw new Error("Expected a committed review");
+  const tree = (
+    await git(repo, ["rev-parse", `${receipt.committedSha}^{tree}`])
+  ).trim();
+  const alternate = (
+    await git(repo, ["commit-tree", tree, "-m", "alternate message"])
+  ).trim();
+
+  await git(repo, ["replace", receipt.committedSha, alternate]);
+  await expect(
+    verifyConfigCommit(operation.snapshot, receipt.committedSha),
+  ).resolves.toBeUndefined();
+});
 
 it("IT-CPC-01/02: unborn first save, repeated save, no-op and replay publish only the reviewed manifest", async () => {
   const { projectId, repo } = await seed();

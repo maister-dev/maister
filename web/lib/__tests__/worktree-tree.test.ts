@@ -166,6 +166,32 @@ describe("listTree / readBlob against a real temp git repo", () => {
     await rm(repo, { recursive: true, force: true });
   });
 
+  it("keeps the tracked tree and blob of the selected commit when an alternate object is configured", async () => {
+    const ref = (await git(repo, "rev-parse", "main")).trim();
+    const originalTree = await listTree({ repo, ref, dir: "" });
+
+    await git(repo, "switch", "--detach", ref);
+    await writeFile(join(repo, "a.txt"), "alternate\n");
+    await writeFile(join(repo, "alternate.txt"), "added\n");
+    await git(repo, "add", "--", "a.txt", "alternate.txt");
+    await git(repo, "commit", "-q", "-m", "alternate tree");
+    const alternate = (await git(repo, "rev-parse", "HEAD")).trim();
+
+    await git(repo, "switch", "main");
+    await git(repo, "replace", ref, alternate);
+
+    try {
+      await expect(listTree({ repo, ref, dir: "" })).resolves.toEqual(
+        originalTree,
+      );
+      await expect(
+        readBlob({ repo, ref, path: "a.txt", maxBytes: 64 }),
+      ).resolves.toEqual({ kind: "text", content: "alpha\n" });
+    } finally {
+      await git(repo, "replace", "-d", ref);
+    }
+  });
+
   describe("listTree", () => {
     it("lists the repo root with a.txt as a file and src as a dir", async () => {
       const res = await listTree({ repo, ref: "main", dir: "" });

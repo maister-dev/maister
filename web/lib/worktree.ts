@@ -1701,7 +1701,7 @@ export async function showFileAtHead(
   const f = validate(repoRelPathSchema, file, "file");
 
   try {
-    const { stdout } = await runGit(repo, ["show", `HEAD:${f}`]);
+    const { stdout } = await runGitInspection(repo, ["show", `HEAD:${f}`]);
 
     return stdout;
   } catch {
@@ -3622,7 +3622,7 @@ export async function listTree(
   if (dir !== "") {
     try {
       const t = (
-        await runGit(repo, [
+        await runGitInspection(repo, [
           "cat-file",
           "-t",
           "--end-of-options",
@@ -3640,7 +3640,7 @@ export async function listTree(
 
   try {
     out = (
-      await runGit(
+      await runGitInspection(
         repo,
         // --full-tree lists from the repo root regardless of CWD, so a repo_path
         // that is itself a nested subdirectory of a larger repo can't silently
@@ -3718,7 +3718,7 @@ export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
 
   try {
     const t = (
-      await runGit(repo, [
+      await runGitInspection(repo, [
         "cat-file",
         "-t",
         "--end-of-options",
@@ -3736,7 +3736,7 @@ export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
   try {
     size = Number(
       (
-        await runGit(repo, [
+        await runGitInspection(repo, [
           "cat-file",
           "-s",
           "--end-of-options",
@@ -3767,6 +3767,7 @@ export async function readBlob(args: ReadBlobArgs): Promise<RepoBlobResult> {
         signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
         maxBuffer: EXEC_MAX_BUFFER,
         encoding: "buffer",
+        env: gitInspectionEnvironment(),
       },
     );
 

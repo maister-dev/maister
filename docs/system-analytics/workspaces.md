@@ -692,6 +692,10 @@ directory is selected by the validated argument, and working-tree inspection
 receives its operation-owned scratch index. Remaining invocation policy is
 Designed. Its migration must cover these owning entry points.
 
+Workbench tree and blob reads, review diffs and logs, and reviewed
+configuration Git operations resolve original objects. Local replacement refs
+do not change a stored commit's tree, blob bytes, or reviewed commit checks.
+
 | Family | Current entry points and behavior to preserve |
 | --- | --- |
 | Worktree lifecycle and evidence | `web/lib/worktree.ts` owns allocation, ref and tree inspection, buffered and streamed review reads, sync, promotion, pushes and removal. `web/lib/auto-promotion/readers.ts` reads promotion evidence. `web/lib/worktree-provenance.ts` installs worktree-local provenance; privileged commits need the same trailers and delivery-root identity without delegating to the worktree hook. |

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { GIT_EXACT_OBJECT_ENV } from "../../../runtime/git-inspection-environment";
+
 import {
   GIT_OWNERSHIP_UNCERTAIN,
   executeReviewedRepositoryGit,
@@ -17,6 +19,7 @@ export async function gitResult(
       maxBuffer: 4 * 1024 * 1024,
       env: {
         ...process.env,
+        ...GIT_EXACT_OBJECT_ENV,
         LC_ALL: "C",
         GIT_TERMINAL_PROMPT: "0",
         GIT_OPTIONAL_LOCKS: "0",
