@@ -22,11 +22,12 @@ import type { ReactElement, ReactNode } from "react";
 import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
@@ -128,10 +129,6 @@ export type LocalPackageEditorLabels = {
   changeReview: ChangeReviewDialogLabels;
 };
 
-function formatUsageCount(locale: string, value: number): string {
-  return new Intl.NumberFormat(locale).format(value);
-}
-
 type SaveStatus =
   | { kind: "idle" }
   | { kind: "saving" }
@@ -222,7 +219,6 @@ export function LocalPackageEditor({
   sync: { pending: SyncPendingState | null; options: SyncOptions } | null;
   recoveryStatus?: "ready" | "recovering" | "recovery_required";
 }): ReactElement {
-  const locale = useLocale();
   const router = useRouter();
   const tApiErrors = useTranslations("apiErrors");
   const tStudio = useTranslations("studio");
@@ -1207,24 +1203,10 @@ export function LocalPackageEditor({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {aiHeader?.usage ? (
-                    <span
-                      className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
-                      data-testid="local-editor-ai-header-summary"
-                    >
-                      <span className="h-1 w-16 overflow-hidden rounded-full bg-ivory">
-                        <span
-                          className="block h-full bg-amber"
-                          style={{
-                            width: `${Math.min(100, Math.round((aiHeader.usage.used / Math.max(1, aiHeader.usage.size)) * 100))}%`,
-                          }}
-                        />
-                      </span>
-                      <span>
-                        {formatUsageCount(locale, aiHeader.usage.used)} /{" "}
-                        {formatUsageCount(locale, aiHeader.usage.size)}
-                      </span>
-                    </span>
+                  {aiHeader ? (
+                    <div data-testid="local-editor-ai-header-summary">
+                      <ContextUsageMeter snapshot={aiHeader.context} />
+                    </div>
                   ) : null}
                   {assistantBusy ? (
                     <span

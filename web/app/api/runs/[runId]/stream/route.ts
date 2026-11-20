@@ -18,6 +18,11 @@ import {
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
 import {
+  contextProjectionThrough,
+  readContextSnapshot,
+  readCurrentAttemptId,
+} from "@/lib/runs/context-reader";
+import {
   executionEvents,
   localPackages,
   projects,
@@ -198,6 +203,7 @@ function canonicalRunEventStream(input: {
   replayEvents: boolean;
   replayCursor: bigint | null;
   startedAt: number;
+  context: boolean;
 }): Response {
   const cancellation = new AbortController();
   const signal = AbortSignal.any([input.req.signal, cancellation.signal]);
@@ -211,6 +217,10 @@ function canonicalRunEventStream(input: {
       let lastStatusCheck = Date.now();
       const maxQuietMs = keepaliveMs();
       let lastEventAt = Date.now();
+      let lastContext = "";
+      let lastAttemptContext = "";
+      let terminalDeadline: number | null = null;
+      let terminalProjectionCursor: bigint | null = null;
       const close = (): void => {
         try {
           controller.close();
@@ -230,6 +240,17 @@ function canonicalRunEventStream(input: {
       try {
         while (!signal.aborted) {
           const events = await readCanonicalRunEvents(input.run.id, cursor);
+          const context =
+            input.context && input.run.runKind !== "librarian"
+              ? await readContextSnapshot(getDb(), input.run.id)
+              : null;
+          const attemptId =
+            context && input.run.runKind === "flow"
+              ? await readCurrentAttemptId(getDb(), input.run.id)
+              : null;
+          const attemptContext = attemptId
+            ? await readContextSnapshot(getDb(), input.run.id, attemptId)
+            : null;
 
           if (input.run.companyId) {
             await assertCompanyRunReadAccess(
@@ -238,6 +259,8 @@ function canonicalRunEventStream(input: {
               input.run.id,
             );
           } else {
+            if (context && input.run.projectId)
+              await requireProjectRole(input.run.projectId, "viewer");
             await assertRunKnowledgeDisclosure(
               getDb(),
               { kind: "user", userId: input.userId },
@@ -245,6 +268,24 @@ function canonicalRunEventStream(input: {
             );
           }
           if (signal.aborted) break;
+          if (context) {
+            const json = JSON.stringify(context);
+
+            if (json !== lastContext) {
+              controller.enqueue(encoder.encode(formatSyntheticSseEvent(json)));
+              lastContext = json;
+              lastEventAt = Date.now();
+            }
+          }
+          if (attemptContext) {
+            const json = JSON.stringify(attemptContext);
+
+            if (json !== lastAttemptContext) {
+              controller.enqueue(encoder.encode(formatSyntheticSseEvent(json)));
+              lastAttemptContext = json;
+              lastEventAt = Date.now();
+            }
+          }
 
           for (const event of events) {
             const sequence = event.runSequence;
@@ -273,7 +314,27 @@ function canonicalRunEventStream(input: {
             lastStatusCheck = Date.now();
             const status = await refreshRunStatus(input.run.id);
 
-            if (!status || TERMINAL_RUN_STATUS.has(status.status)) break;
+            if (!status) break;
+            if (TERMINAL_RUN_STATUS.has(status.status)) {
+              if (!context) break;
+              terminalDeadline ??= Date.now() + 3_000;
+              if (
+                events.length < 500 &&
+                (await contextProjectionThrough(getDb(), input.run.id, cursor))
+              ) {
+                if (terminalProjectionCursor === cursor) break;
+                // Read once after observing the committed projection watermark.
+                terminalProjectionCursor = cursor;
+                continue;
+              }
+              if (Date.now() >= terminalDeadline) {
+                log.warn(
+                  { runId: input.run.id },
+                  "context stream closed with pending projection",
+                );
+                break;
+              }
+            }
           }
           if (Date.now() - lastEventAt > maxQuietMs) {
             if (signal.aborted) break;
@@ -442,5 +503,6 @@ export async function GET(
     replayEvents,
     replayCursor,
     startedAt,
+    context: new URL(req.url).searchParams.get("context") === "1",
   });
 }

@@ -60,6 +60,7 @@ export type HitlOption = {
 };
 
 export type ScratchDetail = {
+  context?: import("@/lib/runs/context-snapshot").ContextSnapshot;
   run: {
     id: string;
     projectId: string | null;

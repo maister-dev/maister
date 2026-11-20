@@ -48,6 +48,16 @@ test("scratch detail lands on the conversation with an enabled composer", async 
 
   await expect(conversation).toBeVisible();
   await expect(conversation).toContainText("Please tweak the README.");
+  const context = conversation.getByTestId("context-usage");
+
+  await expect(context).toContainText("Not reported");
+  await expect(context.getByRole("meter")).toHaveCount(0);
+  await context.getByRole("button", { name: "Context usage details" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Context usage details" }),
+  ).toContainText("Not reported");
+  await page.keyboard.press("Escape");
 
   // WaitingForUser → the composer is primary and enabled.
   const composer = page.locator(

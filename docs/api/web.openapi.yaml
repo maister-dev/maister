@@ -13532,6 +13532,11 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 0 }
+        - name: context
+          in: query
+          required: false
+          description: Opt in to id-less context snapshots with value 1.
+          schema: { type: string, enum: ["1"] }
       responses:
         "200":
           description: SSE stream.
@@ -24166,6 +24171,7 @@ components:
         completedCompactions: { type: integer, minimum: 0 }
         coverage: { type: string, enum: [from_incarnation_start, partial] }
         windowAdvisory: { type: string, nullable: true, enum: [window_unverified, null] }
+        configuredWindowTokens: { type: integer, nullable: true, minimum: 1, maximum: 9007199254740991 }
     RunTranscriptPage:
       description: |
         Each portion contains at most 200 records and 389120 serialized UTF-8

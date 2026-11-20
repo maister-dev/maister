@@ -1332,6 +1332,7 @@ export type SessionRecord = {
   processContext?: HostProcessContext;
   drainSessionOutput?: () => void;
   adapter: ExecutorAgent;
+  contextWindowAdvisory?: "window_unverified";
   runId: string;
   projectSlug: string;
   stepId: string;

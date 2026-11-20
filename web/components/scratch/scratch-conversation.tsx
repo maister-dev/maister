@@ -12,7 +12,7 @@ import type { ReactElement } from "react";
 import type { HitlErrorMessage } from "@/lib/ui-error-message";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import {
@@ -38,10 +38,14 @@ import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
 import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import {
   parseQuickReplies,
-  parseScratchMessageContent,
   type ScratchFlowActionResultPayload,
 } from "@/lib/scratch-runs/transcript";
-import { useRunStream } from "@/lib/use-run-stream";
+import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
+import {
+  latestContextSnapshot,
+  type ContextSnapshot,
+} from "@/lib/runs/context-snapshot";
 import { isStaleViewErrorCode } from "@/lib/ui-error-message";
 import {
   canReplayHitlAnswer,
@@ -58,7 +62,7 @@ const shell =
 export type ScratchHeaderInfo = {
   status: ScratchDialogStatus;
   statusLabel: string;
-  usage: { used: number; size: number } | null;
+  context: ContextSnapshot | null;
 };
 
 function statusClass(status: ScratchDialogStatus): string {
@@ -78,10 +82,6 @@ function statusClass(status: ScratchDialogStatus): string {
     case "Abandoned":
       return "border-line bg-ivory text-mute";
   }
-}
-
-function formatUsageCount(locale: string, value: number): string {
-  return new Intl.NumberFormat(locale).format(value);
 }
 
 // The live conversation center for a scratch run (M35 T3.2/T3.4): owns the
@@ -122,7 +122,6 @@ export function ScratchConversation({
   onMessageSettled?: () => void;
   onHeaderInfo?: (info: ScratchHeaderInfo) => void;
 }): ReactElement {
-  const locale = useLocale();
   const t = useTranslations("scratch");
   const tRun = useTranslations("run");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
@@ -183,7 +182,10 @@ export function ScratchConversation({
   const [commandCatalog, setCommandCatalog] = useState<
     ProjectCapabilityCatalogEntry[]
   >([]);
-  const { eventCount } = useRunStream(runId, { retain: false });
+  const { eventCount, context: streamedContext } = useRunPageStream(
+    runId,
+    true,
+  );
   const resolvedMessageEndpoint =
     messageEndpoint ?? `/api/scratch-runs/${runId}/messages`;
   const resolvedRecoverEndpoint =
@@ -312,7 +314,7 @@ export function ScratchConversation({
     }, 250);
 
     return () => clearTimeout(refreshTimer);
-  }, [eventCount, loadDetail]);
+  }, [eventCount, streamedContext?.transcriptSequence, loadDetail]);
 
   const attachmentsByMessage = useMemo(() => {
     const result = new Map<string, ScratchDetail["attachments"]>();
@@ -330,19 +332,10 @@ export function ScratchConversation({
   const globalAttachments =
     detail?.attachments.filter((attachment) => !attachment.messageId) ?? [];
   const status = detail?.scratch.dialogStatus ?? "Starting";
-  const latestUsage = useMemo(() => {
-    let usage: { used: number; size: number } | null = null;
-
-    for (const message of detail?.messages ?? []) {
-      const parsed = parseScratchMessageContent(message.role, message.content);
-
-      if (parsed.kind === "usage") {
-        usage = { used: parsed.used, size: parsed.size };
-      }
-    }
-
-    return usage;
-  }, [detail?.messages]);
+  const context = latestContextSnapshot(
+    detail?.context ?? null,
+    streamedContext ?? null,
+  );
 
   // A notice describes the turn that was running when its message was sent;
   // the next turn (a dispatched queued message) must not inherit it.
@@ -357,9 +350,9 @@ export function ScratchConversation({
     onHeaderInfo?.({
       status,
       statusLabel: t(`status.${status}`),
-      usage: latestUsage,
+      context,
     });
-  }, [status, latestUsage, onHeaderInfo, t]);
+  }, [status, context, onHeaderInfo, t]);
   const transcriptLabels: TranscriptLabels = {
     thinking: t("thinking"),
     rawEvent: t("rawEvent"),
@@ -720,31 +713,6 @@ export function ScratchConversation({
           >
             {t(`status.${status}`)}
           </span>
-          {latestUsage ? (
-            <div
-              className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
-              title={t("tokens")}
-            >
-              <span className="h-1 w-20 overflow-hidden rounded-full bg-ivory">
-                <span
-                  className="block h-full bg-amber"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      Math.round(
-                        (latestUsage.used / Math.max(1, latestUsage.size)) *
-                          100,
-                      ),
-                    )}%`,
-                  }}
-                />
-              </span>
-              <span>
-                {formatUsageCount(locale, latestUsage.used)} /{" "}
-                {formatUsageCount(locale, latestUsage.size)}
-              </span>
-            </div>
-          ) : null}
         </header>
       ) : null}
 
@@ -881,6 +849,11 @@ export function ScratchConversation({
         </p>
       ) : null}
 
+      {!compact ? (
+        <div className="border-t border-line-soft px-4 pt-2">
+          <ContextUsageMeter snapshot={context} />
+        </div>
+      ) : null}
       <ScratchComposer
         agent={composerAgent}
         attachmentsEnabled={attachmentsEnabled}

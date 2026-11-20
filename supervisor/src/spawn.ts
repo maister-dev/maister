@@ -12,6 +12,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
+import { claudeContextWindow } from "../../runtime/acp-context";
 
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
@@ -362,6 +363,12 @@ export async function spawnSession(
       sessionId,
       ...(opts.hostState ? { processGroup: pid, processContext } : {}),
       adapter: adapterRuntime.id,
+      contextWindowAdvisory:
+        claudeContextWindow({
+          adapter: adapterRuntime.id,
+          providerKind: request.runner?.provider.kind ?? null,
+          configured: request.runner?.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+        }).windowAdvisory ?? undefined,
       runId: workspace.runId,
       projectSlug: workspace.projectSlug,
       stepId: request.stepId,

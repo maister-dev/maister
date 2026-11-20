@@ -62,6 +62,9 @@ channels:
         zero. `?replay=false` begins at the current durable tail and first emits
         `session.stream_ready`. Terminal database run states close the stream
         after already-readable canonical rows are emitted.
+        Clients request context snapshots with `?context=1`. The manager sends
+        the active run snapshot and, for a Flow, may send the current attempt
+        snapshot on the same connection. Neither observation advances replay.
       message:
         oneOf:
           - $ref: "#/components/messages/CanonicalRunEvent"
@@ -169,6 +172,7 @@ components:
         windowAdvisory:
           type: [string, "null"]
           enum: [window_unverified, null]
+        configuredWindowTokens: { type: [integer, "null"], minimum: 1, maximum: 9007199254740991 }
       example:
         type: session.context_snapshot
         runId: 54c27b5c-509a-41a3-a143-c429389e813d

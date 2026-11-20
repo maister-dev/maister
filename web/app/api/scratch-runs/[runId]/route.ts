@@ -16,6 +16,7 @@ import { extractOptions } from "@/lib/queries/hitl";
 import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { readCompactionEvidence } from "@/lib/runs/compaction-evidence";
+import { readContextSnapshot } from "@/lib/runs/context-reader";
 import { loadScratchTerminalCause } from "@/lib/runs/terminal-cause";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
@@ -400,7 +401,9 @@ export async function GET(
     });
     if (markers.length > 0) {
       const evidence = await readCompactionEvidence(
-        getDb(), runId, markers.map(({ message }) => message.id),
+        getDb(),
+        runId,
+        markers.map(({ message }) => message.id),
       );
       try {
         if (run.projectId)
@@ -411,7 +414,10 @@ export async function GET(
           runId,
         );
         for (const { message, marker } of markers) {
-          message.content = JSON.stringify({ ...marker, ...evidence.get(message.id) });
+          message.content = JSON.stringify({
+            ...marker,
+            ...evidence.get(message.id),
+          });
         }
       } catch (error) {
         if (!isMaisterError(error) || error.code !== "UNAUTHORIZED")
@@ -428,6 +434,7 @@ export async function GET(
     }
 
     return NextResponse.json({
+      context: await readContextSnapshot(getDb(), runId),
       run: {
         id: run.id,
         projectId: run.projectId,

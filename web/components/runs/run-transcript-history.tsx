@@ -16,6 +16,8 @@ import { useTranslations } from "next-intl";
 
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
+import { latestContextSnapshot } from "@/lib/runs/context-snapshot";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { useLatestRef } from "@/lib/use-latest-ref";
 
@@ -116,6 +118,7 @@ function mergeRefresh(
   return {
     ...page,
     usage: refreshed.usage,
+    context: refreshed.context,
     projection: refreshed.projection,
     messages,
     beforeCursor: sameFirst ? refreshed.beforeCursor : page.beforeCursor,
@@ -727,6 +730,7 @@ export function RunTranscriptHistory({
           updated[updated.length - 1] = {
             ...final,
             usage: latest.usage,
+            context: latest.context,
             projection: latest.projection,
             hasLater: hasNewer,
           };
@@ -809,7 +813,11 @@ export function RunTranscriptHistory({
 
   useEffect(() => {
     if (stream.eventCount > 0) refreshRef.current();
-  }, [stream.eventCount]);
+  }, [
+    stream.eventCount,
+    stream.context?.transcriptSequence,
+    stream.attemptContext?.transcriptSequence,
+  ]);
 
   const navigate = useCallback(
     async (direction: Direction): Promise<void> => {
@@ -1313,10 +1321,17 @@ export function RunTranscriptHistory({
       {last?.projection.state === "pending" ? (
         <p role="status">{t("projectionPending")}</p>
       ) : null}
-      {last?.usage ? (
-        <p>
-          {t("usage")}: {last.usage.used} / {last.usage.size}
-        </p>
+      {last ? (
+        <ContextUsageMeter
+          snapshot={latestContextSnapshot(
+            last.context ?? null,
+            last.attemptId === null
+              ? (stream.context ?? null)
+              : stream.attemptContext?.nodeAttemptId === last.attemptId
+                ? stream.attemptContext
+                : null,
+          )}
+        />
       ) : null}
       {last?.projection.state === "caught_up" && messages.length === 0 ? (
         <p>{t("emptyTranscript")}</p>

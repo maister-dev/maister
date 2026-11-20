@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { RunInspector } from "@/components/runs/run-inspector";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
@@ -70,7 +71,7 @@ export function LiveRunInspector({
     liveCost?.initial ?? null,
   );
   const [nowMs, setNowMs] = useState<number | null>(null);
-  const { eventCount } = useRunPageStream(rest.runId, live);
+  const { eventCount, context } = useRunPageStream(rest.runId, live);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -172,11 +173,14 @@ export function LiveRunInspector({
   }, [facts, liveCost, cost, liveWallClock, nowMs]);
 
   return (
-    <RunInspector
-      {...rest}
-      changeSummary={changeSummary}
-      facts={liveFacts}
-      stale={stale}
-    />
+    <>
+      {live ? <ContextUsageMeter snapshot={context ?? null} /> : null}
+      <RunInspector
+        {...rest}
+        changeSummary={changeSummary}
+        facts={liveFacts}
+        stale={stale}
+      />
+    </>
   );
 }

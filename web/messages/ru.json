@@ -1,5 +1,18 @@
 {
   "contextUsage": {
+    "label": "Контекст",
+    "details": "Использование контекста",
+    "tokenPair": "{used, number} / {size, number} токенов",
+    "notReported": "Нет данных",
+    "agentReported": "Размер окна сообщён агентом",
+    "runnerConfigured": "В раннере настроено {size, number} токенов",
+    "windowDiscrepancy": "В раннере настроено {size, number} токенов. Агент сообщил другой размер окна.",
+    "runnerReference": "Настройки раннеров и моделей",
+    "updated": "Обновлено {time}",
+    "completedCompactions": "Завершено сжатий: {count, number}",
+    "observedCompactions": "Зафиксировано сжатий: {count, number}",
+    "unverified": "Окно не подтверждено",
+    "windowGuidance": "Укажите фактический размер окна модели в переменной CLAUDE_CODE_MAX_CONTEXT_TOKENS окружения раннера.",
     "in_progress": "Идёт сжатие контекста…",
     "completed": "Контекст сжат",
     "failed": "Не удалось сжать контекст",

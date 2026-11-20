@@ -156,6 +156,7 @@ describe("runtime event ingestion", () => {
     };
     const { canonicalProjectors } = await import("../projection-runtime");
     const { projectExecutionEvents } = await import("../projector");
+    const { readContextSnapshot } = await import("@/lib/runs/context-reader");
     const projector = canonicalProjectors.find(
       (value) => value.consumerName === "canonical-context-v1",
     );
@@ -182,6 +183,31 @@ describe("runtime event ingestion", () => {
         projector,
         runId: contextRunId,
       });
+      if (index === 0) {
+        expect(
+          (await readContextSnapshot(testDatabase.db, contextRunId)).usage,
+        ).toBeNull();
+        const sessionId = randomUUID();
+
+        await testDatabase.pool.query(
+          "INSERT INTO run_sessions(id,run_id,session_name,execution_assignment_id,host_session_id) VALUES($1,$2,'default',$3,$4)",
+          [sessionId, contextRunId, contextAssignmentId, hostSessionId],
+        );
+        await testDatabase.pool.query(
+          "INSERT INTO run_session_incarnations(id,run_session_id,run_id,execution_assignment_id,assignment_epoch,execution_host_id,host_session_id,state,origin) VALUES($1,$2,$3,$4,1,$5,$6,'active','native')",
+          [
+            randomUUID(),
+            sessionId,
+            contextRunId,
+            contextAssignmentId,
+            contextHostId,
+            hostSessionId,
+          ],
+        );
+        expect(
+          (await readContextSnapshot(testDatabase.db, contextRunId)).usage,
+        ).toMatchObject({ used: 72, size: 100 });
+      }
       expect((await context()).rows).toEqual([
         {
           used_tokens: ["72", "72", "72", null, "0", "0"][index],

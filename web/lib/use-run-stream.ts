@@ -3,10 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  ContextSnapshotSchema,
+  type ContextSnapshot,
+} from "@/lib/runs/context-snapshot";
+import {
   advanceRunStreamLifecycle,
   buildRunStreamUrl,
   initialRunStreamLifecycle,
   reconnectDelayMs,
+  runStreamCursor,
   type RunStreamLifecycleKind,
 } from "@/lib/run-stream-controller";
 
@@ -20,6 +25,8 @@ export type RunStreamEvent = {
 export type RunStreamStatus = "connecting" | "open" | "closed";
 
 export type UseRunStreamResult = {
+  context?: ContextSnapshot | null;
+  attemptContext?: ContextSnapshot | null;
   events: RunStreamEvent[];
   eventCount: number;
   status: RunStreamStatus;
@@ -46,6 +53,10 @@ export function useRunStream(
   const retain = options?.retain ?? true;
   const replay = options?.replay ?? retain;
   const [events, setEvents] = useState<RunStreamEvent[]>([]);
+  const [context, setContext] = useState<ContextSnapshot | null>(null);
+  const [attemptContext, setAttemptContext] = useState<ContextSnapshot | null>(
+    null,
+  );
   const [eventCount, setEventCount] = useState(0);
   const [status, setStatus] = useState<RunStreamStatus>("connecting");
   const [liveness, setLiveness] =
@@ -104,9 +115,12 @@ export function useRunStream(
       typeof window !== "undefined"
         ? window.location.origin
         : "http://localhost";
-    const es = new EventSource(
+    const url = new URL(
       buildRunStreamUrl(origin, runId, lastEventIdRef.current, replay),
     );
+
+    url.searchParams.set("context", "1");
+    const es = new EventSource(url.toString());
 
     sourceRef.current = es;
     es.onopen = () => {
@@ -124,11 +138,22 @@ export function useRunStream(
       try {
         const parsed = JSON.parse(msg.data) as RunStreamEvent;
 
+        if (parsed.type === "session.context_snapshot") {
+          const snapshot = ContextSnapshotSchema.safeParse(parsed);
+
+          if (snapshot.success && snapshot.data.runId === runId) {
+            if (snapshot.data.nodeAttemptId === null) setContext(snapshot.data);
+            else setAttemptContext(snapshot.data);
+          }
+          return;
+        }
         setEventCount((c) => c + 1);
         if (retain) setEvents((cur) => [...cur, parsed]);
-        if (/^(0|[1-9][0-9]*)$/.test(msg.lastEventId)) {
-          lastEventIdRef.current = msg.lastEventId;
-          setLastEventId(msg.lastEventId);
+        const cursor = runStreamCursor(parsed, msg.lastEventId);
+
+        if (cursor !== null) {
+          lastEventIdRef.current = cursor;
+          setLastEventId(cursor);
         }
       } catch {
         /* skip malformed */
@@ -176,6 +201,8 @@ export function useRunStream(
   }, [runId, reconnectKey, replay, retain]);
 
   return {
+    context: context?.runId === runId ? context : null,
+    attemptContext: attemptContext?.runId === runId ? attemptContext : null,
     events,
     eventCount,
     status,

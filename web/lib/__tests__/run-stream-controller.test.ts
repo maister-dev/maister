@@ -5,9 +5,18 @@ import {
   buildRunStreamUrl,
   initialRunStreamLifecycle,
   reconnectDelayMs,
+  runStreamCursor,
 } from "@/lib/run-stream-controller";
 
 describe("run stream lifecycle controller", () => {
+  it("ignores inherited SSE ids for context snapshots and resumes from canonical messages only", () => {
+    expect(
+      runStreamCursor({ type: "session.context_snapshot" }, "42"),
+    ).toBeNull();
+    expect(
+      runStreamCursor({ type: "session.update", runSequence: "42" }, "42"),
+    ).toBe("42");
+  });
   it("uses bounded exponential retry delays and stops after the budget", () => {
     expect(reconnectDelayMs(0)).toBe(500);
     expect(reconnectDelayMs(1)).toBe(1_000);

@@ -20,6 +20,31 @@ type AcpContextUpdateType =
 const MAX_COMPACTION_ID_LENGTH = 256;
 export const MAX_COMPACTION_SUMMARY_LENGTH = 64 * 1024;
 
+export function claudeContextWindow(input: {
+  adapter: string | null;
+  providerKind: string | null;
+  configured: string | null | undefined;
+}): {
+  configuredWindowTokens: number | null;
+  windowAdvisory: "window_unverified" | null;
+} {
+  if (input.adapter !== "claude")
+    return { configuredWindowTokens: null, windowAdvisory: null };
+  const requested = input.configured?.trim();
+  const parsed =
+    requested && /^[1-9]\d*$/.test(requested) ? Number(requested) : NaN;
+  const configuredWindowTokens = Number.isSafeInteger(parsed) ? parsed : null;
+
+  return {
+    configuredWindowTokens,
+    windowAdvisory:
+      configuredWindowTokens === null &&
+      input.providerKind === "anthropic_compatible"
+        ? "window_unverified"
+        : null,
+  };
+}
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

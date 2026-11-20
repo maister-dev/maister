@@ -492,6 +492,9 @@ export class RuntimeEventPublisher {
           sessionName: record.sessionName,
           acpSessionId: record.acpSessionId ?? null,
           steeringSupported: sessionSteeringSupported(record),
+          ...(record.contextWindowAdvisory
+            ? { windowAdvisory: record.contextWindowAdvisory }
+            : {}),
         },
       },
     });

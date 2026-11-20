@@ -15,6 +15,7 @@ import {
 import { applyCreateAck } from "../create-ack";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
+import { runEventWakeBus } from "./run-wake";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -40,6 +41,16 @@ const log = pino({
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
   project: projectLifecycle,
+  afterCommit(events) {
+    const lifecycle = events.find(
+      (event) =>
+        event.eventType === "session.created" ||
+        event.eventType === "session.exited" ||
+        event.eventType === "session.crashed",
+    );
+
+    if (lifecycle) runEventWakeBus.wake(lifecycle.runId);
+  },
 };
 
 function permanent(message: string): ExecutionEventProjectionError {

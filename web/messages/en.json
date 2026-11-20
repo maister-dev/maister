@@ -1,5 +1,18 @@
 {
   "contextUsage": {
+    "label": "Context",
+    "details": "Context usage details",
+    "tokenPair": "{used, number} / {size, number} tokens",
+    "notReported": "Not reported",
+    "agentReported": "Agent-reported context window",
+    "runnerConfigured": "Runner configured for {size, number} tokens",
+    "windowDiscrepancy": "Runner configured for {size, number} tokens. The agent reported a different window.",
+    "runnerReference": "Runner and model settings",
+    "updated": "Updated {time}",
+    "completedCompactions": "Completed compactions: {count, number}",
+    "observedCompactions": "Observed compactions: {count, number}",
+    "unverified": "Window unverified",
+    "windowGuidance": "Set CLAUDE_CODE_MAX_CONTEXT_TOKENS in the runner environment to the model’s actual context window.",
     "in_progress": "Compacting context…",
     "completed": "Context compacted",
     "failed": "Context compaction failed",
