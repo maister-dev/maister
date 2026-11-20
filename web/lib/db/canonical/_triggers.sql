@@ -1,4 +1,5 @@
 CREATE TRIGGER actor_identities_owner_guard BEFORE INSERT OR UPDATE ON public.actor_identities FOR EACH ROW EXECUTE FUNCTION guard_human_work_owner();
+CREATE TRIGGER agent_continuation_episode_guard BEFORE INSERT OR UPDATE ON public.agent_continuation_episodes FOR EACH ROW EXECUTE FUNCTION guard_agent_continuation_episode();
 CREATE TRIGGER agent_installation_authority_immutable BEFORE DELETE OR UPDATE ON public.agent_installation_run_authorities FOR EACH ROW EXECUTE FUNCTION reject_installation_witness_mutation();
 CREATE TRIGGER agent_installation_source_immutable BEFORE DELETE OR UPDATE ON public.agent_installation_run_sources FOR EACH ROW EXECUTE FUNCTION reject_installation_witness_mutation();
 CREATE TRIGGER agent_memory_import_payload_immutable BEFORE DELETE OR UPDATE ON public.agent_memory_import_payloads FOR EACH ROW EXECUTE FUNCTION agent_memory_immutable_history();

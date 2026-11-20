@@ -197,7 +197,7 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 | ID | Contract | Tasks | Primary test | Status |
 | --- | --- | --- | --- | --- |
 | APR-01 | `operational-agents.md` | T7,T8 | IT-APR-01 | Planned |
-| APR-02 | `agent-preparation.md` | T3,T7,T8 | IT-APR-02 | Planned |
+| APR-02 | `agent-preparation.md` | T3,T7,T8 | IT-APR-02 | Implemented |
 | APR-03 | `execution-hosts.md` | T4,T6 | IT-APR-03 | Planned |
 | APR-04 | `execution-hosts.md` | T5 | IT-APR-04 | Planned |
 | APR-05 | `agent-preparation.md` | T2,T9 | IT-APR-05 | Planned |

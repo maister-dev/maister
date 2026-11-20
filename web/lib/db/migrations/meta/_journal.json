@@ -2465,6 +2465,20 @@
       "when": 1795173970850,
       "tag": "0355_installation_credential_revocation",
       "breakpoints": true
+    },
+    {
+      "idx": 356,
+      "version": "7",
+      "when": 1795194000528,
+      "tag": "0356_operational_baseline_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 357,
+      "version": "7",
+      "when": 1795194000529,
+      "tag": "0357_agent_continuation_episodes",
+      "breakpoints": true
     }
   ]
 }

@@ -61,6 +61,9 @@ erDiagram
   task_launch_intents o|--o| runs : binds_once
   runs ||--o{ agent_preparation_operations : prepares
   execution_assignments ||--o{ agent_preparation_operations : fences
+  runs ||--o{ agent_continuation_episodes : records
+  execution_assignments ||--o{ agent_continuation_episodes : fences
+  agent_preparation_operations o|--o{ agent_continuation_episodes : witnesses
 ```
 
 ## Columns and invariants

@@ -60,6 +60,32 @@ table agent_activity_cutovers {
   completed_at "timestamp with time zone"
 }
 
+table agent_continuation_episodes {
+  run_id text [not null]
+  logical_key text [not null]
+  assignment_id text [not null]
+  assignment_epoch integer [not null]
+  preparation_id text
+  state text [not null]
+  attempts integer [not null, default: 0]
+  first_failure_at "timestamp with time zone"
+  due_at "timestamp with time zone"
+  claim_token text
+  claim_expires_at "timestamp with time zone"
+  failure jsonb
+  settlement_attempts integer [not null, default: 0]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  updated_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+    (run_id, logical_key) [pk]
+    run_id [name: 'agent_continuation_open_run_uq', unique]
+    (due_at, run_id) [name: 'agent_continuation_due_idx']
+
+
+  }
+}
+
 table agent_incident_episodes {
   id text [pk, not null, default: `gen_random_uuid()::text`]
   project_id text [not null]
@@ -4941,6 +4967,12 @@ ref actor_identities_project_id_projects_id_fk: actor_identities.project_id > pr
 ref actor_identities_company_id_companies_id_fk: actor_identities.company_id > companies.id [delete: restrict, update: no action]
 
 ref actor_identities_user_id_users_id_fk: actor_identities.user_id > users.id [delete: set null, update: no action]
+
+ref agent_continuation_episodes_run_id_runs_id_fk: agent_continuation_episodes.run_id > runs.id [delete: cascade, update: no action]
+
+ref agent_continuation_episodes_assignment_id_execution_assignments_id_fk: agent_continuation_episodes.assignment_id > execution_assignments.id [delete: restrict, update: no action]
+
+ref agent_continuation_episodes_preparation_id_agent_preparation_operations_id_fk: agent_continuation_episodes.preparation_id > agent_preparation_operations.id [delete: restrict, update: no action]
 
 ref agent_incident_episodes_project_id_projects_id_fk: agent_incident_episodes.project_id > projects.id [delete: cascade, update: no action]
 

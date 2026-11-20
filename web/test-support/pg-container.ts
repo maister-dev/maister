@@ -25,6 +25,7 @@ import { migrateTestDatabase } from "./migrate-test-database";
 
 import {
   declareWriterCapability,
+  AGENT_PREPARATION_WRITER_CAPABILITY,
   TASK_QUALIFICATION_WRITER_SETTING,
   TASK_QUALIFICATION_WRITER_CAPABILITY,
 } from "@/lib/db/writer-capability";
@@ -618,7 +619,7 @@ export async function startMainPostgresTestDb(
 
 async function declareFixtureWriter(client: ClientBase): Promise<void> {
   await client.query(
-    `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='v1'; SET maister.task_launch_writer='v3'`,
+    `SET ${TASK_QUALIFICATION_WRITER_SETTING}='${TASK_QUALIFICATION_WRITER_CAPABILITY}'; SET maister.agent_preparation_writer='${AGENT_PREPARATION_WRITER_CAPABILITY}'; SET maister.task_launch_writer='v3'`,
   );
 }
 
