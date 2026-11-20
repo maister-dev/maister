@@ -416,9 +416,11 @@ the local web/supervisor processes.
 
 ## 10. Smoke test
 
-### Configured manager authentication
+### Manager authentication
 
-For authenticated loopback transport, generate 32 random bytes with
+The shipped systemd units require a readable manager credential file before
+launch. The web unit also requires the configured expected host key.
+Generate 32 random bytes with
 `openssl rand -hex 32`. Install the same value in two separate absolute
 files, one owned by the web service identity and one by the supervisor
 identity. Set mode `0600` and place each file in a service-owned or
@@ -453,11 +455,10 @@ the authenticated health check. Curl reads the headers from standard input.
 } | curl --config - -fsS http://127.0.0.1:7777/health
 ```
 
-`curl` without manager credentials is the smoke check for the legacy
-loopback listener configuration.
+An anonymous health request to the installed supervisor must return HTTP 401.
 
 ```bash
-curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",..., "host":{"hostKey":"eh_…","bootId":"…","protocolVersion":1}}
+test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:7777/health)" = 401
 curl -fsS http://127.0.0.1:3000/ >/dev/null    # web responds
 journalctl -u maister-web -n 200 | grep execution-host-registered   # (ADR-166) the web tier registered the host
 journalctl -u maister-supervisor -n 50 | grep execution-host-key-conflict  # MUST be empty — a hit means a MAISTER_EXECUTION_HOST_KEY pin conflicts with the stored identity (unset the pin or wipe the state dir)

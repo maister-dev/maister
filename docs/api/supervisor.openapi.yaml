@@ -81,7 +81,7 @@ security:
   - {}
 x-local-manager-authentication:
   status: Implemented when manager credential file is configured
-  activation: MAISTER_MANAGER_AUTH_FILE
+  activation: MAISTER_MANAGER_AUTH_FILE (required by the shipped systemd unit)
   scheme: ExecutionManagerBearer
   scope: All TCP routes including health, diagnostics, SSE, acknowledgements and binary objects.
   challengeStatus: 401

@@ -61,11 +61,19 @@ sequenceDiagram
 | Package and capability setup | `web/lib/flows.ts`, `web/lib/capabilities/import.ts` | Exact package revision operation with a private staging directory and publication receipt. |
 | Privileged Git | `web/lib/project-config-persistence/git-process.ts`, `worktree.ts`, `worktree-provenance.ts` and direct repository consumers | Trusted, centralized invocation and actor-attributed ref updates. Keep repository execution inside workload isolation. |
 
+Auto-promotion dependency comparisons read both selected refs under the shared
+Git inspection environment. They ignore ambient Git repository routing and
+resolve exact objects without replacement refs.
+
 Manager credential files belong to the manager and trusted host principals only. The trusted host owns provider credentials, deployment configuration, app secrets and private runtime state. Workloads receive an explicit environment and opaque grants. Reserve the manager, supervisor, databases, local credential stores, runtime state and privileged sockets from workload mounts and general egress. The brokered façade authorizes a specific audience, operation and resource.
 
 ### Local transport activation
 
-The P1 loopback transport supports a configured manager bearer credential.
+The shipped systemd units require a readable manager credential file before
+startup. The web unit also requires the expected host key. Directly
+launched processes still activate authenticated loopback transport through
+configuration. The supervisor validates the credential before opening the
+listener, and the manager validates the expected host key before dispatch.
 Each service reads its own private file outside repos and runtime roots.
 Fastify checks the credential and execution host key before invoking a route.
 The manager checks the host key on responses. The same checks cover health,

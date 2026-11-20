@@ -25,6 +25,8 @@ KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=30
 NoNewPrivileges=true
+ExecStartPre=/bin/sh -ec 'test -r "$${MAISTER_MANAGER_AUTH_FILE:-}" || { echo "MAISTER_MANAGER_AUTH_FILE must name a readable service-owned credential" >&2; exit 1; }'
+ExecStartPre=/bin/sh -ec 'test -n "$${MAISTER_SUPERVISOR_EXPECTED_HOST_KEY:-}" || { echo "MAISTER_SUPERVISOR_EXPECTED_HOST_KEY is required" >&2; exit 1; }'
 
 [Install]
 WantedBy=multi-user.target

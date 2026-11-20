@@ -11,6 +11,8 @@ import { promisify } from "node:util";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
+import { gitInspectionEnvironment } from "../../../runtime/git-inspection-environment";
+
 import { gateResults, hitlRequests } from "@/lib/db/schema";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -79,11 +81,22 @@ async function showFileAtRef(
   try {
     const { stdout } = await execFileAsync("git", ["show", `${ref}:${path}`], {
       cwd: worktreePath,
+      env: gitInspectionEnvironment(),
       maxBuffer: 8 * 1024 * 1024,
     });
 
+    log.debug(
+      { operation: "read_dependency_blob", outcome: "read" },
+      "promotion Git inspection completed",
+    );
+
     return stdout;
   } catch {
+    log.debug(
+      { operation: "read_dependency_blob", outcome: "unavailable" },
+      "promotion Git inspection completed",
+    );
+
     return null;
   }
 }
