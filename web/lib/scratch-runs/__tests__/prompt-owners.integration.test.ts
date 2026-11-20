@@ -309,28 +309,38 @@ describe("Scratch prompt owners through the production service", () => {
       const runId = await launch(
         `fixture-output:${JSON.stringify({ bytes: 0, ...fixture })}`,
       );
-      const [scratch] = await db
-        .select()
-        .from(schema.scratchRuns)
-        .where(eq(schema.scratchRuns.runId, runId));
+      const { stopScratchWorkbench } =
+        await import("@/lib/scratch-runs/service");
 
-      expect(scratch).toMatchObject({
-        dialogStatus: "WaitingForUser",
-        activePromptIntent: null,
-        errorCode: "ACP_PROTOCOL",
-        errorMetadata: { reason },
-      });
-      expect(await promptCommands(runId)).toMatchObject([
-        { applicationState: "applied" },
-      ]);
-      if (reason === "context_exhausted") {
-        await expect(
-          sendScratchUserMessage({
-            runId,
-            body: { content: "do not send", attachments: [] },
-          }),
-        ).rejects.toMatchObject({ code: "ACP_PROTOCOL", details: { reason } });
-        expect(await promptCommands(runId)).toHaveLength(1);
+      try {
+        const [scratch] = await db
+          .select()
+          .from(schema.scratchRuns)
+          .where(eq(schema.scratchRuns.runId, runId));
+
+        expect(scratch).toMatchObject({
+          dialogStatus: "WaitingForUser",
+          activePromptIntent: null,
+          errorCode: "ACP_PROTOCOL",
+          errorMetadata: { reason },
+        });
+        expect(await promptCommands(runId)).toMatchObject([
+          { applicationState: "applied" },
+        ]);
+        if (reason === "context_exhausted") {
+          await expect(
+            sendScratchUserMessage({
+              runId,
+              body: { content: "do not send", attachments: [] },
+            }),
+          ).rejects.toMatchObject({
+            code: "ACP_PROTOCOL",
+            details: { reason },
+          });
+          expect(await promptCommands(runId)).toHaveLength(1);
+        }
+      } finally {
+        await stopScratchWorkbench(runId, { db: db as unknown as Db });
       }
     },
     90_000,
