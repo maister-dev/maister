@@ -1,0 +1,26 @@
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -31187,6 +31187,11 @@
+       this.failure = RequestError.authRequired();
+       return;
+     }
++    if (!this.supportsTypedSessionFailures && turn.status === "failed" &&
++        turn.error?.codexErrorInfo === "contextWindowExceeded" && this.failure === null) {
++      this.failure = RequestError.internalError(this.createTurnErrorData(turn.error));
++      return;
++    }
+     const activeFailure = this.sessionState.sessionFailure;
+     if (!this.supportsTypedSessionFailures || turn.status !== "failed" || this.failure !== null || this.failureTurnIdById.get(activeFailure?.id ?? "") === turn.id && activeFailure?.severity === "error") {
+       return;
+@@ -31769,6 +31774,10 @@
+       this.recordTypedSessionFailure(params);
+       return null;
+     }
++    if (error62 === "contextWindowExceeded") {
++      this.failure = RequestError.internalError(this.createTurnErrorData(params.error));
++      return null;
++    }
+     if (error62 === "usageLimitExceeded") {
+       this.failure = RequestError.internalError(
+         this.createTurnErrorData(params.error)
