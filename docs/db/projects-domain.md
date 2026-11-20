@@ -380,3 +380,12 @@ before their revision trigger (migration 0198). This serializes concurrent
 install metadata changes with new/switched/deleted bindings; contention refuses
 without partial writes. The [owning concurrency contract](../system-analytics/project-config-persistence.md#lock-and-recovery-contract-implemented)
 and its PostgreSQL tests define retry and accepted-publication behavior.
+
+## Flow wait and delivery ownership (Designed)
+
+The project stores approved publication and CI-source policy with a
+revision. The platform settings row stores a revisioned live stop. Launch
+snapshots pin authority and at-decision reads can only narrow it. An empty
+or malformed policy is off.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

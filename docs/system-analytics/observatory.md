@@ -812,6 +812,12 @@ Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   that renders no artifact control, and `?view=overview&flowId=…` narrowed
   `getCostSummary` behind one that renders no flow control.
 
+## Autonomous decision and reversal counts (Designed)
+
+Count each realized autonomous Done or Failed once at terminal time. Count verified human reversals at their verified reversal time and link them to the exact original delivery. A refusal, pending effect, unknown actor, unrelated commit or reopened run does not count. Apply the same project and period access on aggregate and drilldown.
+
+See [the governing contract](execution-policy.md).
+
 ## Linked artifacts
 
 - ADR: [ADR-059](../decisions.md#adr-059-read-only-observatory-formulas-and-harvest-priority)

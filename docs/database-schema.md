@@ -5903,3 +5903,31 @@ evidence blocks settlement. Existing rows can omit both. Operator recheck
 updates the episode under the Run lock using an opaque observation derived from
 the episode identity and update timestamp. The state transition preserves both
 attempt counters and needs no schema rewrite.
+
+## Flow waits, publication and autonomous decisions (Designed)
+
+| Migration | Storage | Ownership and indexes |
+| --- | --- | --- |
+| 0358 | `run_waits`, `run_wait_deliveries`, `run_wait_actions`; use text IDs, UTC `timestamptz`, integer versions and bounded condition/result envelopes | Unique (run, owner kind, occurrence) and non-null attempt. Composite project/run and run/attempt FKs enforce tenancy even for direct SQL. Due index on (next due instant, id) for open waits and source lookup by project/kind/target. Delivery keys are unique per wait and source; index unapplied receipts. |
+| 0359 | Publication intent and confirmed receipt, remote and base/source SHAs, generation and exact PR identity. Provider observations carry source identity and revision. | Unique operation by run, publish attempt and action. Reserved waits can defer attempt binding until activation. Exact generation CAS protects workspaces projections and callback matching. Unique observation per source execution/revision and selector. |
+| 0360 | Additive platform/project policy revisions, current hold and versioned decision/effect history linked to exact run. Preserve existing launch snapshots. | Unique decision key by action, candidate, evidence and config generation. Unique verified reversal (decision, revert commit). Index project/terminal time and project/reversal time for Observatory. |
+
+For open Flow waits require an attempt, opened time, deadline and immutable
+ceiling. Resolved waits additionally require outcome, authoritative source,
+resolved time and exact resume identity. Closed or abandoned waits may not
+queue a continuation. Deliveries preserve original canonical request and
+digest. Application status changes separately. Bind child tables to their
+owning wait and cascade on owner deletion. Keep the bounded `wait-result`
+inline artifact with the exact attempt and deterministic identity. Repeat
+application may return matching content and must refuse divergent content.
+
+Upgrade the main lineage with ordered journal entries and matching snapshots.
+Legacy rows acquire no inferred facts. Run fresh-install and immediate
+predecessor fixtures through the actual migrator, then rerun it and compare
+keys and retained evidence. Deploy compatible readers before enabling new
+writers. Stop new intake and drain wait, publication and admission ownership
+before rolling back readers that cannot interpret these states.
+
+See [runs](db/runs-domain.md), [domain events](db/domain-events.md),
+[artifacts](db/artifacts-domain.md), [scheduler](db/scheduler-domain.md),
+[execution hosts](db/execution-hosts-domain.md) and [projects](db/projects-domain.md).

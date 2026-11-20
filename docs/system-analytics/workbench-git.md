@@ -511,6 +511,12 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   shared tree still holds the tree — it has no row of its own to count down —
   while a `Failed` allocator no longer holds its own.
 
+## Flow publication through the Git panel service (Designed)
+
+A reviewed launch grants one project, origin, target and PR mode. The actor-aware publication service owns the lease, exact HEAD witness and retry identity, and reuses the human panel policy and writer. Enroll a push-CI wait before pushing and activate it only when the same occurrence enters the graph. Recovery reconciles an uncertain push or PR with exact remote facts before retrying.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - ADR: [ADR-181](../decisions.md#adr-181-run-git-panel-status-independent-worktree-git-operations-public-branch-names-and-pr-before-promotion)

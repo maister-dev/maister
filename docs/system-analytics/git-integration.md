@@ -546,6 +546,12 @@ the feature does not change their delivery policy. They cannot use trailer
 recovery, while a recognizable managed directory with missing or malformed
 metadata fails closed.
 
+## Provider evidence for Flow waits (Designed)
+
+Select approved GitHub check runs and commit statuses, GitLab pipeline source and Gitea contexts for the published head. Use all required checks from the current attempt across pages. Failure precedes cancellation. Success requires every required trusted result. Missing pages, unknown or revoked outcomes and newer pending attempts remain pending and can invalidate prior green proof for promotion.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - ADRs: [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),

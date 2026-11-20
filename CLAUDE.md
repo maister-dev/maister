@@ -431,6 +431,12 @@ export-branch | handoff-branch` above (its 6th value — `stop` takes no
 
 ### 8. Promotion policy
 
+**Designed (ADR-215/216).** Flow publication and the Git panel share the
+ADR-181 publication and PR writer. The human session facade, approved
+epoch-fenced Flow grant and provider scan each advance only their assigned
+fields from a confirmed receipt under the expected generation. A system
+actor may finalize eligible PR delivery after confirming merge.
+
 After review/readiness gates pass, MAIster promotes the run branch to the
 selected target branch. Initial promotion modes are `local_merge` and
 `pull_request`. `local_merge` uses `git merge --no-ff`; conflict → abort, run
