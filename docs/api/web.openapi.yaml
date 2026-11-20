@@ -3137,20 +3137,15 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/agents/{agentId}/memory:
-    x-vault-cutover: Designed. Authorized legacy methods address the index only and use the legacy hash-only envelope. DELETE leaves history.
+    x-vault-cutover: Implemented. After activation these compatibility methods address the index note and retain the hash-only request envelope. DELETE records a tombstone and preserves revision history.
     get:
       tags: [projects]
-      summary: (ADR-152 — Implemented) Read the agent's memory file for this project
+      summary: Read the project agent's memory index through the compatibility route
       description: |
-        Project `readRepoFiles` (`member`+) — deliberately NOT `readBoard`: the
-        agent writes this file with repo access, so it can hold copied or
-        summarized source that ADR-053 keeps from viewers. Returns the current
-        `memory.md` state
-        for this `(agent, project)` attachment. An absent file is NOT a 404: it
-        returns `200` with `content: ""`, `hash: null`, `sizeChars: 0`,
-        `updatedAt: null` — the first-writer state. Identifiers: `slug` +
-        `agentId` are url-params; `projectId` is server-state derived from
-        `slug`. Memory content is never exposed through the assistant pulse.
+        Requires project `readRepoFiles`. Reads the legacy `memory.md` before
+        activation and the exact `/memories/index.md` head afterward. The absent
+        first-writer state returns 200 with empty content, a null hash, size
+        zero and null updatedAt. The response carries the effective content cap.
       operationId: getProjectAgentMemory
       parameters:
         - name: slug
@@ -3177,14 +3172,12 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     put:
       tags: [projects]
-      summary: (ADR-152 — Implemented) Replace the agent's memory file (CAS)
+      summary: Replace the project agent's memory index with content CAS
       description: |
-        Project `admin`+ (`editSettings`). **CAS applies to the human too**
-        (ADR-152 D18): a blind Save would clobber a concurrent agent write, so
-        `ifHash` is required in the body — `null` is the first-writer form.
-        Ordering is read-current → compare → atomic write → return the
-        POST-write hash. A stale `ifHash` returns `409 CONFLICT` carrying the
-        current `{content, hash}` so the operator can merge.
+        Requires project `editSettings` and a required `ifHash`. Null expects an
+        absent index. Before activation this replaces the legacy file. After
+        activation an authorized edit appends an index revision. A stale hash
+        returns 409 CONFLICT with the authorized current content and hash.
       operationId: putProjectAgentMemory
       parameters:
         - name: slug
@@ -3205,7 +3198,9 @@ paths:
               additionalProperties: false
               required: [content, ifHash]
               properties:
-                content: { type: string, maxLength: 32768 }
+                content:
+                  type: string
+                  description: Subject to the active legacy cap or, after activation, the configured vault index cap.
                 ifHash: { type: string, nullable: true }
       responses:
         "200":
@@ -3227,22 +3222,18 @@ paths:
               schema: { $ref: "#/components/schemas/AgentMemoryConflictBody" }
         "422":
           description: |
-            Invalid body, or `content` exceeds `MAISTER_AGENT_MEMORY_MAX_CHARS`
-            (`CONFIG`).
+            Invalid body or configured content cap exceeded (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
-      summary: (ADR-152 — Implemented) Clear the agent's memory file (CAS)
+      summary: Clear the project agent's memory index with content CAS
       description: |
-        Project `admin`+ (`editSettings`). **Compare-and-delete** (ADR-152 D27):
-        `ifHash` is required, exactly as on `PUT`, and the clear runs under the
-        same per-(project, agent) lock — a blind unlink would destroy a
-        concurrent agent write with no conflict signal, which is strictly worse
-        than the blind Save D18 already refuses. A stale `ifHash` returns `409`
-        carrying the current content. **Idempotent** — clearing an already-absent
-        file succeeds, because `ifHash: null` matches the absent state.
+        Requires project `editSettings` and a required `ifHash`. Null matches an
+        already-absent index. Before activation this clears the legacy file.
+        After activation it appends an index tombstone and preserves revision
+        history. A stale hash returns 409 with the authorized current state.
       operationId: deleteProjectAgentMemory
       parameters:
         - name: slug
@@ -23921,8 +23912,12 @@ paths:
     get:
       operationId: getInboxProposalReview
       summary: Read one reviewer-visible proposal
-      description: Check exact target and source rules before returning proposed content.
+      description: >-
+        Check exact target and source rules before returning proposed content on every request.
         Target identity comes from current credentials and the resolved route resource.
+        Vault and Brain reviews return bounded pages of the exact patch, draft, or promoted
+        memory witness. Concatenate each summary in order without a separator to recover the
+        complete preview. A null nextCursor marks the final page. Native knowledge is single-page.
       x-implementation-status: Implemented
       security:
         - sessionCookie: []
@@ -23932,8 +23927,7 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 192
+            enum: [vault, brain, knowledge]
         - name: proposalId
           in: path
           required: true
@@ -23941,6 +23935,13 @@ paths:
             type: string
             minLength: 1
             maxLength: 192
+        - name: cursor
+          in: query
+          description: Signed vault or Brain preview continuation scoped to the current reviewer and proposal version. Omit it for the first page and native knowledge proposals.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
       responses:
         "200":
           description: Read one reviewer-visible proposal.
@@ -24310,92 +24311,32 @@ components:
     AgentVaultCardKnowledge:
       type: object
       additionalProperties: false
-      required:
-        - kind
-        - proposalId
-        - targetLabel
-        - draftTitle
+      required: [action, content]
       properties:
-        kind:
-          type: string
-          enum:
-            - knowledge_proposal
-        proposalId:
-          type: string
-          minLength: 1
-          maxLength: 192
-          nullable: true
-        targetLabel:
-          type: string
-          minLength: 1
-          maxLength: 512
-        draftTitle:
-          type: string
-          minLength: 1
-          maxLength: 512
-      x-implementation-status: Designed
+        action: { type: string, enum: [knowledge_proposal] }
+        content: { $ref: "#/components/schemas/CBProposalInput/properties/content" }
     AgentVaultCardBrain:
       type: object
       additionalProperties: false
-      required:
-        - kind
-        - projectSlug
-        - targetLabel
-        - draftTitle
+      required: [action, projectSlug, kind, draft]
       properties:
-        kind:
-          type: string
-          enum:
-            - brain_proposal
-        projectSlug:
-          type: string
-          minLength: 1
-          maxLength: 192
-        targetLabel:
-          type: string
-          minLength: 1
-          maxLength: 512
-        draftTitle:
-          type: string
-          minLength: 1
-          maxLength: 512
-      x-implementation-status: Designed
+        action: { type: string, enum: [brain_proposal] }
+        projectSlug: { type: string, minLength: 1, maxLength: 192 }
+        kind: { type: string, enum: [rule, skill, flow, adr, roadmap, state] }
+        evidenceItemIds:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 192 }
+        draft: { type: object }
+        blastRadius: { type: string, enum: [low, medium, high] }
     AgentVaultCardEdit:
       type: object
       additionalProperties: false
-      required:
-        - kind
-        - vaultId
-        - path
-        - commandKind
-        - preview
+      required: [action, vaultId, command]
       properties:
-        kind:
-          type: string
-          enum:
-            - vault_edit
-        vaultId:
-          type: string
-          minLength: 1
-          maxLength: 192
-        path:
-          type: string
-          minLength: 1
-          maxLength: 512
-        commandKind:
-          type: string
-          enum:
-            - create
-            - str_replace
-            - insert
-            - delete
-            - rename
-            - clear
-            - revert
-        preview:
-          type: string
-          maxLength: 16384
-      x-implementation-status: Designed
+        action: { type: string, enum: [vault_edit] }
+        vaultId: { type: string, minLength: 1, maxLength: 192 }
+        command: { $ref: "#/components/schemas/AgentVaultBrowserCommand" }
     AgentVaultLibrarianEffect:
       oneOf:
         - type: object
@@ -25116,6 +25057,7 @@ components:
         - allowed
         - summary
         - sourceRevisionId
+        - nextCursor
       properties:
         kind:
           type: string
@@ -25147,12 +25089,18 @@ components:
         summary:
           type: string
           maxLength: 262144
-          description: Exact text. The service validates configured UTF-16 caps and rejects invalid scalar values.
+          description: Preview text. Each vault or Brain page contains at most 262144 UTF-16 code units and keeps Unicode code points intact.
         sourceRevisionId:
           type: string
           minLength: 1
           maxLength: 192
           nullable: true
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          nullable: true
+          description: Continuation token when more vault or Brain preview text remains. Null for the final page and all native knowledge previews.
     AgentVaultReviewBatch:
       type: object
       additionalProperties: false
@@ -37741,6 +37689,14 @@ components:
       additionalProperties: false
       description: The exact objects a card is bound to; keys it does not address are absent.
       properties:
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 192
+        companyId:
+          type: string
+          minLength: 1
+          maxLength: 192
         vaultId:
           type: string
           minLength: 1
@@ -37827,21 +37783,23 @@ components:
       type: object
       additionalProperties: false
       description: |
-        (Designed — ADR-187 D7, `LOP-08`) Explicit projection of one
-        `librarian_cards` row. A statement proposal renders as a diff against
-        the task's current revision.
+        Implemented conversation projection under ADR-187 and ADR-213.
+        An unavailable card conceals its target, payload and effect preview.
       required:
         [
           id,
           kind,
           status,
+          action,
           target,
           targetRevision,
           payload,
-          requiresOwner,
+          available,
+          currentPrompt,
+          proposedPrompt,
+          hitlPrompt,
+          runBranch,
           expiresAt,
-          decidedAt,
-          createdAt,
         ]
       properties:
         id: { type: string, format: uuid }
@@ -37852,17 +37810,18 @@ components:
           type: string
           enum:
             [pending, accepted, rejected, expired, superseded, cleared_by_reset]
+        action: { type: string }
         target: { $ref: "#/components/schemas/LibrarianCardTarget" }
         targetRevision:
           type: string
           nullable: true
           description: |
             The server-bound revision the decision is checked against — the task
-            revision, the reviewed head SHA, the HITL request revision, or the
-            run status. Null for a memory suggestion. Send it back as
-            `expectedRevision`.
+            revision, the reviewed head SHA, the HITL request revision, the
+            run status or the governed effect digest. Null for a memory
+            suggestion or an unavailable target.
         payload:
-          description: The proposal as created; its `kind` repeats the card's.
+          description: The admitted proposal, or an empty object for an unavailable card.
           oneOf:
             - $ref: "#/components/schemas/LibrarianStatementProposal"
             - $ref: "#/components/schemas/LibrarianConfirmationProposal"
@@ -37870,10 +37829,17 @@ components:
             - $ref: "#/components/schemas/AgentVaultCardKnowledge"
             - $ref: "#/components/schemas/AgentVaultCardBrain"
             - $ref: "#/components/schemas/AgentVaultCardEdit"
-        requiresOwner: { type: boolean }
+            - { type: object, maxProperties: 0, additionalProperties: false }
+        available: { type: boolean }
+        currentPrompt: { type: string, nullable: true }
+        proposedPrompt: { type: string, nullable: true }
+        hitlPrompt: { type: string, nullable: true }
+        runBranch: { type: string, nullable: true }
+        effectPreview:
+          type: string
+          maxLength: 16384
+          description: Complete serialized governed effect, bounded to 16384 UTF-16 code units and present only when authorized for inspection.
         expiresAt: { type: string, format: date-time }
-        decidedAt: { type: string, format: date-time, nullable: true }
-        createdAt: { type: string, format: date-time }
 
     LibrarianTurn:
       type: object

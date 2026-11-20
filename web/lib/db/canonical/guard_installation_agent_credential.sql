@@ -6,9 +6,12 @@ BEGIN
   IF TG_OP='UPDATE' THEN
     IF NEW.installation_run_id IS DISTINCT FROM OLD.installation_run_id OR (
         OLD.installation_run_id IS NOT NULL AND (
-          (to_jsonb(NEW) - 'last_used_at' - 'revoked_at' - 'owner_user_id')
-          IS DISTINCT FROM (to_jsonb(OLD) - 'last_used_at' - 'revoked_at' - 'owner_user_id')
+          (to_jsonb(NEW) - 'last_used_at' - 'revoked_at' - 'owner_user_id' - 'revocation_reason')
+          IS DISTINCT FROM (to_jsonb(OLD) - 'last_used_at' - 'revoked_at' - 'owner_user_id' - 'revocation_reason')
           OR (NEW.owner_user_id IS NOT NULL AND NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id)
+          OR (NEW.revocation_reason IS DISTINCT FROM OLD.revocation_reason AND (
+            OLD.revocation_reason IS NOT NULL OR NEW.revocation_reason IS DISTINCT FROM 'revoked'
+            OR NEW.revoked_at IS NULL))
           OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NULL))) THEN
       RAISE EXCEPTION 'Installation Run credentials cannot be retargeted, widened or reactivated'
         USING ERRCODE='23514', CONSTRAINT='project_tokens_installation_binding_immutable';

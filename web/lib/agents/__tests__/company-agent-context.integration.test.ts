@@ -17437,6 +17437,61 @@ it("AV-06 reserves an installation Run and intersects current project authority 
   const { captureInstallationProjects, installationRunProjects } =
     await import("../installation-source-capture");
   const projectList = await import("@/app/api/v1/ext/projects/route");
+
+  type ResponseContract = {
+    content: { "application/json": { schema: object } };
+  };
+  const externalContract = parse(
+    await readFile(
+      resolve("../docs/api/external/operations.openapi.yaml"),
+      "utf8",
+    ),
+  ) as {
+    components: {
+      schemas: Record<string, object>;
+      responses: Record<string, ResponseContract>;
+    };
+    paths: Record<
+      string,
+      {
+        get: {
+          responses: Record<string, ResponseContract | { $ref: string }>;
+        };
+      }
+    >;
+  };
+  const api = new Ajv({ strict: false, validateFormats: false });
+  const validators = new Map<string, ReturnType<typeof api.compile>>();
+
+  async function assertExternalRead(
+    path: string,
+    response: Response,
+    status = 200,
+  ): Promise<unknown> {
+    expect(response.status, await response.clone().text()).toBe(status);
+    const body: unknown = await response.json();
+    const operation = externalContract.paths[path]!.get.responses[status]!;
+    const { content } =
+      "$ref" in operation
+        ? externalContract.components.responses[
+            operation.$ref.split("/").at(-1)!
+          ]!
+        : operation;
+    const key = `${path} ${status}`;
+    const validate =
+      validators.get(key) ??
+      api.compile({
+        components: externalContract.components,
+        ...content["application/json"].schema,
+      });
+
+    validators.set(key, validate);
+    expect(validate(body), `${key}: ${api.errorsText(validate.errors)}`).toBe(
+      true,
+    );
+
+    return body;
+  }
   const noteCommand =
     await import("@/app/api/v1/ext/agent/memory/commands/route");
   const { hosts } = await fakeExecutionHosts(database.db);
@@ -17456,6 +17511,7 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       "assignments:read",
       "assignments:submit",
       "assignments:update",
+      "assignments:recover",
     ],
     idempotencyKey: randomUUID(),
   });
@@ -17561,24 +17617,24 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     },
     hosts,
   );
-  const [a, b, archived] = [randomUUID(), randomUUID(), randomUUID()] as [
-    string,
-    string,
-    string,
-  ];
+  const [a, b, archived] = [
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+  ].sort() as [string, string, string];
 
-  for (const [id, name] of [
-    [a, "install-a"],
-    [b, "install-b"],
-    [archived, "install-archive"],
-  ]) {
+  for (const [id, name, taskKey] of [
+    [a, "install-a", "INSTA"],
+    [b, "install-b", "INSTB"],
+    [archived, "install-archive", "INSTAR"],
+  ] as const) {
     await database.pool.query(
       "INSERT INTO projects(id,slug,name,repo_path,task_key,archived_at) VALUES($1,$2,$2,$3,$4,$5)",
       [
         id,
         name,
-        join(root, name!),
-        name!.toUpperCase(),
+        join(root, name),
+        taskKey,
         id === archived ? new Date() : null,
       ],
     );
@@ -17600,17 +17656,46 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     authorization: `Bearer ${token.secret}`,
     "content-type": "application/json",
   };
-  const list = () =>
-    projectList.GET(
-      new NextRequest("http://localhost/api/v1/ext/projects", { headers }),
-    );
+  const { secret: userSecret } = await issueUserAccessToken(
+    {
+      name: "Installation facade ordinary reader",
+      ownerUserId: installationAdminId,
+      scopes: ["projects:read", "tasks:read", "runs:read"],
+    },
+    db,
+  );
+  const ordinaryHeaders = { authorization: `Bearer ${userSecret}` };
+  const listUrl = "http://localhost/api/v1/ext/projects";
+  const list = (query = "") =>
+    projectList.GET(new NextRequest(listUrl + query, { headers }));
   const initial = await list();
 
-  expect(initial.status).toBe(200);
-  const ids = (body: { items: { id: string }[] }) =>
-    body.items.map(({ id }) => id);
+  expect(initial.headers.get("cache-control")).toBe("private, no-store");
+  const initialBody = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    initial,
+  )) as {
+    items: { id: string }[];
+  };
 
-  expect(ids(await initial.json())).toContain(a);
+  expect(initialBody.items.map(({ id }) => id)).toContain(a);
+  await assertExternalRead(
+    "/api/v1/ext/projects",
+    await projectList.GET(new NextRequest(listUrl)),
+    401,
+  );
+  expect(
+    await assertExternalRead(
+      "/api/v1/ext/projects",
+      await projectList.GET(
+        new NextRequest(listUrl, { headers: ordinaryHeaders }),
+      ),
+    ),
+  ).toMatchObject({
+    projects: expect.arrayContaining([
+      { id: a, slug: "install-a", name: "install-a" },
+    ]),
+  });
   await expect(installationRunProjects(db, run.runId)).resolves.toContain(a);
   await expect(installationRunProjects(db, run.runId)).resolves.not.toContain(
     b,
@@ -17622,15 +17707,217 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
     [randomUUID(), b, launchUserId],
   );
-  expect(ids(await (await list()).json())).toContain(b);
-  const tasks = await import("@/app/api/v1/ext/projects/[slug]/tasks/route");
-  const slug = "install-a";
-  const taskListUrl = `http://localhost/api/v1/ext/projects/${slug}/tasks`;
-  const params = { params: Promise.resolve({ slug }) };
+  const firstPage = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    await list("?limit=1"),
+  )) as { items: { id: string }[]; nextCursor: string };
+
+  expect(firstPage.items).toHaveLength(1);
+  expect(firstPage.nextCursor).toEqual(expect.any(String));
+  expect(firstPage.items[0]?.id).toBe(a);
+  expect(await installationRunProjects(db, run.runId)).toEqual([a]);
+  const nextPage = (await assertExternalRead(
+    "/api/v1/ext/projects",
+    await list(`?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`),
+  )) as { items: { id: string }[]; nextCursor: string | null };
 
   expect(
-    (await tasks.GET(new NextRequest(taskListUrl, { headers }), params)).status,
-  ).toBe(200);
+    [...firstPage.items, ...nextPage.items].map(({ id }) => id).sort(),
+  ).toEqual([a, b].sort());
+  expect(nextPage.nextCursor).toBeNull();
+  const activityRunId = randomUUID();
+  const activityEventId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,started_at) VALUES($1,$2,'flow','Done','fixture','fixture',now()-interval '90 days')",
+    [activityRunId, a],
+  );
+  await database.pool.query(
+    "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,payload,occurred_at,ingest_disposition) VALUES($1,'manager',$1,$2,'fixture.observation','fixture','{}',now(),'accepted')",
+    [activityEventId, activityRunId],
+  );
+  const { generateToken } = await import("@/lib/tokens/secret");
+  const activityToken = generateToken();
+
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`UPDATE project_tokens SET revoked_at=clock_timestamp() WHERE id=${token.tokenId}`,
+    );
+    // A subset of the appointed scopes is legal on the exact retained Run.
+    await tx.execute(sql`INSERT INTO project_tokens(id,company_id,company_run_id,installation_run_id,name,token_kind,
+      owner_user_id,agent_id,prefix,token_hash,scopes,expires_at)
+      SELECT ${randomUUID()},company_id,company_run_id,installation_run_id,name,token_kind,
+        owner_user_id,agent_id,${activityToken.prefix},${activityToken.hash},'["activity:read"]'::jsonb,expires_at
+      FROM project_tokens WHERE id=${token.tokenId}`);
+  });
+  const { GET: getManualActivity } =
+    await import("@/app/api/v1/ext/runs/[runId]/activity/route");
+  const activityResponse = await getManualActivity(
+    new NextRequest(
+      `http://localhost/api/v1/ext/runs/${activityRunId}/activity`,
+      {
+        headers: { authorization: `Bearer ${activityToken.secret}` },
+      },
+    ),
+    { params: Promise.resolve({ runId: activityRunId }) },
+  );
+
+  expect(
+    await assertExternalRead(
+      "/api/v1/ext/runs/{runId}/activity",
+      activityResponse,
+    ),
+  ).toMatchObject({ items: [{ id: activityEventId, projectId: a }] });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_access FROM runs WHERE id=$1",
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      knowledge_access: expect.objectContaining({
+        restrictions: expect.arrayContaining([
+          { kind: "project_context", projectId: a },
+        ]),
+      }),
+    },
+  ]);
+
+  const refreshedToken = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, run.runId),
+  );
+
+  headers.authorization = `Bearer ${refreshedToken.secret}`;
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE project_id=$1 AND user_id=$2",
+    [a, launchUserId],
+  );
+  try {
+    expect(
+      await assertExternalRead("/api/v1/ext/projects", await list(), 409),
+    ).toMatchObject({ code: "PRECONDITION" });
+    await expect(
+      db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  } finally {
+    await database.pool.query(
+      "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+      [a, launchUserId],
+    );
+  }
+  const slug = "install-a";
+  const params = { params: Promise.resolve({ slug }) };
+  const directory =
+    await import("@/app/api/v1/ext/projects/[slug]/directory/route");
+  const directoryPath = "/api/v1/ext/projects/{slug}/directory";
+  const directoryUrl = `http://localhost/api/v1/ext/projects/${slug}/directory`;
+
+  expect(
+    await assertExternalRead(
+      directoryPath,
+      await directory.GET(new NextRequest(directoryUrl, { headers }), params),
+    ),
+  ).toEqual({ id: a, projectId: a, slug, name: slug });
+  expect(
+    await assertExternalRead(
+      directoryPath,
+      await directory.GET(
+        new NextRequest(directoryUrl, { headers: ordinaryHeaders }),
+        params,
+      ),
+    ),
+  ).toMatchObject({ project: { id: a, slug, name: slug } });
+
+  const tasks = await import("@/app/api/v1/ext/projects/[slug]/tasks/route");
+  const taskId = randomUUID();
+  const taskTitle = "Inspect scoped execution metadata";
+
+  await database.pool.query(
+    "INSERT INTO tasks(id,project_id,number,title,prompt) VALUES($1,$2,1,$3,'Review run data')",
+    [taskId, a, taskTitle],
+  );
+  const taskListPath = "/api/v1/ext/projects/{slug}/tasks";
+  const taskListUrl = `http://localhost/api/v1/ext/projects/${slug}/tasks`;
+  const compactTask = {
+    id: taskId,
+    projectId: a,
+    slug,
+    number: 1,
+    title: taskTitle,
+    status: "Backlog",
+  };
+
+  expect(
+    await assertExternalRead(
+      taskListPath,
+      await tasks.GET(new NextRequest(taskListUrl, { headers }), params),
+    ),
+  ).toEqual({ items: [compactTask], nextCursor: null });
+  expect(
+    await assertExternalRead(
+      taskListPath,
+      await tasks.GET(
+        new NextRequest(taskListUrl, { headers: ordinaryHeaders }),
+        params,
+      ),
+    ),
+  ).toMatchObject({ tasks: [{ id: taskId, prompt: "Review run data" }] });
+  const task =
+    await import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/route");
+  const taskPath = "/api/v1/ext/projects/{slug}/tasks/{taskId}";
+  const taskUrl = `${taskListUrl}/${taskId}`;
+  const taskParams = { params: Promise.resolve({ slug, taskId }) };
+
+  expect(
+    await assertExternalRead(
+      taskPath,
+      await task.GET(new NextRequest(taskUrl, { headers }), taskParams),
+    ),
+  ).toEqual(compactTask);
+  expect(
+    await assertExternalRead(
+      taskPath,
+      await task.GET(
+        new NextRequest(taskUrl, { headers: ordinaryHeaders }),
+        taskParams,
+      ),
+    ),
+  ).toMatchObject({ id: taskId, prompt: "Review run data" });
+  const emptyOrMissing = (projectSlug: string) =>
+    tasks.GET(
+      new NextRequest(
+        `http://localhost/api/v1/ext/projects/${projectSlug}/tasks`,
+        { headers },
+      ),
+      { params: Promise.resolve({ slug: projectSlug }) },
+    );
+
+  expect(
+    await assertExternalRead(taskListPath, await emptyOrMissing("install-b")),
+  ).toEqual({
+    items: [],
+    nextCursor: null,
+  });
+  const [archivedTasks, missingTasks] = await Promise.all([
+    emptyOrMissing("install-archive"),
+    emptyOrMissing("install-missing"),
+  ]);
+
+  expect(await assertExternalRead(taskListPath, archivedTasks, 404)).toEqual(
+    await assertExternalRead(taskListPath, missingTasks, 404),
+  );
+  const detailWithPaging = await task.GET(
+    new NextRequest(`${taskUrl}?limit=1`, { headers }),
+    taskParams,
+  );
+
+  expect(
+    await assertExternalRead(taskPath, detailWithPaging, 422),
+  ).toMatchObject({
+    code: "CONFIG",
+  });
   expect(
     (
       await tasks.POST(
@@ -17644,8 +17931,8 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     ).status,
   ).toBe(403);
   await database.pool.query(
-    "UPDATE projects SET brain_enabled=true WHERE id=$1",
-    [a],
+    "UPDATE projects SET brain_enabled=true WHERE id IN ($1,$2)",
+    [a, b],
   );
   const { POST: brainProposal } =
     await import("@/app/api/v1/ext/projects/[slug]/memory/proposals/route");
@@ -17690,10 +17977,10 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       await import("@/app/api/v1/ext/projects/[slug]/memory/route");
     const recalled = await recall(
       new NextRequest(
-        "http://localhost/api/v1/ext/projects/install-a/memory?q=observation",
+        "http://localhost/api/v1/ext/projects/install-b/memory?q=observation",
         { headers },
       ),
-      params,
+      { params: Promise.resolve({ slug: "install-b" }) },
     );
 
     expect(recalled.status, await recalled.clone().text()).toBe(200);
@@ -17765,11 +18052,18 @@ it("AV-06 reserves an installation Run and intersects current project authority 
   expect(
     (
       await database.pool.query(
-        "SELECT source_project_ids FROM agent_memory_proposals WHERE id=$1",
+        "SELECT source_project_ids,source_restrictions FROM agent_memory_proposals WHERE id=$1",
         [proposalId],
       )
     ).rows,
-  ).toEqual([{ source_project_ids: [a, b].sort() }]);
+  ).toEqual([
+    {
+      source_project_ids: [a, b].sort(),
+      source_restrictions: expect.arrayContaining(
+        [a, b].map((projectId) => ({ kind: "project_context", projectId })),
+      ),
+    },
+  ]);
   const { decideVaultProposal } =
     await import("@/lib/agent-memory-vault/review");
   const { listProposalReviews } =
@@ -17842,10 +18136,9 @@ it("AV-06 reserves an installation Run and intersects current project authority 
     code: "PRECONDITION",
     details: { reason: "agent_memory_unavailable" },
   });
-  const staleRead = await list();
-
-  expect(staleRead.ok).toBe(false);
-  expect(await staleRead.json()).toMatchObject({ code: "PRECONDITION" });
+  expect(
+    await assertExternalRead("/api/v1/ext/projects", await list(), 409),
+  ).toMatchObject({ code: "PRECONDITION" });
   await expect(
     db.transaction((tx) => loadCompanyAgentSessionContext(tx, run.runId)),
   ).rejects.toMatchObject({ code: "PRECONDITION" });
@@ -17938,16 +18231,25 @@ it("AV-06 reserves an installation Run and intersects current project authority 
           "INSERT INTO runs(id,project_id,run_kind,status,flow_version,flow_revision,started_at,ended_at) VALUES($1,$2,'flow','Done','fixture','fixture',now()-interval '1 minute',now())",
           [runId, source],
         );
+        const path = "/api/v1/ext/runs/{runId}";
+        const url = `http://localhost/api/v1/ext/runs/${runId}`;
+        const route = { params: Promise.resolve({ runId }) };
+
         expect(
-          (
+          await assertExternalRead(
+            path,
+            await getRun(new NextRequest(url, { headers: cronHeaders }), route),
+          ),
+        ).toMatchObject({ id: runId, projectId: source, runKind: "flow" });
+        expect(
+          await assertExternalRead(
+            path,
             await getRun(
-              new NextRequest(`http://localhost/api/v1/ext/runs/${runId}`, {
-                headers: cronHeaders,
-              }),
-              { params: Promise.resolve({ runId }) },
-            )
-          ).status,
-        ).toBe(200);
+              new NextRequest(url, { headers: ordinaryHeaders }),
+              route,
+            ),
+          ),
+        ).toMatchObject({ id: runId, runnerId: null });
 
         return runId;
       }),
@@ -17956,19 +18258,73 @@ it("AV-06 reserves an installation Run and intersects current project authority 
       await import("@/app/api/v1/ext/runs/[runId]/activity/route");
     const runId = runIds[0]!;
 
+    const eventId = randomUUID();
+    const eventType = "fixture.observation";
+
+    await database.pool.query(
+      "INSERT INTO execution_events(id,source,source_key,run_id,event_type,payload_schema,payload,occurred_at,ingest_disposition) VALUES($1,'manager',$1,$2,$3,'fixture',$4,now(),'accepted')",
+      [eventId, runId, eventType, { privateData: "Run event payload" }],
+    );
+    const activityPath = "/api/v1/ext/runs/{runId}/activity";
+    const activity = (id: string, requestHeaders: HeadersInit, query = "") =>
+      getActivity(
+        new NextRequest(
+          `http://localhost/api/v1/ext/runs/${id}/activity${query}`,
+          { headers: requestHeaders },
+        ),
+        { params: Promise.resolve({ runId: id }) },
+      );
+
     expect(
-      (
-        await getActivity(
-          new NextRequest(
-            `http://localhost/api/v1/ext/runs/${runId}/activity`,
-            { headers: cronHeaders },
-          ),
-          { params: Promise.resolve({ runId }) },
-        )
-      ).status,
-    ).toBe(200);
+      await assertExternalRead(
+        activityPath,
+        await activity(runId, cronHeaders),
+      ),
+    ).toEqual({
+      items: [
+        {
+          id: eventId,
+          projectId: a,
+          slug,
+          runId,
+          type: eventType,
+          occurredAt: expect.any(String),
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(
+      await assertExternalRead(
+        activityPath,
+        await activity(runId, ordinaryHeaders),
+      ),
+    ).toMatchObject({
+      items: [],
+      hasMore: false,
+    });
+    await assertExternalRead(
+      activityPath,
+      await activity(randomUUID(), cronHeaders),
+      404,
+    );
+    await assertExternalRead(
+      activityPath,
+      await activity(runId, cronHeaders, "?sinceId=1"),
+      422,
+    );
     const { GET: observatory } =
       await import("@/app/api/v1/ext/observatory/summary/route");
+    const observatoryPath = "/api/v1/ext/observatory/summary";
+
+    await assertExternalRead(
+      observatoryPath,
+      await observatory(
+        new NextRequest(`http://localhost${observatoryPath}`, {
+          headers: ordinaryHeaders,
+        }),
+      ),
+      403,
+    );
 
     for (const [slug, projectId] of [
       ["install-a", a],
@@ -17981,15 +18337,18 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         ),
       );
 
-      expect(aggregate.status).toBe(200);
-      expect((await aggregate.json()).items).toEqual([
-        expect.objectContaining({
-          projectId,
-          runCount: 1,
-          successCount: 1,
-          durationMs: 60000,
-        }),
-      ]);
+      expect(await assertExternalRead(observatoryPath, aggregate)).toEqual({
+        items: [
+          {
+            projectId,
+            slug,
+            runCount: 1,
+            successCount: 1,
+            durationMs: 60000,
+          },
+        ],
+        nextCursor: null,
+      });
     }
     await expect(
       db.transaction((tx) =>
@@ -18292,6 +18651,104 @@ it("AV-06 reserves an installation Run and intersects current project authority 
         await (await get(randomUUID())).json(),
       );
   }
+  await database.pool.query(
+    "INSERT INTO project_members(id,project_id,user_id,role) VALUES($1,$2,$3,'member')",
+    [randomUUID(), a, launchUserId],
+  );
+  const installationCredentialGuard = {
+    code: "23514",
+    constraint: "project_tokens_installation_binding_immutable",
+  };
+
+  await expect(
+    database.pool.query(
+      `UPDATE project_tokens SET scopes=scopes || '["runs:read"]'::jsonb
+       WHERE installation_run_id=$1 AND scopes='["activity:read"]'::jsonb`,
+      [run.runId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  const failed = await prepareUndispatchedAgentFailure(run.runId, {
+    db,
+    reason: "agent_dispatch_failed",
+  });
+
+  await db.transaction(failed.apply);
+  expect(
+    (
+      await database.pool.query<{
+        revoked: boolean;
+        revocation_reason: string;
+      }>(
+        `SELECT revoked_at IS NOT NULL AS revoked, revocation_reason
+         FROM project_tokens WHERE installation_run_id=$1`,
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual(
+    Array.from({ length: 3 }, () => ({
+      revoked: true,
+      revocation_reason: "revoked",
+    })),
+  );
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revocation_reason=NULL WHERE id=$1",
+      [refreshedToken.tokenId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  await expect(
+    database.pool.query(
+      "UPDATE project_tokens SET revoked_at=NULL,revocation_reason=NULL WHERE id=$1",
+      [refreshedToken.tokenId],
+    ),
+  ).rejects.toMatchObject(installationCredentialGuard);
+  await assertExternalRead("/api/v1/ext/projects", await list(), 401);
+  const retryOptions = await getAgentRetryOptions(db, run.runId, launchUserId);
+
+  expect(retryOptions).toMatchObject({
+    eligible: true,
+    selectedRunnerId: runnerId,
+  });
+  const retry = await acceptAgentRetry(db, run.runId, launchUserId, {
+    runnerId,
+    requestKey: randomUUID(),
+    previewFingerprint: retryOptions.previewFingerprint,
+  });
+
+  expect(retry).toMatchObject({
+    intentState: "launched",
+    runStatus: "Pending",
+  });
+  expect(
+    (
+      await database.pool.query(
+        `SELECT successor.knowledge_access, successor.knowledge_access=source.knowledge_access AS exact_capture
+         FROM runs source JOIN runs successor ON successor.retry_of_run_id=source.id WHERE source.id=$1`,
+        [run.runId],
+      )
+    ).rows,
+  ).toEqual([
+    {
+      exact_capture: true,
+      knowledge_access: expect.objectContaining({
+        restrictions: expect.arrayContaining(
+          [a, b].map((projectId) => ({ kind: "project_context", projectId })),
+        ),
+      }),
+    },
+  ]);
+  if (!retry.runId) throw new Error("Expected a retained retry Run");
+  const retryRunId = retry.runId;
+
+  await database.pool.query("UPDATE runs SET status='Running' WHERE id=$1", [
+    retryRunId,
+  ]);
+  const retryCredential = await db.transaction((tx) =>
+    retainCompanyAgentSessionCredential(tx, retryRunId),
+  );
+
+  headers.authorization = `Bearer ${retryCredential.secret}`;
+  await assertExternalRead("/api/v1/ext/projects", await list());
   await database.pool.query("DELETE FROM projects WHERE id=$1", [a]);
   await expect(installationRunProjects(db, cronRun.id)).resolves.toEqual(
     [a, b].sort(),

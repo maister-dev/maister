@@ -16,6 +16,7 @@ import {
   effectContextSchema,
   isKnowledgeCardProposal,
   knowledgeCardProposalSchemas,
+  MAX_GOVERNED_PREVIEW_CHARS,
 } from "./knowledge-card-types";
 import {
   admitLibrarianOperation,
@@ -23,6 +24,7 @@ import {
 } from "./operations";
 import { resolveLibrarianVault } from "./vaults";
 
+import { lockConfirmationSources } from "@/lib/agent-memory-vault/card-redaction-fence";
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
 import {
   applyVaultMutationInTransaction,
@@ -49,7 +51,7 @@ import {
   librarianTurns,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { contentDigest } from "@/lib/evaluations/digest";
+import { contentDigest, stableStringify } from "@/lib/evaluations/digest";
 
 type Prepared =
   | {
@@ -83,6 +85,49 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+function completeEffectPreview(
+  value: object,
+  action: KnowledgeCardProposal["action"],
+): string {
+  const preview = stableStringify(value);
+
+  if (preview.length > MAX_GOVERNED_PREVIEW_CHARS) {
+    log.warn(
+      { action, previewChars: preview.length },
+      "[FIX] governed confirmation exceeds its review limit",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      "The proposed effect is too large to review. Split the work into smaller confirmations.",
+      { details: { reason: "governed_preview_limit" } },
+    );
+  }
+
+  return preview;
+}
+
+export function matchesGovernedCardEffect(
+  card: Pick<typeof librarianCards.$inferSelect, "target" | "targetRevision">,
+  retainedPreview: string,
+  current: Pick<Prepared, "target" | "revision" | "preview">,
+): boolean {
+  if (
+    card.targetRevision !== current.revision ||
+    contentDigest(card.target) !== contentDigest(current.target)
+  )
+    return false;
+  if (retainedPreview === current.preview) return true;
+
+  // Earlier complete previews depended on the draft's insertion order.
+  try {
+    return stableStringify(JSON.parse(retainedPreview)) === current.preview;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+
+    return false;
+  }
+}
+
 export async function prepareKnowledgeCard(
   tx: Db,
   userId: string,
@@ -91,6 +136,7 @@ export async function prepareKnowledgeCard(
 ): Promise<Prepared> {
   const principal = { kind: "user", userId } as const;
 
+  await lockConfirmationSources(tx);
   await authorizeSourceRestrictions(tx, principal, inherited);
 
   if (proposal.action === "vault_edit") {
@@ -123,13 +169,15 @@ export async function prepareKnowledgeCard(
       })),
     ]);
 
+    const completePreview = completeEffectPreview(preview, proposal.action);
+
     return {
       kind: proposal.action,
       target,
       revision: contentDigest(preview),
       access,
       projectIds: sources.projectIds,
-      preview: JSON.stringify(preview).slice(0, 16384),
+      preview: completePreview,
       restrictions,
     };
   }
@@ -173,7 +221,7 @@ export async function prepareKnowledgeCard(
         project.id,
         evidence.rows.map(({ id }) => id).sort(),
       ]),
-      preview: JSON.stringify(proposal.draft).slice(0, 16384),
+      preview: completeEffectPreview(proposal.draft, proposal.action),
       restrictions: canonicalKnowledgeRestrictions(inherited),
     };
   }
@@ -248,7 +296,7 @@ export async function prepareKnowledgeCard(
       input.targetRecordId,
       input.expectedRecordRevision,
     ]),
-    preview: JSON.stringify(input.draft).slice(0, 16384),
+    preview: completeEffectPreview(input.draft, proposal.action),
     restrictions,
   };
 }
@@ -279,6 +327,8 @@ export async function decideKnowledgeCard(
       .from(librarianConversations)
       .where(eq(librarianConversations.id, locator.conversationId))
       .for("update");
+
+    await lockConfirmationSources(tx);
     const [card] = await tx
       .select()
       .from(librarianCards)
@@ -363,10 +413,7 @@ export async function decideKnowledgeCard(
       context.data.restrictions,
     );
 
-    if (
-      card.targetRevision !== prepared.revision ||
-      contentDigest(card.target) !== contentDigest(prepared.target)
-    )
+    if (!matchesGovernedCardEffect(card, context.data.preview, prepared))
       throw new MaisterError("CONFLICT", "The confirmation target changed");
     if (input.decision === "reject") {
       await tx

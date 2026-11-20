@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { parseMemoryStructure } from "../structure";
 
-it("AV-07 parses note, heading and entity references without treating fenced examples as prose", () => {
+it("AV-09 parses note, heading and entity references without treating fenced examples as prose", () => {
   const parsed = parseMemoryStructure(
     [
       "---",
@@ -45,7 +45,7 @@ it.each([
   ["non-list value", "aliases: qa"],
   ["non-string value", "aliases: [2]"],
   ["intrinsic cap", 'aliases: ["' + "x".repeat(10240) + '"]'],
-])("AV-07 refuses %s frontmatter before indexing", (_, yaml) => {
+])("AV-09 refuses %s frontmatter before indexing", (_, yaml) => {
   expect(() => parseMemoryStructure(`---\n${yaml}\n---\nbody`)).toThrow(
     expect.objectContaining({ code: "CONFIG" }),
   );

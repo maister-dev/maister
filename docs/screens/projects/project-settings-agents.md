@@ -139,19 +139,13 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **Brain access** (ADR-122) — two toggles: **canReadBrain** (gates
     `memory_recall`) and **canWriteBrain** (gates `memory_retain`, a separate
     write axis — read never grants write). Both default off.
-  - **Memory** (ADR-152 — Implemented) — a third toggle in the same section,
-    **`memoryEnabled`**, labelled explicitly as a **separate axis** from
-    `canWriteBrain`: it gates the agent's own private `memory.md`, not Project
-    Brain, and neither Brain axis implies it. Default off, seeded server-side on
-    attach from the effective definition's `memory:` field. For a **flow-bound
-    agent** (an effective definition declaring `flow:`) the toggle renders
-    **disabled with its reason shown** — "this agent drives a Flow; Flow runs do
-    not carry agent memory" — never hidden and never silently inert, because the
-    launch diverts to the agent-driven flow path and never reaches the prompt
-    seam. The disabled control is an affordance, not the boundary: `attachAgent`
-    lands `false` for a flow-bound agent regardless of its definition, and the
-    `PATCH` refuses an explicit `memoryEnabled: true` with `422 CONFIG`, so no
-    client can land a permanently inert `true`.
+  - **Memory** (ADR-210 — Implemented) controls this attachment's private vault
+    independently of Project Brain. On attach, the effective definition's
+    `memory:` field seeds `memoryEnabled`. The same control is available for a
+    Flow-driving attachment. Each eligible Flow session resolves memory from
+    its acting agent, giving an explicit node persona precedence over the Flow
+    Run's agent. The write policy controls immediate application or review.
+    External input requires review.
   - Close affordance: top-right **✕** (+ Esc + backdrop), `createPortal` to body
     (shared popup convention).
 

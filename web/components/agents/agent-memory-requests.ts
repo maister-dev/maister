@@ -77,14 +77,21 @@ async function manifest(base: string, path: string, generation: string) {
   while (pending.length > 0) {
     const next = pending.pop()!;
     let cursor: string | null = null;
+    // Installation generations describe the visible heads of each subtree.
+    let directoryGeneration = next === path ? generation : undefined;
 
     do {
       const page: View = await vaultRequest(
         noteQuery(base, next, cursor ?? undefined),
       );
 
-      if (page.kind !== "directory" || page.generation !== generation)
+      if (
+        page.kind !== "directory" ||
+        (directoryGeneration !== undefined &&
+          page.generation !== directoryGeneration)
+      )
         throw new VaultRequestError({ code: "CONFLICT", status: 409 });
+      directoryGeneration = page.generation;
       for (const entry of page.entries) {
         if (entry.kind === "directory") pending.push(entry.path);
         else if (entry.hash && entry.revisionId)

@@ -44,6 +44,7 @@ import {
 import {
   captureInstallationProjects,
   installationRunProjects,
+  installationRunSourceCapture,
 } from "./installation-source-capture";
 import { retryDigest, retryRefusal } from "./retry-guards";
 
@@ -402,6 +403,11 @@ async function insertCompanyAgentRun(
   });
   const snapshot = captureCompanyAgentExecution(context);
   const trigger = { source: execution.triggerSource };
+  // A replacement reserves the exact predecessor assignment and source capture.
+  const inheritedSourceCapture =
+    installationGrant && execution.retryOfRunId
+      ? await installationRunSourceCapture(tx, execution.retryOfRunId)
+      : undefined;
 
   await tx.insert(runs).values({
     id: runId,
@@ -446,7 +452,7 @@ async function insertCompanyAgentRun(
       },
     ),
     executionDataPlaneMode,
-    knowledgeAccess: {
+    knowledgeAccess: inheritedSourceCapture ?? {
       schemaVersion: 1,
       state: "complete",
       generation: 1,

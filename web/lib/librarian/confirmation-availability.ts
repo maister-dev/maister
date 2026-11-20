@@ -17,7 +17,10 @@ import {
   isKnowledgeCardProposal,
   effectContextSchema,
 } from "./knowledge-card-types";
-import { prepareKnowledgeCard } from "./knowledge-card-effects";
+import {
+  matchesGovernedCardEffect,
+  prepareKnowledgeCard,
+} from "./knowledge-card-effects";
 import { memoryContentDigest } from "./memory";
 
 import {
@@ -262,14 +265,17 @@ export async function readEligibleConfirmationIds(
       )
         continue;
       try {
-        const prepared = await prepareKnowledgeCard(
-          db as unknown as ExecutionDb,
-          owner.userId,
-          proposal,
-          context.data.restrictions,
+        const prepared = await db.transaction((tx) =>
+          prepareKnowledgeCard(
+            tx as unknown as ExecutionDb,
+            owner.userId,
+            proposal,
+            context.data.restrictions,
+          ),
         );
 
-        if (matchesFrozenCardTarget(card, prepared)) eligible.push(card.id);
+        if (matchesGovernedCardEffect(card, context.data.preview, prepared))
+          eligible.push(card.id);
       } catch (error) {
         if (!isMaisterError(error)) throw error;
       }

@@ -8,6 +8,8 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte } from "drizzle-orm";
 import pino from "pino";
 
 import {
+  librarianMessageSources,
+  librarianProjectSources,
   visibleLibrarianCapture,
   visibleLibrarianTurnSources,
 } from "./disclosed-context";
@@ -48,6 +50,7 @@ export async function retrieveLibrarianContext(
   guardedHistory: boolean;
   sourceMessages: ReadonlyMap<string, readonly KnowledgeAccessRestriction[]>;
   sourceSummaries: ReadonlyMap<string, readonly KnowledgeAccessRestriction[]>;
+  sourceMemoryItems: ReadonlyMap<string, readonly KnowledgeAccessRestriction[]>;
 }> {
   const [owner] = await tx
     .select({ role: users.role })
@@ -85,17 +88,19 @@ export async function retrieveLibrarianContext(
     readonly KnowledgeAccessRestriction[]
   >();
 
-  for (const row of historyRows) {
-    const restrictions = row.turnId ? disclosures.get(row.turnId) : undefined;
+  const visibleHistory = historyRows.filter((row) => {
+    const sources = librarianMessageSources(row, disclosures);
 
-    if (restrictions?.length) sourceMessages.set(row.id, restrictions);
-  }
-  const visibleHistory = historyRows.filter(
-    (row) =>
-      row.authorKind === "owner" ||
-      (row.sourceProjectIds.every((id) => visible.has(id)) &&
-        (!row.turnId || disclosures.get(row.turnId) !== null)),
-  ) as ComposerMessage[];
+    if (
+      !sources ||
+      (row.authorKind !== "owner" &&
+        row.sourceProjectIds.some((id) => !visible.has(id)))
+    )
+      return false;
+    if (sources.length > 0) sourceMessages.set(row.id, sources);
+
+    return true;
+  }) as ComposerMessage[];
 
   const summaryRows = await tx
     .select()
@@ -138,7 +143,6 @@ export async function retrieveLibrarianContext(
       dropped += 1;
       continue;
     }
-    if (sources.length) sourceSummaries.set(row.id, sources);
     if (row.sourceProjectIds.some((id) => !visible.has(id))) {
       await tx
         .update(librarianSegmentSummaries)
@@ -148,6 +152,12 @@ export async function retrieveLibrarianContext(
       invalidated += 1;
       continue;
     }
+    const summarySources = [
+      ...sources,
+      ...librarianProjectSources(row.sourceProjectIds),
+    ];
+
+    if (summarySources.length > 0) sourceSummaries.set(row.id, summarySources);
     const kept = {
       decisions: row.content.decisions.filter(
         (value) => !forgotten.has(memoryContentDigest(value)),
@@ -215,11 +225,21 @@ export async function retrieveLibrarianContext(
   const contentByRevision = new Map(
     revisions.map((row) => [`${row.itemId}:${row.revision}`, row.content]),
   );
+  const sourceMemoryItems = new Map<
+    string,
+    readonly KnowledgeAccessRestriction[]
+  >();
   const memoryItems = accessible.map((row) => {
     const text = contentByRevision.get(`${row.id}:${row.revision}`);
+    const sources = librarianProjectSources(
+      row.projectId
+        ? [...row.sourceProjectIds, row.projectId]
+        : row.sourceProjectIds,
+    );
 
     if (!text)
       throw new Error(`memory revision ${row.id}:${row.revision} missing`);
+    if (sources.length > 0) sourceMemoryItems.set(row.id, sources);
 
     return { id: row.id, revision: row.revision, text };
   });
@@ -252,5 +272,6 @@ export async function retrieveLibrarianContext(
     guardedHistory: guardedTurn !== undefined,
     sourceMessages,
     sourceSummaries,
+    sourceMemoryItems,
   };
 }

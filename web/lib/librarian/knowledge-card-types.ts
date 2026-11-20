@@ -42,10 +42,12 @@ export function isKnowledgeCardProposal(value: {
   );
 }
 
+export const MAX_GOVERNED_PREVIEW_CHARS = 16_384;
+
 export const effectContextSchema = z.strictObject({
   schemaVersion: z.literal(1),
   turnId: z.string().min(1).max(192),
   contextEpoch: z.number().int().nonnegative(),
   restrictions: knowledgeRestrictionsSchema,
-  preview: z.string().max(16384),
+  preview: z.string().max(MAX_GOVERNED_PREVIEW_CHARS),
 });

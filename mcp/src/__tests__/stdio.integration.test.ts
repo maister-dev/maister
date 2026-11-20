@@ -35,7 +35,11 @@ describe("MCP stdio wire contract", () => {
   }
 
   async function connectClient(
-    identity: Readonly<{ token: string; toolset?: string }>,
+    identity: Readonly<{
+      token: string;
+      toolset?: string;
+      installationScopes?: readonly string[];
+    }>,
   ): Promise<Client> {
     const connected = await connectCompiledMcp({ baseUrl, ...identity });
 
@@ -1128,6 +1132,75 @@ describe("MCP stdio wire contract", () => {
 
     expect(result.isError).toBe(true);
     expect(requests).toHaveLength(count);
+  });
+
+  it("publishes and forwards installation paging using the opaque cursor", async () => {
+    const installation = await connectClient({
+      token: "mai_installation_wire",
+      toolset: "installation",
+      installationScopes: ["projects:read", "tasks:read", "activity:read"],
+    });
+
+    try {
+      const { tools } = await installation.listTools();
+      const pages = [
+        { name: "project_list", selector: {}, path: "/api/v1/ext/projects" },
+        {
+          name: "task_list",
+          selector: { slug: "work" },
+          path: "/api/v1/ext/projects/work/tasks",
+        },
+        {
+          name: "run_activity",
+          selector: { runId: "run-1" },
+          path: "/api/v1/ext/runs/run-1/activity",
+        },
+      ] as const;
+      const cursor = "next+page/2=";
+
+      for (const { name, selector, path } of pages) {
+        const schema = tools.find((tool) => tool.name === name)?.inputSchema;
+
+        expect(schema?.properties).toMatchObject({
+          cursor: { type: "string" },
+          limit: { maximum: 50 },
+        });
+        const result = await installation.callTool({
+          name,
+          arguments: { ...selector, cursor, limit: 2 },
+        });
+
+        expect(result.isError).not.toBe(true);
+        const request = requests.at(-1);
+        const url = new URL(request?.url ?? "", baseUrl);
+
+        expect(request).toMatchObject({
+          method: "GET",
+          authorization: "Bearer mai_installation_wire",
+        });
+        expect(url.pathname).toBe(path);
+        expect(Object.fromEntries(url.searchParams)).toEqual({
+          cursor,
+          limit: "2",
+        });
+      }
+      const count = requests.length;
+      const refused = await installation.callTool({
+        name: "run_activity",
+        arguments: { runId: "run-1", sinceId: "5" },
+      });
+
+      expect(refused.isError).toBe(true);
+      expect(requests).toHaveLength(count);
+      const ordinarySchema = (await client.listTools()).tools.find(
+        (tool) => tool.name === "run_activity",
+      )?.inputSchema;
+
+      expect(ordinarySchema?.properties).toHaveProperty("sinceId");
+      expect(ordinarySchema?.properties).not.toHaveProperty("cursor");
+    } finally {
+      await closeClient(installation);
+    }
   });
 
   it("AV-15 exposes the vault tool and forwards only closed self-vault commands", async () => {

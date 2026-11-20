@@ -168,6 +168,8 @@ table agent_memory_import_receipts {
   generation bigint [not null]
   source_kind text [not null]
   source_identity text [not null]
+  source_project_id text
+  source_agent_id text
   source_digest text
   source_bytes integer
   state text [not null]
@@ -180,6 +182,7 @@ table agent_memory_import_receipts {
 
   indexes {
     (generation, source_kind, source_identity) [name: 'agent_memory_import_source_uq', unique]
+
 
 
   }

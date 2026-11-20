@@ -10,13 +10,11 @@ import {
   installationProjectAccess,
   requireInstallationCredential,
 } from "./installation-authority";
-import {
-  captureInstallationProjects,
-  installationRunProjects,
-} from "./installation-source-capture";
+import { installationRunProjects } from "./installation-source-capture";
 
 import { assertBrainSchemaApplied } from "@/lib/brain/guard";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
+import { recordNativeRunSourcesInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { createBrainProposal } from "@/lib/brain/proposals";
@@ -78,7 +76,9 @@ export async function recallInstallationBrain(
       })
     ).filter((hit) => hit.tier === "owned");
 
-    await captureInstallationProjects(tx, context.runId, [projectId]);
+    await recordNativeRunSourcesInTransaction(tx, context.runId, [
+      { kind: "project_context", projectId },
+    ]);
     await writeBrainSnapshot(tx, {
       projectId,
       runId: context.runId,

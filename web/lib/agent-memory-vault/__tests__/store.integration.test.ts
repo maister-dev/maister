@@ -80,11 +80,35 @@ function applied(result: VaultMutationResult): VaultApplied {
   return result;
 }
 
-it("AV-01 serializes same-head edits and records one revision with the authorized conflict body", async () => {
+it("AV-01 serializes one-line edits in a 20-note vault and preserves the other 19 heads", async () => {
   const access = await vault("fixture:races");
   const path = "/memories/notes/race.md";
   const head = applied(await apply(access, create(path, "old\n", "create-01")))
     .affected[0]!;
+
+  for (let index = 0; index < 19; index++) {
+    applied(
+      await apply(
+        access,
+        create(
+          `/memories/notes/untouched-${index}.md`,
+          `Retained line ${index}\n`,
+          `untouched-${index}`,
+        ),
+      ),
+    );
+  }
+  const unaffected = () =>
+    fixture.pool.query(
+      `SELECT note.id,note.path,note.head_revision_id,revision.content_sha256
+       FROM agent_memory_notes note JOIN agent_memory_revisions revision
+         ON (revision.vault_id,revision.note_id,revision.id)=(note.vault_id,note.id,note.head_revision_id)
+       WHERE note.vault_id=$1 AND note.id<>$2 ORDER BY note.path`,
+      [access.vaultId, head.noteId],
+    );
+  const before = (await unaffected()).rows;
+
+  expect(before).toHaveLength(19);
   const patch = {
     command: "str_replace",
     path,
@@ -145,6 +169,7 @@ it("AV-01 serializes same-head edits and records one revision with the authorize
   );
 
   expect(rows).toEqual([{ count: 2 }]);
+  expect((await unaffected()).rows).toEqual(before);
 });
 
 it("AV-12 replays once and denies collisions with targets the writer cannot see", async () => {
@@ -424,6 +449,32 @@ it("AV-12 retains the exact revision in a versioned native capture and rechecks 
   ).rejects.toMatchObject({
     details: { reason: "knowledge_reference_unavailable" },
   });
+});
+
+it("AV-02 records a single visible witness for a folder entry at the page boundary", async () => {
+  const access = await vault("fixture:folder-paging");
+  const paths = ["/memories/notes/first.md", "/memories/notes/second.md"];
+
+  for (const [index, path] of paths.entries())
+    applied(await apply(access, create(path, "", `folder-${index}`)));
+  const capture = vi.fn<VaultAccess["capture"]>().mockResolvedValue(undefined);
+
+  const page = await viewAgentMemory(
+    fixture.db,
+    parseAgentMemoryView({ command: "view", path: "/memories", limit: 1 }),
+    async () => ({ ...access, capture }),
+  );
+
+  expect(page).toMatchObject({
+    kind: "directory",
+    entries: [{ kind: "directory", path: "/memories/notes" }],
+    nextCursor: null,
+  });
+  expect(capture).toHaveBeenCalledOnce();
+  const witnesses = capture.mock.calls[0]![1];
+
+  expect(witnesses).toHaveLength(1);
+  expect(paths).toContain(witnesses[0]?.path);
 });
 
 it("AV-12 pages a text body without splitting Unicode or replaying a cursor against a different principal or head", async () => {

@@ -912,8 +912,8 @@ export async function previewVaultMutation(
           after === null
             ? null
             : createHash("sha256").update(after).digest("hex"),
-        before: before?.slice(0, 2048) ?? null,
-        after: after?.slice(0, 2048) ?? null,
+        before,
+        after,
       };
     }),
   );

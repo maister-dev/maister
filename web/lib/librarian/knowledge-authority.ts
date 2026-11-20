@@ -21,7 +21,11 @@ export type LibrarianKnowledgeContext = Readonly<{
 export async function lockLibrarianKnowledgeContext(
   tx: SqlTransaction,
   tokenId: string,
-  scope: "knowledge:read" | "agent_memory:read" | "librarian:cards",
+  scope:
+    | "knowledge:read"
+    | "agent_memory:read"
+    | "librarian:cards"
+    | "librarian:history",
 ): Promise<LibrarianKnowledgeContext> {
   const [locators] = (
     await tx.execute(sql`

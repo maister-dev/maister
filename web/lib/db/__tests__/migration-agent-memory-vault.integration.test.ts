@@ -207,6 +207,79 @@ it("AV-10 installs the vault on a fresh main-only database", async () => {
   }
 }, 180_000);
 
+it("AV-10 upgrades verified import owners from retained vault identity and leaves interrupted inventory unclassified", async () => {
+  const cutoff = "0353_agent_installation_schedule_reviews";
+  const fixture = await startMainPostgresTestDbUpTo(
+    { databaseName: "agent_memory_import_owner_upgrade" },
+    cutoff,
+  );
+  const client = await fixture.pool.connect();
+
+  try {
+    const project = await seedProject(fixture.db);
+    const vaultId = randomUUID();
+    const noteId = randomUUID();
+    const revisionId = randomUUID();
+
+    await client.query("BEGIN");
+    await client.query(
+      "INSERT INTO agent_memory_vaults(id,project_id,agent_id) VALUES ($1,$2,'test:legacy')",
+      [vaultId, project],
+    );
+    await client.query(
+      "INSERT INTO agent_memory_notes(id,vault_id,path,head_revision_id) VALUES ($1,$2,'/memories/index.md',$3)",
+      [noteId, vaultId, revisionId],
+    );
+    await client.query(
+      "INSERT INTO agent_memory_revisions(id,vault_id,note_id,path,kind,content_sha256,size_chars,size_bytes,author,source_project_ids) VALUES ($1,$2,$3,'/memories/index.md','created',$4,15,15,$5,$6)",
+      [
+        revisionId,
+        vaultId,
+        noteId,
+        legacyHash,
+        JSON.stringify({ kind: "operator_import", userId: "operator" }),
+        [project],
+      ],
+    );
+    await client.query(
+      "INSERT INTO agent_memory_revision_payloads(vault_id,note_id,revision_id,content) VALUES ($1,$2,$3,'# Legacy memory')",
+      [vaultId, noteId, revisionId],
+    );
+    await client.query(
+      `INSERT INTO agent_memory_import_receipts(generation,source_kind,source_identity,state,source_digest,source_bytes,vault_id,note_id,revision_id)
+       VALUES (1,'note','finished','verified',$1,15,$2,$3,$4),
+              (1,'note','interrupted','inventoried',$1,15,NULL,NULL,NULL)`,
+      [legacyHash, vaultId, noteId, revisionId],
+    );
+    await client.query("COMMIT");
+    await upgradeMainTestDb(fixture, cutoff);
+    const expected = [
+      {
+        source_identity: "finished",
+        source_project_id: project,
+        source_agent_id: "test:legacy",
+      },
+      {
+        source_identity: "interrupted",
+        source_project_id: null,
+        source_agent_id: null,
+      },
+    ];
+    const query = () =>
+      client.query(
+        "SELECT source_identity, source_project_id, source_agent_id FROM agent_memory_import_receipts ORDER BY source_identity",
+      );
+
+    expect((await query()).rows).toEqual(expected);
+    await migrate(fixture.db, { migrationsFolder });
+    expect((await query()).rows).toEqual(expected);
+  } finally {
+    await client.query("ROLLBACK");
+    client.release();
+    await fixture.stop();
+  }
+}, 180_000);
+
 it("AV-10 upgrades the optional cache over a seeded pre-vault Brain ledger", async () => {
   const fixture = await startMainPostgresTestDb({
     databaseName: "agent_memory_brain_upgrade",

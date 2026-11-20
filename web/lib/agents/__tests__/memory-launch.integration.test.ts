@@ -41,12 +41,14 @@ import {
 } from "@/lib/agents/launch";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
 import { agentMemoryPath, hashAgentMemory } from "@/lib/agents/memory-store";
+import { issueAgentRunToken } from "@/lib/agents/tokens";
 import {
   parseAgentMemoryMutation,
   parseAgentMemoryView,
 } from "@/lib/agent-memory-vault/commands";
 import {
   stageProjectAgentMemory,
+  stageProjectFlowMemory,
   settleMemoryInjection,
 } from "@/lib/agent-memory-vault/injection";
 import {
@@ -57,12 +59,17 @@ import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
 import {
   ensureProjectVault,
   prepareHumanProjectVault,
+  prepareProjectExecutionVault,
 } from "@/lib/agent-memory-vault/project-access";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import * as schemaModule from "@/lib/db/schema";
-import { seedLocalHost } from "@/test-support/execution-host-seed";
+import { verifyToken } from "@/lib/tokens/verify";
+import {
+  seedLocalHost,
+  seedProjectRow,
+} from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
@@ -80,6 +87,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 
 let testDatabase: StartedPostgresTestDb;
 let root: string;
+let hostId: string;
 
 const AGENT_ID = "mem-pkg:keeper";
 const SLUG = "mem-launch";
@@ -91,6 +99,7 @@ beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "agent_memory_launch_test",
   });
+  hostId = (await seedLocalHost(testDatabase.db)).id;
 }, 180_000);
 
 afterAll(async () => {
@@ -137,25 +146,10 @@ it("AV-02 stages one exact initial manifest and settles it once with the prompt 
   const db = drizzle(testDatabase.pool, { schema: schemaModule });
   const run = await seedRun({ memoryEnabled: true });
   const runId = String(run.runId);
-  const host = await seedLocalHost(testDatabase.db);
   const assignment = await db.transaction((tx) =>
-    mintAssignment(tx, { runId, hostId: host.id, reason: "launch" }),
+    mintAssignment(tx, { runId, hostId, reason: "launch" }),
   );
-  const vaultId = await ensureProjectVault(
-    testDatabase.db,
-    projectId,
-    AGENT_ID,
-  );
-  const prepare: PrepareVaultAccess = async () => ({
-    vaultId,
-    principalKey: "user:operator",
-    actor: { kind: "human", userId: "operator" },
-    sourceProjectIds: [projectId],
-    sourceRestrictions: [],
-    writeAdmission: "apply",
-    canRead: async () => true,
-    capture: async () => {},
-  });
+  const prepare = await vaultFixture();
 
   await testDatabase.pool.query(
     "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
@@ -167,26 +161,12 @@ it("AV-02 stages one exact initial manifest and settles it once with the prompt 
     agentId: AGENT_ID,
     sessionKey: assignment.id,
   };
-  const put = (path: string, file_text: string, requestKey: string) =>
-    applyVaultMutation(
-      testDatabase.db,
-      parseAgentMemoryMutation({
-        command: "create",
-        path,
-        file_text,
-        requestKey,
-        ifHash: null,
-        ifRevisionId: null,
-      }),
-      prepare,
-      agentMemoryVaultLimits(),
-    );
 
-  await put("/memories/index.md", "Summary to read", "index-create");
-  await put(
+  await putVaultNote(prepare, "/memories/index.md", "Summary to read");
+  await putVaultNote(
+    prepare,
     "/memories/notes/detail.md",
     "DETAIL BODY MUST STAY OUT",
-    "detail-create",
   );
   const staged = await stageProjectAgentMemory(testDatabase.db, session, false);
 
@@ -201,7 +181,7 @@ it("AV-02 stages one exact initial manifest and settles it once with the prompt 
   );
 
   expect(before[0]?.agent_memory_hash).toBeNull();
-  await put("/memories/notes/later.md", "new detail", "later-create");
+  await putVaultNote(prepare, "/memories/notes/later.md", "new detail");
   expect(
     await stageProjectAgentMemory(testDatabase.db, session, false),
   ).toEqual(staged);
@@ -235,6 +215,276 @@ it("AV-02 stages one exact initial manifest and settles it once with the prompt 
     readFile(path.join(runDirPath(root, SLUG, runId), "memory-snapshot.md")),
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+async function stageableProjectRun(runId: string, packageId: string) {
+  const db = drizzle(testDatabase.pool, { schema: schemaModule });
+  const assignment = await db.transaction((tx) =>
+    mintAssignment(tx, { runId, hostId, reason: "launch" }),
+  );
+
+  await testDatabase.pool.query(
+    `UPDATE runs SET source_agent_id=$2,activity_sort_at=now(),
+       activity_timestamp_provenance='verified_creation',agent_activity_snapshot=$3::jsonb
+     WHERE id=$1`,
+    [
+      runId,
+      AGENT_ID,
+      JSON.stringify({
+        version: 1,
+        agentId: AGENT_ID,
+        packageInstallId: packageId,
+        packageName: "mem-pkg",
+        definitionSha256: "d".repeat(64),
+      }),
+    ],
+  );
+
+  return { runId, projectId, agentId: AGENT_ID, sessionKey: assignment.id };
+}
+
+async function seedMemoryPackage() {
+  const packageId = randomUUID();
+
+  await testDatabase.pool.query(
+    `INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status,trust_status)
+     VALUES($1,'https://example.invalid/memory','mem-pkg','v1.0.0',$1,'{}','fixture','/tmp/keeper','Installed','trusted')`,
+    [packageId],
+  );
+  await testDatabase.pool.query(
+    `INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name)
+     VALUES($1,$2,$1,'mem-pkg')`,
+    [packageId, projectId],
+  );
+  await testDatabase.pool.query(
+    "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+  );
+
+  return packageId;
+}
+
+async function vaultFixture(
+  sourceRestrictions: Awaited<
+    ReturnType<PrepareVaultAccess>
+  >["sourceRestrictions"] = [],
+): Promise<PrepareVaultAccess> {
+  const vaultId = await ensureProjectVault(
+    testDatabase.db,
+    projectId,
+    AGENT_ID,
+  );
+
+  return async () => ({
+    vaultId,
+    principalKey: "user:operator",
+    actor: { kind: "human", userId: "operator" },
+    sourceProjectIds: [projectId],
+    sourceRestrictions,
+    writeAdmission: "apply",
+    canRead: async () => true,
+    capture: async () => {},
+  });
+}
+
+function putVaultNote(prepare: PrepareVaultAccess, path: string, body: string) {
+  return applyVaultMutation(
+    testDatabase.db,
+    parseAgentMemoryMutation({
+      command: "create",
+      path,
+      file_text: body,
+      requestKey: randomUUID(),
+      ifHash: null,
+      ifRevisionId: null,
+    }),
+    prepare,
+    agentMemoryVaultLimits(),
+  );
+}
+
+it("AV-02 ordinary sessions disclose local vault notes and captured sessions recheck guarded sources", async () => {
+  const first = await seedRun({ memoryEnabled: true });
+  const packageId = await seedMemoryPackage();
+  const original = await stageableProjectRun(String(first.runId), packageId);
+  const mounted = await seedProjectRow(testDatabase.db);
+  const guarded = await vaultFixture([
+    { kind: "project_context", projectId: mounted.id },
+  ]);
+  const local = await vaultFixture();
+
+  await putVaultNote(guarded, "/memories/index.md", "Guarded summary");
+  await putVaultNote(guarded, "/memories/notes/guarded.md", "Guarded note");
+  await putVaultNote(local, "/memories/notes/local.md", "Local note");
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET context_repos=$2::jsonb WHERE project_id=$1",
+    [projectId, JSON.stringify([{ project: mounted.slug }])],
+  );
+  const ordinary = await stageProjectAgentMemory(
+    testDatabase.db,
+    original,
+    false,
+  );
+
+  expect(ordinary).toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("/memories/notes/local.md"),
+  });
+  if (ordinary.mode !== "vault") throw new Error("Expected a vault prompt");
+  expect(ordinary.text).not.toContain("Guarded summary");
+  expect(ordinary.text).not.toContain("/memories/notes/guarded.md");
+  expect(ordinary.text).not.toContain("Local note");
+
+  const credential = await issueAgentRunToken({
+    db: testDatabase.db,
+    runId: original.runId,
+    projectId,
+    agentId: AGENT_ID,
+  });
+  const actor = await verifyToken(credential.secret, testDatabase.db);
+  const read = (path: string) =>
+    viewAgentMemory(
+      testDatabase.db,
+      parseAgentMemoryView({ command: "view", path }),
+      prepareProjectExecutionVault(actor, projectId, "agent_memory:read"),
+    );
+
+  await expect(read("/memories/notes/local.md")).resolves.toMatchObject({
+    content: "Local note",
+  });
+  await expect(read("/memories/notes/guarded.md")).rejects.toMatchObject({
+    details: { reason: "agent_memory_unavailable" },
+  });
+
+  const flow = await seedRun({ runKind: "flow", attached: false });
+  const flowRunId = String(flow.runId);
+
+  await stageableProjectRun(flowRunId, packageId);
+  for (const nodeType of ["ai_coding", "orchestrator"] as const) {
+    const nodeAttemptId = randomUUID();
+
+    await testDatabase.pool.query(
+      "UPDATE runs SET current_step_id=$2 WHERE id=$1",
+      [flowRunId, nodeType],
+    );
+    await testDatabase.pool.query(
+      `INSERT INTO node_attempts(id,run_id,node_id,node_type,status,materialization_plan)
+       VALUES($1,$2,$3,$3,'Running',$4::jsonb)`,
+      [
+        nodeAttemptId,
+        flowRunId,
+        nodeType,
+        JSON.stringify({
+          profileDigest: "d".repeat(64),
+          resolvedRevisions: [],
+          materializedFiles: [],
+          enforcedClasses: [],
+          instructedClasses: [],
+          refusedClasses: [],
+        }),
+      ],
+    );
+    const stagedFlow = await stageProjectFlowMemory(testDatabase.db, {
+      runId: flowRunId,
+      nodeAttemptId,
+      nodeId: nodeType,
+      agentId: AGENT_ID,
+    });
+
+    expect(stagedFlow?.text).not.toContain("Guarded summary");
+    expect(stagedFlow?.text).toContain("/memories/notes/local.md");
+  }
+
+  const second = await seedRun({ attached: false });
+  const capturing = await stageableProjectRun(String(second.runId), packageId);
+
+  await testDatabase.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [
+      capturing.runId,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "complete",
+        generation: 1,
+        restrictions: [],
+      }),
+    ],
+  );
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, false),
+  ).resolves.toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("Guarded summary"),
+  });
+  await testDatabase.pool.query(
+    "UPDATE agent_project_links SET context_repos=NULL WHERE project_id=$1",
+    [projectId],
+  );
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, true),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, capturing, false),
+  ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+  await expect(
+    stageProjectAgentMemory(testDatabase.db, original, true),
+  ).resolves.toEqual({ mode: "vault", text: null });
+});
+
+it("AV-02 native launch bounds paths by the retained authorization budget", async () => {
+  const run = await seedRun({ memoryEnabled: true });
+  const packageId = await seedMemoryPackage();
+  const session = await stageableProjectRun(String(run.runId), packageId);
+  const prepare = await vaultFixture();
+  const limit = agentMemoryVaultLimits().notes;
+  const inherited = { kind: "project_context", projectId };
+  const capture = {
+    schemaVersion: 1,
+    state: "complete",
+    generation: 1,
+    restrictions: [inherited],
+  };
+
+  await testDatabase.pool.query(
+    "UPDATE runs SET knowledge_access=$2::jsonb WHERE id=$1",
+    [session.runId, JSON.stringify(capture)],
+  );
+  await putVaultNote(prepare, "/memories/index.md", "Authorized index");
+  for (let number = 1; number < limit; number++)
+    await putVaultNote(
+      prepare,
+      `/memories/${String(number).padStart(3, "0")}.md`,
+      "",
+    );
+
+  const result = await stageProjectAgentMemory(testDatabase.db, session, false);
+  const { rows } = await testDatabase.pool.query(
+    `SELECT i.tree AS tree, r.knowledge_access AS capture
+     FROM agent_memory_injections i JOIN runs r ON r.id=i.run_id
+     WHERE i.run_id=$1`,
+    [session.runId],
+  );
+  const [stored] = rows;
+
+  expect(result).toMatchObject({
+    mode: "vault",
+    text: expect.stringContaining("More paths omitted"),
+  });
+  if (result.mode !== "vault") throw new Error("Expected a vault prompt");
+  expect(result.text).toContain("Authorized index");
+  expect(stored.tree).toMatchObject({ truncated: true });
+  expect(stored.tree.paths.length).toBeGreaterThan(1);
+  expect(stored.tree.paths.length).toBeLessThan(limit);
+  expect(stored.tree.references).toHaveLength(stored.tree.paths.length + 1);
+  expect(stored.capture.restrictions).toHaveLength(
+    stored.tree.references.length + 1,
+  );
+  expect(stored.capture.restrictions).toEqual(
+    expect.arrayContaining([inherited, ...stored.tree.references]),
+  );
+  expect(
+    Buffer.byteLength(JSON.stringify(stored.capture.restrictions)),
+  ).toBeLessThanOrEqual(65536);
+}, 60_000);
 
 it("AV-10 imports and verifies originals once, fences activation and cleans only verified sources", async () => {
   const db = drizzle(testDatabase.pool, { schema: schemaModule });

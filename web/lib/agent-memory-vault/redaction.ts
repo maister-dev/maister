@@ -6,6 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import { lockConfirmationSourceRedaction } from "./card-redaction-fence";
 import { requireVaultActive } from "./cutover";
 import { lockVault, tombstoneRedactedHead, unavailableMemory } from "./store";
 
@@ -82,7 +83,6 @@ export async function redactMemoryRevision(
   input: z.infer<typeof redactionInput>,
 ) {
   const receipt = await db.transaction(async (tx) => {
-    await requireVaultActive(tx);
     const [admin] = await tx
       .select({ id: users.id })
       .from(users)
@@ -101,6 +101,8 @@ export async function redactMemoryRevision(
         "UNAUTHORIZED",
         "An active global administrator is required",
       );
+    await lockConfirmationSourceRedaction(tx);
+    await requireVaultActive(tx);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["agent-memory-redact", userId, input.requestKey])},0))`,
     );

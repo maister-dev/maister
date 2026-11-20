@@ -2451,6 +2451,20 @@
       "when": 1795113783642,
       "tag": "0353_agent_installation_schedule_reviews",
       "breakpoints": true
+    },
+    {
+      "idx": 354,
+      "version": "7",
+      "when": 1795168323703,
+      "tag": "0354_agent_memory_import_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 355,
+      "version": "7",
+      "when": 1795173970850,
+      "tag": "0355_installation_credential_revocation",
+      "breakpoints": true
     }
   ]
 }

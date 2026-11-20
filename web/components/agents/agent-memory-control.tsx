@@ -113,6 +113,7 @@ type MemoryLocation = Readonly<
   | { kind: "project"; slug: string; projectId: string }
   | { kind: "installation"; companyId: string; bindingId: string }
 >;
+type EditorDraft = Draft & Readonly<{ submittedBody?: string }>;
 
 export function AgentMemoryControl({
   agentId,
@@ -148,7 +149,7 @@ export function AgentMemoryControl({
       : { companyId: location.companyId };
   const path = search.get("memoryPath") ?? memoryRoot;
   const [version, refresh] = useState(0);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [error, setError] = useState<Issue | null>(null);
   const [busy, setBusy] = useState(false);
   const data = useVaultSelection(
@@ -217,17 +218,33 @@ export function AgentMemoryControl({
     setError(null);
   }
 
+  function changeDraft(field: "destination" | "text", value: string) {
+    if (!draft || busy || draft[field] === value) return;
+    setDraft({
+      ...draft,
+      [field]: value,
+      requestKey: crypto.randomUUID(),
+      submittedBody: undefined,
+    });
+    setError(null);
+  }
+
   async function save() {
-    if (!draft) return;
+    if (!draft || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const command = await buildVaultCommand(api, draft);
+      const body =
+        draft.submittedBody ??
+        JSON.stringify(await buildVaultCommand(api, draft));
 
+      // A committed tree operation can remove the paths used to build it.
+      if (draft.submittedBody === undefined)
+        setDraft({ ...draft, submittedBody: body });
       await vaultRequest(`${api}/commands`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(command),
+        body,
       });
       setDraft(null);
       refresh((value) => value + 1);
@@ -276,7 +293,12 @@ export function AgentMemoryControl({
       hash: conflictHead.hash,
     };
 
-    setDraft({ ...draft, selection, requestKey: crypto.randomUUID() });
+    setDraft({
+      ...draft,
+      selection,
+      requestKey: crypto.randomUUID(),
+      submittedBody: undefined,
+    });
     setError(null);
   }
 
@@ -451,12 +473,10 @@ export function AgentMemoryControl({
                     <label className="grid gap-1">
                       <span>{t("path")}</span>
                       <Input
+                        disabled={busy}
                         value={draft.destination}
                         onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            destination: event.target.value,
-                          })
+                          changeDraft("destination", event.target.value)
                         }
                       />
                     </label>
@@ -468,7 +488,7 @@ export function AgentMemoryControl({
                       initialMode="source"
                       labels={markdownEditorLabels(board, t("text"))}
                       value={draft.text}
-                      onChange={(text) => setDraft({ ...draft, text })}
+                      onChange={(text) => changeDraft("text", text)}
                     />
                   ) : null}
                   {draft.action === "clear" ||

@@ -26,6 +26,9 @@ Readers with `readRepoFiles` can view content. Users with `editSettings` can
 create, edit, rename, delete, clear or restore a revision. Markdown edits use
 a modal with the loaded revision and hash. On a conflict, the modal keeps
 the draft and shows the authorized current content before another save.
+If delivery is uncertain, retry sends the same command and request key.
+Changing the draft starts a new request. Recursive directory actions capture
+the complete set of affected note revisions before submitting.
 [Agent memory domain](../../system-analytics/agent-memory.md)
 
 ## States & interactions

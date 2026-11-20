@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { KnowledgeAccessRestriction } from "@/lib/company/types";
+import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { ProjectAction } from "@/lib/authz";
 import type { Db } from "@/lib/execution-host/db";
 import type { TokenActor } from "@/lib/tokens/verify";
@@ -35,11 +36,11 @@ type VaultProjectAction = Extract<
   "readRepoFiles" | "editSettings"
 >;
 
-async function requireEnabledAttachment(
+export async function loadProjectVaultAttachment(
   db: Db,
   projectId: string,
   agentId: string,
-): Promise<"auto" | "review"> {
+) {
   const [attachment] = await db
     .select({
       memoryEnabled: agentProjectLinks.memoryEnabled,
@@ -47,13 +48,25 @@ async function requireEnabledAttachment(
       policy: agentProjectLinks.memoryWritePolicy,
     })
     .from(agentProjectLinks)
+    .innerJoin(projects, eq(projects.id, agentProjectLinks.projectId))
     .where(
       and(
         eq(agentProjectLinks.projectId, projectId),
         eq(agentProjectLinks.agentId, agentId),
+        isNull(projects.archivedAt),
       ),
     )
     .for("share");
+
+  return attachment;
+}
+
+async function requireEnabledAttachment(
+  db: Db,
+  projectId: string,
+  agentId: string,
+): Promise<"auto" | "review"> {
+  const attachment = await loadProjectVaultAttachment(db, projectId, agentId);
 
   if (!attachment) throw unavailableMemory();
   if (!attachment.enabled || !attachment.memoryEnabled)
@@ -105,7 +118,7 @@ function withinProject(revision: VaultRevision, projectId: string): boolean {
   return revision.sourceProjectIds.every((sourceId) => sourceId === projectId);
 }
 
-function humanReadRestrictions(
+function normalizedProjectRestrictions(
   revision: VaultRevision,
 ): KnowledgeAccessRestriction[] {
   return revision.sourceRestrictions.map((source) =>
@@ -191,7 +204,7 @@ function humanProjectVaultAccess(
         await authorizeSourceRestrictions(
           tx,
           { kind: "user", userId: userId },
-          humanReadRestrictions(revision),
+          normalizedProjectRestrictions(revision),
         );
 
         return true;
@@ -227,19 +240,11 @@ export async function authorizeRetainedProjectVaultReview(
     ...input,
     action: "editSettings",
   });
-  const [attachment] = await db
-    .select({
-      enabled: agentProjectLinks.enabled,
-      memoryEnabled: agentProjectLinks.memoryEnabled,
-    })
-    .from(agentProjectLinks)
-    .where(
-      and(
-        eq(agentProjectLinks.projectId, project.id),
-        eq(agentProjectLinks.agentId, input.agentId),
-      ),
-    )
-    .for("share");
+  const attachment = await loadProjectVaultAttachment(
+    db,
+    project.id,
+    input.agentId,
+  );
 
   if (!attachment) throw unavailableMemory();
 
@@ -294,13 +299,6 @@ export function prepareProjectExecutionVault(
       (token.token_kind === "agent" && nodeAttemptId !== null)
     )
       throw unavailableMemory();
-    const [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)))
-      .for("share");
-
-    if (!project) throw unavailableMemory();
     const currentPolicy = await requireEnabledAttachment(
       db,
       projectId,
@@ -357,7 +355,12 @@ export function prepareProjectExecutionVault(
       sourceRestrictions: native.restrictions,
       writeAdmission,
       canRead: (tx, revision) =>
-        canReadExecutionNote(tx, projectId, token.id, revision),
+        canReadProjectExecutionRevision(
+          tx,
+          projectId,
+          revision,
+          native.capturesSources ? { kind: "token", tokenId: token.id } : null,
+        ),
       capture: native.capture,
     };
   };
@@ -394,17 +397,17 @@ async function currentStandalonePersona(
   return run ? agentId : null;
 }
 
-async function canReadExecutionNote(
+/** Project tool reads and prompt delivery use the same retained-source policy. */
+export async function canReadProjectExecutionRevision(
   tx: Db,
   projectId: string,
-  tokenId: string,
   revision: VaultRevision,
+  principal: KnowledgePrincipal | null,
 ): Promise<boolean> {
   if (!withinProject(revision, projectId)) return false;
-  // Non-native credentials have no current source transport for nested
-  // restrictions. Private local context and historical private imports
-  // can still be inspected under the exact attachment above.
-  const refs = humanReadRestrictions(revision);
+  // Ordinary sessions may retain private local notes and legacy imports
+  // under the exact attachment. Governed reads require a source consumer.
+  const refs = normalizedProjectRestrictions(revision);
 
   if (
     refs.every(
@@ -412,8 +415,10 @@ async function canReadExecutionNote(
     )
   )
     return true;
+  if (principal === null) return false;
+
   try {
-    await authorizeSourceRestrictions(tx, { kind: "token", tokenId }, refs);
+    await authorizeSourceRestrictions(tx, principal, refs);
 
     return true;
   } catch (error) {

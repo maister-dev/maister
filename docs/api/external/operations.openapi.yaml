@@ -274,10 +274,15 @@ paths:
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
+
+        Installation agents receive a page of task summaries in the project identified by
+        the path slug. Hidden and missing projects both return 404. An authorized empty
+        project returns an empty page. Installation responses use `Cache-Control: private, no-store`.
       operationId: extListTasks
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: path
@@ -285,24 +290,27 @@ paths:
           schema:
             type: string
             minLength: 1
+        - $ref: "#/components/parameters/InstallationReadCursor"
+        - $ref: "#/components/parameters/InstallationReadLimit"
       responses:
         "200":
           description: Task list.
           content:
             application/json:
               schema:
-                type: object
-                required: [tasks]
-                properties:
-                  tasks:
-                    type: array
-                    items: { $ref: "#/components/schemas/TaskDTO" }
+                oneOf:
+                  - $ref: "#/components/schemas/ExtProjectTaskList"
+                  - $ref: "#/components/schemas/InstallationTaskPage"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/projects/{slug}/tasks/by-source:
     get:
@@ -431,10 +439,15 @@ paths:
         comes from the URL `slug` and the owner's live role must allow
         `readBoard` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
+
+        Installation agents receive a compact summary of the task in the path project.
+        The summary excludes prompts, user identities, and delivery configuration.
+        Installation responses use `Cache-Control: private, no-store`.
       operationId: extGetTask
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: path
@@ -453,14 +466,20 @@ paths:
           description: Task detail.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TaskDTO" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TaskDTO"
+                  - $ref: "#/components/schemas/InstallationTaskSummary"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     patch:
       tags: [tasks]
       summary: Update a task (Backlog-only fields)
@@ -1410,10 +1429,14 @@ paths:
         comes from the URL `slug` and the owner's live role must allow
         `readBrain` there on every request; a project the owner cannot read
         answers `404` exactly like a missing one.
+        Installation agents use the reviewed memory:read scope and receive
+        owned-tier items in an authorized active project. The response retains
+        the project as a protected context source for later authorization.
       operationId: extRecallProjectMemory
       security:
         - projectToken: ["memory:read"]
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: path
@@ -1616,9 +1639,12 @@ paths:
         agent token, `can_write_brain` must be true. Duplicate `clusterHash`
         values are idempotent and return the existing proposal with its current
         status.
+        Installation agents require the reviewed memory:propose scope. Their
+        proposals remain pending for governed review.
       operationId: extCreateProjectMemoryProposal
       security:
         - projectToken: ["memory:write"]
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: path
@@ -1725,7 +1751,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExtAgentMemoryState"
         "202":
-          description: Designed P3. Pending vault proposal.
+          description: The active vault review policy retained a pending proposal without changing the index head.
           content:
             application/json:
               schema:
@@ -2979,10 +3005,15 @@ paths:
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
+
+        Installation agents receive a compact summary for the run in the current active
+        project scope. The summary excludes runner, workspace, and provider details.
+        Installation responses use `Cache-Control: private, no-store`.
       operationId: extGetRun
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: runId
           in: path
@@ -2995,7 +3026,10 @@ paths:
           description: Run status.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/RunDTO" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RunDTO"
+                  - $ref: "#/components/schemas/InstallationRunSummary"
         "409":
           description: Native source authority is unavailable.
           content:
@@ -3007,6 +3041,8 @@ paths:
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/projects/{slug}/members:
     get:
@@ -3463,10 +3499,21 @@ paths:
         comes from the run row (`resolveProjectId`) and the owner's live role
         must allow `readBoard` there on every request; a project the owner
         cannot read answers `404` exactly like a missing one.
+
+        Installation agents receive a page of execution-event metadata for the run in
+        the path. This credential requires activity:read. It takes cursor and limit, with
+        a default of 20 and a maximum of 50, and does not accept sinceId or salience.
+        For a user-initiated installation run, require the current readRepoFiles action.
+        Successful reads retain that permission on the project source. Loss of the
+        retained permission refuses later requests from the same Run with 409.
+        Hidden and missing runs both return 404. An authorized run with no events returns
+        an empty page. Event payloads and transport handles are excluded.
+        Installation responses use `Cache-Control: private, no-store`.
       operationId: extRunActivity
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: runId
           in: path
@@ -3477,8 +3524,9 @@ paths:
         - name: sinceId
           in: query
           required: false
+          x-maister-credentials: [projectToken, librarianTurnToken]
           description: |
-            Forward-only mutation horizon returned by `nextSinceId`. The current
+            For ordinary credentials only. Forward-only mutation horizon returned by `nextSinceId`. The current
             implementation derives it from the projected transcript mutation
             horizon, but callers must treat it as opaque.
           schema:
@@ -3486,27 +3534,32 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Maximum number of activity items to return.
+          description: Maximum number of items. Ordinary credentials default to 100.
+            Installation credentials default to 20 and accept at most 50.
+          x-maister-installation-schema: { $ref: "#/components/schemas/InstallationReadLimit" }
           schema:
             type: integer
             minimum: 1
             maximum: 200
-            default: 100
         - name: salience
           in: query
           required: false
-          description: Minimum salience to emit in the `items` array.
+          x-maister-credentials: [projectToken, librarianTurnToken]
+          description: Ordinary credentials only. Minimum salience to emit in the `items` array.
           schema:
             allOf:
               - $ref: "#/components/schemas/ExtActivitySalience"
             default: low
+        - $ref: "#/components/parameters/InstallationReadCursor"
       responses:
         "200":
           description: Semantic assistant activity for one run.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ExtRunActivityResponse"
+                oneOf:
+                  - $ref: "#/components/schemas/ExtRunActivityResponse"
+                  - $ref: "#/components/schemas/InstallationRunActivityPage"
         "409":
           description: Native source authority is unavailable.
           content:
@@ -4264,17 +4317,12 @@ paths:
   /api/v1/ext/projects:
     get:
       tags: [portfolio]
-      summary: (ADR-186 — Designed) List the token owner's visible projects
+      summary: List projects available to the credential
       description: |
-        (Designed — ADR-186, `LAU-06`.) Scope `projects:read`. Returns every
-        non-archived project the token owner can currently read — membership at
-        `viewer` or above, or every project for a global admin — through the one
-        `getVisibleProjects` query, with the owner's effective role in each.
-
-        Admitted for global personal user tokens (`token_kind=user`,
-        `project_id IS NULL`) and librarian turn tokens. Project-bound tokens,
-        project-scoped user tokens and agent tokens carry no user-wide project
-        set and are refused `403`.
+        (Implemented — ADR-186, `LAU-06`.) Scope `projects:read`. Global
+        personal and librarian turn tokens receive the identities of all
+        non-archived projects visible to the token owner. Project-bound and
+        ordinary agent tokens do not have a user-wide project set.
 
         Identifier labels:
 
@@ -4286,28 +4334,44 @@ paths:
         Writes a `token_audit_log` row with `scope_used='projects:read'` and
         `project_id=NULL` after success; a librarian call also records
         `on_behalf_of_user_id` and `librarian_turn_id`.
+
+        Installation agents receive a page of compact project identities. The reviewed grant
+        and current initiating-user access, when applicable, determine which non-archived
+        projects are visible. The response carries no membership information.
+        Installation responses use `Cache-Control: private, no-store`.
       operationId: extListVisibleProjects
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
+      parameters:
+        - $ref: "#/components/parameters/InstallationReadCursor"
+        - $ref: "#/components/parameters/InstallationReadLimit"
       responses:
         "200":
           description: The owner's visible projects.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtVisibleProjectList" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExtVisibleProjectList"
+                  - $ref: "#/components/schemas/InstallationProjectPage"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
           $ref: "#/components/responses/HitlForbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/projects/{slug}/directory:
     get:
       tags: [portfolio]
-      summary: (ADR-186 — Designed) Read one project's compact directory entry
+      summary: Read one project's directory entry
       description: |
-        (Designed — ADR-186.) Scope `projects:read`. A compact orientation card
-        for one project: its purpose (and where that text came from), its
+        Scope `projects:read`. A compact orientation card
+        for one project: its purpose, its
         launchable flows (the same launchable-only projection as
         `GET /api/v1/ext/projects/{slug}/flows`), its default runner, whether a
         triager is configured, whether Project Brain is enabled, and `asOf`, the
@@ -4321,10 +4385,15 @@ paths:
 
         Writes a `token_audit_log` row with `scope_used='projects:read'` after
         success.
+
+        Installation agents receive only the compact project identity for the path slug.
+        They do not receive repository content, routing configuration, or member roles.
+        Installation responses use `Cache-Control: private, no-store`.
       operationId: extGetProjectDirectory
       security:
         - projectToken: []
         - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: path
@@ -4337,13 +4406,20 @@ paths:
           description: The project's directory entry.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ExtProjectDirectory" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExtProjectDirectory"
+                  - $ref: "#/components/schemas/InstallationProjectSummary"
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
           $ref: "#/components/responses/HitlForbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /api/v1/ext/tasks/search:
     get:
@@ -5019,9 +5095,9 @@ paths:
   /api/v1/ext/librarian/cards:
     post:
       tags: [librarian]
-      summary: (ADR-187 — Designed) Propose a card for the owner to decide
+      summary: Propose a card for the owner to decide
       description: |
-        (Designed — ADR-187 D7, `LOP-08`, `LOP-09`, `LMM-01`.) Scope
+        (ADR-187 D7, `LOP-08`, `LOP-09`, `LMM-01`.) Scope
         `librarian:cards`; librarian turn tokens ONLY — any other token kind is
         refused `403`. Creates a `pending` card in the owner's conversation,
         bound to the current segment and turn, which the owner decides with one
@@ -5044,7 +5120,14 @@ paths:
         - `confirmation` — a human-only action the token itself can never
           perform: a human HITL answer, a promotion, a discard;
         - `memory_suggestion` — an inferred personal memory item, persisted only
-          if the owner accepts it.
+          if the owner accepts it. Creating a suggestion in a turn with
+          governed source access returns `409 PRECONDITION` with
+          `details.reason: governed_memory_source`.
+        - `knowledge_proposal`, `brain_proposal` and `vault_edit` — governed
+          cards bound to exact sources, owner and operation intent (ADR-213).
+          The complete serialized effect must fit 16384 UTF-16 code units.
+          Oversize effects return `409 PRECONDITION` with
+          `details.reason: governed_preview_limit` before card creation.
 
         Every target is visibility-checked against the owner (`404` for a
         foreign or missing one). A target that is not actionable now — a HITL
@@ -5068,15 +5151,16 @@ paths:
                 - $ref: "#/components/schemas/LibrarianVaultEditInput"
       responses:
         "201":
-          description: Card created and shown to the owner.
+          description: Card retained and presented for owner confirmation. Exact idempotent replay returns the retained receipt.
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [card]
+                required: [cardId, status]
                 properties:
-                  card: { $ref: "#/components/schemas/LibrarianCard" }
+                  cardId: { type: string, format: uuid }
+                  status: { type: string, enum: [pending] }
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
@@ -5091,9 +5175,9 @@ paths:
   /api/v1/ext/librarian/memory:
     post:
       tags: [librarian]
-      summary: (ADR-190 — Designed) Remember an item the owner explicitly asked to keep
+      summary: Remember an item the owner explicitly asked to keep
       description: |
-        (Designed — ADR-190, `LMM-01`, `LMM-02`, `LMM-07`, `LMM-11`.) Scope
+        (ADR-190, `LMM-01`, `LMM-02`, `LMM-07`, `LMM-11`.) Scope
         `librarian:memory`; librarian turn tokens only, and only from an
         `owner_message` turn — an Explain or summary turn's token is refused
         `403`. Use it only for an explicit "remember" from the owner; anything
@@ -5107,7 +5191,10 @@ paths:
         `(segment, forget_generation, history_generation)`: a turn that lost the
         fence — a reset, forget or history clear committed meanwhile — writes
         nothing and is refused `409 CONFLICT`. Personal memory never writes to
-        Project Brain or to an agent's `memory.md`. No memory content is logged.
+        Project Brain or to an agent vault. A turn with governed source access
+        is refused `409 PRECONDITION` with
+        `details.reason: governed_memory_source` before persistence.
+        No memory content is logged.
       operationId: extRememberLibrarianMemory
       security:
         - librarianTurnToken: []
@@ -5144,9 +5231,9 @@ paths:
   /api/v1/ext/librarian/history/search:
     get:
       tags: [librarian]
-      summary: (ADR-190 — Designed) Search the owner's own earlier conversation
+      summary: Search the owner's own earlier conversation
       description: |
-        (Designed — ADR-190 D12, `LMM-04`.) Scope `librarian:history`; librarian
+        (ADR-190 D12, `LMM-04`.) Scope `librarian:history`; librarian
         turn tokens only. Full-text search (a `simple` tsvector over
         `librarian_messages.body`) of the OWNER's conversation, older segments
         included — the only way older segments reach a turn, since automatic
@@ -5154,7 +5241,9 @@ paths:
         for lost project visibility (`LMM-09`) are excluded. Hits from an older
         segment are labelled `earlier_conversation`, and the reply must present
         them as "from earlier conversation". There is no parameter naming a user
-        or a conversation.
+        or a conversation. Exact restrictions of the returned excerpts are
+        revalidated and captured in the receiving turn within the response
+        transaction. An unavailable source capture refuses the response.
       operationId: extSearchLibrarianHistory
       security:
         - librarianTurnToken: []
@@ -5169,6 +5258,9 @@ paths:
       responses:
         "200":
           description: Matching messages, at most 20.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["private, no-store"] }
           content:
             application/json:
               schema:
@@ -5177,6 +5269,11 @@ paths:
           $ref: "#/components/responses/TokenUnauthorized"
         "403":
           $ref: "#/components/responses/HitlForbidden"
+        "409":
+          description: The turn could not retain the governed source capture for this response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
@@ -5617,7 +5714,7 @@ paths:
                 $ref: "#/components/schemas/ExtErrorBody"
   /api/v1/ext/knowledge:
     get:
-      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
+      x-librarian-authority: Implemented. The owner-bound librarian turn requires current scope and source rights.
       operationId: extKnowledgeSearch
       summary: Search accessible owned records
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -5652,6 +5749,8 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - projectToken: []
+        - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: cursor
           in: query
@@ -5723,7 +5822,7 @@ paths:
               - unknown
   /api/v1/ext/knowledge/{recordId}:
     get:
-      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
+      x-librarian-authority: Implemented. The owner-bound librarian turn requires current scope and source rights.
       operationId: extKnowledgeGet
       summary: Inspect exact record revision
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -5758,6 +5857,8 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - projectToken: []
+        - librarianTurnToken: []
+        - installationAgentToken: []
       parameters:
         - name: recordId
           in: path
@@ -5776,7 +5877,7 @@ paths:
           description: Exact accepted revision; absent selects current authorized head.
   /api/v1/ext/knowledge/{recordId}/evidence:
     get:
-      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
+      x-librarian-authority: Implemented. The owner-bound librarian turn requires current scope and source rights.
       operationId: extKnowledgeEvidence
       summary: Inspect exact authorized evidence
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
@@ -5811,6 +5912,7 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: recordId
           in: path
@@ -7465,8 +7567,8 @@ paths:
             maxLength: 128
   /api/v1/ext/knowledge/{recordId}/conflicts:
     get:
-      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
-      operationId: extKnowledgeEvidence
+      x-librarian-authority: Implemented. The owner-bound librarian turn requires current scope and source rights.
+      operationId: extKnowledgeConflicts
       summary: Inspect authorized unresolved conflict references
       description: Implemented native read/capture boundary. Requires current knowledge:read. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
@@ -7500,6 +7602,7 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: recordId
           in: path
@@ -7529,7 +7632,7 @@ paths:
           description: Exact accepted revision. The record head must still match the authorized conflict cursor.
   /api/v1/ext/knowledge/witnesses/{witnessId}:
     get:
-      x-librarian-authority: Designed. The named read operation accepts the owner-bound librarian turn with current scope and source rights.
+      x-librarian-authority: Implemented. The owner-bound librarian turn requires current scope and source rights.
       operationId: extKnowledgeWitnessGet
       summary: Inspect an authorized retained evidence witness
       description: Requires current token scope and owner/source read authority. Returns the original witness
@@ -7561,6 +7664,7 @@ paths:
           $ref: "#/components/responses/CBFailure"
       security:
         - projectToken: []
+        - librarianTurnToken: []
       parameters:
         - name: witnessId
           in: path
@@ -7581,6 +7685,7 @@ paths:
       x-implementation-status: Designed
       security:
         - projectToken: []
+        - installationAgentToken: []
       requestBody:
         required: true
         content:
@@ -7647,6 +7752,7 @@ paths:
       x-implementation-status: Implemented
       security:
         - projectToken: []
+        - installationAgentToken: []
       requestBody:
         required: true
         content:
@@ -7687,6 +7793,7 @@ paths:
       x-implementation-status: Implemented
       security:
         - projectToken: []
+        - installationAgentToken: []
       parameters:
         - name: q
           in: query
@@ -7772,6 +7879,7 @@ paths:
       x-implementation-status: Implemented
       security:
         - projectToken: []
+        - installationAgentToken: []
       parameters:
         - name: path
           in: query
@@ -7832,6 +7940,7 @@ paths:
       x-implementation-status: Implemented
       security:
         - projectToken: []
+        - installationAgentToken: []
       parameters:
         - name: cursor
           in: query
@@ -8215,12 +8324,15 @@ paths:
     get:
       operationId: extInstallationObservatorySummary
       summary: Return authorized project Run aggregates
-      description: Designed (P4). Requires installation observatory:read. Filters current active projects
-        before aggregation and captures every returned contributor. Target identity comes from current
-        credentials and the resolved route resource.
-      x-implementation-status: Designed
+      description: |
+        Requires installation observatory:read. Filters active authorized projects before aggregating
+        runs started during the selected period and captures each returned project. runCount counts
+        matching runs, successCount counts runs in Done, and durationMs sums their nonnegative elapsed
+        milliseconds across matching runs with an end time. Projects without matching runs are omitted.
+        A missing or inaccessible slug returns an empty page.
+      x-implementation-status: Implemented
       security:
-        - projectToken: []
+        - installationAgentToken: []
       parameters:
         - name: slug
           in: query
@@ -8271,14 +8383,16 @@ paths:
           $ref: "#/components/responses/AgentVault401"
         "403":
           $ref: "#/components/responses/AgentVault403"
-        "404":
-          $ref: "#/components/responses/AgentVault404"
         "409":
-          $ref: "#/components/responses/AgentVault409"
-        "413":
-          $ref: "#/components/responses/AgentVault413"
+          description: PRECONDITION. The execution cannot revalidate or retain its source authority.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "422":
-          $ref: "#/components/responses/AgentVault422"
+          description: CONFIG. The project selection, period, limit or cursor is invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
 components:
   securitySchemes:
@@ -8336,7 +8450,34 @@ components:
         scopes would match, the route refuses the kind. Those human-only
         actions reach the owner as confirmation cards decided through session
         routes.
+    installationAgentToken:
+      type: http
+      scheme: bearer
+      description: |
+        Run-bound installation specialist bearer from an explicitly reviewed
+        installation grant. Same format and verification as projectToken.
+        Each operation rechecks the exact live grant, the operation scope,
+        previously captured source authority, and current project access.
+        A source that is no longer available returns 409 PRECONDITION.
+        Manual executions intersect the initiating user's current access.
+        Unattended executions use the reviewed grant. Archived projects are
+        excluded. A missing or inaccessible addressed resource returns 404
+        on the compact project, task, run, and activity operations.
   parameters:
+    InstallationReadCursor:
+      name: cursor
+      in: query
+      required: false
+      x-maister-credentials: [installationAgentToken]
+      description: Installation credentials only. Opaque nextCursor from the same run and selection.
+      schema: { type: string, minLength: 1, maxLength: 2048 }
+    InstallationReadLimit:
+      name: limit
+      in: query
+      required: false
+      x-maister-credentials: [installationAgentToken]
+      description: Installation credentials only. Keep it unchanged when following nextCursor.
+      schema: { $ref: "#/components/schemas/InstallationReadLimit" }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -8494,13 +8635,13 @@ components:
       description: |
         Resource not found, or the token's project does not own the addressed
         resource. For global personal tokens, this also covers projects the
-        owner cannot currently access. Existence-hide cross-project access
-        returns 404, not 403.
+        owner cannot currently access. Installation reads of addressed
+        resources use the same 404 for missing and inaccessible targets.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
     UnprocessableEntity:
-      description: Request body failed schema validation.
+      description: Request body, path selection, or query failed validation.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -8579,95 +8720,6 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
-    AgentVaultCardKnowledge:
-      type: object
-      additionalProperties: false
-      required:
-        - kind
-        - proposalId
-        - targetLabel
-        - draftTitle
-      properties:
-        kind:
-          type: string
-          enum:
-            - knowledge_proposal
-        proposalId:
-          type: string
-          minLength: 1
-          maxLength: 192
-          nullable: true
-        targetLabel:
-          type: string
-          minLength: 1
-          maxLength: 512
-        draftTitle:
-          type: string
-          minLength: 1
-          maxLength: 512
-      x-implementation-status: Designed
-    AgentVaultCardBrain:
-      type: object
-      additionalProperties: false
-      required:
-        - kind
-        - projectSlug
-        - targetLabel
-        - draftTitle
-      properties:
-        kind:
-          type: string
-          enum:
-            - brain_proposal
-        projectSlug:
-          type: string
-          minLength: 1
-          maxLength: 192
-        targetLabel:
-          type: string
-          minLength: 1
-          maxLength: 512
-        draftTitle:
-          type: string
-          minLength: 1
-          maxLength: 512
-      x-implementation-status: Designed
-    AgentVaultCardEdit:
-      type: object
-      additionalProperties: false
-      required:
-        - kind
-        - vaultId
-        - path
-        - commandKind
-        - preview
-      properties:
-        kind:
-          type: string
-          enum:
-            - vault_edit
-        vaultId:
-          type: string
-          minLength: 1
-          maxLength: 192
-        path:
-          type: string
-          minLength: 1
-          maxLength: 512
-        commandKind:
-          type: string
-          enum:
-            - create
-            - str_replace
-            - insert
-            - delete
-            - rename
-            - clear
-            - revert
-        preview:
-          type: string
-          maxLength: 16384
-      x-implementation-status: Designed
     AgentVaultLibrarianEffect:
       oneOf:
         - type: object
@@ -9292,7 +9344,7 @@ components:
                 type: integer
                 minimum: 0
               durationMs:
-                type: integer
+                type: number
                 minimum: 0
           minItems: 0
           maxItems: 50
@@ -12199,9 +12251,9 @@ components:
         qualification:
           $ref: "#/components/schemas/TaskQualificationSummary"
         source:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/TaskSource"
-          nullable: true
+            - { type: object, nullable: true, enum: [null] }
           description: (Implemented — ADR-206) Structured external source binding, or null.
         id:
           type: string
@@ -12238,6 +12290,7 @@ components:
             derived `WorkStage` (`Triage`, `Executing`, `Promoted`, and so on).
         flowId:
           type: string
+          nullable: true
           description: |
             The configured flow's UUID (`flows.id`) — always the resolved id,
             even when the task was created or triaged using a `flow_ref_id`.
@@ -12281,9 +12334,9 @@ components:
           nullable: true
           description: (Designed — ADR-188) The accepted statement revision rendered into `prompt`; null when the task has none.
         launchIntent:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/TaskLaunchIntent"
-          nullable: true
+            - { type: string, nullable: true, enum: [null] }
           description: (Designed — ADR-187) `tasks.launch_intent`; null on every non-librarian path.
 
     RunDTO:
@@ -12297,7 +12350,7 @@ components:
         - projectId
         - status
         - flowId
-        - executorId
+        - runnerId
         - startedAt
         - terminalCause
       properties:
@@ -12320,6 +12373,7 @@ components:
             - NeedsInput
             - NeedsInputIdle
             - HumanWorking
+            - WaitingOnChildren
             - Review
             - Crashed
             - Done
@@ -12329,10 +12383,10 @@ components:
           type: string
           nullable: true
           description: Flow id used for this run (from the pinned revision at launch time).
-        executorId:
+        runnerId:
           type: string
-          format: uuid
-          description: Resolved executor id used for this run.
+          nullable: true
+          description: Runner reported by the active session, or null when no session exists.
         currentStepId:
           type: string
           nullable: true
@@ -12348,7 +12402,7 @@ components:
         prState:
           type: string
           nullable: true
-          enum: [open, merged, closed]
+          enum: [open, merged, closed, null]
           description: Provider PR state (ADR-140); `null` = never checked or no PR.
         prHasConflicts:
           type: boolean
@@ -12547,9 +12601,9 @@ components:
           format: date-time
           nullable: true
         lastAction:
-          allOf:
+          oneOf:
             - $ref: "#/components/schemas/ExtActivityLastAction"
-          nullable: true
+            - { type: object, nullable: true, enum: [null] }
         liveness:
           $ref: "#/components/schemas/ExtActivityLiveness"
 
@@ -14893,32 +14947,6 @@ components:
           format: date-time
           nullable: true
 
-    LibrarianCardTarget:
-      type: object
-      additionalProperties: false
-      description: The exact objects a card is bound to; keys it does not address are absent.
-      properties:
-        vaultId:
-          type: string
-          minLength: 1
-          maxLength: 192
-        noteId:
-          type: string
-          minLength: 1
-          maxLength: 192
-        knowledgeRecordId:
-          type: string
-          minLength: 1
-          maxLength: 192
-        projectSlug:
-          type: string
-          minLength: 1
-          maxLength: 192
-        taskId: { type: string, format: uuid }
-        taskKey: { type: string }
-        runId: { type: string, format: uuid }
-        hitlRequestId: { type: string, format: uuid }
-
     LibrarianMemoryDraft:
       type: object
       additionalProperties: false
@@ -14945,68 +14973,6 @@ components:
           type: string
           format: date-time
           description: Optional expiry; an expired item is no longer used.
-
-    LibrarianStatementProposal:
-      type: object
-      additionalProperties: false
-      required: [kind, taskId, statement]
-      properties:
-        kind:
-          type: string
-          enum: [statement_proposal]
-        taskId:
-          type: string
-          format: uuid
-          description: The existing task the revision is proposed for.
-        statement: { $ref: "#/components/schemas/TaskStatement" }
-        rationale:
-          type: string
-          maxLength: 1000
-          description: Shown on the card beside the diff.
-
-    LibrarianConfirmationProposal:
-      type: object
-      additionalProperties: false
-      required: [kind, action, runId]
-      description: |
-        `hitlRequestId` and `response` are required when `action` is
-        `hitl_respond` and refused otherwise (`422 CONFIG`).
-      properties:
-        kind:
-          type: string
-          enum: [confirmation]
-        action:
-          type: string
-          enum: [hitl_respond, run_promote, run_discard]
-        runId:
-          type: string
-          format: uuid
-        hitlRequestId:
-          type: string
-          format: uuid
-        response:
-          type: object
-          additionalProperties: true
-          description: |
-            The proposed answer, in the body shape the session HITL respond
-            route takes for the request's kind; validated against the stored
-            request by the same service when the owner decides.
-        rationale:
-          type: string
-          maxLength: 1000
-
-    LibrarianMemorySuggestionProposal:
-      type: object
-      additionalProperties: false
-      required: [kind, memory]
-      properties:
-        kind:
-          type: string
-          enum: [memory_suggestion]
-        memory: { $ref: "#/components/schemas/LibrarianMemoryDraft" }
-        rationale:
-          type: string
-          maxLength: 1000
 
     LibrarianKnowledgeProposalInput:
       type: object
@@ -15068,67 +15034,6 @@ components:
         mode: { type: string, enum: [local_merge, rebase_merge, pull_request] }
         reviewedTargetCommit: { type: string }
         memory: { type: object }
-
-    LibrarianCard:
-      type: object
-      additionalProperties: false
-      description: |
-        (Designed — ADR-187 D7, `LOP-08`) Explicit projection of one
-        `librarian_cards` row.
-      required:
-        [
-          id,
-          kind,
-          status,
-          target,
-          targetRevision,
-          payload,
-          requiresOwner,
-          expiresAt,
-          decidedAt,
-          createdAt,
-        ]
-      properties:
-        id:
-          type: string
-          format: uuid
-        kind:
-          type: string
-          enum: [statement_proposal, confirmation, memory_suggestion, knowledge_proposal, brain_proposal, vault_edit]
-        status:
-          type: string
-          enum:
-            [pending, accepted, rejected, expired, superseded, cleared_by_reset]
-        target: { $ref: "#/components/schemas/LibrarianCardTarget" }
-        targetRevision:
-          type: string
-          nullable: true
-          description: |
-            The server-bound revision the decision is checked against: the
-            task revision, the reviewed head SHA, the HITL request revision, or
-            the run status. Null for a memory suggestion.
-        payload:
-          description: The proposal as created; its `kind` repeats the card's.
-          oneOf:
-            - $ref: "#/components/schemas/LibrarianStatementProposal"
-            - $ref: "#/components/schemas/LibrarianConfirmationProposal"
-            - $ref: "#/components/schemas/LibrarianMemorySuggestionProposal"
-            - $ref: "#/components/schemas/AgentVaultCardKnowledge"
-            - $ref: "#/components/schemas/AgentVaultCardBrain"
-            - $ref: "#/components/schemas/AgentVaultCardEdit"
-        requiresOwner:
-          type: boolean
-          description: True for a human-only action; the token can never decide any card.
-        expiresAt:
-          type: string
-          format: date-time
-        decidedAt:
-          type: string
-          format: date-time
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
 
     LibrarianMemoryItem:
       type: object
@@ -15220,99 +15125,137 @@ components:
           type: boolean
           description: True when more than 20 messages matched.
 
+    InstallationReadLimit: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    InstallationProjectSummary:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, slug, name]
+      properties:
+        id: { type: string, minLength: 1 }
+        projectId: { type: string, minLength: 1, description: Same identity as id. }
+        slug: { type: string, minLength: 1 }
+        name: { type: string }
+    InstallationProjectPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/InstallationProjectSummary" }
+        nextCursor: { type: string, minLength: 1, maxLength: 2048, nullable: true }
+    InstallationTaskSummary:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, slug, number, title, status]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, minLength: 1 }
+        slug: { type: string, minLength: 1, description: Owning project slug. }
+        number: { type: integer, minimum: 1 }
+        title: { type: string }
+        status: { type: string, enum: [Backlog, InFlight, Done, Abandoned] }
+    InstallationTaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/InstallationTaskSummary" }
+        nextCursor: { type: string, minLength: 1, maxLength: 2048, nullable: true }
+    InstallationRunSummary:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, slug, status, runKind, taskId, startedAt, endedAt]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, minLength: 1 }
+        slug: { type: string, minLength: 1, description: Owning project slug. }
+        status:
+          type: string
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
+        runKind: { type: string, enum: [flow, scratch, agent, librarian] }
+        taskId: { type: string, format: uuid, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+    InstallationRunActivityItem:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, slug, runId, type, occurredAt]
+      properties:
+        id: { type: string, minLength: 1, description: Execution event identity. }
+        projectId: { type: string, minLength: 1 }
+        slug: { type: string, minLength: 1, description: Owning project slug. }
+        runId: { type: string, format: uuid }
+        type: { type: string, minLength: 1, description: Execution event type. }
+        occurredAt: { type: string, format: date-time }
+    InstallationRunActivityPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/InstallationRunActivityItem" }
+        nextCursor: { type: string, minLength: 1, maxLength: 2048, nullable: true }
+    ExtProjectTaskList:
+      type: object
+      additionalProperties: false
+      required: [tasks]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskDTO" }
+
     ExtVisibleProject:
       type: object
       additionalProperties: false
-      required: [projectId, slug, name, taskKey, role]
+      required: [id, slug, name]
       properties:
-        projectId:
-          type: string
-          format: uuid
+        id: { type: string, minLength: 1 }
         slug: { type: string }
         name: { type: string }
-        taskKey:
-          type: string
-          description: The project's platform-unique task key (`KEY` in `KEY-N`).
-        role:
-          type: string
-          enum: [owner, admin, member, viewer]
-          description: The owner's effective project role; a global admin without a membership reads `admin`.
 
     ExtVisibleProjectList:
       type: object
       additionalProperties: false
-      required: [projects, count]
+      required: [projects]
       properties:
         projects:
           type: array
           items: { $ref: "#/components/schemas/ExtVisibleProject" }
-        count:
-          type: integer
-          minimum: 0
-          description: Equals `projects.length`.
 
     ExtProjectDirectory:
       type: object
       additionalProperties: false
-      description: |
-        (Designed — ADR-186) A compact, read-only directory entry. Never carries
-        a repository path, secret reference or member identity.
-      required:
-        [
-          projectId,
-          slug,
-          name,
-          taskKey,
-          role,
-          purpose,
-          flows,
-          defaultRunner,
-          triagerConfigured,
-          brainEnabled,
-          asOf,
-        ]
+      required: [project, purpose, launchableFlows, defaultRunner, triagerConfigured, brainEnabled, asOf]
       properties:
-        projectId:
-          type: string
-          format: uuid
-        slug: { type: string }
-        name: { type: string }
-        taskKey: { type: string }
-        role:
-          type: string
-          enum: [owner, admin, member, viewer]
+        project:
+          $ref: "#/components/schemas/ExtVisibleProject"
         purpose:
-          type: object
-          additionalProperties: false
-          required: [text, source]
-          properties:
-            text:
-              type: string
-              nullable: true
-              maxLength: 2000
-              description: What the project is for; null when no source states it.
-            source:
-              type: string
-              enum: [config, readme, none]
-              description: Where `text` came from — the project configuration or a README excerpt.
-        flows:
+          type: string
+          nullable: true
+          maxLength: 600
+          description: First README paragraph, or null when absent or unreadable by the caller.
+        launchableFlows:
           type: array
-          description: Launchable flows only, as `GET …/flows` projects them.
           items: { $ref: "#/components/schemas/ExtFlowSummary" }
         defaultRunner:
-          allOf:
-            - $ref: "#/components/schemas/ExtRunnerSummary"
+          type: object
           nullable: true
-        triagerConfigured:
-          type: boolean
-          description: True when a triager agent is attached and enabled for the project.
-        brainEnabled:
-          type: boolean
-          description: "`projects.brain_enabled`."
-        asOf:
-          type: string
-          format: date-time
-          description: When these facts were read; a caller states them as of this instant.
+          additionalProperties: false
+          required: [id, model, enabled]
+          properties:
+            id: { type: string }
+            model: { type: string }
+            enabled: { type: boolean }
+        triagerConfigured: { type: boolean }
+        brainEnabled: { type: boolean }
+        asOf: { type: string, format: date-time }
 
     ExtTaskSearchHit:
       type: object

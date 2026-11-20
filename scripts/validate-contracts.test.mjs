@@ -684,6 +684,17 @@ test("AV-15 vault examples agree across HTTP surfaces and distinguish commands f
     ],
   }, true);
   validate("web", "AgentVaultReviewBatch", { items: [] }, false);
+
+  const validateCardReceipt = ajv.getSchema(
+    "external#/paths/~1api~1v1~1ext~1librarian~1cards/post/responses/201/content/application~1json/schema",
+  );
+  assert.ok(validateCardReceipt);
+  const receipt = {
+    cardId: "eaa02fc8-c1c1-43b7-a8a0-0e59994ea8b1",
+    status: "pending",
+  };
+  assertValidExample(validateCardReceipt, receipt);
+  assert.equal(validateCardReceipt({ card: receipt }), false);
 });
 
 test("AV-13 review-only attention tick preserves the old cursor and omits project detail", () => {

@@ -66,7 +66,7 @@ async function create(
   return result;
 }
 
-it("AV-07 commits projections with their exact head, updates alias resolution and hides inaccessible contributors", async () => {
+it("AV-09 commits projections with their exact head, updates alias resolution and hides inaccessible contributors", async () => {
   const original = "/memories/notes/setup.md";
   const renamed = "/memories/notes/deploy.md";
   const source = "/memories/index.md";

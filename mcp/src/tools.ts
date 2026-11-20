@@ -52,6 +52,38 @@ const vaultPage = {
   cursor: { type: "string", minLength: 1, maxLength: 2048 },
   limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
 };
+const installationPaging = z.strictObject({
+  cursor: z.string().min(1).max(2048).optional(),
+  limit: z.int().min(1).max(50).optional().meta({ default: 20 }),
+});
+const installationPageInputs = {
+  project_list: installationPaging,
+  task_list: installationPaging.extend({ slug: z.string().min(1).max(192) }),
+  run_activity: installationPaging.extend({
+    runId: z.string().min(1).max(192),
+  }),
+};
+
+type InstallationPageTool = keyof typeof installationPageInputs;
+const installationReadDescriptions: Readonly<Record<string, string>> = {
+  project_list:
+    "List authorized active projects as compact identities. Follow nextCursor with cursor and the same limit to read the next page.",
+  project_get:
+    "Read an authorized active project's compact identity (id, projectId, slug, name).",
+  task_list:
+    "List compact task summaries in one authorized active project. Follow nextCursor with cursor and the same limit to read the next page.",
+  task_get:
+    "Read a compact task summary (id, projectId, slug, number, title, status) in one authorized active project.",
+  run_get:
+    "Read compact run metadata (id, projectId, slug, status, runKind, taskId, startedAt, endedAt) in one authorized active project.",
+  run_activity:
+    "Read execution-event metadata for an authorized run. This page excludes event payloads. Follow nextCursor with cursor and the same limit to read the next page.",
+};
+
+function isInstallationPageTool(name: string): name is InstallationPageTool {
+  return Object.hasOwn(installationPageInputs, name);
+}
+
 const vaultIndexRoutes = {
   memory_search: "search",
   memory_backlinks: "backlinks",
@@ -1638,7 +1670,22 @@ export async function dispatchTool(opts: {
   // ADR-187: the librarian's operation key rides the `Idempotency-Key` header,
   // never the body — the ext routes validate their bodies strictly.
   const { operationKey, ...routedArgs } = nativeArguments;
-  const normalizedArgs = coerceNumericArgs(name, routedArgs);
+  const normalizedArgs = coerceNumericArgs(
+    toolSpecForToolset(name, opts.toolset)?.inputSchema,
+    routedArgs,
+  );
+  const installationPage =
+    opts.toolset === "installation" && isInstallationPageTool(name)
+      ? installationPageInputs[name].safeParse(normalizedArgs)
+      : null;
+
+  if (installationPage && !installationPage.success)
+    return {
+      isError: true,
+      status: 422,
+      code: "CONFIG",
+      message: "Invalid installation pagination or selection",
+    };
   const librarian = opts.toolset === "librarian";
   const confirmation =
     name === "agent_vault_propose_edit"
@@ -1669,7 +1716,9 @@ export async function dispatchTool(opts: {
         path: "/api/v1/ext/librarian/cards",
         body: confirmation,
       }
-    : resolveRouting(name, normalizedArgs);
+    : installationPage
+      ? routeInstallationPage(name, installationPage.data)
+      : resolveRouting(name, normalizedArgs);
   const headers =
     typeof contextKey === "string" && contextKey.length > 0
       ? { "Idempotency-Key": contextKey }
@@ -1736,13 +1785,10 @@ function propertyIsNumeric(prop: unknown): boolean {
 // number; anything else (null, non-numeric string, an already-numeric value) is
 // left untouched so genuinely bad input still surfaces at the route.
 function coerceNumericArgs(
-  name: string,
+  schema: ToolSpec["inputSchema"] | undefined,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  const properties = (
-    TOOL_SPECS[name]?.inputSchema as
-      { properties?: Record<string, unknown> } | undefined
-  )?.properties;
+  const properties = schema?.properties;
 
   if (!properties) return args;
 
@@ -1762,6 +1808,23 @@ function coerceNumericArgs(
   }
 
   return out;
+}
+
+function routeInstallationPage(
+  name: string,
+  input: z.infer<typeof installationPaging> & {
+    slug?: string;
+    runId?: string;
+  },
+): ReturnType<typeof resolveRouting> {
+  const { cursor, limit, ...selector } = input;
+  const { path } = resolveRouting(name, selector);
+  const query = new URLSearchParams();
+
+  if (cursor !== undefined) query.set("cursor", cursor);
+  if (limit !== undefined) query.set("limit", String(limit));
+
+  return { method: "GET", path: query.size ? `${path}?${query}` : path };
 }
 
 function resolveRouting(
@@ -2820,6 +2883,29 @@ export function toolNamesForToolset(
   );
 
   return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+}
+
+export function toolSpecForToolset(
+  name: string,
+  toolset: string | undefined,
+): ToolSpec {
+  const standard = TOOL_SPECS[name];
+
+  if (
+    toolset !== "installation" ||
+    !Object.hasOwn(installationReadDescriptions, name)
+  )
+    return standard;
+
+  return {
+    ...standard,
+    description: installationReadDescriptions[name],
+    inputSchema: isInstallationPageTool(name)
+      ? (z.toJSONSchema(
+          installationPageInputs[name],
+        ) as ToolSpec["inputSchema"])
+      : standard.inputSchema,
+  };
 }
 
 export function isToolInToolset(

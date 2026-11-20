@@ -31,12 +31,14 @@ import {
   agentMemoryCutover as cutover,
   agentMemoryImportPayloads as payloads,
   agentMemoryImportReceipts as receipts,
+  agentMemoryVaults as vaults,
   agents,
   projects,
   runs,
   users,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { projectSlugSchema } from "@/lib/flow-paths";
 
 export const LEGACY_MEMORY_IMPORT_GENERATION = 1n;
 const LEGACY_NOTE = "/memories/notes/legacy.md";
@@ -61,11 +63,97 @@ type Source =
       expectedHash: string;
     }>;
 type Receipt = typeof receipts.$inferSelect;
+type SourceSelector =
+  | Pick<Extract<Source, { kind: "note" }>, "kind" | "relative">
+  | Pick<
+      Extract<Source, { kind: "run_snapshot" }>,
+      "kind" | "relative" | "runId"
+    >;
 export type LegacyMemoryImportCommand =
   "preview" | "import" | "activate" | "cleanup";
 
 function failure(message: string): MaisterError {
   return new MaisterError("PRECONDITION", message);
+}
+
+function notePathIdentity(root: string, relative: string) {
+  const [namespace, slug, folder, pkg, stem, name, ...extra] = relative.split(
+    path.sep,
+  );
+
+  if (
+    namespace !== ".maister" ||
+    folder !== "agents" ||
+    name !== "memory.md" ||
+    !slug ||
+    !pkg ||
+    !stem ||
+    extra.length
+  )
+    throw failure("Legacy memory source path is invalid");
+  let agentId: string;
+
+  try {
+    agentId = `${decodeURIComponent(pkg)}:${decodeURIComponent(stem)}`;
+  } catch (error) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Legacy memory source has no canonical agent owner",
+      { cause: error },
+    );
+  }
+  if (path.relative(root, agentMemoryPath(slug, agentId, root)) !== relative)
+    throw failure("Legacy memory source owner is unresolved");
+
+  return { slug, agentId };
+}
+
+function snapshotRelative(slug: string, runId: string) {
+  if (
+    !projectSlugSchema.safeParse(slug).success ||
+    path.basename(runId) !== runId ||
+    runId === "." ||
+    runId === ".."
+  )
+    throw failure("Legacy run snapshot identity is invalid");
+
+  return path.join(".maister", slug, "runs", runId, "memory-snapshot.md");
+}
+
+async function lockLegacySource(
+  tx: Db,
+  root: string,
+  selector: SourceSelector,
+): Promise<Source> {
+  if (selector.kind === "note") {
+    const { slug, agentId } = notePathIdentity(root, selector.relative);
+    const [owner] = (
+      await tx.execute<{ id: string }>(sql`
+        SELECT p.id FROM projects p JOIN agents a ON a.id=${agentId}
+        WHERE p.slug=${slug} FOR SHARE OF p,a
+      `)
+    ).rows;
+
+    if (!owner) throw failure("Legacy memory source owner is unresolved");
+
+    return { ...selector, projectId: owner.id, agentId };
+  }
+  const [run] = (
+    await tx.execute<{ slug: string; hash: string }>(sql`
+      SELECT p.slug,r.agent_memory_hash AS hash FROM runs r
+        JOIN projects p ON p.id=r.project_id
+      WHERE r.id=${selector.runId} AND r.agent_memory_hash_format='legacy-file-v1'
+      FOR SHARE OF p,r
+    `)
+  ).rows;
+
+  if (
+    !run?.hash ||
+    snapshotRelative(run.slug, selector.runId) !== selector.relative
+  )
+    throw failure("Legacy run snapshot owner is unresolved");
+
+  return { ...selector, expectedHash: run.hash };
 }
 
 async function inventory(db: Db, root: string): Promise<Source[]> {
@@ -90,24 +178,10 @@ async function inventory(db: Db, root: string): Promise<Source[]> {
         const original = await readLegacyMemoryText(root, relative);
 
         if (!original) continue;
-        let agentId: string;
-
-        try {
-          agentId = `${decodeURIComponent(pkg)}:${decodeURIComponent(stem)}`;
-        } catch (error) {
-          throw new MaisterError(
-            "PRECONDITION",
-            "Legacy memory source has no canonical agent owner",
-            { cause: error, details: { relative } },
-          );
-        }
+        const { agentId } = notePathIdentity(root, relative);
         const projectId = bySlug.get(slug);
 
-        if (
-          !projectId ||
-          !knownAgents.has(agentId) ||
-          path.relative(root, agentMemoryPath(slug, agentId, root)) !== relative
-        )
+        if (!projectId || !knownAgents.has(agentId))
           throw new MaisterError(
             "PRECONDITION",
             "Legacy memory source owner is unresolved",
@@ -128,22 +202,10 @@ async function inventory(db: Db, root: string): Promise<Source[]> {
     .where(eq(runs.agentMemoryHashFormat, "legacy-file-v1"));
 
   for (const row of history) {
-    if (
-      !row.hash ||
-      path.basename(row.runId) !== row.runId ||
-      row.runId === "." ||
-      row.runId === ".."
-    )
-      throw failure("Legacy run snapshot identity is invalid");
+    if (!row.hash) throw failure("Legacy run snapshot identity is invalid");
     sources.push({
       kind: "run_snapshot",
-      relative: path.join(
-        ".maister",
-        row.slug,
-        "runs",
-        row.runId,
-        "memory-snapshot.md",
-      ),
+      relative: snapshotRelative(row.slug, row.runId),
       runId: row.runId,
       expectedHash: row.hash,
     });
@@ -197,7 +259,53 @@ async function receiptFor(
       ),
     );
 
+  if (receipt) assertReceiptOwner(receipt, source);
+
   return receipt;
+}
+
+function assertReceiptOwner(receipt: Receipt, source: Source): void {
+  const matches =
+    source.kind === "note"
+      ? receipt.sourceProjectId === source.projectId &&
+        receipt.sourceAgentId === source.agentId
+      : receipt.runId === source.runId &&
+        (receipt.state === "missing" ||
+          receipt.state === "mismatched" ||
+          receipt.sourceDigest === source.expectedHash);
+
+  if (!matches) {
+    log.warn(
+      { receiptId: receipt.id, sourceKind: receipt.sourceKind },
+      "[FIX] Legacy memory source no longer has its recorded owner",
+    );
+    throw failure("Legacy memory source owner changed after inventory");
+  }
+}
+
+function assertInventoryOwner(source: Source, current: Source): void {
+  const matches =
+    source.kind === "note"
+      ? current.kind === "note" &&
+        source.projectId === current.projectId &&
+        source.agentId === current.agentId
+      : current.kind === "run_snapshot" &&
+        source.runId === current.runId &&
+        source.expectedHash === current.expectedHash;
+
+  if (!matches) throw failure("Legacy memory source changed during inventory");
+}
+
+function receiptSelector(receipt: Receipt): SourceSelector {
+  if (receipt.sourceKind === "note")
+    return { kind: "note", relative: receipt.sourceIdentity };
+  if (!receipt.runId) throw failure("Legacy run snapshot identity is missing");
+
+  return {
+    kind: "run_snapshot",
+    relative: receipt.sourceIdentity,
+    runId: receipt.runId,
+  };
 }
 
 function ensureSourceMatch(
@@ -299,6 +407,19 @@ async function verifyRetainedImport(db: Db, receipt: Receipt): Promise<void> {
 
     content = payload?.content;
   } else if (receipt.vaultId && receipt.noteId && receipt.revisionId) {
+    const [owner] = await db
+      .select({ projectId: vaults.projectId, agentId: vaults.agentId })
+      .from(vaults)
+      .where(eq(vaults.id, receipt.vaultId))
+      .for("share");
+
+    if (
+      !receipt.sourceProjectId ||
+      !receipt.sourceAgentId ||
+      owner?.projectId !== receipt.sourceProjectId ||
+      owner.agentId !== receipt.sourceAgentId
+    )
+      throw failure("Retained legacy memory has a different vault owner");
     content = await readVaultPayload(
       db,
       await readVaultRevision(
@@ -327,8 +448,11 @@ async function importSource(
     if (await lockImport(tx))
       throw failure("Memory vault cutover is already active");
     await requireImportAdmin(tx, actor);
-    const text = await readLegacyMemoryText(root, source.relative);
-    const existing = await receiptFor(tx, source);
+    const current = await lockLegacySource(tx, root, source);
+
+    assertInventoryOwner(source, current);
+    const text = await readLegacyMemoryText(root, current.relative);
+    const existing = await receiptFor(tx, current);
 
     if (existing) {
       ensureSourceMatch(existing, text);
@@ -339,17 +463,19 @@ async function importSource(
       throw failure("Legacy memory disappeared after inventory");
     await tx.insert(receipts).values({
       generation: LEGACY_MEMORY_IMPORT_GENERATION,
-      sourceKind: source.kind,
-      sourceIdentity: source.relative,
+      sourceKind: current.kind,
+      sourceIdentity: current.relative,
+      sourceProjectId: current.kind === "note" ? current.projectId : null,
+      sourceAgentId: current.kind === "note" ? current.agentId : null,
       sourceDigest: text?.digest,
       sourceBytes: text?.bytes,
-      runId: source.kind === "run_snapshot" ? source.runId : undefined,
+      runId: current.kind === "run_snapshot" ? current.runId : undefined,
       state:
-        source.kind === "note"
+        current.kind === "note"
           ? "inventoried"
           : !text
             ? "missing"
-            : text.digest !== source.expectedHash
+            : text.digest !== current.expectedHash
               ? "mismatched"
               : "inventoried",
     });
@@ -358,7 +484,8 @@ async function importSource(
     if (await lockImport(tx))
       throw failure("Memory vault cutover is already active");
     await requireImportAdmin(tx, actor);
-    const receipt = await receiptFor(tx, source);
+    const current = await lockLegacySource(tx, root, source);
+    const receipt = await receiptFor(tx, current);
 
     if (!receipt) throw failure("Legacy memory inventory receipt is missing");
     const text = await readLegacyMemoryText(root, source.relative);
@@ -367,11 +494,11 @@ async function importSource(
     if (receipt.state !== "inventoried") return;
     if (!text) throw failure("Inventoried legacy memory source is missing");
     const revision =
-      source.kind === "note"
-        ? await writeVaultLegacyNote(tx, source, text, actor)
+      current.kind === "note"
+        ? await writeVaultLegacyNote(tx, current, text, actor)
         : undefined;
 
-    if (source.kind === "run_snapshot")
+    if (current.kind === "run_snapshot")
       await tx
         .insert(payloads)
         .values({ receiptId: receipt.id, content: text.text });
@@ -384,7 +511,8 @@ async function importSource(
     if (await lockImport(tx))
       throw failure("Memory vault cutover is already active");
     await requireImportAdmin(tx, actor);
-    const receipt = await receiptFor(tx, source);
+    const current = await lockLegacySource(tx, root, source);
+    const receipt = await receiptFor(tx, current);
 
     if (!receipt) throw failure("Legacy memory inventory receipt is missing");
     if (receipt.state !== "imported" && receipt.state !== "verified") return;
@@ -427,7 +555,10 @@ async function activate(db: Db, root: string, actor: string) {
     if (prior.some((row) => !found.has(row.sourceIdentity)))
       throw failure("An inventoried source disappeared before activation");
     for (const source of sources) {
-      const receipt = await receiptFor(tx, source);
+      const current = await lockLegacySource(tx, root, source);
+
+      assertInventoryOwner(source, current);
+      const receipt = await receiptFor(tx, current);
 
       if (
         !receipt ||
@@ -470,6 +601,9 @@ async function cleanup(db: Db, root: string, actor: string) {
 
       if (!current || current.state !== "verified" || !current.sourceDigest)
         return;
+      const source = await lockLegacySource(tx, root, receiptSelector(current));
+
+      assertReceiptOwner(current, source);
       await verifyRetainedImport(tx, current);
       await cleanupLegacyMemoryText(
         root,

@@ -8,6 +8,7 @@ import type { TokenActor } from "@/lib/tokens/verify";
 import { createHash } from "node:crypto";
 
 import { sql } from "drizzle-orm";
+import pino from "pino";
 import { z } from "zod";
 
 import {
@@ -17,6 +18,7 @@ import {
 import { captureInstallationProjects } from "./installation-source-capture";
 
 import { privateJson } from "@/lib/api/private-json";
+import { recordNativeRunSourcesInTransaction } from "@/lib/brain/knowledge-execution-access";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { parseCursorPayload, signCursorPayload } from "@/lib/keyset-cursor";
@@ -29,15 +31,21 @@ export const installationResourceScope = {
   observatory: "observatory:read",
 } as const satisfies Record<string, InstallationAgentScope>;
 export type InstallationResource = keyof typeof installationResourceScope;
+const log = pino({
+  name: "installation-read",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 const identity = z
   .string()
   .min(1)
   .max(192)
   .refine((value) => value.isWellFormed() && !value.includes("\0"));
-const selection = z.strictObject({
+const pathTarget = z.strictObject({
   slug: identity.optional(),
   id: identity.optional(),
   runId: identity.optional(),
+});
+const paging = z.strictObject({
   cursor: z.string().min(1).max(2048).optional(),
   limit: z
     .string()
@@ -45,8 +53,12 @@ const selection = z.strictObject({
     .transform(Number)
     .pipe(z.number().max(50))
     .prefault("20"),
+});
+const observatoryQuery = paging.extend({
+  slug: identity.optional(),
   period: z.enum(["24h", "7d", "30d"]).default("7d"),
 });
+const noQuery = z.strictObject({});
 const cursorSchema = z.strictObject({
   scope: z.string().length(64),
   after: identity,
@@ -54,8 +66,58 @@ const cursorSchema = z.strictObject({
 const namespace = "maister.installation.read.v1";
 const intervals = { "24h": "24 hours", "7d": "7 days", "30d": "30 days" };
 
-type Query = z.infer<typeof selection>;
+type PathTarget = Readonly<z.infer<typeof pathTarget>>;
+type Query = z.infer<typeof observatoryQuery> & PathTarget;
 type Row = { id: string; projectId: string; slug: string };
+
+function isDetail(resource: InstallationResource, target: PathTarget) {
+  return (
+    target.id !== undefined ||
+    (resource === "projects" && target.slug !== undefined)
+  );
+}
+
+function unavailableResource() {
+  return new MaisterError("PRECONDITION", "Resource unavailable", {
+    details: { reason: "installation_resource_unavailable" },
+  });
+}
+
+function accessibleProject(
+  context: InstallationRunAuthority,
+  resource: InstallationResource,
+) {
+  return sql`p.archived_at IS NULL AND ${installationProjectAccess(
+    context,
+    sql`p.id`,
+    resource === "activity" ? "readRepoFiles" : "readBoard",
+  )}`;
+}
+
+async function resolveCollectionProject(
+  tx: Db,
+  context: InstallationRunAuthority,
+  resource: InstallationResource,
+  target: PathTarget,
+): Promise<string | null> {
+  const restriction =
+    resource === "tasks" && target.id === undefined
+      ? sql`p.slug=${target.slug}`
+      : resource === "activity"
+        ? sql`EXISTS (SELECT 1 FROM runs r WHERE r.id=${target.runId} AND r.project_id=p.id FOR SHARE)`
+        : null;
+
+  if (restriction === null) return null;
+  const { rows } = await tx.execute<{ id: string }>(sql`
+    SELECT p.id FROM projects p
+    WHERE ${restriction} AND ${accessibleProject(context, resource)}
+    FOR SHARE OF p
+  `);
+
+  if (!rows[0]) throw unavailableResource();
+
+  return rows[0].id;
+}
 
 function relatedRows(resource: InstallationResource, query: Query) {
   switch (resource) {
@@ -87,13 +149,15 @@ async function selectInstallationRows(
   context: InstallationRunAuthority,
   resource: InstallationResource,
   query: Query,
+  collectionProjectId: string | null,
   after?: string,
 ) {
   return tx.execute<Row>(sql`
     WITH allowed_projects AS MATERIALIZED (
-      SELECT p.id,p.slug,p.name,p.task_key FROM projects p
-      WHERE p.archived_at IS NULL AND ${installationProjectAccess(context, sql`p.id`, resource === "activity" ? "readRepoFiles" : "readBoard")}
+      SELECT p.id,p.slug,p.name FROM projects p
+      WHERE ${accessibleProject(context, resource)}
         ${query.slug ? sql`AND p.slug=${query.slug}` : sql``}
+        ${collectionProjectId === null ? sql`` : sql`AND p.id=${collectionProjectId}`}
       FOR SHARE OF p
     ), rows AS (${relatedRows(resource, query)})
     SELECT * FROM rows WHERE ${query.id ? sql`rows.id=${query.id}` : sql`true`}
@@ -107,18 +171,29 @@ export async function readInstallationResource(
   tokenId: string,
   resource: InstallationResource,
   params: URLSearchParams,
+  target: PathTarget = {},
 ) {
+  const detail = isDetail(resource, target);
   const input = Object.fromEntries(params);
-  const validated = selection.safeParse(input);
+  const parsed = (
+    resource === "observatory" ? observatoryQuery : detail ? noQuery : paging
+  ).safeParse(input);
+  const routeTarget = pathTarget.safeParse(target);
 
   if (
-    !validated.success ||
+    !parsed.success ||
+    !routeTarget.success ||
     params.size !== Object.keys(input).length ||
-    (resource === "observatory" ? params.has("id") : params.has("period")) ||
-    (resource !== "activity" && params.has("runId"))
+    (resource === "tasks" && target.slug === undefined) ||
+    (resource === "activity" && target.runId === undefined)
   )
     throw new MaisterError("CONFIG", "Invalid installation read selection");
-  const { cursor, ...query } = validated.data;
+  const { cursor, ...query }: Query & { cursor?: string } = {
+    limit: detail ? 1 : 20,
+    period: "7d",
+    ...parsed.data,
+    ...routeTarget.data,
+  };
 
   return db.transaction(async (tx) => {
     const context = await requireInstallationCredential(
@@ -126,8 +201,16 @@ export async function readInstallationResource(
       tokenId,
       installationResourceScope[resource],
     );
+    // Preserve the v1 field order for cursors issued before query validation was split.
+    const { slug, id, runId, limit, period } = query;
     const scope = createHash("sha256")
-      .update(JSON.stringify([context.runId, resource, query]))
+      .update(
+        JSON.stringify([
+          context.runId,
+          resource,
+          { slug, id, runId, limit, period },
+        ]),
+      )
       .digest("hex");
     const after =
       cursor === undefined
@@ -139,21 +222,52 @@ export async function readInstallationResource(
         "CONFIG",
         "Installation cursor belongs to another selection",
       );
+    const collectionProjectId = await resolveCollectionProject(
+      tx,
+      context,
+      resource,
+      routeTarget.data,
+    );
     const { rows } = await selectInstallationRows(
       tx,
       context,
       resource,
       query,
+      collectionProjectId,
       after?.success ? after.data.after : undefined,
     );
     const page = rows.slice(0, query.limit);
 
-    await captureInstallationProjects(
-      tx,
-      context.runId,
-      rows.map(({ projectId }) => projectId),
-    );
+    if (detail && page.length === 0) throw unavailableResource();
+    const projectIds = new Set([
+      ...(collectionProjectId === null ? [] : [collectionProjectId]),
+      ...page.map(({ projectId }) => projectId),
+    ]);
+
+    if (resource === "activity") {
+      // Preserve the readRepoFiles gate for later consumers of this activity.
+      await recordNativeRunSourcesInTransaction(
+        tx,
+        context.runId,
+        [...projectIds].map((projectId) => ({
+          kind: "project_context",
+          projectId,
+        })),
+      );
+    } else {
+      await captureInstallationProjects(tx, context.runId, [...projectIds]);
+    }
     const last = page.at(-1);
+
+    log.debug(
+      {
+        runId: context.runId,
+        resource,
+        items: page.length,
+        more: rows.length > query.limit,
+      },
+      "[FIX] served a scoped installation read",
+    );
 
     return {
       items:
@@ -171,38 +285,20 @@ export async function readInstallationResource(
 export function installationReadAdapter(
   request: Request,
   resource: InstallationResource,
-  target: Readonly<{ slug?: string; id?: string; runId?: string }> = {},
+  target: PathTarget = {},
 ) {
   return {
     scope: installationResourceScope[resource],
     async work(actor: TokenActor) {
-      const params = new URL(request.url).searchParams;
-
-      for (const [key, value] of Object.entries(target)) {
-        if (params.has(key))
-          throw new MaisterError(
-            "CONFIG",
-            "The resource identifier comes from the route",
-          );
-        params.set(key, value);
-      }
       const page = await readInstallationResource(
         getDb(),
         actor.tokenId,
         resource,
-        params,
+        new URL(request.url).searchParams,
+        target,
       );
 
-      if (target.id || (target.slug && resource === "projects")) {
-        if (!page.items[0])
-          throw new MaisterError("PRECONDITION", "Resource unavailable", {
-            details: { reason: "installation_resource_unavailable" },
-          });
-
-        return privateJson(page.items[0]);
-      }
-
-      return privateJson(page);
+      return privateJson(isDetail(resource, target) ? page.items[0] : page);
     },
   };
 }

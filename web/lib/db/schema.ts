@@ -12635,6 +12635,8 @@ export const agentMemoryImportReceipts = pgTable(
       enum: ["note", "run_snapshot"],
     }).notNull(),
     sourceIdentity: text("source_identity").notNull(),
+    sourceProjectId: text("source_project_id"),
+    sourceAgentId: text("source_agent_id"),
     sourceDigest: text("source_digest"),
     sourceBytes: integer("source_bytes"),
     state: text("state", {
@@ -12673,6 +12675,12 @@ export const agentMemoryImportReceipts = pgTable(
         agentMemoryRevisions.id,
       ],
     }).onDelete("restrict"),
+    noteOwner: check(
+      "agent_memory_import_note_owner_check",
+      sql`num_nonnulls(${t.sourceProjectId}, ${t.sourceAgentId}) = 0
+        OR (${t.sourceKind} = 'note' AND coalesce(length(${t.sourceProjectId}), 0) > 0
+          AND coalesce(length(${t.sourceAgentId}), 0) > 0)`,
+    ),
     witness: check(
       "agent_memory_import_witness_check",
       sql`${t.generation} > 0

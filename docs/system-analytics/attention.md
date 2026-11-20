@@ -228,7 +228,7 @@ Inbox review projection.
 | Source | Eligibility before listing and counting | Settlement |
 | --- | --- | --- |
 | Project vault | Current `readRepoFiles`, `editSettings` and all stored source rights. | Accept applies the exact proposed command through the vault CAS transaction. Reject settles the proposal with no head change. |
-| Installation vault (Designed) | Current global administrator and available exact sources. | Same vault transaction. Installation author credentials only create pending proposals. |
+| Installation vault (Implemented) | Current global administrator and available exact sources. | Same vault transaction. Installation author credentials only create pending proposals. |
 | Project Brain legacy proposal | Existing kind-specific conclusion rights and evidence visibility. | Use the existing Brain transition. Show only the outcomes this actor may choose. |
 | Native knowledge proposal | Current `knowledge:review` on the destination and visibility to every source. | Use the native knowledge review service and its revision/evidence checks. |
 
@@ -248,6 +248,12 @@ request matches. A reused key with different input or a lost decision CAS
 conflicts. Missing and hidden rows share the item status `unavailable`.
 An invalid batch envelope refuses before processing any item. A valid batch
 returns a result for each item in request order even when only some succeed.
+The browser retains the original serialized batch across uncertain delivery,
+even if a refresh removes already settled rows. Retry returns the exact
+outcome for each committed item and attempts the remaining decisions.
+Large vault and Project Brain previews are paged against the exact pending
+proposal version. Every page rechecks reviewer and source authority, and a
+changed or settled proposal invalidates its cursor.
 
 The attention stream computes `reviews` and `reviewVersion` for the
 authorized global queue. The version covers the ordered visible proposal
@@ -262,13 +268,13 @@ an older tick retains its existing review baseline until it sees a versioned
 review tick. Missing or invalid baselines cause one reconciliation for
 clients that support this projection.
 
-- **AV-04, AV-13 (Designed).** Attention MUST derive `reviews` and its
+- **AV-04, AV-13 (Implemented).** Attention MUST derive `reviews` and its
   revision from authorized proposal state and refresh on same-count changes
   without modifying amber or Activity counters.
-- **AV-11 (Designed).** Inbox batch settlement MUST preserve item order,
+- **AV-11 (Implemented).** Inbox batch settlement MUST preserve item order,
   use the domain decision transaction and apply current per-outcome rights
   for each typed source.
-- **AV-16 (Designed).** Acceptance MUST enforce the proposal's original
+- **AV-16 (Implemented).** Acceptance MUST enforce the proposal's original
   revision, source constraints and quotas at effect time.
 
 ## Expectations

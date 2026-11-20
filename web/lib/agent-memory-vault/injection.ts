@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { VaultRevisionRestriction } from "@/lib/company/types";
+import type { KnowledgePrincipal } from "@/lib/brain/knowledge-types";
 import type { Db } from "@/lib/execution-host/db";
 import type { VaultRevision } from "./store";
 
@@ -20,7 +21,11 @@ import {
   seesEveryProject,
 } from "./installation-access";
 import { MEMORY_INDEX } from "./paths";
-import { ensureProjectVault } from "./project-access";
+import {
+  canReadProjectExecutionRevision,
+  ensureProjectVault,
+  loadProjectVaultAttachment,
+} from "./project-access";
 import {
   MEMORY_PROTOCOL_HASH,
   MEMORY_PROTOCOL_VERSION,
@@ -37,6 +42,7 @@ import {
 import { installationRunProjects } from "@/lib/agents/installation-source-capture";
 import { requireInstallationRunAuthority } from "@/lib/agents/installation-authority";
 import {
+  boundNativeRunSourcePrefix,
   recordNativeRunSourcesInTransaction,
   resolveRunKnowledgePrincipal,
   usesNativeKnowledgeTransport,
@@ -45,7 +51,6 @@ import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions"
 import {
   agentMemoryInjections as injections,
   agentMemoryVaults,
-  agentProjectLinks,
   runs,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -77,20 +82,7 @@ function digest(value: unknown) {
 }
 
 async function enabledAttachment(db: Db, projectId: string, agentId: string) {
-  const [link] = await db
-    .select({
-      enabled: agentProjectLinks.enabled,
-      memoryEnabled: agentProjectLinks.memoryEnabled,
-      policy: agentProjectLinks.memoryWritePolicy,
-    })
-    .from(agentProjectLinks)
-    .where(
-      and(
-        eq(agentProjectLinks.projectId, projectId),
-        eq(agentProjectLinks.agentId, agentId),
-      ),
-    )
-    .for("share");
+  const link = await loadProjectVaultAttachment(db, projectId, agentId);
 
   return link?.enabled === true && link.memoryEnabled ? link : null;
 }
@@ -110,9 +102,10 @@ function revisionReference(revision: VaultRevision): VaultRevisionRestriction {
 
 async function authorizeStagedReferences(
   db: Db,
-  runId: string,
   staged: MemoryInjection,
+  projectId: string | null,
 ) {
+  const { runId } = staged;
   const native = await usesNativeKnowledgeTransport(db, runId);
   const references = staged.tree.references ?? [];
 
@@ -128,6 +121,11 @@ async function authorizeStagedReferences(
     return;
   }
 
+  if (projectId === null)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Staged memory scope is unavailable",
+    );
   for (const source of references) {
     const revision = await readVaultRevision(
       db,
@@ -136,8 +134,19 @@ async function authorizeStagedReferences(
       source.revisionId,
     );
 
-    if (revision.contentSha256 !== source.contentSha256)
-      throw new MaisterError("PRECONDITION", "Staged memory source changed");
+    if (
+      revision.contentSha256 !== source.contentSha256 ||
+      !(await canReadProjectExecutionRevision(db, projectId, revision, null))
+    ) {
+      log.warn(
+        { runId, sessionKey: staged.sessionKey },
+        "[FIX:memory-prompt-authority] staged source unavailable",
+      );
+      throw new MaisterError(
+        "PRECONDITION",
+        "Staged memory source is unavailable",
+      );
+    }
     // Exact historical payloads can disappear only through audited redaction.
     await db
       .execute(
@@ -157,7 +166,11 @@ async function authorizeStagedReferences(
   }
 }
 
-async function restoreStaged(db: Db, staged: MemoryInjection): Promise<string> {
+async function restoreStaged(
+  db: Db,
+  staged: MemoryInjection,
+  projectId: string | null,
+): Promise<string> {
   if (
     staged.protocolVersion !== MEMORY_PROTOCOL_VERSION ||
     staged.protocolSha256 !== MEMORY_PROTOCOL_HASH ||
@@ -167,7 +180,7 @@ async function restoreStaged(db: Db, staged: MemoryInjection): Promise<string> {
       "PRECONDITION",
       "Stored memory prompt protocol is unavailable",
     );
-  await authorizeStagedReferences(db, staged.runId, staged);
+  await authorizeStagedReferences(db, staged, projectId);
   const index =
     staged.indexNoteId && staged.indexRevisionId
       ? await readVaultPayload(
@@ -283,6 +296,10 @@ async function stageFreshProjectSession(
     session.projectId,
     session.agentId,
   );
+  const principal: KnowledgePrincipal | null =
+    (await usesNativeKnowledgeTransport(tx, session.runId))
+      ? { kind: "execution", runId: session.runId, nodeAttemptId }
+      : null;
 
   return stageVaultSession(
     tx,
@@ -290,8 +307,13 @@ async function stageFreshProjectSession(
     nodeAttemptId,
     vaultId,
     attachment.policy === "review",
-    async (revision) =>
-      revision.sourceProjectIds.every((id) => id === session.projectId),
+    (revision) =>
+      canReadProjectExecutionRevision(
+        tx,
+        session.projectId,
+        revision,
+        principal,
+      ),
   );
 }
 
@@ -357,6 +379,7 @@ async function stageVaultSession(
   requiresReviewAtLaunch: boolean,
   allows: (revision: VaultRevision) => Promise<boolean>,
 ): Promise<Extract<StageResult, { mode: "vault" }>> {
+  const vault = await lockVault(tx, vaultId);
   const [existing] = await tx
     .select()
     .from(injections)
@@ -374,10 +397,12 @@ async function stageVaultSession(
     )
       throw new MaisterError("CONFLICT", "Staged memory persona changed");
 
-    return { mode: "vault", text: await restoreStaged(tx, existing) };
+    return {
+      mode: "vault",
+      text: await restoreStaged(tx, existing, vault.projectId),
+    };
   }
 
-  await lockVault(tx, vaultId);
   const limits = agentMemoryVaultLimits();
   const heads = (await loadActiveHeads(tx, vaultId)).map(
     ({ revision }) => revision,
@@ -389,7 +414,25 @@ async function stageVaultSession(
   const index = indexHead ? await readVaultPayload(tx, indexHead) : null;
   const byPath = new Map(visible.map((entry) => [entry.path, entry]));
   const paths = [...byPath.keys()].sort();
-  const rendered = renderMemoryProtocol(index, paths, limits.injectionChars);
+  const characterBound = renderMemoryProtocol(
+    index,
+    paths,
+    limits.injectionChars,
+  );
+  const sourceBound = (await usesNativeKnowledgeTransport(tx, session.runId))
+    ? await boundNativeRunSourcePrefix(tx, {
+        runId: session.runId,
+        nodeAttemptId,
+        required: indexHead ? [revisionReference(indexHead)] : [],
+        candidates: characterBound.tree.paths.map((path) =>
+          revisionReference(byPath.get(path)!),
+        ),
+      })
+    : characterBound.tree.paths.length;
+  const rendered =
+    sourceBound < characterBound.tree.paths.length
+      ? renderMemoryProtocol(index, paths, limits.injectionChars, sourceBound)
+      : characterBound;
   const witnesses = new Set(
     rendered.tree.paths.map((path) => byPath.get(path)!),
   );
@@ -427,8 +470,10 @@ async function stageVaultSession(
       renderedChars: rendered.text.length,
       paths: paths.length,
       injectedPaths: rendered.tree.paths.length,
+      sourceBudgetOmissions:
+        characterBound.tree.paths.length - rendered.tree.paths.length,
     },
-    "agent memory injection staged",
+    "[FIX:memory-prompt-authority] agent memory injection staged",
   );
 
   return { mode: "vault", text: rendered.text };
@@ -472,7 +517,7 @@ export async function assertMemorySessionSources(
         "PRECONDITION",
         "Memory session attachment is unavailable",
       );
-    await authorizeStagedReferences(db, runId, injection);
+    await authorizeStagedReferences(db, injection, owner.projectId);
   }
 }
 

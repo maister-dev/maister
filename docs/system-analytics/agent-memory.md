@@ -205,13 +205,13 @@ sequenceDiagram
     API-->>UI: 204 - idempotent when already absent
 ```
 
-### Vault ownership, writes and cutover (Designed, ADR-210)
+### Vault ownership, writes and cutover (Implemented — ADR-210)
 
 A vault resolves from a current memory-enabled attachment and a stable owner
 key. For a project, the key is the project ID plus qualified agent ID. For
 an installation, it is the company ID plus qualified agent ID. History
 survives detach and catalog retirement. The [vault data
-contract](../db/agents-domain.md#agent-memory-vault-designed) owns its storage
+contract](../db/agents-domain.md#agent-memory-vault-implemented) owns its storage
 constraints. The [external API](../api/external/operations.openapi.yaml) and
 [browser API](../api/web.openapi.yaml) own the command and response schemas.
 
@@ -243,17 +243,20 @@ characters and non-scalar UTF-16 are invalid. File leaves end in `.md`.
 Directories are implicit parents. A file cannot also be a parent prefix.
 The limit is 512 UTF-8 bytes and 16 segments below the root. A directory page
 sorts by canonical UTF-8 path, and a note page binds to its exact revision.
+An immediate folder entry records one visible descendant as evidence for that
+folder. The generation still fences the visible subtree. Child note paths,
+hashes and bodies are disclosed through subsequent reads.
 Every cursor binds the vault, selection, kind and sort key. Offset into a
 long note is measured in UTF-16 code units and a page cannot split a
 surrogate pair.
 
 A command locks the current principal and provenance consumer first, then the
 cross-domain knowledge lock where applicable, the vault quota/generation row,
-and the affected note heads in ID order. If an operation starts from a
-librarian card or review proposal, its decision owner locks that row after
-principal and knowledge admission and before acquiring the vault; redaction
-must not invert that order. It invalidates dependent copies through the exact
-source guard, with projection cleanup after commit. No external provider or
+and the affected note heads in ID order. Governed Librarian card preparation
+and confirmation hold a shared redaction fence before locking the card,
+vault, or source payload. Redaction takes the exclusive fence before its vault
+and dependent card changes. It invalidates dependent projections in the same
+transaction, and later reads recheck exact source access. No external provider or
 filesystem action runs under a vault write transaction. The service validates
 every CAS, authorization and resulting quota before modifying any head.
 
@@ -268,6 +271,14 @@ the authorized mismatched heads and includes a reload instruction.
 For launch, an attested Flow node persona takes precedence over the Run
 persona. An enabled attachment authorizes bounded protocol, visible
 `/memories/index.md` and a sorted path page delimited as untrusted data.
+Current source authorization applies to the index and path metadata, including
+ordinary project Runs. A fresh prompt omits an unreadable index and any
+unreadable paths. Project sessions without the governed source capture profile
+can read local project memory and legacy private imports. Governed revisions
+require a current source consumer for prompt delivery and on-demand access.
+The path page fits both the character limit and the
+remaining source capture budget. Omitted paths can be read through authorized,
+bounded vault views.
 Escape reserved markers in note bytes and path names for rendering only.
 Use the existing prompt application owner to stage the exact manifest before
 dispatch and settle applied or retired. An uncertain delivery keeps its staged
@@ -281,7 +292,10 @@ Legacy imports use the current ADR-152 encoder only for resolving original
 files. Reject symlinks, nonregular files, invalid UTF-8 and ambiguous owners.
 Move exact note bytes into the index only if they fit its cap. Otherwise use
 `/memories/notes/legacy.md` and create a small bounded index pointer. Preserve
-the original SHA-256 in the import receipt. Snapshot evidence is separately
+the original SHA-256, project ID and qualified agent ID in the import receipt.
+Import retries, activation and cleanup revalidate the path's current owner
+against the retained identity. A reused slug cannot adopt another vault's
+verified receipt. Snapshot evidence is separately
 classified as retained, missing or mismatched, using the Run ID and the
 historical hash. Cleanup of mismatched evidence is forbidden. Before
 activation the operator can restart the legacy writer with intact files.
@@ -332,7 +346,9 @@ evidence points to an exact revision and refuses reads after redaction.
 - **AV-10.** The cutover generation MUST fence API writes until the operator
   verifies import receipts and quiesces legacy writers.
 - **AV-14.** The disclosure service MUST record exact memory revision sources
-  before private bytes leave a read, conflict, replay or prompt path.
+  before governed bytes leave a read, conflict, replay or prompt path. A
+  session that cannot retain those restrictions must conceal the governed
+  revision and refuse restore of a prior disclosure.
 - **AV-15.** The wire adapters MUST distinguish applied, pending, disabled,
   stale and hidden outcomes using the canonical schemas.
 - **AV-16.** An exact redaction MUST deny derivatives and future effects
@@ -340,7 +356,7 @@ evidence points to an exact revision and refuses reads after redaction.
 - **AV-17.** A history revert MUST write a new revision through the same
   command service used for normal edits.
 
-**Vault refusals (Designed):**
+**Vault refusals (Implemented):**
 
 - Invalid path, command, insertion line, or configured cap uses
   `CONFIG`. A stale head, conflicting destination or replay digest uses
@@ -353,6 +369,18 @@ evidence points to an exact revision and refuses reads after redaction.
   Index-provider retries are bounded and keyed by exact revision and model.
   The lexical index remains locally available. A configured vector error is
   visible to the caller.
+
+### Installation vault (Implemented)
+
+The vault owner is the qualified agent and the installation company. Admins
+can edit and review. A non-admin needs current `specialists:read` plus
+access to every source project and any finer source restrictions. Each
+installation session proposal retains the union of projects disclosed up to
+the write, guarded links and base revision sources. The Memory tab and Inbox
+resolve the same company and agent identifiers from their URL filters.
+Directory generations describe the visible subtree selected by the request.
+A recursive mutation submits the original selected subtree generation and
+the exact complete set of member revisions for atomic revalidation.
 
 ## Expectations
 
@@ -440,7 +468,6 @@ These cases describe the legacy file store before activation.
 | Path exists but is not a readable regular file (a directory, a bad mode) | No MEMORY section, `log.warn` with `reason: "unreadable"`, launch proceeds. Nothing throws. |
 | CAS loss | 409 `MaisterError("CONFLICT")` whose body carries the current `{content, hash}` so the agent can merge and retry. The agent's bytes are discarded, never partially merged. |
 | Two genuinely concurrent writers | The advisory lock serializes them: the second observes the first's committed bytes, loses the hash comparison, and gets the 409 with the winner's content. The atomic tmp+rename additionally guarantees the file is never a partial or interleaved write. Both halves are required — without the lock the compare-then-write is a check-then-act and BOTH writers succeed. |
-| A flow-bound agent whose definition says `memory: enabled` | `attachAgent` lands `memory_enabled = false` and `updateAgentLink` refuses an explicit `true` with `MaisterError("CONFIG")`. The axis can never be switched on for an attachment that structurally cannot use it, from the UI or from a direct `PATCH`. |
 | Owner `DELETE` racing an agent write | Refused. `DELETE` is a compare-and-delete under the same lock as the write CAS, so a clear holding a stale `ifHash` answers `409` with the content it would have destroyed. Exactly one of a racing clear and write wins; the loser always learns why. |
 | A memory file that tells the agent to do something | The injected block is bracketed by `BEGIN/END AGENT MEMORY` markers and explicitly framed as reference data, so a line that reads like a command is a note about a command. This narrows, but does not eliminate, the fact that an agent authors its own later prompt context — see ADR-152 D29 for the accepted residual risk. |
 | A directory (or any non-file) at the memory path on `DELETE` | Surfaces as an error rather than a `204`. Only `ENOENT`/`ENOTDIR` mean "already absent"; answering "cleared" while the path survives would be the same lie the read path already reports as `unreadable`. |
@@ -451,19 +478,18 @@ These cases describe the legacy file store before activation.
 | Launch using `opts.overridePrompt` | Injects nothing and records nothing — no MEMORY section, no `memory-snapshot.md`, no `runs.agent_memory_hash`. The override discards the composed base prompt, so claiming provenance would be a lie. |
 | Session resume | Memory is injected at initial spawn only. `startAgentSession` is ALSO the resume entry point (hook_trip and idle-permission resumes call it), so the gate is explicit: a run with an `acp_session_id` resolves no memory, re-injects nothing, and — crucially — does NOT re-write `memory-snapshot.md` or re-stamp `runs.agent_memory_hash`, which would otherwise describe the last resume instead of what the agent started from. |
 | Provenance write fails (full disk, unwritable run dir, DB error) | The launch PROCEEDS with memory injected; the failure degrades to a `log.warn` carrying `reason: "provenance_write_failed"`. Memory must never block a launch, and the snapshot/stamp are evidence, not a precondition. |
-| Flow-bound agent | An effective definition declaring `flow:` diverts to the agent-driven flow path and produces a `run_kind='flow'` run that never reaches the prompt seam, so it carries no memory. The owner's Memory toggle renders disabled with that reason rather than hidden. |
+| Flow-bound agent before vault activation | The legacy file is not injected into a Flow prompt. After activation, the attested persona can use the vault. |
 | Agent id with no `:` reaching the store | `MaisterError("CONFIG")` — never a silent single-level path, which would let two different agents share a file. |
 | Run dir GC'd after 7 days | `memory-snapshot.md` is gone but `runs.agent_memory_hash` remains, so "what did this agent remember when it acted" stays answerable. |
 | Agent token revoked (link disabled or detached) | The write fails at the token layer as well as the memory gate — `revokeAgentProjectTokens` fires on both disable and detach. |
 
 ## Non-goals
 
-Embeddings, vector search, or any Project Brain ledger involvement —
-`memory_recall` / `memory_propose` are untouched · cross-project or
-cross-agent sharing · encryption · an autonomous consolidation job · memory for
-flow `ai_coding` nodes or scratch runs (`run_kind = 'agent'` only) · exposing
-memory in the assistant pulse · package-shipped seed templates · a
-`memory_read` MCP tool.
+Personal scratch-run memory, graph visualization, scheduled consolidation,
+package-shipped seed notes, and memory content in the assistant pulse are outside
+ADR-210. Project Brain owns its separate `memory_recall` and `memory_propose`
+semantics. Vault vector search uses optional Brain infrastructure and promotes
+notes through governed proposals that reference the exact source revision.
 
 ## Linked artifacts
 
@@ -495,12 +521,3 @@ memory in the assistant pulse · package-shipped seed templates · a
   `web/app/api/v1/ext/agent/memory/route.ts`,
   `web/app/api/projects/[slug]/agents/[agentId]/memory/route.ts`,
   `mcp/src/tools.ts`.
-
-## Installation vault
-
-The vault owner is the qualified agent and the installation company. Admins
-can edit and review, and a non-admin needs current `specialists:read` plus
-access to every source project and any finer source restrictions. Each
-installation session proposal retains the union of projects disclosed up to
-the write, guarded links and base revision sources. The Memory tab and Inbox
-resolve the same company and agent identifiers from their URL filters.

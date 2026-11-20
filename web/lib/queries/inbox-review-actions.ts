@@ -4,12 +4,16 @@ import type {
   ReviewDecision,
   ReviewSelector,
 } from "./knowledge-memory-reviews";
+import type { AgentMemoryMutation } from "@/lib/agent-memory-vault/commands";
+import type { VaultRevision } from "@/lib/agent-memory-vault/store";
+import type { AgentMemoryProposedChange } from "@/lib/agent-memory-vault/types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { createHash } from "node:crypto";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
+import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
@@ -19,7 +23,7 @@ import {
   insertMemoryText,
   replaceMemoryText,
 } from "@/lib/agent-memory-vault/commands";
-import { vaultProposalBases } from "@/lib/agent-memory-vault/proposals";
+import { MAX_VAULT_NOTE_COUNT } from "@/lib/agent-memory-vault/limits";
 import {
   decideVaultProposalInTransaction,
   lockVaultReview,
@@ -37,15 +41,26 @@ import {
 import { lockKnowledgeWriteConsumer } from "@/lib/brain/knowledge-disclosure";
 import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
 import { reviewKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
-import { getKnowledgeWitness } from "@/lib/brain/knowledge-witnesses";
+import { getKnowledgeWitnessContent } from "@/lib/brain/knowledge-witnesses";
 import { concludeBrainProposal, getBrainProposal } from "@/lib/brain/proposals";
 import { inboxReviewReceipts as receipts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { parseCursorPayload, signCursorPayload } from "@/lib/keyset-cursor";
 import { truncateUtf16 } from "@/lib/utf8";
 
 const log = pino({
   name: "inbox-proposal-review",
   level: process.env.LOG_LEVEL ?? "info",
+});
+const previewNamespace = "maister.inbox.review-preview.v1";
+const previewPageChars = 262_144;
+const previewCursorSchema = z.strictObject({
+  scope: z.string().length(64),
+  index: z
+    .int()
+    .min(0)
+    .max(MAX_VAULT_NOTE_COUNT - 1),
+  offset: z.int().min(0),
 });
 
 type Result = Readonly<{
@@ -61,69 +76,145 @@ function sharedTx(tx: Db) {
   };
 }
 
-async function vaultPreview(tx: Db, selection: ReviewSelector, userId: string) {
-  const { proposal } = await lockVaultReview(tx, selection.id, userId);
-  const command = await readVaultProposalCommand(tx, proposal);
-  const bases = await vaultProposalBases(
-    tx,
-    proposal.vaultId,
-    proposal.operationId,
-  );
-  const patches: string[] = [];
-  let chars = 0;
+function markPatchLines(content: string, marker: string): string {
+  return content ? `${marker}${content.replaceAll("\n", `\n${marker}`)}` : "";
+}
 
-  for (const change of proposal.changes) {
-    const base = bases.find(
-      (revision) => revision.id === change.beforeRevisionId,
-    );
-    const before = base?.contentSha256 ? await readVaultPayload(tx, base) : "";
-    let after = "";
+async function renderVaultPatch(
+  tx: Db,
+  command: AgentMemoryMutation,
+  change: AgentMemoryProposedChange,
+  bases: ReadonlyMap<string, VaultRevision>,
+): Promise<string> {
+  const base =
+    change.beforeRevisionId === null
+      ? undefined
+      : bases.get(change.beforeRevisionId);
 
-    if (command.command === "create") after = command.file_text;
-    if (command.command === "rename") after = before;
-    if (command.command === "insert")
-      after = insertMemoryText(
-        before,
-        command.insert_line,
-        command.insert_text,
-      );
-    if (command.command === "str_replace")
-      after = replaceMemoryText(before, command.old_str, command.new_str);
-    if (command.command === "revert") {
-      const target = bases.find(
-        (revision) => revision.id === command.revisionId,
-      );
+  if (change.beforeRevisionId !== null && !base) throw unavailableMemory();
+  const before = base?.contentSha256 ? await readVaultPayload(tx, base) : "";
+  let after = "";
 
-      if (!target) throw unavailableMemory();
-      after = await readVaultPayload(tx, target);
-    }
-    const patch =
-      `--- ${base?.path ?? "/dev/null"}\n+++ ${change.kind === "deleted" ? "/dev/null" : change.path}\n` +
-      `${
-        before
-          ? before
-              .split("\n")
-              .map((line) => `-${line}`)
-              .join("\n")
-          : ""
-      }\n` +
-      `${
-        after
-          ? after
-              .split("\n")
-              .map((line) => `+${line}`)
-              .join("\n")
-          : ""
-      }`;
+  if (command.command === "create") after = command.file_text;
+  if (command.command === "rename") after = before;
+  if (command.command === "insert")
+    after = insertMemoryText(before, command.insert_line, command.insert_text);
+  if (command.command === "str_replace")
+    after = replaceMemoryText(before, command.old_str, command.new_str);
+  if (command.command === "revert") {
+    const target = bases.get(command.revisionId);
 
-    patches.push(truncateUtf16(patch, 262144 - chars));
-    chars += (patches.at(-1)?.length ?? 0) + 1;
-    if (chars >= 262144) break;
+    if (!target) throw unavailableMemory();
+    after = await readVaultPayload(tx, target);
   }
 
+  return [
+    `--- ${base?.path ?? "/dev/null"}`,
+    `+++ ${change.kind === "deleted" ? "/dev/null" : change.path}`,
+    markPatchLines(before, "-"),
+    markPatchLines(after, "+"),
+  ].join("\n");
+}
+
+function previewScope(
+  selection: ReviewSelector,
+  userId: string,
+  revision: string | number,
+  snapshot: string,
+): string {
+  return createHash("sha256")
+    .update(
+      canonicalCommandJson([
+        userId,
+        selection.kind,
+        selection.id,
+        revision,
+        snapshot,
+      ]),
+    )
+    .digest("hex");
+}
+
+async function pageReviewText(
+  scope: string,
+  blockCount: number,
+  renderBlock: (index: number) => Promise<string> | string,
+  rawCursor?: string,
+): Promise<{ summary: string; nextCursor: string | null }> {
+  const cursor =
+    rawCursor === undefined
+      ? { scope, index: 0, offset: 0 }
+      : previewCursorSchema.safeParse(
+          parseCursorPayload(previewNamespace, rawCursor),
+        ).data;
+
+  if (!cursor || cursor.scope !== scope || cursor.index >= blockCount)
+    throw new MaisterError("CONFIG", "Invalid proposal review continuation");
+  const fragments: string[] = [];
+  let remaining = previewPageChars;
+  let { index, offset } = cursor;
+
+  while (index < blockCount && remaining > 0) {
+    const block = await renderBlock(index);
+
+    if (offset > block.length)
+      throw new MaisterError(
+        "CONFIG",
+        "Invalid proposal review continuation offset",
+      );
+    const fragment = truncateUtf16(
+      block.slice(offset, offset + remaining + 1),
+      remaining,
+    );
+
+    fragments.push(fragment);
+    remaining -= fragment.length;
+    offset += fragment.length;
+    if (offset < block.length) break;
+    index += 1;
+    offset = 0;
+  }
+  const nextCursor =
+    index < blockCount
+      ? signCursorPayload(previewNamespace, { scope, index, offset })
+      : null;
+
+  return { summary: fragments.join(""), nextCursor };
+}
+
+async function vaultPreview(
+  tx: Db,
+  selection: ReviewSelector,
+  userId: string,
+  rawCursor?: string,
+) {
+  const { proposal, bases } = await lockVaultReview(tx, selection.id, userId);
+
+  if (proposal.state !== "pending") throw unavailableMemory();
+  const scope = previewScope(
+    selection,
+    userId,
+    proposal.version,
+    proposal.operationId,
+  );
+  const command = await readVaultProposalCommand(tx, proposal);
+  const baseById = new Map(bases.map((revision) => [revision.id, revision]));
+  const page = await pageReviewText(
+    scope,
+    proposal.changes.length,
+    async (index) =>
+      (await renderVaultPatch(
+        tx,
+        command,
+        proposal.changes[index]!,
+        baseById,
+      )) + (index + 1 < proposal.changes.length ? "\n" : ""),
+    rawCursor,
+  );
+
   return {
-    summary: truncateUtf16(patches.join("\n"), 262144),
-    sourceRevisionId: bases[0]?.id ?? null,
+    ...page,
+    sourceRevisionId: bases.at(0)?.id ?? null,
   };
 }
 
@@ -131,6 +222,7 @@ export async function getProposalReviewDetail(
   db: Db,
   userId: string,
   selection: ReviewSelector,
+  cursor?: string,
 ) {
   return db.transaction(async (tx) => {
     const {
@@ -140,47 +232,70 @@ export async function getProposalReviewDetail(
     } = await readProposalReviewMetadata(tx, userId, selection);
     const principal = { kind: "user", userId } as const;
 
-    if (selection.kind === "vault")
-      return { ...item, ...(await vaultPreview(tx, selection, userId)) };
     if (selection.kind === "knowledge") {
+      if (cursor !== undefined)
+        throw new MaisterError(
+          "CONFIG",
+          "Knowledge reviews do not have continuation pages",
+        );
       const proposal = await getKnowledgeProposal(
         sharedTx(tx),
         principal,
         selection.id,
       );
 
+      if (proposal.status !== "pending") throw unavailableMemory();
+
       return {
         ...item,
         summary: proposal.content.assertion,
         sourceRevisionId: null,
+        nextCursor: null,
       };
     }
-    if (!projectId) throw unavailableMemory();
-    const proposal = await getBrainProposal(tx, projectId, selection.id, {
-      type: "user",
-      id: userId,
-    });
-    const witnessId =
-      typeof proposal.draft.witnessId === "string"
-        ? (
-            await tx.execute(
-              sql`SELECT 1 FROM agent_memory_promotions WHERE proposal_id=${proposal.id}`,
-            )
-          ).rows[0]
-          ? proposal.draft.witnessId
-          : null
-        : null;
-    const proof = witnessId
-      ? await getKnowledgeWitness(sharedTx(tx), principal, witnessId)
-      : null;
+    let page: Awaited<ReturnType<typeof vaultPreview>>;
 
-    return {
-      ...item,
-      summary:
-        proof?.excerpt ??
-        truncateUtf16(JSON.stringify(proposal.draft, null, 2), 262144),
-      sourceRevisionId: null,
-    };
+    if (selection.kind === "vault") {
+      page = await vaultPreview(tx, selection, userId, cursor);
+    } else {
+      if (!projectId) throw unavailableMemory();
+      const proposal = await getBrainProposal(tx, projectId, selection.id, {
+        type: "user",
+        id: userId,
+      });
+
+      if (proposal.status !== "pending") throw unavailableMemory();
+      const witnessId = proposal.draft.witnessId;
+      const promoted =
+        typeof witnessId === "string" &&
+        (
+          await tx.execute(
+            sql`SELECT 1 FROM agent_memory_promotions WHERE proposal_id=${proposal.id}`,
+          )
+        ).rows.length > 0;
+      const content = promoted
+        ? await getKnowledgeWitnessContent(sharedTx(tx), principal, witnessId)
+        : JSON.stringify(proposal.draft, null, 2);
+      const digest = createHash("sha256").update(content).digest("hex");
+      const scope = previewScope(selection, userId, item.version, digest);
+
+      page = {
+        ...(await pageReviewText(scope, 1, () => content, cursor)),
+        sourceRevisionId: null,
+      };
+    }
+
+    log.debug(
+      {
+        kind: selection.kind,
+        proposalId: selection.id,
+        continued: cursor !== undefined,
+        complete: page.nextCursor === null,
+      },
+      "[FIX] proposal review page loaded",
+    );
+
+    return { ...item, ...page };
   });
 }
 

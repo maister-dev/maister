@@ -238,5 +238,5 @@ revision restrictions. Capture is versioned and locked by source consumer
 and Run before disclosure. Archive and detach retain identity values for
 existing restrictions. A project that no longer resolves cannot turn a
 previously restricted note into an unrestricted note. The [specialist runtime
-contract](../system-analytics/specialist-runtime.md#installation-agent-authority-designed--adr-211)
+contract](../system-analytics/specialist-runtime.md#installation-agent-authority-implemented--adr-211)
 owns live admission and capture bounds.

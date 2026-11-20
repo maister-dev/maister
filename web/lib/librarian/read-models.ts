@@ -9,7 +9,10 @@ import {
   effectContextSchema,
   isKnowledgeCardProposal,
 } from "./knowledge-card-types";
-import { prepareKnowledgeCard } from "./knowledge-card-effects";
+import {
+  matchesGovernedCardEffect,
+  prepareKnowledgeCard,
+} from "./knowledge-card-effects";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -228,18 +231,29 @@ export async function getLinkedWork(
         effects && effectContext.success
           ? await db.transaction(async (tx) => {
               try {
-                await authorizeSourceRestrictions(
-                  tx,
-                  { kind: "user", userId: ownerId },
-                  effectContext.data.restrictions,
-                );
-                if (card.status === "pending")
-                  await prepareKnowledgeCard(
+                if (card.status === "pending") {
+                  const prepared = await prepareKnowledgeCard(
                     tx as unknown as ExecutionDb,
                     ownerId,
                     effects,
                     effectContext.data.restrictions,
                   );
+
+                  if (
+                    !matchesGovernedCardEffect(
+                      card,
+                      effectContext.data.preview,
+                      prepared,
+                    )
+                  )
+                    return false;
+                } else {
+                  await authorizeSourceRestrictions(
+                    tx,
+                    { kind: "user", userId: ownerId },
+                    effectContext.data.restrictions,
+                  );
+                }
 
                 return projectId ? visibleById.has(projectId) : true;
               } catch (error) {

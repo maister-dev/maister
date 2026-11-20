@@ -47,7 +47,7 @@ the target and proposed change, with the existing confirmation and reject
 actions. Confirmation submits a proposal for Brain or knowledge review, or
 applies a vault edit with the owner's current edit authority. A card with
 unavailable source material hides its preview and decision controls.
-[Librarian authority](../../system-analytics/librarian-authority.md#knowledge-and-agent-vault-authority-designed--adr-213)
+[Librarian authority](../../system-analytics/librarian-authority.md#knowledge-and-agent-vault-authority-implemented--adr-213)
 defines the live checks.
 
 ## Navigation
@@ -248,6 +248,11 @@ The [peek navigation contract](../../system-analytics/run-peek-navigation.md) ow
 
 Action history opens beside the conversation. The composer area keeps a compact cue for current confirmations or unresolved work. A changed HITL question or invalidated memory suggestion loses its confirm control and leaves the Attention count. Its receipt remains in Action history. Receipts with proven linkage appear on messages in the current segment.
 
-## Knowledge and vault confirmations (Designed)
+## Knowledge and vault confirmations (Implemented)
 
-Knowledge and agent vault reads follow the current owner's rights. New mutation cards show the exact target and intended effect. Owner confirmation commits a result or exposes a refusal through the existing card refresh.
+Knowledge and agent vault reads follow the current owner's rights. New
+mutation cards show the exact target and complete effect. A proposed effect
+that exceeds the preview limit is refused before the card is created.
+A retained card with an incomplete preview has no confirm action. Owner
+confirmation commits a result or exposes a refusal through the existing card
+refresh.

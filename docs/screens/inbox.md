@@ -402,7 +402,7 @@ Agent problems have one stable project/agent card with distinct cause episodes, 
 
 ## Knowledge and memory review
 
-Eligible reviewers see a neutral Knowledge & memory group. URL filters retain the proposal source and target. A batch returns a result per selected row. Review actions revalidate authority and show stale proposals without applying them. EN and RU labels distinguish this group from amber blocked work.
+Eligible reviewers see a neutral Knowledge & memory group. URL filters retain the proposal source and target. Large vault and Brain previews show a next-page action until the last page. A batch returns a result per selected row. If delivery is uncertain, the same batch can be retried after the list refreshes. Review actions revalidate authority and show stale proposals without applying them. EN and RU labels distinguish this group from amber blocked work.
 
 Open a proposal to inspect its pending diff or evidence. Select eligible rows
 and accept or reject them together. Knowledge decisions require a reason.

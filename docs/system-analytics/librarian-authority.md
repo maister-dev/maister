@@ -132,7 +132,7 @@ flowchart LR
     D -- no --> G["refused - token, settings, admin, delegate, collect, agent memory"]
 ```
 
-### Knowledge and agent vault authority (Designed — ADR-213)
+### Knowledge and agent vault authority (Implemented — ADR-213)
 
 | Turn or operation | Admission | Effect |
 | --- | --- | --- |
@@ -144,13 +144,14 @@ flowchart LR
 | Owner confirmation | Existing owner decision surface, live owner rights, matching target/preconditions and current access to captured sources | Record one durable domain effect and audit in the same transaction as card and operation settlement. |
 | Expired, stale, redacted, revoked, or reset | Recheck under the current owner, turn and operation locks | Refuse without domain mutation. Keep the established cancellation and reset barriers. |
 
-Native knowledge and vault responses append the exact source restrictions to
-the current turn in the response transaction. The conversation, history
-search and prompt composition recheck those restrictions before including a
-reply. Summaries retain the source union of the composed excerpt so older
-message retention cannot remove their restrictions. For the rest of a
-segment that has captured guarded source material, each turn starts a fresh
-ACP session with reauthorized context.
+Native knowledge, vault and history search responses append source restrictions
+to the current turn in the response transaction. Explicit and automatic
+history include project visibility dependencies from preserved replies and
+updates alongside their exact knowledge dependencies. Automatic composition
+also retains sources from selected summaries and personal-memory revisions.
+Current visibility is rechecked before capture and again when disclosing a
+derived reply. A guarded composition starts a fresh ACP session. Later turns in
+that segment also start fresh and reauthorize the selected context.
 
 Use the existing source policies for knowledge and Brain reads. Treat the
 librarian credential as a turn principal through both the external handler
@@ -159,6 +160,11 @@ tools use a validated opaque selector. Its owner resolves from the database.
 A turn inherits source restrictions only from restored context actually
 passed to that turn. Collect exact disclosures before returning bytes.
 Freeze the union with command and evidence in the confirmation card.
+Personal memory stores project-level provenance. A turn that has inherited or
+read governed material cannot persist it through the direct remember tool or
+create a personal-memory suggestion. Both requests return `409 PRECONDITION`
+with reason `governed_memory_source` before persistence. Explicit owner edits
+remain governed by the separate personal-memory contract.
 
 A confirmed vault edit uses the human command policy. It requires
 `editSettings` for a project vault or a current global administrator for
@@ -170,9 +176,9 @@ the permitted result projection and returns the committed effect receipt.
 If the owner no longer has access, replay returns the same hidden response
 as a missing card. It cannot recreate the effect or reveal its payload.
 
-- **AV-07 (Designed).** A librarian confirmation MUST commit one
+- **AV-07 (Implemented).** A librarian confirmation MUST commit one
   owner-attributed domain effect through the durable operation barrier.
-- **AV-08 (Designed).** Tool and route admission MUST reject direct writes
+- **AV-08 (Implemented).** Tool and route admission MUST reject direct writes
   and projects or revisions beyond the owner's current visibility.
 
 ## Expectations

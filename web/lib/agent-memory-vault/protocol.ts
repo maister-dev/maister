@@ -68,6 +68,7 @@ export function renderMemoryProtocol(
   index: string | null,
   paths: readonly string[],
   cap: number,
+  maxPaths = paths.length,
 ): Readonly<{ text: string; tree: AgentMemoryTreeDescriptor }> {
   let length = indexSection(index).length + MEMORY_END.length + 1;
   const selected: string[] = [];
@@ -77,14 +78,14 @@ export function renderMemoryProtocol(
     length,
   );
 
-  if (fullLength > cap) length += omitted.length + 1;
+  if (fullLength > cap || paths.length > maxPaths) length += omitted.length + 1;
   if (length > cap)
     throw new MaisterError(
       "CONFIG",
       "Memory protocol and index exceed the prompt limit",
     );
   for (const [index, line] of all.entries()) {
-    if (length + line.length + 1 > cap) break;
+    if (index >= maxPaths || length + line.length + 1 > cap) break;
     selected.push(paths[index]!);
     length += line.length + 1;
   }

@@ -377,14 +377,14 @@ Both company agent and result-only Flow paths derive the following actions from 
 | Abandoned | Preserve cancellation/effects and close owned waits; no unattended relaunch | Terminal outbox and independent operation reconciliation |
 | Failed | Keep classified diagnostics/results; no success inference; explicit bounded retry where contract permits | Existing retry recipe and assignment revision |
 
-### Installation agent authority (Designed — ADR-211)
+### Installation agent authority (Implemented — ADR-211)
 
 The binding API represents installation reach as `installationGrant` with a version,
 `reach: active_projects`, an explicit scope list and `memoryEnabled`. A new
 binding with the field omitted is company-only. A PATCH that omits the field
 keeps the current grant. Sending null revokes it by exact binding revision.
 
-The reviewed company binding opts into `all_non_archived_projects`. Its
+The reviewed company binding opts into `active_projects`. Its
 revision freezes the allowed operations. Admission requires a current
 global administrator to configure the grant and a package definition that
 supports a repository-free single agent session. A disabled binding, archived
@@ -414,9 +414,9 @@ cannot inherit a later grant.
 | --- | --- | --- |
 | List / get project metadata | `project_list`, GET `/api/v1/ext/projects`; `project_get`, GET `/api/v1/ext/projects/{slug}/directory`. Scope `projects:read`. | Return only project ID, slug and display name for installation tokens. A manual user needs `readBoard`. Capture every project returned in the same snapshot. |
 | Read task list / detail | `task_list`, `task_get`, GET `/api/v1/ext/projects/{slug}/tasks` with optional `/{taskId}`. Scope `tasks:read`. | Apply target ownership and `readBoard` for manual users. Use the bounded task read DTO with matching owner, and carry any stricter sources attached to returned task content. |
-| Read Run summary and activity | `run_get`, `run_activity`, GET `/api/v1/ext/runs/{runId}` or `/{runId}/activity`. Scopes `runs:read` for a summary and `activity:read` for activity metadata. | Resolve project from the Run. Manual minimum is `readBoard` for summary and `readRepoFiles` for activity. The activity response includes event identity, kind and timestamp. Capture the project before returning the response. |
+| Read Run summary and activity | `run_get`, `run_activity`, GET `/api/v1/ext/runs/{runId}` or `/{runId}/activity`. Scopes `runs:read` for a summary and `activity:read` for activity metadata. | Resolve project from the Run. Manual minimum is `readBoard` for summary and `readRepoFiles` for activity. The activity response includes event identity, kind and timestamp. Retain activity as a protected `project_context` source before returning the response. |
 | Read bounded Observatory summaries | `observatory_summary`, GET `/api/v1/ext/observatory/summary`. Scope `observatory:read`. | Accept an optional project slug, period `24h/7d/30d` default `7d`, limit 1–50 default 20 and a scoped cursor. Return per-project Run count, success count and measured elapsed duration, filtered before grouping. Require manual `readBoard` on every project contributor. Capture exact aggregate contributors in the same query snapshot. |
-| Recall Project Brain | `memory_recall`, GET `/api/v1/ext/projects/{slug}/memory`. Scope `memory:read`. | Apply Brain read policy and exact restrictions. Capture project plus each visible hit's restrictions before bytes leave the handler. |
+| Recall Project Brain | `memory_recall`, GET `/api/v1/ext/projects/{slug}/memory`. Scope `memory:read`. | Apply Brain read policy. The owned result set excludes items with additional restrictions. Retain the queried project as a protected `project_context` source before disclosure. |
 | Read structured knowledge | `knowledge_search`, `knowledge_get`, GET `/api/v1/ext/knowledge` or `/{recordId}`. Scope `knowledge:read`. | Apply existing company/project owner and native-record source policies. Capture every returned exact record source plus its own restrictions. |
 | Submit a governed proposal | `memory_propose`, `knowledge_propose`, `memory_promote` on their explicit proposal APIs. | The operation requires the frozen matching submit grant, advisory-only/pending path, and current destination rights. The output carries the full captured source union. |
 | Read or propose in the session vault | `memory`, `memory_search`, `memory_tags`, `memory_backlinks` through the self-vault facade. | `agent_memory:read` reads current visible revisions. `agent_memory:propose` allows pending changes. Capture every disclosed exact revision. |
@@ -427,7 +427,10 @@ deployment, task creation or Run launching. Tool discovery and route
 admission both enforce the table. Current nonarchived projects are selected
 at the read boundary before rows, counts and search rankings are produced.
 A scoped cursor cannot change the reader, grant, filter or target. Hidden
-targets and missing targets share a response.
+targets and missing targets share a response. Project, task and activity
+MCP tools accept the `nextCursor` from the preceding page. Only returned
+rows and explicitly addressed, authorized targets contribute sources.
+Lookahead rows stay outside the source receipt.
 
 Each successful disclosure extends the Run's bounded source receipt in the
 response transaction, including returned metadata, search results, prompt
@@ -441,14 +444,18 @@ inherited revision sources. A+B remains A+B if a later edit removes a
 citation. A deleted or hidden source makes a dependent revision unavailable
 to a non-admin who cannot see it. Redaction denies payload even to an admin.
 Source-denied resume refuses before session dispatch.
+Protected project context keeps the member-level read requirement for reads,
+proposals and resume. A replacement retains the source Run's exact disclosure
+capture. Event admissions carry these restrictions through their frozen
+assignment sources.
 
-- **AV-05, AV-14 (Designed).** The capture transaction MUST record all
+- **AV-05, AV-14 (Implemented).** The capture transaction MUST record all
   returned project/source contributors before disclosure and before an
   installation mutation can snapshot the same Run.
-- **AV-06 (Designed).** Installation credential admission MUST enforce
+- **AV-06 (Implemented).** Installation credential admission MUST enforce
   reviewed binding version, trigger-derived actor, operation allow-list,
   active project selection, current source constraints and cap/chain guards.
-- **AV-15 (Designed).** Installation tool discovery MUST match the
+- **AV-15 (Implemented).** Installation tool discovery MUST match the
   authenticated route allow-list.
 
 ## Expectations

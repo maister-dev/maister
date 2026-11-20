@@ -1,10 +1,10 @@
 import "server-only";
 
 import type { PendingVaultProposal } from "./proposals";
-import type { VaultAccess } from "./store";
+import type { VaultAccess, VaultRevision } from "./store";
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { parseAgentMemoryMutation } from "./commands";
 import { authorizeHumanInstallationVault } from "./installation-access";
@@ -14,7 +14,6 @@ import { vaultProposalBases } from "./proposals";
 import {
   applyVaultMutationInTransaction,
   lockVault,
-  readVaultPayload,
   unavailableMemory,
 } from "./store";
 
@@ -22,6 +21,7 @@ import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions"
 import {
   agentMemoryProposalPayloads as payloads,
   agentMemoryProposals as proposals,
+  agentMemoryRevisionPayloads as revisionPayloads,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
@@ -33,6 +33,7 @@ export async function lockVaultReview(
   reviewer: VaultAccess;
   proposal: PendingVaultProposal;
   enabled: boolean;
+  bases: VaultRevision[];
 }> {
   const owner = (
     await tx.execute<{
@@ -102,16 +103,35 @@ export async function lockVaultReview(
           : source,
       ),
     );
-    for (const revision of await vaultProposalBases(
+    const bases = await vaultProposalBases(
       tx,
       owner.vault_id,
       proposal.operationId,
-    )) {
+    );
+
+    for (const revision of bases) {
       if (!(await reviewer.canRead(tx, revision))) throw unavailableMemory();
-      if (revision.contentSha256 !== null) await readVaultPayload(tx, revision);
+    }
+    const contentIds = bases
+      .filter(({ contentSha256 }) => contentSha256 !== null)
+      .map(({ id }) => id);
+
+    if (contentIds.length > 0) {
+      const content = await tx
+        .select({ id: revisionPayloads.revisionId })
+        .from(revisionPayloads)
+        .where(
+          and(
+            eq(revisionPayloads.vaultId, owner.vault_id),
+            inArray(revisionPayloads.revisionId, contentIds),
+          ),
+        );
+
+      if (content.length !== new Set(contentIds).size)
+        throw unavailableMemory();
     }
 
-    return { reviewer, proposal, enabled };
+    return { reviewer, proposal, enabled, bases };
   } catch (error) {
     if (
       isMaisterError(error) &&

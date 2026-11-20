@@ -154,7 +154,7 @@ async function pageDirectory(
     throw new MaisterError("CONFLICT", "Memory listing changed while paging");
   const children = new Map<
     string,
-    { entry: DirectoryEntry; sources: VaultRevision[] }
+    { entry: DirectoryEntry; witness: VaultRevision }
   >();
 
   for (const revision of revisions) {
@@ -164,11 +164,8 @@ async function pageDirectory(
       separator < 0
         ? revision.path
         : `${command.path}/${child.slice(0, separator)}`;
-    const existing = children.get(path);
 
-    if (existing) {
-      existing.sources.push(revision);
-    } else {
+    if (!children.has(path)) {
       children.set(path, {
         entry: {
           path,
@@ -177,7 +174,9 @@ async function pageDirectory(
           revisionId: separator < 0 ? revision.id : null,
           hash: separator < 0 ? revision.contentSha256 : null,
         },
-        sources: [revision],
+        // Only the folder's existence is disclosed. One visible descendant
+        // proves it, while the generation still fences the full subtree.
+        witness: revision,
       });
     }
   }
@@ -194,7 +193,7 @@ async function pageDirectory(
 
   await access.capture(
     db,
-    page.flatMap(({ sources }) => sources),
+    page.map(({ witness }) => witness),
   );
 
   return {

@@ -10,9 +10,10 @@ import {
   type InstallationRunAuthority,
 } from "./installation-authority";
 
+import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 
-const maximumSources = 256;
+export const MAX_INSTALLATION_SOURCES = 256;
 const log = pino({
   name: "installation-source-capture",
   level: process.env.LOG_LEVEL ?? "info",
@@ -24,10 +25,10 @@ export async function installationRunProjects(
 ): Promise<string[]> {
   const result =
     await tx.execute(sql`SELECT project_id FROM agent_installation_run_sources WHERE run_id=${runId}
-    ORDER BY project_id COLLATE "C" LIMIT ${maximumSources + 1}`);
+    ORDER BY project_id COLLATE "C" LIMIT ${MAX_INSTALLATION_SOURCES + 1}`);
 
   if (
-    result.rows.length > maximumSources ||
+    result.rows.length > MAX_INSTALLATION_SOURCES ||
     result.rows.some((row) => typeof row.project_id !== "string")
   )
     throw new MaisterError(
@@ -36,6 +37,25 @@ export async function installationRunProjects(
     );
 
   return result.rows.map(({ project_id }) => String(project_id));
+}
+
+/** The caller holds the Run lock while retaining or transferring source authority. */
+export async function installationRunSourceCapture(
+  tx: SqlTransaction,
+  runId: string,
+) {
+  const [row] = (
+    await tx.execute(sql`SELECT knowledge_access FROM runs WHERE id=${runId}`)
+  ).rows;
+  const capture = knowledgeAccessCaptureSchema.safeParse(row?.knowledge_access);
+
+  if (!capture.success || capture.data.state !== "complete")
+    throw new MaisterError(
+      "PRECONDITION",
+      "The installation execution source capture is unavailable",
+    );
+
+  return capture.data;
 }
 
 /** Serialize with the Run credential and vault writer before projecting a response. */
@@ -58,7 +78,7 @@ export async function captureInstallationProjects(
   const combined = new Set([...prior, ...projectIds]);
 
   if (
-    combined.size > maximumSources ||
+    combined.size > MAX_INSTALLATION_SOURCES ||
     [...combined].some(
       (id) =>
         id.length < 1 ||

@@ -5,7 +5,7 @@ import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { randomUUID } from "node:crypto";
 
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -17,6 +17,11 @@ import {
   vi,
 } from "vitest";
 
+import {
+  librarianMessages,
+  librarianSegmentSummaries,
+  librarianTurns,
+} from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   admitNextLibrarianTurn,
@@ -26,7 +31,10 @@ import {
   clearLibrarianHistory,
   previewLibrarianClear,
 } from "@/lib/librarian/clear-history";
-import { lockOwnerConversation } from "@/lib/librarian/conversation";
+import {
+  appendConversationMessage,
+  lockOwnerConversation,
+} from "@/lib/librarian/conversation";
 import {
   listPersonalMemory,
   rememberPersonalMemory,
@@ -35,6 +43,7 @@ import { admitLibrarianOperation } from "@/lib/librarian/operations";
 import * as librarianRuntime from "@/lib/librarian/runtime";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
 import { queueLibrarianSummary } from "@/lib/librarian/summary";
+import { librarianMessageDtos } from "@/lib/librarian/view";
 import {
   runLibrarianTurnSweep,
   stopLibrarianTurn,
@@ -45,8 +54,14 @@ import {
   unknownOutcomeError,
   type FakeExecutionHost,
 } from "@/test-support/fake-execution-host";
-import { seedProject, seedRun } from "@/test-support/execution-host-seed";
 import {
+  seedProject,
+  seedProjectRow,
+  seedRun,
+} from "@/test-support/execution-host-seed";
+import {
+  addProjectMember,
+  removeProjectMember,
   seedActiveUser,
   seedLibrarianPlatform,
 } from "@/test-support/librarian-seed";
@@ -541,6 +556,112 @@ describe("IT-LCV-06: session/resume only under the same epoch and runner", () =>
     ).toMatchObject([
       { id: memoryId, content: "Keep the switch context", revision: 1 },
     ]);
+  });
+
+  it("AV-08 starts a fresh guarded context and masks a derivative reply after project access changes", async () => {
+    const contextDb = database.db;
+    const ownerId = await seedActiveUser(db);
+    const messageProject = await seedProjectRow(db);
+    const summaryProject = await seedProjectRow(db);
+    const memoryProject = await seedProjectRow(db);
+
+    for (const project of [messageProject, summaryProject, memoryProject]) {
+      await addProjectMember(db, {
+        projectId: project.id,
+        userId: ownerId,
+        role: "member",
+      });
+    }
+    const first = await send(ownerId, "Open a general discussion.");
+
+    await settle();
+    await contextDb.transaction(async (tx) => {
+      const { conversation, segment } = await lockOwnerConversation(
+        tx,
+        ownerId,
+      );
+
+      await appendConversationMessage(tx, {
+        conversationId: conversation.id,
+        segmentId: segment.id,
+        authorKind: "librarian",
+        body: "A project-only reply under the legacy capture format.",
+        turnId: first.turn!.id,
+        sourceProjectIds: [messageProject.id],
+      });
+      await tx.insert(librarianSegmentSummaries).values({
+        segmentId: segment.id,
+        revision: 1,
+        fromSeq: 1n,
+        toSeq: 1n,
+        content: {
+          decisions: ["Project-only summary."],
+          proposals: [],
+          uncertainties: [],
+        },
+        sourceProjectIds: [summaryProject.id],
+        forgetGeneration: 0,
+        historyGeneration: 0,
+      });
+    });
+    await rememberPersonalMemory(
+      ownerId,
+      {
+        kind: "fact",
+        scope: "project",
+        projectSlug: memoryProject.slug,
+        content: "Project-scoped memory.",
+      },
+      contextDb,
+    );
+
+    reply("The project context informed this answer.");
+    const sent = await send(ownerId, "Review the current discussion.");
+
+    await settle();
+    expect(creates().at(-1)).not.toHaveProperty("resumeSessionId");
+    for (const text of [
+      "A project-only reply",
+      "Project-only summary.",
+      "Project-scoped memory.",
+    ])
+      expect(prompts.at(-1)).toContain(text);
+    const [turn] = await contextDb
+      .select({ capture: librarianTurns.knowledgeAccess })
+      .from(librarianTurns)
+      .where(eq(librarianTurns.id, sent.turn!.id));
+
+    expect(turn.capture?.restrictions).toHaveLength(3);
+    expect(turn.capture?.restrictions).toEqual(
+      expect.arrayContaining(
+        [messageProject, summaryProject, memoryProject].map(({ id }) => ({
+          kind: "project_visibility",
+          projectId: id,
+        })),
+      ),
+    );
+    const responses = await contextDb
+      .select()
+      .from(librarianMessages)
+      .where(
+        and(
+          eq(librarianMessages.turnId, sent.turn!.id),
+          eq(librarianMessages.authorKind, "librarian"),
+        ),
+      );
+
+    expect(
+      await librarianMessageDtos(responses, ownerId, contextDb),
+    ).toMatchObject([
+      { body: "The project context informed this answer.", masked: false },
+    ]);
+    await removeProjectMember(db, {
+      projectId: messageProject.id,
+      userId: ownerId,
+    });
+    expect(
+      await librarianMessageDtos(responses, ownerId, contextDb),
+    ).toMatchObject([{ body: null, masked: true }]);
   });
 
   it("keeps the active response on A and starts its queued successor on saved B exactly once", async () => {

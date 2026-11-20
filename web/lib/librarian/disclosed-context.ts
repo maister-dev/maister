@@ -10,6 +10,51 @@ import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { librarianConversations, librarianTurns } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 
+type LibrarianSources = readonly KnowledgeAccessRestriction[];
+
+export function librarianProjectSources(
+  projectIds: readonly string[],
+): LibrarianSources {
+  return [...new Set(projectIds)].map((projectId) => ({
+    kind: "project_visibility",
+    projectId,
+  }));
+}
+
+export function librarianMessageSources(
+  message: {
+    authorKind: string;
+    sourceProjectIds: readonly string[];
+    turnId: string | null;
+  },
+  turnSources: ReadonlyMap<string, LibrarianSources | null>,
+): LibrarianSources | null {
+  if (message.authorKind === "owner") return [];
+  const exact = message.turnId ? turnSources.get(message.turnId) : [];
+
+  if (!exact) return null;
+
+  return [...exact, ...librarianProjectSources(message.sourceProjectIds)];
+}
+
+/** Lock coarse sources before committing a context that uses them. */
+export async function recheckLibrarianProjects(
+  tx: Db,
+  ownerId: string,
+  sources: LibrarianSources,
+): Promise<void> {
+  const projectIds = sources.flatMap((source) =>
+    source.kind === "project_visibility" ? [source.projectId] : [],
+  );
+
+  if (projectIds.length === 0) return;
+  await authorizeSourceRestrictions(
+    tx,
+    { kind: "user", userId: ownerId },
+    librarianProjectSources(projectIds),
+  );
+}
+
 export async function visibleLibrarianCapture(
   tx: Db,
   ownerId: string,

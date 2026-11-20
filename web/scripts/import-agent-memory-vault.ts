@@ -2,7 +2,10 @@ import { parseArgs } from "node:util";
 
 import pino from "pino";
 
-import { importLegacyAgentMemory, type LegacyMemoryImportCommand } from "@/lib/agent-memory-vault/import-legacy";
+import {
+  importLegacyAgentMemory,
+  type LegacyMemoryImportCommand,
+} from "@/lib/agent-memory-vault/import-legacy";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { runtimeRoot } from "@/lib/runtime-root";
@@ -24,7 +27,7 @@ async function main(): Promise<void> {
   if (values.help) {
     process.stdout.write(
       "Scan by default. Use one of --import, --activate or --cleanup with --actor-user-id <admin-id>.\n" +
-      "Set MAISTER_RUNTIME_ROOT to the legacy runtime root. Stop the old service and drain its executions before activation.\n",
+        "Set MAISTER_RUNTIME_ROOT to the legacy runtime root. Stop the old service and drain its executions before activation.\n",
     );
 
     return;
@@ -35,7 +38,10 @@ async function main(): Promise<void> {
   if (values.activate) actions.push("activate");
   if (values.cleanup) actions.push("cleanup");
   if (actions.length > 1 || (actions.length > 0 && !values["actor-user-id"]))
-    throw new MaisterError("CONFIG", "Select one memory import action and supply its administrator identity");
+    throw new MaisterError(
+      "CONFIG",
+      "Select one memory import action and supply its administrator identity",
+    );
   const db = getDb();
 
   try {
@@ -52,7 +58,14 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   // Database errors can include content from a failed insert.
   if (isMaisterError(error))
-    log.error({ code: error.code, details: error.details, message: error.message }, "vault import refused");
-  else log.error({ errorType: error instanceof Error ? error.name : typeof error }, "vault import failed");
+    log.error(
+      { code: error.code, details: error.details, message: error.message },
+      "vault import refused",
+    );
+  else
+    log.error(
+      { errorType: error instanceof Error ? error.name : typeof error },
+      "vault import failed",
+    );
   process.exitCode = 1;
 });

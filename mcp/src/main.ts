@@ -23,6 +23,7 @@ import {
   isToolInToolset,
   TOOL_SPECS,
   toolNamesForToolset,
+  toolSpecForToolset,
 } from "./tools";
 
 const log = pino({
@@ -54,7 +55,7 @@ function buildServer(transportType: "stdio" | "http"): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: toolNamesForToolset(TOOLSET, INSTALLATION_SCOPES).map((name) => ({
       name,
-      ...TOOL_SPECS[name],
+      ...toolSpecForToolset(name, TOOLSET),
       ...(TOOLSET === "librarian" &&
         name === "memory_propose" && {
           description:

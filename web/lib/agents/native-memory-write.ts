@@ -72,7 +72,12 @@ export async function prepareNativeVaultSources(
   owner: ExecutionMemoryOwner,
 ) {
   if (!(await usesNativeKnowledgeTransport(tx, owner.runId)))
-    return { restrictions: [], allowWrite: () => {}, capture: async () => {} };
+    return {
+      capturesSources: false as const,
+      restrictions: [],
+      allowWrite: () => {},
+      capture: async () => {},
+    };
 
   const principal = { kind: "token" as const, tokenId: owner.tokenId };
   const consumer = await lockKnowledgeReadConsumer(tx, principal);
@@ -82,6 +87,7 @@ export async function prepareNativeVaultSources(
   const restrictions = consumer.capture.restrictions;
 
   return {
+    capturesSources: true as const,
     restrictions,
     allowWrite() {
       const safe = restrictions.every(

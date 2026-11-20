@@ -31,6 +31,87 @@ afterAll(async () => {
   await database?.stop();
 });
 
+it("AV-08 captures governed history excerpts in the receiving turn", async () => {
+  const { GET: search } =
+    await import("@/app/api/v1/ext/librarian/history/search/route");
+  const { appendConversationMessage, lockOwnerConversation } =
+    await import("@/lib/librarian/conversation");
+  const db = database.db;
+  const userId = await seedActiveUser(db);
+  const projectId = await seedProject(db);
+
+  await addProjectMember(db, { projectId, userId, role: "member" });
+  const priorTurn = await seedLibrarianTurn(db, userId);
+  const source = { kind: "project_context", projectId };
+
+  await db.transaction(async (tx) => {
+    const { conversation, segment } = await lockOwnerConversation(tx, userId);
+
+    await appendConversationMessage(tx, {
+      conversationId: conversation.id,
+      segmentId: segment.id,
+      authorKind: "librarian",
+      body: "The release witness remains project-private.",
+      turnId: priorTurn,
+    });
+  });
+  await database.pool.query(
+    "UPDATE librarian_turns SET knowledge_access=$2 WHERE id=$1",
+    [
+      priorTurn,
+      {
+        schemaVersion: 2,
+        state: "complete",
+        generation: 1,
+        restrictions: [source],
+      },
+    ],
+  );
+  const turnId = await seedLibrarianTurn(db, userId);
+  const { tokenId, secret } = await issueLibrarianTurnToken(
+    {
+      turnId,
+      ownerUserId: userId,
+      scopes: scopesForLibrarianTurn("owner_message"),
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    db,
+  );
+
+  await database.pool.query(
+    "UPDATE librarian_turns SET token_id=$2 WHERE id=$1",
+    [turnId, tokenId],
+  );
+  const request = () =>
+    new NextRequest(
+      "http://localhost/api/v1/ext/librarian/history/search?q=witness",
+      { headers: { authorization: `Bearer ${secret}` } },
+    );
+  const found = await search(request());
+
+  expect(found.status).toBe(200);
+  expect(await found.json()).toMatchObject({
+    hits: [{ excerpt: "The release witness remains project-private." }],
+  });
+  expect(
+    (
+      await database.pool.query(
+        "SELECT knowledge_access->'restrictions' AS sources FROM librarian_turns WHERE id=$1",
+        [turnId],
+      )
+    ).rows,
+  ).toEqual([{ sources: [source] }]);
+
+  await database.pool.query(
+    "DELETE FROM project_members WHERE project_id=$1 AND user_id=$2",
+    [projectId, userId],
+  );
+  expect(await (await search(request())).json()).toEqual({
+    hits: [],
+    truncated: false,
+  });
+});
+
 it("AV-08 reads native knowledge through the turn's live access and refuses direct writes", async () => {
   const get = (await import("@/app/api/v1/ext/knowledge/route")).GET;
   const post = (await import("@/app/api/v1/ext/knowledge/proposals/route"))

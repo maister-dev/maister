@@ -24,6 +24,8 @@ import {
 import { librarianConfig } from "./config";
 import { lockOwnerConversation } from "./conversation";
 import {
+  librarianMessageSources,
+  recheckLibrarianProjects,
   visibleLibrarianCapture,
   visibleLibrarianTurnSources,
 } from "./disclosed-context";
@@ -266,24 +268,17 @@ async function prepareStart(
     let currentRestrictions = priorRestrictions;
 
     if (turn.variant === "summary" && message.authorKind !== "owner") {
-      const source = message.turnId
-        ? (
-            await visibleLibrarianTurnSources(tx, ref.userId, [message.turnId])
-          ).get(message.turnId)
-        : [];
-      const projects = await visibleLibrarianCapture(tx, ref.userId, {
-        schemaVersion: 2,
-        state: "complete",
-        generation: 1,
-        restrictions: message.sourceProjectIds.map((projectId) => ({
-          kind: "project_visibility",
-          projectId,
-        })),
-      });
+      const sources = librarianMessageSources(
+        message,
+        await visibleLibrarianTurnSources(
+          tx,
+          ref.userId,
+          message.turnId ? [message.turnId] : [],
+        ),
+      );
 
-      if (!source || !projects)
-        return { refused: true, reason: "source_access_changed" };
-      currentRestrictions = [...priorRestrictions, ...source, ...projects];
+      if (!sources) return { refused: true, reason: "source_access_changed" };
+      currentRestrictions = [...priorRestrictions, ...sources];
     }
     const current: ComposerMessage = {
       id: message.id,
@@ -333,8 +328,35 @@ async function prepareStart(
           eq(runSessions.sessionName, "default"),
         ),
       );
+    const restrictions = canonicalKnowledgeRestrictions([
+      ...currentRestrictions,
+      ...composed.messageIds.flatMap(
+        (id) => retrieved.sourceMessages.get(id) ?? [],
+      ),
+      ...Object.keys(composed.summaryRevisions).flatMap(
+        (id) => retrieved.sourceSummaries.get(id) ?? [],
+      ),
+      ...Object.keys(composed.memoryItemRevisions).flatMap(
+        (id) => retrieved.sourceMemoryItems.get(id) ?? [],
+      ),
+    ]);
+
+    if (
+      !knowledgeRestrictionsSchema.safeParse(restrictions).success ||
+      Buffer.byteLength(JSON.stringify(restrictions)) > 65536
+    )
+      return { refused: true, reason: "source_capture_limit" };
+    try {
+      await recheckLibrarianProjects(tx, ref.userId, restrictions);
+    } catch (error) {
+      if (!isMaisterError(error)) throw error;
+
+      return { refused: true, reason: "source_access_changed" };
+    }
     const mode =
-      turn.variant === "summary" || retrieved.guardedHistory
+      turn.variant === "summary" ||
+      retrieved.guardedHistory ||
+      restrictions.length > 0
         ? "new"
         : decideSessionMode({
             acpSessionId: session?.acpSessionId ?? null,
@@ -347,21 +369,6 @@ async function prepareStart(
             runnerSnapshot: runner,
           });
 
-    const restrictions = canonicalKnowledgeRestrictions([
-      ...currentRestrictions,
-      ...composed.messageIds.flatMap(
-        (id) => retrieved.sourceMessages.get(id) ?? [],
-      ),
-      ...Object.keys(composed.summaryRevisions).flatMap(
-        (id) => retrieved.sourceSummaries.get(id) ?? [],
-      ),
-    ]);
-
-    if (
-      !knowledgeRestrictionsSchema.safeParse(restrictions).success ||
-      Buffer.byteLength(JSON.stringify(restrictions)) > 65536
-    )
-      return { refused: true, reason: "source_capture_limit" };
     await writeContextSnapshot(tx, {
       turnId,
       composed,
@@ -420,6 +427,7 @@ async function prepareStart(
         chars: composed.charCount,
         truncated: composed.truncated,
         epochMatch: mode === "resume",
+        sourceRestrictionCount: restrictions.length,
       },
       "librarian turn started",
     );

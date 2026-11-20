@@ -11,12 +11,14 @@ import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import { installationAgentGrantSchema } from "./installation-access-types";
-import { assertCurrentInstallationSources } from "./installation-source-capture";
+import {
+  assertCurrentInstallationSources,
+  installationRunSourceCapture,
+} from "./installation-source-capture";
 
 import { projectRolesForActions } from "@/lib/authz";
 import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions";
 import { lockCurrentNativeKnowledgeToken } from "@/lib/brain/knowledge-token-lock";
-import { knowledgeAccessCaptureSchema } from "@/lib/company/types";
 import { MaisterError } from "@/lib/errors";
 
 const principal = z.discriminatedUnion("kind", [
@@ -191,22 +193,12 @@ export async function requireInstallationCredential(
   // The native credential lock already serializes disclosure on this Run.
   // Recheck its prior inputs before any adapter can read a new resource.
   await assertCurrentInstallationSources(tx, context);
-  const [row] = (
-    await tx.execute(
-      sql`SELECT knowledge_access FROM runs WHERE id=${context.runId}`,
-    )
-  ).rows;
-  const capture = knowledgeAccessCaptureSchema.safeParse(row?.knowledge_access);
+  const capture = await installationRunSourceCapture(tx, context.runId);
 
-  if (!capture.success || capture.data.state !== "complete")
-    throw new MaisterError(
-      "PRECONDITION",
-      "The installation execution source capture is unavailable",
-    );
   await authorizeSourceRestrictions(
     tx,
     { kind: "execution", runId: context.runId, nodeAttemptId: null },
-    capture.data.restrictions,
+    capture.restrictions,
   );
 
   return context;

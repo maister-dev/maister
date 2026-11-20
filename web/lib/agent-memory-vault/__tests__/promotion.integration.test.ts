@@ -33,7 +33,8 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
     const admin = await seedActiveUser(db.db, { role: "admin" });
     const principal = { kind: "user" as const, userId: admin };
     const agentId = "fixture:evidence";
-    const path = "/memories/index.md";
+    const path = "/memories/notes/evidence.md";
+    const content = `${"Restricted witness\n".repeat(500)}Final retained line`;
     const prepare = prepareHumanProjectVault({
       userId: admin,
       slug: project.slug,
@@ -62,7 +63,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
       parseAgentMemoryMutation({
         command: "create",
         path,
-        file_text: "Restricted witness",
+        file_text: content,
         ifHash: null,
         ifRevisionId: null,
         requestKey: "promote-source",
@@ -184,7 +185,19 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
 
     expect(
       await getKnowledgeWitness(db.db, principal, witness.id),
-    ).toMatchObject({ excerpt: "Restricted witness" });
+    ).toMatchObject({
+      excerpt: content.slice(0, 8192),
+      excerptTruncated: true,
+    });
+    expect(
+      await getProposalReviewDetail(db.db, admin, {
+        kind: "brain",
+        id: brain.proposalId,
+      }),
+    ).toMatchObject({
+      summary: expect.stringMatching(/Final retained line$/),
+      nextCursor: null,
+    });
     const decision = await reviewKnowledgeProposal(db.db, {
       proposalId: structured.proposalId,
       principal,
@@ -198,7 +211,7 @@ it("AV-16 promotes an exact vault revision, requires review, and revokes derived
     const selector = { recordId: decision.acceptedRecordId! };
 
     expect(await getKnowledgeRecord(db.db, principal, selector)).toMatchObject({
-      assertion: "Restricted witness",
+      assertion: content,
     });
     await redactMemoryRevision(db.db, admin, note.revisionId, {
       reason: "Withdraw source",

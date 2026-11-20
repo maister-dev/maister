@@ -46,6 +46,15 @@ export function canonicalKnowledgeRestrictions(
   return [...entries.keys()].sort().map((key) => entries.get(key)!);
 }
 
+export function fitsKnowledgeCapture(
+  restrictions: readonly KnowledgeAccessRestriction[],
+): boolean {
+  return (
+    knowledgeRestrictionsSchema.safeParse(restrictions).success &&
+    Buffer.byteLength(JSON.stringify(restrictions), "utf8") <= 65536
+  );
+}
+
 /** Destination ownership already supplies its own read gate; narrower record/source dependencies remain. */
 export function additionalKnowledgeRestrictions(
   owner: Owner,
@@ -59,10 +68,7 @@ export function additionalKnowledgeRestrictions(
     ),
   );
 
-  if (
-    !knowledgeRestrictionsSchema.safeParse(retained).success ||
-    Buffer.byteLength(JSON.stringify(retained), "utf8") > 65536
-  )
+  if (!fitsKnowledgeCapture(retained))
     throw new MaisterError(
       "PRECONDITION",
       "Inherited knowledge source access exceeds its bounded contract",
@@ -243,10 +249,7 @@ export async function recordKnowledgeDisclosure(
     ...restrictions,
   ]);
 
-  if (
-    !knowledgeRestrictionsSchema.safeParse(combined).success ||
-    Buffer.byteLength(JSON.stringify(combined), "utf8") > 65536
-  )
+  if (!fitsKnowledgeCapture(combined))
     throw new MaisterError(
       "PRECONDITION",
       "Native knowledge source capture reached its bound; narrow the requested work",

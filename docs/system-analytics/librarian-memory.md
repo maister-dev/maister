@@ -43,7 +43,10 @@ The whole domain is **Implemented**.
   `librarian_segments` row.
 - **History search** (Implemented) — `GET /api/v1/ext/librarian/history/search`
   (`librarian_history_search`) over the generated `librarian_messages.body_tsv`,
-  at most 20 hits, labelled `from earlier conversation`.
+  at most 20 hits, labelled `from earlier conversation`. Returned excerpts
+  retain the original exact dependencies and project visibility in the current
+  turn. The same source model applies to automatic context. See
+  [Librarian authority](librarian-authority.md) for the live checks.
 - **Clear-history preview** (Implemented) — counts plus a `previewDigest`; the clear
   refuses a stale digest.
 - **Retention** (Implemented) — `MAISTER_LIBRARIAN_HISTORY_RETENTION_DAYS` (default 365)
@@ -176,6 +179,8 @@ sequenceDiagram
 ## Expectations
 
 - **LMM-01:** Direct memory writes MUST require an owner-message turn token. Instructions require an explicit owner "remember" request, but the server cannot infer the meaning of free-form text; other inferred items MUST remain visible suggestions until the owner accepts a card. The turn-kind gate on `POST /api/v1/ext/librarian/memory` and the card decide route enforce the server-observable boundary (Implemented).
+  Governed-source restrictions also apply to direct writes and suggestion
+  creation. See [Librarian authority](librarian-authority.md#knowledge-and-agent-vault-authority-implemented--adr-213).
 - **LMM-02:** An item MUST carry kind, scope, source refs, origin, validity and revision, and an edit MUST write a new revision, enforced by `librarian_memory_item_revisions` and trigger `librarian_memory_items_content_immutable` (Implemented).
 - **LMM-03:** Every use MUST re-check visibility of each item's and summary's source projects, and a mixed summary with an invisible source MUST be dropped and queued for rebuild, enforced by the composer's `source_project_ids` re-check (Implemented).
 - **LMM-04:** Automatic context MUST include only the active segment's messages and summaries, and older segments MUST be reachable only through the explicit history-search tool, labelled in the reply, enforced by the composer and `librarian_history_search` (Implemented).
