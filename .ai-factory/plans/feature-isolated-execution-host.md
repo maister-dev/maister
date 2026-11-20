@@ -143,9 +143,9 @@ The checked-in benchmark at `ad86d0cfc` ran on native Ubuntu 24.04.5 x64, kernel
 
 A repeat at `3100f6b33` on the same Ubuntu and Node versions, with ordinary OS caches and without concurrent contract validation, measured **437.7/502.8 ms p50/p95** across 20 fresh-host launches and **442.2/513.5 ms** across 30 reused-host launches. The fresh-host test starts a new daemon and SQLite store per sample. It does not flush OS caches. The separate concurrent run remains evidence of observed timing variation on this host.
 
-#### Proposed P0 budgets awaiting owner approval
+#### Owner-approved P0 budgets
 
-| Release measurement | Proposed limit | Comparison |
+| Release measurement | Approved limit | Comparison |
 | --- | --- | --- |
 | Ubuntu 24.04 x64 synthetic ACP launch, fresh and reused host | 575 ms p50 / 650 ms p95 for each class | Quiet native x64 run. About 25% headroom over the higher observed percentile of each class after rounding. |
 | macOS ARM64 synthetic ACP launch, fresh and reused host | 160 ms p50 / 170 ms p95 for each class | Higher percentile across the documented native ARM64 runs, with about 25% headroom after rounding. |
@@ -153,7 +153,7 @@ A repeat at `3100f6b33` on the same Ubuntu and Node versions, with ordinary OS c
 | Hosted macOS Intel web lanes | 45 minutes per part including cleanup and upload | Observed 33:05–36:57. Existing 54-minute execution cutoff and six-minute cleanup/upload reserve apply. |
 | Hosted Linux runtime/supervisor and macOS aggregation | 3 minutes and 1 minute 15 seconds respectively, including cleanup and upload | Observed 2:00 and 0:47. |
 
-Use the checked-in 20 fresh-host and 30 reused-host sampling protocol on matched OS, runtime, workload and cache conditions. Repeat the hosted lanes on the release images and measure the enforced counterpart before claiming performance acceptance. The proposal has no approved or measured limits for additional classes or architectures. T01 and the P2 approval gate stay open.
+Use the checked-in 20 fresh-host and 30 reused-host sampling protocol on matched OS, runtime, workload and cache conditions. Repeat the hosted lanes on the release images and measure the enforced counterpart before claiming performance acceptance. The owner approved these budgets on 2026-11-20, satisfying the P2 approval gate. Existing CI hard cutoffs still apply. T01 remains open for the remaining baseline and inventory evidence. Additional classes and architectures require their own measured baseline and approval.
 
 #### Ubuntu installed-service qualification attempt (2026-11-20)
 
