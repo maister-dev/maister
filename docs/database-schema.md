@@ -21,6 +21,63 @@ supported.
 
 ## Tables
 
+### ACP context observations (Implemented, ADR-215)
+
+Migration `0358_acp_context` adds the numeric projections and the nullable
+failure reasons on existing attempts and gate results. Forward migration
+`0359_acp_context_projection_state` adds point-readable rollups, context binding
+indexes and an independent transcript change clock.
+It seeds counts from existing compaction rows and initializes each existing
+transcript scope at revision 1 with its retained marker high-water sequence.
+For inline host compactions, the first canonical event identifies keys that
+0358 stored with a JSONB-escaped adapter ID. Migration 0359 restores the
+literal ID in the lifecycle key and rekeys the existing transcript marker.
+Message IDs, sequence positions and content are preserved.
+
+`run_context_usage` holds a scope’s last measurement or its reset. Its key is
+`(run_id, execution_host_id, assignment_id, assignment_epoch, host_session_id, node_attempt_id)`.
+The session-wide row has a NULL attempt and the key treats NULL as equal.
+An attributed update writes both rows in the projection cursor transaction.
+The pair `used_tokens` / `size_tokens`, `observed_at` and
+`usage_run_sequence` is all present or all NULL. Use bigint for sequences
+and range checks for safe integers in token counts. `last_run_sequence`
+advances at reset. `active_compactions`, `completed_compactions` and
+`compaction_run_sequence` track that scope’s compaction observations.
+`coverage_incomplete` preserves evidence of a pruned observation.
+Reads by run and attempt use a scope index.
+
+`run_context_compactions` gives the same physical identity one row per
+bounded `compaction_id`, with nullable attempt attribution, source
+sequences and lifecycle timestamps. A start uses the actual start event.
+The terminal may exist without a start. `interrupted` denotes physical exit
+without an adapter terminal. The scope/status index supports lifecycle
+projection, and the run/attempt index supports ledger reads. Transcript
+content stays in `run_messages`.
+
+`run_context_transcript_revisions` has one row per `(run_id, node_attempt_id)`
+with NULLS NOT DISTINCT. A NULL attempt covers markers from the entire run.
+A marker or its displayed token evidence advances the revision for the whole
+run and its owning attempt in the transaction that changes it.
+`last_run_sequence` preserves the greatest canonical sequence recorded for
+those mutations. A repair or late commit can increase `revision` without
+advancing this sequence. Snapshot reads use these scoped point reads without
+aggregating retained transcript rows.
+
+Run deletion cascades all three tables. Attempt deletion cascades its scoped
+rows. Bind to the activated incarnation by physical identity, even when
+activation projects after the measurement. Reject cross-run attempt
+attribution at the projector boundary. The current binding index orders
+incarnations by active-state precedence, creation time and incarnation ID.
+`run_session_incarnations.context_node_attempt_id` is the nullable attempt
+associated with the create ACK. Its partial index supports exact-attempt
+binding before any usage sample. Legacy incarnations can bind through retained
+usage attribution. Attempt deletion sets the link to NULL.
+
+Preserve old `node_attempts`, `gate_results` and receipts during upgrade. Add
+nullable bounded `node_attempts.error_reason` and gate technical outcome
+fields. Existing scratch, agent and consensus evidence store safe reason tokens
+in their bounded outcome metadata.
+
 ### Installation company and authority (Implemented storage)
 
 Migration `0230_company_ownership` creates one server-generated `companies` identity without a project. `company_grants` has explicit principal/action/revision, optional confirmation classes, server creator/time and revocation. Live principal/action uniqueness is independent of revoked history; CHECKs constrain actions, principal shape and confirmation classes. No grants are seeded. Current active-user authorization is `requireCompanyActionForUser` in `web/lib/authz.ts`; global administrator status does not grant company content access. Native knowledge reads enforce record-specific restrictions; session-only administrator grant list/create/revoke and native review HTTP are implemented locally in [Company Brain](system-analytics/company-brain.md). Main `0232_company_grant_requests` adds nullable `creationKey`/`creationDigest`, `revocationKey`/`revocationDigest`, `revokedBy` and `revocationReason` to the existing grants, preserving legacy NULL metadata. A partial creation-receipt unique index and immutable policy/revocation trigger guard exact deliveries. Brain `0011_proposal_source_access` adds bounded nullable `sourceRestrictions` and a server-derived `sourceAclKey` to proposals, partitions canonical input deduplication by source access and freezes submitted/settled authority snapshots. Logical dependency references never obstruct project deletion; company-owned history survives deletion of an originating project.

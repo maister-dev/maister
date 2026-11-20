@@ -253,6 +253,10 @@ leads and a muted `reason: <token>` line follows. A raw code is never
 rendered, and a cause with neither copy nor reason renders no notice. The
 `source` is not rendered.
 
+## Context usage
+
+The live session view and selected node transcript show context for their own session or attempt. A typed prompt limit appears in the attempt, gate or terminal diagnostic. Failed gates preserve the action’s existing recovery boundary. See [ACP context observations](../../system-analytics/acp-context.md).
+
 ## Data & APIs
 
 - `getRunDetail(runId)` supplies run, project, branch, workspace, HITL,

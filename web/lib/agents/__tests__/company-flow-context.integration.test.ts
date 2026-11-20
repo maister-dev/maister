@@ -74,6 +74,7 @@ import {
 
 import { recoverPendingAgentQuestions } from "@/lib/services/agent-question";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
@@ -221,7 +222,7 @@ const result = {
 const manifest = {
   schemaVersion: 1,
   name: "rah-control",
-  compat: { engine_min: "3.12.0", engine_max: "3.12.0" },
+  compat: { engine_min: "3.12.0", engine_max: MAISTER_ENGINE_VERSION },
   execution: { workspace: "none", completion: "result" },
   result: {
     export: {
@@ -1110,7 +1111,8 @@ it("refuses changed required schema bytes under the same retained package identi
 });
 
 it("honors the pinned Flow maximum on a newer host before execution allocation", async () => {
-  const compatibility = useEngineVersion("3.13.0");
+  const major = Number(MAISTER_ENGINE_VERSION.split(".")[0]);
+  const compatibility = useEngineVersion(`${major + 1}.0.0`);
 
   try {
     await expect(

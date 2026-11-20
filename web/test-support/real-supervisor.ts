@@ -45,12 +45,18 @@ export const DEFAULT_FIXTURE = "mock-acp-lifecycle.mjs";
 
 const LOG_TAIL_BYTES = 16 * 1024;
 
+const fixtureAdapterEnvironment = {
+  claude: "MAISTER_ADAPTER_BINARY_CLAUDE",
+  codex: "MAISTER_ADAPTER_BINARY_CODEX",
+} as const;
+
 export type RealSupervisorOptions = {
   runtimeRoot?: string;
   stateDir?: string;
   workspaceRoots?: string[];
   fixture?: string;
   fixtureArgs?: string[];
+  fixtureAdapters?: readonly (keyof typeof fixtureAdapterEnvironment)[];
   port?: number;
   env?: Record<string, string>;
   logFile?: string;
@@ -225,6 +231,12 @@ async function startRealSupervisorAttempt(
     fixturePath,
     options.fixtureArgs ?? [],
   );
+  const fixtureOverrides = Object.fromEntries(
+    (options.fixtureAdapters ?? ["claude"]).map((adapter) => [
+      fixtureAdapterEnvironment[adapter],
+      wrapper,
+    ]),
+  );
   const env: NodeJS.ProcessEnv = {
     ...scrubbedEnv(),
     NODE_ENV: "production",
@@ -233,7 +245,7 @@ async function startRealSupervisorAttempt(
     MAISTER_RUNTIME_ROOT: runtimeRoot,
     MAISTER_EXECUTION_HOST_STATE_DIR: stateDir,
     MAISTER_WORKSPACE_ROOTS: workspaceRoots.join(path.delimiter),
-    MAISTER_ADAPTER_BINARY_CLAUDE: wrapper,
+    ...fixtureOverrides,
     MAISTER_HEARTBEAT_INTERVAL_MS: "1000",
     MAISTER_SHUTDOWN_GRACE_MS: "1000",
     MAISTER_KILL_GRACE_MS: "500",

@@ -254,6 +254,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-212](#adr-212-unified-optional-knowledge-and-memory-review) | Unified optional knowledge and memory review | Accepted | 2026-11-19 |
 | [ADR-213](#adr-213-librarian-knowledge-and-vault-confirmations) | Librarian knowledge and vault confirmations | Accepted | 2026-11-19 |
 | [ADR-214](#adr-214-operational-preparation-and-undispatched-cancellation) | Operational preparation and undispatched cancellation | Proposed | 2026-11-20 |
+| [ADR-215](#adr-215-acp-context-observations-and-overflow-recovery) | ACP context observations and overflow recovery | Accepted | 2026-11-20 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2452,5 +2453,14 @@ Full record: [`decisions/adr-213.md`](decisions/adr-213.md)
 **Date:** 2026-11-20
 
 Full record: [`decisions/adr-214.md`](decisions/adr-214.md)
+
+---
+
+### ADR-215: ACP context observations and overflow recovery
+
+**Status:** Accepted
+**Date:** 2026-11-20
+
+Full record: [`decisions/adr-215.md`](decisions/adr-215.md)
 
 ---

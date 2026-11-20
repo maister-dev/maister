@@ -7,12 +7,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   executionCommands,
+  nodeAttempts,
+  runContextUsage,
   runs,
   runSessions,
   runSessionIncarnations,
 } from "@/lib/db/schema";
 import { mintAssignment } from "@/lib/execution-host/assignments";
 import { applyCreateAck } from "@/lib/execution-host/create-ack";
+import { readContextSnapshot } from "@/lib/runs/context-reader";
 import { seedLocalHost } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDb,
@@ -39,6 +42,7 @@ async function ack(
   runId: string,
   assignmentId: string,
   hostSessionId: string,
+  nodeAttemptId: string | null = null,
 ): Promise<void> {
   await expect(
     db.transaction((tx) =>
@@ -46,7 +50,7 @@ async function ack(
         runId,
         sessionName: "default",
         assignmentId,
-        nodeAttemptId: null,
+        nodeAttemptId,
         result: {
           sessionId: hostSessionId,
           acpSessionId: null,
@@ -65,6 +69,61 @@ async function incarnation(hostSessionId: string) {
 
   return row;
 }
+
+it("selects the successor attempt binding before its first canonical event", async () => {
+  const runId = randomUUID();
+  const attemptId = randomUUID();
+  const firstSession = `host-${randomUUID()}`;
+  const successor = `host-${randomUUID()}`;
+
+  await db.insert(runs).values({
+    id: runId,
+    runKind: "flow",
+    flowVersion: "fixture",
+    flowRevision: "fixture",
+    status: "Running",
+  });
+  await db.insert(nodeAttempts).values({
+    id: attemptId,
+    runId,
+    nodeId: "context",
+    nodeType: "ai_coding",
+    status: "Running",
+  });
+  const assignment = await db.transaction((tx) =>
+    mintAssignment(tx as unknown as Db, { runId, hostId, reason: "launch" }),
+  );
+
+  await ack(runId, assignment.id, firstSession, attemptId);
+  await db.insert(runContextUsage).values({
+    runId,
+    executionHostId: hostId,
+    assignmentId: assignment.id,
+    assignmentEpoch: assignment.epoch,
+    hostSessionId: firstSession,
+    nodeAttemptId: attemptId,
+    usedTokens: 80,
+    sizeTokens: 100,
+    observedAt: new Date(),
+    usageRunSequence: 4n,
+    lastRunSequence: 4n,
+  });
+  const previous = await readContextSnapshot(db, runId, attemptId);
+
+  expect(previous.usage).toMatchObject({ used: 80, size: 100 });
+  await ack(runId, assignment.id, successor, attemptId);
+  await expect(
+    readContextSnapshot(db, runId, attemptId),
+  ).resolves.toMatchObject({
+    incarnationId: (await incarnation(successor))?.id,
+    bindingObservedAt: expect.any(String),
+    lifecycleSequence: null,
+    contextSequence: null,
+    usage: null,
+    activeCompactions: 0,
+    completedCompactions: 0,
+  });
+}, 60_000);
 
 describe("retireSupersededSessionIncarnations", () => {
   it("names a lower-epoch retirement assignment_superseded and a same-epoch one session_superseded", async () => {

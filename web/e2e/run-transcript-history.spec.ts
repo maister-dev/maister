@@ -613,7 +613,11 @@ for (const surface of ["agent", "node"] as const) {
     await expect(
       transcript.getByText("Mixed user prompt", { exact: true }),
     ).toHaveCount(1);
-    await expect(transcript).toContainText("123 / 456");
+    // The seeded legacy transcript row has no canonically attributed reading.
+    // Its tool and message neighbors must still render in the same order.
+    await expect(transcript.getByTestId("context-usage")).toContainText(
+      "Not reported",
+    );
     await transcript
       .getByRole("button", { name: /Thinking/ })
       .evaluate((element: HTMLButtonElement) => element.click());

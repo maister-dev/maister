@@ -102,7 +102,8 @@ const log = pino({
 // 3.11.1 fixes native safe-tool arbitration and read-only facade classification.
 // 3.12.0 adds declared company result-only graphs over the existing execution
 // ledger, with current authority, required results and durable native recovery.
-export const MAISTER_ENGINE_VERSION = "3.12.0";
+// 3.13.0 adds typed ACP retry selectors.
+export const MAISTER_ENGINE_VERSION = "3.13.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

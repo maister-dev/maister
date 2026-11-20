@@ -2101,14 +2101,18 @@ export async function* launchLocalPackageAssistantStaged(
       owner: launchOwner,
     });
     const dialogStatus = await readScratchDialogStatus(db, runId);
-    const actionResult = await postProcessFlowAssistantTurn({
-      db,
-      localPackage: pkg,
-      runId,
-      actionId: postprocessActionId,
-      lockGeneration: args.body.sessionId,
-      assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
-    });
+    const actionResult =
+      promptResult.stopReason === "end_turn"
+        ? await postProcessFlowAssistantTurn({
+            db,
+            localPackage: pkg,
+            runId,
+            actionId: postprocessActionId,
+            lockGeneration: args.body.sessionId,
+            assertCanApply: () =>
+              assertHoldsLock(pkg.id, args.body.sessionId, db),
+          })
+        : undefined;
 
     log.info(
       {
@@ -2545,11 +2549,17 @@ export async function dispatchQueuedScratchMessages(
   skipped?: "not_waiting" | "nothing_queued" | "cas_lost";
 }> {
   const [candidate] = await db
-    .select({ dialogStatus: scratchRuns.dialogStatus })
+    .select({
+      dialogStatus: scratchRuns.dialogStatus,
+      errorMetadata: scratchRuns.errorMetadata,
+    })
     .from(scratchRuns)
     .where(eq(scratchRuns.runId, runId));
 
-  if (candidate?.dialogStatus !== "WaitingForUser")
+  if (
+    candidate?.dialogStatus !== "WaitingForUser" ||
+    candidate.errorMetadata?.reason === "context_exhausted"
+  )
     return { dispatched: false, skipped: "not_waiting" };
   const [queued] = await db
     .select({ id: runMessages.id })
@@ -2593,11 +2603,17 @@ export async function dispatchQueuedScratchMessages(
   const claim = await db.transaction(async (tx: Db) => {
     await lockScratchRunRows(tx, runId);
     const [scratch] = await tx
-      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .select({
+        dialogStatus: scratchRuns.dialogStatus,
+        errorMetadata: scratchRuns.errorMetadata,
+      })
       .from(scratchRuns)
       .where(eq(scratchRuns.runId, runId));
 
-    if (scratch?.dialogStatus !== "WaitingForUser")
+    if (
+      scratch?.dialogStatus !== "WaitingForUser" ||
+      scratch.errorMetadata?.reason === "context_exhausted"
+    )
       return { skipped: "not_waiting" as const };
     const [oldest] = await tx
       .select()
@@ -2927,6 +2943,14 @@ async function appendScratchUserMessage(args: {
       } = await loadScratchRows(tx, args.runId);
       const activeSession = await loadActiveRunSession(tx, args.runId);
 
+      if (scratch.errorMetadata?.reason === "context_exhausted")
+        throw new MaisterError(
+          "ACP_PROTOCOL",
+          "Scratch session context window exhausted",
+          {
+            details: { reason: "context_exhausted" },
+          },
+        );
       const arm = assertScratchCanAcceptUserMessage({
         runId: args.runId,
         runStatus: lockedRun.status,
@@ -3313,14 +3337,18 @@ export async function sendLocalPackageAssistantMessage(args: {
       owner: scratchOwnerFromIntent(appended.promptIntent),
     });
     const dialogStatus = await readScratchDialogStatus(db, args.runId);
-    const actionResult = await postProcessFlowAssistantTurn({
-      db,
-      localPackage: pkg,
-      runId: args.runId,
-      actionId: postprocessActionId,
-      lockGeneration: args.body.sessionId,
-      assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
-    });
+    const actionResult =
+      promptResult.stopReason === "end_turn"
+        ? await postProcessFlowAssistantTurn({
+            db,
+            localPackage: pkg,
+            runId: args.runId,
+            actionId: postprocessActionId,
+            lockGeneration: args.body.sessionId,
+            assertCanApply: () =>
+              assertHoldsLock(pkg.id, args.body.sessionId, db),
+          })
+        : undefined;
 
     log.info(
       {

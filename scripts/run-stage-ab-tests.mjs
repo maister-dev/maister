@@ -106,7 +106,7 @@ export function isolationFiles(platform = process.platform) {
     [...laneSuites.isolation, "test-support/__tests__/linux-isolation-driver.integration.test.ts"];
 }
 
-/** Select ordinary integration once; production isolation and load tests own separate invocations. */
+/** Select routine integration once. Isolation, load and credentialed probes run separately. */
 export function webRemainderFiles(files) {
   const separatelyOwned = new Set([
     ...laneSuites.web,
@@ -114,6 +114,7 @@ export function webRemainderFiles(files) {
     "test-support/__tests__/execution-ab-preflight.integration.test.ts",
     "lib/execution-host/__tests__/event-plane-load.integration.test.ts",
     "lib/execution-host/__tests__/host-span-load.integration.test.ts",
+    "lib/scratch-runs/__tests__/context-provider.integration.test.ts",
   ]);
 
   assert.equal(new Set(files).size, files.length, "integration inventory contains duplicate suites");

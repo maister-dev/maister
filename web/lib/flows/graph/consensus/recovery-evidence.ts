@@ -28,6 +28,7 @@ export async function loadConsensusRecoveryEvidence(
       id: nodeAttempts.id,
       status: nodeAttempts.status,
       errorCode: nodeAttempts.errorCode,
+      errorReason: nodeAttempts.errorReason,
     })
     .from(nodeAttempts)
     .where(
@@ -56,7 +57,11 @@ export async function loadConsensusRecoveryEvidence(
     .limit(1);
 
   if (conflict) return { incompleteSynthesis: false, quarantined: true };
-  if (attempt.status !== "Failed" || attempt.errorCode !== "CRASH")
+  if (
+    attempt.status !== "Failed" ||
+    (attempt.errorCode !== "CRASH" &&
+      !(attempt.errorCode === "ACP_PROTOCOL" && attempt.errorReason))
+  )
     return { incompleteSynthesis: false, quarantined: false };
   const [witness] = await db
     .select({ id: artifactInstances.id })

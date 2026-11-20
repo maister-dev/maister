@@ -48,6 +48,16 @@ test("scratch detail lands on the conversation with an enabled composer", async 
 
   await expect(conversation).toBeVisible();
   await expect(conversation).toContainText("Please tweak the README.");
+  const context = conversation.getByTestId("context-usage");
+
+  await expect(context).toContainText("Not reported");
+  await expect(context.getByRole("meter")).toHaveCount(0);
+  await context.getByRole("button", { name: "Context usage details" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Context usage details" }),
+  ).toContainText("Not reported");
+  await page.keyboard.press("Escape");
 
   // WaitingForUser → the composer is primary and enabled.
   const composer = page.locator(
@@ -229,6 +239,7 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
 // turn stays open until the spec drops `<sessionId>.turn-release`.
 test("sending while the agent is busy shows a Queued row and the composer stays usable", async ({
   page,
+  baseURL,
 }) => {
   test.setTimeout(150_000);
   const fx = loadScratchDetailFixture();
@@ -247,7 +258,7 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
       // The fixture's own branch `maister/<slug>` would shadow the derived
       // `maister/<slug>/scratch/...` ref.
       branchName: `e2e-busy-send/${randomUUID().slice(0, 8)}`,
-      prompt: `${E2E_HOLD_TURN_MARKER} Keep working until told otherwise.`,
+      prompt: `${E2E_HOLD_TURN_MARKER} e2e:observe-context Keep working until told otherwise.`,
       reasoningEffort: "high",
       attachments: [],
     },
@@ -288,6 +299,22 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
     )
     .toBe("Running");
 
+  let streamOpens = 0;
+  let detailReads = 0;
+
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === `/api/scratch-runs/${runId}`
+    )
+      detailReads++;
+
+    if (
+      request.resourceType() === "eventsource" &&
+      new URL(request.url()).pathname === `/api/runs/${runId}/stream`
+    )
+      streamOpens++;
+  });
   await page.goto(`/scratch-runs/${runId}`);
   const composer = page.locator(
     '[data-testid="scratch-message-composer"] [data-testid="capability-composer-input"]',
@@ -296,8 +323,48 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
   await expect(page.getByTestId("scratch-composer-stop")).toBeVisible({
     timeout: 30_000,
   });
+  const context = page
+    .getByTestId("scratch-conversation")
+    .getByTestId("context-usage");
+
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "72000",
+  );
+  await expect(context).toContainText("Compacting context");
+  expect(streamOpens).toBe(1);
+  const detailReadsBeforeReload = detailReads;
+
+  await page.reload();
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "72000",
+  );
+  await expect(context).toContainText("Compacting context");
+  const hostSessionId = await singleValue<string>(
+    "SELECT host_session_id AS value FROM run_sessions WHERE run_id = $1",
+    [runId],
+  );
+
+  // The page boot and the ready catch-up both read the current detail.
+  await expect
+    .poll(() => detailReads)
+    .toBeGreaterThanOrEqual(detailReadsBeforeReload + 2);
+  const initialDetailReads = detailReads;
+
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-refresh`),
+    "",
+  );
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "74000",
+  );
+  expect(detailReads).toBe(initialDetailReads);
   await composer.click();
-  await page.keyboard.type("Queued while the agent works");
+  const queuedText = "e2e:context-output-limit Queued while the agent works";
+
+  await page.keyboard.type(queuedText);
   const sent = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -322,13 +389,107 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
   // The composer stays usable while the agent works.
   await expect(composer).toBeEditable();
 
-  // End the running turn: the queued message is dispatched as the next turn,
-  // so its row loses the badge.
-  const hostSessionId = await singleValue<string>(
-    "SELECT host_session_id AS value FROM run_sessions WHERE run_id = $1",
+  // Observe compaction before the held prompt settles.
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-complete`),
+    "",
+  );
+  await expect(context).toContainText("Not reported", { timeout: 30_000 });
+  await expect(context.getByRole("meter")).toHaveCount(0);
+  await expect(
+    page.getByText("Context compacted", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Context compaction failed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Context compaction cancelled", { exact: true }),
+  ).toBeVisible();
+  const compaction = page.getByText("Context compacted", { exact: true });
+
+  await expect(compaction).toHaveCount(1);
+  await compaction.click();
+  await expect(page.getByText("Synthetic compaction summary")).toBeVisible();
+  const compactionSequence = await singleValue<string>(
+    `SELECT run_sequence::text AS value FROM execution_events
+       WHERE run_id = $1 AND ingest_disposition = 'accepted'
+         AND event_type = 'session.update'
+         AND payload->'update'->>'sessionUpdate' = 'compaction_update'
+         AND payload->'update'->>'compactionId' = 'e2e-context'
+         AND payload->'update'->>'status' = 'completed'`,
     [runId],
   );
 
+  if (!compactionSequence)
+    throw new Error("Completed compaction has no durable event sequence");
+  const replay = await page.evaluate(
+    async ({ id, sequence }) => {
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 10_000);
+
+      try {
+        const response = await fetch(
+          `/api/runs/${id}/stream?context=1&lastEventId=0`,
+          {
+            signal: abort.signal,
+          },
+        );
+
+        if (!response.ok || !response.body)
+          throw new Error("Context replay did not open");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let events = "";
+        const targetObserved = (): boolean =>
+          events
+            .split("\n\n")
+            .slice(0, -1)
+            .some(
+              (frame) =>
+                frame.startsWith(`id: ${sequence}\n`) &&
+                frame.includes('"type":"session.update"'),
+            );
+
+        while (
+          !events.includes('"type":"session.context_snapshot"') ||
+          !targetObserved()
+        ) {
+          const next = await reader.read();
+
+          if (next.done) break;
+          events += decoder.decode(next.value, { stream: true });
+        }
+
+        return {
+          snapshot: events.includes('"type":"session.context_snapshot"'),
+          targetObserved: targetObserved(),
+          summaryDisclosed: events.includes("Synthetic compaction summary"),
+        };
+      } finally {
+        clearTimeout(timeout);
+        abort.abort();
+      }
+    },
+    { id: runId, sequence: compactionSequence },
+  );
+
+  expect(replay).toEqual({
+    snapshot: true,
+    targetObserved: true,
+    summaryDisclosed: false,
+  });
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-after`),
+    "",
+  );
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "35000",
+  );
+  await expect(page.getByText("After 35,000 / 100,000 tokens")).toBeVisible();
+  await expect(badge).toHaveText("Queued");
+
+  // End the running turn so the queued message can be dispatched.
   writeFileSync(
     path.join(STUB_SESSIONS_DIR, `${hostSessionId}.turn-release`),
     "",
@@ -339,8 +500,20 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
   expect(
     await singleValue<string>(
       "SELECT delivery AS value FROM run_messages WHERE run_id = $1 AND content = $2",
-      [runId, "Queued while the agent works"],
+      [runId, queuedText],
     ),
   ).toBe("prompted");
   expect((await launching).status()).toBe(200);
+  const promptLimit = page.getByTestId("scratch-context-limit");
+
+  await expect(promptLimit).toContainText(
+    "The response reached the agent’s output limit.",
+  );
+  await expect(composer).toBeEditable();
+  await page
+    .context()
+    .addCookies([{ name: "NEXT_LOCALE", value: "ru", url: baseURL! }]);
+  await page.reload();
+  await expect(page.getByText("Контекст сжат", { exact: true })).toBeVisible();
+  await expect(promptLimit).toContainText("Ответ достиг лимита вывода агента.");
 });

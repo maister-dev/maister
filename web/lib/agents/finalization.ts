@@ -23,6 +23,7 @@ import { and, eq, inArray, is, isNull, ne, sql } from "drizzle-orm";
 import { NodePgTransaction } from "drizzle-orm/node-postgres";
 import pino from "pino";
 
+import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import {
@@ -231,6 +232,8 @@ function agentTerminalCause(
 ): TerminalCause {
   if (resultFailure)
     return { code: "CONFIG", reason: resultFailure, source: "agent" };
+  if (isAcpContextFailureReason(reason))
+    return { code: "ACP_PROTOCOL", reason, source: "agent" };
   // A code as the reason says nothing the code does not.
   const token =
     reason !== undefined && !isMaisterErrorCode(reason)

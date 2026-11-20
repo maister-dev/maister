@@ -575,7 +575,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
         "SELECT to_jsonb(a) AS value FROM node_attempts a WHERE id='legacy-native-actor-attempt'",
       )
     ).rows[0]?.value,
-  ).toEqual({ ...attemptBefore, knowledge_actor: null });
+  ).toEqual({ ...attemptBefore, knowledge_actor: null, error_reason: null });
   expect(
     (
       await database.pool.query(

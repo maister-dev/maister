@@ -139,21 +139,34 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
   // replaces said the assistant "sits below the editor, not hidden behind a
   // view switch" — that described a layout the editor no longer has, which is
   // why the assertion below was waiting on a permanently hidden element.
-  await page.getByTestId("local-editor-ai-toggle").click();
-  await expect(page.getByTestId("local-editor-ai-panel")).toBeVisible();
-  await expect(page.getByTestId("studio-ai-tab")).toBeVisible();
+  await page
+    .getByTestId("local-editor-ai-toggle")
+    .filter({ visible: true })
+    .click();
+  await expect(
+    page.getByTestId("local-editor-ai-panel").filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("studio-ai-tab").filter({ visible: true }),
+  ).toBeVisible();
 
   // The separate `local-editor-ai-collapse` control no longer exists — the one
   // `local-editor-ai-toggle` opened above is now also what closes the panel
   // (it drives `aiOpen`, and the right slot swaps back to the inspector). The
   // round-trip below is still worth asserting: it proves the toggle is a real
   // toggle and that the assistant survives being hidden and shown again.
-  const collapse = page.getByTestId("local-editor-ai-toggle");
+  const collapse = page
+    .getByTestId("local-editor-ai-toggle")
+    .filter({ visible: true });
 
   await collapse.click();
-  await expect(page.getByTestId("studio-ai-tab")).toBeHidden();
+  await expect(
+    page.getByTestId("studio-ai-tab").filter({ visible: true }),
+  ).toBeHidden();
   await collapse.click();
-  await expect(page.getByTestId("studio-ai-tab")).toBeVisible();
+  await expect(
+    page.getByTestId("studio-ai-tab").filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByTestId("studio-ai-runner")).toBeVisible();
   await expect(page.getByTestId("studio-ai-runner")).toBeEnabled({
     timeout: 15_000,
@@ -171,7 +184,7 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
   await page
     .getByTestId("studio-ai-prompt")
     .getByTestId("capability-composer-input")
-    .fill("Add a review gate to the flow");
+    .fill("e2e:studio-keep-session Add a review gate to the flow");
   await expect(launch).toBeEnabled({ timeout: 15_000 });
 
   // Launching POSTs to the assistant route (asserts the lock) → the staged
@@ -201,6 +214,13 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
       .getByTestId("local-editor-ai-panel")
       .getByText("Waiting for you", { exact: true }),
   ).toContainText("Waiting for you", { timeout: 30_000 });
+
+  await expect(
+    page
+      .getByTestId("local-editor-ai-panel")
+      .filter({ visible: true })
+      .getByTestId("context-usage"),
+  ).toContainText("Not reported");
 
   const messageResponse = page.waitForResponse(
     (response) =>

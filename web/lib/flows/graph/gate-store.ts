@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AcpContextFailureReason } from "../../../../runtime/acp-context-failure";
+
 import type {
   GateResult,
   GateResultStatus,
@@ -216,8 +218,17 @@ export async function markGateFailed(
   id: string,
   verdict?: GateVerdict,
   db?: Db,
+  promptFailureReason?: AcpContextFailureReason,
 ): Promise<void> {
-  await transition(id, "failed", verdict ? { verdict } : {}, db);
+  await transition(
+    id,
+    "failed",
+    {
+      ...(verdict ? { verdict } : {}),
+      ...(promptFailureReason ? { promptFailureReason } : {}),
+    },
+    db,
+  );
 }
 
 export async function markGateStale(id: string, db?: Db): Promise<void> {

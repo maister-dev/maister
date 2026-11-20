@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  isAcpContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../../../runtime/acp-context-failure";
+
 import type {
   ArtifactInstance,
   ArtifactInstanceInsert,
@@ -56,6 +61,7 @@ export type ConsensusVerdictEvidence = ParsedConsensusVerdict & {
   round: number;
   rawOutputArtifactId: string | null;
   errorCode?: string;
+  errorReason?: AcpContextFailureReason;
   truncated?: boolean;
   textBounds?: ConsensusTextBounds;
 };
@@ -83,6 +89,7 @@ function invalidStorage(): MaisterError {
 // field: its rows feed critique prompts.
 function normalizeDisagreements(value: ConsensusRoundDisagreementStorage): {
   rows: ConsensusDisagreement[];
+  errorReason?: AcpContextFailureReason;
   truncated?: boolean;
   textBounds?: ConsensusTextBounds;
 } {
@@ -103,6 +110,9 @@ function normalizeDisagreements(value: ConsensusRoundDisagreementStorage): {
 
   return {
     rows: value.rows,
+    ...(isAcpContextFailureReason(value.errorReason)
+      ? { errorReason: value.errorReason }
+      : {}),
     truncated: value.truncated,
     ...(textBounds ? { textBounds } : {}),
   };
@@ -212,6 +222,13 @@ export async function loadConsensusDraftEvidence(args: {
     if (artifact) artifacts.set(expectedId, artifact);
   }
 
+  const failureReasons = await loadConsensusDraftFailureReasons({
+    db: args.db,
+    runIds: draftRows
+      .filter((row) => row.status === "Failed")
+      .map((row) => row.id),
+  });
+
   return draftRows
     .map((row: ConsensusDraftRunRow): ConsensusDraftEvidence => {
       const payload = row.triggerPayload;
@@ -242,7 +259,11 @@ export async function loadConsensusDraftEvidence(args: {
               ? "partial"
               : "complete",
         stopReason: meta?.stopReason ?? null,
-        reason: meta?.reason ?? null,
+        reason:
+          meta?.reason ??
+          (isAcpContextFailureReason(failureReasons[row.id])
+            ? failureReasons[row.id]
+            : null),
       };
     })
     .sort((a, b) => a.participantId.localeCompare(b.participantId));
@@ -334,6 +355,9 @@ export async function loadConsensusVerdicts(args: {
         typeof row.rawOutputArtifactId === "string"
           ? row.rawOutputArtifactId
           : null,
+      ...(row.errorCode === "ACP_PROTOCOL" && storage.errorReason
+        ? { errorReason: storage.errorReason }
+        : {}),
       ...(typeof row.errorCode === "string"
         ? { errorCode: row.errorCode }
         : {}),
@@ -366,6 +390,7 @@ export type ConsensusVerdictWrite = ConsensusVerdictCell &
     result: ParsedConsensusVerdict;
     rawOutput: string;
     errorCode?: string;
+    errorReason?: AcpContextFailureReason;
     inputTextBounds?: ConsensusTextBounds;
     // Bytes the generation lost past its 1 MiB retention budget; recorded on
     // the raw-output artifact, which is otherwise only an excerpt of `rawOutput`.
@@ -435,6 +460,8 @@ export async function writeConsensusVerdict(
   const rawOutputArtifactId = consensusVerdictArtifactId(args);
   const raw = boundConsensusText(args.rawOutput, CONSENSUS_EXCERPT_CAP_BYTES);
   const outputDropped = args.outputDroppedBytes ?? 0;
+  const errorReason =
+    args.errorCode === "ACP_PROTOCOL" ? args.errorReason : undefined;
   const rawBounds = {
     bytes: raw.bounds.bytes + outputDropped,
     retainedBytes: raw.bounds.retainedBytes,
@@ -483,6 +510,7 @@ export async function writeConsensusVerdict(
         rows: args.result.disagreements,
         truncated: !!args.inputTextBounds?.droppedBytes,
         ...(args.inputTextBounds ? { textBounds: args.inputTextBounds } : {}),
+        ...(errorReason ? { errorReason } : {}),
       },
       confidence: args.result.confidence,
       rawOutputArtifactId,
@@ -512,6 +540,7 @@ export async function writeConsensusVerdict(
     round: args.round,
     ...args.result,
     rawOutputArtifactId,
+    ...(errorReason ? { errorReason } : {}),
     ...(args.inputTextBounds?.droppedBytes
       ? { truncated: true, textBounds: args.inputTextBounds }
       : {}),

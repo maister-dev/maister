@@ -14,6 +14,15 @@ export const initialRunStreamLifecycle: RunStreamLifecycle = {
   retryAttempt: 0,
 };
 
+export function runStreamCursor(
+  frame: { type: string; runSequence?: string },
+  eventId: string,
+): string | null {
+  return frame.runSequence === eventId && /^(0|[1-9][0-9]*)$/.test(eventId)
+    ? eventId
+    : null;
+}
+
 const MAX_RETRY_ATTEMPTS = 3;
 const INITIAL_RECONNECT_DELAY_MS = 500;
 

@@ -771,6 +771,8 @@ export const REASON_TOKENS = [
   "steer_unsupported",
   "steer_no_active_turn",
   "steer_timeout",
+  "context_exhausted",
+  "max_output_tokens",
 ] as const;
 
 export type ReasonToken = (typeof REASON_TOKENS)[number];
@@ -1332,6 +1334,7 @@ export type SessionRecord = {
   processContext?: HostProcessContext;
   drainSessionOutput?: () => void;
   adapter: ExecutorAgent;
+  contextWindowAdvisory?: "window_unverified";
   runId: string;
   projectSlug: string;
   stepId: string;
@@ -1543,12 +1546,14 @@ export type SessionEvent =
       sessionId: string;
       monotonicId: number;
       line: string;
+      contextUsageOnly?: true;
     }
   | {
       type: "session.update";
       sessionId: string;
       monotonicId: number;
       update: unknown;
+      contextReplay?: true;
     }
   | {
       type: "session.permission_request";

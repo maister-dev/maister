@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { PromptResult } from "@/lib/execution-host";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionCommand } from "@/lib/db/schema";
@@ -13,6 +14,12 @@ import type {
 
 import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
+
+import {
+  acpContextFailureReason,
+  promptContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../runtime/acp-context-failure";
 
 import {
   applyScratchPromptCompletion,
@@ -295,7 +302,11 @@ export async function prepareScratchPrompt(input: {
         )
           throw new PromptOwnerDeferred("scratch_transcript_pending");
       }
-      const dialogStatus = await applyScratchPromptCompletion(tx, ref.runId);
+      const dialogStatus = await applyScratchPromptCompletion(
+        tx,
+        ref.runId,
+        promptContextFailureReason(outcome),
+      );
 
       log.info(
         {
@@ -383,14 +394,18 @@ export function isYieldedScratchTurn(err: unknown): boolean {
   );
 }
 
+export type ScratchPromptResult =
+  | PromptResult
+  | { errorReason: AcpContextFailureReason; stopReason?: undefined };
+
 export async function waitForScratchPrompt(
   db: Db,
   client: BoundClient,
   commandId: string,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<ScratchPromptResult | null> {
   try {
-    await client.waitForPrompt(
+    return await client.waitForPrompt(
       { commandId },
       { owners: scratchPromptOwners, signal },
     );
@@ -413,7 +428,15 @@ export async function waitForScratchPrompt(
       (command.applicationState === "applied" ||
         command.applicationState === "superseded")
     )
-      return;
+      return null;
+    const errorReason = acpContextFailureReason(cause);
+
+    if (
+      errorReason &&
+      command?.state === "failed" &&
+      command.applicationState === "applied"
+    )
+      return { errorReason };
     if (command?.state === "failed" || command?.state === "fenced") throw cause;
     if (isUnsettledPromptQuarantine(command ?? null))
       throw new ScratchPromptQuarantined(

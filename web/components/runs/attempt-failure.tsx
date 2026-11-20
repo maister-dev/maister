@@ -1,6 +1,10 @@
 import type { ReactElement } from "react";
 import type { MaisterErrorCode } from "@/lib/errors-core";
 
+import type { AcpContextFailureReason } from "../../../runtime/acp-context-failure";
+
+import { ContextLimitMessage } from "./context-limit-message";
+
 import { isMaisterErrorCode } from "@/lib/errors-core";
 
 export interface AttemptFailureLabels {
@@ -14,11 +18,13 @@ export interface AttemptFailureLabels {
 export function AttemptFailure({
   status,
   errorCode,
+  errorReason,
   exitCode,
   labels,
 }: {
   status: string;
   errorCode: string | null;
+  errorReason?: AcpContextFailureReason | null;
   exitCode: number | null;
   labels: AttemptFailureLabels;
 }): ReactElement | null {
@@ -28,7 +34,13 @@ export function AttemptFailure({
 
   return (
     <div className="mt-2 text-sm text-danger" data-testid="attempt-failure">
-      <p>{(code && labels.codes[code]) || labels.unknown}</p>
+      <p>
+        {code === "ACP_PROTOCOL" && errorReason ? (
+          <ContextLimitMessage reason={errorReason} />
+        ) : (
+          (code && labels.codes[code]) || labels.unknown
+        )}
+      </p>
       {code ? (
         <p className="font-mono text-xs">
           {labels.code}: {code}

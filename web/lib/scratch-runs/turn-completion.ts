@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AcpContextFailureReason } from "../../../runtime/acp-context-failure";
+
 import type { Db } from "@/lib/execution-host/db";
 import type { ScratchDialogStatus } from "@/lib/db/schema";
 
@@ -37,6 +39,7 @@ export async function lockScratchRunRows(tx: Db, runId: string): Promise<void> {
 export async function applyScratchPromptCompletion(
   tx: Db,
   runId: string,
+  errorReason?: AcpContextFailureReason,
 ): Promise<ScratchDialogStatus> {
   await lockScratchRunRows(tx, runId);
   const [scratch] = await tx
@@ -65,6 +68,13 @@ export async function applyScratchPromptCompletion(
     .set({
       dialogStatus: nextStatus,
       activePromptIntent: null,
+      ...(errorReason
+        ? {
+            errorCode: "ACP_PROTOCOL",
+            errorMessage: null,
+            errorMetadata: { reason: errorReason },
+          }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(scratchRuns.runId, runId));

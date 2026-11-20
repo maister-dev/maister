@@ -252,6 +252,11 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  acpContextFailureReason,
+  type AcpContextFailureReason,
+} from "../../../../runtime/acp-context-failure";
+
 import { nodeAttempts } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -2750,6 +2755,7 @@ export async function runGraph(
   let checkpointed = false;
   let failed = false;
   let runErrorCode: MaisterErrorCode | null = null;
+  let requiresSynthesisRecovery = false;
   // B6: the refusal's own token beside its code — what carries e.g.
   // `consensus_no_draft_available` onto the terminal event's cause.
   let runErrorReason: string | undefined;
@@ -2812,7 +2818,11 @@ export async function runGraph(
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
-    state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
+    state: {
+      nodeAttemptNumber: number;
+      attemptCheckpointRef: string | null;
+      errorReason?: AcpContextFailureReason;
+    },
   ): Promise<AutoRetryDecision> => {
     if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return "fail";
     // Author's explicit per-node retry_policy wins; otherwise the run's
@@ -2829,7 +2839,15 @@ export async function runGraph(
       });
 
     if (!retryPolicy) return "fail";
-    if (!(retryPolicy.on_errors as readonly string[]).includes(code)) {
+    const codeSelected = retryPolicy.on_errors?.some(
+      (candidate) => candidate === code,
+    );
+    const reasonSelected =
+      code === "ACP_PROTOCOL" &&
+      state.errorReason !== undefined &&
+      retryPolicy.on_reasons?.includes(state.errorReason);
+
+    if (!codeSelected && !reasonSelected) {
       return "fail";
     }
     if (state.nodeAttemptNumber >= retryPolicy.attempts) {
@@ -2907,6 +2925,35 @@ export async function runGraph(
     );
 
     return "retry";
+  };
+
+  const recordActionFailure = async (
+    node: CompiledNode,
+    nodeAttemptId: string,
+    failure: Parameters<typeof markNodeFailed>[1],
+    state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
+  ): Promise<AutoRetryDecision> => {
+    const decision = await scheduleAutoRetry(node, failure.errorCode, {
+      ...state,
+      errorReason: failure.errorReason,
+    });
+
+    if (decision === "retry" && opts.driver) {
+      await db.transaction(async (tx: Db) => {
+        await markNodeFailed(nodeAttemptId, failure, tx);
+        await persistFinishContinuation(tx, runId, nodeAttemptId, {
+          version: 1,
+          targetNodeId: node.id,
+          injectedVars: {},
+          sessionPolicy: "new_session",
+          autoRetry: true,
+        });
+      });
+    } else {
+      await markNodeFailed(nodeAttemptId, failure, db);
+    }
+
+    return decision;
   };
 
   // P7 (ADR-103, Q3): ensure `.maister/` is git-excluded BEFORE the first
@@ -3154,6 +3201,8 @@ export async function runGraph(
       // node's fresh attempt inside the claim transaction (the observable CAS
       // marker). Reuse it on the first loop iteration so the resume rerun does
       // not double-append; consume it once.
+      let startsFresh = pendingAutoRetryNodeId === node.id;
+
       if (claimedTakeoverAttemptId && node.id === resumeNodeId) {
         nodeAttemptId = claimedTakeoverAttemptId;
         claimedTakeoverAttemptId = null;
@@ -3195,15 +3244,29 @@ export async function runGraph(
         // M30 (ADR-081): a rework re-entry consumes the resolved session
         // policy. The resume handle is the PRIOR attempt's acp_session_id —
         // resolved BEFORE the new row is appended.
-        let appendSessionPolicy: SessionPolicy | undefined;
+        let appendSessionPolicy: SessionPolicy | undefined = startsFresh
+          ? "new_session"
+          : undefined;
+        let exhaustedSessionFallback = false;
 
         if (pendingSessionPolicy && pendingSessionPolicy.nodeId === node.id) {
           appendSessionPolicy = pendingSessionPolicy.policy;
           pendingSessionPolicy = null;
 
-          if (appendSessionPolicy === "resume") {
-            const prior = await latestAttemptForNode(runId, node.id, db);
+          const prior =
+            appendSessionPolicy === "resume"
+              ? await latestAttemptForNode(runId, node.id, db)
+              : null;
 
+          if (
+            prior?.errorReason === "context_exhausted" &&
+            prior.acpSessionId
+          ) {
+            exhaustedSessionFallback = true;
+            appendSessionPolicy = "new_session";
+          }
+          startsFresh ||= appendSessionPolicy === "new_session";
+          if (appendSessionPolicy === "resume") {
             attemptResumeSessionId = prior?.acpSessionId ?? undefined;
             // ADR-175: a CRASHED attempt's row carries no handle —
             // `node_attempts.acp_session_id` is written once at append and the
@@ -3242,6 +3305,12 @@ export async function runGraph(
             db: tx,
           });
 
+          if (
+            exhaustedSessionFallback ||
+            (appendSessionPolicy === "resume" && !attemptResumeSessionId)
+          )
+            await setSessionFallback(row.id, tx);
+
           if (opts.driver)
             await tx
               .update(runs)
@@ -3255,12 +3324,6 @@ export async function runGraph(
 
         nodeAttemptId = appended.id;
         nodeAttemptNumber = appended.attempt;
-
-        // Resume requested but no prior session handle exists → observable
-        // immediate fallback (the dispatch goes out fresh).
-        if (appendSessionPolicy === "resume" && !attemptResumeSessionId) {
-          await setSessionFallback(nodeAttemptId, db);
-        }
 
         // M30 (ADR-079): capture the pre-attempt workspace checkpoint for
         // ai_coding/cli attempts (new attempts only — a NeedsInput resume or
@@ -3318,11 +3381,24 @@ export async function runGraph(
       // graph order) unless a rework/orchestrator resume already set a handle. The
       // default session keeps per-node-fresh behavior (no implicit continuity).
       if (
+        !startsFresh &&
         !attemptResumeSessionId &&
         usesNamedSession &&
         nodeSession?.acpSessionId
       ) {
-        attemptResumeSessionId = nodeSession.acpSessionId;
+        const [exhausted] = await db
+          .select({ id: nodeAttempts.id })
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, runId),
+              eq(nodeAttempts.acpSessionId, nodeSession.acpSessionId),
+              eq(nodeAttempts.errorReason, "context_exhausted"),
+            ),
+          )
+          .limit(1);
+
+        if (!exhausted) attemptResumeSessionId = nodeSession.acpSessionId;
       }
 
       await db
@@ -3836,24 +3912,20 @@ export async function runGraph(
             { nodeId: node.id, code: e.code, err: e.message },
             "node action threw — Failed",
           );
-          await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+          const errorReason = acpContextFailureReason(e);
 
-          const threwRetry = await scheduleAutoRetry(node, e.code, {
-            nodeAttemptNumber,
-            attemptCheckpointRef,
-          });
+          requiresSynthesisRecovery =
+            errorReason !== undefined &&
+            node.nodeType === "consensus" &&
+            e.details?.recovery === "consensus_synthesis_incomplete";
+          const threwRetry = await recordActionFailure(
+            node,
+            nodeAttemptId,
+            { errorCode: e.code, errorReason },
+            { nodeAttemptNumber, attemptCheckpointRef },
+          );
 
           if (threwRetry === "retry") {
-            if (opts.driver)
-              await db.transaction(async (tx: Db) => {
-                await persistFinishContinuation(tx, runId, nodeAttemptId, {
-                  version: 1,
-                  targetNodeId: node.id,
-                  injectedVars: {},
-                  sessionPolicy: "new_session",
-                  autoRetry: true,
-                });
-              });
             pendingAutoRetryNodeId = node.id;
             continue;
           }
@@ -4100,27 +4172,20 @@ export async function runGraph(
       if (!result.ok) {
         const code = (result.errorCode ?? "PRECONDITION") as MaisterErrorCode;
 
-        await markNodeFailed(
+        const failRetry = await recordActionFailure(
+          node,
           nodeAttemptId,
-          { errorCode: code, exitCode: result.exitCode, stdout: result.stdout },
-          db,
+          {
+            errorCode: code,
+            errorReason: result.errorReason,
+            acpSessionId: result.acpSessionId,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+          },
+          { nodeAttemptNumber, attemptCheckpointRef },
         );
-        const failRetry = await scheduleAutoRetry(node, code, {
-          nodeAttemptNumber,
-          attemptCheckpointRef,
-        });
 
         if (failRetry === "retry") {
-          if (opts.driver)
-            await db.transaction(async (tx: Db) => {
-              await persistFinishContinuation(tx, runId, nodeAttemptId, {
-                version: 1,
-                targetNodeId: node.id,
-                injectedVars: {},
-                sessionPolicy: "new_session",
-                autoRetry: true,
-              });
-            });
           pendingAutoRetryNodeId = node.id;
           continue;
         }
@@ -4139,7 +4204,11 @@ export async function runGraph(
         }
         failed = true;
         runErrorCode = code;
-        log2.warn({ nodeId: node.id, errorCode: code }, "node failed");
+        runErrorReason = result.errorReason;
+        log2.warn(
+          { nodeId: node.id, errorCode: code, reason: result.errorReason },
+          "node failed",
+        );
         break;
       }
 
@@ -4408,15 +4477,19 @@ export async function runGraph(
         }
 
         if (!gateOutcome.ok) {
-          await markNodeFailed(
-            nodeAttemptId,
-            { errorCode: "PRECONDITION" },
-            db,
-          );
+          const errorReason = gateOutcome.blockingFailureReason;
+          const errorCode = errorReason ? "ACP_PROTOCOL" : "PRECONDITION";
+
+          await markNodeFailed(nodeAttemptId, { errorCode }, db);
           failed = true;
-          runErrorCode = "PRECONDITION";
+          runErrorCode = errorCode;
+          runErrorReason = errorReason;
           log2.warn(
-            { nodeId: node.id, gateId: gateOutcome.blockingFailedGateId },
+            {
+              nodeId: node.id,
+              gateId: gateOutcome.blockingFailedGateId,
+              reason: errorReason,
+            },
             "blocking gate failed — node Failed",
           );
           break;
@@ -5673,7 +5746,7 @@ export async function runGraph(
       rootDb,
       runId,
       requested: failed
-        ? runErrorCode === "CRASH"
+        ? runErrorCode === "CRASH" || requiresSynthesisRecovery
           ? "Crashed"
           : "Failed"
         : "Done",
@@ -5705,7 +5778,7 @@ export async function runGraph(
   // Ordinary completion requires Running; failed owned permissions also admit
   // the exact NeedsInput generation above. Concurrent abandon, takeover,
   // checkpoint or reconciliation retains its state.
-  if (failed && runErrorCode === "CRASH") {
+  if (failed && (runErrorCode === "CRASH" || requiresSynthesisRecovery)) {
     const crashed = await db.transaction(async (tx: Db): Promise<boolean> => {
       const rows = await tx
         .update(runs)

@@ -7,6 +7,21 @@ An ACP runner is a host-scoped launch profile for a coding-agent adapter, model,
 provider route, environment references, and permission policy. Projects and
 Flows select these profiles; they do not spawn arbitrary commands.
 
+## Context window and compaction
+
+When an agent reports occupancy, the context bar uses its token counts. For a
+Claude runner with an Anthropic-compatible endpoint, “Window unverified” means
+the adapter may be using an assumed window. Set
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` in the runner environment to the model’s
+actual capacity. The advisory allows the run to start.
+
+Claude Code also reads `DISABLE_AUTO_COMPACT`, `DISABLE_COMPACT`,
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`.
+Codex reads `model_context_window` and `model_auto_compact_token_limit` from
+its `config.toml`. In the standard Codex setup, a session home links to the
+execution host’s global Codex config, so changes can affect other sessions
+using that host configuration. These are agent settings.
+
 ## Prerequisites
 
 - Global `admin` access.

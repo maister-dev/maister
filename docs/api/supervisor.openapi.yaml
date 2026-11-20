@@ -4238,6 +4238,8 @@ components:
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
         - required_output_incomplete
+        - context_exhausted
+        - max_output_tokens
         - session_delete_exit_unconfirmed
         - session_create_exit_unconfirmed
         - session_eviction_exit_unconfirmed
@@ -5333,6 +5335,9 @@ components:
         caller. Accepted has null terminal; completed/rejected has exact terminal
         evidence. Receipt alone cannot settle a prompt. Absence or failed reads
         preserve unknown outcome. Pre-effect refusal is explicit typed evidence.
+        For a prompt rejection terminal.error.details may carry context_exhausted
+        or max_output_tokens with ACP_PROTOCOL. A resolved max_tokens prompt
+        retains its successful receipt shape, sealed partial output and stopReason.
     CommandRetirementRequestV1:
       x-implementation-status: Designed
       type: object

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { CompactionMarker } from "@/lib/run-transcript/compaction";
 import type { Components } from "react-markdown";
 import type {
   ScratchFlowActionResultPayload,
@@ -10,6 +11,7 @@ import type {
 
 import { useMemo, useState } from "react";
 import clsx from "clsx";
+import { useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -489,6 +491,40 @@ function clearedHistoryLabel(labels: TranscriptLabels, count: number): string {
   return labels.clearedHistory?.(count) ?? `Cleared history · ${count}`;
 }
 
+function CompactionRow({ marker }: { marker: CompactionMarker }): ReactElement {
+  const t = useTranslations("contextUsage");
+  const label = t(marker.status);
+
+  return (
+    <div className="rounded-lg border border-line-soft px-3 py-2 text-sm text-mute">
+      {marker.summary || marker.error ? (
+        <details>
+          <summary className="cursor-pointer">{label}</summary>
+          {marker.summary ? (
+            <p className="mt-2 whitespace-pre-wrap break-words">
+              {marker.summary}
+            </p>
+          ) : null}
+          {marker.error ? (
+            <p className="mt-2 whitespace-pre-wrap break-words">
+              {marker.error}
+            </p>
+          ) : null}
+        </details>
+      ) : (
+        label
+      )}
+      {marker.before || marker.after ? (
+        <p className="mt-1 text-xs">
+          {marker.before ? t("beforeTokens", marker.before) : null}
+          {marker.before && marker.after ? " · " : null}
+          {marker.after ? t("afterTokens", marker.after) : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function TranscriptView({
   messages,
   labels,
@@ -611,6 +647,10 @@ export function TranscriptView({
       return (
         <ThoughtBlock key={message.id} labels={labels} text={parsed.text} />
       );
+    }
+
+    if (parsed.kind === "compaction") {
+      return <CompactionRow key={message.id} marker={parsed} />;
     }
 
     if (parsed.kind === "permission") {

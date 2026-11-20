@@ -96,6 +96,7 @@ export type StepResult = {
   originalOutput?: RawNodeOutputPayload;
   exitCode?: number;
   errorCode?: MaisterErrorCode;
+  errorReason?: import("../../../runtime/acp-context-failure").AcpContextFailureReason;
   durationMs?: number;
   acpSessionId?: string;
   needsInput?: boolean;

@@ -520,6 +520,7 @@ const OUTPUT_ENGINE_MIN = "1.3.0";
 // `session_policy` (node or rework) or a `defaults` block must declare
 // engine_min >= this value.
 const POLICY_ENGINE_MIN = "1.4.0";
+const CONTEXT_RETRY_ENGINE_MIN = "3.13.0";
 
 // M34 floor (ADR-089): manifests binding a node to a catalog agent
 // (`settings.agent`) must declare engine_min >= this value.
@@ -1251,6 +1252,20 @@ export function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring output.result but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  if (
+    nodes.some(
+      (node) =>
+        (node.type === "ai_coding" || node.type === "cli") &&
+        node.retry_policy?.on_reasons !== undefined,
+    ) &&
+    !semverGte(engineMin, CONTEXT_RETRY_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} requires compat.engine_min >= ${CONTEXT_RETRY_ENGINE_MIN} for retry_policy.on_reasons`,
     );
   }
 

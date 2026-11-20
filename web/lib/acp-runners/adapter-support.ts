@@ -70,6 +70,7 @@ export type AdapterSupport = {
   readonly id: AdapterId;
   readonly capabilityAgent: AdapterId;
   readonly readOnlyCapable: boolean;
+  readonly contextCompaction: boolean;
   readonly readOnlySessionSmoke: ReadOnlySessionSmokeRequirement;
   // ADR-130: required for every adapter — the launch evidence gate refuses a strict
   // tools/mcps enforcement launch until this adapter's capabilityEnforcement smoke
@@ -91,6 +92,7 @@ export type AdapterSupport = {
 export const ADAPTER_SUPPORT = [
   {
     id: "claude",
+    contextCompaction: true,
     capabilityAgent: "claude",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
@@ -112,6 +114,7 @@ export const ADAPTER_SUPPORT = [
   },
   {
     id: "codex",
+    contextCompaction: true,
     capabilityAgent: "codex",
     readOnlyCapable: true,
     readOnlySessionSmoke: "not_required",
@@ -138,6 +141,7 @@ export const ADAPTER_SUPPORT = [
   },
   {
     id: "gemini",
+    contextCompaction: false,
     capabilityAgent: "gemini",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
@@ -157,6 +161,7 @@ export const ADAPTER_SUPPORT = [
   },
   {
     id: "opencode",
+    contextCompaction: false,
     capabilityAgent: "opencode",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",
@@ -180,6 +185,7 @@ export const ADAPTER_SUPPORT = [
   },
   {
     id: "mimo",
+    contextCompaction: false,
     capabilityAgent: "mimo",
     readOnlyCapable: true,
     readOnlySessionSmoke: "required",

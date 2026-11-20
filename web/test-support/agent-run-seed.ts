@@ -1,4 +1,5 @@
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
+import type { TestRunnerAgent } from "@/lib/__tests__/runner-fixtures";
 import type { Db } from "@/lib/execution-host/db";
 import type { RunResultContract } from "@/lib/run-results/types";
 
@@ -8,7 +9,10 @@ import path from "node:path";
 
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
 import { parseAgentDefinition } from "@/lib/agents/definition";
-import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import {
+  testPlatformRunnerRow,
+  testRunnerSnapshot,
+} from "@/lib/__tests__/runner-fixtures";
 import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import {
   agentProjectLinks,
@@ -34,6 +38,7 @@ export type SeedAgentRunInput = Readonly<{
   definition: string;
   workspace: "none" | "repo_read" | "worktree";
   resultContract: RunResultContract | null;
+  adapter?: TestRunnerAgent;
   persistent?: boolean;
   scheduledRequestSnapshot?: ScheduledAgentRequestSnapshot | null;
   operational?: boolean;
@@ -125,19 +130,10 @@ export async function seedAgentRun(
   await db
     .insert(agentProjectLinks)
     .values({ id: randomUUID(), projectId, agentId });
-  const snapshot = testRunnerSnapshot(runnerId);
+  const runner = testPlatformRunnerRow(runnerId, input.adapter);
+  const snapshot = testRunnerSnapshot(runnerId, input.adapter);
 
-  await db.insert(platformAcpRunners).values({
-    id: runnerId,
-    adapter: "claude",
-    capabilityAgent: "claude",
-    model: snapshot.model,
-    provider: { kind: "anthropic" },
-    permissionPolicy: "default",
-    readinessStatus: "Ready",
-    readinessReasons: [],
-    enabled: true,
-  });
+  await db.insert(platformAcpRunners).values(runner);
   await db.insert(runs).values({
     id: runId,
     projectId,
@@ -204,7 +200,7 @@ export async function seedAgentRun(
     sessionName: "default",
     runnerId,
     runnerSnapshot: snapshot,
-    capabilityAgent: "claude",
+    capabilityAgent: runner.capabilityAgent,
   });
   const hosts = createExecutionHosts({ db });
   const host = await localHost({ db, transport: hosts.transport });

@@ -308,6 +308,7 @@ async function driveReworkLoop(args: {
   manifest: Record<string, unknown>;
   // null = attempt 1 returns NO session id (vs undefined = default "sess-1").
   attempt1SessionId?: string | null;
+  priorContextExhausted?: boolean;
   attempt2Script?: { acpSessionId?: string; sessionFallback?: boolean };
 }): Promise<{
   runId: string;
@@ -338,6 +339,14 @@ async function driveReworkLoop(args: {
 
   expect(statusAfter1).toBe("NeedsInput");
 
+  if (args.priorContextExhausted) {
+    // Install the durable failure witness as it would appear when the
+    // operator's rework is routed to a previously exhausted action.
+    await pool.query(
+      "UPDATE node_attempts SET status = 'Failed', error_code = 'ACP_PROTOCOL', error_reason = 'context_exhausted' WHERE run_id = $1 AND node_id = 'implement' AND acp_session_id = 'sess-1'",
+      [runId],
+    );
+  }
   // The operator's rework decision (delivery channel: input artifact).
   const dir = join(runtimeRoot, ".maister", projectSlug, "runs", runId);
 
@@ -430,6 +439,20 @@ describe("session_policy rework threading (ADR-081)", () => {
 
     expect(row?.session_policy).toBe("resume");
     expect(row?.session_fallback).toBe(true);
+  }, 120_000);
+
+  it("rework records effective fresh dispatch for the exact exhausted session", async () => {
+    const { runId, redispatch } = await driveReworkLoop({
+      manifest: reworkManifest(),
+      priorContextExhausted: true,
+    });
+
+    expect(redispatch?.resumeSessionId).toBeUndefined();
+    expect(await attemptRow(runId, "implement", 2)).toMatchObject({
+      session_policy: "new_session",
+      session_fallback: true,
+      acp_session_id: "sess-2",
+    });
   }, 120_000);
 
   it("a prior attempt WITHOUT a session id degrades resume to a fresh dispatch (no handle)", async () => {

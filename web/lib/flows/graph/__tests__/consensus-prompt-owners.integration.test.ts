@@ -2687,12 +2687,17 @@ describe("Consensus prompt owners through the production graph driver", () => {
       .where(eq(runs.id, seeded.runId));
 
     expect(crashed.status).toBe("Crashed");
-    expect(failed).toMatchObject({ status: "Failed", errorCode: "CRASH" });
+    expect(failed).toMatchObject({
+      status: "Failed",
+      errorCode: "ACP_PROTOCOL",
+      errorReason: "max_output_tokens",
+    });
     expect(oldSynthesis.locator).toMatchObject({
       kind: "inline",
       text: "partial synthesis text",
       partial: true,
       reason: "consensus_synthesis_incomplete",
+      errorReason: "max_output_tokens",
       stopReason: "max_tokens",
     });
     if (oldSynthesis.locator.kind !== "inline")

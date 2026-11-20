@@ -43,6 +43,7 @@ minimumReleaseAgeExclude:
 
 # Keep native installers, crypto and CPU detection on the current Node/V8 API.
 patchedDependencies:
+  '@agentclientprotocol/codex-acp@2.2.2': patches/codex-acp@2.2.2.patch
   cpu-features@0.0.10: patches/cpu-features@0.0.10.patch
   prebuild-install@7.1.3: patches/prebuild-install@7.1.3.patch
   ssh2@1.17.0: patches/ssh2@1.17.0.patch

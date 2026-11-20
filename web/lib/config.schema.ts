@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ACP_CONTEXT_FAILURE_REASONS } from "../../runtime/acp-context-failure";
+
 import {
   classifyFlowManifestShape,
   LEGACY_STEPS_REFUSAL_MESSAGE,
@@ -357,10 +359,16 @@ export const RETRYABLE_ERROR_CODES = [
 export const retryPolicySchema = z
   .object({
     attempts: z.number().int().min(1),
-    on_errors: z.array(z.enum(RETRYABLE_ERROR_CODES)).min(1),
+    on_errors: z.array(z.enum(RETRYABLE_ERROR_CODES)).min(1).optional(),
+    on_reasons: z.array(z.enum(ACP_CONTEXT_FAILURE_REASONS)).min(1).optional(),
     workspace: workspacePolicySchema.default("rewind-to-node-checkpoint"),
   })
-  .strict();
+  .strict()
+  .refine(
+    (policy) =>
+      policy.on_errors !== undefined || policy.on_reasons !== undefined,
+    "retry_policy requires on_errors or on_reasons",
+  );
 
 export type RetryPolicy = z.infer<typeof retryPolicySchema>;
 

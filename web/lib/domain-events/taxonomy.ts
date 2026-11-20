@@ -242,6 +242,8 @@ export const TERMINAL_CAUSE_REASONS = [
   // agent finalization
   "agent_turn_lost",
   "agent_prompt_failed",
+  "context_exhausted",
+  "max_output_tokens",
   "agent_session_create_failed",
   "agent_workspace_prepare_failed",
   "agent_dispatch_failed",

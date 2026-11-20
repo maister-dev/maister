@@ -56,6 +56,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const USER_ID = "scratch-owner-user";
+const codexRunnerId = randomUUID();
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => db,
@@ -94,6 +95,7 @@ beforeAll(async () => {
   db = testDatabase.db;
   supervisor = await startRealSupervisor({
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
+    fixtureAdapters: ["claude", "codex"],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   resetRegistrarStateForTests();
@@ -137,12 +139,10 @@ beforeAll(async () => {
   });
   await db
     .insert(schema.platformAcpRunners)
-    .values(
-      testPlatformRunnerRow(
-        runnerId,
-        "claude",
-      ) as typeof schema.platformAcpRunners.$inferInsert,
-    );
+    .values([
+      testPlatformRunnerRow(runnerId, "claude"),
+      testPlatformRunnerRow(codexRunnerId, "codex"),
+    ]);
   await db.insert(schema.platformRuntimeSettings).values({
     id: "singleton",
     defaultRunnerId: runnerId,
@@ -182,9 +182,9 @@ function launchBody(prompt: string): ScratchLaunchInput {
   };
 }
 
-async function launch(prompt: string): Promise<string> {
+async function launch(prompt: string, runnerId?: string): Promise<string> {
   const staged = launchScratchRunStaged({
-    body: launchBody(prompt),
+    body: { ...launchBody(prompt), runnerId },
     userId: USER_ID,
   });
 
@@ -299,6 +299,64 @@ async function killAtDialogTransition(
 }
 
 describe("Scratch prompt owners through the production service", () => {
+  it.each([
+    [{ contextFailure: "claude-input" }, "context_exhausted"],
+    [{ contextFailure: "codex-input" }, "context_exhausted"],
+    [{ contextFailure: "claude-output" }, "max_output_tokens"],
+    [{ stopReason: "max_tokens" }, "max_output_tokens"],
+  ] as const)(
+    "scratch context limit %j is retained as %s without a second prompt",
+    async (fixture, reason) => {
+      const runId = await launch(
+        `fixture-output:${JSON.stringify({ bytes: 0, ...fixture })}`,
+        "contextFailure" in fixture && fixture.contextFailure === "codex-input"
+          ? codexRunnerId
+          : undefined,
+      );
+      const { stopScratchWorkbench } =
+        await import("@/lib/scratch-runs/service");
+
+      try {
+        const [scratch] = await db
+          .select()
+          .from(schema.scratchRuns)
+          .where(eq(schema.scratchRuns.runId, runId));
+
+        expect(scratch).toMatchObject({
+          dialogStatus: "WaitingForUser",
+          activePromptIntent: null,
+          errorCode: "ACP_PROTOCOL",
+          errorMetadata: { reason },
+        });
+        const commands = await promptCommands(runId);
+
+        expect(commands).toHaveLength(1);
+        const [command] = commands;
+        expect(command?.applicationState).toBe("applied");
+        if ("contextFailure" in fixture)
+          expect(command?.lastError).toMatchObject({
+            code: "ACP_PROTOCOL",
+            details: { reason },
+          });
+        if (reason === "context_exhausted") {
+          await expect(
+            sendScratchUserMessage({
+              runId,
+              body: { content: "do not send", attachments: [] },
+            }),
+          ).rejects.toMatchObject({
+            code: "ACP_PROTOCOL",
+            details: { reason },
+          });
+          expect(await promptCommands(runId)).toHaveLength(1);
+        }
+      } finally {
+        await stopScratchWorkbench(runId, { db: db as unknown as Db });
+      }
+    },
+    90_000,
+  );
+
   it("a delayed empty create handoff preserves a legacy Running turn and its unknown-delivery notice", async () => {
     const runId = await launch("");
     const hosts = createExecutionHosts({ db: db as unknown as Db });

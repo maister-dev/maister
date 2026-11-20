@@ -1,10 +1,14 @@
 import "server-only";
 
+import type { ExecutionEvent } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
+import type { ContextSnapshot } from "@/lib/runs/context-snapshot";
 
 import { and, asc, desc, eq, gt, isNotNull } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
+
+import { acpContextUpdateType } from "../../../../../../runtime/acp-context";
 
 import {
   httpStatusForAuthz,
@@ -17,6 +21,11 @@ import {
   assertRunKnowledgeDisclosure,
   isRunKnowledgeUnavailable,
 } from "@/lib/brain/knowledge-run-disclosure";
+import {
+  contextProjectionThrough,
+  readContextSnapshot,
+  readCurrentAttemptId,
+} from "@/lib/runs/context-reader";
 import {
   executionEvents,
   localPackages,
@@ -149,10 +158,20 @@ async function latestCanonicalRunSequence(runId: string): Promise<bigint> {
   return rows[0]?.runSequence ?? -1n;
 }
 
+type CanonicalRunEvent = Pick<
+  ExecutionEvent,
+  | "id"
+  | "runSequence"
+  | "eventType"
+  | "payload"
+  | "occurredAt"
+  | "hostSessionId"
+>;
+
 async function readCanonicalRunEvents(
   runId: string,
   afterSequence: bigint,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<CanonicalRunEvent[]> {
   const db = getDb() as unknown as Db;
 
   return db
@@ -177,8 +196,18 @@ async function readCanonicalRunEvents(
 }
 
 function canonicalBrowserEvent(
-  event: Record<string, unknown>,
+  event: CanonicalRunEvent,
+  context: boolean,
 ): Record<string, unknown> {
+  const { payload } = event;
+  const contextUsageOnly =
+    context &&
+    ((event.eventType === "session.update" &&
+      (payload?.contextType === "usage_update" ||
+        acpContextUpdateType(payload?.update) === "usage_update")) ||
+      (event.eventType === "session.line" &&
+        payload?.contextUsageOnly === true));
+
   return {
     type: event.eventType,
     eventId: event.id,
@@ -188,6 +217,7 @@ function canonicalBrowserEvent(
         ? event.occurredAt.toISOString()
         : String(event.occurredAt),
     hostSessionId: event.hostSessionId ?? null,
+    ...(contextUsageOnly ? { contextUsageOnly } : {}),
   };
 }
 
@@ -198,6 +228,7 @@ function canonicalRunEventStream(input: {
   replayEvents: boolean;
   replayCursor: bigint | null;
   startedAt: number;
+  context: boolean;
 }): Response {
   const cancellation = new AbortController();
   const signal = AbortSignal.any([input.req.signal, cancellation.signal]);
@@ -211,12 +242,36 @@ function canonicalRunEventStream(input: {
       let lastStatusCheck = Date.now();
       const maxQuietMs = keepaliveMs();
       let lastEventAt = Date.now();
+      let lastContext = "";
+      let lastAttemptContext = "";
+      let terminalDeadline: number | null = null;
+      let terminalProjectionCursor: bigint | null = null;
       const close = (): void => {
         try {
           controller.close();
         } catch {
           // The client may have aborted while a database read completed.
         }
+      };
+      const enqueueContext = (
+        snapshot: ContextSnapshot | null,
+        previousState: string,
+      ): string => {
+        if (!snapshot) return previousState;
+        // A newer observation is useful for selection, but alone changes no state.
+        const state = JSON.stringify({
+          ...snapshot,
+          bindingObservedAt: undefined,
+        });
+
+        if (state !== previousState) {
+          controller.enqueue(
+            encoder.encode(formatSyntheticSseEvent(JSON.stringify(snapshot))),
+          );
+          lastEventAt = Date.now();
+        }
+
+        return state;
       };
 
       if (!input.replayEvents) {
@@ -230,6 +285,17 @@ function canonicalRunEventStream(input: {
       try {
         while (!signal.aborted) {
           const events = await readCanonicalRunEvents(input.run.id, cursor);
+          const context =
+            input.context && input.run.runKind !== "librarian"
+              ? await readContextSnapshot(getDb(), input.run.id)
+              : null;
+          const attemptId =
+            context && input.run.runKind === "flow"
+              ? await readCurrentAttemptId(getDb(), input.run.id)
+              : null;
+          const attemptContext = attemptId
+            ? await readContextSnapshot(getDb(), input.run.id, attemptId)
+            : null;
 
           if (input.run.companyId) {
             await assertCompanyRunReadAccess(
@@ -238,6 +304,8 @@ function canonicalRunEventStream(input: {
               input.run.id,
             );
           } else {
+            if (context && input.run.projectId)
+              await requireProjectRole(input.run.projectId, "viewer");
             await assertRunKnowledgeDisclosure(
               getDb(),
               { kind: "user", userId: input.userId },
@@ -245,6 +313,11 @@ function canonicalRunEventStream(input: {
             );
           }
           if (signal.aborted) break;
+          lastContext = enqueueContext(context, lastContext);
+          lastAttemptContext = enqueueContext(
+            attemptContext,
+            lastAttemptContext,
+          );
 
           for (const event of events) {
             const sequence = event.runSequence;
@@ -261,7 +334,7 @@ function canonicalRunEventStream(input: {
               encoder.encode(
                 formatSseEvent(
                   sequence.toString(),
-                  JSON.stringify(canonicalBrowserEvent(event)),
+                  JSON.stringify(canonicalBrowserEvent(event, input.context)),
                 ),
               ),
             );
@@ -273,7 +346,27 @@ function canonicalRunEventStream(input: {
             lastStatusCheck = Date.now();
             const status = await refreshRunStatus(input.run.id);
 
-            if (!status || TERMINAL_RUN_STATUS.has(status.status)) break;
+            if (!status) break;
+            if (TERMINAL_RUN_STATUS.has(status.status)) {
+              if (!context) break;
+              terminalDeadline ??= Date.now() + 3_000;
+              if (
+                events.length < 500 &&
+                (await contextProjectionThrough(getDb(), input.run.id, cursor))
+              ) {
+                if (terminalProjectionCursor === cursor) break;
+                // Read once after observing the committed projection watermark.
+                terminalProjectionCursor = cursor;
+                continue;
+              }
+              if (Date.now() >= terminalDeadline) {
+                log.warn(
+                  { runId: input.run.id },
+                  "context stream closed with pending projection",
+                );
+                break;
+              }
+            }
           }
           if (Date.now() - lastEventAt > maxQuietMs) {
             if (signal.aborted) break;
@@ -442,5 +535,6 @@ export async function GET(
     replayEvents,
     replayCursor,
     startedAt,
+    context: new URL(req.url).searchParams.get("context") === "1",
   });
 }

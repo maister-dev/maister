@@ -4,6 +4,9 @@
 
 # Supervisor Daemon
 
+See [ACP context handling](system-analytics/acp-context.md) for
+compaction negotiation and typed terminal prompt limits.
+
 The supervisor is a second Node process that owns the lifecycle of agent
 processes. Implemented adapters are `claude-agent-acp` and `codex-acp`;
 ADR-084/ADR-085 add `gemini --acp`, `opencode acp`, and `mimo acp` as

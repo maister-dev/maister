@@ -147,8 +147,9 @@ describe("GET /api/runs/[runId]/transcript", () => {
   // by nothing weaker. The two tests above assert the gate is CALLED; this one
   // asserts what the gate actually protects — the prompt bytes themselves never
   // reach a caller the gate rejected, and reach one it admitted verbatim.
-  it("CT-TRC-11: serves a user prompt row only behind readRepoFiles", async () => {
+  it("CT-TRC-11: rechecks current content access for prompt text and a compaction summary", async () => {
     const prompt = "/aif-plan implement the widget";
+    const summary = "private synthetic compaction sentinel";
 
     vi.mocked(getRunNodeTranscript).mockResolvedValue({
       messages: [
@@ -164,6 +165,17 @@ describe("GET /api/runs/[runId]/transcript", () => {
           content: "done",
           createdAt: "2026-06-29T00:00:01.000Z",
         },
+        {
+          id: "m2",
+          role: "system",
+          content: JSON.stringify({
+            v: 1,
+            kind: "compaction",
+            status: "completed",
+            summary,
+          }),
+          createdAt: "2026-06-29T00:00:02.000Z",
+        },
       ],
       usage: null,
     });
@@ -174,8 +186,13 @@ describe("GET /api/runs/[runId]/transcript", () => {
     };
 
     expect(admitted.status).toBe(200);
-    expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(body.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "system",
+    ]);
     expect(body.messages[0]?.content).toBe(prompt);
+    expect(body.messages[2]?.content).toContain(summary);
 
     vi.mocked(requireProjectAction).mockRejectedValue(
       new MaisterError("UNAUTHORIZED", "not a member"),
@@ -184,7 +201,11 @@ describe("GET /api/runs/[runId]/transcript", () => {
     const refused = await invoke(RUN_ID, "implement");
 
     expect(refused.status).toBe(403);
-    expect(await refused.text()).not.toContain(prompt);
+    const deniedBody = await refused.text();
+
+    expect(deniedBody).not.toContain(prompt);
+    expect(deniedBody).not.toContain(summary);
+    expect(getRunNodeTranscript).toHaveBeenCalledTimes(1);
   });
 
   it("returns 404 when the run does not exist", async () => {

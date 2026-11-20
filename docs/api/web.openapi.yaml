@@ -13543,8 +13543,13 @@ paths:
         states (`Done`, `Abandoned`, `Failed`, `Crashed`) close the
         stream cleanly after draining trailing events.
 
-        Canonical frames contain only `type`, `eventId`, `runSequence`,
-        `occurredAt`, and `hostSessionId`; they do not expose the host payload.
+        Canonical frames contain `type`, `eventId`, `runSequence`, `occurredAt`,
+        and `hostSessionId`. On a context opt-in stream, usage-only frames
+        also carry `contextUsageOnly: true`. These frames advance the durable
+        cursor and let clients skip transcript and run-detail invalidations.
+        Host payloads are excluded. `session.context_snapshot` carries safe
+        projected metadata without an SSE id. The recipient must still hold
+        the current run/source grant.
         See `async/web-runs.asyncapi.yaml`.
       operationId: streamRunEvents
       parameters:
@@ -13562,6 +13567,11 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 0 }
+        - name: context
+          in: query
+          required: false
+          description: Opt in to id-less context snapshots and the usage-only canonical frame hint with value 1.
+          schema: { type: string, enum: ["1"] }
       responses:
         "200":
           description: SSE stream.
@@ -26930,6 +26940,8 @@ components:
         message represented by valid role-specific bounded content. Cumulative
         response exhaustion ends a page instead of producing previews. Tool
         previews preserve the tool name, status and argument/result summaries.
+        Oversized compaction markers preserve the lifecycle status and a summary
+        excerpt. Their preview metadata links to the same authorized download.
       properties:
         id: { type: string }
         role:
@@ -26946,6 +26958,54 @@ components:
             fullContentHref:
               type: string
               description: Authorized attachment download of the complete record, bound to its current node attempt when applicable.
+    ContextSnapshot:
+      description: Safe projected context metadata shared by authorized REST readers and run SSE.
+      type: object
+      additionalProperties: false
+      required:
+        [type, runId, runSessionId, incarnationId, nodeAttemptId, lifecycleSequence,
+         contextSequence, transcriptSequence, usage, activeCompactions,
+         completedCompactions, coverage, windowAdvisory]
+      properties:
+        type: { type: string, enum: [session.context_snapshot] }
+        runId: { type: string, format: uuid }
+        runSessionId: { type: string, nullable: true }
+        incarnationId: { type: string, nullable: true }
+        nodeAttemptId: { type: string, nullable: true }
+        lifecycleSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        contextSequence: { type: string, nullable: true, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        transcriptSequence:
+          type: string
+          nullable: true
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+          description: Greatest canonical sequence recorded for a compaction marker or its display evidence in this transcript scope.
+        transcriptRevision:
+          type: string
+          nullable: true
+          pattern: "^(0|[1-9][0-9]{0,18})$"
+          description: Monotonic revision for committed compaction marker and evidence changes in the whole-run or exact-attempt transcript.
+        bindingObservedAt:
+          type: string
+          nullable: true
+          format: date-time
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$'
+          description: Database observation time for physical selection, including an empty selection, with UTC microsecond precision. Used to compare different bindings. Does not advance SSE or trigger an event by itself.
+        usage:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [used, size, sizeSource, observedAt, sourceSequence]
+          properties:
+            used: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            size: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            sizeSource: { type: string, enum: [agent_reported] }
+            observedAt: { type: string, format: date-time }
+            sourceSequence: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+        activeCompactions: { type: integer, minimum: 0 }
+        completedCompactions: { type: integer, minimum: 0 }
+        coverage: { type: string, enum: [from_incarnation_start, partial] }
+        windowAdvisory: { type: string, nullable: true, enum: [window_unverified, null] }
+        configuredWindowTokens: { type: integer, nullable: true, minimum: 1, maximum: 9007199254740991 }
     RunTranscriptPage:
       description: |
         Each portion contains at most 200 records and 389120 serialized UTF-8
@@ -26999,6 +27059,7 @@ components:
             size:
               type: integer
               minimum: 0
+        context: { $ref: "#/components/schemas/ContextSnapshot" }
         attemptId:
           type: string
           nullable: true
@@ -32331,6 +32392,7 @@ components:
           terminalCause,
         ]
       properties:
+        context: { $ref: "#/components/schemas/ContextSnapshot" }
         terminalCause:
           type: object
           nullable: true
@@ -32451,12 +32513,15 @@ components:
                 "scratch_dispatch_unknown"}` when a legacy Running dialog
                 has no frozen prompt intent or unresolved command. Delivery
                 is unknown; the operator must Stop and start a new run.
+                ADR-215 exposes `context_exhausted` or `max_output_tokens` after
+                a terminal prompt limit. Input exhaustion stops sends to the
+                affected scratch conversation until a fresh session is started.
                 Private intent/owner/payload fields are never returned; `null` otherwise.
               properties:
                 cause: { type: string, enum: [host_pressure] }
                 reason:
                   type: string
-                  enum: [prompt_terminal_conflict, scratch_dispatch_unknown]
+                  enum: [prompt_terminal_conflict, scratch_dispatch_unknown, context_exhausted, max_output_tokens]
                 causeCode: { type: string }
         workspace:
           type: object

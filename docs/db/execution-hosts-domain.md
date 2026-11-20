@@ -236,6 +236,23 @@ until the matching forward Drizzle migration exists.
 
 ## Retention
 
+The [ACP context projections](runs-domain.md#acp-context-observations-implemented--adr-215)
+use the physical identity of accepted events. The ledger joins their run, host,
+assignment, epoch and host session to the matching incarnation. This is a
+logical join. Context can commit before the incarnation exists in the lifecycle
+projection.
+
+```mermaid
+erDiagram
+    RUN_SESSION_INCARNATIONS o|..o{ RUN_CONTEXT_USAGE : "physical identity (logical join)"
+    RUN_SESSION_INCARNATIONS o|..o{ RUN_CONTEXT_COMPACTIONS : "physical identity (logical join)"
+```
+
+Rebuild measurements from retained valid events and disclose partial coverage
+when source data has been pruned. The existing canonical cursor claim and repair
+path fence context projection transactions. See the
+[recovery state machine](../system-analytics/acp-context.md#state-machine).
+
 The existing age-only command/receipt pruning is incomplete (AB-10).
 The [Designed retirement protocol](../system-analytics/execution-prompt-lifecycle.md#command-retirement-and-bounded-retry-policy-designed)
 requires terminal ACK, owner disposition, terminal run/delivery holds and grace,

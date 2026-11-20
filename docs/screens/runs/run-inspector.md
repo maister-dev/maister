@@ -164,6 +164,10 @@ Disabled actions display one-line reasons:
 | Environment-gated | Push remote or provider token is missing. |
 | Safety-gated | Target branch advanced since review. |
 
+## Context usage
+
+The live session inspector shows the latest physical session reading. The selected attempt’s transcript shows its own context and compaction marker. Details include the source, last observation and completed count. See [ACP context observations](../../system-analytics/acp-context.md).
+
 ## Data & APIs
 
 - Overview uses `getRunDetail`, `getRunCostSummary`, `getRunTimeline`, and

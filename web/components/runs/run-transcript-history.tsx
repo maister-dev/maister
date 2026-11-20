@@ -16,6 +16,11 @@ import { useTranslations } from "next-intl";
 
 import { TranscriptView } from "@/components/run-transcript/transcript-view";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
+import {
+  contextTranscriptRevision,
+  latestContextSnapshot,
+} from "@/lib/runs/context-snapshot";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
 import { useLatestRef } from "@/lib/use-latest-ref";
 
@@ -116,6 +121,7 @@ function mergeRefresh(
   return {
     ...page,
     usage: refreshed.usage,
+    context: refreshed.context,
     projection: refreshed.projection,
     messages,
     beforeCursor: sameFirst ? refreshed.beforeCursor : page.beforeCursor,
@@ -727,6 +733,7 @@ export function RunTranscriptHistory({
           updated[updated.length - 1] = {
             ...final,
             usage: latest.usage,
+            context: latest.context,
             projection: latest.projection,
             hasLater: hasNewer,
           };
@@ -807,9 +814,25 @@ export function RunTranscriptHistory({
     boundPages,
   ]);
 
+  const transcriptRevision = contextTranscriptRevision(stream.context);
+  const attemptTranscriptRevision = contextTranscriptRevision(
+    stream.attemptContext,
+  );
+  const streamedAttemptId = stream.attemptContext?.nodeAttemptId;
+
   useEffect(() => {
-    if (stream.eventCount > 0) refreshRef.current();
-  }, [stream.eventCount]);
+    if (
+      stream.eventCount > 0 ||
+      transcriptRevision !== null ||
+      attemptTranscriptRevision !== null
+    )
+      refreshRef.current();
+  }, [
+    stream.eventCount,
+    transcriptRevision,
+    attemptTranscriptRevision,
+    streamedAttemptId,
+  ]);
 
   const navigate = useCallback(
     async (direction: Direction): Promise<void> => {
@@ -1287,42 +1310,53 @@ export function RunTranscriptHistory({
       {!pages.length && !error ? (
         <p role="status">{t("loadingTranscript")}</p>
       ) : null}
-      {first?.hasEarlier ? (
-        <Button
-          className={controlClass}
-          data-testid="transcript-earlier"
-          isDisabled={loading !== null}
-          size="sm"
-          variant="outline"
-          onPress={() => navigateRef.current("earlier")}
-        >
-          {t("earlierMessages")}
-        </Button>
-      ) : null}
-      {loading ? (
-        <p data-testid="transcript-history-loading" role="status">
-          {t(
-            loading === "earlier"
-              ? "loadingEarlier"
-              : loading === "later"
-                ? "loadingLater"
-                : "loadingTranscript",
-          )}
-        </p>
-      ) : null}
-      {last?.projection.state === "pending" ? (
-        <p role="status">{t("projectionPending")}</p>
-      ) : null}
-      {last?.usage ? (
-        <p>
-          {t("usage")}: {last.usage.used} / {last.usage.size}
-        </p>
-      ) : null}
-      {last?.projection.state === "caught_up" && messages.length === 0 ? (
-        <p>{t("emptyTranscript")}</p>
-      ) : null}
       <div className="grid min-w-0 grid-cols-1">
-        <div className="col-start-1 row-start-1 min-w-0">
+        <div className="col-start-1 row-start-1 min-w-0 space-y-3">
+          {first?.hasEarlier || last ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {first?.hasEarlier ? (
+                <Button
+                  className={controlClass}
+                  data-testid="transcript-earlier"
+                  isDisabled={loading !== null}
+                  size="sm"
+                  variant="outline"
+                  onPress={() => navigateRef.current("earlier")}
+                >
+                  {t("earlierMessages")}
+                </Button>
+              ) : null}
+              {last ? (
+                <ContextUsageMeter
+                  snapshot={latestContextSnapshot(
+                    last.context ?? null,
+                    last.attemptId === null
+                      ? (stream.context ?? null)
+                      : stream.attemptContext?.nodeAttemptId === last.attemptId
+                        ? stream.attemptContext
+                        : null,
+                  )}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {loading ? (
+            <p data-testid="transcript-history-loading" role="status">
+              {t(
+                loading === "earlier"
+                  ? "loadingEarlier"
+                  : loading === "later"
+                    ? "loadingLater"
+                    : "loadingTranscript",
+              )}
+            </p>
+          ) : null}
+          {last?.projection.state === "pending" ? (
+            <p role="status">{t("projectionPending")}</p>
+          ) : null}
+          {last?.projection.state === "caught_up" && messages.length === 0 ? (
+            <p>{t("emptyTranscript")}</p>
+          ) : null}
           <TranscriptView
             labels={labels}
             messages={messages}

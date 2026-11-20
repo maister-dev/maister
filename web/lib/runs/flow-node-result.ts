@@ -9,6 +9,7 @@ export interface FlowNodeAttemptResult {
   attempt: number;
   status: string;
   errorCode: string | null;
+  errorReason?: FlowResultTimelineEntryDto["errorReason"];
   exitCode: number | null;
   decision: string | null;
   reworkFromNode: string | null;
@@ -28,6 +29,7 @@ export interface FlowNodeGateResult {
   kind: TimelineGate["kind"];
   mode: TimelineGate["mode"];
   status: TimelineGate["status"];
+  promptFailureReason?: TimelineGate["promptFailureReason"];
   stale: boolean;
 }
 
@@ -83,6 +85,7 @@ function attemptDto(entry: FlowResultTimelineEntryDto): FlowNodeAttemptResult {
     attempt: entry.attempt,
     status: entry.status,
     errorCode: entry.errorCode,
+    ...(entry.errorReason ? { errorReason: entry.errorReason } : {}),
     exitCode: entry.exitCode,
     decision: entry.decision,
     reworkFromNode: entry.reworkFromNode,
@@ -105,6 +108,9 @@ function gateDtos(
       kind: gate.kind,
       mode: gate.mode,
       status: gate.status,
+      ...(gate.promptFailureReason
+        ? { promptFailureReason: gate.promptFailureReason }
+        : {}),
       stale: gate.stale,
     })),
   );

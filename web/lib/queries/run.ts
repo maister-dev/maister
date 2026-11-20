@@ -1201,6 +1201,7 @@ export { CASCADE_NON_TERMINAL_RUN_STATUSES };
 // --- M11b: run-detail timeline read model (ADR-030) -----------------------
 
 export interface TimelineGate {
+  promptFailureReason?: GateResult["promptFailureReason"];
   gateId: string;
   kind: GateResult["kind"];
   mode: GateResult["mode"];
@@ -1246,6 +1247,7 @@ export interface TimelineEntry {
   attempt: number;
   status: NodeAttempt["status"];
   errorCode: string | null;
+  errorReason?: NodeAttempt["errorReason"];
   exitCode: number | null;
   decision: string | null;
   reworkFromNode: string | null;
@@ -1423,6 +1425,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       attempt: nodeAttempts.attempt,
       status: nodeAttempts.status,
       errorCode: nodeAttempts.errorCode,
+      errorReason: nodeAttempts.errorReason,
       exitCode: nodeAttempts.exitCode,
       decision: nodeAttempts.decision,
       autoRetry: nodeAttempts.autoRetry,
@@ -1451,6 +1454,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       mode: gateResults.mode,
       status: gateResults.status,
       verdict: gateResults.verdict,
+      promptFailureReason: gateResults.promptFailureReason,
       endedAt: gateResults.endedAt,
     })
     .from(gateResults)
@@ -1508,6 +1512,9 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       mode: g.mode,
       status: g.status,
       verdict: g.verdict ?? null,
+      ...(g.promptFailureReason
+        ? { promptFailureReason: g.promptFailureReason }
+        : {}),
       stale: g.status === "stale",
       endedAt: g.endedAt ? g.endedAt.toISOString() : null,
     });
@@ -1545,6 +1552,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     attempt: r.attempt,
     status: r.status,
     errorCode: isMaisterErrorCode(r.errorCode) ? r.errorCode : null,
+    ...(r.errorReason ? { errorReason: r.errorReason } : {}),
     exitCode: r.exitCode ?? null,
     decision: r.decision,
     reworkFromNode: r.reworkFromNode,

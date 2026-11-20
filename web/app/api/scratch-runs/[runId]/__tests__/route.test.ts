@@ -53,6 +53,7 @@ function tableOf(table: unknown): keyof Tables {
 }
 
 const fakeDb = {
+  execute: vi.fn(async () => ({ rows: [] })),
   select: () => ({
     from: (table: unknown) => ({
       where: async () => dbState.tables[tableOf(table)],

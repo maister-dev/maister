@@ -22,36 +22,29 @@ import { finished } from "node:stream/promises";
 import { ReadableStream, WritableStream } from "node:stream/web";
 import { setImmediate as nextTurn } from "node:timers/promises";
 
+import pino from "pino";
 import { z } from "zod";
 
 // The SDK's `exports` map publishes no zod subpath (only the JSON schema), yet
 // these generated validators are exactly the inbound contract this producer
 // boundary enforces. A relative file import bypasses the exports map.
 import {
-  zCost,
   zRequestPermissionRequest,
-  zSessionId,
   zSessionNotification,
 } from "../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js";
 
 import { SupervisorError, type SupervisorErrorDetails } from "./types";
 import { createAcpToolCallContext } from "./acp-tool-call-context";
+import { acpContextUpdateType } from "../../runtime/acp-context";
 
 export const MAX_ACP_FRAME_BYTES = 1_048_576;
 const MAX_PRODUCERS = 20;
 const PRODUCER_BUFFER_BYTES = 144 * 1024;
 const DECODE_BUFFER_BYTES = 7 * 1024 * 1024;
 
-// Claude 0.95 can sum absent provider cache counters to NaN, which JSON
-// encodes as null. Preserve the raw advisory without inventing a measurement.
-const claudeUnknownContextUsage = z.object({
-  sessionId: zSessionId,
-  update: z.object({
-    sessionUpdate: z.literal("usage_update"),
-    used: z.null(),
-    size: z.number().positive(),
-    cost: zCost.nullish(),
-  }),
+const log = pino({
+  name: "bounded-acp-stream",
+  level: process.env.LOG_LEVEL ?? "info",
 });
 
 // One decoder/publication slot plus twenty bounded pipe/chunk/ring reservations fits
@@ -584,16 +577,29 @@ export function boundedAcpStream(input: {
     return admission;
   }
 
+  const warnedContextTypes = new Set<string>();
+
   async function update(params: unknown, line: string): Promise<void> {
     const parsed = zSessionNotification.safeParse(params);
 
     if (!parsed.success) {
       input.onLine?.(line);
-      if (
-        input.adapter === "claude" &&
-        claudeUnknownContextUsage.safeParse(params).success
-      )
+      const type = acpContextUpdateType(
+        params && typeof params === "object" && "update" in params
+          ? params.update
+          : undefined,
+      );
+
+      if (type) {
+        if (!warnedContextTypes.has(type)) {
+          warnedContextTypes.add(type);
+          log.warn(
+            { adapter: input.adapter, type },
+            "invalid ACP context update",
+          );
+        }
         return;
+      }
 
       throw incomplete("producer_update_invalid");
     }

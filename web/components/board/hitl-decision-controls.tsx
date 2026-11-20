@@ -1,4 +1,8 @@
 import type { HitlOption } from "@/lib/queries/hitl";
+import { isAcpContextFailureReason } from "../../../runtime/acp-context-failure";
+
+import { ContextLimitMessage } from "@/components/runs/context-limit-message";
+
 import type { NodeInterruptControlsProps } from "@/components/runs/node-interrupt-controls";
 import type { FormSchemaFieldType } from "@/lib/flows/editor/form-schema-edit";
 import type { ReactElement } from "react";
@@ -1115,6 +1119,11 @@ function ConsensusDraftCard({
           </button>
         ) : null}
       </div>
+      {isAcpContextFailureReason(draft.reason) ? (
+        <p className="mt-1 text-sm text-danger">
+          <ContextLimitMessage reason={draft.reason} />
+        </p>
+      ) : null}
       {pickable ? null : (
         <p className="mt-1 text-[12px] text-mute" id={reasonId}>
           {labels.consensusUnavailableReason ?? "No draft text was produced."}
@@ -1174,8 +1183,12 @@ function ConsensusTechnicalFailureRow({
     <li className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-ink-2">
       <span className="font-semibold text-ink">{subject}</span>
       {": "}
-      {labels[`consensusTechnicalCode.${code}`] ??
-        TECHNICAL_CODE_FALLBACK[code]}
+      {failure.errorReason ? (
+        <ContextLimitMessage reason={failure.errorReason} />
+      ) : (
+        (labels[`consensusTechnicalCode.${code}`] ??
+        TECHNICAL_CODE_FALLBACK[code])
+      )}
       <span className="ml-1.5 font-mono text-[10.5px] text-mute">
         ({labels.consensusTechnicalDiagnostic ?? "Code"}: {failure.errorCode})
       </span>

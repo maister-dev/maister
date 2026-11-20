@@ -5,6 +5,7 @@ import { ADAPTER_SUPPORT } from "../web/lib/acp-runners/adapter-support.ts";
 
 type SharedAdapterContract = {
   readonly id: string;
+  readonly contextCompaction: boolean;
   readonly readOnlyCapable: boolean;
   readonly readOnlySessionSmoke: "required" | "not_required";
   readonly readOnlyMaterializer: "claude-settings" | "none";
@@ -18,6 +19,7 @@ type SharedAdapterContract = {
 function sharedContract(adapter: SharedAdapterContract): SharedAdapterContract {
   return {
     id: adapter.id,
+    contextCompaction: adapter.contextCompaction,
     readOnlyCapable: adapter.readOnlyCapable,
     readOnlySessionSmoke: adapter.readOnlySessionSmoke,
     readOnlyMaterializer: adapter.readOnlyMaterializer,

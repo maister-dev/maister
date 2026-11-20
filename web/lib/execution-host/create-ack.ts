@@ -50,6 +50,8 @@ export async function applyCreateAck(
   const assignment = await lockCurrentSessionAssignment(tx, input);
 
   if (!assignment) return "stale";
+  let contextNodeAttemptId = input.nodeAttemptId;
+
   if (input.commandId) {
     const [command] = await tx
       .select()
@@ -67,6 +69,11 @@ export async function applyCreateAck(
     )
       throw createIntentError("create_ack_command");
     if (!(await currentCreateCommand(tx, command))) return "stale";
+    if (
+      contextNodeAttemptId === null &&
+      typeof command.payload.nodeAttemptId === "string"
+    )
+      contextNodeAttemptId = command.payload.nodeAttemptId;
   } else {
     const [owned] = await tx
       .select({ id: executionCommands.id })
@@ -106,11 +113,11 @@ export async function applyCreateAck(
       !["created", "active"].includes(incarnation.state))
   )
     return "stale";
-  if (input.nodeAttemptId) {
+  if (contextNodeAttemptId) {
     const [attempt] = await tx
       .select({ runId: nodeAttempts.runId })
       .from(nodeAttempts)
-      .where(eq(nodeAttempts.id, input.nodeAttemptId))
+      .where(eq(nodeAttempts.id, contextNodeAttemptId))
       .for("update")
       .limit(1);
 
@@ -121,7 +128,7 @@ export async function applyCreateAck(
         {
           details: {
             reason: "command_invariant_conflict",
-            nodeAttemptId: input.nodeAttemptId,
+            nodeAttemptId: contextNodeAttemptId,
           },
         },
       );
@@ -180,6 +187,7 @@ export async function applyCreateAck(
       executionHostId: assignment.executionHostId,
       hostSessionId: input.result.sessionId,
       acpSessionId: input.result.acpSessionId,
+      contextNodeAttemptId,
       state: "created",
       origin: "native",
       steeringSupported,
@@ -221,6 +229,12 @@ export async function applyCreateAck(
       "create-ack-steering-recorded",
     );
   }
+  if (incarnation?.contextNodeAttemptId === null && contextNodeAttemptId)
+    await tx
+      .update(runSessionIncarnations)
+      .set({ contextNodeAttemptId })
+      .where(eq(runSessionIncarnations.id, incarnation.id));
+
   if (input.nodeAttemptId)
     await tx
       .update(nodeAttempts)

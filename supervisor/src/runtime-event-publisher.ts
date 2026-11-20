@@ -17,6 +17,8 @@ import type {
   SessionTextFrameEvents,
 } from "./types";
 
+import { acpContextUpdateType } from "../../runtime/acp-context";
+
 import { commandReceiptPayloadV2 } from "./command-event";
 import { sessionSteeringSupported } from "./types";
 import { CONTROL_EVENT_MAX_BYTES } from "./runtime-limits";
@@ -209,8 +211,15 @@ export class RuntimeEventPublisher {
       });
 
       this.contentReferences.set(event, contentRef);
+      const contextType = acpContextUpdateType(original.update);
+
       payload = {
         sourceMonotonicId: event.monotonicId,
+        ...(contextType ? { contextType } : {}),
+        ...(original.contextUsageOnly === true
+          ? { contextUsageOnly: true }
+          : {}),
+        ...(original.contextReplay === true ? { contextReplay: true } : {}),
         ...(record.activePromptCommandId
           ? { sourceCommandId: record.activePromptCommandId }
           : {}),
@@ -488,6 +497,9 @@ export class RuntimeEventPublisher {
           sessionName: record.sessionName,
           acpSessionId: record.acpSessionId ?? null,
           steeringSupported: sessionSteeringSupported(record),
+          ...(record.contextWindowAdvisory
+            ? { windowAdvisory: record.contextWindowAdvisory }
+            : {}),
         },
       },
     });

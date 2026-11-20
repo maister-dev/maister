@@ -49,11 +49,20 @@ const execFileAsync = promisify(execFile);
 
 // Scripted agent action — per-test queue of results; every call is recorded
 // with its step config so fresh-session can be asserted.
-const agentCalls: Array<{ mode: string; stepId: string }> = [];
+const agentCalls: Array<{
+  mode: string;
+  stepId: string;
+  resumeSessionId?: string;
+}> = [];
 let agentScript: Array<
   | { ok: true }
   | { ok: false; errorCode: string }
-  | { commitFile: string; thenFail: string }
+  | {
+      commitFile: string;
+      thenFail: string;
+      errorReason?: "context_exhausted";
+      acpSessionId?: string;
+    }
   // B6: a typed refusal the node throws, its token in `details.reason`.
   | { throws: { code: "CRASH" | "CONFIG"; reason: string } }
 > = [];
@@ -63,9 +72,13 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
   runAgentStep: vi.fn(
     async (
       step: { id: string; mode: string },
-      ctx: { worktreePath: string },
+      ctx: { worktreePath: string; resumeSessionId?: string },
     ) => {
-      agentCalls.push({ mode: step.mode, stepId: step.id });
+      agentCalls.push({
+        mode: step.mode,
+        stepId: step.id,
+        resumeSessionId: ctx.resumeSessionId,
+      });
       const next = agentScript.shift() ?? { ok: true as const };
 
       if ("throws" in next) {
@@ -97,6 +110,8 @@ vi.mock("@/lib/flows/runner-agent", async (importOriginal) => ({
           durationMs: 1,
           needsInput: false,
           errorCode: next.thenFail,
+          errorReason: next.errorReason,
+          acpSessionId: next.acpSessionId,
         };
       }
 
@@ -163,12 +178,13 @@ function retryManifest(
   opts: {
     gate?: boolean;
     retrySafe?: boolean;
+    engineMin?: string;
   } = {},
 ) {
   return {
     schemaVersion: 1,
     name: "Retry",
-    compat: { engine_min: "1.4.0" },
+    compat: { engine_min: opts.engineMin ?? "1.4.0" },
     nodes: [
       {
         id: "implement",
@@ -346,7 +362,7 @@ async function seedRun(
 
 async function attemptsFor(runId: string) {
   const r = await pool.query(
-    `SELECT attempt, status, error_code, auto_retry, checkpoint_ref
+    `SELECT attempt, status, error_code, error_reason, acp_session_id, auto_retry, checkpoint_ref
        FROM node_attempts WHERE run_id = $1 ORDER BY attempt`,
     [runId],
   );
@@ -377,6 +393,53 @@ async function runStatus(runId: string): Promise<string> {
 }
 
 describe("retry_policy auto-retry (ADR-080)", () => {
+  it.each([true, false])(
+    "reason-only retry selects the typed overflow (%s) and preserves the workspace",
+    async (overflow) => {
+      const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+      const manifest = retryManifest(
+        { attempts: 2, on_reasons: ["context_exhausted"], workspace: "keep" },
+        { engineMin: "3.13.0" },
+      );
+      const { loaded, runId, worktree, runtimeRoot } = await seedRun(manifest);
+      agentScript = [
+        {
+          commitFile: "retained.txt",
+          thenFail: "ACP_PROTOCOL",
+          ...(overflow
+            ? { errorReason: "context_exhausted", acpSessionId: "exhausted" }
+            : {}),
+        },
+        { ok: true },
+      ];
+
+      await runGraph(loaded as never, {
+        db,
+        runtimeRoot,
+        executionHosts: (await fakeGraphHosts(db, runId)).hosts,
+      });
+      const attempts = await attemptsFor(runId);
+
+      expect(attempts).toHaveLength(overflow ? 2 : 1);
+      expect(attempts[0]).toMatchObject({
+        error_code: "ACP_PROTOCOL",
+        error_reason: overflow ? "context_exhausted" : null,
+        acp_session_id: overflow ? "exhausted" : null,
+      });
+      if (overflow) {
+        expect(attempts[1]).toMatchObject({
+          auto_retry: true,
+          status: "Succeeded",
+        });
+        expect(agentCalls[1]).toMatchObject({
+          mode: "new-session",
+          resumeSessionId: undefined,
+        });
+      }
+      expect(await git(worktree, "show", "HEAD:retained.txt")).toBe("agent\n");
+    },
+  );
+
   it("retries an on-list failure with fresh sessions, applies the workspace policy, then succeeds", async () => {
     const { runGraph } = await import("@/lib/flows/graph/runner-graph");
     const manifest = retryManifest(

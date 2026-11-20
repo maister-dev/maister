@@ -110,6 +110,16 @@ components:
             message: { type: string }
             data: { type: object, additionalProperties: true }
     SessionUpdateNotification:
+      description: |
+        Context updates use the unstable ACP 2.0.2 schema. The supervisor
+        advertises the optional clientCapabilities.session.compaction object
+        to the qualified Claude and Codex adapters.
+        usage_update reports used and size, with optional cost.
+        compaction_update carries compactionId, status and optional summary
+        or error. compaction_summary_chunk carries compactionId and content.
+        Status can be in_progress, completed, failed, cancelled or a future string.
+        Adapters may send a terminal without a start. Manual compaction can be
+        exposed through an ordinary advertised command.
       allOf:
         - $ref: "#/components/schemas/JsonRpcEnvelope"
         - type: object

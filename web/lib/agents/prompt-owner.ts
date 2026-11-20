@@ -1,5 +1,7 @@
 import "server-only";
 
+import { promptContextFailureReason } from "../../../runtime/acp-context-failure";
+
 import type {
   AgentTurn,
   RunSessionIncarnation,
@@ -716,7 +718,10 @@ export function agentTerminalOutcomeFor(
   if (outcome.state === "failed" && isTurnLostError(outcome.error))
     return { outcome: "Crashed", reason: "agent_turn_lost" };
 
-  return { outcome: "Failed", reason: "agent_prompt_failed" };
+  return {
+    outcome: "Failed",
+    reason: promptContextFailureReason(outcome) ?? "agent_prompt_failed",
+  };
 }
 
 /** Settle an irrecoverable application as failure without replaying or

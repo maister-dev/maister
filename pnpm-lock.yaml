@@ -15,6 +15,7 @@ overrides:
   eslint-plugin-jsx-a11y-x>minimatch: 11.0.8
 
 patchedDependencies:
+  '@agentclientprotocol/codex-acp@2.2.2': 6cab1e2d09b24135dc6ca53289779aeb357cbdd8092c132b1525312246855749
   cpu-features@0.0.10: d6806337cd6cf8063da9f65aa6af6eb5fc291fc5161404d0ac5e027e2bcb5093
   prebuild-install@7.1.3: d3458d63bb5cdd4111b21e064af785cd0db3f1769c474ffe56d5e6db5676d810
   ssh2@1.17.0: 86b97dc86e026ef8852b32031c7c552fc189d8e85550430ab6b129c793135f40
@@ -192,7 +193,7 @@ importers:
         version: 0.95.0(@anthropic-ai/sdk@1.3.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))
       '@agentclientprotocol/codex-acp':
         specifier: 2.2.2
-        version: 2.2.2
+        version: 2.2.2(patch_hash=6cab1e2d09b24135dc6ca53289779aeb357cbdd8092c132b1525312246855749)
       '@agentclientprotocol/sdk':
         specifier: 2.0.2
         version: 2.0.2(zod@4.6.7)
@@ -6887,7 +6888,7 @@ snapshots:
       - '@anthropic-ai/sdk'
       - '@modelcontextprotocol/sdk'
 
-  '@agentclientprotocol/codex-acp@2.2.2':
+  '@agentclientprotocol/codex-acp@2.2.2(patch_hash=6cab1e2d09b24135dc6ca53289779aeb357cbdd8092c132b1525312246855749)':
     dependencies:
       '@agentclientprotocol/sdk': 1.9.0(zod@4.6.7)
       '@openai/codex': 0.160.1

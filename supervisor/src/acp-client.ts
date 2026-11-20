@@ -4,6 +4,7 @@ import type {
   Writable as NodeWritable,
 } from "node:stream";
 import type { Logger } from "pino";
+import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
 
 import { randomUUID } from "node:crypto";
 
@@ -259,6 +260,39 @@ function withTimeout<T>(
   });
 }
 
+function contextLimitReason(
+  adapter: ExecutorAgent,
+  error: unknown,
+): AcpContextFailureReason | undefined {
+  if (!(error instanceof acp.RequestError) || error.code !== -32603)
+    return undefined;
+  const data = error.data;
+  const kind =
+    data && typeof data === "object" && "errorKind" in data
+      ? data.errorKind
+      : undefined;
+
+  if (
+    adapter === "codex" &&
+    data &&
+    typeof data === "object" &&
+    "codexErrorInfo" in data &&
+    data.codexErrorInfo === "contextWindowExceeded"
+  )
+    return "context_exhausted";
+  if (adapter !== "claude") return undefined;
+  if (kind === "max_output_tokens") return "max_output_tokens";
+
+  // Claude ACP 0.95 shares invalid_request across unrelated provider errors.
+  if (
+    (kind === "invalid_request" || kind === undefined) &&
+    error.message.trim() === "Internal error: Prompt is too long"
+  )
+    return "context_exhausted";
+
+  return undefined;
+}
+
 export function classifyAcpMethodError(args: {
   adapter: ExecutorAgent;
   method: AcpMethod;
@@ -266,6 +300,22 @@ export function classifyAcpMethodError(args: {
   sessionId?: string;
 }): SupervisorError {
   if (isSupervisorError(args.err)) return args.err;
+
+  const reason =
+    args.method === "prompt"
+      ? contextLimitReason(args.adapter, args.err)
+      : undefined;
+
+  if (reason) {
+    const message =
+      reason === "context_exhausted"
+        ? "Agent context window exhausted"
+        : "Agent reached its output token limit";
+
+    return new SupervisorError("ACP_PROTOCOL", message, {
+      details: { reason },
+    });
+  }
 
   const rawMessage = errorText(args.err);
   const lower = rawMessage.toLowerCase();
@@ -460,6 +510,7 @@ export async function createAcpConnection(
 
   const lineEvent = (
     line: string,
+    contextUsageOnly?: true,
   ): Extract<SessionEvent, { type: "session.line" }> => {
     record.monotonicId += 1;
     logger.debug(
@@ -476,6 +527,7 @@ export async function createAcpConnection(
       sessionId,
       monotonicId: record.monotonicId,
       line,
+      ...(contextUsageOnly ? { contextUsageOnly } : {}),
     };
   };
   const emitLine = (line: string): void => {
@@ -491,6 +543,13 @@ export async function createAcpConnection(
       sessionId,
       monotonicId: record.monotonicId,
       update: params.update,
+      ...(args.resumeSessionId &&
+      !record.acpSessionId &&
+      (params.update.sessionUpdate === "usage_update" ||
+        params.update.sessionUpdate === "compaction_update" ||
+        params.update.sessionUpdate === "compaction_summary_chunk")
+        ? { contextReplay: true as const }
+        : {}),
     };
   };
 
@@ -1047,7 +1106,9 @@ export async function createAcpConnection(
       ) {
         args.publishTextFrame([lineEvent(line), updateEvent(params)]);
       } else {
-        emitLine(line);
+        if (params.update.sessionUpdate === "usage_update")
+          emitter.emit(SESSION_EVENT_CHANNEL, lineEvent(line, true));
+        else emitLine(line);
         await clientImpl.sessionUpdate(params);
       }
     },

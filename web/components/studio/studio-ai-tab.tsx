@@ -23,6 +23,7 @@ import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalo
 import { type LaunchStage, readLaunchStream } from "@/lib/runs/launch-progress";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
 import { useRunStream } from "@/lib/use-run-stream";
+import { RunStreamValueProvider } from "@/components/runs/run-stream-provider";
 
 export type StudioAiTabLabels = {
   intro: string;
@@ -101,7 +102,8 @@ export function StudioAiTab({
 
   // Change-tick only (retain:false): the run's SSE stream signals assistant
   // activity. We re-read dialogStatus on each tick to drive busy/refresh.
-  const { eventCount } = useRunStream(runId, { retain: false });
+  const stream = useRunStream(runId, { retain: false });
+  const { eventCount } = stream;
   const adapter = useMemo<AdapterId>(
     () =>
       (runners.find((runner) => runner.id === selectedRunnerId)?.adapter ??
@@ -395,21 +397,23 @@ export function StudioAiTab({
           </button>
         </div>
         <div className="min-h-0 flex-1">
-          <ScratchConversation
-            canAct
-            compact
-            attachmentsEnabled={false}
-            interruptEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/interrupt`}
-            messageBodyExtras={messageBodyExtras}
-            messageEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/messages`}
-            recoverEndpoint={null}
-            renderFlowActionResult={renderFlowActionResult}
-            runId={runId}
-            sendDisabledReason={sendDisabledReason}
-            onBeforeSend={onBeforeSend}
-            onHeaderInfo={onHeaderInfo}
-            onMessageSettled={onActivity}
-          />
+          <RunStreamValueProvider runId={runId} stream={stream}>
+            <ScratchConversation
+              canAct
+              compact
+              attachmentsEnabled={false}
+              interruptEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/interrupt`}
+              messageBodyExtras={messageBodyExtras}
+              messageEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/messages`}
+              recoverEndpoint={null}
+              renderFlowActionResult={renderFlowActionResult}
+              runId={runId}
+              sendDisabledReason={sendDisabledReason}
+              onBeforeSend={onBeforeSend}
+              onHeaderInfo={onHeaderInfo}
+              onMessageSettled={onActivity}
+            />
+          </RunStreamValueProvider>
         </div>
         {error ? (
           <p

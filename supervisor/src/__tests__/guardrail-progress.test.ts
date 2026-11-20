@@ -50,6 +50,33 @@ describe("completed-work no_progress accounting", () => {
     expect(result.tripped).toBe(false);
   });
 
+  it("preserves accrued no-progress state across compaction events", () => {
+    const stalled = replay([start("a"), finish("a")]).state;
+    const notifications = [
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: "c",
+        status: "in_progress",
+      },
+      { sessionUpdate: "compaction_summary_chunk", compactionId: "c" },
+      {
+        sessionUpdate: "compaction_update",
+        compactionId: "c",
+        status: "completed",
+      },
+      { sessionUpdate: "usage_update", used: 18, size: 100 },
+    ];
+    const after = notifications.reduce(
+      (state, notification) => accountProgress(state, notification, 2).state,
+      stalled,
+    );
+
+    expect(after).toBe(stalled);
+    const pending = accountProgress(after, start("b"), 2).state;
+
+    expect(accountProgress(pending, finish("b"), 2).tripped).toBe(true);
+  });
+
   it("counts sparse completion once using announcement metadata and ignores duplicate terminal updates", () => {
     const result = replay([
       start("a", "read"),

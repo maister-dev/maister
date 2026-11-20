@@ -3,6 +3,7 @@ import "server-only";
 import type { SQL } from "drizzle-orm";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import type { FlowManifestIncompatibility } from "@/lib/flows/manifest-parser";
+import type { ContextSnapshot } from "./context-snapshot";
 
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -13,6 +14,8 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
+import { readCompactionEvidence } from "@/lib/runs/compaction-evidence";
+import { readContextSnapshot } from "@/lib/runs/context-reader";
 import { projectRunTranscript } from "@/lib/runs/run-transcript-projector";
 
 export type TranscriptPageMessage = TranscriptMessage & {
@@ -23,6 +26,7 @@ export type TranscriptPage = {
   incompatibility: FlowManifestIncompatibility | null;
   messages: TranscriptPageMessage[];
   usage: { used: number; size: number } | null;
+  context?: ContextSnapshot;
   attemptId: string | null;
   beforeCursor: string | null;
   afterCursor: string | null;
@@ -349,10 +353,15 @@ async function readWindow(
   const bounds = sql`${before ? sql`AND ${order}<${tuple(before, node)}` : sql``} ${after ? sql`AND ${order}>${tuple(after, node)}` : sql``} ${lower && upper ? sql`AND ${order}>=LEAST(${tuple(lower, node)},${tuple(upper, node)}) AND ${order}<=GREATEST(${tuple(lower, node)},${tuple(upper, node)})` : sql``} ${anchor ? sql`AND ${order}>=${tuple(anchor, node)}` : sql``}`;
   const ascending = after !== null || lower !== null || anchor !== null;
   const rows = await db.execute<Metadata>(
-    sql`SELECT id,role,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes,CASE WHEN octet_length(content)>${TRANSCRIPT_PAGE_BYTES} THEN octet_length(content)+2 ELSE octet_length(to_json(content)::text) END::int AS "wireBytes" FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
+    sql`SELECT id,role,to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "createdAt",${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')` : sql`'0'`} AS event,(prompt_dispatch_key IS NOT NULL) AS prompt,sequence,octet_length(content)::int AS bytes,CASE WHEN octet_length(content)>${TRANSCRIPT_PAGE_BYTES} THEN octet_length(content)+2 ELSE octet_length(to_json(content)::text) END::int + CASE WHEN projection_tool_key LIKE 'compaction:%' THEN 192 ELSE 0 END AS "wireBytes" FROM run_messages WHERE ${scope} ${bounds} ORDER BY ${node ? sql`coalesce(first_supervisor_event_id,supervisor_event_id,'0')::bigint ${ascending ? sql`ASC` : sql`DESC`},(prompt_dispatch_key IS NOT NULL) ${ascending ? sql`ASC` : sql`DESC`},` : sql`created_at ${ascending ? sql`ASC` : sql`DESC`},`} sequence ${ascending ? sql`ASC` : sql`DESC`},id ${ascending ? sql`ASC` : sql`DESC`} LIMIT ${limit}`,
   );
-  const usage = await readUsage(db, scope, node);
-  const envelope: TranscriptPage = { ...empty, usage };
+  const context = await readContextSnapshot(db, runId, attemptId);
+  const { usage } = context;
+  const envelope: TranscriptPage = {
+    ...empty,
+    context,
+    usage: usage ? { used: usage.used, size: usage.size } : null,
+  };
   const encode = (position: Position, direction: Cursor["direction"]): string =>
     Buffer.from(
       JSON.stringify({
@@ -446,29 +455,6 @@ function messageOf(row: Metadata, content: string): TranscriptPageMessage {
   return { id: row.id, role: row.role, content, createdAt: row.createdAt };
 }
 
-async function readUsage(
-  db: ReadDb,
-  scope: SQL,
-  node: string | null,
-): Promise<TranscriptPage["usage"]> {
-  const validJson = sql`CASE WHEN pg_input_is_valid(content, 'jsonb') THEN content::jsonb ELSE '{}'::jsonb END`;
-  const rows = await db.execute<{ used: unknown; size: unknown }>(
-    sql`SELECT (${validJson})->'used' AS used, (${validJson})->'size' AS size FROM run_messages WHERE ${scope} AND role='system' AND (${validJson})->>'kind'='usage' ORDER BY ${node ? sql`coalesce(supervisor_event_id,'0')::bigint DESC,(prompt_dispatch_key IS NOT NULL) DESC,` : sql`created_at DESC,`} sequence DESC,id DESC LIMIT 1`,
-  );
-  const row = rows.rows[0];
-
-  if (!row) return null;
-  const parsed = z
-    .object({
-      used: z.number().int().nonnegative(),
-      size: z.number().int().nonnegative(),
-    })
-    .safeParse({ used: row.used ?? 0, size: row.size ?? 0 });
-
-  return parsed.success ? parsed.data : null;
-}
-
-/** Build valid payload previews in Postgres without transferring the full record. */
 function previewContent(): SQL {
   const json = sql`CASE WHEN pg_input_is_valid(m.content, 'jsonb') THEN m.content::jsonb ELSE '{}'::jsonb END`;
 
@@ -484,6 +470,9 @@ function previewContent(): SQL {
       'result',left(coalesce((${json})->>'result',''),1024)
     )::text
     WHEN (${json})->>'kind'='thought' THEN jsonb_build_object('v',1,'kind','thought','text',left(coalesce((${json})->>'text',''),1024))::text
+    WHEN (${json})->>'kind'='compaction' THEN jsonb_build_object(
+      'v',1,'kind','compaction','status',(${json})->>'status','summary',left(coalesce((${json})->>'summary',''),1024)
+    )::text
     WHEN (${json})->>'kind'='permission' THEN jsonb_build_object('v',1,'kind','permission','prompt',left(coalesce((${json})->>'prompt',''),1024))::text
     ELSE jsonb_build_object('v',1,'kind',left(coalesce((${json})->>'kind','system'),64))::text
   END`;
@@ -502,6 +491,11 @@ async function readMessageBodies(
     )}) AS a(id,preview) ON a.id=m.id WHERE m.run_id=${runId}`,
   );
   const content = new Map(bodies.rows.map((row) => [row.id, row.content]));
+  const evidence = await readCompactionEvidence(
+    db,
+    runId,
+    records.map(({ row }) => row.id),
+  );
 
   return records.map(({ row, preview }): TranscriptPageMessage => {
     const body = content.get(row.id);
@@ -518,7 +512,13 @@ async function readMessageBodies(
           },
         },
       );
-    const message = messageOf(row, body);
+    const measurement = evidence.get(row.id);
+    const message = messageOf(
+      row,
+      measurement
+        ? JSON.stringify({ ...JSON.parse(body), ...measurement })
+        : body,
+    );
 
     return preview
       ? {

@@ -61,6 +61,63 @@ describe("retryPolicySchema (ADR-080)", () => {
   });
 });
 
+describe("context retry selectors", () => {
+  it("preserves a reason-only policy and rejects missing, empty, and unknown selectors", () => {
+    const policy = {
+      attempts: 2,
+      workspace: "keep",
+      on_reasons: ["context_exhausted"],
+    };
+
+    expect(retryPolicySchema.parse(policy)).toEqual(policy);
+    expect(
+      retryPolicySchema.parse({ ...policy, on_errors: ["SPAWN"] }),
+    ).toEqual({
+      ...policy,
+      on_errors: ["SPAWN"],
+    });
+    for (const selectors of [
+      {},
+      { on_reasons: [] },
+      { on_reasons: ["protocol"] },
+    ]) {
+      expect(
+        retryPolicySchema.safeParse({ attempts: 2, ...selectors }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("requires the new floor only when declaring reason selectors", () => {
+    const nodes = [
+      {
+        id: "impl",
+        type: "ai_coding",
+        action: { prompt: "/impl" },
+        transitions: { success: "done" },
+        retry_policy: {
+          attempts: 2,
+          workspace: "keep",
+          on_reasons: ["context_exhausted"],
+        },
+      },
+    ] as never;
+    const check = (engine_min: string) =>
+      validateGraphManifest(
+        {
+          schemaVersion: 1,
+          name: "Retry",
+          compat: { engine_min },
+          nodes,
+        } as never,
+        nodes,
+        "/tmp/flow.yaml",
+      );
+
+    expect(() => check("3.12.0")).toThrowError(/3\.13\.0/);
+    expect(() => check("3.13.0")).not.toThrow();
+  });
+});
+
 describe("retry_policy node placement", () => {
   const base = {
     id: "n1",

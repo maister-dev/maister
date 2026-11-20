@@ -17,7 +17,10 @@ import {
   type ExecutionEventProjector,
 } from "@/lib/execution-host/events/projector";
 import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/projection-consumers";
-import { prepareArtifactContent } from "@/lib/execution-host/events/session-content";
+import {
+  isPrunedContextEvent,
+  prepareArtifactContent,
+} from "@/lib/execution-host/events/session-content";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches the store/ledger idiom).
@@ -272,6 +275,7 @@ async function projectCanonicalArtifactEvent(
   // a deterministic `legacy_import` identity. They are immutable audit input,
   // not a live host authority, but retain the same line/tool-call derivations.
   if (event.source !== "host" && event.source !== "legacy_import") return;
+  if (isPrunedContextEvent(event)) return;
   let derivation: Derivation | null;
 
   try {

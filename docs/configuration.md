@@ -1023,7 +1023,13 @@ bump log — one entry per capability floor (graph `nodes[]` 1.1.0 → … →
 graph-only cut-over 3.0.0 → context mounts 3.4.0). A flow declaring a floored
 capability MUST set `compat.engine_min` accordingly; each floor's rationale
 lives in the ADR the comment names. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
-`[1]`.
+`[1]`. The `retry_policy.on_reasons` selector requires engine 3.13.0.
+See the [input overflow recipe](flow-dsl.md#node-retry_policy-implemented).
+
+**ACP context window.** Set any adapter-specific context window or compaction
+limits on the runner configuration. A Claude runner using an Anthropic-compatible
+provider displays a non-blocking advisory when the window is missing or invalid.
+See [ACP runner configuration](system-analytics/acp-runners.md).
 
 **Default vs declared artifacts.** DEFAULT artifact recording — the run log,
 guard metrics, the human/form answer, and the diff — is captured for **all

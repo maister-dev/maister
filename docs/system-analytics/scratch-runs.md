@@ -1,5 +1,7 @@
 # Scratch runs domain
 
+The [context meter](acp-context.md) uses the current scratch incarnation. Summaries require current transcript-content authority.
+
 ## Purpose
 
 A **scratch run** is a manually started coding-agent workspace outside the task

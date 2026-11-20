@@ -5,6 +5,7 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { ProcessIdentity } from "@/test-support/process-invocation";
 import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
+import type { TestRunnerAgent } from "@/lib/__tests__/runner-fixtures";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -119,6 +120,7 @@ beforeAll(async () => {
   });
   supervisor = await startRealSupervisor({
     fixtureArgs: ["--hang", "--lines", "0", "--supports-resume"],
+    fixtureAdapters: ["claude", "codex"],
   });
   restoreUrl = useRealSupervisorUrl(supervisor.url);
   resetRegistrarStateForTests();
@@ -148,6 +150,7 @@ afterAll(async () => {
 async function seedOwnerFlow(
   nodes: FlowYamlV1["nodes"],
   options: {
+    adapter?: TestRunnerAgent;
     engineMin?: string;
     installedPath?: string;
     scheduledRequest?: string;
@@ -170,6 +173,7 @@ async function seedOwnerFlow(
       nodes,
     },
     {
+      agent: options.adapter,
       repoPath,
       run: options.scheduledRequest
         ? {
@@ -2376,6 +2380,105 @@ describe("Flow prompt owners through the production graph driver", () => {
     },
     110_000,
   );
+  it.each([
+    ["node", "claude-input", undefined, "context_exhausted"],
+    ["node", "codex-input", undefined, "context_exhausted"],
+    ["node", "claude-output", undefined, "max_output_tokens"],
+    ["ai_judgment", undefined, "max_tokens", "max_output_tokens"],
+    ["ai_judgment", "codex-input", undefined, "context_exhausted"],
+    ["skill_check", "claude-input", undefined, "context_exhausted"],
+    ["skill_check", "codex-input", undefined, "context_exhausted"],
+  ] as const)(
+    "owner-flow-context: %s retains %s / %s as %s",
+    async (owner, contextFailure, stopReason, reason) => {
+      const prompt = `fixture-output:${JSON.stringify({ bytes: 0, contextFailure, stopReason })}`;
+      const seed = await seedOwnerFlow(
+        [
+          {
+            id: "work",
+            ...(owner === "node"
+              ? {
+                  type: "ai_coding",
+                  action: { prompt },
+                }
+              : {
+                  type: "cli",
+                  action: { command: "printf applied > action-witness.txt" },
+                  retry_policy: {
+                    attempts: 2,
+                    workspace: "keep",
+                    on_reasons: [reason],
+                  },
+                  pre_finish: {
+                    gates: [
+                      {
+                        id: "review",
+                        mode: "blocking",
+                        kind: owner,
+                        ...(owner === "skill_check"
+                          ? { command: prompt }
+                          : { prompt }),
+                      },
+                    ],
+                  },
+                }),
+            transitions: { success: "done" },
+          },
+        ],
+        {
+          engineMin: "3.13.0",
+          adapter: contextFailure === "codex-input" ? "codex" : "claude",
+        },
+      );
+      const { runId } = seed;
+
+      startDriver(runId);
+      await expect
+        .poll(
+          async () => {
+            const [run] = await database.db
+              .select()
+              .from(runs)
+              .where(eq(runs.id, runId));
+            return run.status;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("Failed");
+      const attempts = await database.db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, runId));
+      const gates = await database.db
+        .select()
+        .from(gateResults)
+        .where(eq(gateResults.runId, runId));
+      const [event] = await database.db
+        .select()
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, runId),
+            eq(domainEvents.kind, "run.failed"),
+          ),
+        );
+
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        errorCode: "ACP_PROTOCOL",
+        errorReason: owner === "node" ? reason : null,
+      });
+      if (owner !== "node")
+        expect(gates).toMatchObject([
+          { status: "failed", promptFailureReason: reason },
+        ]);
+      expect(event.payload).toMatchObject({
+        cause: { code: "ACP_PROTOCOL", reason },
+      });
+    },
+    60_000,
+  );
+
   it("owner-flow-retry: SIGKILL preserves the admitted retry without extending its budget", async () => {
     const seeded = await seedOwnerFlow(
       [
@@ -2383,17 +2486,17 @@ describe("Flow prompt owners through the production graph driver", () => {
           id: "work",
           type: "ai_coding",
           action: {
-            prompt: 'fixture-output:{"failMessage":"bounded retry failure"}',
+            prompt: 'fixture-output:{"contextFailure":"claude-input"}',
           },
           retry_policy: {
             attempts: 2,
-            on_errors: ["ACP_PROTOCOL"],
+            on_reasons: ["context_exhausted"],
             workspace: "keep",
           },
           transitions: { success: "done" },
         },
       ],
-      { engineMin: "2.1.0" },
+      { engineMin: "3.13.0" },
     );
     let continuation:
       ReturnType<typeof startFlowContinuationWorker> | undefined;
@@ -2436,6 +2539,7 @@ describe("Flow prompt owners through the production graph driver", () => {
       expect(attempts[0]).toMatchObject({
         status: "Failed",
         autoRetry: false,
+        errorReason: "context_exhausted",
         finishContinuation: { targetNodeId: "work", autoRetry: true },
       });
       expect(attempts[1]).toMatchObject({
@@ -2445,6 +2549,9 @@ describe("Flow prompt owners through the production graph driver", () => {
         finishContinuation: null,
       });
       expect(prompts).toHaveLength(2);
+      expect(attempts[0].acpSessionId).toBeTruthy();
+      expect(attempts[1].acpSessionId).toBeTruthy();
+      expect(attempts[0].acpSessionId).not.toBe(attempts[1].acpSessionId);
       expect(
         new Set(prompts.map((command) => command.logicalOperationKey)).size,
       ).toBe(2);

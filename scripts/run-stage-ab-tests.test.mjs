@@ -20,16 +20,20 @@ test("a host worker ceiling is opt-in and rejects ambiguous limits", () => {
   }
 });
 
-test("the ordinary integration remainder and dedicated lanes cover every non-load web suite exactly once", () => {
+test("the ordinary integration remainder and dedicated lanes cover every routine web suite exactly once", () => {
   const root = fileURLToPath(new URL("../web/", import.meta.url));
   const all = globSync("{lib,app,scripts,test-support,e2e}/**/*.integration.test.ts", { cwd: root });
-  const load = ["host-span-load", "event-plane-load"].map((name) => `lib/execution-host/__tests__/${name}.integration.test.ts`);
+  const optIn = [
+    "lib/execution-host/__tests__/host-span-load.integration.test.ts",
+    "lib/execution-host/__tests__/event-plane-load.integration.test.ts",
+    "lib/scratch-runs/__tests__/context-provider.integration.test.ts",
+  ];
   const dedicated = [...laneSuites.web, ...parseLaneInvocation(["isolation"], "linux").files,
     "test-support/__tests__/execution-ab-preflight.integration.test.ts"];
   const remainder = webRemainderFiles(all);
 
-  assert.deepEqual([...remainder, ...dedicated].sort(), all.filter((file) => !load.includes(file)).sort());
-  assert.deepEqual(webRemainderFiles(["lib/new.integration.test.ts", ...dedicated, ...load]), ["lib/new.integration.test.ts"]);
+  assert.deepEqual([...remainder, ...dedicated].sort(), all.filter((file) => !optIn.includes(file)).sort());
+  assert.deepEqual(webRemainderFiles(["lib/new.integration.test.ts", ...dedicated, ...optIn]), ["lib/new.integration.test.ts"]);
   assert.throws(() => webRemainderFiles([all[0], all[0]]), /duplicate/u);
 });
 

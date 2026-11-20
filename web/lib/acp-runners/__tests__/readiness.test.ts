@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
+import { claudeContextWindow } from "../../../../runtime/acp-context";
+
+it.each([
+  ["anthropic_compatible", undefined, "window_unverified", null],
+  ["anthropic_compatible", "0", "window_unverified", null],
+  ["anthropic_compatible", "200000", null, 200000],
+  ["anthropic", undefined, null, null],
+] as const)(
+  "derives window guidance for %s with %s configured",
+  (providerKind, configured, windowAdvisory, configuredWindowTokens) => {
+    expect(
+      claudeContextWindow({ adapter: "claude", providerKind, configured }),
+    ).toEqual({ windowAdvisory, configuredWindowTokens });
+  },
+);
 
 const diagnostics = {
   adapters: [

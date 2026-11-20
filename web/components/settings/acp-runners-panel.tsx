@@ -20,6 +20,7 @@ import {
   type RunnerRow,
 } from "@/components/settings/acp-runner-modal";
 import { AddButton } from "@/components/settings/add-button";
+import { claudeContextWindow } from "../../../runtime/acp-context";
 
 export type { RunnerRow };
 
@@ -102,6 +103,7 @@ export function AcpRunnersPanel({
   unavailableAdapters,
 }: Props): ReactElement {
   const t = useTranslations("settings");
+  const contextText = useTranslations("contextUsage");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [selectedDefaultRunnerId, setSelectedDefaultRunnerId] = useState(
@@ -296,6 +298,18 @@ export function AcpRunnersPanel({
                 </td>
                 <td className="px-4 py-3">
                   {statusDot(runner, readinessLabels)}
+                  {claudeContextWindow({
+                    adapter: runner.adapter,
+                    providerKind: runner.provider.kind,
+                    configured: runner.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+                  }).windowAdvisory ? (
+                    <p
+                      className="mt-1 text-xs text-amber"
+                      title={contextText("windowGuidance")}
+                    >
+                      {contextText("unverified")}
+                    </p>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3 text-ink-2">
                   {runner.enabled ? "✓" : "—"}
