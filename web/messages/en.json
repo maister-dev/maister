@@ -3552,6 +3552,7 @@
       "pullComplete": "Repository updated from origin.",
       "pullBranchMismatch": "Check out {branch} in the project repository before updating it.",
       "pullDirty": "The repository has local changes. Commit or stash them before updating.",
+      "pullBusy": "The repository is busy with another operation. Try again shortly.",
       "pullConflict": "The branch could not be updated by fast-forward. Check its history and resolve conflicts locally, then retry.",
       "pullUnavailable": "Could not reach origin. Check the server's network connection and Git access, then retry.",
       "tooLarge": "File is too large to display",
