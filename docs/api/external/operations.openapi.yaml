@@ -10463,10 +10463,7 @@ components:
       type: object
       additionalProperties: false
       description: |
-        Sparse per-axis overrides. Keys map to the execution-control axes
-        (A1 reworkExhaustion / A2 crashRetry / A3 checks / B1 permissions /
-        B2 humanGate / B3 onStuck / C1 promotion / C2 commits / C3 dirtyResolve).
-        Unset keys inherit the preset baseline.
+        Sparse per-axis overrides. Unset keys inherit the preset baseline.
       properties:
         reworkExhaustion:
           type: string
@@ -10489,6 +10486,14 @@ components:
         promotion:
           type: string
           enum: [manual, auto_on_ready]
+        autonomousCompletion:
+          type: string
+          enum: [off, evidence_gated]
+          description: >-
+            Off by default. An evidence-gated Flow launch requires human
+            session authority and a server-issued grant. A bearer token cannot
+            obtain the grant, including when the resolved policy inherits this
+            mode from a task or project default.
         commits:
           type: string
           enum: [keep_all, squash_rework, squash_on_promote, defer]

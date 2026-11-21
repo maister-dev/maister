@@ -300,6 +300,28 @@ of 900 seconds in a production web process.
 | C04 | Real Git was used for conflict recovery and source deletion. Exact provider merge finalized once, while retargeted and unverifiable results stayed unqualified. The graph and installed reference exercised classified timeout/exhaustion and Review under revoked authority. |
 | C05 | The installed local and PR journeys reached Done without a human completion call. Observatory and the browser exercised system attribution, persisted controls and a deduplicated verified human reversal. |
 
+### Qualification after rebase onto `227ba34aa`
+
+**18 of 18 accepted.** The 31 commits replayed onto `227ba34aa` at
+`6e67b9ab1`. ADRs 216–217, migration SQL for 0361–0363 and their snapshots
+matched the previous branch byte for byte. The journal retains the full
+master prefix and appends the three consecutive entries. The seeded upgrades,
+Drizzle chain check and ERD validation passed. Schema generation produced no
+additional migrations.
+
+The rerun passed 239 acceptance unit tests, 296 affected web integration
+tests across 28 files, 27 supervisor receipt tests, seven installed
+`env-e2e/v1.1.0` cases, the W06/W08 production restart case, and three
+Playwright scenarios plus login setup. The finalization race passed in
+isolation and in the completed integration rerun after the first run missed
+its lock observation. All 532 MCP unit tests and 20 MCP integrations passed,
+as did the built stdio catalog, type checks, docs and contract validation.
+The MCP schema parity rerun covers the `autonomousCompletion` override in
+the external launch and replace contracts. Human session grant checks remain
+part of admission. The full web unit run passed 9,271 tests and reproduced
+the same six scratch-run failures by name on clean master outside this
+acceptance matrix. The installed Ubuntu receipt remains pinned to `965600cae`.
+
 ### Requirements, acceptance and primary test ownership
 
 IDs are stable links for Phase 0 specs and implementation tasks. Paths below are relative to `web/` unless marked supervisor or plugins. A named new suite is a proposed home for the cases, not a requirement to create a second suite where the existing owner already runs them. Rows with the same owner share fixtures and setup.
