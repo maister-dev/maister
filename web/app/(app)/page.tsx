@@ -25,7 +25,10 @@ import {
 } from "@/lib/queries/activity-feed";
 import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
 import { getDb } from "@/lib/db/client";
-import { getCurrentReviewRefusals } from "@/lib/queries/autonomous-completion";
+import {
+  getCurrentReviewRefusals,
+  getDeskAutonomousDecisions,
+} from "@/lib/queries/autonomous-completion";
 import { getOpenWaitLabels } from "@/lib/waits/attention";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
@@ -65,6 +68,7 @@ import { splitAtCursor } from "@/lib/activity/activity-view";
 /** How much of each region the Desk shows before deferring to its full surface. */
 const DESK_WORK_ROWS = 12;
 const DESK_ACTIVITY_ROWS = 12;
+const DESK_ENGINE_DECISIONS = 5;
 /** How much of a running row's history its panel shows before deferring. */
 const DESK_PANEL_EVENTS = 5;
 
@@ -124,22 +128,24 @@ export default async function DeskPage({
       ? inFlight
       : inFlight.filter((row) => row.stage === activeStage);
   const shownRows = visible.slice(0, DESK_WORK_ROWS);
-  const [reviewRefusals, waitConditions, tAutonomy, tWait] = await Promise.all([
-    getCurrentReviewRefusals(
-      getDb(),
-      shownRows.flatMap((row) =>
-        row.stage === "Review" && row.runId ? [row.runId] : [],
+  const [reviewRefusals, waitConditions, tAutonomy, tWait, engineDecisions] =
+    await Promise.all([
+      getCurrentReviewRefusals(
+        getDb(),
+        shownRows.flatMap((row) =>
+          row.stage === "Review" && row.runId ? [row.runId] : [],
+        ),
       ),
-    ),
-    getOpenWaitLabels(
-      getDb(),
-      shownRows.flatMap((row) =>
-        row.runStatus === "Waiting" && row.runId ? [row.runId] : [],
+      getOpenWaitLabels(
+        getDb(),
+        shownRows.flatMap((row) =>
+          row.runStatus === "Waiting" && row.runId ? [row.runId] : [],
+        ),
       ),
-    ),
-    getTranslations("runAutonomy"),
-    getTranslations("flowWait"),
-  ]);
+      getTranslations("runAutonomy"),
+      getTranslations("flowWait"),
+      getDeskAutonomousDecisions(getDb(), user, DESK_ENGINE_DECISIONS),
+    ]);
   const workGroups = groupWorkTableRows(shownRows, "project");
   // REQ-D15: the row -> decision join, on `runId`, built from the queue this
   // page ALREADY loads. `getWorkTable` is untouched — a read-model change here
@@ -314,6 +320,45 @@ export default async function DeskPage({
         testid="desk-activity"
         title={t("activityTitle")}
       >
+        {engineDecisions.length > 0 ? (
+          <section
+            aria-labelledby="desk-engine-decisions"
+            className="flex flex-col gap-2"
+          >
+            <h3
+              id="desk-engine-decisions"
+              className="m-0 text-sm font-semibold text-ink"
+            >
+              {tAutonomy("title")}
+            </h3>
+            <ul className="m-0 rounded-lg border border-line p-0">
+              {engineDecisions.map((decision) => (
+                <li
+                  key={decision.id}
+                  className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-line px-3 py-2 text-[12.5px] last:border-b-0"
+                >
+                  <span className="font-semibold text-ink">
+                    {`${tAutonomy(`action.${decision.action}`)} · ${tAutonomy(`phase.${decision.phase}`)}`}
+                  </span>
+                  <span className="text-ink-2">
+                    {tActivity("actor.system")}
+                  </span>
+                  <Link
+                    className="text-ink underline underline-offset-2"
+                    href={`/runs/${decision.runId}`}
+                  >
+                    {decision.taskTitle ?? decision.projectName}
+                  </Link>
+                  {tAutonomy.has(`reason.${decision.reason}`) ? (
+                    <span className="text-mute">
+                      {tAutonomy(`reason.${decision.reason}`)}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {activity.unread.length + activity.seen.length === 0 ? (
           <DeskEmpty text={t("activityEmpty")} />
         ) : (

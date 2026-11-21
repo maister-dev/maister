@@ -1540,6 +1540,8 @@ Waiting owns a retained workspace but no executor slot. Resolution enters Pendin
 
 ADR-208 attributes the open wait and later admission delay to duration outside execution. ADR-216 counts only realized Done or classified Failed. With a revoked grant, stale evidence or a hold, leave an actionable Review.
 
+The Run inspector shows its decision ledger. Desk Activity links to the five latest engine decisions across visible projects and labels the system actor. A decision that ends execution shares its committed run transition timestamp, so a refusal stays visible for the current Review.
+
 See [the governing contract](waits.md).
 
 ## Linked artifacts

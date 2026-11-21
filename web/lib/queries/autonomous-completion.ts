@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { GlobalRole } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
 
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
@@ -12,7 +13,9 @@ import {
   runAutonomousDecisions,
   runAutonomousReversals,
   runs,
+  tasks,
 } from "@/lib/db/schema";
+import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 
 export type AutonomousCompletionCounts = Readonly<{
   done: number;
@@ -113,6 +116,46 @@ export async function getRecentAutonomousDecisions(
         GIT_OBJECT_ID.test(deliveredCommit),
     }),
   );
+}
+
+export async function getDeskAutonomousDecisions(
+  db: Db,
+  user: { id: string; role: GlobalRole },
+  limit: number,
+) {
+  const projectIds = await getVisibleProjectIds(user.id, user.role, db);
+
+  if (projectIds.length === 0) return [];
+
+  return db
+    .select({
+      id: runAutonomousDecisions.id,
+      runId: runAutonomousDecisions.runId,
+      action: runAutonomousDecisions.action,
+      phase: runAutonomousDecisions.phase,
+      reason: runAutonomousDecisions.reason,
+      taskTitle: tasks.title,
+      projectName: projects.name,
+    })
+    .from(runAutonomousDecisions)
+    .innerJoin(projects, eq(projects.id, runAutonomousDecisions.projectId))
+    .innerJoin(
+      runs,
+      and(
+        eq(runs.id, runAutonomousDecisions.runId),
+        eq(runs.projectId, runAutonomousDecisions.projectId),
+      ),
+    )
+    .leftJoin(
+      tasks,
+      and(eq(tasks.id, runs.taskId), eq(tasks.projectId, runs.projectId)),
+    )
+    .where(inArray(runAutonomousDecisions.projectId, projectIds))
+    .orderBy(
+      desc(runAutonomousDecisions.createdAt),
+      desc(runAutonomousDecisions.id),
+    )
+    .limit(limit);
 }
 
 export async function getCurrentReviewRefusals(
