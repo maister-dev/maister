@@ -2493,6 +2493,13 @@
       "when": 1795211674292,
       "tag": "0359_flow_publications",
       "breakpoints": true
+    },
+    {
+      "idx": 360,
+      "version": "7",
+      "when": 1795216068635,
+      "tag": "0360_autonomous_completion",
+      "breakpoints": true
     }
   ]
 }
