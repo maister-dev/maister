@@ -159,9 +159,11 @@ future task revision. SQL guards prevent receipt reclassification after creation
 Accepted capability imports are materialized from a private per-preparation
 capture. Its whole-bundle digest must match the accepted content digest before
 artifact copying; copying consumes the validated capture rather than mutable
-installed paths. Internal relative links retain their text. Absolute or escaping
-links refuse without reading their targets. The private capture is removed before
-sealing the checkout receipt; a removal failure is actionable and does not roll
+installed paths. Internal relative links retain their text. The run's workspace
+skill projection keeps each captured bundle's `skills/` and `agents/` layout so
+packaged instructions can still resolve their companions after cleanup. Absolute
+or escaping links refuse without reading their targets. The private capture is
+removed before sealing the checkout receipt; a removal failure is actionable and does not roll
 back a checkout or Run. An interrupted materializing phase remains fail-closed
 and follows the existing owned disposition process.
 

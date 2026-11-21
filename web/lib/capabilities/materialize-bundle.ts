@@ -15,7 +15,10 @@ import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
   assertSafeAgentMaterializationPath,
 } from "@/lib/agents/materialization-manifest";
-import { materializeWorkspacePackageSkills } from "@/lib/capabilities/package-skills";
+import {
+  materializeCapturedWorkspacePackageSkills,
+  materializeWorkspacePackageSkills,
+} from "@/lib/capabilities/package-skills";
 import { capabilityImports } from "@/lib/db/schema";
 import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
@@ -306,6 +309,7 @@ export async function materializeProjectBundlesIntoWorktree(args: {
       baseBranch: args.baseBranch,
     },
     copyBundleArtifactsToWorktree,
+    materializeWorkspacePackageSkills,
   );
 }
 
@@ -322,12 +326,17 @@ type BundleSetMaterialization = Readonly<{
 export function materializeCapabilityBundlesIntoWorktree(
   args: BundleSetMaterialization,
 ): Promise<{ bundles: number }> {
-  return materializeBundleSet(args, copyCapturedBundleArtifactsToWorktree);
+  return materializeBundleSet(
+    args,
+    copyCapturedBundleArtifactsToWorktree,
+    materializeCapturedWorkspacePackageSkills,
+  );
 }
 
 async function materializeBundleSet(
   args: BundleSetMaterialization,
   copyArtifacts: BundleArtifactCopier,
+  publishSkills: typeof materializeWorkspacePackageSkills,
 ): Promise<{ bundles: number }> {
   if (args.bundles.length === 0) return { bundles: 0 };
 
@@ -335,7 +344,7 @@ async function materializeBundleSet(
     args.worktreePath,
     ".maister/capabilities",
   );
-  const materializedPaths = await materializeWorkspacePackageSkills({
+  const materializedPaths = await publishSkills({
     cwd: worktreePath,
     runId: args.runId,
     installedPaths: args.bundles.map((bundle) => bundle.installedPath),

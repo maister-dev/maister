@@ -1111,8 +1111,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["entryStat", "node:fs/promises.lstat", "stat"],
         ["skillEntries", "node:fs/promises.readdir", "list"],
+        ["workspacePackageSkillsPrompt", "node:fs/promises.readdir", "list"],
         ["<object>.materialize", "node:fs/promises.mkdir", "write"],
-        ["<object>.materialize", "node:fs/promises.cp", "write"],
+        ["materializeWorkspacePackageSkills", "node:fs/promises.cp", "write"],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.mkdir",
+          "write",
+        ],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.cp",
+          "write",
+        ],
         ["<object>.filter", "node:fs/promises.lstat", "stat"],
       ],
     ),
@@ -3034,6 +3045,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["runCapabilitiesCleanupSweep", false],
   ]),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
+    ["materializeCapturedWorkspacePackageSkills", false],
     ["materializeWorkspacePackageSkills", false],
     ["workspacePackageSkillsPrompt", false],
   ]),

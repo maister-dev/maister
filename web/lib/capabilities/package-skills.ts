@@ -19,6 +19,15 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+type WorkspaceSkillProjection = Readonly<{
+  cwd: string;
+  runId: string;
+  installedPaths: readonly string[];
+}>;
+
+const capturedBundlePrefix = ".bundle-";
+const capturedBundleName = /^\.bundle-\d+$/u;
+
 function skillRoot(cwd: string, runId: string): string {
   return path.join(
     capabilityMaterializationRootPath(cwd, runId),
@@ -68,11 +77,9 @@ async function skillEntries(root: string): Promise<string[]> {
 }
 
 /** Publish only package skill directories inside the session's file-tool root. */
-export async function materializeWorkspacePackageSkills(args: {
-  cwd: string;
-  runId: string;
-  installedPaths: readonly string[];
-}): Promise<string[]> {
+export async function materializeWorkspacePackageSkills(
+  args: WorkspaceSkillProjection,
+): Promise<string[]> {
   const skills = new Map<string, string>();
 
   for (const installedPath of args.installedPaths) {
@@ -84,15 +91,94 @@ export async function materializeWorkspacePackageSkills(args: {
   }
 
   if (skills.size === 0) return [];
+
+  return publishSkillProjection(args, async (root) => {
+    for (const [slug, source] of skills) {
+      await cp(source, path.join(root, slug), {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        filter: async (file) => {
+          const metadata = await lstat(file);
+
+          if (metadata.isFile() || metadata.isDirectory()) return true;
+          throw new MaisterError(
+            "CONFIG",
+            `Packaged skill contains a symlink or special file: ${file}`,
+          );
+        },
+      });
+    }
+  });
+}
+
+/** Preserve the layout of private bundles whose bytes and links the launch owner has verified. */
+export async function materializeCapturedWorkspacePackageSkills(
+  args: WorkspaceSkillProjection,
+): Promise<string[]> {
+  const bundles: string[] = [];
+
+  for (const source of args.installedPaths) {
+    if ((await skillEntries(path.join(source, "skills"))).length > 0)
+      bundles.push(source);
+  }
+  if (bundles.length === 0) return [];
+
+  return publishSkillProjection(args, async (root) => {
+    for (const [index, source] of bundles.entries()) {
+      const destination = path.join(root, `${capturedBundlePrefix}${index}`);
+
+      await mkdir(destination);
+      for (const tree of ["skills", "agents"] as const) {
+        const entry = path.join(source, tree);
+        const metadata = await entryStat(entry);
+
+        if (!metadata) continue;
+        if (!metadata.isDirectory())
+          throw new MaisterError(
+            "CONFIG",
+            `Captured bundle path is not a directory: ${entry}`,
+          );
+        await cp(entry, path.join(destination, tree), {
+          recursive: true,
+          dereference: false,
+          verbatimSymlinks: true,
+          force: false,
+          errorOnExist: true,
+          filter: async (file) => {
+            const captured = await entryStat(file);
+
+            if (
+              captured?.isFile() ||
+              captured?.isDirectory() ||
+              captured?.isSymbolicLink()
+            )
+              return true;
+            throw new MaisterError(
+              "CONFIG",
+              `Captured bundle entry is missing or a special file: ${file}`,
+            );
+          },
+        });
+      }
+    }
+  });
+}
+
+async function publishSkillProjection(
+  { cwd: worktree, runId }: Pick<WorkspaceSkillProjection, "cwd" | "runId">,
+  copy: (root: string) => Promise<void>,
+): Promise<string[]> {
   const cwd = await assertSafeAgentMaterializationPath(
-    args.cwd,
+    worktree,
     ".maister/capabilities",
   );
-  const root = skillRoot(cwd, args.runId);
+  const root = skillRoot(cwd, runId);
   const relative = path.relative(cwd, root);
-  const paths = await materializeWithAgentLease({
+
+  return materializeWithAgentLease({
     cwd,
-    runId: args.runId,
+    runId,
     materialize: async (_owned, recordIntent, ownedByRun) => {
       if (await entryStat(root)) {
         if (!ownedByRun.has(relative))
@@ -106,33 +192,15 @@ export async function materializeWorkspacePackageSkills(args: {
 
       await recordIntent([root]);
       await mkdir(root, { recursive: true });
-      for (const [slug, source] of skills) {
-        await cp(source, path.join(root, slug), {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          filter: async (file) => {
-            const metadata = await lstat(file);
-
-            if (metadata.isFile() || metadata.isDirectory()) return true;
-            throw new MaisterError(
-              "CONFIG",
-              `Packaged skill contains a symlink or special file: ${file}`,
-            );
-          },
-        });
-      }
+      await copy(root);
+      log.debug(
+        { runId },
+        "packaged skills materialized within session workspace",
+      );
 
       return [root];
     },
   });
-
-  log.debug(
-    { runId: args.runId, skillCount: skills.size },
-    "packaged skills materialized within session workspace",
-  );
-
-  return paths;
 }
 
 export async function workspacePackageSkillsPrompt(
@@ -146,14 +214,35 @@ export async function workspacePackageSkillsPrompt(
   if (!(await agentMaterializationPathsForRun(cwd, runId)).includes(relative))
     return "";
   await assertSafeAgentMaterializationPath(cwd, relative);
-  const skills = await skillEntries(root);
+  const skills = new Map(
+    (await skillEntries(root)).map((slug) => [
+      slug,
+      `${relative}/${slug}/SKILL.md`,
+    ]),
+  );
+  const captured = (await readdir(root, { withFileTypes: true }))
+    .filter(
+      (entry) => entry.isDirectory() && capturedBundleName.test(entry.name),
+    )
+    .sort(
+      (left, right) =>
+        Number(left.name.slice(capturedBundlePrefix.length)) -
+        Number(right.name.slice(capturedBundlePrefix.length)),
+    );
 
-  if (skills.length === 0) return "";
+  for (const { name } of captured) {
+    for (const slug of await skillEntries(path.join(root, name, "skills"))) {
+      if (!skills.has(slug))
+        skills.set(slug, `${relative}/${name}/skills/${slug}/SKILL.md`);
+    }
+  }
+
+  if (skills.size === 0) return "";
 
   return [
     "## Packaged skills",
     "When the task or agent instructions require a packaged skill, read its SKILL.md using the workspace-relative path below. Use this copy for the packaged instructions and resolve its companion files relative to SKILL.md.",
-    ...skills.map((slug) => `- ${slug}: \`${relative}/${slug}/SKILL.md\``),
+    ...Array.from(skills, ([slug, file]) => `- ${slug}: \`${file}\``),
   ].join("\n");
 }
 
