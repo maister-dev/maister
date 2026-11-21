@@ -29,6 +29,10 @@ import {
   getObservatoryOverview,
   type OverviewTable,
 } from "@/lib/queries/observatory-overview";
+import {
+  getAutonomousCompletionCounts,
+  type AutonomousCompletionCounts,
+} from "@/lib/queries/autonomous-completion";
 import { isDeliveryRunKind } from "@/lib/observatory/run-kind";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
@@ -211,6 +215,7 @@ export interface ObservatoryPortfolio {
   artifacts: ObservatoryArtifactSummary[];
   cost: ObservatoryCostSummary;
   budget: ObservatoryBudgetSummary;
+  autonomous: AutonomousCompletionCounts;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
 }
@@ -224,6 +229,7 @@ export interface ObservatoryProject {
   artifacts: ObservatoryArtifactSummary[];
   cost: ObservatoryCostSummary;
   budget: ObservatoryBudgetSummary;
+  autonomous: AutonomousCompletionCounts;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
   agentization: AgentizationSummary;
@@ -799,7 +805,7 @@ export async function getPortfolioObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const [cost, budget, overview] = await Promise.all([
+  const [cost, budget, overview, autonomous] = await Promise.all([
     getCostSummary(client, visibleProjects, filters),
     getBudgetSummary(client, visibleProjects, filters, now),
     getObservatoryOverview(client, visibleProjects, {
@@ -813,6 +819,12 @@ export async function getPortfolioObservatory(
       includePlatform: globalRole === "admin" && scoped.length === 0,
       includeBreakdown: false,
     }),
+    getAutonomousCompletionCounts(
+      client,
+      visibleProjects.map(({ id }) => id),
+      period,
+      filters.runKind,
+    ),
   ]);
 
   log.info(
@@ -825,7 +837,7 @@ export async function getPortfolioObservatory(
     "getPortfolioObservatory aggregated",
   );
 
-  return { ...portfolio, cost, budget, overview };
+  return { ...portfolio, cost, budget, overview, autonomous };
 }
 
 export async function getProjectObservatory(
@@ -863,7 +875,7 @@ export async function getProjectObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const [cost, budget, delivery, overview] = await Promise.all([
+  const [cost, budget, delivery, overview, autonomous] = await Promise.all([
     getCostSummary(client, [project], filters),
     getBudgetSummary(client, [project], filters, now),
     getProjectAgentization(client, {
@@ -879,6 +891,7 @@ export async function getProjectObservatory(
       includePlatform: false,
       includeBreakdown: true,
     }),
+    getAutonomousCompletionCounts(client, [projectId], period, filters.runKind),
   ]);
 
   log.info(
@@ -903,6 +916,7 @@ export async function getProjectObservatory(
     artifacts: portfolio.artifacts,
     cost,
     budget,
+    autonomous,
     topSignals: portfolio.topSignals,
     harness: portfolio.harness,
     agentization: delivery.agentization,
@@ -1312,7 +1326,7 @@ function buildPortfolio(
   projectScope: readonly ProjectScopeRow[],
   now: Date,
   minExecutions: number,
-): Omit<ObservatoryPortfolio, "cost" | "budget" | "overview"> {
+): Omit<ObservatoryPortfolio, "cost" | "budget" | "overview" | "autonomous"> {
   const projectsById = new Map(
     projectScope.map((project) => [project.id, project]),
   );
@@ -1765,6 +1779,7 @@ function emptyProject(
     artifacts: [],
     cost: emptyCostSummary(),
     budget: emptyBudgetSummary(),
+    autonomous: { done: 0, failed: 0, reverted: 0 },
     topSignals: [],
     harness: emptyHarness(),
     agentization: rollupAgentization({ runKind, runs: [], buckets: [] }),

@@ -10,6 +10,8 @@ export type NodeKind =
   | "check"
   | "judge"
   | "guard"
+  | "wait"
+  | "publish"
   | "human"
   | "form"
   | "orchestrator"

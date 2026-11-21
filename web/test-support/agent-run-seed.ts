@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { sql } from "drizzle-orm";
+
 import { buildOperationalContract } from "@/lib/agents/launch-contract";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import {
@@ -20,9 +22,7 @@ import {
   packageInstalls,
   platformAcpRunners,
   projectPackageAttachments,
-  projects,
   runSessions,
-  runs,
   workspaces,
 } from "@/lib/db/schema";
 import { mintAssignment } from "@/lib/execution-host/assignments";
@@ -72,14 +72,10 @@ export async function seedAgentRun(
 
   await mkdir(path.dirname(sourcePath), { recursive: true });
   await writeFile(sourcePath, input.definition);
-  await db.insert(projects).values({
-    id: projectId,
-    slug: `p-${runId}`,
-    name: "Agent fixture",
-    taskKey: `T${runId.replaceAll("-", "").slice(0, 7)}`.toUpperCase(),
-    repoPath,
-    maisterYamlPath: path.join(repoPath, "maister.yaml"),
-  });
+  // Migration fixtures also call this seed on predecessor databases.
+  await db.execute(sql`INSERT INTO projects (id,slug,name,task_key,repo_path,maister_yaml_path)
+    VALUES (${projectId},${`p-${runId}`},'Agent fixture',
+      ${`T${runId.replaceAll("-", "").slice(0, 7)}`.toUpperCase()},${repoPath},${path.join(repoPath, "maister.yaml")})`);
   await db.insert(packageInstalls).values({
     id: packageId,
     sourceUrl: `github.com/fixture/${runId}`,
@@ -134,34 +130,26 @@ export async function seedAgentRun(
   const snapshot = testRunnerSnapshot(runnerId, input.adapter);
 
   await db.insert(platformAcpRunners).values(runner);
-  await db.insert(runs).values({
-    id: runId,
-    projectId,
-    runKind: "agent",
-    agentId,
-    agentKind: input.operational ? "operational" : null,
-    agentWorkspace: input.workspace,
-    status: "Running",
-    flowVersion: "agent",
-    flowRevision: "manual",
-    resultContract: input.operational
-      ? buildOperationalContract({
-          parsed: parseAgentDefinition(agentId, input.definition),
-          sourcePath,
-          installedPath,
-          packageName,
-          packageInstallId: packageId,
-          versionLabel: "v1.0.0",
-          resolvedRevision: "rev-1",
-          manifest: null,
-          execTrust: "trusted",
-        })
-      : input.resultContract,
-    triggerSource: input.scheduledRequestSnapshot ? "cron" : "manual",
-    scheduledRequestSnapshot: input.scheduledRequestSnapshot ?? null,
-    persistent: input.persistent ?? false,
-    addressableKey: input.persistent ? "researcher" : null,
-  });
+  const resultContract = input.operational
+    ? buildOperationalContract({
+        parsed: parseAgentDefinition(agentId, input.definition),
+        sourcePath,
+        installedPath,
+        packageName,
+        packageInstallId: packageId,
+        versionLabel: "v1.0.0",
+        resolvedRevision: "rev-1",
+        manifest: null,
+        execTrust: "trusted",
+      })
+    : input.resultContract;
+
+  await db.execute(sql`INSERT INTO runs (id,project_id,run_kind,agent_id,agent_kind,agent_workspace,
+      status,flow_version,flow_revision,result_contract,trigger_source,scheduled_request_snapshot,persistent,addressable_key)
+    VALUES (${runId},${projectId},'agent',${agentId},${input.operational ? "operational" : null},${input.workspace},
+      'Running','agent','manual',${resultContract === null ? null : JSON.stringify(resultContract)}::jsonb,
+      ${input.scheduledRequestSnapshot ? "cron" : "manual"},${input.scheduledRequestSnapshot ? JSON.stringify(input.scheduledRequestSnapshot) : null}::jsonb,
+      ${input.persistent ?? false},${input.persistent ? "researcher" : null})`);
   if (input.workspace === "worktree") {
     const worktreePath = agentWorkdirPath(`p-${runId}`, runId);
     const branch = `maister/permission-${runId}`;

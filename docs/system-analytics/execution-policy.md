@@ -408,6 +408,8 @@ The default is off, including legacy or malformed snapshots. A project admin con
 
 Default limits on a fresh opt-in are low risk, confidence at least 0.90, at most 10 changed files and 300 additions plus deletions. Preserve the hard deny list and stricter project or manifest bounds. Reversal proof requires the actual actor and exact completed decision.
 
+An authorized local merge records the attempt identity with the reviewed source and base. If the Git effect lands before its database acknowledgement, recovery checks the reachable first-parent merge for that identity and both exact parents. A matching effect can be settled once under a new database fence even after the kill switch is applied.
+
 ## Linked artifacts
 
 - ADRs: [ADR-095](../decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship);

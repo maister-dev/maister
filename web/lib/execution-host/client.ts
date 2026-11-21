@@ -45,12 +45,21 @@ import type {
   PlacementReason,
 } from "./types";
 import type { SessionCreateOwner } from "./create-intent";
+import type {
+  WorkspacePublicationRequest,
+  WorkspacePublicationSnapshot,
+} from "../../../runtime/workspace-publication";
+import type {
+  WaitHeadObservation,
+  WaitHeadObservationRequest,
+} from "../../../runtime/wait-head";
 
 import { and, eq } from "drizzle-orm";
 import pino, { type Logger } from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 import { hasSessionCreateQuiescence } from "../../../runtime/session-create-quiescence";
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 
 import {
   ensureWorkspaceAdopted,
@@ -163,6 +172,11 @@ export interface BoundClient {
   releaseWorkspace(
     executionWorkspaceId: ExecutionWorkspaceId | string,
   ): Promise<{ released: boolean }>;
+  registerWaitWorkspaceHead(waitId: string): Promise<WaitHeadObservation>;
+  observeWaitWorkspaceHead(waitId: string): Promise<WaitHeadObservation>;
+  workspacePublication(
+    request: WorkspacePublicationRequest,
+  ): Promise<WorkspacePublicationSnapshot>;
   createSession(
     payload: Omit<CreateSessionPayload, "executionWorkspaceId">,
     opts?: CreateSessionOptions,
@@ -485,6 +499,41 @@ export function createExecutionHosts(
       timeoutMs: COMMAND_POLICY[kind].timeoutMs,
     });
 
+    async function observeWaitHead(
+      payload: WaitHeadObservationRequest,
+    ): Promise<WaitHeadObservation> {
+      const workspaceId = current.executionWorkspaceId;
+
+      if (!workspaceId)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Wait has no adopted execution workspace",
+        );
+
+      const result = await immediate(
+        "workspace.observe_head",
+        payload,
+        (env) =>
+          transport.observeWaitWorkspaceHead(
+            workspaceId,
+            env,
+            timeoutFor("workspace.observe_head"),
+          ),
+        {
+          targetSessionId: workspaceId,
+          resultSummary: ({ headSha }) => ({ headSha }),
+        },
+      );
+
+      if (!GIT_OBJECT_ID.test(result.headSha))
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Execution host returned an invalid Git object ID",
+        );
+
+      return result;
+    }
+
     async function assignmentIsCurrent(): Promise<boolean> {
       const rows = await db
         .select({ id: executionAssignments.id })
@@ -565,6 +614,48 @@ export function createExecutionHosts(
               timeoutFor("workspace.release"),
             ),
           { targetSessionId: executionWorkspaceId },
+        );
+      },
+      async registerWaitWorkspaceHead(waitId) {
+        await client.ensureWorkspace();
+
+        return observeWaitHead({
+          waitId,
+          workspaceGeneration: current.epoch,
+          register: true,
+        });
+      },
+      observeWaitWorkspaceHead(waitId) {
+        return observeWaitHead({ waitId, workspaceGeneration: current.epoch });
+      },
+      async workspacePublication(request) {
+        const workspaceId =
+          request.action === "evidence" && current.state === "released"
+            ? current.executionWorkspaceId
+            : await client.ensureWorkspace();
+
+        if (!workspaceId)
+          throw new MaisterError(
+            "PRECONDITION",
+            "Release has no retained execution workspace",
+          );
+
+        return immediate(
+          "workspace.publication",
+          request,
+          (envelope) =>
+            transport.workspacePublication(
+              workspaceId,
+              envelope,
+              timeoutFor("workspace.publication"),
+            ),
+          {
+            targetSessionId: workspaceId,
+            resultSummary: ({ headSha, remoteHeadSha }) => ({
+              headSha,
+              remoteHeadSha,
+            }),
+          },
         );
       },
       async createSession(payload, opts) {
@@ -914,6 +1005,7 @@ export function createExecutionHosts(
             {},
           );
         }
+
         return immediate<
           Record<string, never>,
           { outcome: DeleteSessionOutcome }

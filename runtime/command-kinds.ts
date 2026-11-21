@@ -1,6 +1,8 @@
 export const COMMAND_KINDS = [
   "workspace.adopt",
   "workspace.release",
+  "workspace.observe_head",
+  "workspace.publication",
   "session.create",
   "session.prompt",
   "session.input",

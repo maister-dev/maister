@@ -3,6 +3,8 @@ import type { FlowGraph } from "@/lib/flows/graph/compile";
 
 import pino from "pino";
 
+import { transitionNodeId } from "@/lib/flows/graph/transition-target";
+
 const log = pino({
   name: "run-reentry",
   level: process.env.LOG_LEVEL ?? "info",
@@ -56,13 +58,13 @@ export function resolveReentryNode(
 
     if (node === undefined || node.nodeType !== "human") continue;
 
-    const target = node.transitions.takeover;
+    const target = transitionNodeId(node.transitions.takeover);
 
     log.debug({ nodeId, target }, "[reentry] candidate human node");
 
     // A takeover target that compiled away (or was hand-edited out) DISABLES
     // the action rather than throwing — the compiled graph is the allow-list.
-    if (target !== undefined && graph.nodes.has(target)) {
+    if (target !== null && graph.nodes.has(target)) {
       log.info(
         { nodeId: target, source: "takeover_transition" },
         "[reentry] resolved",

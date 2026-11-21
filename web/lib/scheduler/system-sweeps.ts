@@ -72,6 +72,7 @@ import { sweepTaskLaunchPreparationCleanup } from "@/lib/tasks/launch-preparatio
 import { recoverInterruptedStandOperations } from "@/lib/stand-operations/recovery-sweep";
 import { stopRunForUser } from "@/lib/runs/stop";
 import { reconcileAssignmentCancellations } from "@/lib/specialist-assignments/controls";
+import { runWaitDeadlineSweep } from "@/lib/scheduler/handlers/wait-deadline";
 
 export type GcCompatibilitySummary = {
   worktreesPreserved: number;
@@ -370,6 +371,25 @@ export async function runSystemSweep(
   let digest: SystemSweepSummary["digest"] = null;
   let executionObservability: ExecutionObservabilitySummary | null = null;
   let pressure: HostPressureSweepSummary | null = null;
+
+  try {
+    const waitDeadlines = await runWaitDeadlineSweep(getDb());
+
+    if (waitDeadlines.scanned)
+      log.info(waitDeadlines, "system_sweep wait deadlines");
+
+    errors.push(
+      ...waitDeadlines.errors.map(
+        (id) => `condition wait deadline failed: ${id}`,
+      ),
+    );
+  } catch (error: unknown) {
+    const message = `wait deadline sweep failed: ${errorMessage(error)}`;
+
+    errors.push(message);
+    bundleErrors.push(message);
+    log.error({ err: error }, "system_sweep wait deadlines threw");
+  }
 
   try {
     await reconcileAssignmentCancellations(getDb(), stopRunForUser);

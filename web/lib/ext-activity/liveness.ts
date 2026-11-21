@@ -66,6 +66,12 @@ export function deriveActivityLiveness(
   switch (input.runStatus) {
     case "Pending":
       return inactiveLiveness(input.now, terminalSince, "pending start");
+    case "Waiting":
+      return inactiveLiveness(
+        input.now,
+        terminalSince,
+        "waiting on a Flow condition",
+      );
     case "WaitingOnChildren":
       return inactiveLiveness(
         input.now,

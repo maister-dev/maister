@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { loadFlowManifest } from "@/lib/config";
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
@@ -656,7 +657,7 @@ describe("runGraph — ADR-162 output_contract identity", () => {
       schemaRef: "./schemas/result.json",
       schemaVersion: 1,
       sha256,
-      engineVersion: "3.13.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     };
 
     expect(attempts.find((a) => a.nodeId === "plan")?.outputContract).toEqual({
@@ -709,7 +710,7 @@ describe("runGraph — ADR-162 output_contract identity", () => {
       schemaVersion: 1,
       sha256,
       transport: "sentinel",
-      engineVersion: "3.13.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     });
   }, 60_000);
 });

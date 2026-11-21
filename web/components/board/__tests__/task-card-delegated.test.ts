@@ -83,6 +83,7 @@ function render(c: BacklogCard, canAct = true): string {
           Review: "Review",
           Running: "Running",
           WaitingOnChildren: "Waiting on children",
+          Waiting: "Waiting",
         },
         title: () => "Children",
       },

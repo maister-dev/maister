@@ -1,3 +1,15 @@
+import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
+import type {
+  CompletionGitAnchor,
+  CompletionGrant,
+  CompletionSettings,
+} from "@/lib/auto-promotion/completion-policy";
+import type {
+  WaitConditionSnapshot,
+  WaitJson,
+  WaitResult,
+  WaitSignal,
+} from "@/lib/waits/contracts";
 import type {
   AgentMemoryAuthor,
   AgentMemoryHashFormat,
@@ -475,6 +487,12 @@ export const projects = pgTable(
     // (resolved live via resolveAutoPromotionConfig, never snapshotted — the sweep
     // enforces current operator intent, D-8).
     autoPromotion: jsonb("auto_promotion").$type<AutoPromotionConfig | null>(),
+    autonomousCompletion: jsonb(
+      "autonomous_completion",
+    ).$type<CompletionSettings>(),
+    autonomousCompletionRevision: integer("autonomous_completion_revision")
+      .notNull()
+      .default(0),
     // ADR-122 (Project Brain): Brain on for this repo. Enable-gate refuses CONFIG
     // unless platform embedding + distill config are set (a project can never be
     // enabled into an unharvest-able state).
@@ -576,6 +594,12 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     .notNull()
     .references(() => platformAcpRunners.id),
   webhooksEnabled: boolean("webhooks_enabled").notNull().default(true),
+  autonomousCompletionEnabled: boolean("autonomous_completion_enabled")
+    .notNull()
+    .default(false),
+  autonomousCompletionRevision: integer("autonomous_completion_revision")
+    .notNull()
+    .default(0),
   // ADR-122 (Project Brain): OpenAI-compatible embedding + distillation provider
   // config. All nullable. API keys are `env:NAME` references only — never the
   // raw secret. Changing embedding_model/embedding_dimensions is a reindex
@@ -2450,6 +2474,7 @@ export const runs = pgTable(
         "NeedsInputIdle",
         "HumanWorking",
         "WaitingOnChildren",
+        "Waiting",
         "Review",
         "Crashed",
         "Done",
@@ -2600,6 +2625,12 @@ export const runs = pgTable(
       .$type<ExecutionPolicy>()
       .notNull()
       .default({ preset: "supervised" }),
+    flowPublicationGrant: jsonb(
+      "flow_publication_grant",
+    ).$type<FlowPublicationGrant>(),
+    autonomousCompletionGrant: jsonb(
+      "autonomous_completion_grant",
+    ).$type<CompletionGrant>(),
     // ADR-126: auto-promotion hold. NULL ⇒ no hold. Survives rework by
     // construction (never cleared by state transitions). `launch` source is
     // written at run INSERT when the launcher opts out; `system` on give-up.
@@ -2712,6 +2743,7 @@ export const runs = pgTable(
         AND (${t.taskAdmissionSnapshot}->'parent')-ARRAY['parentRunId','parentTaskId','rootRunId','parentAdmissionDigest','nodeAttemptId','nodeId','round','participantId','participantKind','runnerId','agentId','promptDigest','manifestDigest']='{}'::jsonb
       ))) IS TRUE`,
     ),
+    waitOwnerUnique: unique("runs_wait_owner_uq").on(t.projectId, t.id),
     launchIntentUnique: unique("runs_task_launch_intent_uq").on(
       t.taskLaunchIntentId,
     ),
@@ -5983,6 +6015,11 @@ export const workspaces = pgTable(
     }>(),
   },
   (t) => ({
+    publicationOwner: unique("workspaces_publication_owner_uq").on(
+      t.projectId,
+      t.runId,
+      t.id,
+    ),
     lifecycleClaimIndex: index("workspaces_lifecycle_claim_idx").on(
       t.lifecycleOperationState,
       t.lifecycleOperationLeaseExpiresAt,
@@ -6684,6 +6721,8 @@ export const nodeAttempts = pgTable(
         "form",
         "orchestrator",
         "consensus",
+        "wait",
+        "publish",
       ],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
@@ -6739,6 +6778,9 @@ export const nodeAttempts = pgTable(
     finishContinuation: jsonb(
       "finish_continuation",
     ).$type<FlowFinishContinuation>(),
+    completionGitAnchor: jsonb(
+      "completion_git_anchor",
+    ).$type<CompletionGitAnchor>(),
     // The final Mustache-resolved prompt sent to an ai_coding/judge node,
     // captured at dispatch (migration 0053). Null for cli/check/human nodes and
     // for attempts created before the column shipped.
@@ -6805,6 +6847,7 @@ export const nodeAttempts = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
+    waitOwnerUnique: unique("node_attempts_wait_owner_uq").on(t.runId, t.id),
     uniqRunNodeAttempt: unique("node_attempts_run_node_attempt_uq").on(
       t.runId,
       t.nodeId,
@@ -6837,6 +6880,454 @@ export const nodeAttempts = pgTable(
     idxRun: index("node_attempts_run_idx").on(t.runId),
     idxAssignment: index("node_attempts_assignment_idx").on(
       t.executionAssignmentId,
+    ),
+  }),
+);
+
+// ADR-215: an occurrence belongs to one exact project, run and Flow attempt.
+export const runAutonomousDecisions = pgTable(
+  "run_autonomous_decisions",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull(),
+    projectId: text("project_id").notNull(),
+    action: text("action", {
+      enum: ["promote", "finalize_pr", "fail"],
+    }).notNull(),
+    phase: text("phase", {
+      enum: ["refused", "claimed", "observed"],
+    }).notNull(),
+    reason: text("reason").notNull(),
+    projectRevision: integer("project_revision").notNull(),
+    platformRevision: integer("platform_revision").notNull(),
+    witness: jsonb("witness").$type<Record<string, WaitJson>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    owner: foreignKey({
+      columns: [t.projectId, t.runId],
+      foreignColumns: [runs.projectId, runs.id],
+      name: "run_autonomous_decisions_owner_fk",
+    }).onDelete("cascade"),
+    scope: unique("run_autonomous_decisions_scope_uq").on(
+      t.projectId,
+      t.runId,
+      t.id,
+    ),
+    runHistory: index("run_autonomous_decisions_history_idx").on(
+      t.runId,
+      t.createdAt,
+      t.id,
+    ),
+    realized: index("run_autonomous_decisions_realized_idx")
+      .on(t.projectId, t.createdAt, t.id)
+      .where(sql`${t.phase} = 'observed'`),
+    shape: check(
+      "run_autonomous_decisions_shape_chk",
+      sql`
+      ${t.action} IN ('promote','finalize_pr','fail') AND ${t.phase} IN ('refused','claimed','observed')
+      AND ${t.projectRevision} >= 0 AND ${t.platformRevision} >= 0
+      AND jsonb_typeof(${t.witness}) = 'object' AND octet_length(${t.witness}::text) <= 16384
+      AND length(${t.reason}) BETWEEN 1 AND 128
+    `,
+    ),
+  }),
+);
+
+export const runAutonomousReversals = pgTable(
+  "run_autonomous_reversals",
+  {
+    id: text("id").primaryKey(),
+    decisionId: text("decision_id").notNull(),
+    projectId: text("project_id").notNull(),
+    runId: text("run_id").notNull(),
+    reportedBy: text("reported_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    providerActorId: text("provider_actor_id").notNull(),
+    providerPrNumber: integer("provider_pr_number").notNull(),
+    deliveredCommit: text("delivered_commit").notNull(),
+    revertCommit: text("revert_commit").notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    owner: foreignKey({
+      columns: [t.projectId, t.runId, t.decisionId],
+      foreignColumns: [
+        runAutonomousDecisions.projectId,
+        runAutonomousDecisions.runId,
+        runAutonomousDecisions.id,
+      ],
+      name: "run_autonomous_reversals_owner_fk",
+    }).onDelete("cascade"),
+    logicalReversal: unique("run_autonomous_reversals_commit_uq").on(
+      t.decisionId,
+      t.revertCommit,
+    ),
+    period: index("run_autonomous_reversals_period_idx").on(
+      t.projectId,
+      t.reversedAt,
+      t.id,
+    ),
+    shape: check(
+      "run_autonomous_reversals_shape_chk",
+      sql`
+      ${t.providerPrNumber} > 0 AND
+      ${t.deliveredCommit} ~ '^([0-9a-f]{40}|[0-9a-f]{64})$' AND
+      ${t.revertCommit} ~ '^([0-9a-f]{40}|[0-9a-f]{64})$' AND
+      ${t.deliveredCommit} <> ${t.revertCommit}
+    `,
+    ),
+  }),
+);
+
+export const runPublications = pgTable(
+  "run_publications",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    runId: text("run_id").notNull(),
+    nodeAttemptId: text("node_attempt_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    operationKey: text("operation_key").notNull(),
+    generation: integer("generation").notNull().default(1),
+    flowRevision: text("flow_revision").notNull(),
+    assignmentId: text("assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "restrict" },
+    ),
+    remoteName: text("remote_name").notNull(),
+    repoIdentity: text("repo_identity").notNull(),
+    headRef: text("head_ref").notNull(),
+    baseRef: text("base_ref").notNull(),
+    sourceHead: text("source_head").notNull(),
+    expectedRemoteHead: text("expected_remote_head"),
+    observedHead: text("observed_head"),
+    prMode: text("pr_mode", { enum: ["none", "draft", "ready"] }).notNull(),
+    prNumber: integer("pr_number"),
+    prUrl: text("pr_url"),
+    phase: text("phase", {
+      enum: ["claimed", "observed", "refused", "uncertain"],
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }),
+  },
+  (t) => ({
+    runOwner: foreignKey({
+      name: "run_publications_run_owner_fk",
+      columns: [t.projectId, t.runId],
+      foreignColumns: [runs.projectId, runs.id],
+    }).onDelete("cascade"),
+    nodeOwner: foreignKey({
+      name: "run_publications_node_owner_fk",
+      columns: [t.runId, t.nodeAttemptId],
+      foreignColumns: [nodeAttempts.runId, nodeAttempts.id],
+    }).onDelete("cascade"),
+    workspaceOwner: foreignKey({
+      name: "run_publications_workspace_owner_fk",
+      columns: [t.projectId, t.runId, t.workspaceId],
+      foreignColumns: [workspaces.projectId, workspaces.runId, workspaces.id],
+    }).onDelete("cascade"),
+    observationOwner: unique("run_publications_observation_owner_uq").on(
+      t.projectId,
+      t.runId,
+      t.id,
+    ),
+    operation: unique("run_publications_operation_uq").on(
+      t.runId,
+      t.nodeAttemptId,
+      t.operationKey,
+    ),
+    generation: unique("run_publications_generation_uq").on(
+      t.runId,
+      t.generation,
+    ),
+    state: check(
+      "run_publications_shape_check",
+      sql`(
+      ${t.generation} >= 1 AND length(${t.operationKey}) BETWEEN 1 AND 256 AND
+      ${t.sourceHead} ~ '^([a-f0-9]{40}|[a-f0-9]{64})$' AND
+      (${t.expectedRemoteHead} IS NULL OR ${t.expectedRemoteHead} ~ '^([a-f0-9]{40}|[a-f0-9]{64})$') AND
+      ${t.prMode} IN ('none','draft','ready') AND ${t.phase} IN ('claimed','observed','refused','uncertain') AND
+      ${t.headRef} LIKE 'refs/heads/%' AND ${t.baseRef} LIKE 'refs/heads/%' AND
+      (${t.prNumber} IS NULL) = (${t.prUrl} IS NULL) AND
+      (${t.prNumber} IS NULL OR ${t.prNumber} > 0 AND ${t.prMode} <> 'none') AND
+      ((${t.phase} = 'observed' AND ${t.observedAt} IS NOT NULL AND ${t.observedHead} = ${t.sourceHead} AND (${t.prMode} = 'none' OR ${t.prNumber} IS NOT NULL))
+        OR (${t.phase} <> 'observed' AND ${t.observedAt} IS NULL AND ${t.observedHead} IS NULL))
+    ) IS TRUE`,
+    ),
+  }),
+);
+
+export const runPublicationObservations = pgTable(
+  "run_publication_observations",
+  {
+    id: text("id").primaryKey(),
+    publicationId: text("publication_id").notNull(),
+    projectId: text("project_id").notNull(),
+    runId: text("run_id").notNull(),
+    kind: text("kind", { enum: ["ci", "pr", "ref"] }).notNull(),
+    sourceRevision: text("source_revision").notNull(),
+    headSha: text("head_sha").notNull(),
+    fact: jsonb("fact").$type<WaitJson>().notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    owner: foreignKey({
+      name: "run_publication_observations_owner_fk",
+      columns: [t.projectId, t.runId, t.publicationId],
+      foreignColumns: [
+        runPublications.projectId,
+        runPublications.runId,
+        runPublications.id,
+      ],
+    }).onDelete("cascade"),
+    receipt: unique("run_publication_observations_receipt_uq").on(
+      t.publicationId,
+      t.kind,
+      t.sourceRevision,
+    ),
+    latest: index("run_publication_observations_latest_idx").on(
+      t.publicationId,
+      t.kind,
+      t.observedAt.desc(),
+      t.id.desc(),
+    ),
+    shape: check(
+      "run_publication_observations_shape_check",
+      sql`(
+      ${t.kind} IN ('ci','pr','ref') AND ${t.headSha} ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'
+      AND length(${t.sourceRevision}) BETWEEN 1 AND 256 AND jsonb_typeof(${t.fact}) = 'object'
+      AND ${t.fact}->'schemaVersion' = '1'::jsonb AND octet_length(${t.fact}::text) <= 32768
+    ) IS TRUE`,
+    ),
+  }),
+);
+
+export const runWaits = pgTable(
+  "run_waits",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    runId: text("run_id").notNull(),
+    ownerKind: text("owner_kind", { enum: ["flow"] }).notNull(),
+    occurrenceKey: text("occurrence_key").notNull(),
+    nodeAttemptId: text("node_attempt_id"),
+    flowRevision: text("flow_revision").notNull(),
+    conditionKind: text("condition_kind", {
+      enum: ["timer", "comment", "run", "signal", "ci", "pr"],
+    }).notNull(),
+    condition: jsonb("condition").$type<WaitConditionSnapshot>().notNull(),
+    sourceTargetId: text("source_target_id"),
+    publicationId: text("publication_id"),
+    providerScannedAt: timestamp("provider_scanned_at", { withTimezone: true }),
+    providerVerifiedAt: timestamp("provider_verified_at", {
+      withTimezone: true,
+    }),
+    reservedUntil: timestamp("reserved_until", { withTimezone: true }),
+    bindingHeadSha: text("binding_head_sha"),
+    registrationSnapshot: text("registration_snapshot"),
+    state: text("state", {
+      enum: ["reserved", "parking", "open", "resolved", "closed"],
+    }).notNull(),
+    version: integer("version").notNull().default(0),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    timerAt: timestamp("timer_at", { withTimezone: true }),
+    nextDueAt: timestamp("next_due_at", { withTimezone: true }),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    absoluteCapAt: timestamp("absolute_cap_at", { withTimezone: true }),
+    deadlineRetryAt: timestamp("deadline_retry_at", { withTimezone: true }),
+    result: jsonb("result").$type<WaitResult>(),
+    resultDigest: text("result_digest"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    queuedAt: timestamp("queued_at", { withTimezone: true }),
+    resumeState: text("resume_state", {
+      enum: ["queued", "admitted", "applied", "invalidated"],
+    }),
+    resumeAssignmentId: text("resume_assignment_id").references(
+      () => executionAssignments.id,
+      { onDelete: "restrict" },
+    ),
+  },
+  (t) => ({
+    runOwner: foreignKey({
+      name: "run_waits_owner_run_fk",
+      columns: [t.projectId, t.runId],
+      foreignColumns: [runs.projectId, runs.id],
+    }).onDelete("cascade"),
+    publicationOwner: foreignKey({
+      name: "run_waits_publication_owner_fk",
+      columns: [t.projectId, t.runId, t.publicationId],
+      foreignColumns: [
+        runPublications.projectId,
+        runPublications.runId,
+        runPublications.id,
+      ],
+    }).onDelete("cascade"),
+    attemptOwner: foreignKey({
+      name: "run_waits_owner_attempt_fk",
+      columns: [t.runId, t.nodeAttemptId],
+      foreignColumns: [nodeAttempts.runId, nodeAttempts.id],
+    }).onDelete("cascade"),
+    attemptUnique: unique("run_waits_attempt_unique").on(t.nodeAttemptId),
+    occurrenceUnique: unique("run_waits_occurrence_unique").on(
+      t.runId,
+      t.ownerKind,
+      t.occurrenceKey,
+    ),
+    due: index("run_waits_due_idx")
+      .on(sql`greatest(${t.nextDueAt}, ${t.deadlineRetryAt})`, t.id)
+      .where(sql`state = 'open'`),
+    reservedDue: index("run_waits_reserved_due_idx")
+      .on(t.reservedUntil, t.id)
+      .where(sql`state = 'reserved'`),
+    source: index("run_waits_open_source_idx")
+      .on(t.projectId, t.conditionKind, t.sourceTargetId)
+      .where(sql`state = 'open'`),
+    queued: uniqueIndex("run_waits_resume_in_progress_uq")
+      .on(t.runId)
+      .where(sql`resume_state IN ('queued', 'admitted')`),
+    stateCheck: check(
+      "run_waits_state_check",
+      sql`
+      ${t.ownerKind} = 'flow' AND ${t.state} IN ('reserved','parking','open','resolved','closed')
+      AND ${t.version} >= 0
+      AND (${t.state} = 'closed') = (${t.closedAt} IS NOT NULL)
+      AND (${t.nodeAttemptId} IS NOT NULL OR (${t.state} IN ('reserved','closed') AND ${t.publicationId} IS NOT NULL AND ${t.reservedUntil} IS NOT NULL))
+      AND (${t.state} <> 'reserved' OR (${t.nodeAttemptId} IS NULL AND ${t.reservedUntil} IS NOT NULL))
+    `,
+    ),
+    conditionCheck: check(
+      "run_waits_condition_check",
+      sql`
+      (${t.conditionKind} IN ('timer','comment','run','signal','ci','pr')
+      AND (${t.conditionKind} IN ('ci','pr')) = (${t.publicationId} IS NOT NULL)
+      AND jsonb_typeof(${t.condition}) = 'object'
+      AND ${t.condition}->'schemaVersion' = '1'::jsonb
+      AND ${t.condition}->>'kind' = ${t.conditionKind}
+      AND pg_column_size(${t.condition}) <= 32768
+      AND (${t.bindingHeadSha} IS NULL OR ${t.bindingHeadSha} ~ '^([0-9a-f]{40}|[0-9a-f]{64})$')) IS TRUE
+    `,
+    ),
+    deadlineCheck: check(
+      "run_waits_deadline_check",
+      sql`
+      ((${t.state} IN ('reserved','parking','closed') AND ${t.openedAt} IS NULL AND
+        ${t.nextDueAt} IS NULL AND ${t.deadlineAt} IS NULL AND ${t.absoluteCapAt} IS NULL) OR
+       (${t.openedAt} IS NOT NULL AND ${t.nextDueAt} IS NOT NULL
+        AND ${t.openedAt} <= ${t.deadlineAt} AND ${t.deadlineAt} <= ${t.absoluteCapAt}
+        AND (${t.conditionKind} = 'timer') = (${t.timerAt} IS NOT NULL)
+        AND ${t.nextDueAt} = least(${t.timerAt}, ${t.deadlineAt}))) IS TRUE
+    `,
+    ),
+    resultCheck: check(
+      "run_waits_result_check",
+      sql`
+      ((${t.state} = 'resolved' AND
+          ${t.resolvedAt} IS NOT NULL AND ${t.resolvedAt} >= ${t.openedAt} AND
+          jsonb_typeof(${t.result}) = 'object' AND ${t.result}->'schemaVersion' = '1'::jsonb AND
+          jsonb_typeof(${t.result}->'outcome') = 'string' AND
+          ${t.result}->>'source' IN ('timer','comment','run','signal','operator','head','provider') AND
+          jsonb_typeof(${t.result}->'sourceId') = 'string' AND
+          pg_column_size(${t.result}) <= 65536 AND
+          ${t.resultDigest} ~ '^[0-9a-f]{64}$' AND ${t.queuedAt} IS NOT NULL AND
+          ${t.resumeState} IN ('queued','admitted','applied','invalidated') AND
+          (${t.resumeState} NOT IN ('admitted','applied') OR ${t.resumeAssignmentId} IS NOT NULL))
+        OR (${t.state} <> 'resolved' AND ${t.resolvedAt} IS NULL AND
+          ${t.result} IS NULL AND ${t.resultDigest} IS NULL AND ${t.queuedAt} IS NULL AND
+          ${t.resumeState} IS NULL AND ${t.resumeAssignmentId} IS NULL)) IS TRUE
+    `,
+    ),
+  }),
+);
+
+export const runWaitDeliveries = pgTable(
+  "run_wait_deliveries",
+  {
+    id: text("id").primaryKey(),
+    waitId: text("wait_id")
+      .notNull()
+      .references(() => runWaits.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind", {
+      enum: ["project_token", "operator"],
+    }).notNull(),
+    sourceId: text("source_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    payloadDigest: text("payload_digest").notNull(),
+    body: jsonb("body").$type<WaitSignal>().notNull(),
+    disposition: text("disposition", {
+      enum: ["accepted", "stale", "rejected"],
+    }).notNull(),
+    reason: text("reason"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    application: text("application", {
+      enum: ["pending", "applied", "not_applied"],
+    }).notNull(),
+  },
+  (t) => ({
+    receiptUnique: unique("run_wait_deliveries_receipt_uq").on(
+      t.waitId,
+      t.sourceKind,
+      t.sourceId,
+      t.idempotencyKey,
+    ),
+    backlog: index("run_wait_deliveries_pending_idx")
+      .on(t.waitId, t.receivedAt, t.id)
+      .where(sql`application = 'pending'`),
+    shape: check(
+      "run_wait_deliveries_shape_check",
+      sql`
+      ${t.sourceKind} IN ('project_token','operator') AND
+      length(${t.idempotencyKey}) BETWEEN 1 AND 128 AND ${t.payloadDigest} ~ '^[0-9a-f]{64}$' AND
+      pg_column_size(${t.body}) <= 65536 AND
+      ((${t.disposition} = 'accepted' AND ${t.reason} IS NULL AND ${t.application} IN ('pending','applied','not_applied'))
+       OR (${t.disposition} IN ('stale','rejected') AND ${t.reason} IS NOT NULL AND ${t.application} = 'not_applied'))
+    `,
+    ),
+  }),
+);
+
+export const runWaitActions = pgTable(
+  "run_wait_actions",
+  {
+    id: text("id").primaryKey(),
+    waitId: text("wait_id")
+      .notNull()
+      .references(() => runWaits.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    payloadDigest: text("payload_digest").notNull(),
+    action: text("action", {
+      enum: ["deliver_signal", "resolve_now", "extend", "cancel"],
+    }).notNull(),
+    reason: text("reason").notNull(),
+    expectedVersion: integer("expected_version").notNull(),
+    resultingVersion: integer("resulting_version").notNull(),
+    response: jsonb("response").$type<WaitJson>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    actionUnique: unique("run_wait_actions_intent_uq").on(
+      t.waitId,
+      t.userId,
+      t.idempotencyKey,
+    ),
+    shape: check(
+      "run_wait_actions_shape_check",
+      sql`
+      ${t.action} IN ('deliver_signal','resolve_now','extend','cancel') AND
+      length(${t.idempotencyKey}) BETWEEN 1 AND 128 AND
+      length(${t.reason}) BETWEEN 1 AND 1024 AND ${t.payloadDigest} ~ '^[0-9a-f]{64}$' AND
+      ${t.expectedVersion} >= 0 AND ${t.resultingVersion} >= ${t.expectedVersion}
+    `,
     ),
   }),
 );
@@ -6893,6 +7384,7 @@ export const nodeAttemptCostRollups = pgTable(
 export type GateVerdict = {
   verdict?: string;
   confidence?: number;
+  risk?: "low" | "medium" | "high";
   reasons?: string[];
   recommendedAction?: string;
   calibration?: {
@@ -7299,6 +7791,7 @@ export const artifactInstances = pgTable(
         "generic_file",
         "mutation_report",
         "plan",
+        "wait-result",
       ],
     }).notNull(),
     producer: text("producer", {
@@ -9475,7 +9968,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed', 'run.pr_merged')`,
+      sql`${t.kind} in ('knowledge.record_changed', 'specialist.assignment_changed', 'agent.activity_changed', 'agent.incident_changed', 'task.qualification_changed', 'task.launch_changed', 'task.created', 'task.comment_added', 'task.triage_requeued', 'task.clarification_requested', 'task.clarification_answered', 'task.clarification_cancelled', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.review_opened', 'run.needs_input', 'run.escalated', 'run.rework_claimed', 'run.rework_returned', 'gate.failed', 'run.operational_attention_acknowledged', 'run.operational_cleanup_changed', 'run.pr_merged', 'run.wait_registered', 'run.wait_delivery_recorded', 'run.wait_resolved', 'run.wait_closed', 'run.workspace_head_changed', 'run.publication_observed', 'run.ci_observed', 'run.pr_observed', 'run.autonomous_decision')`,
     ),
     ownerCheck: check(
       "domain_events_owner_check",
@@ -9494,6 +9987,14 @@ export const domainEvents = pgTable(
     projectSequenceIdx: index("domain_events_project_sequence_idx")
       .on(t.projectId, t.id)
       .where(sql`${t.projectId} IS NOT NULL`),
+    waitCommentIdx: index("domain_events_wait_comment_idx")
+      .on(t.projectId, t.taskId, t.occurredAt, t.id)
+      .where(sql`${t.kind} = 'task.comment_added'`),
+    waitRunSettleIdx: index("domain_events_wait_run_settle_idx")
+      .on(t.projectId, t.runId, t.occurredAt, t.id)
+      .where(
+        sql`${t.kind} IN ('run.done','run.failed','run.review','run.review_opened','run.crashed','run.abandoned')`,
+      ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",
       sql`${t.actorType} in ('user', 'system', 'agent')`,

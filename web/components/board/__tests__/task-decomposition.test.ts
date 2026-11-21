@@ -24,6 +24,7 @@ const labels: TaskDecompositionLabels = {
     NeedsInputIdle: "Needs input · idle",
     HumanWorking: "Human working",
     WaitingOnChildren: "Waiting on children",
+    Waiting: "Waiting",
     Review: "Review",
     Crashed: "Crashed",
     Done: "Done",

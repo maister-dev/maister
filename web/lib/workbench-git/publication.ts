@@ -1,14 +1,16 @@
 import "server-only";
 
 import type { BranchUpstream } from "@/lib/worktree";
+import type { PrResult } from "@/lib/runs/pr-adapter";
 
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { branchNameSchema } from "@/lib/git-ref-names";
+import { RELEASED_LIFECYCLE_CLAIM } from "@/lib/runs/lifecycle-claim";
 import {
   DEFAULT_PUBLIC_BRANCH_TEMPLATE,
   attemptFromBranch,
@@ -199,4 +201,37 @@ export async function recordPublished(
     },
     "publication recorded",
   );
+}
+
+export async function recordPullRequestOpened(input: {
+  database: Db;
+  workspaceId: string;
+  attemptId: string;
+  operation: "prOpen" | "exportBranch";
+  pr: PrResult;
+  targetBranch: string;
+}): Promise<boolean> {
+  const fence = and(
+    eq(workspaces.lifecycleOperationName, input.operation),
+    eq(workspaces.lifecycleOperationState, "claiming"),
+    eq(workspaces.lifecycleOperationAttemptId, input.attemptId),
+    gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
+  );
+  const changedPr = sql`${workspaces.prUrl} IS DISTINCT FROM ${input.pr.url}`;
+  const rows = await input.database
+    .update(workspaces)
+    .set({
+      prUrl: input.pr.url,
+      prNumber: input.pr.number,
+      prState: "open",
+      targetBranch: input.targetBranch,
+      prHasConflicts: sql`CASE WHEN ${changedPr} THEN NULL ELSE ${workspaces.prHasConflicts} END`,
+      prMergedAt: sql`CASE WHEN ${changedPr} THEN NULL ELSE ${workspaces.prMergedAt} END`,
+      prMergeCommitSha: sql`CASE WHEN ${changedPr} THEN NULL ELSE ${workspaces.prMergeCommitSha} END`,
+      ...RELEASED_LIFECYCLE_CLAIM,
+    })
+    .where(and(eq(workspaces.id, input.workspaceId), fence))
+    .returning({ id: workspaces.id });
+
+  return rows.length > 0;
 }

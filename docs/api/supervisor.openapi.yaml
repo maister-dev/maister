@@ -1134,7 +1134,9 @@ paths:
       description: |
         Apply the ADR-166 fence without advancing the host high-water from
         a released wait epoch. Require the exact wait witness, current
-        assignment identity and an active workspace handle. Return a
+        assignment identity and an active workspace handle. Registration uses
+        the current active assignment to retain the initial observation.
+        Later reads require that retained witness. Return a
         path-free observation. This operation cannot start an executor or
         mutate a ref.
       parameters:
@@ -1162,8 +1164,9 @@ paths:
                   required: [waitId, workspaceGeneration]
                   additionalProperties: false
                   properties:
-                    waitId: { type: string, minLength: 1 }
-                    workspaceGeneration: { type: integer, minimum: 0 }
+                    waitId: { type: string, pattern: '^[0-9a-f]{64}$' }
+                    workspaceGeneration: { type: integer, minimum: 1 }
+                    register: { type: boolean, enum: [true] }
       responses:
         "200":
           description: Current commit for the observed workspace witness.

@@ -303,6 +303,8 @@ function scopeText(labels: TokenLabels, scope: UserTokenScope): string {
       return labels.scopeRunsSync;
     case "runs:recover":
       return labels.scopeRunsRecover;
+    case "waits:signal":
+      return labels.scopeWaitsSignal;
     case "assignments:read":
       return labels.scopeAssignmentsRead;
     case "assignments:submit":

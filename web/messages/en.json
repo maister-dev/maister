@@ -21,6 +21,112 @@
     "beforeTokens": "Before {used, number} / {size, number} tokens",
     "afterTokens": "After {used, number} / {size, number} tokens"
   },
+  "completionSettings": {
+    "projectTitle": "Project autonomous completion",
+    "platformTitle": "Platform autonomous completion",
+    "enabled": "Allow evidence-gated completion",
+    "riskMax": "Maximum review risk",
+    "confidenceMin": "Minimum confidence",
+    "changedFilesMax": "Maximum changed files",
+    "changedLinesMax": "Maximum added and deleted lines",
+    "sources": "Approved CI sources",
+    "sourceHelp": "Enter one provider issuer or trusted project CI token ID per line.",
+    "save": "Save completion settings",
+    "risk": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "status": {
+      "saved": "Settings saved.",
+      "invalid": "Enter valid limits and at least one approved CI source.",
+      "conflict": "Settings changed. Reload before saving.",
+      "failed": "Could not save completion settings."
+    }
+  },
+  "runAutonomy": {
+    "title": "Engine decisions",
+    "action": {
+      "promote": "Promotion",
+      "finalize_pr": "Pull request finalization",
+      "fail": "Classified failure"
+    },
+    "phase": {
+      "claimed": "Authorized",
+      "observed": "Completed",
+      "refused": "Requires attention"
+    },
+    "reason": {
+      "missing_required_evidence": "Required evidence is missing or stale.",
+      "missing_launch_grant": "This run has no completion grant.",
+      "run_held": "A run hold is active.",
+      "platform_disabled": "The platform switch is off.",
+      "project_disabled": "The project policy is disabled.",
+      "required_gate": "A required gate is missing, stale or incomplete.",
+      "review_verdict": "A passing review with risk and confidence is required.",
+      "review_threshold": "The review did not meet the project limits.",
+      "ci_witness": "Current CI evidence does not match the candidate.",
+      "diff_unavailable": "The exact candidate diff could not be verified.",
+      "diff_bound": "The candidate exceeds the diff limits.",
+      "deny_list": "The diff touches a protected path.",
+      "dependency_evidence": "Dependency changes need additional evidence.",
+      "not_graph_review": "The run needs a completed graph review.",
+      "delivery_strategy": "The delivery policy does not permit this action.",
+      "reconcile_effect": "Recovery found a delivery matching the authorized operation.",
+      "confirmed_merged_pr": "The provider confirmed the exact pull request was merged.",
+      "wait_timeout": "The declared wait deadline elapsed.",
+      "rework_exhausted": "The permitted rework attempts were used.",
+      "evidence_gated": "The required completion evidence matched."
+    }
+  },
+  "flowWait": {
+    "failure": {
+      "wait_timeout": "Fail on timeout",
+      "rework_exhausted": "Fail when rework is exhausted"
+    },
+    "conditionJson": "Condition JSON",
+    "timeoutSeconds": "Timeout in seconds",
+    "invalidCondition": "Enter a valid wait condition and timeout.",
+    "applyCondition": "Apply condition",
+    "transitions": "Outcome transitions",
+    "unavailable": "Could not load the wait. Try again.",
+    "invalidPayload": "Enter a valid JSON payload.",
+    "waitTitle": "Flow wait",
+    "waitingFor": "Waiting for {condition}",
+    "secondsRemaining": "{seconds, number} seconds remaining",
+    "overdue": "Overdue",
+    "outcome": "Outcome: {outcome}",
+    "deliveries": "Signal deliveries",
+    "moreDeliveries": "Load older deliveries",
+    "resultData": "Result data",
+    "action": "Wait action",
+    "chooseAction": "Choose an action",
+    "chooseOutcome": "Outcome",
+    "newDeadline": "New deadline",
+    "headSha": "Head SHA",
+    "payload": "Payload JSON",
+    "reason": "Reason",
+    "applyAction": "Apply action",
+    "actions": {
+      "deliver_signal": "Deliver signal",
+      "resolve_now": "Resolve now",
+      "extend": "Extend deadline",
+      "cancel": "Cancel wait"
+    },
+    "kind": {
+      "timer": "timer",
+      "comment": "task comment",
+      "run": "related run",
+      "signal": "signal",
+      "ci": "CI",
+      "pr": "pull request"
+    },
+    "delivery": {
+      "accepted": "Accepted",
+      "stale": "Stale",
+      "rejected": "Rejected"
+    }
+  },
   "agentVault": {
     "title": "Memory vault",
     "location": "Memory location",
@@ -960,7 +1066,10 @@
       "clarificationTitle": "Needs your answer · $count",
       "review": "Review and promote",
       "openTask": "Open the task",
-      "operationalTitle": "Operations requiring attention · $count"
+      "operationalTitle": "Operations requiring attention · $count",
+      "waitTitle": "Conditions requiring attention · $count",
+      "waitOverdue": "The wait deadline has passed.",
+      "waitHandoff": "This wait timed out and is handing off to a human."
     }
   },
   "mcps": {
@@ -1081,6 +1190,7 @@
       "needs_input": "Needs input",
       "being_edited": "Being edited",
       "waiting_on_children": "Waiting on child Runs",
+      "waiting_condition": "Waiting on a Flow condition",
       "awaiting_review": "Awaiting review",
       "unpromoted_closed_task": "Unpromoted work on a closed task",
       "recover_or_discard": "Recover or discard",
@@ -1151,6 +1261,12 @@
     }
   },
   "observatory": {
+    "autonomous": {
+      "title": "Autonomous completion",
+      "done": "Completed by the engine",
+      "failed": "Failed by the engine",
+      "reverted": "Verified human reversals"
+    },
     "eyebrow": "Read-only metrics",
     "projectEyebrow": "Project metrics",
     "title": "Observatory",
@@ -2307,6 +2423,8 @@
     "runnerBindingCheck": "Check saved mapping",
     "thisLaunch": "This launch",
     "selectedFlowRevision": "Revision {revision}",
+    "authorizeFlowPublication": "Allow this Flow revision to push the run branch to origin and open any pull request declared by the Flow.",
+    "allowAutonomousCompletion": "Allow the engine to finish this run after it verifies the required evidence.",
     "runnerBindingRetryRole": "Retry saving runner for {role}",
     "runnerBindingSaving": "Saving runner…",
     "runnerBindingRetry": "Retry save",
@@ -3212,6 +3330,7 @@
       "NeedsInput": "Needs input",
       "NeedsInputIdle": "Needs input · idle",
       "HumanWorking": "Human working",
+      "Waiting": "Waiting for a condition",
       "WaitingOnChildren": "Waiting on children",
       "Review": "Review",
       "Crashed": "Crashed",
@@ -3228,6 +3347,7 @@
       "Succeeded": "Succeeded",
       "Failed": "Failed",
       "NeedsInput": "Needs input",
+      "Waiting": "Waiting for a condition",
       "WaitingOnChildren": "Waiting on children",
       "Reworked": "Reworked",
       "Stale": "Stale",
@@ -3280,6 +3400,8 @@
       "reasons": {
         "context_exhausted": "The agent ran out of context. Retry in a fresh session, choose a runner with a larger context window, or set this runner’s actual context window.",
         "max_output_tokens": "The response reached the agent’s output limit. Split the requested output into smaller parts.",
+        "wait_timeout": "A required wait reached its deadline.",
+        "rework_exhausted": "The flow used all allowed rework attempts.",
         "agent_turn_lost": "The execution host restarted and lost the agent's turn.",
         "turn_lost": "The execution host restarted and lost the agent's turn.",
         "session_crashed": "The agent process crashed.",
@@ -3541,6 +3663,7 @@
         "Succeeded": "Succeeded",
         "Failed": "Failed",
         "NeedsInput": "Needs input",
+        "Waiting": "Waiting for a condition",
         "WaitingOnChildren": "Waiting on children",
         "Reworked": "Reworked",
         "Stale": "Stale"
@@ -4522,6 +4645,7 @@
     "scopeRunsPromote": "Promote child runs",
     "scopeRunsSync": "Sync & reopen runs",
     "scopeRunsRecover": "Recover & discard runs",
+    "scopeWaitsSignal": "Signal Flow waits",
     "scopeKnowledgeRead": "Read structured knowledge",
     "scopeKnowledgePropose": "Propose knowledge changes",
     "scopeKnowledgeReview": "Review knowledge proposals",
@@ -4893,7 +5017,9 @@
         "judge": "Judge",
         "consensus": "Consensus",
         "human": "Human",
-        "form": "Form"
+        "form": "Form",
+        "wait": "Wait",
+        "publish": "Publish"
       },
       "nodeTypeHint": {
         "ai_coding": "AI coding agent. Runs an ACP agent that reads and writes code in the worktree to carry out the step's prompt.",
@@ -4903,7 +5029,9 @@
         "judge": "AI judge. An LLM scores the work against criteria and emits a structured verdict (pass / score).",
         "consensus": "Consensus. Several participants draft independently, then a synthesizer merges them into one result.",
         "human": "Human review. Pauses for a person to approve, reject, or send back with comments (HITL).",
-        "form": "Form. Collects structured input from a person through a schema-defined form (HITL)."
+        "form": "Form. Collects structured input from a person through a schema-defined form (HITL).",
+        "wait": "Suspend the run until a bounded condition is resolved.",
+        "publish": "Publish the run branch and optionally open a pull request."
       },
       "gateKind": {
         "command_check": "Command check",
@@ -6734,6 +6862,7 @@
       "NeedsInput": "Needs input",
       "NeedsInputIdle": "Needs input · idle",
       "HumanWorking": "Human working",
+      "Waiting": "Waiting for a condition",
       "WaitingOnChildren": "Waiting on children",
       "Review": "Review",
       "Failed": "Failed",

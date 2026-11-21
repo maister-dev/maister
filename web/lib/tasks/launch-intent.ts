@@ -101,6 +101,7 @@ const ACTIVE_RUN_STATUSES = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
 ] as const;
 
 async function scopedTask(db: Db, taskId: string) {
@@ -684,8 +685,16 @@ export async function applyPreparedTaskLaunch(
       tx,
       authority.serverSource.snapshot,
     );
+  if (resolved.flowPublicationRequired && !resolved.flowPublicationGrant)
+    throw launchRefusal("flow_publication_grant_required", "PRECONDITION");
+  if (
+    (resolved.flowPublicationGrant || resolved.autonomousCompletionGrant) &&
+    authority.principalKind !== "session_user"
+  )
+    throw launchRefusal("flow_publication_session_required", "PRECONDITION");
   await authority.assert(tx, projectId, [
     "launchRun",
+    ...(resolved.flowPublicationGrant ? ["promoteRun" as const] : []),
     ...(requiresLaunchUnattended(resolved.executionPolicy)
       ? ["launchUnattended" as const]
       : []),

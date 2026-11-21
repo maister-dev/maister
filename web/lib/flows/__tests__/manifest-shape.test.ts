@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
-import { isEngineCompatible } from "@/lib/flows/engine-version";
+import {
+  isEngineCompatible,
+  MAISTER_ENGINE_VERSION,
+} from "@/lib/flows/engine-version";
 import {
   classifyStoredFlowManifest,
   getFlowManifestIncompatibility,
@@ -85,7 +88,7 @@ describe("graph-only manifest shape contract", () => {
       manifestShape: "graph",
       reason: {
         kind: "engine_incompatible",
-        message: "engine 3.13.0 < engine_min 4.0.0",
+        message: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
       },
     });
     expect(isEngineCompatible(value.compat.engine_min)).toMatchObject({
@@ -111,12 +114,11 @@ describe("graph-only manifest shape contract", () => {
     } catch (error) {
       expect(error).toMatchObject({
         code: "CONFIG",
-        message:
-          "flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine 3.13.0 < engine_min 4.0.0",
+        message: `flow manifest in flow revision rev-engine-max is incompatible with this MAIster engine: engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
       });
       expect(getFlowManifestIncompatibility(error)).toEqual({
         kind: "engine_incompatible",
-        message: "engine 3.13.0 < engine_min 4.0.0",
+        message: `engine ${MAISTER_ENGINE_VERSION} < engine_min 4.0.0`,
       });
     }
   });

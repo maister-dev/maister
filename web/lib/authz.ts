@@ -52,6 +52,7 @@ export const PROJECT_ACTION_MIN = {
   renameScratchRun: "member",
   promoteRun: "member",
   recoverRun: "member",
+  operateWait: "member",
   createTask: "member",
   editTask: "member",
   commentTask: "member",

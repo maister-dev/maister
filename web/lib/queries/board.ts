@@ -332,7 +332,7 @@ function runStatusToCard(status: RunStatus): CardStatus {
   if (status === "Pending") return "queued";
   if (status === "Done") return "done";
   if (status === "Crashed") return "crashed";
-  if (status === "WaitingOnChildren") return "waiting";
+  if (status === "WaitingOnChildren" || status === "Waiting") return "waiting";
 
   return "running";
 }

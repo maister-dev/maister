@@ -1,5 +1,13 @@
 import type { CommandReceiptV2 } from "../../../runtime/command-evidence";
 import type {
+  WorkspacePublicationRequest,
+  WorkspacePublicationSnapshot,
+} from "../../../runtime/workspace-publication";
+import type {
+  WaitHeadObservation,
+  WaitHeadObservationRequest,
+} from "../../../runtime/wait-head";
+import type {
   CreateSessionInput,
   CreateSessionResult,
   ExecutionHostIdentity,
@@ -375,6 +383,16 @@ export interface ExecutionHostTransport {
     envelope: CommandEnvelope<EmptyPayload>,
     opts?: CommandCallOptions,
   ): Promise<{ released: boolean }>;
+  observeWaitWorkspaceHead(
+    executionWorkspaceId: string,
+    envelope: CommandEnvelope<WaitHeadObservationRequest>,
+    opts?: CommandCallOptions,
+  ): Promise<WaitHeadObservation>;
+  workspacePublication(
+    executionWorkspaceId: string,
+    envelope: CommandEnvelope<WorkspacePublicationRequest>,
+    opts?: CommandCallOptions,
+  ): Promise<WorkspacePublicationSnapshot>;
   createSession(
     envelope: CommandEnvelope<CreateSessionPayload>,
     opts?: CommandCallOptions,

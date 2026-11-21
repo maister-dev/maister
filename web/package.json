@@ -91,6 +91,7 @@
     "@xyflow/react": "12.12.0",
     "adm-zip": "^0.6.1",
     "bcryptjs": "3.0.3",
+    "ajv": "8.20.0",
     "clsx": "2.1.1",
     "croner": "^10.0.1",
     "drizzle-orm": "^0.45.4",

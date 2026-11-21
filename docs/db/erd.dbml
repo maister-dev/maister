@@ -1111,6 +1111,8 @@ table domain_events {
     (payload, id) [name: 'domain_events_specialist_assignment_idx']
     (company_id, kind, id) [name: 'domain_events_company_kind_id_idx']
     (project_id, id) [name: 'domain_events_project_sequence_idx']
+    (project_id, task_id, occurred_at, id) [name: 'domain_events_wait_comment_idx']
+    (project_id, run_id, occurred_at, id) [name: 'domain_events_wait_run_settle_idx']
 
     (run_id, occurred_at) [name: 'domain_events_m43_cutover_run_occurred_idx']
     (task_id, occurred_at) [name: 'domain_events_m43_cutover_task_occurred_idx']
@@ -2533,6 +2535,7 @@ table node_attempts {
   action_prompt_ordinal integer [not null, default: 0]
   action_resume jsonb
   finish_continuation jsonb
+  completion_git_anchor jsonb
   resolved_prompt text
   rework_baseline integer
   vars jsonb [not null, default: `{}`]
@@ -2552,6 +2555,7 @@ table node_attempts {
   ended_at "timestamp with time zone"
 
   indexes {
+    (run_id, id) [name: 'node_attempts_wait_owner_uq', unique]
     (run_id, node_id, attempt) [name: 'node_attempts_run_node_attempt_uq', unique]
 
 
@@ -2682,6 +2686,8 @@ table platform_runtime_settings {
   id text [pk, not null, default: 'singleton']
   default_runner_id text [not null]
   webhooks_enabled boolean [not null, default: true]
+  autonomous_completion_enabled boolean [not null, default: false]
+  autonomous_completion_revision integer [not null, default: 0]
   embedding_base_url text
   embedding_model text
   embedding_dimensions integer
@@ -2914,6 +2920,8 @@ table projects {
   execution_policy_default jsonb
   task_queue_settings jsonb
   auto_promotion jsonb
+  autonomous_completion jsonb
+  autonomous_completion_revision integer [not null, default: 0]
   brain_enabled boolean [not null, default: false]
   task_key text [not null, unique]
   next_task_number integer [not null, default: 1]
@@ -2990,6 +2998,48 @@ table review_comments {
     parent_id [name: 'review_comments_parent_idx']
 
 
+
+  }
+}
+
+table run_autonomous_decisions {
+  id text [pk, not null]
+  run_id text [not null]
+  project_id text [not null]
+  action text [not null]
+  phase text [not null]
+  reason text [not null]
+  project_revision integer [not null]
+  platform_revision integer [not null]
+  witness jsonb [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+
+  indexes {
+
+    (project_id, run_id, id) [name: 'run_autonomous_decisions_scope_uq', unique]
+    (run_id, created_at, id) [name: 'run_autonomous_decisions_history_idx']
+    (project_id, created_at, id) [name: 'run_autonomous_decisions_realized_idx']
+
+  }
+}
+
+table run_autonomous_reversals {
+  id text [pk, not null]
+  decision_id text [not null]
+  project_id text [not null]
+  run_id text [not null]
+  reported_by text [not null]
+  provider_actor_id text [not null]
+  provider_pr_number integer [not null]
+  delivered_commit text [not null]
+  revert_commit text [not null]
+  verified_at "timestamp with time zone" [not null, default: `now()`]
+  reversed_at "timestamp with time zone" [not null]
+
+  indexes {
+
+    (decision_id, revert_commit) [name: 'run_autonomous_reversals_commit_uq', unique]
+    (project_id, reversed_at, id) [name: 'run_autonomous_reversals_period_idx']
 
   }
 }
@@ -3109,6 +3159,60 @@ table run_messages {
 
     (run_id, sequence) [name: 'run_messages_queued_idx']
     steer_command_id [name: 'run_messages_steer_command_uq', unique]
+  }
+}
+
+table run_publication_observations {
+  id text [pk, not null]
+  publication_id text [not null]
+  project_id text [not null]
+  run_id text [not null]
+  kind text [not null]
+  source_revision text [not null]
+  head_sha text [not null]
+  fact jsonb [not null]
+  observed_at "timestamp with time zone" [not null]
+
+  indexes {
+
+    (publication_id, kind, source_revision) [name: 'run_publication_observations_receipt_uq', unique]
+    (publication_id, kind, observed_at, id) [name: 'run_publication_observations_latest_idx']
+
+  }
+}
+
+table run_publications {
+  id text [pk, not null]
+  project_id text [not null]
+  run_id text [not null]
+  node_attempt_id text [not null]
+  workspace_id text [not null]
+  operation_key text [not null]
+  generation integer [not null, default: 1]
+  flow_revision text [not null]
+  assignment_id text
+  remote_name text [not null]
+  repo_identity text [not null]
+  head_ref text [not null]
+  base_ref text [not null]
+  source_head text [not null]
+  expected_remote_head text
+  observed_head text
+  pr_mode text [not null]
+  pr_number integer
+  pr_url text
+  phase text [not null]
+  created_at "timestamp with time zone" [not null, default: `now()`]
+  observed_at "timestamp with time zone"
+
+  indexes {
+
+
+
+    (project_id, run_id, id) [name: 'run_publications_observation_owner_uq', unique]
+    (run_id, node_attempt_id, operation_key) [name: 'run_publications_operation_uq', unique]
+    (run_id, generation) [name: 'run_publications_generation_uq', unique]
+
   }
 }
 
@@ -3271,6 +3375,95 @@ table run_transcript_states {
   }
 }
 
+table run_wait_actions {
+  id text [pk, not null]
+  wait_id text [not null]
+  user_id text [not null]
+  idempotency_key text [not null]
+  payload_digest text [not null]
+  action text [not null]
+  reason text [not null]
+  expected_version integer [not null]
+  resulting_version integer [not null]
+  response jsonb [not null]
+  created_at "timestamp with time zone" [not null]
+
+  indexes {
+    (wait_id, user_id, idempotency_key) [name: 'run_wait_actions_intent_uq', unique]
+
+  }
+}
+
+table run_wait_deliveries {
+  id text [pk, not null]
+  wait_id text [not null]
+  source_kind text [not null]
+  source_id text [not null]
+  idempotency_key text [not null]
+  payload_digest text [not null]
+  body jsonb [not null]
+  disposition text [not null]
+  reason text
+  received_at "timestamp with time zone" [not null]
+  application text [not null]
+
+  indexes {
+    (wait_id, source_kind, source_id, idempotency_key) [name: 'run_wait_deliveries_receipt_uq', unique]
+    (wait_id, received_at, id) [name: 'run_wait_deliveries_pending_idx']
+
+  }
+}
+
+table run_waits {
+  id text [pk, not null]
+  project_id text [not null]
+  run_id text [not null]
+  owner_kind text [not null]
+  occurrence_key text [not null]
+  node_attempt_id text
+  flow_revision text [not null]
+  condition_kind text [not null]
+  condition jsonb [not null]
+  source_target_id text
+  publication_id text
+  provider_scanned_at "timestamp with time zone"
+  provider_verified_at "timestamp with time zone"
+  reserved_until "timestamp with time zone"
+  binding_head_sha text
+  registration_snapshot text
+  state text [not null]
+  version integer [not null, default: 0]
+  opened_at "timestamp with time zone"
+  timer_at "timestamp with time zone"
+  next_due_at "timestamp with time zone"
+  deadline_at "timestamp with time zone"
+  absolute_cap_at "timestamp with time zone"
+  deadline_retry_at "timestamp with time zone"
+  result jsonb
+  result_digest text
+  resolved_at "timestamp with time zone"
+  closed_at "timestamp with time zone"
+  queued_at "timestamp with time zone"
+  resume_state text
+  resume_assignment_id text
+
+  indexes {
+
+
+
+    node_attempt_id [name: 'run_waits_attempt_unique', unique]
+    (run_id, owner_kind, occurrence_key) [name: 'run_waits_occurrence_unique', unique]
+    (next_due_at, deadline_retry_at, id) [name: 'run_waits_due_idx']
+    (reserved_until, id) [name: 'run_waits_reserved_due_idx']
+    (project_id, condition_kind, source_target_id) [name: 'run_waits_open_source_idx']
+    run_id [name: 'run_waits_resume_in_progress_uq', unique]
+
+
+
+
+  }
+}
+
 table runs {
   id text [pk, not null]
   run_kind text [not null, default: 'flow']
@@ -3342,6 +3535,8 @@ table runs {
   merge_commit_sha text
   diff_stat jsonb
   execution_policy jsonb [not null, default: `{"preset":"supervised"}`]
+  flow_publication_grant jsonb
+  autonomous_completion_grant jsonb
   promotion_hold jsonb
   review_entered_at "timestamp with time zone"
   budget_state jsonb
@@ -3361,6 +3556,7 @@ table runs {
     (company_id, source_agent_id, activity_sort_at, id) [name: 'runs_company_agent_history_idx']
 
 
+    (project_id, id) [name: 'runs_wait_owner_uq', unique]
     task_launch_intent_id [name: 'runs_task_launch_intent_uq', unique]
     (project_id, status) [name: 'runs_project_status_idx']
     retry_of_run_id [name: 'runs_agent_retry_child_uq', unique]
@@ -4683,6 +4879,7 @@ table workspaces {
   branch_delivery jsonb
 
   indexes {
+    (project_id, run_id, id) [name: 'workspaces_publication_owner_uq', unique]
     (lifecycle_operation_state, lifecycle_operation_lease_expires_at) [name: 'workspaces_lifecycle_claim_idx']
 
 
@@ -5637,6 +5834,12 @@ ref review_comments_author_user_id_users_id_fk: review_comments.author_user_id >
 
 ref review_comments_resolved_by_user_id_users_id_fk: review_comments.resolved_by_user_id > users.id [delete: set null, update: no action]
 
+ref run_autonomous_decisions_owner_fk: run_autonomous_decisions.(project_id, run_id) > runs.(project_id, id) [delete: cascade, update: no action]
+
+ref run_autonomous_reversals_reported_by_users_id_fk: run_autonomous_reversals.reported_by > users.id [delete: restrict, update: no action]
+
+ref run_autonomous_reversals_owner_fk: run_autonomous_reversals.(project_id, run_id, decision_id) > run_autonomous_decisions.(project_id, run_id, id) [delete: cascade, update: no action]
+
 ref run_context_compactions_run_id_runs_id_fk: run_context_compactions.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_context_compactions_node_attempt_id_node_attempts_id_fk: run_context_compactions.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
@@ -5662,6 +5865,16 @@ ref run_messages_run_id_runs_id_fk: run_messages.run_id > runs.id [delete: casca
 ref run_messages_node_attempt_id_node_attempts_id_fk: run_messages.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
 
 ref run_messages_steer_command_id_execution_commands_id_fk: run_messages.steer_command_id > execution_commands.id [delete: restrict, update: no action]
+
+ref run_publication_observations_owner_fk: run_publication_observations.(project_id, run_id, publication_id) > run_publications.(project_id, run_id, id) [delete: cascade, update: no action]
+
+ref run_publications_assignment_id_execution_assignments_id_fk: run_publications.assignment_id > execution_assignments.id [delete: restrict, update: no action]
+
+ref run_publications_run_owner_fk: run_publications.(project_id, run_id) > runs.(project_id, id) [delete: cascade, update: no action]
+
+ref run_publications_node_owner_fk: run_publications.(run_id, node_attempt_id) > node_attempts.(run_id, id) [delete: cascade, update: no action]
+
+ref run_publications_workspace_owner_fk: run_publications.(project_id, run_id, workspace_id) > workspaces.(project_id, run_id, id) [delete: cascade, update: no action]
 
 ref run_results_run_id_runs_id_fk: run_results.run_id > runs.id [delete: cascade, update: no action]
 
@@ -5702,6 +5915,18 @@ ref run_sync_attempts_workspace_id_workspaces_id_fk: run_sync_attempts.workspace
 ref run_transcript_states_run_id_runs_id_fk: run_transcript_states.run_id > runs.id [delete: cascade, update: no action]
 
 ref run_transcript_states_node_attempt_id_node_attempts_id_fk: run_transcript_states.node_attempt_id > node_attempts.id [delete: cascade, update: no action]
+
+ref run_wait_actions_wait_id_run_waits_id_fk: run_wait_actions.wait_id > run_waits.id [delete: cascade, update: no action]
+
+ref run_wait_deliveries_wait_id_run_waits_id_fk: run_wait_deliveries.wait_id > run_waits.id [delete: cascade, update: no action]
+
+ref run_waits_resume_assignment_id_execution_assignments_id_fk: run_waits.resume_assignment_id > execution_assignments.id [delete: restrict, update: no action]
+
+ref run_waits_owner_run_fk: run_waits.(project_id, run_id) > runs.(project_id, id) [delete: cascade, update: no action]
+
+ref run_waits_publication_owner_fk: run_waits.(project_id, run_id, publication_id) > run_publications.(project_id, run_id, id) [delete: cascade, update: no action]
+
+ref run_waits_owner_attempt_fk: run_waits.(run_id, node_attempt_id) > node_attempts.(run_id, id) [delete: cascade, update: no action]
 
 ref runs_company_id_companies_id_fk: runs.company_id > companies.id [delete: restrict, update: no action]
 

@@ -14,6 +14,8 @@ describe("nodeVisual", () => {
       check: { iconName: "shield", colorToken: "cv-amber" },
       human: { iconName: "person", colorToken: "cv-blue" },
       form: { iconName: "form", colorToken: "cv-rose" },
+      wait: { iconName: "clock", colorToken: "cv-amber" },
+      publish: { iconName: "link", colorToken: "cv-blue" },
     };
 
     for (const type of NODE_TYPES) {

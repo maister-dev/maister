@@ -28,6 +28,7 @@ const ACTIVE_RUN_STATUSES = new Set([
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
 ]);

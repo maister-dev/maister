@@ -27,6 +27,7 @@ import { z, ZodError, type ZodType } from "zod";
 import { safeDownloadHeaders } from "../../runtime/safe-download";
 import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
+import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 
 import {
   reconcileRunSessionProcesses,
@@ -95,6 +96,15 @@ import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { checkpointSession } from "./checkpoint-teardown";
+import {
+  observeWaitWorkspaceHead,
+  requireWaitWorkspaceFence,
+} from "./workspace-wait-head";
+import {
+  observeWorkspaceEvidence,
+  observeWorkspacePublication,
+  pushWorkspacePublication,
+} from "./workspace-publication";
 import {
   settleRetiredSessionCreate,
   UnsettledSessionCreateError,
@@ -329,12 +339,14 @@ function receiptAdmission(
       };
     case "session.prompt":
     case "workspace.adopt":
+    case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
     case "stand.dispatch":
       return { kind: "new_work" };
     case "session.input":
     case "session.steer":
+    case "workspace.observe_head":
       return { kind: "resolve" };
     case "session.cancel":
     case "session.checkpoint":
@@ -2587,6 +2599,123 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
         return { status: 200, body };
       },
+    });
+  });
+
+  app.post<SessionIdParams>(
+    "/workspaces/:id/publication",
+    async (req, reply) => {
+      const target = {
+        remote: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/),
+        headRef: z
+          .string()
+          .regex(/^refs\/heads\/[A-Za-z0-9_][A-Za-z0-9._/-]{0,250}$/),
+      };
+      const parsed = parseCommandBody(
+        req.body,
+        "workspace.publication",
+        z.discriminatedUnion("action", [
+          z.strictObject({ ...target, action: z.literal("inspect") }),
+          z.strictObject({ ...target, action: z.literal("evidence") }),
+          z.strictObject({
+            ...target,
+            action: z.literal("push"),
+            expectedHead: z.string().regex(GIT_OBJECT_ID),
+            expectedRemoteHead: z.string().regex(GIT_OBJECT_ID).nullable(),
+            repoIdentity: z.string().min(1).max(512),
+          }),
+        ]),
+        { route: "POST /workspaces/:id/publication" },
+      );
+      const handle = workspaces.get(req.params.id);
+
+      if (!handle)
+        throw new SupervisorError(
+          "PRECONDITION",
+          "unknown execution workspace",
+          { details: { reason: "unknown_workspace" } },
+        );
+      const assertCurrentFence = (): void => {
+        const current = workspaces.get(handle.id);
+
+        if (!current)
+          throw new SupervisorError(
+            "PRECONDITION",
+            "unknown execution workspace",
+            { details: { reason: "unknown_workspace" } },
+          );
+        requireWaitWorkspaceFence(hostState, current, parsed.envelope.fence);
+      };
+
+      assertCurrentFence();
+      await runCommand({
+        reply,
+        parsed,
+        kind: "workspace.publication",
+        expectedRunId: handle.runId,
+        execute: async () => {
+          const command = parsed.payload;
+          const body =
+            command.action === "inspect"
+              ? await observeWorkspacePublication(
+                  handle,
+                  command.remote,
+                  command.headRef,
+                )
+              : command.action === "evidence"
+                ? await observeWorkspaceEvidence(
+                    handle,
+                    command.remote,
+                    command.headRef,
+                  )
+                : await pushWorkspacePublication(
+                    handle,
+                    command,
+                    assertCurrentFence,
+                  );
+
+          assertCurrentFence();
+
+          return { status: 200, body };
+        },
+      });
+    },
+  );
+
+  app.post<SessionIdParams>("/workspaces/:id/head", async (req, reply) => {
+    const parsed = parseCommandBody(
+      req.body,
+      "workspace.observe_head",
+      z.strictObject({
+        waitId: z.string().regex(/^[0-9a-f]{64}$/),
+        workspaceGeneration: z.number().int().positive(),
+        register: z.literal(true).optional(),
+      }),
+      { route: "POST /workspaces/:id/head" },
+    );
+    const handle = workspaces.get(req.params.id);
+
+    if (!handle)
+      throw new SupervisorError("PRECONDITION", "unknown execution workspace", {
+        details: { reason: "unknown_workspace" },
+      });
+    // Refuse before the shared command path can advance the high-water.
+    requireWaitWorkspaceFence(hostState, handle, parsed.envelope.fence);
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "workspace.observe_head",
+      expectedRunId: handle.runId,
+      execute: async () => ({
+        status: 200,
+        body: await observeWaitWorkspaceHead(
+          hostState,
+          handle,
+          parsed.envelope.fence,
+          parsed.payload,
+        ),
+      }),
     });
   });
 

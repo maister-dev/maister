@@ -55,6 +55,7 @@ export const TOKEN_SCOPES = [
   // `runs:*` scope is, and an agent must neither spend another project's
   // execution budget nor terminate its runs.
   "runs:recover",
+  "waits:signal",
   // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
   // Access is additionally gated by projects.brain_enabled and, for agent
   // tokens, the can_read_brain / can_write_brain link axes.
@@ -278,6 +279,7 @@ export type LibrarianOnlyTokenScope =
 export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
   "agent_memory:read",
   "hitl:respond:human",
+  "waits:signal",
   "targets:read",
   "targets:logs",
   "targets:restart",

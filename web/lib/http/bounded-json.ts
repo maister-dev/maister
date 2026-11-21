@@ -21,7 +21,7 @@ const defaultMessages: BoundedJsonMessages = {
 
 /** Reads at most `maxBytes` of strict UTF-8 JSON, refusing other content types. */
 export async function readBoundedJson(
-  request: Request,
+  request: Pick<Request, "headers" | "body">,
   maxBytes: number,
   messages: BoundedJsonMessages = defaultMessages,
 ): Promise<unknown> {

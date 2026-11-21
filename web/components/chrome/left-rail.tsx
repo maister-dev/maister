@@ -179,6 +179,7 @@ export async function LeftRail({
   const tAgent = await getTranslations("agentActivity");
   const tNav = await getTranslations("nav");
   const tPortfolio = await getTranslations("portfolio");
+  const tWait = await getTranslations("flowWait");
   const tGc = await getTranslations("gc");
   const tStatus = await getTranslations("status");
   const platformLabels = {
@@ -221,7 +222,12 @@ export async function LeftRail({
     const ttlActive = ws.ttlState === "active";
 
     return {
-      statusWord: tPortfolio(`railStatus.${ws.statusLabel}`),
+      statusWord: ws.waitCondition
+        ? tWait("waitingFor", {
+            condition:
+              ws.waitCondition.name ?? tWait(`kind.${ws.waitCondition.kind}`),
+          })
+        : tPortfolio(`railStatus.${ws.statusLabel}`),
       reasonLabel: tPortfolio(`attentionReason.${ws.attentionReason}`),
       attention: ATTENTION_LABELS.has(ws.statusLabel),
       flowLabel: ws.flowRefLabel,

@@ -33,6 +33,7 @@ const ASSIGNMENT_OWNED_BY_RUN_STATUS = {
   NeedsInputIdle: false,
   HumanWorking: false,
   WaitingOnChildren: false,
+  Waiting: false,
   Review: false,
   Crashed: false,
   Done: false,

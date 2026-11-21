@@ -37,6 +37,7 @@ const NON_TERMINAL_RUN_STATUSES = [
   "NeedsInput",
   "NeedsInputIdle",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
 ] as const;

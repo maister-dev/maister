@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadRunManifest } from "@/lib/queries/run-manifest";
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 
 const engineExcludedGraphManifest = {
   schemaVersion: 1,
@@ -53,7 +54,7 @@ describe("loadRunManifest — stored engine compatibility", () => {
       manifest: null,
       incompatibility: {
         kind: "engine_incompatible",
-        message: "engine 3.13.0 > engine_max 2.2.0",
+        message: `engine ${MAISTER_ENGINE_VERSION} > engine_max 2.2.0`,
       },
     });
   });

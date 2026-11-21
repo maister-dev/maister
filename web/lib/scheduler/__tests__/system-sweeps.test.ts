@@ -135,6 +135,13 @@ vi.mock("@/lib/execution-host", () => ({
   executionCommandReconcilePass: executionCommandReconcilePassMock,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+vi.mock("@/lib/scheduler/handlers/wait-deadline", () => ({
+  runWaitDeadlineSweep: vi.fn(async () => ({
+    scanned: 0,
+    resolved: 0,
+    errors: [],
+  })),
+}));
 // ADR-183 amendment 2026-09-28: the pressure step's collaborators, so its
 // orchestration (isolation, drain on every admitting sample) is observable.
 vi.mock("@/lib/execution-host/host-pressure", async (importOriginal) => ({

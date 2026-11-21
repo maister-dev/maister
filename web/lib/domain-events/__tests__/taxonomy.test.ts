@@ -167,6 +167,15 @@ describe("domain-event taxonomy", () => {
       "run.operational_attention_acknowledged",
       "run.operational_cleanup_changed",
       "run.pr_merged",
+      "run.wait_registered",
+      "run.wait_delivery_recorded",
+      "run.wait_resolved",
+      "run.wait_closed",
+      "run.workspace_head_changed",
+      "run.publication_observed",
+      "run.ci_observed",
+      "run.pr_observed",
+      "run.autonomous_decision",
     ]);
     expect(isDomainEventKind("specialist.assignment_changed")).toBe(true);
     expect(isAgentTriggerEventKind("specialist.assignment_changed")).toBe(
@@ -292,7 +301,7 @@ describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
     // Every `run.*`/`gate.*` fact has to reach the reader through SOMETHING:
     // the `updates` population, or — for a kind that opens a decision and is
     // therefore already counted by `decisions` — the decision-opening list.
-    // Landing in neither is the silent case this guards.
+    // Projection-only facts are explicitly exempt from the attention feed.
     const visible = new Set<string>([
       ...OPERATIONAL_ATTENTION_EVENT_KINDS,
       ...ATTENTION_EVENT_KINDS,
@@ -301,6 +310,8 @@ describe("UT-ATN-09 attention/twinned partition of the taxonomy", () => {
 
     for (const kind of DOMAIN_EVENT_KINDS) {
       if (!kind.startsWith("run.") && kind !== "gate.failed") continue;
+      if ((NON_ATTENTION_EVENT_KINDS as readonly string[]).includes(kind))
+        continue;
       expect([...visible]).toContain(kind);
     }
   });

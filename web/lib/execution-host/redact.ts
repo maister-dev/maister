@@ -52,6 +52,16 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
     contextMountCount: countOf(p.contextMounts),
   }),
   "workspace.release": () => ({}),
+  "workspace.publication": (payload) =>
+    pickScalars(payload, [
+      "action",
+      "remote",
+      "headRef",
+      "expectedHead",
+      "expectedRemoteHead",
+    ]),
+  "workspace.observe_head": (payload) =>
+    pickScalars(payload, ["waitId", "workspaceGeneration", "register"]),
   "session.create": (p) => {
     const executor = asObject(p.executor);
     const runner = asObject(p.runner);

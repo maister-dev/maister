@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { PrResult } from "@/lib/runs/pr-adapter";
 import type { MaisterProvenance } from "@/lib/worktree-provenance";
 
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
@@ -28,7 +27,10 @@ import {
 import { closingReferenceForRun } from "@/lib/tasks/external-source/service";
 import { WORKTREE_TTL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { worktreePresence } from "@/lib/workbench-git/presence";
-import { publishedTarget } from "@/lib/workbench-git/publication";
+import {
+  publishedTarget,
+  recordPullRequestOpened,
+} from "@/lib/workbench-git/publication";
 import {
   mergedPullRequestBehind,
   preflightedPrAdapter,
@@ -501,44 +503,6 @@ export type OpenPullRequestResult = {
   targetBranch: string;
 };
 
-// D11 step 5 + C27: the PR's rows are written only after the provider
-// answered, in the statement that releases the claim (this attempt, a live
-// lease). A different PR resets the previous PR's ADR-140 evidence — null is
-// "unknown until scanned", never the old PR's merge or conflict.
-async function recordPullRequestOpened(args: {
-  database: Db;
-  workspaceId: string;
-  attemptId: string;
-  pr: PrResult;
-  targetBranch: string;
-  previousPrUrl: string | null;
-}): Promise<boolean> {
-  const rows = await args.database
-    .update(workspaces)
-    .set({
-      prUrl: args.pr.url,
-      prNumber: args.pr.number,
-      prState: "open",
-      targetBranch: args.targetBranch,
-      ...(args.previousPrUrl !== args.pr.url
-        ? { prHasConflicts: null, prMergedAt: null, prMergeCommitSha: null }
-        : {}),
-      ...RELEASED_LIFECYCLE_CLAIM,
-    })
-    .where(
-      and(
-        eq(workspaces.id, args.workspaceId),
-        eq(workspaces.lifecycleOperationName, "prOpen"),
-        eq(workspaces.lifecycleOperationState, "claiming"),
-        eq(workspaces.lifecycleOperationAttemptId, args.attemptId),
-        gt(workspaces.lifecycleOperationLeaseExpiresAt, new Date()),
-      ),
-    )
-    .returning({ id: workspaces.id });
-
-  return rows.length > 0;
-}
-
 // D11 step 2: the target an Open PR resolves — the request's, else the
 // recorded one, else the project main branch; a scratch run is target-locked
 // exactly as its promotion is (D13), so a later finalize finds the same PR.
@@ -704,9 +668,9 @@ export async function openPullRequest(
         database: git.db(),
         workspaceId: workspace.id,
         attemptId: claim.attemptId,
+        operation: "prOpen",
         pr,
         targetBranch,
-        previousPrUrl: workspace.prUrl ?? null,
       }))
     ) {
       throw new MaisterError(

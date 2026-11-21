@@ -237,6 +237,12 @@ export function FlowEdgeLabel({
 // matches the chrome left-rail convention). Stroked via `currentColor`, which the
 // chip sets to the type's forest token.
 const NODE_ICON_PATHS: Record<string, ReactElement> = {
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
   bot: (
     <>
       <rect height="7" rx="2" width="10" x="3" y="5.5" />

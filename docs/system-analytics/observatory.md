@@ -814,7 +814,7 @@ Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
 
 ## Autonomous decision and reversal counts (Designed)
 
-Count each realized autonomous Done or Failed once at terminal time. Count verified human reversals at their verified reversal time and link them to the exact original delivery. A refusal, pending effect, unknown actor, unrelated commit or reopened run does not count. Apply the same project and period access on aggregate and drilldown.
+Count each observed autonomous delivery or classified failure once using its decision receipt and terminal time. Count verified human reversals at their verified reversal time, keyed to the exact original decision and inverse commit. Refusals, pending effects, unrelated commits and reopening by itself contribute zero. Human attribution currently uses an authenticated GitHub.com merged pull request and a Git-verified inverse on the target history. An unattributed revert contributes zero. Apply the same project and period access to both counters.
 
 See [the governing contract](execution-policy.md).
 

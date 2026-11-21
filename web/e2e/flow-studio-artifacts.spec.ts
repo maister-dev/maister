@@ -43,6 +43,26 @@ function loadFixture(): FlowStudioArtifactsFixture {
   return all.byKey.flowStudioArtifacts;
 }
 
+test("W10 edits a bounded condition on a new wait node", async ({ page }) => {
+  await openEditor(page, loadFixture());
+  const main = page.getByRole("main");
+
+  await main.getByTestId("flow-tab-graph").click();
+  await main.getByTestId("add-node-wait").click();
+  const fields = main.getByTestId("wait-condition-editor");
+
+  await expect(fields).toBeVisible();
+  await fields.getByLabel("Condition JSON").fill('{"kind":"timer","after":0}');
+  await fields.getByRole("button", { name: "Apply condition" }).click();
+  await expect(fields.getByRole("alert")).toBeVisible();
+  await fields
+    .getByLabel("Condition JSON")
+    .fill('{"kind":"signal","name":"ci","outcomes":["passed"]}');
+  await fields.getByRole("button", { name: "Apply condition" }).click();
+  await expect(fields.getByRole("alert")).toHaveCount(0);
+  await expect(fields.getByText("passed", { exact: true })).toBeVisible();
+});
+
 // Open the dedicated authored draft's editor directly (no fork). Returns the
 // editor URL so later journeys can reload the same draft in place.
 async function openEditor(

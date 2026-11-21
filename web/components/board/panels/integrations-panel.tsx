@@ -100,6 +100,7 @@ export interface TokenLabels {
   scopeRunsPromote: string;
   scopeRunsSync: string;
   scopeRunsRecover: string;
+  scopeWaitsSignal: string;
   scopeKnowledgeRead: string;
   scopeKnowledgePropose: string;
   scopeKnowledgeReview: string;
@@ -214,6 +215,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeRunsSync;
     case "runs:recover":
       return labels.scopeRunsRecover;
+    case "waits:signal":
+      return labels.scopeWaitsSignal;
     case "assignments:read":
       return labels.scopeAssignmentsRead;
     case "assignments:submit":
@@ -497,6 +500,7 @@ export async function IntegrationsPanel({
     scopeRunsPromote: t("scopeRunsPromote"),
     scopeRunsSync: t("scopeRunsSync"),
     scopeRunsRecover: t("scopeRunsRecover"),
+    scopeWaitsSignal: t("scopeWaitsSignal"),
     scopeKnowledgeRead: t("scopeKnowledgeRead"),
     scopeKnowledgePropose: t("scopeKnowledgePropose"),
     scopeKnowledgeReview: t("scopeKnowledgeReview"),

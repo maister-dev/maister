@@ -17,6 +17,7 @@ export type BudgetBreachRunStatus =
   | "NeedsInputIdle"
   | "HumanWorking"
   | "WaitingOnChildren"
+  | "Waiting"
   | "Review"
   | "Crashed"
   | "Done"
