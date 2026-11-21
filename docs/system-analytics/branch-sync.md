@@ -251,9 +251,25 @@ Sync and rebase never rewrite an existing PR body.
 - **Duration runaway** (30 min continuous `Running`) → W5 sweep kills session, aborts,
   `failed`, returns to `Review`.
 
-## Conflict observed by a PR wait (Designed)
+## Conflict observed by a PR wait (Implemented)
 
-An exact publication-generation conflict routes through ADR-141 with bounded rework. The captured continuation survives the sync-returned Review. Republish and recheck new SHA evidence. An arbitrary sync return cannot attest completed review.
+A PR conflict can recover automatically when a completing Flow declares a
+bounded rework edge for `conflict` and the pinned and live policies both allow
+it. The wait must resolve from a current provider observation for the exact
+publication. The Flow journals the wait, publication, released assignment,
+deadline and selected graph target with the closing attempt, then parks in
+Review with its slot released. The scheduler claims one existing ADR-141 sync
+attempt on that host. The resolver has its existing active-time cap. Its local
+merge preserves the prior publication history and leaves the remote push to
+the Flow's publish node.
+
+Successful settlement of that exact sync attempt queues the recorded graph
+target through normal admission. It runs on the same host under a new epoch,
+republishes, and requires fresh CI and review evidence. Superseded, failed,
+held or expired handoffs stay in operator Review with a reason on the run
+ledger. A human can still stop or abandon the run with existing operations.
+Ordinary sync returns and operator-overridden conflict outcomes do not grant
+this continuation.
 
 See [the governing contract](waits.md).
 

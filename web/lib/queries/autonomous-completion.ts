@@ -113,7 +113,10 @@ export async function getCurrentReviewRefusals(
           // A refused failure enters Review without a promotable Review epoch.
           and(
             isNull(runs.reviewEnteredAt),
-            eq(runAutonomousDecisions.action, "fail"),
+            or(
+              eq(runAutonomousDecisions.action, "fail"),
+              eq(runAutonomousDecisions.reason, "pr_conflict_action_required"),
+            ),
             gte(runAutonomousDecisions.createdAt, runs.endedAt),
           ),
         ),

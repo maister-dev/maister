@@ -86,7 +86,16 @@ const queuedWaitHostIsReady = sql`(
     SELECT 1 FROM execution_assignments a
     JOIN execution_hosts h ON h.id = a.execution_host_id
     WHERE a.id=runs.execution_assignment_id AND a.run_id=runs.id
-      AND a.state='released' AND a.released_reason='waiting_condition'
+      AND a.state='released' AND (
+        a.released_reason='waiting_condition' OR (
+          a.released_reason='sync_finished' AND EXISTS (
+            SELECT 1 FROM run_waits w
+            JOIN node_attempts n ON n.id=w.node_attempt_id AND n.run_id=w.run_id
+            WHERE w.id=${pendingWaitColumn("id")} AND w.condition_kind='pr'
+              AND n.finish_continuation->'prConflict'->>'waitId'=w.id
+          )
+        )
+      )
       AND h.readiness='ready' AND h.retired_at IS NULL
   )
 )`;

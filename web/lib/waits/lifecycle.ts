@@ -22,6 +22,7 @@ import {
   runWaits,
   runWaitDeliveries,
   runPublications,
+  runSyncAttempts,
 } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
@@ -30,6 +31,7 @@ import {
   mintAssignment,
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
+import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
 import { waitOutcomes } from "@/lib/waits/manifest";
 import { ciReservationId } from "@/lib/waits/reservations";
 import { isRelatedWaitRun, readObservedWaitFact } from "@/lib/waits/facts";
@@ -670,9 +672,40 @@ export async function admitConditionWaitResume(
   if (
     !original ||
     original.id !== run.assignmentId ||
-    original.state !== "released" ||
-    original.releasedReason !== "waiting_condition"
-  ) {
+    original.state !== "released"
+  )
+    return null;
+  if (original.releasedReason === "sync_finished") {
+    const [source] = await tx
+      .select({ continuation: nodeAttempts.finishContinuation })
+      .from(nodeAttempts)
+      .where(eq(nodeAttempts.id, wait.nodeAttemptId ?? ""));
+    const [sync] = await tx
+      .select()
+      .from(runSyncAttempts)
+      .where(eq(runSyncAttempts.runId, address.runId))
+      .orderBy(desc(runSyncAttempts.attempt))
+      .limit(1);
+    const ownerId = source?.continuation?.prConflict?.assignmentId;
+    const [owner] = ownerId
+      ? await tx
+          .select()
+          .from(executionAssignments)
+          .where(eq(executionAssignments.id, ownerId))
+      : [];
+
+    if (
+      source?.continuation?.prConflict?.waitId !== wait.id ||
+      !owner ||
+      owner.runId !== address.runId ||
+      owner.releasedReason !== "waiting_condition" ||
+      owner.executionHostId !== original.executionHostId ||
+      owner.epoch >= original.epoch ||
+      sync?.id !== flowConflictSyncAttemptId(wait.id) ||
+      sync.phase !== "succeeded"
+    )
+      return null;
+  } else if (original.releasedReason !== "waiting_condition") {
     return null;
   }
 
@@ -726,8 +759,12 @@ export async function admittedConditionWait(
       nodeAttemptId: runWaits.nodeAttemptId,
       flowRevision: runWaits.flowRevision,
       result: runWaits.result,
+      publicationId: runWaits.publicationId,
+      deadlineAt: runWaits.deadlineAt,
+      continuation: nodeAttempts.finishContinuation,
     })
     .from(runWaits)
+    .innerJoin(nodeAttempts, eq(runWaits.nodeAttemptId, nodeAttempts.id))
     .where(
       and(
         eq(runWaits.runId, runId),
@@ -758,7 +795,11 @@ export async function canRedriveConditionWait(
     .where(
       and(
         eq(runWaits.runId, runId),
-        eq(nodeAttempts.nodeId, nodeId),
+        sql`(${nodeAttempts.nodeId} = ${nodeId} OR (
+          ${runWaits.conditionKind} = 'pr' AND
+          ${nodeAttempts.finishContinuation}->'prConflict'->>'waitId' = ${runWaits.id} AND
+          ${nodeAttempts.finishContinuation}->>'targetNodeId' = ${nodeId}
+        ))`,
         sql`(
       (${runWaits.state} = 'parking' AND ${nodeAttempts.executionAssignmentId} = ${assignmentId})
       OR (${runWaits.resumeState} = 'admitted' AND ${runWaits.resumeAssignmentId} = ${assignmentId})
