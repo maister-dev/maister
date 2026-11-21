@@ -1021,6 +1021,37 @@ it.each(["head movement", "host outage"] as const)(
 
       return;
     }
+    const {
+      rows: [{ execution_assignment_id: assignmentId }],
+    } = await database.pool.query<{ execution_assignment_id: string }>(
+      "SELECT execution_assignment_id FROM runs WHERE id=$1",
+      [runId],
+    );
+    await database.pool.query(
+      "UPDATE execution_assignments SET released_reason='run_terminal' WHERE id=$1",
+      [assignmentId],
+    );
+    const nonWaitAssignment = await hosts.forAssignment({ id: assignmentId });
+
+    await expect(
+      nonWaitAssignment.observeWaitWorkspaceHead(wait.id),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "assignment_fenced" },
+    });
+    expect(reads).toHaveLength(2);
+    expect(
+      (
+        await database.pool.query(
+          "SELECT state,result FROM run_waits WHERE id=$1",
+          [wait.id],
+        )
+      ).rows,
+    ).toEqual([{ state: "open", result: null }]);
+    await database.pool.query(
+      "UPDATE execution_assignments SET released_reason='waiting_condition' WHERE id=$1",
+      [assignmentId],
+    );
     observed = b;
     expect(await resolveObservedWait(database.db, address, hosts)).toBe(true);
     expect(await resolveObservedWait(database.db, address, hosts)).toBe(false);
