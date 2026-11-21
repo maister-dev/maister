@@ -70,6 +70,8 @@ export function agentMemoryReadPolicy(
   project: SQL,
   agent: SQL,
 ): SQL {
+  if (identity.kind === "user" && identity.suppressVaultSources)
+    return sql`false`;
   if (
     identity.kind === "company_agent" ||
     identity.kind === "installation_agent"
@@ -88,6 +90,8 @@ export function vaultRevisionReferenceQuery(
   identity: KnowledgePrincipalIdentity,
   reference: SQL,
 ): SQL {
+  if (identity.kind === "user" && identity.suppressVaultSources)
+    return sql`SELECT ARRAY[]::text[] AS source_project_ids,'[]'::jsonb AS source_restrictions,false AS installation WHERE false`;
   const companyAuthority =
     identity.kind === "installation_agent"
       ? sql`vault.company_id=${identity.installation.companyId} AND vault.agent_id=${identity.installation.agentId} AND ${identity.installation.memoryEnabled}`

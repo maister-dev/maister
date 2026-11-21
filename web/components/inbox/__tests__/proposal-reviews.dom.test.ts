@@ -22,6 +22,11 @@ const first = {
   title: "First proposal",
   allowed: ["accept"],
   createdAt: "2026-11-20T09:00:00Z",
+  owner: { kind: "project", id: "fixture", label: "Fixture" },
+  agentId: null,
+  author: null,
+  domainState: "pending",
+  outcomeAvailable: false,
 } satisfies ComponentProps<typeof ProposalReviews>["page"]["items"][number];
 const second = { ...first, id: "proposal-2", title: "Second proposal" };
 
@@ -30,12 +35,14 @@ let root: Root;
 
 function render(
   items: ComponentProps<typeof ProposalReviews>["page"]["items"],
+  initial?: ComponentProps<typeof ProposalReviews>["initial"],
 ) {
   act(() => {
     root.render(
       createElement(ProposalReviews, {
-        page: { items, nextCursor: null },
+        page: { items, nextCursor: null, total: items.length },
         filters: {},
+        initial,
       }),
     );
   });
@@ -58,6 +65,80 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+});
+
+it("K03 settles a deep-linked proposal outside the current page without selecting a batch row", async () => {
+  const decision = {
+    kind: "vault",
+    id: second.id,
+    reviewedVersion: second.version,
+    domainState: "accepted",
+    outcome: {
+      type: "applied_vault_operation",
+      operationId: "operation-2",
+      href: null,
+    },
+    receiptId: "receipt-2",
+    replayed: false,
+  };
+  const fetcher = vi
+    .fn<(url: string, options: RequestInit) => Promise<Response>>()
+    .mockResolvedValueOnce(
+      Response.json({
+        ...second,
+        summary: "Exact off-page diff",
+        detail: {
+          operationId: "proposal-operation",
+          changeCount: 1,
+          vaultHref: null,
+        },
+        decision: { by: null, at: null, reason: null, reviewedVersion: null },
+        nextCursor: null,
+        outcome: null,
+      }),
+    )
+    .mockResolvedValueOnce(Response.json(decision))
+    .mockResolvedValueOnce(
+      Response.json({
+        ...second,
+        summary: "Exact off-page diff",
+        detail: {
+          operationId: "proposal-operation",
+          changeCount: 1,
+          vaultHref: null,
+        },
+        decision: {
+          by: "fixture",
+          at: "2026-11-20T09:00:00Z",
+          reason: null,
+          reviewedVersion: "1",
+        },
+        allowed: [],
+        domainState: "accepted",
+        nextCursor: null,
+        outcome: decision.outcome,
+      }),
+    );
+
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => render([first], { kind: second.kind, id: second.id }));
+  const accept = [
+    ...document.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((button) => button.textContent === "acceptReviewed");
+
+  expect(accept?.disabled).toBe(false);
+  await act(async () => accept?.click());
+  const [url, options] = fetcher.mock.calls[1]!;
+
+  expect(url).toBe("/api/inbox/reviews/vault/proposal-2/decision");
+  expect(JSON.parse(String(options.body))).toEqual({
+    expectedVersion: "1",
+    decision: "accept",
+    requestKey: expect.any(String),
+  });
+  expect(document.body.textContent).toContain(
+    "outcomeLabel.applied_vault_operation",
+  );
 });
 
 afterEach(() => {

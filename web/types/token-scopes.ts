@@ -23,6 +23,7 @@ export const TOKEN_SCOPES = [
   // (it is not an EXACT_ONLY scope; the exact-only list guards responding, not
   // reading).
   "decisions:read",
+  "decisions:review",
   // M51 (ADR-173 D10): CRUD over the caller's OWN notification subscriptions.
   // Deliberately absent from AGENT_TOKEN_SCOPES and CROSS_PROJECT_AGENT_SCOPES —
   // an agent must not edit where a human gets notified. The owner always comes
@@ -277,6 +278,7 @@ export type LibrarianOnlyTokenScope =
 // Defined here rather than in the server-only scopes module so the UI reads the
 // same list instead of mirroring it.
 export const EXACT_ONLY_TOKEN_SCOPES: ReadonlySet<string> = new Set([
+  "decisions:review",
   "agent_memory:read",
   "hitl:respond:human",
   "waits:signal",

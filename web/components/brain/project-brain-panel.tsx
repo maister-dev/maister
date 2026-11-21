@@ -2,7 +2,6 @@ import type { ReactElement } from "react";
 import type {
   BrainIndexPanelStatus,
   BrainMemorySearchRow,
-  BrainProposalReviewRow,
 } from "@/lib/brain/ui-queries";
 import type { BrainSourceDto } from "@/lib/brain/sources";
 import type { BrainSourceRef } from "@/lib/brain/schema";
@@ -73,6 +72,11 @@ export interface ProjectBrainPanelLabels {
   rejectReason: string;
   reviewInInbox?: string;
   emptyProposals: string;
+  reviewHistory: string;
+  nextSources: string;
+  previousSources: string;
+  filterSources: string;
+  memoryUnavailable: string;
 }
 
 interface ProjectBrainPanelProps {
@@ -81,16 +85,15 @@ interface ProjectBrainPanelProps {
   labels: ProjectBrainPanelLabels;
   indexStatus: BrainIndexPanelStatus;
   memory: BrainMemorySearchRow[];
-  proposals: BrainProposalReviewRow[];
+  projectId: string;
+  pendingReviews: number;
   sources: BrainSourceDto[];
   canManageSources?: boolean;
-  proposalCapabilities?: BrainProposalReviewCapabilities;
-}
-
-export interface BrainProposalReviewCapabilities {
-  canAcceptCatalog: boolean;
-  canAcceptProjection: boolean;
-  canReject: boolean;
+  sourceQuery: string;
+  sourcePage: number;
+  hasMoreSources: boolean;
+  selectedMemory?: BrainMemorySearchRow | null;
+  selectedMemoryId?: string;
 }
 
 const sectionClass =
@@ -164,21 +167,6 @@ function renderPointer(
       {pointerLabel(pointer)}
     </Link>
   );
-}
-
-function draftText(draft: Record<string, unknown>): string {
-  return JSON.stringify(draft, null, 2);
-}
-
-function canAcceptProposal(
-  kind: BrainProposalReviewRow["kind"],
-  capabilities: BrainProposalReviewCapabilities,
-): boolean {
-  if (kind === "rule" || kind === "skill" || kind === "flow") {
-    return capabilities.canAcceptCatalog;
-  }
-
-  return capabilities.canAcceptProjection;
 }
 
 function IndexMetric({
@@ -284,7 +272,23 @@ function MemorySection({
                 </span>
               </div>
               <div className="text-[13px] font-semibold text-ink">
-                {item.title}
+                {item.tier === "owned" ? (
+                  <Link
+                    className="underline"
+                    href={`/projects/${encodeURIComponent(slug)}?${new URLSearchParams({ tab: "brain", brain_query: query, brainItem: item.id })}#brain-item`}
+                  >
+                    {item.title}
+                  </Link>
+                ) : item.pointer ? (
+                  <Link
+                    className="underline"
+                    href={repoFileHref(slug, item.pointer)}
+                  >
+                    {item.title}
+                  </Link>
+                ) : (
+                  item.title
+                )}
               </div>
               <p className="m-0 text-[12px] leading-[1.45] text-body">
                 {item.preview}
@@ -485,105 +489,36 @@ function SourcesSection({
   );
 }
 
-function ProposalsSection({
-  slug,
-  labels,
-  proposals,
-  proposalCapabilities,
-}: {
-  slug: string;
-  labels: ProjectBrainPanelLabels;
-  proposals: BrainProposalReviewRow[];
-  proposalCapabilities: BrainProposalReviewCapabilities;
-}): ReactElement {
-  return (
-    <section className={sectionClass}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <h2 className={headingClass}>{labels.proposalsTitle}</h2>
-        <span className={badgeClass}>
-          {labels.pendingBadge}{" "}
-          {proposals.filter((proposal) => proposal.status === "pending").length}
-        </span>
-      </div>
-      {proposals.length === 0 ? (
-        <div className="px-4 py-6 font-mono text-[12px] text-mute">
-          {labels.emptyProposals}
-        </div>
-      ) : (
-        <div className="divide-y divide-line">
-          {proposals.map((proposal) => {
-            const canAccept = canAcceptProposal(
-              proposal.kind,
-              proposalCapabilities,
-            );
-            const canReject = proposalCapabilities.canReject;
-
-            return (
-              <article
-                key={proposal.id}
-                className="grid gap-3 px-4 py-4 lg:grid-cols-[1fr_auto]"
-              >
-                <div className="min-w-0">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className={badgeClass}>{proposal.kind}</span>
-                    <span className="font-mono text-[10.5px] text-mute">
-                      {proposal.status} · {proposal.blastRadius} ·{" "}
-                      {proposal.autonomyDecision}
-                    </span>
-                  </div>
-                  <div className="mb-2">
-                    <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                      {labels.proposalEvidence}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {proposal.evidence.map((item) => (
-                        <span key={item.id} className="text-[12px]">
-                          {renderPointer(slug, item.pointer) ?? item.title}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="mb-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-                      {labels.proposalDraft}
-                    </div>
-                    <pre className="m-0 max-h-[220px] overflow-auto rounded-md border border-line bg-canvas p-3 font-mono text-[11px] leading-[1.45] text-ink">
-                      {draftText(proposal.draft)}
-                    </pre>
-                  </div>
-                </div>
-                {proposal.status === "pending" && (canAccept || canReject) ? (
-                  <Link
-                    className="text-sm underline"
-                    href={`/inbox?${new URLSearchParams({ kind: "brain", proposalId: proposal.id })}#knowledge-memory`}
-                  >
-                    {labels.reviewInInbox ?? labels.proposalsTitle}
-                  </Link>
-                ) : null}
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function ProjectBrainPanel({
   slug,
   query,
   labels,
   indexStatus,
   memory,
-  proposals,
+  projectId,
+  pendingReviews,
   sources,
+  sourceQuery,
+  sourcePage,
+  hasMoreSources,
+  selectedMemory,
+  selectedMemoryId,
   canManageSources = true,
-  proposalCapabilities = {
-    canAcceptCatalog: true,
-    canAcceptProjection: true,
-    canReject: true,
-  },
 }: ProjectBrainPanelProps): ReactElement {
+  const reviewUrl = new URLSearchParams({ kind: "brain", projectId });
+  const historyUrl = new URLSearchParams(reviewUrl);
+  historyUrl.set("view", "history");
+  const projectUrl = `/projects/${encodeURIComponent(slug)}`;
+  const sourcesHref = (page: number) => {
+    const params = new URLSearchParams({
+      tab: "brain",
+      sourcePage: String(page),
+    });
+    if (sourceQuery) params.set("sourceQuery", sourceQuery);
+    if (query) params.set("brain_query", query);
+    return `${projectUrl}?${params}#brain-sources`;
+  };
+
   return (
     <section className="grid gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -597,23 +532,91 @@ export function ProjectBrainPanel({
         query={query}
         slug={slug}
       />
+      {selectedMemoryId ? (
+        <section className={`${sectionClass} space-y-2 p-4`} id="brain-item">
+          {selectedMemory ? (
+            <>
+              <h3 className={headingClass}>{selectedMemory.title}</h3>
+              <p className="whitespace-pre-wrap break-words text-sm">
+                {selectedMemory.preview}
+              </p>
+              {renderPointer(slug, selectedMemory.pointer)}
+            </>
+          ) : (
+            <p role="status">{labels.memoryUnavailable}</p>
+          )}
+        </section>
+      ) : null}
       <IndexStatusSection
         indexStatus={indexStatus}
         labels={labels}
         slug={slug}
       />
-      <SourcesSection
-        canManageSources={canManageSources}
-        labels={labels}
-        slug={slug}
-        sources={sources}
-      />
-      <ProposalsSection
-        labels={labels}
-        proposalCapabilities={proposalCapabilities}
-        proposals={proposals}
-        slug={slug}
-      />
+      <section className={`${sectionClass} grid gap-3 p-4`}>
+        <h3 className={headingClass}>{labels.proposalsTitle}</h3>
+        <span className={badgeClass}>
+          {labels.pendingBadge} {pendingReviews}
+        </span>
+        <nav className="flex flex-wrap gap-3 text-sm">
+          <Link className="underline" href={`/knowledge/reviews?${reviewUrl}`}>
+            {labels.reviewInInbox ?? labels.proposalsTitle}
+          </Link>
+          <Link className="underline" href={`/knowledge/reviews?${historyUrl}`}>
+            {labels.reviewHistory}
+          </Link>
+          <Link className="underline" href="#brain-sources">
+            {labels.sourcesTitle}
+          </Link>
+        </nav>
+      </section>
+      <div className="space-y-3" id="brain-sources">
+        <form
+          action={`${projectUrl}#brain-sources`}
+          className="flex flex-wrap items-end gap-2"
+        >
+          <input name="tab" type="hidden" value="brain" />
+          {query ? (
+            <input name="brain_query" type="hidden" value={query} />
+          ) : null}
+          <label className="grid gap-1 text-sm">
+            {labels.filterSources}
+            <input
+              className="rounded border border-line bg-paper px-3 py-2"
+              defaultValue={sourceQuery}
+              maxLength={256}
+              name="sourceQuery"
+              type="search"
+            />
+          </label>
+          <button
+            className="rounded border border-line px-3 py-2 text-sm"
+            type="submit"
+          >
+            {labels.searchAction}
+          </button>
+        </form>
+        <SourcesSection
+          canManageSources={canManageSources}
+          labels={labels}
+          slug={slug}
+          sources={sources}
+        />
+        <nav
+          aria-label={labels.sourcesTitle}
+          className="flex flex-wrap gap-3 text-sm"
+        >
+          {sourcePage > 1 ? (
+            <Link className="underline" href={sourcesHref(sourcePage - 1)}>
+              {labels.previousSources}
+            </Link>
+          ) : null}
+          {hasMoreSources ? (
+            <Link className="underline" href={sourcesHref(sourcePage + 1)}>
+              {labels.nextSources}
+            </Link>
+          ) : null}
+        </nav>
+      </div>
     </section>
   );
 }

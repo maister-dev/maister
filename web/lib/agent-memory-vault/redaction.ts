@@ -53,9 +53,14 @@ async function removeDerivedVaultContent(
         OR EXISTS (SELECT 1 FROM agent_memory_operation_revisions refs
           WHERE refs.vault_id=p.vault_id AND refs.operation_id IN (p.operation_id,p.applied_operation_id)
             AND refs.revision_id=${revisionId})
-    ), invalidated AS (
-      UPDATE agent_memory_proposals p SET state='redacted', version=2, decided_at=now()
-      FROM dependent d WHERE p.id=d.id AND p.state='pending' RETURNING p.id
+    ), scrubbed AS (
+      UPDATE agent_memory_proposals p SET
+        state=CASE WHEN p.state='pending' THEN 'redacted' ELSE p.state END,
+        version=CASE WHEN p.state='pending' THEN 2 ELSE p.version END,
+        decided_at=CASE WHEN p.state='pending' THEN now() ELSE p.decided_at END,
+        decision_reason=NULL
+      FROM dependent d WHERE p.id=d.id AND (p.state='pending' OR p.decision_reason IS NOT NULL)
+      RETURNING p.id
     )
     DELETE FROM agent_memory_proposal_payloads payload USING dependent d
     WHERE (payload.vault_id,payload.proposal_id)=(d.vault_id,d.id)

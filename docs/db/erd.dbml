@@ -369,6 +369,7 @@ table agent_memory_proposals {
   decided_at "timestamp with time zone"
   reviewer_id text
   decision_key text
+  decision_reason text
   applied_operation_id text
 
   indexes {
@@ -377,6 +378,7 @@ table agent_memory_proposals {
 
 
     (vault_id, created_at, id) [name: 'agent_memory_proposal_queue_idx']
+
 
   }
 }

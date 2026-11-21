@@ -11,6 +11,7 @@ import { applyVaultMutation } from "../store";
 import { seedProject } from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { decideProposalReviewBatch } from "@/lib/queries/inbox-review-actions";
 
 it("AV-04 holds external input as one pending proposal across retries and a later policy change", async () => {
   const fixture = await startMainPostgresTestDb({
@@ -101,26 +102,58 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     if (first.status !== "pending")
       throw new Error("Expected a pending vault proposal");
     const decision = {
-      userId: admin,
-      proposalId: first.proposalId,
+      kind: "vault" as const,
+      id: first.proposalId,
       decision: "accept" as const,
-      expectedVersion: 1,
+      expectedVersion: "1",
       requestKey: "review-accept",
+      reason: "Reviewed using the exact note",
     };
-    const results = await Promise.all([
-      decideVaultProposal(fixture.db, decision),
-      decideVaultProposal(fixture.db, decision),
+    const secondReviewer = await seedActiveUser(fixture.db, { role: "admin" });
+    const decide = (userId: string, input: typeof decision) =>
+      decideProposalReviewBatch(fixture.db, userId, [input]).then(
+        ({ results }) => results[0],
+      );
+    const otherDecision = { ...decision, requestKey: "other-reviewer" };
+    const competing = await Promise.all([
+      decide(admin, decision),
+      decide(secondReviewer, otherDecision),
     ]);
 
-    expect(results[0]).toMatchObject({
-      state: "accepted",
-      version: 2,
-      operationId: expect.any(String),
+    expect(competing.map((result) => result?.status).sort()).toEqual([
+      "applied",
+      "conflict",
+    ]);
+    const winner = competing[0]?.status === "applied" ? admin : secondReviewer;
+    const accepted = competing.find((result) => result?.status === "applied");
+    const winningDecision = winner === admin ? decision : otherDecision;
+    const replay = await decide(winner, winningDecision);
+
+    expect(replay).toMatchObject({
+      receiptId: accepted?.receiptId,
+      replayed: true,
+      domainState: "accepted",
+      outcome: {
+        type: "applied_vault_operation",
+        operationId: expect.any(String),
+      },
     });
-    expect(results[0]).toEqual(results[1]);
-    await expect(
-      decideVaultProposal(fixture.db, { ...decision, decision: "reject" }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(
+      await decide(winner, {
+        ...winningDecision,
+        reason: "Changed decision reason",
+      }),
+    ).toMatchObject({ status: "conflict", receiptId: null });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT review.decision_reason, review.reviewer_id, count(receipt.id)::int AS committed FROM agent_memory_proposals review JOIN inbox_review_receipts receipt ON receipt.user_id=review.reviewer_id AND receipt.request_key=review.decision_key WHERE review.id=$1 GROUP BY review.id",
+          [first.proposalId],
+        )
+      ).rows,
+    ).toEqual([
+      { decision_reason: decision.reason, reviewer_id: winner, committed: 1 },
+    ]);
     const { rows: heads } = await fixture.pool.query<{
       id: string;
       content_sha256: string;
@@ -133,6 +166,31 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     const head = heads[0]!;
 
     expect(head.author.runId).toEqual("run");
+    const another = await applyVaultMutation(fixture.db, parseAgentMemoryMutation({
+      command: "create", path: "/memories/reject.md", file_text: "Unreviewed note",
+      ifHash: null, ifRevisionId: null, requestKey: "external-reject",
+    }), async () => access, limits);
+
+    if (another.status !== "pending") throw new Error("Expected a proposal pending rejection");
+    const rejection = {
+      kind: "vault" as const, id: another.proposalId, decision: "reject" as const,
+      expectedVersion: "1", requestKey: "rollback-review", reason: "Unnecessary secondary note",
+    };
+    await fixture.pool.query("ALTER TABLE inbox_review_receipts ADD CONSTRAINT fixture_reject_receipt CHECK (request_key <> 'rollback-review')");
+    const refused = await decideProposalReviewBatch(fixture.db, admin, [rejection]);
+
+    expect(refused.results).toEqual([{ status: "refused", replayed: false, receiptId: null }]);
+    const inspectRejected = () => fixture.pool.query(
+      "SELECT state,version,decision_reason,reviewer_id FROM agent_memory_proposals WHERE id=$1", [another.proposalId],
+    );
+
+    expect((await inspectRejected()).rows).toEqual([{ state: "pending", version: 1, decision_reason: null, reviewer_id: null }]);
+    await fixture.pool.query("ALTER TABLE inbox_review_receipts DROP CONSTRAINT fixture_reject_receipt");
+    expect((await decideProposalReviewBatch(fixture.db, admin, [rejection])).results[0]).toMatchObject({
+      status: "rejected", receiptId: expect.any(String), outcome: { type: "rejected", proposalId: another.proposalId },
+    });
+    expect((await inspectRejected()).rows).toEqual([{ state: "rejected", version: 2, decision_reason: rejection.reason, reviewer_id: admin }]);
+    expect((await fixture.pool.query("SELECT id FROM agent_memory_notes WHERE vault_id=$1 AND path='/memories/reject.md'", [access.vaultId])).rows).toEqual([]);
     const followup = await applyVaultMutation(
       fixture.db,
       parseAgentMemoryMutation({
@@ -186,8 +244,11 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     ).toEqual([]);
     await expect(
       decideVaultProposal(fixture.db, {
-        ...decision,
         proposalId: followup.proposalId,
+        userId: winner,
+        expectedVersion: 1,
+        requestKey: "followup-review",
+        decision: "accept",
       }),
     ).rejects.toMatchObject({
       details: { reason: "agent_memory_unavailable" },

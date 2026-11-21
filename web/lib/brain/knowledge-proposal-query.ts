@@ -53,6 +53,7 @@ export function knowledgeProposalReadPolicyCte(
   identity: KnowledgePrincipalIdentity,
   principal: KnowledgePrincipal,
   selection: SQL,
+  historyRead: SQL = sql`false`,
 ): SQL {
   const read = knowledgeOwnerActionPolicy(
     identity,
@@ -69,8 +70,9 @@ export function knowledgeProposalReadPolicyCte(
   );
 
   return sql`WITH knowledge_readable_proposals AS (
-    SELECT p.*,CASE WHEN (${review}) THEN 'review' ELSE 'propose' END AS inspection_action
-    FROM brain_proposals p WHERE p.kind IN ('knowledge_add','knowledge_correct') AND (${selection}) AND (${read}) AND ((${review}) OR (${propose}))
+    SELECT p.*,CASE WHEN (${review}) THEN 'review' WHEN (${propose}) THEN 'propose' ELSE 'read' END AS inspection_action
+    FROM brain_proposals p WHERE p.kind IN ('knowledge_add','knowledge_correct') AND (${selection}) AND (${read})
+    AND ((${review}) OR (${propose}) OR (p.status<>'pending' AND (${historyRead})))
     AND NOT EXISTS (
       SELECT 1 FROM (
         SELECT ref FROM native_knowledge_source_restrictions(coalesce(p.source_restrictions,'[]'::jsonb)) ref

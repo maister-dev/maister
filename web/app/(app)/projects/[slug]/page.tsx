@@ -51,6 +51,7 @@ import {
 import { getProjectLocalPackages } from "@/lib/queries/project-local-packages";
 import { getDecisionsCount } from "@/lib/queries/decisions";
 import { getHitlInbox } from "@/lib/queries/hitl";
+import { listProposalReviews } from "@/lib/queries/knowledge-memory-reviews";
 import {
   ACTIVITY_LOG_PAGE_SIZE,
   getProjectActivityLog,
@@ -115,6 +116,9 @@ interface PageProps {
     audit_result?: string | string[];
     audit_page?: string | string[];
     brain_query?: string | string[];
+    sourceQuery?: string | string[];
+    sourcePage?: string | string[];
+    brainItem?: string | string[];
     workspaces?: string | string[];
     workspaceGroup?: string | string[];
     workspaceGroups?: string | string[];
@@ -166,6 +170,12 @@ export default async function ProjectBoardPage({
     page: Number.parseInt(one(rawAuditPage) ?? "1", 10) || 1,
   };
   const brainQuery = one(rawBrainQuery) ?? "";
+  const sourceQuery = (one(search.sourceQuery) ?? "").trim().slice(0, 256);
+  const selectedMemoryId = one(search.brainItem)?.slice(0, 192);
+  const sourcePage = Math.min(
+    5000,
+    Math.max(1, Number.parseInt(one(search.sourcePage) ?? "1", 10) || 1),
+  );
   const file = parseFile(rawFile);
 
   const user = await getSessionUser();
@@ -295,14 +305,32 @@ export default async function ProjectBoardPage({
                 sourceCount: 0,
               },
               memory: [],
-              proposals: [],
               sources: [],
+              hasMoreSources: false,
+              pendingReviews: 0,
+              selectedMemory: null,
             };
           }
 
           await requireProjectAction(project.id, "readBrain");
 
-          return loadProjectBrainPanelData(db, project.id, brainQuery);
+          const [data, reviews] = await Promise.all([
+            loadProjectBrainPanelData(
+              db,
+              project.id,
+              brainQuery,
+              sourceQuery,
+              sourcePage,
+              selectedMemoryId,
+            ),
+            listProposalReviews(getDb(), user.id, {
+              kind: "brain",
+              projectId: project.id,
+              limit: 1,
+            }),
+          ]);
+
+          return { ...data, pendingReviews: reviews.total };
         })()
       : {
           indexStatus: {
@@ -319,8 +347,10 @@ export default async function ProjectBoardPage({
             sourceCount: 0,
           },
           memory: [],
-          proposals: [],
           sources: [],
+          hasMoreSources: false,
+          pendingReviews: 0,
+          selectedMemory: null,
         };
   const automations = await (async () => {
     if (tab !== "automations") return { page: null, unavailable: false };
@@ -594,6 +624,7 @@ export default async function ProjectBoardPage({
           </Link>
           <ProjectBrainPanel
             canManageSources={isAdmin}
+            hasMoreSources={brainPanelData.hasMoreSources}
             indexStatus={brainPanelData.indexStatus}
             labels={{
               title: tBrain("title"),
@@ -657,21 +688,31 @@ export default async function ProjectBoardPage({
               accept: tBrain("accept"),
               reject: tBrain("reject"),
               rejectReason: tBrain("rejectReason"),
-              reviewInInbox: tBrain("reviewInInbox"),
+              reviewInInbox: tBrain("openProjectReviews"),
               emptyProposals: tBrain("emptyProposals"),
+              reviewHistory: tBrain("reviewHistory"),
+              nextSources: tBrain("nextSources"),
+              previousSources: tBrain("previousSources"),
+              filterSources: tBrain("filterSources"),
+              memoryUnavailable: tBrain("memoryUnavailable"),
             }}
             memory={brainPanelData.memory}
-            proposalCapabilities={{
-              canAcceptCatalog: isAdmin,
-              canAcceptProjection: canAct,
-              canReject: canAct,
-            }}
-            proposals={brainPanelData.proposals}
+            pendingReviews={brainPanelData.pendingReviews}
+            projectId={project.id}
             query={brainQuery}
+            selectedMemory={brainPanelData.selectedMemory}
+            selectedMemoryId={selectedMemoryId}
             slug={slug}
+            sourcePage={sourcePage}
+            sourceQuery={sourceQuery}
             sources={brainPanelData.sources}
           />
         </>
+      ) : null}
+      {requestedTab === "brain" && tab !== "brain" ? (
+        <p className="mb-4 text-sm text-mute" role="status">
+          {tBrain("tabUnavailable")}
+        </p>
       ) : null}
       {tab === "mcps" ? (
         <McpPanel

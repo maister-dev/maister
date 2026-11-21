@@ -13620,6 +13620,7 @@ export const agentMemoryProposals = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     reviewerId: text("reviewer_id"),
     decisionKey: text("decision_key"),
+    decisionReason: text("decision_reason"),
     appliedOperationId: text("applied_operation_id"),
   },
   (t) => ({
@@ -13638,6 +13639,14 @@ export const agentMemoryProposals = pgTable(
     queue: index("agent_memory_proposal_queue_idx")
       .on(t.vaultId, t.createdAt, t.id)
       .where(sql`${t.state}='pending'`),
+    decisionReasonShape: check(
+      "agent_memory_proposal_decision_reason_check",
+      sql`${t.decisionReason} IS NULL OR (
+        ${t.state} IN ('accepted','rejected')
+        AND char_length(${t.decisionReason}) BETWEEN 1 AND 2000
+        AND ${t.decisionReason} !~ '^[[:space:]]|[[:space:]]$'
+      )`,
+    ),
     shape: check(
       "agent_memory_proposal_shape_check",
       sql`

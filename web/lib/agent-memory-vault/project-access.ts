@@ -74,7 +74,11 @@ async function requireEnabledAttachment(
       "PRECONDITION",
       "Memory is disabled for this agent",
       {
-        details: { reason: "agent_memory_disabled" },
+        details: {
+          reason: attachment.enabled
+            ? "agent_memory_disabled"
+            : "agent_memory_attachment_disabled",
+        },
       },
     );
 
@@ -231,15 +235,12 @@ export function prepareHumanProjectVault(
   };
 }
 
-export async function authorizeRetainedProjectVaultReview(
+export async function authorizeRetainedProjectVault(
   db: Db,
-  input: Omit<HumanProjectVaultInput, "action">,
+  input: HumanProjectVaultInput,
   vaultId: string,
 ) {
-  const project = await authorizeHumanProjectVault(db, {
-    ...input,
-    action: "editSettings",
-  });
+  const project = await authorizeHumanProjectVault(db, input);
   const attachment = await loadProjectVaultAttachment(
     db,
     project.id,
@@ -252,6 +253,18 @@ export async function authorizeRetainedProjectVaultReview(
     reviewer: humanProjectVaultAccess(input.userId, project.id, vaultId),
     enabled: attachment.enabled && attachment.memoryEnabled,
   };
+}
+
+export async function authorizeRetainedProjectVaultReview(
+  db: Db,
+  input: Omit<HumanProjectVaultInput, "action">,
+  vaultId: string,
+) {
+  return authorizeRetainedProjectVault(
+    db,
+    { ...input, action: "editSettings" },
+    vaultId,
+  );
 }
 
 export function prepareProjectExecutionVault(

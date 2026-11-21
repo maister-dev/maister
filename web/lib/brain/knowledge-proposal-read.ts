@@ -74,13 +74,22 @@ export const knowledgeProposalViewSchema = z
     attribution: knowledgeActorSchema,
     acceptedRecordId: identity.nullable(),
     acceptedRecordRevision: knowledgeRevisionSchema.nullable(),
+    decision: z
+      .object({
+        by: identity.nullable(),
+        at: z.string().datetime().nullable(),
+        reason: postgresTextSchema.max(2000).nullable(),
+        reviewedVersion: identity.nullable(),
+      })
+      .strict()
+      .optional(),
     evidence: z.array(knowledgeRecordEvidenceSummarySchema).max(64),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
   .strict();
 export const knowledgeProposalSummarySchema = knowledgeProposalViewSchema
-  .omit({ content: true, evidence: true })
+  .omit({ content: true, evidence: true, decision: true })
   .extend({
     change: z.enum(["add", "correct"]),
     title: postgresTextSchema.min(1).max(256),
@@ -105,6 +114,7 @@ async function readProposal(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
   proposalId: string,
+  historyRead: boolean,
 ): Promise<{ proposal: KnowledgeProposalView; access: KnowledgeAccessWalk }> {
   const actor = await resolveKnowledgePrincipal(
     tx,
@@ -115,6 +125,7 @@ async function readProposal(
     actor,
     principal,
     sql`p.id=${proposalId}`,
+    sql`${historyRead}`,
   );
   const row = (
     await tx.execute(
@@ -127,7 +138,9 @@ async function readProposal(
   const action =
     row.inspection_action === "review"
       ? "knowledge:review"
-      : "knowledge:propose";
+      : row.inspection_action === "propose"
+        ? "knowledge:propose"
+        : "knowledge:read";
 
   await authorizeKnowledge(tx, principal, owner, action);
   let access = await authorizeSourceRestrictions(tx, principal, [owner]);
@@ -237,6 +250,24 @@ async function readProposal(
     attribution: row.knowledge_attribution,
     acceptedRecordId: row.published_record_id,
     acceptedRecordRevision: row.published_record_revision,
+    ...(row.status !== "pending" && {
+      decision: (() => {
+        const resolution = z
+          .object({
+            actor: z.object({ id: identity }).optional(),
+            reason: postgresTextSchema.max(2000).optional(),
+          })
+          .safeParse(row.resolution);
+
+        return {
+          by: resolution.data?.actor?.id ?? null,
+          reason: resolution.data?.reason ?? null,
+          at: row.resolved_at ? knowledgeTimestamp(row.resolved_at) : null,
+          reviewedVersion:
+            Number(row.revision) > 1 ? String(Number(row.revision) - 1) : null,
+        };
+      })(),
+    }),
     evidence,
     createdAt: knowledgeTimestamp(row.created_at),
     updatedAt: knowledgeTimestamp(row.updated_at),
@@ -255,6 +286,7 @@ export async function getKnowledgeProposal(
   db: KnowledgeDatabase,
   principal: KnowledgePrincipal,
   proposalId: string,
+  options?: Readonly<{ historyRead: true }>,
 ): Promise<KnowledgeProposalView> {
   if (!identity.safeParse(proposalId).success)
     throw new MaisterError("CONFIG", "Invalid knowledge proposal identity");
@@ -263,7 +295,12 @@ export async function getKnowledgeProposal(
       await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
       await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
       const consumer = await lockKnowledgeReadConsumer(tx, principal);
-      const result = await readProposal(tx, principal, proposalId);
+      const result = await readProposal(
+        tx,
+        principal,
+        proposalId,
+        options?.historyRead ?? false,
+      );
 
       if (Buffer.byteLength(JSON.stringify(result.proposal), "utf8") > 524288)
         throw new MaisterError(

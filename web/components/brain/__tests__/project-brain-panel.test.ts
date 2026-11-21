@@ -8,7 +8,6 @@ vi.mock("next/navigation", () => ({
 
 import {
   ProjectBrainPanel,
-  type BrainProposalReviewCapabilities,
   type ProjectBrainPanelLabels,
 } from "@/components/brain/project-brain-panel";
 
@@ -75,18 +74,14 @@ const labels: ProjectBrainPanelLabels = {
   reject: "Reject",
   rejectReason: "Reason",
   emptyProposals: "No proposals",
+  reviewHistory: "Review history",
+  nextSources: "More sources",
+  previousSources: "Previous sources",
+  filterSources: "Filter sources",
+  memoryUnavailable: "Memory unavailable",
 };
 
-const fullProposalCapabilities: BrainProposalReviewCapabilities = {
-  canAcceptCatalog: true,
-  canAcceptProjection: true,
-  canReject: true,
-};
-
-function render(
-  proposalCapabilities: BrainProposalReviewCapabilities = fullProposalCapabilities,
-  query = "decision",
-): string {
+function render(query = "decision"): string {
   return renderToStaticMarkup(
     createElement(ProjectBrainPanel, {
       slug: "demo",
@@ -139,41 +134,11 @@ function render(
           },
         },
       ],
-      proposals: [
-        {
-          id: "proposal-1",
-          kind: "rule",
-          status: "pending",
-          blastRadius: "low",
-          autonomyDecision: "manual",
-          draft: { slug: "brain-rule", title: "Brain rule" },
-          evidence: [
-            {
-              id: "item-1",
-              title: "Use task projection",
-              pointer: { sourcePath: "docs/decisions.md" },
-            },
-          ],
-          createdAt: "2026-07-03T00:00:00.000Z",
-        },
-        {
-          id: "proposal-2",
-          kind: "state",
-          status: "pending",
-          blastRadius: "low",
-          autonomyDecision: "manual",
-          draft: { title: "Document Brain state" },
-          evidence: [
-            {
-              id: "item-2",
-              title: "Brain source state",
-              pointer: { sourcePath: "docs/system-analytics/project-brain.md" },
-            },
-          ],
-          createdAt: "2026-07-03T00:00:00.000Z",
-        },
-      ],
-      proposalCapabilities,
+      projectId: "demo-project",
+      pendingReviews: 26,
+      sourceQuery: "docs",
+      sourcePage: 2,
+      hasMoreSources: true,
       sources: [
         {
           id: "source-1",
@@ -216,7 +181,7 @@ describe("ProjectBrainPanel", () => {
     );
   });
 
-  it("keeps source index actions and links pending proposals to Inbox review", () => {
+  it("links to scoped proposal review and paged sources without embedding old drafts", () => {
     const html = render();
 
     expect(html).toContain('data-testid="brain-source-reindex-source-1"');
@@ -224,17 +189,17 @@ describe("ProjectBrainPanel", () => {
     expect(html).toContain(
       "/projects/demo?tab=repo&amp;file=docs%2Fdecisions.md",
     );
+    expect(html).toContain("pending 26");
     expect(html).toContain(
-      "/inbox?kind=brain&amp;proposalId=proposal-1#knowledge-memory",
+      "/knowledge/reviews?kind=brain&amp;projectId=demo-project",
     );
-    expect(html).toContain(
-      "/inbox?kind=brain&amp;proposalId=proposal-2#knowledge-memory",
-    );
-    expect(html).not.toMatch(/brain-proposal-(?:accept|reject)-/);
+    expect(html).toContain("view=history");
+    expect(html).toContain("sourcePage=3");
+    expect(html).not.toContain("Brain rule");
   });
 
   it("shows the search prompt instead of memory results for an empty query", () => {
-    const html = render(fullProposalCapabilities, "");
+    const html = render("");
 
     expect(html).toContain("Search first");
     expect(html).not.toContain("Use task projection");

@@ -58,6 +58,7 @@ export type KnowledgePrincipalIdentity =
       actor: KnowledgeAuthorityActor;
       user: SessionUser;
       boundProjectId: string | null;
+      suppressVaultSources?: true;
     }>
   | Readonly<{
       kind: "agent";

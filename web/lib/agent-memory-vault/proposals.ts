@@ -94,10 +94,11 @@ export async function retainVaultProposal(
   return { status: "pending", operationId, proposalId: proposal.id };
 }
 
-export async function vaultProposalBases(
+export async function vaultOperationRevisions(
   tx: Db,
   vaultId: string,
   operationId: string,
+  role: "base" | "result",
 ): Promise<VaultRevision[]> {
   const records = await tx
     .select({ revision: revisions })
@@ -114,12 +115,20 @@ export async function vaultProposalBases(
       and(
         eq(operationRevisions.vaultId, vaultId),
         eq(operationRevisions.operationId, operationId),
-        eq(operationRevisions.role, "base"),
+        eq(operationRevisions.role, role),
       ),
     )
     .orderBy(operationRevisions.ordinal);
 
   return records.map(({ revision }) => revision);
+}
+
+export function vaultProposalBases(
+  tx: Db,
+  vaultId: string,
+  operationId: string,
+) {
+  return vaultOperationRevisions(tx, vaultId, operationId, "base");
 }
 
 export async function findVaultProposal(
