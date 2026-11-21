@@ -2,10 +2,19 @@ import "server-only";
 
 import type { WaitTx } from "@/lib/waits/store";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 
 import { nodeAttempts, runWaitDeliveries, runWaits } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+
+export function queuedConditionResumeExists(
+  runId: SQLWrapper | string,
+): SQL<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM ${runWaits} WHERE ${runWaits.runId} = ${runId}
+      AND ${runWaits.resumeState} = 'queued'
+  )`;
+}
 
 /** The caller owns the run lock and is committing its stop or abandonment. */
 export async function closeConditionWaitsForRun(
