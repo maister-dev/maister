@@ -1027,6 +1027,7 @@ it.each(["head movement", "host outage"] as const)(
       "SELECT execution_assignment_id FROM runs WHERE id=$1",
       [runId],
     );
+
     await database.pool.query(
       "UPDATE execution_assignments SET released_reason='run_terminal' WHERE id=$1",
       [assignmentId],

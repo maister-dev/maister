@@ -87,6 +87,7 @@ async function seedOperatorWait(
     "SELECT id,version FROM run_waits WHERE run_id=$1",
     [runId],
   );
+
   return { runId, projectId, wait, hosts };
 }
 
