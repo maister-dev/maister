@@ -38,16 +38,21 @@ it.each([
   "merged-pr",
   "wrong-pr-head",
   "closed-pr",
+  "conflict-pr",
+  "held-conflict-pr",
   "recover-merge",
 ] as const)(
   "C02/C04/C05 settles %s retained evidence through the engine promotion service",
   async (scenario) => {
     const { runFlow } = await import("@/lib/flows/runner");
     const { promoteNextPending } = await import("@/lib/scheduler");
+    const conflictCase =
+      scenario === "conflict-pr" || scenario === "held-conflict-pr";
     const prBacked =
       scenario === "merged-pr" ||
       scenario === "wrong-pr-head" ||
-      scenario === "closed-pr";
+      scenario === "closed-pr" ||
+      conflictCase;
     const prNumber = 31;
     const mergeCommitSha = "b".repeat(40);
 
@@ -75,6 +80,14 @@ it.each([
     const root = await mkdtemp(join(tmpdir(), "completion-evidence-"));
     const { repoPath, worktreePath, branch } = await initRepoWithWorktree(root);
     const base = await git(repoPath, "rev-parse", "HEAD");
+
+    if (conflictCase) {
+      const remote = join(root, "origin.git");
+
+      await git(root, "init", "--bare", remote);
+      await git(repoPath, "remote", "add", "origin", remote);
+      await git(repoPath, "push", "origin", "main:main");
+    }
     const declaration = {
       ci: "ci",
       gates: [{ node: "verified", gate: "tests" }],
@@ -139,11 +152,20 @@ it.each([
                   transitions: {
                     merged: "done",
                     closed: "done",
-                    conflict: "done",
+                    conflict: conflictCase ? "verified" : "done",
                     timeout: "done",
                     cancelled: "done",
                     stale: "done",
                   },
+                  ...(conflictCase
+                    ? {
+                        rework: {
+                          allowedTargets: ["verified"],
+                          workspacePolicies: ["keep"],
+                          maxLoops: 1,
+                        },
+                      }
+                    : {}),
                 },
               ]
             : []),
@@ -263,14 +285,44 @@ it.each([
         { verdict: "pass", risk: "low", confidence: 0.9 },
       ],
     );
-    const { hosts, fake } = await fakeGraphHosts(database.db, runId);
+    let resolutions = 0;
+    const { hosts, fake } = await fakeGraphHosts(database.db, runId, {
+      text: '{"verdict":"pass","risk":"low","confidence":0.95}',
+      onPrompt: async ({ envelope }) => {
+        if (envelope.payload.prompt.includes("hit conflicts and is paused")) {
+          resolutions += 1;
+          await writeFile(
+            join(worktreePath, "result.ts"),
+            "export const result = 42;\n",
+          );
+          await git(worktreePath, "add", "--", "result.ts");
+          await git(worktreePath, "commit", "--no-edit");
+        }
+
+        return { stopReason: "end_turn", meta: null };
+      },
+    });
     let remoteHeadSha: string | null = null;
 
     fake.transport.workspacePublication = async (_handle, envelope) => {
-      if (envelope.payload.action === "push")
+      if (envelope.payload.action === "push") {
         remoteHeadSha = envelope.payload.expectedHead;
+        if (conflictCase)
+          await git(
+            worktreePath,
+            "push",
+            "origin",
+            `HEAD:${envelope.payload.headRef}`,
+          );
+      }
       if (envelope.payload.action !== "evidence")
-        return { repoIdentity, headSha: head, remoteHeadSha };
+        return {
+          repoIdentity,
+          headSha: conflictCase
+            ? await git(worktreePath, "rev-parse", "HEAD")
+            : head,
+          remoteHeadSha,
+        };
 
       return {
         repoIdentity,
@@ -308,12 +360,16 @@ it.each([
 
           return {
             kind: "state",
-            state: scenario === "closed-pr" ? "closed" : "merged",
+            state: conflictCase
+              ? "open"
+              : scenario === "closed-pr"
+                ? "closed"
+                : "merged",
             headSha: scenario === "wrong-pr-head" ? "e".repeat(40) : head,
             mergeCommitSha: scenario === "closed-pr" ? null : mergeCommitSha,
             mergedAt:
               scenario === "closed-pr" ? null : new Date().toISOString(),
-            hasConflicts: false,
+            hasConflicts: conflictCase,
           };
         },
         fetchPage: async (request) => {
@@ -415,9 +471,158 @@ it.each([
           ])
         ).rows,
       ).toEqual([{ status: "Waiting" }]);
-      if (scenario !== "closed-pr") remoteHeadSha = null;
+      if (conflictCase) {
+        await writeFile(
+          join(repoPath, "result.ts"),
+          "export const result = false;\n",
+        );
+        await git(repoPath, "add", "--", "result.ts");
+        await git(repoPath, "commit", "-m", "Advance the base into conflict");
+        await git(repoPath, "push", "origin", "main:main");
+      } else if (scenario !== "closed-pr") {
+        remoteHeadSha = null;
+      }
       await scan();
       await resume();
+      if (conflictCase) {
+        const handoff = await database.pool.query(
+          `SELECT r.status,r.current_step_id,a.state AS assignment_state,a.execution_host_id,a.epoch,
+             n.finish_continuation->'prConflict'->>'waitId' AS wait_ref,
+             w.id AS wait_id,w.result->>'outcome' AS outcome
+           FROM runs r
+           JOIN execution_assignments a ON a.id=r.execution_assignment_id
+           JOIN run_waits w ON w.run_id=r.id AND w.condition_kind='pr'
+           JOIN node_attempts n ON n.id=w.node_attempt_id WHERE r.id=$1`,
+          [runId],
+        );
+
+        expect(handoff.rows).toEqual([
+          {
+            status: "Review",
+            current_step_id: "verified",
+            assignment_state: "released",
+            execution_host_id: expect.any(String),
+            epoch: expect.any(Number),
+            wait_ref: expect.any(String),
+            wait_id: expect.any(String),
+            outcome: "conflict",
+          },
+        ]);
+        expect(handoff.rows[0].wait_ref).toBe(handoff.rows[0].wait_id);
+        const published = await database.pool.query(
+          "SELECT generation FROM run_publications WHERE run_id=$1",
+          [runId],
+        );
+
+        expect(published.rows).toEqual([{ generation: 1 }]);
+        const { runFlowPrConflictSweep } =
+          await import("@/lib/runs/flow-pr-conflict");
+        const sweep = () =>
+          runFlowPrConflictSweep({ db, executionHosts: hosts });
+
+        if (scenario === "held-conflict-pr") {
+          await database.pool.query(
+            "UPDATE platform_runtime_settings SET autonomous_completion_enabled=false,autonomous_completion_revision=2 WHERE id='singleton'",
+          );
+          await sweep();
+          await sweep();
+          expect(
+            (
+              await database.pool.query(
+                "SELECT status,current_step_id FROM runs WHERE id=$1",
+                [runId],
+              )
+            ).rows,
+          ).toEqual([{ status: "Review", current_step_id: null }]);
+          expect(
+            (
+              await database.pool.query(
+                "SELECT reason,platform_revision FROM run_autonomous_decisions WHERE run_id=$1",
+                [runId],
+              )
+            ).rows,
+          ).toEqual([
+            { reason: "pr_conflict_action_required", platform_revision: 2 },
+          ]);
+          expect(
+            (
+              await database.pool.query(
+                "SELECT id FROM run_sync_attempts WHERE run_id=$1",
+                [runId],
+              )
+            ).rows,
+          ).toHaveLength(0);
+
+          return;
+        }
+        await database.pool.query(
+          "UPDATE runs SET flow_driver_token=$2,flow_driver_lease_expires_at=now()-interval '1 second' WHERE id=$1",
+          [runId, randomUUID()],
+        );
+        const readSync = async () =>
+          (
+            await database.pool.query(
+              "SELECT phase, mode, actor_type, pushed FROM run_sync_attempts WHERE run_id=$1",
+              [runId],
+            )
+          ).rows;
+
+        await Promise.all([sweep(), sweep()]);
+        await vi.waitFor(
+          async () => {
+            expect(await readSync()).toEqual([
+              {
+                phase: "succeeded",
+                mode: "agent",
+                actor_type: "system",
+                pushed: false,
+              },
+            ]);
+          },
+          { timeout: 15_000 },
+        );
+        await sweep();
+        await sweep();
+        const queued = await database.pool.query(
+          "SELECT status FROM runs WHERE id=$1",
+          [runId],
+        );
+
+        expect(queued.rows).toEqual([{ status: "Pending" }]);
+        expect(
+          (
+            await promoteNextPending({
+              db: database.db,
+              runFlow: () => undefined,
+            })
+          ).promotedRunId,
+        ).toBe(runId);
+        await drive();
+        expect(resolutions).toBe(1);
+        expect(await readSync()).toHaveLength(1);
+        expect(
+          (
+            await database.pool.query(
+              `SELECT p.source_head,w.condition_kind,r.status,a.execution_host_id,a.epoch FROM run_publications p
+           JOIN run_waits w ON w.publication_id=p.id JOIN runs r ON r.id=p.run_id
+           JOIN execution_assignments a ON a.id=r.execution_assignment_id
+           WHERE p.run_id=$1 AND p.generation=2 AND w.state='open'`,
+              [runId],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            source_head: await git(worktreePath, "rev-parse", "HEAD"),
+            condition_kind: "ci",
+            status: "Waiting",
+            execution_host_id: handoff.rows[0].execution_host_id,
+            epoch: handoff.rows[0].epoch + 2,
+          },
+        ]);
+        expect(await git(worktreePath, "rev-parse", "HEAD")).not.toBe(head);
+
+        return;
+      }
       const prResult = await database.pool.query<{ outcome: string }>(
         "SELECT result->>'outcome' AS outcome FROM run_waits WHERE run_id=$1 AND condition_kind='pr'",
         [runId],

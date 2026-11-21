@@ -114,6 +114,9 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
 }));
+vi.mock("@/lib/runs/flow-pr-conflict", () => ({
+  runFlowPrConflictSweep: async () => undefined,
+}));
 // ADR-185 (D19/D20): the librarian backstop reads the DB; mocked for the same
 // reason, so `errors: []` keeps guarding the composition.
 vi.mock("@/lib/librarian/turn-recovery", () => ({

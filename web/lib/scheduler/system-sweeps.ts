@@ -479,6 +479,19 @@ export async function runSystemSweep(
   }
 
   try {
+    const { runFlowPrConflictSweep } =
+      await import("@/lib/runs/flow-pr-conflict");
+
+    await runFlowPrConflictSweep({ db: getDb() });
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`Flow PR conflict recovery failed: ${message}`);
+    bundleErrors.push(`Flow PR conflict recovery failed: ${message}`);
+    log.error({ err: message }, "system_sweep Flow PR conflict recovery threw");
+  }
+
+  try {
     const { runLibrarianTurnSweep } =
       await import("@/lib/librarian/turn-recovery");
 

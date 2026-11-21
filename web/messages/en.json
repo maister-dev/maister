@@ -60,6 +60,8 @@
       "missing_required_evidence": "Required evidence is missing or stale.",
       "missing_launch_grant": "This run has no completion grant.",
       "run_held": "A run hold is active.",
+      "pr_conflict_sync": "The engine requested resolution of the pull request conflict.",
+      "pr_conflict_action_required": "The pull request conflict needs an operator.",
       "platform_disabled": "The platform switch is off.",
       "project_disabled": "The project policy is disabled.",
       "required_gate": "A required gate is missing, stale or incomplete.",

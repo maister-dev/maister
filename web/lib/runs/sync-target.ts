@@ -20,6 +20,11 @@ import { RUN_SYNC_TERMINAL_PHASES, type RunSyncPhase } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import {
+  authorizeFlowConflictHandoff,
+  recordFlowConflictClaim,
+} from "@/lib/runs/flow-pr-conflict";
+import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
 import {
   resolveSyncRef,
@@ -162,6 +167,7 @@ export type SyncRunInput = {
   // Persisted on the attempt; on a verified agent resolution the resolver
   // best-effort chains `promoteRun(rebase_merge)` to Done (default OFF).
   autoFinalize?: boolean;
+  flowConflictWaitId?: string;
   actor: SyncActor;
   db?: Db;
   now?: () => Date;
@@ -808,7 +814,37 @@ export async function syncRunTarget(
     ((task: () => Promise<void>) => {
       queueMicrotask(() => void task());
     });
-  const { runId } = input;
+  const { runId, flowConflictWaitId } = input;
+  const flowConflict = flowConflictWaitId
+    ? await authorizeFlowConflictHandoff(db, runId, flowConflictWaitId, now())
+    : null;
+
+  if (flowConflictWaitId) {
+    if (
+      !flowConflict ||
+      input.actor.type !== "system" ||
+      input.actor.id !== null ||
+      input.strategy !== "merge" ||
+      input.push !== false ||
+      input.agent !== true ||
+      input.autoFinalize === true ||
+      (input.onto && input.onto !== "target")
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "Flow conflict sync has no current authority",
+      );
+    const host = await localHost({
+      db,
+      transport: input.executionHosts?.transport,
+    });
+
+    if (host.id !== flowConflict.original.executionHostId)
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "Flow conflict sync host is unavailable",
+      );
+  }
 
   // 1. Load + eligibility + dirty-tree refusal (all BEFORE any claim).
   const run = await loadRun(db, runId);
@@ -940,6 +976,23 @@ export async function syncRunTarget(
     // lock (ADR-181 C25: any parked status, not only `Review`), so the
     // terminalization that later takes the same row lock cancels exactly it.
     const lockedRun = await loadRunForUpdate(tx, runId);
+    const conflictAuthorization = flowConflictWaitId
+      ? await authorizeFlowConflictHandoff(tx, runId, flowConflictWaitId, now())
+      : null;
+
+    if (
+      flowConflictWaitId &&
+      (!conflictAuthorization ||
+        lockedRun.executionAssignmentId !== conflictAuthorization.original.id ||
+        remoteShaBefore !== conflictAuthorization.publication.sourceHead ||
+        syncRef.kind !== "branch" ||
+        `refs/heads/${syncRef.branch}` !==
+          conflictAuthorization.publication.baseRef)
+    )
+      throw new MaisterError(
+        "PRECONDITION",
+        "Flow conflict sync candidate changed",
+      );
 
     assertSyncEligible(
       {
@@ -995,7 +1048,25 @@ export async function syncRunTarget(
       .from(runSyncAttempts)
       .where(eq(runSyncAttempts.runId, runId));
     const attempt = Number(attemptRows[0].maxAttempt) + 1;
-    const attemptId = randomUUID();
+    const attemptId = flowConflictWaitId
+      ? flowConflictSyncAttemptId(flowConflictWaitId)
+      : randomUUID();
+
+    if (flowConflictWaitId) {
+      const [existing] = await tx
+        .select({ id: runSyncAttempts.id })
+        .from(runSyncAttempts)
+        .where(eq(runSyncAttempts.id, attemptId));
+
+      if (existing)
+        throw new MaisterError(
+          "CONFLICT",
+          "Flow conflict sync was already claimed",
+          {
+            details: { reason: "flow_sync_already_claimed" },
+          },
+        );
+    }
 
     // (d) the attempt row, phase 'starting'.
     await tx.insert(runSyncAttempts).values({
@@ -1013,6 +1084,9 @@ export async function syncRunTarget(
       actorType: input.actor.type,
       actorId: input.actor.id,
     });
+
+    if (conflictAuthorization)
+      await recordFlowConflictClaim(tx, conflictAuthorization, attemptId);
 
     // (e) take the shared workspace lifecycle slot as `sync`. The attempt id is
     // the slot's fence token — kept, not thrown away: the release and the lease
@@ -1130,6 +1204,14 @@ export async function syncRunTarget(
     // 6. Apply.
     const headShaBefore = await headCommit({ worktreePath: worktree });
 
+    if (flowConflict && headShaBefore !== flowConflict.publication.sourceHead) {
+      await abortAttempt(db, claim);
+      throw new MaisterError(
+        "CONFLICT",
+        "Flow conflict sync candidate head moved",
+      );
+    }
+
     await advancePhaseOrCancel(db, claim, runId, "rebasing", { headShaBefore });
 
     const applied =
@@ -1166,6 +1248,7 @@ export async function syncRunTarget(
           push: input.push,
           runnerId: input.runnerId,
           autoFinalize: input.autoFinalize ?? false,
+          flowConflictWaitId,
           actor: input.actor,
           executionHosts: input.executionHosts ?? createExecutionHosts({ db }),
         };
@@ -1482,6 +1565,7 @@ type SyncResolverArgs = {
   push?: boolean;
   runnerId?: string;
   autoFinalize?: boolean;
+  flowConflictWaitId?: string;
   actor: SyncActor;
   executionHosts: ExecutionHosts;
 };
@@ -1593,6 +1677,24 @@ async function prepareSyncResolver(
         );
       }
 
+      if (args.flowConflictWaitId) {
+        await loadRunForUpdate(tx, runId);
+        const authorized = await authorizeFlowConflictHandoff(
+          tx,
+          runId,
+          args.flowConflictWaitId,
+          now(),
+        );
+
+        if (
+          !authorized ||
+          authorized.original.executionHostId !== placementHost.id
+        )
+          throw new MaisterError(
+            "PRECONDITION",
+            "Flow conflict resolver authority changed",
+          );
+      }
       const flip = await markSyncFromReview(runId, { db: tx });
 
       if (!flip.ok) {

@@ -74,7 +74,10 @@ import { FlowPromptContinuationPending } from "./prompt-owner";
 import { ConsensusGenerationPending } from "./consensus/prompt-owner";
 import { FlowDriverClaimLost, isFlowDriverClaimLost } from "./driver-claim";
 import { persistLocalActionCompletion } from "./action-completion";
-import { persistFinishContinuation } from "./finish-continuation";
+import {
+  persistFinishContinuation,
+  type FlowPrConflictHandoff,
+} from "./finish-continuation";
 import { closeAppliedFlowPromptSession } from "./prompt-session-cleanup";
 import { loadGatePermissionContinuation } from "./gate-permission-resume";
 import { hasOpenGatePrompt, hasOpenNodePrompt } from "./prompt-permission";
@@ -2521,14 +2524,22 @@ export async function runGraph(
     opts.driver?.claim.scope === "assignment"
       ? opts.driver.claim.assignmentId
       : null;
-  const waitContinuation = waitAssignmentId
+  const admittedWait = waitAssignmentId
     ? await admittedConditionWait(db, runId, waitAssignmentId)
     : null;
 
+  let recoveredConflict =
+    admittedWait?.continuation?.prConflict?.waitId === admittedWait?.id &&
+    admittedWait?.continuation?.targetNodeId === loaded.run.currentStepId &&
+    admittedWait?.continuation?.prConflict?.assignmentId !== waitAssignmentId
+      ? admittedWait
+      : null;
+  const waitContinuation = recoveredConflict ? null : admittedWait;
+
   if (
-    waitContinuation &&
-    (!waitContinuation.result ||
-      waitContinuation.flowRevision !== loaded.run.flowRevision)
+    admittedWait &&
+    (!admittedWait.result ||
+      admittedWait.flowRevision !== loaded.run.flowRevision)
   ) {
     throw new MaisterError(
       "CONFLICT",
@@ -3414,9 +3425,21 @@ export async function runGraph(
               .set({ currentStepId: node.id, failedChildWakeAt: null })
               .where(eq(runs.id, runId));
 
+          if (
+            recoveredConflict?.continuation?.targetNodeId === node.id &&
+            waitAssignmentId
+          )
+            await finishConditionWaitResume(
+              tx,
+              recoveredConflict.id,
+              waitAssignmentId,
+            );
+
           return row;
         });
 
+        if (recoveredConflict?.continuation?.targetNodeId === node.id)
+          recoveredConflict = null;
         if (pendingAutoRetryNodeId === node.id) pendingAutoRetryNodeId = null;
 
         nodeAttemptId = appended.id;
@@ -5546,6 +5569,27 @@ export async function runGraph(
         const chosenPolicy: WorkspacePolicy = policyParse.success
           ? policyParse.data
           : "keep";
+        const prConflict: FlowPrConflictHandoff | null =
+          chosenPolicy === "keep" &&
+          !isCompanyFlowRun(loaded) &&
+          loaded.manifest.autonomous_completion &&
+          loaded.run.deliveryPolicySnapshot?.strategy === "pull_request" &&
+          node.source.node.type === "wait" &&
+          node.source.node.on.kind === "pr" &&
+          outcome === "conflict" &&
+          waitContinuation?.result?.source === "provider" &&
+          waitContinuation.nodeAttemptId === nodeAttemptId &&
+          waitContinuation.publicationId &&
+          waitContinuation.deadlineAt &&
+          waitAssignmentId &&
+          target
+            ? {
+                waitId: waitContinuation.id,
+                publicationId: waitContinuation.publicationId,
+                assignmentId: waitAssignmentId,
+                expiresAt: waitContinuation.deadlineAt.toISOString(),
+              }
+            : null;
 
         if (chosenPolicy !== "keep") {
           const targetAttempt = target
@@ -5832,14 +5876,45 @@ export async function runGraph(
               injectedVars: pendingInjectedVars ?? {},
               sessionPolicy: pendingSessionPolicy?.policy ?? null,
               autoRetry: false,
+              ...(prConflict ? { prConflict } : {}),
             });
           await finishWaitApplication(tx);
+          if (prConflict) {
+            const [parked] = await tx
+              .update(runs)
+              .set({
+                status: "Review",
+                reviewEnteredAt: null,
+                keepaliveUntil: null,
+              })
+              .where(
+                and(
+                  eq(runs.id, runId),
+                  eq(runs.status, "Running"),
+                  eq(runs.executionAssignmentId, prConflict.assignmentId),
+                ),
+              )
+              .returning({ id: runs.id });
+
+            if (!parked)
+              throw new MaisterError(
+                "CONFLICT",
+                "Flow conflict handoff lost its run",
+              );
+            await releaseAssignmentForRun(tx, runId, "waiting_condition");
+          }
         });
 
         if (!closed) {
           result = { ...result, needsInput: true, waitsForChildren: true };
           if (!(await parkNodeForInput())) return;
           break;
+        }
+        if (prConflict) {
+          await safeProject();
+          await promoteAfterExit(rootDb, { ...opts, db: rootDb }, log2);
+
+          return;
         }
       } else {
         // ADR-162 (C-9): the contract identity rides the SAME closing UPDATE as
