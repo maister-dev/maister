@@ -2,7 +2,7 @@
 
 Branch `feature/flow-waits-autonomous-completion` · Original base `master` at `cd9e37f071f7` · Rebased onto `master` at `99279c6cb686` · Created 2026-11-20
 
-Status: Review remediation in progress. Tasks 01–21 retain their original qualification evidence. Recheck all 18 requirements on the remediated branch before closing this plan.
+Status: Complete. All 10 review findings are resolved, and all 18 acceptance requirements passed the remediation rerun.
 
 ## Settings
 
@@ -187,11 +187,12 @@ Official contracts for the scanner are [GitHub check runs](https://docs.github.c
 - [x] **22 — Wait lifecycle and evidence.** Exercise current related-run settlement, bounded park recovery, callback-time ref proof and safe typed wait data.
 - [x] **23 — Publication and autonomous authority.** Verify the PR's actual base, apply the platform switch consistently and fence provider writes at the execution host.
 - [x] **24 — Contracts and operator UX.** Fan out the Waiting status on the wire, accept exact provider labels, require explicit Studio targets and qualify the wait graph and operator actions.
-- [ ] **25 — Requalify W01–W10, B01–B03 and C01–C05.** Record the test, runtime and lineage for each requirement.
+- [x] **25 — Requalify W01–W10, B01–B03 and C01–C05.** Record the test, runtime and lineage for each requirement.
 
-**Tasks 22–23 evidence.** RED reproduced a lost callback at the published head,
-a park preparation left Running past its deadline, a prior Review masking Done,
-missing Review facts, and agent and CLI prompt trust-boundary violations. A
+**Tasks 22–23 evidence.** RED reproduced a callback left pending at the
+published head, a park preparation left Running past its deadline, a prior
+Review masking Done, missing Review facts, and the missing safe delivery path
+for external data in agent prompts. A
 retargeted PR resolved as merged, the platform disable still allowed classified
 failure, and all three PR adapters wrote after the post-lookup epoch fence was
 lost. GREEN and refactor included the exact callback receipt, the registration
@@ -256,6 +257,48 @@ web integration tests and 27 supervisor command receipt integration tests.
 Web and supervisor type checks, all documentation checks and contract
 validation passed. The installed Ubuntu evidence above remains tied to its
 original commit and migration lineage.
+
+### Review remediation qualification
+
+**18 of 18 accepted.** The qualification used review base `99279c6cb686` and
+remediation commits `503e213a9` and `38bdee9b8`. It passed 9,271 web unit tests,
+223 affected web integration tests across 23 suites, 533 supervisor unit tests,
+all 413 supervisor integration tests, seven installed reference cases, one
+targeted real process-death case, and three browser scenarios plus login setup.
+Web, supervisor and MCP type checks, the MCP build, contracts, all docs checks,
+and the generated ERD passed. An initial supervisor run reproduced two baseline
+Codex ACP fixture failures with an unpatched local package. Offline frozen
+installation restored the pinned 2.2.2 patch and the full rerun passed.
+
+The rerun used Node 24.15.0 on Darwin arm64, disposable PostgreSQL,
+temporary Git repositories, and the repository's production process and
+Playwright wrappers. The seven installed reference cases use
+`env-e2e/v1.1.0` at `aac7a16fb701d6f5879a51bc76942d1941a33985`, the package's
+Docker Playwright gate, and controlled provider responses. The historical
+Ubuntu EnvironmentFile receipt at `965600cae` remains the installed-service
+witness. The current process-death fixture independently exercises the value
+of 900 seconds in a production web process.
+
+| ID | Rerun evidence |
+| --- | --- |
+| W01 | The three upgrade suites applied migrations 0361–0363 from their seeded predecessors, preserved legacy records, rejected conflicting owners, replayed the receipt, and rolled back a decision with its outbox. The generated ERD matched the resulting schema. |
+| W02 | Compiler and package intake exercised all six wait kinds, declared outcome coverage, engine floors, bounded rework, and malformed schemas. The GitLab and Gitea fixtures accepted exact provider labels containing spaces or slashes. |
+| W03 | `condition-wait-park` covered already-due and equal-deadline timers, deadline catch-up and isolation of a failing candidate. Park preparation expired from the frozen attempt deadline. |
+| W04 | `wait-resolver` covered actor/task visibility and exact related runs, all settlement outcomes, and current status replacing older facts. `reopen` and `dirty-watchdog` exercised the top-level Review writers. |
+| W05 | PostgreSQL wait and route tests exercised one surviving resolution and receipt, both timeout/extension orderings, closed and queued abandon, and rejection of replay that changes content or revives a wait. |
+| W06 | The real process-death fixture checked parked storage, empty supervisor inventory, GC retention, cap-one admission, FIFO, original host and new epoch, web death after admission, and Stop of a separate queued wake. |
+| W07 | Supervisor command receipts and graph cases exercised exact released wait ownership, rejected commands for other epochs/workspaces, ref supersession, and timeout during host outage. The push CI graph required a ref observation linked to the exact accepted delivery. |
+| W08 | The external route exercised token scope, rejection and replay; the contract test validated the actual parked Run DTO. The real restart fixture recovered the original pending callback over HTTP and applied one wake. |
+| W09 | The operator route exercised all four actions, session authority and token refusal, audit, stale versions, and content redaction. The agent sink delimited external data after rendering, and CLI template rendering refused the content reference. Playwright exercised confirmation, dismissal and stale feedback. |
+| W10 | Board, timing and browser cases exercised attention routing, separate wait and execution time, rail and graph state, Studio target persistence and SSE removal of the countdown after cancellation. |
+| B01 | Publication and graph tests exercised exact source leases, contention, and lost acknowledgement reconciliation. The real supervisor receipt replayed PR creation once. Per-provider tests switched the epoch after PR lookup and fenced creation. |
+| B02 | Provider and scanner cases exercised pagination, exact checks, missing/forbidden evidence, superseded PR, source deletion after merge, and PR retargeting. A merge on the expected head into a different base resolved stale and left delivery unqualified. |
+| B03 | The installed pull and push journeys executed the Docker gate, carried a bounded check summary into rework, published a different SHA and recovered. The push journey killed and restarted production web and replayed the callback recorded before publication acknowledgement. |
+| C01 | Launch policy and the settings API exercised downgrade, admin authority, revision CAS, hold and study guards. The installed reference exercised the environment kill switch at the next classified-failure decision. |
+| C02 | Policy and graph cases exercised exact head/base, required gates, review bounds, provenance, deny paths, and newer pending or missing CI. Push-only evidence left Review until the trusted provider independently agreed. |
+| C03 | Claim races, policy changes, manual delivery, lost acknowledgements and decision/outbox rollback exercised the delivery choke points. A disabled policy refused an in-flight completion at the next decision. |
+| C04 | Real Git was used for conflict recovery and source deletion. Exact provider merge finalized once, while retargeted and unverifiable results stayed unqualified. The graph and installed reference exercised classified timeout/exhaustion and Review under revoked authority. |
+| C05 | The installed local and PR journeys reached Done without a human completion call. Observatory and the browser exercised system attribution, persisted controls and a deduplicated verified human reversal. |
 
 ### Requirements, acceptance and primary test ownership
 

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Provider } from "@/lib/repo-source";
+
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -16,7 +18,6 @@ import {
   type PrAdapter,
   type PrAdapterContext,
 } from "../../../runtime/pull-request";
-import type { Provider } from "@/lib/repo-source";
 
 export {
   EXEC_TIMEOUT_MS,

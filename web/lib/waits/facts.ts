@@ -75,8 +75,10 @@ export function registeredRunFact(target: {
   revision: string;
 }): ObservedFact | null {
   const outcome = target.status.toLowerCase();
+
   if (!Object.values(WAIT_RUN_FACTS).some((value) => value === outcome))
     return null;
+
   return {
     source: "run",
     sourceId: `run:${target.id}:${target.revision}`,

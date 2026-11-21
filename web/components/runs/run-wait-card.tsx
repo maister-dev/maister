@@ -34,6 +34,7 @@ async function waitActionErrorKey(response: Response) {
 
   if (reason && Object.hasOwn(waitErrorLabels, reason))
     return waitErrorLabels[reason as keyof typeof waitErrorLabels];
+
   return "actionFailed";
 }
 

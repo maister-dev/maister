@@ -418,6 +418,7 @@ export async function commitConditionWaitPark(
 
   let existingSettlement: ReturnType<typeof registeredRunFact> = null;
   let sourceSnapshot: string | null = null;
+
   if (intent.conditionKind === "run" && intent.sourceTargetId) {
     const [target] = await tx
       .select({
@@ -431,6 +432,7 @@ export async function commitConditionWaitPark(
       })
       .from(runs)
       .where(eq(runs.id, intent.sourceTargetId));
+
     // Capture the exact snapshot that supplied the source row. Locking both
     // runs would deadlock if related runs registered waits on each other.
     sourceSnapshot = target?.snapshot ?? null;
@@ -440,6 +442,7 @@ export async function commitConditionWaitPark(
       kind: intent.conditionKind,
       ...parameters,
     });
+
     if (
       selector.kind === "run" &&
       target &&
