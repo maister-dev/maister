@@ -1,6 +1,10 @@
+import type { z } from "zod";
+import type { waitConditionSchema } from "@/lib/waits/manifest";
+
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
@@ -26,7 +30,12 @@ afterAll(async () => {
   await database?.stop();
 });
 
-async function seedOperatorWait() {
+const timer = { kind: "timer", after: 60 } as const;
+
+async function seedOperatorWait(
+  on: z.input<typeof waitConditionSchema>,
+  matchedOutcome: string,
+) {
   const { runFlow } = await import("@/lib/flows/runner");
   const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
     database.db,
@@ -39,8 +48,12 @@ async function seedOperatorWait() {
           type: "wait",
           id: "verify",
           timeout: 120,
-          on: { kind: "timer", after: 60 },
-          transitions: { elapsed: "done", timeout: "done", cancelled: "done" },
+          on,
+          transitions: {
+            [matchedOutcome]: "done",
+            timeout: "done",
+            cancelled: "done",
+          },
         },
       ],
     },
@@ -74,12 +87,12 @@ async function seedOperatorWait() {
     "SELECT id,version FROM run_waits WHERE run_id=$1",
     [runId],
   );
-  return { runId, projectId, wait };
+  return { runId, projectId, wait, hosts };
 }
 
 it("W09 authorizes and audits one resolve-now, including mixed-credential and viewer refusals", async () => {
   const { POST } = await import("../route");
-  const { runId, projectId, wait } = await seedOperatorWait();
+  const { runId, projectId, wait } = await seedOperatorWait(timer, "elapsed");
   const origin = process.env.AUTH_URL
     ? new URL(process.env.AUTH_URL).origin
     : "http://localhost";
@@ -196,7 +209,7 @@ it("W09 authorizes and audits one resolve-now, including mixed-credential and vi
 
 it("W09 cancels through the operator route only against the current version", async () => {
   const { POST } = await import("../route");
-  const { runId, projectId, wait } = await seedOperatorWait();
+  const { runId, projectId, wait } = await seedOperatorWait(timer, "elapsed");
 
   await database.pool.query(
     "UPDATE project_members SET role='member' WHERE user_id=$1 AND project_id=$2",
@@ -244,3 +257,210 @@ it("W09 cancels through the operator route only against the current version", as
     },
   ]);
 });
+
+it("W09 exposes signal data only through its audience-checked projection", async () => {
+  const { POST } = await import("../route");
+  const { GET: inspect } = await import("../../route");
+  const { GET: artifactPayload } =
+    await import("../../../../artifacts/[artifactId]/payload/route");
+  const { resolveObservedWait } = await import("@/lib/waits/resolve");
+  const { runId, projectId, wait, hosts } = await seedOperatorWait(
+    { kind: "signal", name: "build", outcomes: ["success"] },
+    "success",
+  );
+  const origin = process.env.AUTH_URL
+    ? new URL(process.env.AUTH_URL).origin
+    : "http://localhost";
+  const resource = `${origin}/api/runs/${runId}/waits/${wait.id}`;
+  const context = { params: Promise.resolve({ runId, waitId: wait.id }) };
+  const data = { summary: "{{ task.prompt }} -- source data" };
+
+  await database.pool.query(
+    "UPDATE project_members SET role='member' WHERE user_id=$1 AND project_id=$2",
+    [userId, projectId],
+  );
+  const delivered = await POST(
+    new Request(`${resource}/actions`, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "idempotency-key": "manual-payload",
+      },
+      body: JSON.stringify({
+        action: "deliver_signal",
+        expectedVersion: wait.version,
+        reason: "CI delivery is missing.",
+        signal: { name: "build", outcome: "success", payload: data },
+      }),
+    }),
+    context,
+  );
+
+  expect(delivered.status).toBe(202);
+  expect(
+    await resolveObservedWait(
+      database.db,
+      { runId, projectId, waitId: wait.id },
+      hosts,
+    ),
+  ).toBe(true);
+  const member = await inspect(new Request(resource), context);
+
+  expect(member.status).toBe(200);
+  expect(await member.json()).toMatchObject({
+    result: { data, redacted: false },
+  });
+  await database.pool.query(
+    "UPDATE project_members SET role='viewer' WHERE user_id=$1 AND project_id=$2",
+    [userId, projectId],
+  );
+  const viewer = await inspect(new Request(resource), context);
+
+  expect(viewer.status).toBe(200);
+  expect((await viewer.json()).result).toEqual({
+    outcome: "success",
+    source: "signal",
+    redacted: true,
+  });
+  const {
+    rows: [{ id: artifactId }],
+  } = await database.pool.query<{ id: string }>(
+    "SELECT id FROM artifact_instances WHERE run_id=$1 AND kind='wait-result'",
+    [runId],
+  );
+  const url = `${origin}/api/runs/${runId}/artifacts/${encodeURIComponent(artifactId)}/payload`;
+
+  for (const query of ["", "?view=preview"]) {
+    const artifact = await artifactPayload(new Request(url + query), {
+      params: Promise.resolve({ runId, artifactId }),
+    });
+
+    expect(artifact.status).toBe(200);
+    const envelope = JSON.parse(await artifact.text());
+
+    expect(envelope).toMatchObject({
+      outcome: "success",
+      dataRestricted: true,
+    });
+    expect(envelope).not.toHaveProperty("data");
+  }
+});
+
+it.each(["extend", "timeout"] as const)(
+  "W05 serializes an extension and a deadline sweep when %s wins",
+  async (first) => {
+    const { extendWaitDeadline, extendWaitDeadlineInTransaction } =
+      await import("@/lib/waits/store");
+    const { resolveEligibleConditionWait } =
+      await import("@/lib/waits/lifecycle");
+    const { resolveObservedWait } = await import("@/lib/waits/resolve");
+    const { runId, projectId, wait, hosts } = await seedOperatorWait(
+      { kind: "signal", name: "build", outcomes: ["success"] },
+      "success",
+    );
+    const address = { runId, projectId, waitId: wait.id };
+    const {
+      rows: [{ deadline_at: originalDeadline }],
+    } = await database.pool.query<{ deadline_at: Date }>(
+      `UPDATE run_waits
+       SET deadline_at=greatest(opened_at,statement_timestamp()+($2::int*interval '1 second')),
+           next_due_at=greatest(opened_at,statement_timestamp()+($2::int*interval '1 second'))
+       WHERE id=$1 RETURNING deadline_at`,
+      [wait.id, first === "extend" ? 3 : -1],
+    );
+    const extension = {
+      ...address,
+      userId,
+      idempotencyKey: "deadline-race",
+      expectedVersion: wait.version,
+      reason: "Verification needs more time.",
+      deadline: new Date(originalDeadline.getTime() + 60_000),
+    };
+    let entered!: (pid: number) => void;
+    let release!: () => void;
+    const ready = new Promise<number>((resolve) => {
+      entered = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const winner = database.db.transaction(async (tx) => {
+      const {
+        rows: [{ pid }],
+      } = await tx.execute<{ pid: number }>(
+        sql`SELECT pg_backend_pid() AS pid`,
+      );
+
+      if (first === "extend")
+        await extendWaitDeadlineInTransaction(tx, extension);
+      else expect(await resolveEligibleConditionWait(tx, address)).toBe(true);
+      entered(pid);
+      await hold;
+    });
+    const pid = await Promise.race([
+      ready,
+      winner.then(() => {
+        throw new Error("Winner did not hold the wait");
+      }),
+    ]);
+
+    try {
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query<{ due: boolean }>(
+                "SELECT next_due_at<=clock_timestamp() AS due FROM run_waits WHERE id=$1",
+                [wait.id],
+              )
+            ).rows[0].due,
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+      const rival =
+        first === "extend"
+          ? resolveObservedWait(database.db, address, hosts)
+          : extendWaitDeadline(database.db, extension).catch(
+              (error: unknown) => error,
+            );
+
+      await expect
+        .poll(
+          async () =>
+            (
+              await database.pool.query<{ blocked: boolean }>(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid))) AS blocked",
+                [pid],
+              )
+            ).rows[0].blocked,
+        )
+        .toBe(true);
+      release();
+      await winner;
+      if (first === "extend") expect(await rival).toBe(false);
+      else
+        expect(await rival).toMatchObject({
+          code: "CONFLICT",
+          details: { reason: "wait_closed" },
+        });
+    } finally {
+      release();
+    }
+    const { rows } = await database.pool.query(
+      `SELECT w.state,w.version,w.result->>'outcome' AS outcome,
+      (SELECT count(*)::int FROM run_wait_actions a WHERE a.wait_id=w.id) AS actions
+      FROM run_waits w WHERE w.id=$1`,
+      [wait.id],
+    );
+
+    expect(rows).toEqual([
+      {
+        state: first === "extend" ? "open" : "resolved",
+        version: wait.version + 1,
+        outcome: first === "extend" ? null : "timeout",
+        actions: first === "extend" ? 1 : 0,
+      },
+    ]);
+  },
+);
