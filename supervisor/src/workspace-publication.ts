@@ -4,10 +4,15 @@ import type {
   WorkspacePublicationSnapshot,
 } from "../../runtime/workspace-publication";
 import type { WorkspaceRow } from "./host-state";
+import type { Logger } from "pino";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { branchNameViolation } from "../../runtime/git-branch";
+import { isMaisterError } from "../../runtime/maister-error";
+import { selectPrAdapter } from "../../runtime/pull-request";
+import { detectProvider } from "../../runtime/repository-url";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import { normalizePublicationOrigin } from "../../runtime/workspace-publication";
 
@@ -116,7 +121,7 @@ async function readPublicationTarget(
   };
 }
 
-export async function observeWorkspacePublication(
+async function observeWorkspacePublication(
   handle: WorkspaceRow,
   remote: string,
   headRef: string,
@@ -171,7 +176,7 @@ function parseEvidenceFiles(output: string): WorkspaceEvidenceFile[] {
   return files;
 }
 
-export async function observeWorkspaceEvidence(
+async function observeWorkspaceEvidence(
   handle: WorkspaceRow,
   remote: string,
   baseRef: string,
@@ -227,7 +232,7 @@ export async function observeWorkspaceEvidence(
     evidence: { baseSha, clean: !initialStatus && !finalStatus, files },
   };
 }
-export async function pushWorkspacePublication(
+async function pushWorkspacePublication(
   handle: WorkspaceRow,
   request: Extract<WorkspacePublicationRequest, { action: "push" }>,
   assertCurrentFence: () => void,
@@ -279,4 +284,129 @@ export async function pushWorkspacePublication(
     );
 
   return { ...before, remoteHeadSha };
+}
+
+async function openWorkspacePullRequest(
+  handle: WorkspaceRow,
+  request: Extract<WorkspacePublicationRequest, { action: "open_pr" }>,
+  assertCurrentFence: () => void,
+  logger: Logger,
+): Promise<WorkspacePublicationSnapshot> {
+  const sourceBranch = request.headRef.slice("refs/heads/".length);
+  const targetBranch = request.baseRef.slice("refs/heads/".length);
+
+  if (
+    sourceBranch === targetBranch ||
+    branchNameViolation(sourceBranch) ||
+    branchNameViolation(targetBranch)
+  )
+    throw new SupervisorError(
+      "PRECONDITION",
+      "Publication PR branch is invalid",
+    );
+
+  const signal = AbortSignal.timeout(38_000);
+  const observeExactSource = async () => {
+    const target = await readPublicationTarget(
+      handle,
+      request.remote,
+      request.headRef,
+    );
+    const { snapshot } = target;
+
+    if (
+      snapshot.repoIdentity !== request.repoIdentity ||
+      snapshot.headSha !== request.expectedHead ||
+      snapshot.remoteHeadSha !== request.expectedHead
+    )
+      throw new SupervisorError(
+        "PRECONDITION",
+        "The published PR source no longer matches",
+      );
+
+    assertCurrentFence();
+    if (signal.aborted)
+      throw new SupervisorError(
+        "EXECUTOR_UNAVAILABLE",
+        "Publication PR command expired",
+      );
+
+    return target;
+  };
+
+  const { snapshot, url } = await observeExactSource();
+  const provider = detectProvider(url);
+
+  try {
+    const adapter = selectPrAdapter(provider, {
+      remoteUrl: url,
+      logger,
+      credential: request.credential,
+    });
+
+    await adapter.preflight(signal);
+    const pullRequest = await adapter.createOrUpdatePr({
+      repoPath: handle.realPath,
+      remote: request.remote,
+      sourceBranch,
+      targetBranch,
+      providerRepository:
+        provider === "github"
+          ? request.repoIdentity
+          : `https://${request.repoIdentity}`,
+      title: request.title,
+      body: request.body,
+      draft: request.draft,
+      signal,
+      beforeWrite: async () => {
+        await observeExactSource();
+      },
+    });
+
+    await observeExactSource();
+    logger.info(
+      {
+        runId: handle.runId,
+        prNumber: pullRequest.number,
+        reused: pullRequest.reused,
+      },
+      "fenced publication PR observed",
+    );
+
+    return { ...snapshot, pullRequest };
+  } catch (error: unknown) {
+    if (isMaisterError(error))
+      throw new SupervisorError(
+        error.code === "PRECONDITION" ? "PRECONDITION" : "EXECUTOR_UNAVAILABLE",
+        error.message,
+      );
+    throw error;
+  }
+}
+
+export async function executeWorkspacePublication(
+  handle: WorkspaceRow,
+  command: WorkspacePublicationRequest,
+  assertCurrentFence: () => void,
+  logger: Logger,
+): Promise<WorkspacePublicationSnapshot> {
+  switch (command.action) {
+    case "inspect":
+      return observeWorkspacePublication(
+        handle,
+        command.remote,
+        command.headRef,
+      );
+    case "evidence":
+      return observeWorkspaceEvidence(handle, command.remote, command.headRef);
+    case "push":
+      return pushWorkspacePublication(handle, command, assertCurrentFence);
+    case "open_pr":
+      return openWorkspacePullRequest(
+        handle,
+        command,
+        assertCurrentFence,
+        logger,
+      );
+  }
 }

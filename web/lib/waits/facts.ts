@@ -68,7 +68,23 @@ export async function isRelatedWaitRun(
   return relation !== undefined;
 }
 
-/** Read committed canonical facts under the wait's resolution lock. */
+/** The related run's registration snapshot also covers rows predating review events. */
+export function registeredRunFact(target: {
+  id: string;
+  status: string;
+  revision: string;
+}): ObservedFact | null {
+  const outcome = target.status.toLowerCase();
+  if (!Object.values(WAIT_RUN_FACTS).some((value) => value === outcome))
+    return null;
+  return {
+    source: "run",
+    sourceId: `run:${target.id}:${target.revision}`,
+    outcome,
+    data: { runId: target.id },
+  };
+}
+
 export async function readObservedWaitFact(
   tx: WaitTx,
   wait: WaitRow,
@@ -178,6 +194,7 @@ export async function readObservedWaitFact(
         eq(domainEvents.projectId, wait.projectId),
         eq(domainEvents.runId, target.id),
         inArray(domainEvents.kind, runFactKinds),
+        sql`NOT pg_visible_in_snapshot(${domainEvents.txId}, ${wait.registrationSnapshot}::pg_snapshot)`,
         sql`${domainEvents.occurredAt} < ${wait.deadlineAt}`,
       ),
     )
@@ -194,7 +211,7 @@ export async function readObservedWaitFact(
   };
 }
 
-async function readTrustedWaitDelivery(
+export async function readTrustedWaitDelivery(
   tx: WaitTx,
   wait: WaitRow,
 ): Promise<ObservedFact | null> {
@@ -284,8 +301,18 @@ async function readProviderWaitFact(
           boundHeadSha: wait.bindingHeadSha,
         },
       };
-    if (wait.condition.parameters.transport === "push")
-      return readTrustedWaitDelivery(tx, wait);
+    if (wait.condition.parameters.transport === "push") {
+      const delivery = await readTrustedWaitDelivery(tx, wait);
+      const fact = ref.fact;
+
+      return delivery &&
+        fact !== null &&
+        typeof fact === "object" &&
+        !Array.isArray(fact) &&
+        fact.deliveryId === delivery.sourceId
+        ? delivery
+        : null;
+    }
   }
 
   if (wait.conditionKind !== "ci" && wait.conditionKind !== "pr") return null;
@@ -297,6 +324,9 @@ async function readProviderWaitFact(
     typeof data !== "object" ||
     data === null ||
     Array.isArray(data) ||
+    (wait.conditionKind === "pr" &&
+      observed.headSha === wait.bindingHeadSha &&
+      typeof data.baseRef !== "string") ||
     typeof data.outcome !== "string" ||
     !wait.condition.outcomes.includes(data.outcome)
   )

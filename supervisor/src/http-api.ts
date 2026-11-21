@@ -100,11 +100,7 @@ import {
   observeWaitWorkspaceHead,
   requireWaitWorkspaceFence,
 } from "./workspace-wait-head";
-import {
-  observeWorkspaceEvidence,
-  observeWorkspacePublication,
-  pushWorkspacePublication,
-} from "./workspace-publication";
+import { executeWorkspacePublication } from "./workspace-publication";
 import {
   settleRetiredSessionCreate,
   UnsettledSessionCreateError,
@@ -2624,6 +2620,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             expectedRemoteHead: z.string().regex(GIT_OBJECT_ID).nullable(),
             repoIdentity: z.string().min(1).max(512),
           }),
+          z.strictObject({
+            ...target,
+            action: z.literal("open_pr"),
+            expectedHead: z.string().regex(GIT_OBJECT_ID),
+            repoIdentity: z.string().min(1).max(512),
+            baseRef: target.headRef,
+            title: z.string().min(1).max(512),
+            body: z.string().max(65_536),
+            draft: z.boolean(),
+            credential: z.string().min(1).max(4096).optional(),
+          }),
         ]),
         { route: "POST /workspaces/:id/publication" },
       );
@@ -2654,25 +2661,12 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
         kind: "workspace.publication",
         expectedRunId: handle.runId,
         execute: async () => {
-          const command = parsed.payload;
-          const body =
-            command.action === "inspect"
-              ? await observeWorkspacePublication(
-                  handle,
-                  command.remote,
-                  command.headRef,
-                )
-              : command.action === "evidence"
-                ? await observeWorkspaceEvidence(
-                    handle,
-                    command.remote,
-                    command.headRef,
-                  )
-                : await pushWorkspacePublication(
-                    handle,
-                    command,
-                    assertCurrentFence,
-                  );
+          const body = await executeWorkspacePublication(
+            handle,
+            parsed.payload,
+            assertCurrentFence,
+            logger,
+          );
 
           assertCurrentFence();
 

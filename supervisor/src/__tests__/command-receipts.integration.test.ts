@@ -24,6 +24,7 @@ import { SESSION_EVENT_CHANNEL } from "../registry";
 import { pendingPermissions } from "../pending-permissions";
 import { signalOwnedSessionProcess } from "../execution-fence";
 import { canonicalCommandJson } from "../../../runtime/command-json";
+import * as prAdapters from "../../../runtime/pull-request";
 import {
   parseCommandReceiptV2,
   parseCommandOutputReferenceV2,
@@ -174,6 +175,66 @@ it("B01 publishes the exact observed HEAD under a remote ref lease to a local Gi
 
   expect(pushed).toMatchObject({ status: 200, body: { remoteHeadSha: head } });
   expect(git(["-C", remotePath, "rev-parse", target.headRef])).toBe(head);
+
+  let supersedeDuringLookup = false;
+  const created = vi.fn(() => ({
+    url: "https://provider.example.test/team/project/pull/7",
+    number: 7,
+    reused: false,
+  }));
+  const adapter = vi.spyOn(prAdapters, "selectPrAdapter").mockReturnValue({
+    preflight: async () => undefined,
+    createOrUpdatePr: async (input) => {
+      expect(input).toMatchObject({
+        sourceBranch: "run/evidence",
+        targetBranch: "main",
+        draft: true,
+      });
+      if (supersedeDuringLookup)
+        host.hostState.setFence(runId, randomUUID(), 2);
+      if (!input.beforeWrite) throw new Error("Missing provider effect fence");
+      await input.beforeWrite();
+
+      return created();
+    },
+  });
+
+  try {
+    const request = {
+      ...target,
+      action: "open_pr",
+      repoIdentity: inspect.body.repoIdentity,
+      expectedHead: head,
+      baseRef: "refs/heads/main",
+      title: "Review the candidate",
+      body: "Publication test",
+      draft: true,
+      credential: "fixture-provider-credential",
+    };
+    const command = envelope("workspace.publication", fence, request);
+    const opened = await postJson(endpoint, command);
+
+    expect(opened).toMatchObject({
+      status: 200,
+      body: { headSha: head, remoteHeadSha: head, pullRequest: { number: 7 } },
+    });
+    expect(JSON.stringify(opened.body)).not.toContain(request.credential);
+    expect(await postJson(endpoint, command)).toMatchObject({
+      body: opened.body,
+    });
+    expect(created).toHaveBeenCalledTimes(1);
+
+    supersedeDuringLookup = true;
+    expect(
+      await postJson(
+        endpoint,
+        envelope("workspace.publication", fence, request),
+      ),
+    ).toMatchObject({ status: 409, body: { code: "FENCED" } });
+    expect(created).toHaveBeenCalledTimes(1);
+  } finally {
+    adapter.mockRestore();
+  }
 });
 
 it("W07 retains the exact read-only wait witness across a supervisor restart", async () => {

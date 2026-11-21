@@ -408,6 +408,8 @@ The default is off, including legacy or malformed snapshots. A project admin con
 
 Default limits on a fresh opt-in are low risk, confidence at least 0.90, at most 10 changed files and 300 additions plus deletions. Preserve the hard deny list and stricter project or manifest bounds. Reversal proof requires the actual actor and exact completed decision.
 
+A classified timeout or exhausted rework loop checks both platform switches at the terminal decision. Disabling either switch retains the run in Review and records a refused failure with reason `platform_disabled`.
+
 An authorized local merge records the attempt identity with the reviewed source and base. If the Git effect lands before its database acknowledgement, recovery checks the reachable first-parent merge for that identity and both exact parents. A matching effect can be settled once under a new database fence even after the kill switch is applied.
 
 ## Linked artifacts

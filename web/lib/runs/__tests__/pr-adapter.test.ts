@@ -413,6 +413,61 @@ describe("GiteaApiAdapter — preflight", () => {
 // =============================================================================
 
 describe("GhCliAdapter — createOrUpdatePr happy path (no existing PR)", () => {
+  it.each(["github", "gitlab", "gitea"] as const)(
+    "B01 checks ownership again after the %s lookup and before create",
+    async (provider) => {
+      const { selectPrAdapter } = await loadAdapter();
+      let lookedUp = false;
+      const refusal = { code: "FENCED" };
+
+      for (const bin of ["gh", "glab"]) {
+        execImpls[bin] = async (args) => {
+          lookedUp = true;
+
+          return {
+            stdout: args.includes("list")
+              ? "[]"
+              : "https://example.test/pulls/42",
+            stderr: "",
+          };
+        };
+      }
+      process.env.GITEA_TOKEN = "fixture-token";
+      fetchHandler = (_url, init) => {
+        lookedUp = true;
+
+        return {
+          status: 200,
+          json:
+            init?.method === "POST"
+              ? { html_url: "https://example.test/pulls/42", number: 42 }
+              : [],
+        };
+      };
+      const args = {
+        ...PR_ARGS,
+        beforeWrite: async () => {
+          expect(lookedUp).toBe(true);
+          throw refusal;
+        },
+      };
+
+      await expect(
+        selectPrAdapter(provider, {
+          remoteUrl: `https://${provider}.example.test/org/repo.git`,
+        }).createOrUpdatePr(args),
+      ).rejects.toBe(refusal);
+      expect(
+        execCalls.filter(
+          (entry) => Array.isArray(entry.args) && entry.args.includes("create"),
+        ),
+      ).toHaveLength(0);
+      expect(
+        fetchCalls.filter((entry) => entry.init?.method === "POST"),
+      ).toHaveLength(0);
+    },
+  );
+
   it("detects no existing PR via `gh pr list --head`, then `gh pr create`, parsing the PR url/number", async () => {
     const { selectPrAdapter } = await loadAdapter();
 

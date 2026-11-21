@@ -20,7 +20,7 @@ export function queuedConditionResumeExists(
 export async function closeConditionWaitsForRun(
   tx: WaitTx,
   runId: string,
-  reason: "run_stopped" | "run_abandoned",
+  reason: "run_stopped" | "run_abandoned" | "wait_park_timeout",
 ): Promise<void> {
   const closed = await tx
     .update(runWaits)

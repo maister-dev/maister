@@ -9,6 +9,7 @@ import {
   completionGrantSchema,
   completionSettingsSchema,
 } from "./completion-policy";
+import { platformAllowsAutonomousCompletion } from "./config";
 import { recordAutonomousDecision } from "./decisions";
 
 import { platformRuntimeSettings, projects, runs } from "@/lib/db/schema";
@@ -76,7 +77,7 @@ export async function finalizeClassifiedFlowFailure(
     ? "missing_launch_grant"
     : run.promotionHold
       ? "run_held"
-      : !platform?.enabled
+      : !platformAllowsAutonomousCompletion(platform?.enabled)
         ? "platform_disabled"
         : !live.success || !live.data.enabled || project?.archived
           ? "project_disabled"

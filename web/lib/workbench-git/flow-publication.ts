@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { configuredPrCredential } from "../../../runtime/pull-request";
+import { detectProvider } from "../../../runtime/repository-url";
 import { normalizePublicationOrigin } from "../../../runtime/workspace-publication";
 
 import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
@@ -27,10 +29,7 @@ import {
   type FlowDriverClaim,
 } from "@/lib/flows/graph/driver-claim";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import {
-  preflightedPrAdapter,
-  pullRequestDefaults,
-} from "@/lib/workbench-git/pull-request";
+import { pullRequestDefaults } from "@/lib/workbench-git/pull-request";
 import {
   recordPublished,
   recordPullRequestOpened,
@@ -324,10 +323,6 @@ async function applyPublication(
   if (input.pr !== "none") {
     await db.transaction((tx) => lockPublishAttempt(tx, input));
     await renewLifecycleOperationLease(ownership);
-    const adapter = await preflightedPrAdapter({
-      project,
-      parentRepoPath: workspace.parentRepoPath,
-    });
     const defaults = pullRequestDefaults({
       run,
       internalBranch: workspace.branch,
@@ -339,15 +334,32 @@ async function applyPublication(
       closingReference: await closingReferenceForRun(db, run, project),
     });
 
-    pr = await adapter.createOrUpdatePr({
-      repoPath: workspace.parentRepoPath,
-      remote: "origin",
-      sourceBranch: branch,
-      targetBranch,
+    if (!project.repoUrl) throw forbidden();
+    const credential = configuredPrCredential(detectProvider(project.repoUrl));
+    const observed = await client.workspacePublication({
+      action: "open_pr",
+      remote: receipt.remoteName,
+      headRef: receipt.headRef,
+      baseRef: receipt.baseRef,
+      expectedHead: receipt.sourceHead,
+      repoIdentity: receipt.repoIdentity,
       title: defaults.title,
       body: defaults.body,
       draft: input.pr === "draft",
+      ...(credential ? { credential } : {}),
     });
+
+    if (
+      !observed.pullRequest ||
+      observed.repoIdentity !== receipt.repoIdentity ||
+      observed.headSha !== receipt.sourceHead ||
+      observed.remoteHeadSha !== receipt.sourceHead
+    )
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "The exact publication PR effect could not be observed",
+      );
+    pr = observed.pullRequest;
   }
 
   return db.transaction(async (tx) => {

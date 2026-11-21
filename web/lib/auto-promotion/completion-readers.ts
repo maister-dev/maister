@@ -196,6 +196,7 @@ export async function readCompletionEvidence(input: {
       Array.isArray(fact) ||
       fact.outcome !== "merged" ||
       fact.prNumber !== publication.prNumber ||
+      fact.baseRef !== publication.baseRef ||
       typeof fact.mergeCommitSha !== "string" ||
       !GIT_OBJECT_ID.test(fact.mergeCommitSha)
     )

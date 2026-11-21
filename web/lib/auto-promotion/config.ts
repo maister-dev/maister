@@ -118,3 +118,9 @@ export function resolveAutoPromotionConfig(
 export function autoPromotionEnabledFromEnv(): boolean {
   return process.env.MAISTER_AUTO_PROMOTION?.trim().toLowerCase() !== "off";
 }
+
+export function platformAllowsAutonomousCompletion(
+  enabled: boolean | undefined,
+): boolean {
+  return enabled === true && autoPromotionEnabledFromEnv();
+}

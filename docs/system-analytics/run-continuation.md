@@ -388,7 +388,7 @@ throw nothing.
 
 ## Crash recovery of a condition wait (Implemented)
 
-Before a park, the graph records intent and the exact predecessor command. Recover the quiescence receipt before release. Once resolved, recover the persisted next edge and its dispatch claim. A newer epoch adopts the same logical key after fencing the old driver.
+Before a park, the graph records intent and the exact predecessor command. Reconciliation retries quiescence on the same assignment until the original attempt start plus the manifest timeout. On expiry the clock closes the occurrence and fences the assignment through the classified crash transition. Once resolved, recover the persisted next edge and its dispatch claim. A newer epoch adopts the same logical key after fencing the old driver.
 
 See [the governing contract](waits.md).
 

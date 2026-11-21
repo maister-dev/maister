@@ -511,13 +511,20 @@ is `CONFLICT`, the rest `PRECONDITION`), and an unknown run is 404 with
   shared tree still holds the tree — it has no row of its own to count down —
   while a `Failed` allocator no longer holds its own.
 
-## Flow publication through the Git panel service (Designed)
+## Flow publication through the Git panel service (Implemented)
 
 A reviewed launch grants one project, origin, target and PR mode. The actor-aware publication service owns the lease, exact HEAD witness and retry identity, and reuses the human panel policy and writer. Enroll a push-CI wait before pushing and activate it only when the same occurrence enters the graph. Recovery reconciles an uncertain push or PR with exact remote facts before retrying.
 
 The current graph driver can reclaim the same publication operation under its durable node-attempt identity. The host observes the exact source and destination before a retry, and the workspace writer verifies the graph driver and shared operation lease before committing the receipt.
 
 See [the governing contract](waits.md).
+
+The Flow uses the same provider adapter and receipt writer as the human Git
+panel. Its push and PR write both go through the fenced workspace publication
+command. The host rechecks the published source and assignment immediately
+before provider creation, including after provider lookup. If a command
+loses ownership after the effect, recovery can adopt the matching provider
+result. Source worktree paths are resolved only on the host.
 
 ## Linked artifacts
 

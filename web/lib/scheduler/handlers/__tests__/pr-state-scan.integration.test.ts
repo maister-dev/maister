@@ -88,6 +88,7 @@ const OPEN: PrStateReadResult = {
   mergedAt: null,
   mergeCommitSha: null,
   hasConflicts: null,
+  baseRef: null,
   headSha: null,
 };
 
@@ -120,6 +121,7 @@ describe("runPrStateScanJob", () => {
           mergeCommitSha: "a".repeat(40),
           mergedAt: "2026-07-14T00:00:00.000Z",
           hasConflicts: false,
+          baseRef: "refs/heads/main",
           headSha: "b".repeat(40),
         };
       },
@@ -165,6 +167,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-101",
           hasConflicts: false,
+          baseRef: null,
           headSha: null,
         },
         102: {
@@ -173,6 +176,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: null,
+          baseRef: null,
           headSha: null,
         },
         103: {
@@ -181,6 +185,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: true,
+          baseRef: null,
           headSha: null,
         },
       }),
@@ -296,6 +301,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-901",
           hasConflicts: false,
+          baseRef: null,
           headSha: null,
         },
       }),
@@ -322,6 +328,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-07-14T00:00:00.000Z",
         mergeCommitSha: "merge-sha-201",
         hasConflicts: false,
+        baseRef: null,
         headSha: null,
       },
       202: {
@@ -330,6 +337,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: null,
+        baseRef: null,
         headSha: null,
       },
       203: {
@@ -338,6 +346,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: true,
+        baseRef: null,
         headSha: null,
       },
     });
@@ -531,6 +540,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-09-23T00:00:00.000Z",
         mergeCommitSha: `merge-sha-${args.prNumber}`,
         hasConflicts: null,
+        baseRef: null,
         headSha: null,
       }),
     );
@@ -720,6 +730,7 @@ describe("runPrStateScanJob", () => {
       mergedAt: "2026-07-14T00:00:00.000Z",
       mergeCommitSha: "merge-sha-701",
       hasConflicts: false,
+      baseRef: null,
       headSha: null,
     });
 

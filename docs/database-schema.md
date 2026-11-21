@@ -5904,7 +5904,7 @@ updates the episode under the Run lock using an opaque observation derived from
 the episode identity and update timestamp. The state transition preserves both
 attempt counters and needs no schema rewrite.
 
-## Flow waits, publication and autonomous decisions (Designed)
+## Flow waits, publication and autonomous decisions (Implemented)
 
 | Migration | Storage | Ownership and indexes |
 | --- | --- | --- |

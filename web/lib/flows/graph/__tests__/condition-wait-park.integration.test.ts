@@ -516,6 +516,74 @@ it("W06 releases the exact assignment only when the same wait attempt parks", as
   ]);
 });
 
+it("W06 expires an unacknowledged park across driver restarts", async () => {
+  const { runFlow } = await import("@/lib/flows/runner");
+  const { runWaitDeadlineSweep } =
+    await import("@/lib/scheduler/handlers/wait-deadline");
+  const { seedGraphRun } = await import("@/test-support/graph-run-seed");
+  const { fakeGraphHosts } = await import("@/test-support/fake-execution-host");
+  const { runId, runtimeRoot, worktreePath } = await seedGraphRun(database.db, {
+    schemaVersion: 1,
+    name: "Unconfirmed parking",
+    compat: { engine_min: "3.14.0" },
+    nodes: [
+      {
+        type: "wait",
+        id: "hold",
+        timeout: 60,
+        on: { kind: "timer", after: 10 },
+        transitions: { elapsed: "done", timeout: "done", cancelled: "done" },
+      },
+    ],
+  });
+
+  onTestFinished(async () => {
+    await Promise.all(
+      [runtimeRoot, worktreePath].map((path) =>
+        rm(path, { recursive: true, force: true }),
+      ),
+    );
+  });
+  const { hosts, fake } = await fakeGraphHosts(database.db, runId);
+
+  fake.transport.listSessionsForRun = async () => {
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Host unavailable");
+  };
+  const drive = () =>
+    runFlow(runId, { db: database.db, runtimeRoot, executionHosts: hosts });
+
+  await drive();
+  await drive();
+  const states = async () =>
+    (
+      await database.pool.query(
+        "SELECT w.state,r.status,a.state AS assignment FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN execution_assignments a ON a.id=r.execution_assignment_id WHERE r.id=$1",
+        [runId],
+      )
+    ).rows;
+
+  expect(await states()).toEqual([
+    { state: "parking", status: "Running", assignment: "active" },
+  ]);
+  await database.pool.query(
+    "UPDATE node_attempts SET started_at=now()-interval '2 minutes' WHERE run_id=$1",
+    [runId],
+  );
+  await runWaitDeadlineSweep(database.db);
+  await runWaitDeadlineSweep(database.db);
+  expect(await states()).toEqual([
+    { state: "closed", status: "Crashed", assignment: "released" },
+  ]);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT payload->'cause'->>'reason' AS reason FROM domain_events WHERE run_id=$1 AND kind='run.crashed'",
+        [runId],
+      )
+    ).rows,
+  ).toEqual([{ reason: "wait_park_timeout" }]);
+});
+
 it("W06 drives a timer wait through the normal graph entry and common Pending admission", async () => {
   const { runFlow } = await import("@/lib/flows/runner");
   const { promoteNextPending, tryStartRun } = await import("@/lib/scheduler");

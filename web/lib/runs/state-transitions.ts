@@ -987,11 +987,13 @@ export async function markReopenFromDone(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Review", endedAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Done")))
-    .returning({ id: runs.id });
+  const rows = await casToReviewAndEmit(
+    db,
+    runId,
+    { status: "Review", endedAt: null },
+    "Done",
+    "pr_reopened",
+  );
 
   if (rows.length === 0) {
     log.warn(
@@ -1536,6 +1538,7 @@ export async function crashResumedRun(
 // terminal crash. The caller (reconcile/GC) owns the promoteNextPending
 // follow-up — this helper only flips the run state (§3.3).
 export type CrashReason =
+  | "wait-park-timeout"
   | "worktree-gone"
   | "agent-session-gone"
   | "cli-not-retry-safe"

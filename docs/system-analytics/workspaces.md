@@ -872,7 +872,7 @@ flowchart TD
   hold + one comment, mapping to `MaisterError("PRECONDITION")`. A transient
   `MaisterError("EXECUTOR_UNAVAILABLE")` instead skips with no hold and retries.
 
-### Retention and publication generations (Designed)
+### Retention and publication generations (Implemented)
 
 Open waits and resolved Pending continuations pin the workspace through readmission. Shared publication receipts advance projected branch and PR fields with an expected generation CAS. Older provider results cannot mutate a replacement PR.
 

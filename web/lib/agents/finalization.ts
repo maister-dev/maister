@@ -1331,30 +1331,24 @@ async function prepareAgentFinalization(
         },
       });
 
-    // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
-    // the parked coordinator wakes to promote/rework the diff (and as-plan
-    // auto-promote fires). A top-level Review (no parent) emits nothing — there is
-    // no orchestrator to route to. Terminal outcomes emit their terminal kind.
+    // Delegated reviews wake the coordinator; project-level reviews wake
+    // project readers and related-run waits through the complementary event.
     if (terminalStatus === "Review") {
-      if (row.parentRunId) {
+      if (row.parentRunId || row.projectId) {
         await emitDomainEvent({
           db: tx,
-          kind: "run.review",
+          ...(row.parentRunId
+            ? { kind: "run.review" as const, parentRunId: row.parentRunId }
+            : { kind: "run.review_opened" as const }),
           ...runDomainEventScope(row),
           taskId: row.taskId,
           runId,
           actor: { type: "agent", id: row.agentId },
-          parentRunId: row.parentRunId,
           payload: {
             runKind: "agent",
             agentId: row.agentId,
             status: terminalStatus,
-            // Codex review F1: the same cause field the flow emit helper
-            // writes — a clean agent exit IS a completion and stays
-            // auto-promotable.
             cause: "agent_exit" satisfies RunReviewCause,
-            // ADR-165 (Q10-A): additive, omitted when the run carries no
-            // contract — an omitted value is honestly absent.
             ...(resultStatus ? { resultStatus } : {}),
           },
         });

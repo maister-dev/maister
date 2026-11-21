@@ -257,6 +257,7 @@ export const TERMINAL_CAUSE_REASONS = [
   "cli_not_retry_safe",
   "orphaned_child",
   "orchestrator_stuck",
+  "wait_park_timeout",
   "turn_lost",
   "session_crashed",
   "session_delete_exit_unconfirmed",
@@ -365,6 +366,7 @@ export const RUN_REVIEW_CAUSES = [
   "agent_exit",
   "operator_stop",
   "rework_released",
+  "pr_reopened",
   "sync_returned",
 ] as const;
 

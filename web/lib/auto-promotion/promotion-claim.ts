@@ -8,7 +8,7 @@ import type { MergedPullRequestEvidence } from "./completion-evidence";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { autoPromotionEnabledFromEnv } from "./config";
+import { platformAllowsAutonomousCompletion } from "./config";
 import {
   completionGrantSchema,
   completionSettingsSchema,
@@ -144,7 +144,7 @@ export async function evaluatePromotionClaim(
         ? "missing_launch_grant"
         : run.promotionHold
           ? "run_held"
-          : !platform?.enabled || !autoPromotionEnabledFromEnv()
+          : !platformAllowsAutonomousCompletion(platform?.enabled)
             ? "platform_disabled"
             : !current.success || !current.data.enabled || project?.archivedAt
               ? "project_disabled"

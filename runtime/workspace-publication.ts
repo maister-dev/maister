@@ -13,6 +13,16 @@ export type WorkspacePublicationRequest = WorkspacePublicationTarget &
         expectedRemoteHead: string | null;
         repoIdentity: string;
       }
+    | {
+        action: "open_pr";
+        expectedHead: string;
+        repoIdentity: string;
+        baseRef: string;
+        title: string;
+        body: string;
+        draft: boolean;
+        credential?: string;
+      }
   );
 
 export type WorkspaceEvidenceFile = {
@@ -28,6 +38,7 @@ export type WorkspacePublicationSnapshot = {
   headSha: string;
   remoteHeadSha: string | null;
   repoIdentity: string;
+  pullRequest?: { url: string; number: number; reused: boolean };
   evidence?: {
     baseSha: string;
     clean: boolean;

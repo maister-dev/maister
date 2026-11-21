@@ -188,7 +188,7 @@ async function admitsWorkspacePublication(
     );
 
   if (!owner || command.action === "inspect") return owner !== undefined;
-  if (command.action !== "push") return false;
+  if (command.action !== "push" && command.action !== "open_pr") return false;
 
   const [claim] = await db
     .select({ id: runPublications.id })
@@ -203,7 +203,12 @@ async function admitsWorkspacePublication(
         eq(runPublications.headRef, command.headRef),
         eq(runPublications.remoteName, command.remote),
         eq(runPublications.repoIdentity, command.repoIdentity),
-        sql`${runPublications.expectedRemoteHead} IS NOT DISTINCT FROM ${command.expectedRemoteHead}`,
+        command.action === "push"
+          ? sql`${runPublications.expectedRemoteHead} IS NOT DISTINCT FROM ${command.expectedRemoteHead}`
+          : and(
+              eq(runPublications.baseRef, command.baseRef),
+              eq(runPublications.prMode, command.draft ? "draft" : "ready"),
+            ),
       ),
     );
 

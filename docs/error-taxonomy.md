@@ -937,7 +937,8 @@ New routes use existing typed domain/auth codes with safe `details.reason` and l
 | --- | --- | --- |
 | `CONFIG` | `wait_invalid_condition`, `wait_invalid_payload`, `wait_engine_min` | Refused manifest, envelope or payload. |
 | `CONFLICT` | `wait_key_conflict`, `wait_closed`, `wait_wrong_head`, `wait_version_changed`, `wait_deadline_elapsed`, `wait_callback_ambiguous` | Replayed different intent, unavailable occurrence, wrong witness, ordering conflict or ambiguous correlation. |
-| `PRECONDITION` | `wait_unrelated_run`, `wait_deadline_cap`, `autonomy_revert_unverified` | Current relationship, expiry bound or exact reversal evidence cannot authorize the effect. |
+| `PRECONDITION` | `wait_unrelated_run`, `wait_deadline_cap`, `wait_content_unavailable`, `wait_content_too_large`, `autonomy_revert_unverified` | Refuse an unrelated run, a deadline beyond the cap, unavailable or oversized prompt data, or unverified reversal evidence. |
+| `CRASH` | `wait-park-timeout` | The assigned host did not prove quiescence by the preparation deadline. Existing crash actions apply. |
 | `CONFLICT` | `autonomy_revision_changed` | The admin setting CAS lost to a newer policy revision. |
 | `UNAUTHORIZED` or `NOT_FOUND` | — | Token/session refused or resource tuple hidden according to route authority. |
 

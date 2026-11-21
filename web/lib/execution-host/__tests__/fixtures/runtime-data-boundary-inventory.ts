@@ -2195,11 +2195,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "../runtime/pull-request.ts",
+      "repository-worktree",
+      "Provider CLI writes shared by execution-host Flow publication and the human Git panel",
+      [["CliPrAdapter.exec", "node:child_process.execFile", "spawn", null]],
+    ),
+    ...classified(
       "lib/runs/pr-adapter.ts",
       "repository-worktree",
-      "PR delivery through the provider CLIs (gh/glab) — Stage C delivery boundary",
+      "PR state reads through the provider CLIs (gh/glab)",
       [
-        ["CliPrAdapter.exec", "node:child_process.execFile", "spawn", null],
         ["githubPrState", "node:child_process.execFile", "spawn", "gh"],
         ["gitlabPrState", "node:child_process.execFile", "spawn", "glab"],
       ],

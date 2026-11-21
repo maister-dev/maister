@@ -418,6 +418,7 @@ function currentPrObservation(candidate: CandidateRow, state: PrState): SQL {
     AND workspaces.pr_number = ${candidate.pr_number}
     AND workspaces.pr_url IS NOT DISTINCT FROM ${candidate.pr_url}
     AND COALESCE((SELECT p.source_head IS NOT DISTINCT FROM ${state.headSha ?? null}
+        AND p.base_ref IS NOT DISTINCT FROM ${state.baseRef ?? null}
       FROM run_publications p
       WHERE p.workspace_id = workspaces.id AND p.phase = 'observed' AND p.pr_number = workspaces.pr_number AND p.pr_url = workspaces.pr_url
       ORDER BY p.generation DESC LIMIT 1), true)`;

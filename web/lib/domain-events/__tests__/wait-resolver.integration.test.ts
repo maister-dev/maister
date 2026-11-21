@@ -262,7 +262,22 @@ it.each([
       };
     }
 
-    if (kind === "run.done") await fact(relatedRunId, kind);
+    if (kind === "run.abandoned")
+      await database.pool.query(
+        "UPDATE runs SET status='Abandoned' WHERE id=$1",
+        [relatedRunId],
+      );
+    if (kind === "run.crashed") {
+      await fact(relatedRunId, "run.review");
+      await database.pool.query(
+        "UPDATE runs SET status='Running' WHERE id=$1",
+        [relatedRunId],
+      );
+    }
+    if (kind === "run.done") {
+      await fact(relatedRunId, "run.review");
+      await fact(relatedRunId, kind);
+    }
     await runFlow(runId, {
       db: database.db,
       runtimeRoot,
@@ -270,7 +285,11 @@ it.each([
     });
 
     if (kind === "run.failed") expect(settledWhileParking).toBe(true);
-    if (kind !== "run.done" && kind !== "run.failed") {
+    if (
+      kind !== "run.done" &&
+      kind !== "run.failed" &&
+      kind !== "run.abandoned"
+    ) {
       await fact(decoy, kind);
       expect((await dispatch()).failures).toBe(0);
       expect(await state()).toEqual({ state: "open", result: null });

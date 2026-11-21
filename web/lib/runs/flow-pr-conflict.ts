@@ -6,7 +6,7 @@ import type { ExecutionHosts } from "@/lib/execution-host/client";
 import { and, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { autoPromotionEnabledFromEnv } from "@/lib/auto-promotion/config";
+import { platformAllowsAutonomousCompletion } from "@/lib/auto-promotion/config";
 import {
   completionGrantSchema,
   completionSettingsSchema,
@@ -88,7 +88,12 @@ async function readHandoff(db: Db, runId: string, waitId: string) {
     );
 
   const [latestFact] = await db
-    .select({ id: runPublicationObservations.id })
+    .select({
+      id: runPublicationObservations.id,
+      baseRef: sql<
+        string | null
+      >`${runPublicationObservations.fact}->>'baseRef'`,
+    })
     .from(runPublicationObservations)
     .where(
       and(
@@ -103,7 +108,9 @@ async function readHandoff(db: Db, runId: string, waitId: string) {
     )
     .limit(1);
 
-  return original && latestFact?.id === row.wait.result.sourceId
+  return original &&
+    latestFact?.baseRef === row.publication.baseRef &&
+    latestFact.id === row.wait.result.sourceId
     ? { ...row, handoff, original }
     : null;
 }
@@ -154,8 +161,9 @@ export async function authorizeFlowConflictHandoff(
   );
 
   if (
-    !autoPromotionEnabledFromEnv() ||
-    !platform?.autonomousCompletionEnabled ||
+    !platformAllowsAutonomousCompletion(
+      platform?.autonomousCompletionEnabled,
+    ) ||
     !project ||
     project.archivedAt ||
     !current.success ||

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { Provider } from "@/lib/repo-source";
+import type { PrStateReadResult } from "@/lib/runs/pr-adapter";
 import type { ProviderSource } from "@/lib/waits/ci-provider";
 
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -18,6 +19,7 @@ import {
   readProviderCi,
   readProviderPublicationHead,
 } from "@/lib/waits/ci-provider";
+import { readTrustedWaitDelivery } from "@/lib/waits/facts";
 import { waitConditionSchema } from "@/lib/waits/manifest";
 import { recordPublicationObservation } from "@/lib/waits/publication-observations";
 
@@ -61,6 +63,18 @@ export function providerSourceForPublication(
     headSha: publication.sourceHead,
     ref: publication.headRef,
   };
+}
+
+function publicationPrOutcome(
+  observed: Extract<PrStateReadResult, { kind: "state" }>,
+  publication: { sourceHead: string; baseRef: string },
+): "pending" | "stale" | "merged" | "closed" | "conflict" {
+  if (observed.headSha !== publication.sourceHead) return "stale";
+  if (!observed.baseRef) return "pending";
+  if (observed.baseRef !== publication.baseRef) return "stale";
+  if (observed.state !== "open") return observed.state;
+
+  return observed.hasConflicts ? "conflict" : "pending";
 }
 
 export async function scanWaitPublications(input: {
@@ -134,6 +148,7 @@ export async function scanWaitPublications(input: {
               pr.kind !== "state" ||
               pr.state !== "merged" ||
               pr.headSha !== publication.sourceHead ||
+              pr.baseRef !== publication.baseRef ||
               !pr.mergeCommitSha ||
               !GIT_OBJECT_ID.test(pr.mergeCommitSha)
             )
@@ -142,8 +157,15 @@ export async function scanWaitPublications(input: {
             return pr.headSha;
           }
         };
-        const initialHead = await observeHead();
         const push = condition.transport === "push";
+        const delivery =
+          push && wait.state === "open"
+            ? await readTrustedWaitDelivery(db, wait)
+            : null;
+        const refFact: Record<string, string> = delivery
+          ? { deliveryId: delivery.sourceId }
+          : {};
+        const initialHead = await observeHead();
         const providerIssuer = push
           ? condition.provider_issuer
           : condition.issuer;
@@ -154,7 +176,7 @@ export async function scanWaitPublications(input: {
             ...scope,
             kind: "ref",
             headSha: initialHead,
-            fact: {},
+            fact: refFact,
           });
         const ci =
           initialHead === publication.sourceHead && providerIssuer
@@ -175,7 +197,7 @@ export async function scanWaitPublications(input: {
             ...scope,
             kind: "ref",
             headSha,
-            fact: {},
+            fact: refFact,
           });
         if (providerIssuer && headSha === publication.sourceHead)
           await recordPublicationObservation(db, {
@@ -199,22 +221,15 @@ export async function scanWaitPublications(input: {
         });
 
         if (observed.kind !== "state" || !observed.headSha) continue;
-        const outcome =
-          observed.headSha !== publication.sourceHead
-            ? "stale"
-            : observed.state !== "open"
-              ? observed.state
-              : observed.hasConflicts
-                ? "conflict"
-                : "pending";
 
         await recordPublicationObservation(db, {
           ...scope,
           kind: "pr",
           headSha: observed.headSha,
           fact: {
-            outcome,
+            outcome: publicationPrOutcome(observed, publication),
             prNumber: publication.prNumber,
+            baseRef: observed.baseRef,
             mergedAt: observed.mergedAt,
             mergeCommitSha: observed.mergeCommitSha,
           },

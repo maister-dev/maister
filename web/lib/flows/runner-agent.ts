@@ -86,6 +86,7 @@ import {
   workspacePackageSkillsPrompt,
 } from "@/lib/capabilities/package-skills";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
+import { readWaitPromptBlocks } from "@/lib/waits/prompt-data";
 import { appendCapped } from "@/lib/flows/capped-text";
 import {
   completeHitlAssignmentFromCurrentActor,
@@ -169,6 +170,7 @@ export type AgentSessionCapabilities = Pick<
 >;
 
 export type RunAgentStepCtx = {
+  waitContentNodes?: readonly string[];
   resultContract?: RunResultContract | null;
   knowledgeAccess?: KnowledgeAccessCapture | null;
   runtimeRoot: string;
@@ -1512,11 +1514,17 @@ async function dispatchAgentStep(
           nodeId: ctx.stepId,
         })
       : null;
-  const resolvedPrompt = ctx.resumeSessionId
+  const visiblePrompt = ctx.resumeSessionId
     ? RESUME_READONLY_LIFT + clarifiedPrompt
     : memory
       ? [clarifiedPrompt, memory.text].join("\n\n")
       : clarifiedPrompt;
+
+  const resolvedPrompt =
+    ctx.waitContentNodes?.length && ctx.promptOwner.variant === "node"
+      ? visiblePrompt +
+        (await readWaitPromptBlocks(database, ctx.runId, ctx.waitContentNodes))
+      : visiblePrompt;
 
   log.info(
     {
@@ -1559,7 +1567,7 @@ async function dispatchAgentStep(
       // overwriting it with a resume-lifted variant.
       const landed = await (ctx.db ?? getDb())
         .update(nodeAttempts)
-        .set({ resolvedPrompt })
+        .set({ resolvedPrompt: visiblePrompt })
         .where(
           and(
             eq(nodeAttempts.id, ctx.nodeAttemptId),

@@ -2202,6 +2202,18 @@ revision. Rework creates a fresh occurrence. The attempt's wait-result
 is bounded data and includes provenance. It cannot supply command input or
 interpolation syntax.
 
+Each resolved attempt exports `steps.<id>.vars.waitData.kind`. Timer data includes
+`dueAt` and `deadline`, comment data includes `taskId`, related-run data includes
+`runId`, and signal data includes `name` and the boolean `hasPayload`. CI and PR
+data include `publicationId`, and CI includes an array of declared `failedChecks`.
+In a graph agent action prompt, `{{ steps.<id>.vars.waitData.content }}`
+requests a separate quoted JSON record for the latest successful wait attempt.
+Signal payloads retain their JSON types. Comment content is read from its exact
+project and task and appears as a JSON `text` field. The prompt renderer inserts
+this bounded record after instruction and capability rendering. CLI and check
+commands can read the public fields above. Content is available only at the
+agent prompt sink and through the authorized wait detail.
+
 Engine minimum 3.14.0 adds `publish` with PR mode absent, draft or ready,
 plus CI and PR wait selectors. A provider wait must reference the successful
 publication on its current path. Engine minimum 3.15.0 adds explicit

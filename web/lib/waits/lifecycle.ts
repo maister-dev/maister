@@ -32,9 +32,15 @@ import {
   releaseAssignmentForRun,
 } from "@/lib/execution-host/assignments";
 import { flowConflictSyncAttemptId } from "@/lib/flows/graph/finish-continuation";
-import { waitOutcomes } from "@/lib/waits/manifest";
+import { crashRunningRun } from "@/lib/runs/state-transitions";
+import { closeConditionWaitsForRun } from "@/lib/waits/close";
+import { waitConditionSchema, waitOutcomes } from "@/lib/waits/manifest";
 import { ciReservationId } from "@/lib/waits/reservations";
-import { isRelatedWaitRun, readObservedWaitFact } from "@/lib/waits/facts";
+import {
+  isRelatedWaitRun,
+  registeredRunFact,
+  readObservedWaitFact,
+} from "@/lib/waits/facts";
 import { lockWait, persistWaitResult, readWaitClock } from "@/lib/waits/store";
 
 const log = pino({
@@ -305,6 +311,67 @@ function timerInstant(intent: WaitRow, openedAt: Date): Date | null {
   throw new MaisterError("CONFIG", "Retained timer wait has no due time");
 }
 
+/** The original attempt start and frozen timeout survive every park redrive. */
+export const conditionParkDeadline = sql`${nodeAttempts.startedAt} + (${runWaits.condition}->'parameters'->>'timeoutSeconds')::integer * interval '1 second'`;
+
+export async function expireConditionWaitPark(
+  tx: WaitTx,
+  address: WaitAddress,
+): Promise<boolean> {
+  const [owner] = await tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.id, address.runId),
+        eq(runs.projectId, address.projectId),
+        eq(runs.status, "Running"),
+      ),
+    )
+    .for("update");
+
+  if (!owner) return false;
+  const [expired] = await tx
+    .select({ id: runWaits.id })
+    .from(runWaits)
+    .innerJoin(nodeAttempts, eq(nodeAttempts.id, runWaits.nodeAttemptId))
+    .innerJoin(
+      runs,
+      and(
+        eq(runs.id, runWaits.runId),
+        eq(runs.currentStepId, nodeAttempts.nodeId),
+        eq(runs.executionAssignmentId, nodeAttempts.executionAssignmentId),
+      ),
+    )
+    .innerJoin(
+      executionAssignments,
+      and(
+        eq(executionAssignments.id, runs.executionAssignmentId),
+        eq(executionAssignments.state, "active"),
+      ),
+    )
+    .where(
+      and(
+        eq(runWaits.id, address.waitId),
+        eq(runWaits.runId, address.runId),
+        eq(runWaits.state, "parking"),
+        eq(nodeAttempts.status, "Running"),
+        sql`${conditionParkDeadline} <= clock_timestamp()`,
+      ),
+    )
+    .for("update", { of: runWaits });
+
+  if (!expired) return false;
+  const crashed = await crashRunningRun(address.runId, "wait-park-timeout", {
+    db: tx,
+  });
+
+  if (!crashed.ok) return false;
+  await closeConditionWaitsForRun(tx, address.runId, "wait_park_timeout");
+
+  return true;
+}
+
 /** Commit on the driver's transaction after exact host quiescence is confirmed. */
 export async function commitConditionWaitPark(
   tx: WaitTx,
@@ -314,7 +381,7 @@ export async function commitConditionWaitPark(
       readonly headSha?: string;
     },
 ): Promise<void> {
-  await lockParkOwner(tx, input);
+  const owner = await lockParkOwner(tx, input);
   const intent = await lockWait(tx, input);
 
   if (
@@ -349,6 +416,44 @@ export async function commitConditionWaitPark(
     );
   }
 
+  let existingSettlement: ReturnType<typeof registeredRunFact> = null;
+  let sourceSnapshot: string | null = null;
+  if (intent.conditionKind === "run" && intent.sourceTargetId) {
+    const [target] = await tx
+      .select({
+        id: runs.id,
+        status: runs.status,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        parentRunId: runs.parentRunId,
+        revision: sql<string>`xmin::text`,
+        snapshot: sql<string>`pg_current_snapshot()::text`,
+      })
+      .from(runs)
+      .where(eq(runs.id, intent.sourceTargetId));
+    // Capture the exact snapshot that supplied the source row. Locking both
+    // runs would deadlock if related runs registered waits on each other.
+    sourceSnapshot = target?.snapshot ?? null;
+    const { timeoutSeconds: _timeout, ...parameters } =
+      intent.condition.parameters;
+    const selector = waitConditionSchema.parse({
+      kind: intent.conditionKind,
+      ...parameters,
+    });
+    if (
+      selector.kind === "run" &&
+      target &&
+      (await isRelatedWaitRun(
+        tx,
+        { ...owner, id: input.runId },
+        target,
+        selector,
+      ))
+    )
+      existingSettlement = registeredRunFact(target);
+  }
+
+  if (await expireConditionWaitPark(tx, input)) return;
   const openedAt = await readWaitClock(tx);
   const [publication] = intent.publicationId
     ? await tx
@@ -383,7 +488,7 @@ export async function commitConditionWaitPark(
       deadlineAt,
       absoluteCapAt,
       nextDueAt: timerAt && timerAt < deadlineAt ? timerAt : deadlineAt,
-      registrationSnapshot: sql`pg_current_snapshot()::text`,
+      registrationSnapshot: sourceSnapshot ?? sql`pg_current_snapshot()::text`,
       bindingHeadSha: publication?.head ?? input.headSha ?? null,
     })
     .where(eq(runWaits.id, intent.id));
@@ -404,9 +509,15 @@ export async function commitConditionWaitPark(
     payload: { schemaVersion: 1, waitId: intent.id },
   });
 
-  // The registration transaction already owns committed related-run facts and
-  // can settle an elapsed timer without a scheduler tick or host round trip.
-  if (intent.conditionKind === "timer" || intent.conditionKind === "run")
+  // An existing run settlement or an elapsed timer can resolve at registration.
+  if (existingSettlement)
+    await queueConditionWaitResume(
+      tx,
+      input,
+      intent.version + 1,
+      existingSettlement,
+    );
+  else if (intent.conditionKind === "timer")
     await resolveEligibleConditionWait(tx, input);
 
   log.info(
@@ -433,6 +544,37 @@ async function lockConditionWaitOwner(
     .for("update");
 
   return run?.status === "Waiting" ? run.nodeId : null;
+}
+
+function conditionVariables(
+  wait: WaitRow,
+  result: WaitResult,
+  failedChecks: string[],
+) {
+  const kind = wait.conditionKind;
+
+  switch (kind) {
+    case "timer":
+      return {
+        kind,
+        dueAt: wait.timerAt?.toISOString(),
+        deadline: wait.deadlineAt?.toISOString(),
+      };
+    case "comment":
+      return { kind, taskId: wait.sourceTargetId };
+    case "run":
+      return { kind, runId: wait.sourceTargetId };
+    case "signal":
+      return {
+        kind,
+        name: wait.sourceTargetId,
+        hasPayload: result.source === "signal" && result.data !== undefined,
+      };
+    case "ci":
+      return { kind, publicationId: wait.publicationId, failedChecks };
+    case "pr":
+      return { kind, publicationId: wait.publicationId };
+  }
 }
 
 /** Apply a verified fact and create the sole durable admission wake. */
@@ -505,6 +647,7 @@ async function applyConditionWaitResolution(
       status: "Succeeded",
       decision: result.outcome,
       vars: {
+        waitData: conditionVariables(wait, result, failedChecks),
         waitOutcome: result.outcome,
         waitId: wait.id,
         waitSource: result.source,

@@ -128,38 +128,16 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
     ["env-e2e-ci-push", "push", "unconfirmed"],
     ["env-e2e-ci-pr", "pull", "recover"],
     ["env-e2e-ci", "pull", "exhaust"],
+    ["env-e2e-ci", "pull", "disabled-exhaust"],
   ] as const)(
     "executes installed %s using %s CI through %s",
     async (flowId, transport, strategy) => {
       const prBacked = flowId === "env-e2e-ci-pr";
-      const exhausted = strategy === "exhaust";
+      const disabledFailure = strategy === "disabled-exhaust";
+      const exhausted = strategy === "exhaust" || disabledFailure;
       const repoIdentity = "github.com/example/reference";
       const prNumber = 72;
 
-      if (prBacked) {
-        const prService = await import("@/lib/workbench-git/pull-request");
-        const adapter = vi
-          .spyOn(prService, "preflightedPrAdapter")
-          .mockResolvedValue({
-            preflight: async () => undefined,
-            createOrUpdatePr: async (input) => {
-              expect(input).toMatchObject({
-                targetBranch: "main",
-                draft: false,
-              });
-
-              return {
-                url: `https://${repoIdentity}/pull/${prNumber}`,
-                number: prNumber,
-                reused: false,
-              };
-            },
-          });
-
-        onTestFinished(() => {
-          adapter.mockRestore();
-        });
-      }
       const { runFlow } = await import("@/lib/flows/runner");
       const { promoteNextPending } = await import("@/lib/scheduler");
       const { buildWaitResolver } =
@@ -480,6 +458,28 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
           payload.headRef,
         );
 
+        if (payload.action === "open_pr") {
+          expect(prBacked).toBe(true);
+          expect(envelope.fence.runId).toBe(runId);
+          expect(payload).toMatchObject({
+            repoIdentity,
+            expectedHead: headSha,
+            baseRef: "refs/heads/main",
+            draft: false,
+          });
+          expect(remoteHeadSha).toBe(headSha);
+
+          return {
+            repoIdentity,
+            headSha,
+            remoteHeadSha,
+            pullRequest: {
+              url: `https://${repoIdentity}/pull/${prNumber}`,
+              number: prNumber,
+              reused: generations.length > 1,
+            },
+          };
+        }
         return { repoIdentity, headSha, remoteHeadSha: remoteHeadSha || null };
       };
 
@@ -663,21 +663,33 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
             });
           },
         });
+        if (disabledFailure && generation === 3) {
+          vi.stubEnv("MAISTER_AUTO_PROMOTION", "off");
+          onTestFinished(() => {
+            vi.unstubAllEnvs();
+          });
+        }
         await resume();
       }
 
       if (exhausted) {
-        expect(await state()).toBe("Failed");
+        expect(await state()).toBe(disabledFailure ? "Review" : "Failed");
         expect(await git(repoPath, "rev-parse", "main")).toBe(base);
         expect(implementationPrompts).toHaveLength(3);
         expect(
           (
             await database.pool.query(
-              `SELECT action,reason FROM run_autonomous_decisions WHERE run_id=$1 AND phase='observed'`,
+              `SELECT action,phase,reason FROM run_autonomous_decisions WHERE run_id=$1`,
               [runId],
             )
           ).rows,
-        ).toEqual([{ action: "fail", reason: "rework_exhausted" }]);
+        ).toEqual([
+          {
+            action: "fail",
+            phase: disabledFailure ? "refused" : "observed",
+            reason: disabledFailure ? "platform_disabled" : "rework_exhausted",
+          },
+        ]);
 
         return;
       }
@@ -789,6 +801,7 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
               kind: "state",
               state: "merged",
               headSha: candidate.head,
+              baseRef: "refs/heads/main",
               mergeCommitSha,
               hasConflicts: false,
               mergedAt: new Date().toISOString(),

@@ -3442,6 +3442,7 @@
         "worktree_gone": "The run's worktree disappeared.",
         "cli_not_retry_safe": "A command step stopped and is not safe to run twice.",
         "orphaned_child": "Its coordinating run is gone.",
+        "wait_park_timeout": "The execution host did not confirm that the preceding session stopped before the wait could open.",
         "orchestrator_stuck": "The coordinating run had nothing left to wait for.",
         "budget_breach": "The run reached its budget limit.",
         "budget_parked": "The run was parked at its budget limit and then abandoned.",

@@ -141,7 +141,10 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 A \`type: wait\` node declares \`timeout\` in positive seconds, an \`on\`
 condition and one transition for each outcome. Wait nodes have no session,
 action or settings. Their typed \`wait-result\` is supplied by the engine.
-Use the output as data only.
+Use the output as data only. \`steps.<id>.vars.waitData\` contains typed condition
+metadata. A literal \`{{ steps.<id>.vars.waitData.content }}\` in an agent action
+requests a separate untrusted JSON record at dispatch. Command templates only see
+the metadata.
 
 - \`on: { kind: timer, after: 60 }\` (or supply RFC 3339 \`until\`) routes
   \`elapsed\`, \`timeout\` and \`cancelled\`.

@@ -1126,6 +1126,114 @@ paths:
                       runId: "run-abc"
                       commandEpoch: 1
                       hostEpoch: 2
+  /workspaces/{id}/publication:
+    post:
+      tags: [execution-host]
+      summary: Read or deliver a publication on an adopted Git workspace
+      operationId: workspacePublication
+      description: |
+        One fenced command surface for publication inspection, evidence, push and
+        PR creation. The host resolves the checkout path and provider origin from
+        the adopted workspace. An open_pr command verifies the approved source
+        and base and rechecks the assignment before requesting a provider write.
+        The optional provider credential is injected into the provider command
+        only and omitted from stored command summaries and response receipts.
+      parameters:
+        - $ref: "#/components/parameters/ExecutionWorkspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command, fence, payload]
+              properties:
+                command:
+                  type: object
+                  additionalProperties: false
+                  required: [id, kind, issuedAt]
+                  properties:
+                    id: { type: string, format: uuid }
+                    kind: { type: string, enum: [workspace.publication] }
+                    issuedAt: { type: string, format: date-time }
+                fence: { $ref: "#/components/schemas/CommandFence" }
+                payload:
+                  oneOf:
+                    - type: object
+                      additionalProperties: false
+                      required: [action, remote, headRef]
+                      properties:
+                        action: { type: string, enum: [inspect, evidence] }
+                        remote: &publicationRemote { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$' }
+                        headRef: &publicationRef { type: string, pattern: '^refs/heads/[A-Za-z0-9_][A-Za-z0-9._/-]{0,250}$' }
+                    - type: object
+                      additionalProperties: false
+                      required: [action, remote, headRef, expectedHead, expectedRemoteHead, repoIdentity]
+                      properties:
+                        action: { type: string, enum: [push] }
+                        remote: *publicationRemote
+                        headRef: *publicationRef
+                        expectedHead: &publicationSha { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                        expectedRemoteHead: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$', nullable: true }
+                        repoIdentity: &publicationRepo { type: string, minLength: 1, maxLength: 512 }
+                    - type: object
+                      additionalProperties: false
+                      required: [action, remote, headRef, expectedHead, repoIdentity, baseRef, title, body, draft]
+                      properties:
+                        action: { type: string, enum: [open_pr] }
+                        remote: *publicationRemote
+                        headRef: *publicationRef
+                        baseRef: *publicationRef
+                        expectedHead: *publicationSha
+                        repoIdentity: *publicationRepo
+                        title: { type: string, minLength: 1, maxLength: 512 }
+                        body: { type: string, maxLength: 65536 }
+                        draft: { type: boolean }
+                        credential: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
+      responses:
+        "200":
+          description: Verified observation for this publication operation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [headSha, remoteHeadSha, repoIdentity]
+                properties:
+                  headSha: { type: string }
+                  remoteHeadSha: { type: string, nullable: true }
+                  repoIdentity: { type: string }
+                  pullRequest:
+                    type: object
+                    description: Required for a successful open_pr command.
+                    required: [url, number, reused]
+                    properties:
+                      url: { type: string, format: uri }
+                      number: { type: integer, minimum: 1 }
+                      reused: { type: boolean }
+                  evidence:
+                    type: object
+                    description: Present for the evidence command.
+                    required: [baseSha, clean, files]
+                    properties:
+                      baseSha: { type: string }
+                      clean: { type: boolean }
+                      files:
+                        type: array
+                        items:
+                          type: object
+                          required: [path, status, additions, deletions, binary]
+                          properties:
+                            path: { type: string }
+                            oldPath: { type: string }
+                            status: { type: string }
+                            additions: { type: integer, minimum: 0 }
+                            deletions: { type: integer, minimum: 0 }
+                            binary: { type: boolean }
+        "409":
+          description: Workspace, assignment, branch, or publication witness is stale.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /workspaces/{id}/head:
     post:
       tags: [execution-host]
@@ -4592,6 +4700,8 @@ components:
       type: string
       enum:
         - workspace.adopt
+        - workspace.observe_head
+        - workspace.publication
         - workspace.release
         - session.create
         - session.prompt

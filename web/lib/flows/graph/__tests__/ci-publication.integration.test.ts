@@ -39,6 +39,8 @@ it.each([
   "merged-pr",
   "disabled-finalize-pr",
   "wrong-pr-head",
+  "retargeted-pr",
+  "legacy-pr-observation",
   "closed-pr",
   "conflict-pr",
   "held-conflict-pr",
@@ -54,32 +56,13 @@ it.each([
       scenario === "merged-pr" ||
       scenario === "disabled-finalize-pr" ||
       scenario === "wrong-pr-head" ||
+      scenario === "retargeted-pr" ||
+      scenario === "legacy-pr-observation" ||
       scenario === "closed-pr" ||
       conflictCase;
     const prNumber = 31;
     const mergeCommitSha = "b".repeat(40);
 
-    if (prBacked) {
-      const prAdapter = await import("@/lib/workbench-git/pull-request");
-      const adapter = vi
-        .spyOn(prAdapter, "preflightedPrAdapter")
-        .mockResolvedValue({
-          preflight: async () => undefined,
-          createOrUpdatePr: async (input) => {
-            expect(input).toMatchObject({ targetBranch: "main", draft: true });
-
-            return {
-              url: `https://${repoIdentity}/pull/${prNumber}`,
-              number: prNumber,
-              reused: false,
-            };
-          },
-        });
-
-      onTestFinished(() => {
-        adapter.mockRestore();
-      });
-    }
     const root = await mkdtemp(join(tmpdir(), "completion-evidence-"));
     const { repoPath, worktreePath, branch } = await initRepoWithWorktree(root);
     const base = await git(repoPath, "rev-parse", "HEAD");
@@ -319,6 +302,30 @@ it.each([
             `HEAD:${envelope.payload.headRef}`,
           );
       }
+      if (envelope.payload.action === "open_pr") {
+        const headSha = await git(worktreePath, "rev-parse", "HEAD");
+
+        expect(prBacked).toBe(true);
+        expect(envelope.fence.runId).toBe(runId);
+        expect(envelope.payload).toMatchObject({
+          repoIdentity,
+          baseRef: "refs/heads/main",
+          expectedHead: headSha,
+          draft: true,
+        });
+        expect(remoteHeadSha).toBe(headSha);
+
+        return {
+          repoIdentity,
+          headSha,
+          remoteHeadSha,
+          pullRequest: {
+            url: `https://${repoIdentity}/pull/${prNumber}`,
+            number: prNumber,
+            reused: false,
+          },
+        };
+      }
       if (envelope.payload.action !== "evidence")
         return {
           repoIdentity,
@@ -369,6 +376,10 @@ it.each([
               : scenario === "closed-pr"
                 ? "closed"
                 : "merged",
+            baseRef:
+              scenario === "retargeted-pr"
+                ? "refs/heads/other"
+                : "refs/heads/main",
             headSha: scenario === "wrong-pr-head" ? "e".repeat(40) : head,
             mergeCommitSha: scenario === "closed-pr" ? null : mergeCommitSha,
             mergedAt:
@@ -414,6 +425,12 @@ it.each([
           })
         ).promotedRunId,
       ).toBe(runId);
+      if (scenario === "legacy-pr-observation") {
+        await database.pool.query(
+          "UPDATE run_publication_observations SET fact=fact-'baseRef' WHERE run_id=$1 AND kind='pr'",
+          [runId],
+        );
+      }
       if (scenario === "superseded-ci") {
         newestCheckPending = true;
         await scan();
@@ -490,7 +507,41 @@ it.each([
       } else if (scenario !== "closed-pr") {
         remoteHeadSha = null;
       }
-      await scan();
+      if (scenario === "retargeted-pr") {
+        const { runPrStateScanJob } =
+          await import("@/lib/scheduler/handlers/pr-state-scan");
+
+        await runPrStateScanJob({
+          db,
+          projectId,
+          getPrState: async () => ({
+            kind: "state",
+            state: "merged",
+            headSha: head,
+            baseRef: "refs/heads/other",
+            mergeCommitSha,
+            mergedAt: new Date().toISOString(),
+            hasConflicts: false,
+          }),
+          fetchPage: async () => Response.json({}, { status: 404 }),
+        });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT pr_state FROM workspaces WHERE run_id=$1",
+              [runId],
+            )
+          ).rows,
+        ).toEqual([{ pr_state: "open" }]);
+        expect(
+          (
+            await database.pool.query(
+              "SELECT id FROM domain_events WHERE run_id=$1 AND kind='run.pr_merged'",
+              [runId],
+            )
+          ).rowCount,
+        ).toBe(0);
+      } else await scan();
       if (scenario === "disabled-finalize-pr") {
         const settingsWriter = await database.pool.connect();
 
@@ -696,7 +747,7 @@ it.each([
           outcome:
             scenario === "closed-pr"
               ? "closed"
-              : scenario === "wrong-pr-head"
+              : scenario === "wrong-pr-head" || scenario === "retargeted-pr"
                 ? "stale"
                 : "merged",
         },
@@ -1192,6 +1243,39 @@ it.each(["pull", "push"] as const)(
       });
     }
 
+    if (transport === "push") {
+      // A previous scheduler read observed this head before the delivery existed.
+      const { recordPublicationObservation } =
+        await import("@/lib/waits/publication-observations");
+      const {
+        rows: [row],
+      } = await database.pool.query<{ publication_id: string }>(
+        "SELECT publication_id FROM run_waits WHERE id=$1",
+        [wait.id],
+      );
+
+      await recordPublicationObservation(
+        database.db as unknown as import("@/lib/execution-host/db").Db,
+        {
+          publicationId: row.publication_id,
+          waitId: wait.id,
+          kind: "ref",
+          headSha: head,
+          fact: {},
+        },
+      );
+      await dispatchDomainEvents({
+        db: database.db,
+        consumers: [buildWaitResolver(() => database.db)],
+      });
+      expect(
+        (
+          await database.pool.query("SELECT state FROM run_waits WHERE id=$1", [
+            wait.id,
+          ])
+        ).rows,
+      ).toEqual([{ state: "open" }]);
+    }
     const seen: string[] = [];
 
     await scanWaitPublications({

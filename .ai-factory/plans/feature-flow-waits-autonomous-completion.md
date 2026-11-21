@@ -184,10 +184,22 @@ Official contracts for the scanner are [GitHub check runs](https://docs.github.c
 
 ## Review remediation
 
-- [ ] **22 — Wait lifecycle and evidence.** Exercise current related-run settlement, bounded park recovery, callback-time ref proof and safe typed wait data.
-- [ ] **23 — Publication and autonomous authority.** Verify the PR's actual base, apply the platform switch consistently and fence provider writes at the execution host.
+- [x] **22 — Wait lifecycle and evidence.** Exercise current related-run settlement, bounded park recovery, callback-time ref proof and safe typed wait data.
+- [x] **23 — Publication and autonomous authority.** Verify the PR's actual base, apply the platform switch consistently and fence provider writes at the execution host.
 - [x] **24 — Contracts and operator UX.** Fan out the Waiting status on the wire, accept exact provider labels, require explicit Studio targets and qualify the wait graph and operator actions.
 - [ ] **25 — Requalify W01–W10, B01–B03 and C01–C05.** Record the test, runtime and lineage for each requirement.
+
+**Tasks 22–23 evidence.** RED reproduced a lost callback at the published head,
+a park preparation left Running past its deadline, a prior Review masking Done,
+missing Review facts, and agent and CLI prompt trust-boundary violations. A
+retargeted PR resolved as merged, the platform disable still allowed classified
+failure, and all three PR adapters wrote after the post-lookup epoch fence was
+lost. GREEN and refactor included the exact callback receipt, the registration
+snapshot and bounded pre-open crash, escaped typed prompt data, actual provider
+base and live authority checks, and fenced execution-host receipts. The final
+focused reruns passed 22 wait lifecycle and prompt tests, 27 supervisor
+receipt tests and nine filesystem ownership checks. The fixes reuse the
+existing wait, publication observation and host-command ledger schema.
 
 **Task 24 evidence.** RED reproduced a 200 RunDTO rejected by its status
 enum, provider labels rejected at manifest parsing, and browser failures for

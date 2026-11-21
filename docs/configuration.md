@@ -379,6 +379,13 @@ requests. In the service account and environment, run
 `gh pr list --repo OWNER/REPO --limit 1` to verify access. A missing credential
 blocks GitHub delivery before the branch is rewritten or pushed.
 
+For a Flow `publish` node, the execution host owns both the Git push and
+provider PR creation. Install the provider CLI and Git push credentials on
+that host. An explicit token from the web environment is supplied only to the
+authorized host command. The command receipt retains the confirmed effect,
+and agent processes receive none of this command's credential data. When
+using stored CLI authentication, sign in as the execution host service user.
+
 > **Manual verification (not in CI).** The provider boundary is MOCKED in CI: the
 > `gh`/`glab` CLI exec AND the Gitea-API `fetch` are stubbed, so no real remote is
 > touched. A live `gh`/`glab` push + PR and a live Gitea/GitVerse PR MUST be exercised

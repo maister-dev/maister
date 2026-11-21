@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //   export type PrStateReadResult =
 //     | { kind: "state"; state: "open" | "merged" | "closed";
 //         mergedAt: string | null; mergeCommitSha: string | null;
-//         hasConflicts: boolean | null; headSha: string | null }
+//         hasConflicts: boolean | null; headSha: string | null; baseRef: string | null }
 //     | { kind: "skip"; transient: boolean; reason: string }
 //     | { kind: "unsupported" };
 //
@@ -160,6 +160,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: null,
     });
@@ -171,6 +172,7 @@ describe("getPrState — github (gh CLI)", () => {
         state: "MERGED",
         mergedAt: "2026-07-14T10:00:00Z",
         mergeCommit: { oid: "abc123def456" },
+        baseRefName: "develop",
         headRefOid: "0123456789abcdef0123456789abcdef01234567",
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
@@ -190,6 +192,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "merged",
       mergedAt: "2026-07-14T10:00:00Z",
       mergeCommitSha: "abc123def456",
+      baseRef: "refs/heads/develop",
       headSha: "0123456789abcdef0123456789abcdef01234567",
       hasConflicts: false,
     });
@@ -219,6 +222,7 @@ describe("getPrState — github (gh CLI)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: null,
     });
@@ -248,12 +252,13 @@ describe("getPrState — github (gh CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: true,
     });
   });
 
-  it("targets --repo owner/repo + pr number; token rides child env only, never argv", async () => {
+  it("targets --repo host/owner/repo + pr number; token rides child env only, never argv", async () => {
     process.env.GH_TOKEN = "gh-secret-token";
     execImpls["gh"] = async () => ({
       stdout: JSON.stringify({
@@ -276,7 +281,7 @@ describe("getPrState — github (gh CLI)", () => {
     const argv = call?.args as string[];
 
     expect(argv).toContain("--repo");
-    expect(argv[argv.indexOf("--repo") + 1]).toBe("org/repo");
+    expect(argv[argv.indexOf("--repo") + 1]).toBe("github.com/org/repo");
     expect(argv).toContain("7");
     expect(argv.join(" ")).not.toContain("gh-secret-token");
     // The field list IS the contract with gh: every one of these is read off the
@@ -285,7 +290,7 @@ describe("getPrState — github (gh CLI)", () => {
     // silently disabled PR-conflict detection with every test still green.
     expect(argv).toContain("--json");
     expect(argv[argv.indexOf("--json") + 1]).toBe(
-      "state,mergedAt,mergeCommit,mergeable,mergeStateStatus,headRefOid",
+      "state,mergedAt,mergeCommit,mergeable,mergeStateStatus,headRefOid,baseRefName",
     );
 
     const env = (call?.opts as { env?: Record<string, string> }).env;
@@ -385,6 +390,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: false,
     });
@@ -396,6 +402,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
         state: "merged",
         merged_at: "2026-07-14T09:00:00Z",
         merge_commit_sha: "cafebabe00",
+        target_branch: "develop",
         sha: "1111111111111111111111111111111111111111",
         has_conflicts: false,
       }),
@@ -414,6 +421,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "merged",
       mergedAt: "2026-07-14T09:00:00Z",
       mergeCommitSha: "cafebabe00",
+      baseRef: "refs/heads/develop",
       headSha: "1111111111111111111111111111111111111111",
       hasConflicts: false,
     });
@@ -441,6 +449,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: null,
     });
@@ -469,6 +478,7 @@ describe("getPrState — gitlab (glab CLI)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: true,
     });
@@ -593,6 +603,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: false,
     });
@@ -615,6 +626,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
         merged: true,
         merged_at: "2026-07-14T08:00:00Z",
         merge_commit_sha: "feed1234ab",
+        base: { ref: "develop" },
         head: { sha: "2222222222222222222222222222222222222222" },
       },
     });
@@ -631,6 +643,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "merged",
       mergedAt: "2026-07-14T08:00:00Z",
       mergeCommitSha: "feed1234ab",
+      baseRef: "refs/heads/develop",
       headSha: "2222222222222222222222222222222222222222",
       hasConflicts: null,
     });
@@ -660,6 +673,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "closed",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: null,
     });
@@ -688,6 +702,7 @@ describe("getPrState — gitea / gitverse (REST)", () => {
       state: "open",
       mergedAt: null,
       mergeCommitSha: null,
+      baseRef: null,
       headSha: null,
       hasConflicts: true,
     });

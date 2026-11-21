@@ -9,6 +9,12 @@ import { promisify } from "node:util";
 import pino from "pino";
 import { z } from "zod";
 
+import {
+  detectProvider,
+  redactUrl,
+  type Provider,
+} from "../../runtime/repository-url";
+
 import { reposRoot } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
 import { deriveRepoNameSafe } from "@/lib/repo-name";
@@ -29,7 +35,12 @@ const MAX_CLONE_DETAIL = 4096;
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const URL_SCHEME_ALLOWLIST = ["https://", "http://", "ssh://", "file://"];
 
-export type Provider = "github" | "gitlab" | "gitea" | "gitverse" | "generic";
+export {
+  detectProvider,
+  parseHost,
+  redactUrl,
+  type Provider,
+} from "../../runtime/repository-url";
 export type GitStatus = "remote" | "no-remote" | "initialized";
 export type ResolvedSource = {
   dir: string;
@@ -75,32 +86,6 @@ function gitExecOptions(timeoutMs: number, signal?: AbortSignal) {
   };
 }
 
-// Extract the host from both scp-like (git@host:org/repo) and URL forms.
-export function parseHost(url: string): string | null {
-  const scp = /^[^/@]+@([^/:]+):/.exec(url);
-
-  if (scp) return scp[1].toLowerCase();
-
-  const schemed = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/@]+@)?([^/:]+)/i.exec(url);
-
-  if (schemed) return schemed[1].toLowerCase();
-
-  return null;
-}
-
-export function detectProvider(url: string): Provider {
-  const host = parseHost(url);
-
-  if (!host) return "generic";
-
-  if (host === "github.com") return "github";
-  if (host.includes("gitlab")) return "gitlab";
-  if (host === "gitverse.ru") return "gitverse";
-  if (host.includes("gitea")) return "gitea";
-
-  return "generic";
-}
-
 // Thin throwing wrapper over the client-safe `deriveRepoNameSafe` — keeps the
 // server contract (PRECONDITION on an underivable name) while single-sourcing
 // the regex/segment logic in the client-importable `repo-name.ts`.
@@ -115,15 +100,6 @@ export function deriveRepoName(url: string): string {
   }
 
   return name;
-}
-
-// Strip `://user:password@` credentials from anywhere in the string — git
-// stderr embeds the full URL mid-message, so this must NOT be anchored.
-export function redactUrl(url: string): string {
-  return url.replace(
-    /([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+):[^/@\s]*@/gi,
-    "$1:***@",
-  );
 }
 
 // ADR-093: classify a (redacted) git stderr blob into an advisory reason. The
