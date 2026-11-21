@@ -79,6 +79,18 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: true,
     timeoutMs: 10_000,
   },
+  "workspace.observe_head": {
+    maxAttempts: 2,
+    backoffBaseMs: 250,
+    driverless: false,
+    timeoutMs: 5000,
+  },
+  "workspace.publication": {
+    maxAttempts: 2,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 50_000,
+  },
   "session.create": {
     maxAttempts: 3,
     backoffBaseMs: 1_000,

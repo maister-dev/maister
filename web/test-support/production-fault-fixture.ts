@@ -1,3 +1,4 @@
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { DatabaseFaultBarrier } from "./fault-barriers";
 import type { RealSupervisor, RealSupervisorOptions } from "./real-supervisor";
 import type { RealWeb } from "./real-web";
@@ -153,6 +154,7 @@ export type ProductionFaultFixture = {
   readonly web: RealWeb;
   api(route: string, init?: RequestInit): Promise<Response>;
   requestSweep(): Promise<Response>;
+  dispatchDomainEvents(): Promise<Response>;
   restartWeb(): Promise<RealWeb>;
   restartSupervisor(
     overrides?: Partial<RealSupervisorOptions>,
@@ -161,7 +163,7 @@ export type ProductionFaultFixture = {
     input: Omit<Parameters<typeof holdDatabaseWrite>[0], "pool">,
   ): Promise<DatabaseFaultBarrier>;
   launchScratch(prompt?: string): Promise<string>;
-  launchFlow(): Promise<string>;
+  launchFlow(manifest?: FlowYamlV1): Promise<string>;
   tails(): Promise<{
     web: string;
     supervisor: string;
@@ -174,6 +176,7 @@ type ProductionFaultOptions = {
   fixture?: string;
   fixtureArgs?: string[];
   fixtureEnv?: Record<string, string>;
+  webEnvironment?: Record<string, string>;
 };
 
 export type ProductionFaultSuite = {
@@ -281,7 +284,7 @@ async function startProductionFaultFixture(
       supervisorUrl: proxy.url,
       runtimeRoot: path.join(root, "web"),
       worktreesRoot,
-      env: { MAISTER_CRON_TOKEN: cronToken },
+      env: { ...options.webEnvironment, MAISTER_CRON_TOKEN: cronToken },
     });
     const cookie = await signInWithCredentials(web.url, WORKER_ADMIN);
     const api = (route: string, init: RequestInit = {}): Promise<Response> =>
@@ -306,6 +309,12 @@ async function startProductionFaultFixture(
       api,
       requestSweep(): Promise<Response> {
         return api("/api/cron/gc", {
+          method: "POST",
+          headers: { "X-Maister-Cron-Token": cronToken },
+        });
+      },
+      dispatchDomainEvents(): Promise<Response> {
+        return api("/api/cron/tick?jobKind=domain_event_dispatch", {
           method: "POST",
           headers: { "X-Maister-Cron-Token": cronToken },
         });
@@ -357,11 +366,12 @@ async function startProductionFaultFixture(
 
         return (await readLaunchResult(response)).runId;
       },
-      async launchFlow(): Promise<string> {
+      async launchFlow(manifest?: FlowYamlV1): Promise<string> {
         const seeded = await seedFlowTask(database!.db, {
           projectId,
           installedPath: root,
           terminalDelayMs: 0,
+          manifest,
         });
 
         return launchFlowThroughHttp({

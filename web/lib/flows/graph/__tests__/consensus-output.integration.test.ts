@@ -27,6 +27,7 @@ import {
   vi,
 } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { closeDb } from "@/lib/db/client";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
@@ -220,10 +221,13 @@ describe("P0-5 consensus pending graph yield", () => {
     expect(attempt.status).toBe("Running");
     scriptCompletion({});
     await redrive();
-    const [resumed] = await getAttempts(seeded.runId);
+    const resumedAttempts = (await getAttempts(seeded.runId)).filter(
+      (entry) => entry.nodeId === "decide",
+    );
 
-    expect(resumed.id).toBe(attempt.id);
-    expect(resumed.status).toBe("Succeeded");
+    expect(resumedAttempts).toEqual([
+      expect.objectContaining({ id: attempt.id, status: "Succeeded" }),
+    ]);
     expect((await getRun(seeded.runId)).status).not.toBe("Failed");
   }, 60_000);
 });
@@ -259,7 +263,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       schemaVersion: 1,
       sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
       transport: "engine_vars",
-      engineVersion: "3.13.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     });
   }, 60_000);
 

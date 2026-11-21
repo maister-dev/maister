@@ -41,6 +41,9 @@ export async function registerNodeRuntime(): Promise<void> {
   initializeEventStreamLagConfig();
   eventIngestBatchRows();
   readSchedulerClockStatus();
+  const { maximumWaitSeconds } = await import("@/lib/waits/config");
+
+  maximumWaitSeconds();
   const { projectionLimitsFromEnv } =
     await import("@/lib/execution-host/events/projection-limits");
 

@@ -284,3 +284,12 @@ native Run/assignment capture remains the control-plane authority; a host handle
 is an opaque execution resource. HTTP shape and replay semantics are owned by
 [the runtime domain](../system-analytics/specialist-runtime.md#company-workspace-adoption)
 and [supervisor API](../api/supervisor.openapi.yaml).
+
+## Flow wait and delivery ownership (Designed)
+
+A condition park retains the workspace and releases the last assignment
+with wait provenance. Restore work on the same host and workspace under a
+new epoch at admission. The only added released-epoch Git read is the
+head observation against the exact wait workspace binding.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

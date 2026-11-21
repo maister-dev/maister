@@ -1594,7 +1594,13 @@ sequenceDiagram
   CONFLICT`.
 - `approve` never needs preview fingerprints and retains current semantics.
 
-### Linked artifacts
+### Condition wait operators (Implemented)
+
+The session-only operateWait grant authorizes delivery, resolution, extension and cancellation. In a timeout-to-human handoff the actual HITL request owns the Decisions item once it exists. A routine wait carries no Decisions item.
+
+See [the governing contract](waits.md).
+
+## Linked artifacts
 
 - Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — the permission-respond Phase-1 transaction also inserts the `session.input` command row; Phase 2 marks `responded_at` and the command `succeeded` in one transaction, and every persist-failure path cancels through a `session.input{action:"cancel"}` command.
 - [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),

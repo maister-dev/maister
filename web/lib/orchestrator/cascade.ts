@@ -281,6 +281,12 @@ async function abandonRunSubtree(
             "agent-queued-turns-superseded",
           );
         for (const row of runRows) {
+          if (row.runKind === "flow" && row.projectId) {
+            const { closeConditionWaitsForRun } =
+              await import("@/lib/waits/close");
+
+            await closeConditionWaitsForRun(tx, row.id, "run_abandoned");
+          }
           await releaseAssignmentForRun(tx, row.id, "abandoned");
           await emitDomainEvent({
             db: tx,

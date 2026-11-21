@@ -872,7 +872,13 @@ flowchart TD
   hold + one comment, mapping to `MaisterError("PRECONDITION")`. A transient
   `MaisterError("EXECUTOR_UNAVAILABLE")` instead skips with no hold and retries.
 
-### Linked artifacts
+### Retention and publication generations (Implemented)
+
+Open waits and resolved Pending continuations pin the workspace through readmission. Shared publication receipts advance projected branch and PR fields with an expected generation CAS. Older provider results cannot mutate a replacement PR.
+
+See [the governing contract](waits.md).
+
+## Linked artifacts
 
 - Execution-host contract (ADR-166, Implemented): [`execution-hosts.md`](execution-hosts.md) — the worktree path is adopted once per host handle into an opaque host-scoped `executionWorkspaceId` (the host refuses a wiped or released handle and the client re-adopts once) (validated against `MAISTER_WORKSPACE_ROOTS`, which MUST mirror a moved `MAISTER_WORKTREES_ROOT`); GC worktree removal issues a driverless `workspace.release`.
 - ADR: [ADR-126 Auto-promotion lanes](../decisions.md#adr-126-auto-promotion-lanes)

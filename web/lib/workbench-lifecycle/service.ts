@@ -57,6 +57,7 @@ import {
 } from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { queuedConditionResumeExists } from "@/lib/waits/close";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
 import {
   branchNameSchema,
@@ -257,6 +258,7 @@ export type WorkbenchLifecycleDeps = {
     runId: string;
     endedAt: Date;
     reason: string;
+    expectedRunStatus?: "Pending";
   }) => Promise<void>;
   promoteNextPending: () => Promise<void>;
   finalizeAgentRun: (args: {
@@ -479,6 +481,7 @@ const STOP_STATUSES: WorkbenchRunStatus[] = [
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  "Waiting",
 ];
 
 // Exported with `requireWorkspace` and `markLifecycleClaimFailed` for the run
@@ -1879,12 +1882,20 @@ async function stopFlowAfterAuth(
 
   await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
-  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
+  // A queued condition wait has no live session. If admission wins, leave
+  // its successor alone and let the exact Pending CAS report the conflict.
+  const supervisorStopped =
+    ctx.run.status === "Pending"
+      ? false
+      : await stopLiveSupervisorSession(ctx, deps);
 
   await deps.markStoppedAndCloseAssignments({
     runId,
     endedAt: new Date(),
     reason: "run stopped by operator",
+    ...(ctx.run.status === "Pending"
+      ? { expectedRunStatus: ctx.run.status }
+      : {}),
   });
 
   try {
@@ -2612,6 +2623,7 @@ async function markRunStoppedAndCloseAssignments(args: {
   runId: string;
   endedAt: Date;
   reason: string;
+  expectedRunStatus?: "Pending";
 }): Promise<void> {
   await db().transaction(async (tx) => {
     const rows = await tx
@@ -2624,7 +2636,18 @@ async function markRunStoppedAndCloseAssignments(args: {
         // the auto-promotion grace window.
         reviewEnteredAt: args.endedAt,
       })
-      .where(and(eq(runs.id, args.runId), inArray(runs.status, STOP_STATUSES)))
+      .where(
+        and(
+          eq(runs.id, args.runId),
+          args.expectedRunStatus === "Pending"
+            ? and(
+                eq(runs.status, args.expectedRunStatus),
+                eq(runs.runKind, "flow"),
+                queuedConditionResumeExists(runs.id),
+              )
+            : inArray(runs.status, STOP_STATUSES),
+        ),
+      )
       .returning({
         id: runs.id,
         projectId: runs.projectId,
@@ -2642,6 +2665,11 @@ async function markRunStoppedAndCloseAssignments(args: {
     }
 
     // ADR-166 D7: the stop ends the run's driver generation.
+    if (rows[0].runKind === "flow" && rows[0].projectId) {
+      const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
+
+      await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
+    }
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
       args.runId,
@@ -2686,6 +2714,10 @@ export async function claimLifecycleOperation(args: {
   // run lock; omitted by a system caller (GC, the reconciler recording a
   // vanished tree), which the policy never gated on the claim's owner.
   actorUserId?: string | null;
+  replay?: {
+    attemptId: string;
+    assertOwner(tx: NodePgDatabase<typeof schema>): Promise<void>;
+  };
 }): Promise<LifecycleOperationClaim> {
   const client = args.database ?? db();
 
@@ -2693,6 +2725,8 @@ export async function claimLifecycleOperation(args: {
     const rows = await tx
       .select({
         id: workspaces.id,
+        lifecycleOperationAttemptId: workspaces.lifecycleOperationAttemptId,
+        lifecycleOperationName: workspaces.lifecycleOperationName,
         lifecycleOperationState: workspaces.lifecycleOperationState,
         lifecycleOperationLeaseExpiresAt:
           workspaces.lifecycleOperationLeaseExpiresAt,
@@ -2711,7 +2745,12 @@ export async function claimLifecycleOperation(args: {
       );
     }
 
-    if (!canReclaimLifecycle(workspace)) {
+    const sameOperation =
+      args.replay &&
+      workspace.lifecycleOperationAttemptId === args.replay.attemptId &&
+      workspace.lifecycleOperationName === args.operation;
+
+    if (!sameOperation && !canReclaimLifecycle(workspace)) {
       throw new MaisterError(
         "CONFLICT",
         `lifecycle operation already in progress for run ${args.runId}`,
@@ -2775,7 +2814,8 @@ export async function claimLifecycleOperation(args: {
       await requireReworkClaimOwner(args.runId, args.actorUserId, tx);
     }
 
-    const attemptId = randomUUID();
+    if (args.replay) await args.replay.assertOwner(tx);
+    const attemptId = args.replay?.attemptId ?? randomUUID();
     const claimedAt = new Date();
     const leaseExpiresAt = new Date(
       claimedAt.getTime() + promotionClaimTimeoutSeconds() * 1000,

@@ -570,6 +570,11 @@ Full DSL reference: [Flow DSL](flow-dsl.md). Bundled plugin walkthrough:
 
 ## Scheduler cron
 
+For installed web services, set `MAISTER_MAX_WAIT_SECONDS` in
+`/etc/maister/maister.env`, the `maister-web.service` environment file. The
+default permits a wait lifetime of seven days, including operator extensions.
+Restart the web service after changing it. Open waits retain their original cap.
+
 The unified scheduler clock is exposed at `GET`/`POST /api/cron/tick`
 (Implemented). Single-box installs use the fallback timer by default and should
 set `MAISTER_SCHEDULER_TIMER_ENABLED=true` explicitly. Multi-web or

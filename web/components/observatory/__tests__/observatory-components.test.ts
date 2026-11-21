@@ -40,6 +40,7 @@ const period = resolveObservatoryPeriod({
 function portfolio(): ObservatoryPortfolio {
   return {
     overview: emptyOverviewTable(),
+    autonomous: { done: 0, failed: 0, reverted: 0 },
     totals: {
       correction: {
         runCount: 2,

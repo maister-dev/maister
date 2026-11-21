@@ -35,6 +35,8 @@ export type AdmissionCandidate = {
     runId?: string;
     taskId?: string;
     parentRunId?: string | null;
+    waitId?: string | null;
+    projectId?: string | null;
   } & Record<string, unknown>;
 };
 

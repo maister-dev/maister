@@ -21,6 +21,8 @@ const NODE_VISUALS: Record<NodeType, NodeVisual> = {
   check: { iconName: "shield", colorToken: "cv-amber" },
   human: { iconName: "person", colorToken: "cv-blue" },
   form: { iconName: "form", colorToken: "cv-rose" },
+  wait: { iconName: "clock", colorToken: "cv-amber" },
+  publish: { iconName: "link", colorToken: "cv-blue" },
 };
 
 const GATE_VISUALS: Record<GateKind, NodeVisual> = {

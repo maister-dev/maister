@@ -78,6 +78,7 @@ const IN_PRODUCTION_STATUSES: ReadonlySet<RunStatus> = new Set([
   // M37 (ADR-098): a parked orchestrator awaiting its children renders in
   // InProduction with a "waiting on N children" affordance.
   "WaitingOnChildren",
+  "Waiting",
 ]);
 
 export function deriveStage(input: DeriveStageInput): BoardColumn {

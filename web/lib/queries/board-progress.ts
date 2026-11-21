@@ -74,7 +74,8 @@ function activeStateFor(
   runStatus: RunStatus,
   attemptStatus?: ProgressNodeAttempt["status"],
 ): ActiveNodeState | null {
-  if (runStatus === "WaitingOnChildren") return "waiting";
+  if (runStatus === "WaitingOnChildren" || runStatus === "Waiting")
+    return "waiting";
   if (attemptStatus === "Failed" || runStatus === "Crashed") return "failed";
   if (
     attemptStatus === "NeedsInput" ||

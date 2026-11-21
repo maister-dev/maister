@@ -2584,18 +2584,23 @@ it("IT-CBA-01 records cancellation once the operator stop parks a linked flow ru
   });
   const control = cancelControl("Stop and keep the diff for review.");
 
-  expect(
-    await cancelAssignmentExecution(
-      database.db,
-      requesterId,
-      assignmentId,
-      control,
-      stopToReview,
-    ),
-  ).toMatchObject({
-    receipt: { revision: 3, status: "cancelled", duplicate: false },
-    settled: true,
-  });
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 60_000 });
+  try {
+    expect(
+      await cancelAssignmentExecution(
+        database.db,
+        requesterId,
+        assignmentId,
+        control,
+        stopToReview,
+      ),
+    ).toMatchObject({
+      receipt: { revision: 3, status: "cancelled", duplicate: false },
+      settled: true,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
   expect(stopToReview).toHaveBeenCalledOnce();
   expect(stopToReview).toHaveBeenCalledWith(runId);
   const { rows } = await database.pool.query(

@@ -1,7 +1,7 @@
 import type { GateDef } from "@/lib/config.schema";
 import type { FlowGraph } from "@/lib/flows/graph/compile";
 
-import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
+import { transitionNodeId } from "./transition-target";
 
 // Client-safe topology builder: pure transform from a compiled (logic-only)
 // FlowGraph to a renderable {nodes, edges} shape. No runtime server-side
@@ -19,6 +19,8 @@ export type GraphNodeRole =
   | "consensus"
   | "human"
   | "form"
+  | "wait"
+  | "publish"
   | "terminal"
   | "other";
 
@@ -95,6 +97,10 @@ function nodeRoleForType(nodeType: string): GraphNodeRole {
       return "human";
     case "form":
       return "form";
+    case "wait":
+      return "wait";
+    case "publish":
+      return "publish";
     default:
       return "other";
   }
@@ -116,6 +122,10 @@ function nodeTypeLabelForRole(role: GraphNodeRole): string {
       return "Human review";
     case "form":
       return "Form";
+    case "wait":
+      return "Wait";
+    case "publish":
+      return "Publish";
     case "terminal":
       return "Terminal";
     default:
@@ -199,8 +209,10 @@ export function buildGraphTopology(compiled: FlowGraph): GraphTopology {
       ...(sessionName ? { sessionName } : {}),
     });
 
-    for (const [outcome, target] of Object.entries(node.transitions)) {
-      if (target === TERMINAL_TRANSITION_TARGET) continue;
+    for (const [outcome, declared] of Object.entries(node.transitions)) {
+      const target = transitionNodeId(declared);
+
+      if (!target) continue;
 
       edges.push({
         id: `${id}:${outcome}`,

@@ -498,6 +498,14 @@ describe("reopenRun — round-trip", () => {
     expect(run.status).toBe("Review");
     expect(run.endedAt).toBeNull();
     expect(run.reviewEnteredAt).not.toBeNull();
+    expect(
+      (
+        await pool.query(
+          "SELECT payload->>'cause' AS cause FROM domain_events WHERE kind='run.review_opened' AND run_id=$1",
+          [runId],
+        )
+      ).rows,
+    ).toEqual([{ cause: "pr_reopened" }]);
 
     const ws = await readWorkspace(runId);
 

@@ -103,6 +103,7 @@ async function referenceHold(
           "NeedsInput",
           "NeedsInputIdle",
           "WaitingOnChildren",
+          "Waiting",
         ]),
         sql`(${executionCommands.createIntent}->'continuation'->'payload'->'contentBlocks') @> ${JSON.stringify([{ type: "runtime_object", objectId: object.id }])}::jsonb`,
       ),

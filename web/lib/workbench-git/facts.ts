@@ -3,6 +3,7 @@ import "server-only";
 import type { AgentKind } from "@/lib/agents/kind";
 import type { WorkbenchGitPolicyInput } from "@/lib/workbench-git/policy";
 
+import { sql } from "drizzle-orm";
 import pino from "pino";
 
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
@@ -11,6 +12,7 @@ import { workbenchClaimHolder } from "@/lib/runs/lifecycle-claim";
 import { openReworkClaimOwnerUserId } from "@/lib/runs/rework-claim";
 import { countUnsettledSharedSiblings } from "@/lib/runs/shared-tree";
 import { syncShapeRefusal } from "@/lib/runs/sync-shape";
+import { queuedConditionResumeExists } from "@/lib/waits/close";
 import { worktreePresence } from "@/lib/workbench-git/presence";
 import { publishedTarget } from "@/lib/workbench-git/publication";
 import {
@@ -165,23 +167,33 @@ export async function loadWorkbenchGitFacts(args: {
     run.workspaceMode === "shared" &&
     run.agentWorkspace === "worktree" &&
     typeof run.rootRunId === "string";
-  const [claimOwnerUserId, siblings, assignment, presence, remotes, launched] =
-    await Promise.all([
-      run.status === "HumanWorking"
-        ? openReworkClaimOwnerUserId(run.id, db)
-        : null,
-      sharedTree ? countUnsettledSharedSiblings(db, run.rootRunId!) : 0,
-      getActiveAssignment(db, run.id),
-      workspace
-        ? worktreePresence([workspace.worktreePath])
-        : new Map<string, boolean>(),
-      workspace
-        ? probe("remotes", run.id, degraded, () =>
-            listRemotes({ projectRepoPath: workspace.parentRepoPath }),
-          )
-        : null,
-      run.runKind === "scratch" ? false : isLaunchedLineageRun(db, run.id),
-    ]);
+  const [
+    claimOwnerUserId,
+    siblings,
+    assignment,
+    presence,
+    remotes,
+    launched,
+    queuedResume,
+  ] = await Promise.all([
+    run.status === "HumanWorking"
+      ? openReworkClaimOwnerUserId(run.id, db)
+      : null,
+    sharedTree ? countUnsettledSharedSiblings(db, run.rootRunId!) : 0,
+    getActiveAssignment(db, run.id),
+    workspace
+      ? worktreePresence([workspace.worktreePath])
+      : new Map<string, boolean>(),
+    workspace
+      ? probe("remotes", run.id, degraded, () =>
+          listRemotes({ projectRepoPath: workspace.parentRepoPath }),
+        )
+      : null,
+    run.runKind === "scratch" ? false : isLaunchedLineageRun(db, run.id),
+    run.runKind === "flow" && run.status === "Pending"
+      ? db.execute(sql`SELECT ${queuedConditionResumeExists(run.id)} AS queued`)
+      : null,
+  ]);
   const worktreePresent = workspace
     ? presence.get(workspace.worktreePath) === true
     : false;
@@ -215,6 +227,9 @@ export async function loadWorkbenchGitFacts(args: {
       runKind: run.runKind,
       agentKind: run.agentKind,
       runStatus: run.status,
+      ...(queuedResume?.rows[0]?.queued === true
+        ? { queuedConditionResume: true }
+        : {}),
       scratchDialogStatus:
         (run.scratchDialogStatus as WorkbenchGitPolicyInput["scratchDialogStatus"]) ??
         null,

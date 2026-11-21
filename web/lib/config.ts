@@ -9,6 +9,14 @@ import Mustache from "mustache";
 import pino from "pino";
 import { parse as parseYaml } from "yaml";
 
+import { PUBLICATION_ENGINE_MIN, WAIT_ENGINE_MIN } from "@/lib/waits/contracts";
+import {
+  AUTONOMOUS_COMPLETION_ENGINE_MIN,
+  usesAutonomousCompletionSyntax,
+} from "@/lib/auto-promotion/completion-policy";
+import { transitionNodeId } from "@/lib/flows/graph/transition-target";
+import { waitTransitionError } from "@/lib/waits/manifest";
+import { compileWaitPayloadSchema } from "@/lib/waits/payload-schema";
 import {
   ARTIFACT_KINDS,
   OUTPUT_COORDINATOR_ENGINE_MIN,
@@ -458,9 +466,20 @@ function nodeActionTemplate(node: NodeDef): string | undefined {
 function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const adj = new Map<string, string[]>();
+  const requireReworkEdges = nodes.some((node) => node.type === "wait");
 
   for (const n of nodes) {
-    adj.set(n.id, Object.values(n.transitions ?? {}));
+    adj.set(
+      n.id,
+      Object.values(n.transitions ?? {}).flatMap((target) => {
+        const next = transitionNodeId(target);
+
+        return next &&
+          (!requireReworkEdges || !n.rework?.allowedTargets.includes(next))
+          ? [next]
+          : [];
+      }),
+    );
   }
 
   const WHITE = 0;
@@ -483,7 +502,7 @@ function findUnboundedCycle(nodes: NodeDef[]): string[] | null {
           (cid) => byId.get(cid)?.rework !== undefined,
         );
 
-        if (!bounded) return [...cycle, next];
+        if (requireReworkEdges || !bounded) return [...cycle, next];
       } else if (c === WHITE) {
         const found = dfs(next);
 
@@ -896,7 +915,9 @@ function validatePlanReviewNodes(nodes: NodeDef[], flowYamlPath: string): void {
 
     if (
       transitions.approve === undefined ||
-      node.rework?.allowedTargets.includes(transitions.approve)
+      node.rework?.allowedTargets.some(
+        (target) => target === transitionNodeId(transitions.approve),
+      )
     ) {
       throw new MaisterError(
         "CONFIG",
@@ -904,10 +925,12 @@ function validatePlanReviewNodes(nodes: NodeDef[], flowYamlPath: string): void {
       );
     }
 
-    const reworkTarget = transitions[planReview.rework_transition];
+    const reworkTarget = transitionNodeId(
+      transitions[planReview.rework_transition],
+    );
 
     if (
-      reworkTarget === undefined ||
+      reworkTarget === null ||
       node.rework === undefined ||
       !node.rework.allowedTargets.includes(reworkTarget)
     ) {
@@ -1194,6 +1217,61 @@ export function validateGraphManifest(
   }
 
   const engineMin = manifest.compat?.engine_min ?? "";
+
+  if (
+    usesAutonomousCompletionSyntax(manifest) &&
+    !semverGte(engineMin, AUTONOMOUS_COMPLETION_ENGINE_MIN)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      `Autonomous completion requires compat.engine_min >= ${AUTONOMOUS_COMPLETION_ENGINE_MIN}`,
+      {
+        details: { reason: "autonomy_engine_min" },
+      },
+    );
+  const publicationNodes = nodes.some(
+    (node) =>
+      node.type === "publish" ||
+      (node.type === "wait" &&
+        (node.on.kind === "ci" || node.on.kind === "pr")),
+  );
+
+  if (publicationNodes && !semverGte(engineMin, PUBLICATION_ENGINE_MIN))
+    throw new MaisterError(
+      "CONFIG",
+      `Flow publication and provider waits require compat.engine_min >= ${PUBLICATION_ENGINE_MIN}`,
+      {
+        details: { reason: "wait_engine_min" },
+      },
+    );
+
+  if (
+    nodes.some((node) => node.type === "wait") &&
+    !semverGte(engineMin, WAIT_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `Flow waits require compat.engine_min >= ${WAIT_ENGINE_MIN}`,
+      {
+        details: { reason: "wait_engine_min" },
+      },
+    );
+  }
+  for (const node of nodes) {
+    if (node.type !== "wait") continue;
+    if (node.on.kind === "signal" && node.on.payload_schema !== undefined)
+      compileWaitPayloadSchema(node.on.payload_schema);
+    const error = waitTransitionError(
+      node.on,
+      node.transitions,
+      node.rework?.onExhaustion,
+    );
+
+    if (error) {
+      log.debug({ nodeId: node.id, error }, "wait graph transitions refused");
+      throw new MaisterError("CONFIG", `wait node "${node.id}" ${error}`);
+    }
+  }
   const artifactsPresent = declaresArtifacts(nodes);
 
   // Engine gate: manifests declaring artifacts require engine_min >= 1.2.0.
@@ -1768,8 +1846,10 @@ export function validateGraphManifest(
       }
     }
 
-    for (const [decision, target] of Object.entries(n.transitions ?? {})) {
-      if (target === TERMINAL_TRANSITION_TARGET) continue;
+    for (const [decision, declared] of Object.entries(n.transitions ?? {})) {
+      const target = transitionNodeId(declared);
+
+      if (!target) continue;
       if (!nodeIds.has(target)) {
         refUnknown(`node "${n.id}" transition "${decision}"`, target);
       }

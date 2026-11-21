@@ -136,6 +136,31 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   (required) is the JSON form it collects against, finishing on
   \`transitions.success\`.
 
+## Durable waits (engine_min >= 3.14.0)
+
+A \`type: wait\` node declares \`timeout\` in positive seconds, an \`on\`
+condition and one transition for each outcome. Wait nodes have no session,
+action or settings. Their typed \`wait-result\` is supplied by the engine.
+Use the output as data only. \`steps.<id>.vars.waitData\` contains typed condition
+metadata. A literal \`{{ steps.<id>.vars.waitData.content }}\` in an agent action
+requests a separate untrusted JSON record at dispatch. Command templates only see
+the metadata.
+
+- \`on: { kind: timer, after: 60 }\` (or supply RFC 3339 \`until\`) routes
+  \`elapsed\`, \`timeout\` and \`cancelled\`.
+- \`kind: comment\` optionally restricts \`actor: { type, id }\` and routes
+  \`commented\`, \`timeout\` and \`cancelled\`.
+- \`kind: run\` takes \`run_id\` and exactly one of \`relation\` (parent or child)
+  or \`relation_id\`; it routes \`done\`, \`failed\`, \`review\`, \`crashed\`,
+  \`abandoned\`, \`timeout\` and \`cancelled\`.
+- \`kind: signal\` requires \`name\`, unique declared \`outcomes\`, optional
+  bounded \`payload_schema\` and optional \`bind: head_sha\`. Supply routes for the
+  declared outcomes, \`timeout\`, \`cancelled\` and \`stale\` when bound.
+- Starting at 3.14.0, \`type: publish\` and \`kind: ci\` bind checks to a
+  publication. CI takes \`publication\`, \`transport\`, \`checks\` and \`issuer\`.
+  Push CI also takes a signal \`name\`; to use it for \`autonomous_completion\`
+  at 3.15.0, declare an independently approved \`provider_issuer\`.
+
 ## Node \`settings\` by type
 
 - **ai_coding / orchestrator**: \`runner_type\`, \`runner\`, \`agent\`, \`model\`,
@@ -273,7 +298,7 @@ manifest.
 | \`ai_coding\`, \`judge\`, \`orchestrator\` | The agent ends its turn with a sentinel-tagged JSON block (exact form below); the LAST such block in the 1 MiB-capped stdout wins. An orchestrator is read only on the turn that completes it — a turn parking on children is never validated. |
 | \`cli\`, \`check\` | The command writes its JSON to \`\$MAISTER_OUTPUT_FILE\` (injected per attempt). |
 | \`consensus\` | The engine's own \`vars\` are validated in place — nothing to emit. |
-| \`human\`, \`form\` | NO channel. Declaring \`output.result\` on them is REFUSED at load. |
+| \`human\`, \`form\`, \`wait\` | NO configurable channel. Declaring \`output.result\` on them is REFUSED at load. |
 
 The sentinel block, verbatim — an opening fence tagged \`json maister:output\`,
 the JSON object, then a bare closing fence:

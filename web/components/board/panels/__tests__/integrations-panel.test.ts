@@ -118,6 +118,7 @@ const labels: TokenLabels = {
   scopeRunsPromote: "Promote child runs",
   scopeRunsSync: "Sync & reopen runs",
   scopeRunsRecover: "Recover & discard runs",
+  scopeWaitsSignal: "Signal Flow waits",
   scopeKnowledgeRead: "Read structured knowledge",
   scopeKnowledgePropose: "Propose knowledge changes",
   scopeKnowledgeReview: "Review knowledge proposals",

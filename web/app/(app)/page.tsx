@@ -24,6 +24,12 @@ import {
   getCrossProjectActivityFeed,
 } from "@/lib/queries/activity-feed";
 import { buildActivityRowLabels } from "@/lib/activity/activity-row-labels";
+import { getDb } from "@/lib/db/client";
+import {
+  getCurrentReviewRefusals,
+  getDeskAutonomousDecisions,
+} from "@/lib/queries/autonomous-completion";
+import { getOpenWaitLabels } from "@/lib/waits/attention";
 import { buildWorkRowsLabels } from "@/lib/work/work-row-labels";
 import { countWorkInFlightByStage } from "@/lib/work/stage-counts";
 import { getActivityCursor } from "@/lib/queries/activity-cursor";
@@ -62,6 +68,7 @@ import { splitAtCursor } from "@/lib/activity/activity-view";
 /** How much of each region the Desk shows before deferring to its full surface. */
 const DESK_WORK_ROWS = 12;
 const DESK_ACTIVITY_ROWS = 12;
+const DESK_ENGINE_DECISIONS = 5;
 /** How much of a running row's history its panel shows before deferring. */
 const DESK_PANEL_EVENTS = 5;
 
@@ -121,6 +128,24 @@ export default async function DeskPage({
       ? inFlight
       : inFlight.filter((row) => row.stage === activeStage);
   const shownRows = visible.slice(0, DESK_WORK_ROWS);
+  const [reviewRefusals, waitConditions, tAutonomy, tWait, engineDecisions] =
+    await Promise.all([
+      getCurrentReviewRefusals(
+        getDb(),
+        shownRows.flatMap((row) =>
+          row.stage === "Review" && row.runId ? [row.runId] : [],
+        ),
+      ),
+      getOpenWaitLabels(
+        getDb(),
+        shownRows.flatMap((row) =>
+          row.runStatus === "Waiting" && row.runId ? [row.runId] : [],
+        ),
+      ),
+      getTranslations("runAutonomy"),
+      getTranslations("flowWait"),
+      getDeskAutonomousDecisions(getDb(), user, DESK_ENGINE_DECISIONS),
+    ]);
   const workGroups = groupWorkTableRows(shownRows, "project");
   // REQ-D15: the row -> decision join, on `runId`, built from the queue this
   // page ALREADY loads. `getWorkTable` is untouched — a read-model change here
@@ -137,8 +162,19 @@ export default async function DeskPage({
   const panels: Record<string, ReactNode> = {};
 
   for (const row of shownRows) {
+    const refusal = row.runId ? reviewRefusals.get(row.runId) : undefined;
+    const condition = row.runId ? waitConditions.get(row.runId) : undefined;
     const panel = deskRowPanel({
       row,
+      waitingFor: condition
+        ? tWait("waitingFor", {
+            condition: condition.name ?? tWait(`kind.${condition.kind}`),
+          })
+        : null,
+      engineRefusal:
+        refusal && tAutonomy.has(`reason.${refusal}`)
+          ? tAutonomy(`reason.${refusal}`)
+          : null,
       decision:
         row.runId === null ? null : (decisionByRunId.get(row.runId) ?? null),
       events: feed.rows.filter((event) => event.runId === row.runId),
@@ -268,6 +304,9 @@ export default async function DeskPage({
               flaggedTitle: tInbox("decisions.flaggedTitle"),
               clarificationTitle: tInbox("decisions.clarificationTitle"),
               operationalTitle: tInbox("decisions.operationalTitle"),
+              waitTitle: tInbox("decisions.waitTitle"),
+              waitOverdue: tInbox("decisions.waitOverdue"),
+              waitHandoff: tInbox("decisions.waitHandoff"),
               review: tInbox("decisions.review"),
               openTask: tInbox("decisions.openTask"),
               stage: workLabels.stage,
@@ -281,6 +320,45 @@ export default async function DeskPage({
         testid="desk-activity"
         title={t("activityTitle")}
       >
+        {engineDecisions.length > 0 ? (
+          <section
+            aria-labelledby="desk-engine-decisions"
+            className="flex flex-col gap-2"
+          >
+            <h3
+              id="desk-engine-decisions"
+              className="m-0 text-sm font-semibold text-ink"
+            >
+              {tAutonomy("title")}
+            </h3>
+            <ul className="m-0 rounded-lg border border-line p-0">
+              {engineDecisions.map((decision) => (
+                <li
+                  key={decision.id}
+                  className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-line px-3 py-2 text-[12.5px] last:border-b-0"
+                >
+                  <span className="font-semibold text-ink">
+                    {`${tAutonomy(`action.${decision.action}`)} · ${tAutonomy(`phase.${decision.phase}`)}`}
+                  </span>
+                  <span className="text-ink-2">
+                    {tActivity("actor.system")}
+                  </span>
+                  <Link
+                    className="text-ink underline underline-offset-2"
+                    href={`/runs/${decision.runId}`}
+                  >
+                    {decision.taskTitle ?? decision.projectName}
+                  </Link>
+                  {tAutonomy.has(`reason.${decision.reason}`) ? (
+                    <span className="text-mute">
+                      {tAutonomy(`reason.${decision.reason}`)}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {activity.unread.length + activity.seen.length === 0 ? (
           <DeskEmpty text={t("activityEmpty")} />
         ) : (
@@ -311,6 +389,8 @@ export default async function DeskPage({
  */
 function deskRowPanel({
   row,
+  waitingFor,
+  engineRefusal,
   decision,
   events,
   canAct,
@@ -323,6 +403,8 @@ function deskRowPanel({
   now,
 }: {
   row: WorkTableRow;
+  waitingFor: string | null;
+  engineRefusal: string | null;
   decision: DecisionItem | null;
   events: ActivityFeedRow[];
   canAct: boolean;
@@ -334,6 +416,13 @@ function deskRowPanel({
   locale: string;
   now: Date;
 }): ReactNode {
+  if (waitingFor)
+    return (
+      <DeskPanelFrame>
+        <p className="m-0 text-[12.5px] text-mute">{waitingFor}</p>
+      </DeskPanelFrame>
+    );
+
   if (row.stage === "WaitingOnHuman" && decision?.kind === "hitl") {
     return (
       <HitlPanel
@@ -349,6 +438,9 @@ function deskRowPanel({
   if (row.stage === "Review" && row.runId !== null) {
     return (
       <DeskPanelFrame>
+        {engineRefusal && (
+          <p className="mb-2 text-[12.5px] text-mute">{engineRefusal}</p>
+        )}
         <Link
           className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"
           href={runReviewHref(row.runId)}

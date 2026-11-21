@@ -120,3 +120,13 @@ MUST honor `min(cursor_event_id)` across registered consumers.
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0046_domain_events.sql`).
 
 Company Run facts use an explicit retained company owner. Main `0251_company_flow_runtime` extends the existing reference guard from finite operational agents to exact v2 workspace-none Flow captures with a pinned required export and no project/Task/project-Flow. It also admits the existing `run.escalated` kind for company work. The guard preserves immutable event ownership and rejects cross-owner Run references. Project webhook subscriptions do not receive company work; assignment result delivery has its own destination contract.
+
+## Flow wait and delivery ownership (Designed)
+
+Wait and decision events use the existing durable project-owned outbox.
+Enforce closed kind and ownership checks. Body fields are versioned
+identifiers, audited actor and fact time. The consumer checkpoints normally
+and catches up eligible facts on committed registration. Adoption never
+advances an execution-host stream cursor.
+
+See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).

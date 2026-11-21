@@ -923,6 +923,12 @@ agent-token server state; none can appear in the body. The strict body is
 Schema. A human-only answer of `agent_question` requires a session responder or
 a global personal token with exact `hitl:respond:human`; `*` is insufficient.
 
+## Project signals and CI correlation (Implemented)
+
+Require an exact waits:signal project-token grant and a project/run/occurrence match. Idempotency is scoped to the authenticated source and wait. Commit the receipt and audit before acceptance. Replay validates content, token and ownership first. A CI lookup returns only the exact callback address and refuses ambiguous generations. Project tokens cannot control waits, policy or finalization.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - ADRs: [ADR-045](../decisions.md#adr-045) (external_check enforcement via review
@@ -983,6 +989,10 @@ Status returns source-free metadata, not protected task input. Cancellation,
 replacement and uncertain replay retain their exact operation scope and current
 authority checks. JSON fields cannot construct a human actor or server-source
 capability; a user-owned bearer token still uses automatic or parent admission.
+The shared execution-policy schema exposes the autonomous completion axis.
+Admission requires a human session for a server-issued evidence-gated Flow
+grant, including when a task or project default selects that axis. The engine
+evaluates the resulting grant as the system actor.
 
 The existing `/api/v1/ext/runs` compatibility adapter requires the same optimistic
 witnesses and reports accepted pending work without inventing a Run ID. Existing

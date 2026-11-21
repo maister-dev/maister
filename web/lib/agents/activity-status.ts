@@ -8,6 +8,7 @@ export const AGENT_EXECUTION_STATUS = {
   NeedsInputIdle: "active",
   HumanWorking: "active",
   WaitingOnChildren: "active",
+  Waiting: "active",
   Review: "settled",
   Crashed: "settled",
   Done: "settled",

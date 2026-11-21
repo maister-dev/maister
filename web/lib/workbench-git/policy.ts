@@ -71,6 +71,7 @@ export type WorkbenchGitPolicyInput = {
   workspaceRemoved: boolean;
   // Legacy input kept for existing callers; no action depends on it.
   workspaceArchived?: boolean;
+  queuedConditionResume?: boolean;
   // ADR-160: `owner_user_id` of an OPEN rework claim, and the acting user.
   claimOwnerUserId: string | null | undefined;
   viewerUserId: string | null | undefined;
@@ -97,6 +98,7 @@ const STATUS_CLASS = {
   NeedsInput: "live",
   NeedsInputIdle: "live",
   WaitingOnChildren: "live",
+  Waiting: "live",
   HumanWorking: "human",
   Review: "parked",
   Crashed: "parked",
@@ -126,6 +128,7 @@ const FLOW_STOP_STATUSES: ReadonlySet<string> = new Set([
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  "Waiting",
 ]);
 
 const SCRATCH_STOP_DIALOG_STATUSES: ReadonlySet<string> = new Set([
@@ -163,7 +166,12 @@ function isStopAllowed(input: WorkbenchGitPolicyInput): boolean {
     return SCRATCH_STOP_DIALOG_STATUSES.has(input.scratchDialogStatus);
   }
 
-  return isStoppableRunStatus(input.runStatus);
+  return (
+    isStoppableRunStatus(input.runStatus) ||
+    (input.runKind === "flow" &&
+      input.runStatus === "Pending" &&
+      input.queuedConditionResume === true)
+  );
 }
 
 // Compare only two REAL ids: `undefined === undefined` from a caller that

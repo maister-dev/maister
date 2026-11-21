@@ -165,6 +165,7 @@ const OPEN_AT_HEAD = {
   state: "open" as const,
   mergedAt: null,
   mergeCommitSha: null,
+  baseRef: "refs/heads/main",
   hasConflicts: false,
   headSha: "source-head-000",
 };

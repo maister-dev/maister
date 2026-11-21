@@ -113,12 +113,16 @@ export async function runFlow(
   // Keep host registration, canonical consumers and owner application on the
   // root database. Only this graph's traversal receives the fenced handle.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const execution = requirements.ownedPrompts
-    ? (opts.execution ??
-      (await bindExecution(hosts, runId, {
-        assignmentId: loaded.run.executionAssignmentId,
-      })))
-    : opts.execution;
+  const requiresWorkspaceCommand = [...graph.nodes.values()].some(
+    (node) => node.nodeType === "wait" || node.nodeType === "publish",
+  );
+  const execution =
+    requirements.ownedPrompts || requiresWorkspaceCommand
+      ? (opts.execution ??
+        (await bindExecution(hosts, runId, {
+          assignmentId: loaded.run.executionAssignmentId,
+        })))
+      : opts.execution;
   // CLI-only traversal owns a database lease without creating an ACP session.
   // ADR-166's existing backfill handles only never-placed historical rows.
   const assignmentId =

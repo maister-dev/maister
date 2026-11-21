@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ExecutionHosts } from "@/lib/execution-host/client";
+
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -11,8 +13,14 @@ import {
   switchDeliveryPolicyToManual,
   type DeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
-import { promotionFromSnapshot } from "@/lib/runs/execution-policy";
-import { promoteRun } from "@/lib/runs/promote";
+import {
+  autonomousCompletionFromSnapshot,
+  promotionFromSnapshot,
+} from "@/lib/runs/execution-policy";
+import {
+  promoteRun,
+  promoteRunWithAutonomousEvidence,
+} from "@/lib/runs/promote";
 
 const { runs } = schemaModule as unknown as Record<string, any>;
 
@@ -52,6 +60,7 @@ export async function deliverRunIfAutoReady(
   runId: string,
   db: Db = getDb() as Db,
   promote: typeof promoteRun = promoteRun,
+  hosts?: Pick<ExecutionHosts, "forAssignment">,
 ): Promise<void> {
   const rows = await db
     .select({
@@ -74,6 +83,23 @@ export async function deliverRunIfAutoReady(
         executionPolicy: unknown;
       }
     | undefined;
+
+  if (
+    run?.status === "Review" &&
+    autonomousCompletionFromSnapshot(run.executionPolicy) === "evidence_gated"
+  ) {
+    try {
+      await promoteRunWithAutonomousEvidence(runId, db, hosts);
+    } catch (error: unknown) {
+      if (!isMaisterError(error)) throw error;
+      log.debug(
+        { runId, code: error.code, details: error.details?.reason },
+        "autonomous delivery deferred",
+      );
+    }
+
+    return;
+  }
 
   // C1 (execution-policy promotion=auto_on_ready): OR-combine with the existing
   // delivery-policy trigger. Either knob auto-promotes; the delivery policy

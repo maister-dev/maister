@@ -88,10 +88,53 @@ const OPEN: PrStateReadResult = {
   mergedAt: null,
   mergeCommitSha: null,
   hasConflicts: null,
+  baseRef: null,
   headSha: null,
 };
 
 describe("runPrStateScanJob", () => {
+  it("B02 discards an old provider merge after the tracked PR is replaced", async () => {
+    const projectId = await seedProject();
+    const candidate = await seedCandidate({
+      projectId,
+      prNumber: 910,
+      withTask: true,
+    });
+    const replacement = {
+      prNumber: 911,
+      prUrl: "https://github.com/fixture/repo/pull/911",
+      prState: "open" as const,
+    };
+    const summary = await runPrStateScanJob({
+      projectId,
+      db,
+      getPrState: async ({ prNumber }) => {
+        expect(prNumber).toBe(910);
+        await db
+          .update(schema.workspaces)
+          .set(replacement)
+          .where(eq(schema.workspaces.id, candidate.workspaceId));
+
+        return {
+          kind: "state",
+          state: "merged",
+          mergeCommitSha: "a".repeat(40),
+          mergedAt: "2026-07-14T00:00:00.000Z",
+          hasConflicts: false,
+          baseRef: "refs/heads/main",
+          headSha: "b".repeat(40),
+        };
+      },
+    });
+
+    expect(summary.updated).toBe(0);
+    expect(await workspace(candidate.workspaceId)).toMatchObject({
+      ...replacement,
+      prMergeCommitSha: null,
+    });
+    expect(await prMergedEvents(projectId)).toHaveLength(0);
+  });
+
   it("applies the merged, closed, and conflicts edges with one webhook each and a merged task_activity, without touching the supervisor or runs.merge_commit_sha", async () => {
     const projectId = await seedProject();
     const merged = await seedCandidate({
@@ -124,6 +167,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-101",
           hasConflicts: false,
+          baseRef: null,
           headSha: null,
         },
         102: {
@@ -132,6 +176,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: null,
+          baseRef: null,
           headSha: null,
         },
         103: {
@@ -140,6 +185,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: null,
           mergeCommitSha: null,
           hasConflicts: true,
+          baseRef: null,
           headSha: null,
         },
       }),
@@ -255,6 +301,7 @@ describe("runPrStateScanJob", () => {
           mergedAt: "2026-07-14T00:00:00.000Z",
           mergeCommitSha: "merge-sha-901",
           hasConflicts: false,
+          baseRef: null,
           headSha: null,
         },
       }),
@@ -281,6 +328,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-07-14T00:00:00.000Z",
         mergeCommitSha: "merge-sha-201",
         hasConflicts: false,
+        baseRef: null,
         headSha: null,
       },
       202: {
@@ -289,6 +337,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: null,
+        baseRef: null,
         headSha: null,
       },
       203: {
@@ -297,6 +346,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: null,
         mergeCommitSha: null,
         hasConflicts: true,
+        baseRef: null,
         headSha: null,
       },
     });
@@ -490,6 +540,7 @@ describe("runPrStateScanJob", () => {
         mergedAt: "2026-09-23T00:00:00.000Z",
         mergeCommitSha: `merge-sha-${args.prNumber}`,
         hasConflicts: null,
+        baseRef: null,
         headSha: null,
       }),
     );
@@ -679,6 +730,7 @@ describe("runPrStateScanJob", () => {
       mergedAt: "2026-07-14T00:00:00.000Z",
       mergeCommitSha: "merge-sha-701",
       hasConflicts: false,
+      baseRef: null,
       headSha: null,
     });
 

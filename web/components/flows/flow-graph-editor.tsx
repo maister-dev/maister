@@ -880,6 +880,7 @@ export default function FlowGraphEditor({
                 schemaFiles={schemaFiles}
                 sessionNames={sessionNames}
                 skillOptions={skillOptions}
+                waitTargets={manifest.nodes.map(({ id }) => id)}
                 onChange={handleNodeFormChange}
                 onPresentationChange={handlePresentationChange}
                 onWriteSchemaFile={onWriteSchemaFile}

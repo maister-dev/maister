@@ -13,7 +13,6 @@ import {
   inArray,
   isNotNull,
   isNull,
-  lt,
   ne,
   not,
   sql,
@@ -77,6 +76,31 @@ import {
   type TaskQueueSettings,
 } from "@/lib/tasks/queue-settings";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { admitConditionWaitResume } from "@/lib/waits/lifecycle";
+
+const pendingWaitColumn = (column: "id" | "queued_at") =>
+  sql`(SELECT w.${sql.identifier(column)} FROM run_waits w WHERE w.run_id=runs.id AND w.resume_state='queued' ORDER BY w.queued_at DESC LIMIT 1)`;
+
+const queuedWaitHostIsReady = sql`(
+  ${pendingWaitColumn("id")} IS NULL OR EXISTS (
+    SELECT 1 FROM execution_assignments a
+    JOIN execution_hosts h ON h.id = a.execution_host_id
+    WHERE a.id=runs.execution_assignment_id AND a.run_id=runs.id
+      AND a.state='released' AND (
+        a.released_reason='waiting_condition' OR (
+          a.released_reason='sync_finished' AND EXISTS (
+            SELECT 1 FROM run_waits w
+            JOIN node_attempts n ON n.id=w.node_attempt_id AND n.run_id=w.run_id
+            WHERE w.id=${pendingWaitColumn("id")} AND w.condition_kind='pr'
+              AND n.finish_continuation->'prConflict'->>'waitId'=w.id
+          )
+        )
+      )
+      AND h.readiness='ready' AND h.retired_at IS NULL
+  )
+)`;
+
+const queuedRunFifo = sql`coalesce(${pendingWaitColumn("queued_at")}, ${schemaModule.runs.startedAt})`;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projects, runs, tasks } = schemaModule as unknown as Record<
@@ -347,6 +371,24 @@ function queuedRunHasAvailableSlots(): SQL<boolean> {
   ) AND (${assignmentBudgetAllowsDispatchSql(sql`runs.id`)})`;
 }
 
+function pendingContinuationAvailable(pool: SchedulerPool) {
+  return and(
+    eq(runs.status, "Pending"),
+    sql`(${runs.taskLaunchIntentId} IS NULL OR EXISTS (SELECT 1 FROM task_launch_intents continuation WHERE continuation.id=${runs.taskLaunchIntentId} AND continuation.dispatch_committed_at IS NOT NULL))`,
+    inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+    queuedRunHasAvailableSlots(),
+    queuedWaitHostIsReady,
+  );
+}
+
+function pendingContinuationOrder() {
+  return [
+    sql`${priorityWeightSql(tasks.priority)} desc`,
+    asc(queuedRunFifo),
+    asc(runs.id),
+  ] as const;
+}
+
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
@@ -501,9 +543,15 @@ export async function tryStartRun(
       rootRunId: string | null;
       parentRunId: string | null;
       assignmentBudgetAvailable: boolean;
+      projectId: string | null;
+      waitId: string | null;
+      waitQueuedAt: Date | null;
     }> = await tx
       .select({
         runKind: runs.runKind,
+        projectId: runs.projectId,
+        waitId: pendingWaitColumn("id"),
+        waitQueuedAt: pendingWaitColumn("queued_at").mapWith(runs.startedAt),
         startedAt: runs.startedAt,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
@@ -608,6 +656,15 @@ export async function tryStartRun(
         );
     }
 
+    const pendingWait =
+      targetRows[0]?.waitId && targetRows[0].projectId
+        ? {
+            waitId: targetRows[0].waitId,
+            projectId: targetRows[0].projectId,
+            runId,
+          }
+        : null;
+
     if (
       automaticAllowed &&
       !sharedBlocked &&
@@ -615,44 +672,61 @@ export async function tryStartRun(
       !assignmentBudgetBlocked &&
       liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
     ) {
-      await acceptedDispatch?.apply(tx);
-      const startedRows: Array<{ projectId: string | null }> = await tx
-        .update(runs)
-        .set({ status: "Running", startedAt: new Date() })
-        .where(
-          and(
-            eq(runs.id, runId),
-            eq(runs.status, "Pending"),
-            assignmentBudgetAllowsDispatchSql(sql`runs.id`),
-          ),
+      if (pendingWait) {
+        const [head] = await tx
+          .select({ id: runs.id })
+          .from(runs)
+          .leftJoin(tasks, eq(runs.taskId, tasks.id))
+          .where(pendingContinuationAvailable(pool))
+          .orderBy(...pendingContinuationOrder())
+          .limit(1);
+
+        if (
+          head?.id === runId &&
+          (await admitConditionWaitResume(tx, pendingWait))
         )
-        .returning({ projectId: runs.projectId });
+          return { started: true } satisfies TryStartRunResult;
+      } else {
+        await acceptedDispatch?.apply(tx);
+        const startedRows: Array<{ projectId: string | null }> = await tx
+          .update(runs)
+          .set({ status: "Running", startedAt: new Date() })
+          .where(
+            and(
+              eq(runs.id, runId),
+              eq(runs.status, "Pending"),
+              assignmentBudgetAllowsDispatchSql(sql`runs.id`),
+            ),
+          )
+          .returning({ projectId: runs.projectId });
 
-      if (startedRows[0]?.projectId != null) {
-        await emitWebhookEvent({
-          db: tx,
-          type: "run.started",
-          projectId: startedRows[0].projectId,
-          runId,
-          data: { trigger: "direct" },
-        });
+        if (startedRows[0]?.projectId != null) {
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.started",
+            projectId: startedRows[0].projectId,
+            runId,
+            data: { trigger: "direct" },
+          });
+        }
+
+        if (startedRows.length === 0)
+          throw new MaisterError(
+            "CONFLICT",
+            "Run state changed before dispatch",
+            { details: { reason: "run_state_changed", runId } },
+          );
+
+        log.info({ runId, pool, liveCount, cap }, "tryStartRun → started");
+
+        return { started: true } satisfies TryStartRunResult;
       }
-
-      if (startedRows.length === 0)
-        throw new MaisterError(
-          "CONFLICT",
-          "Run state changed before dispatch",
-          { details: { reason: "run_state_changed", runId } },
-        );
-
-      log.info({ runId, pool, liveCount, cap }, "tryStartRun → started");
-
-      return { started: true } satisfies TryStartRunResult;
     }
 
     await acceptedDispatch?.releaseCapacity(tx);
 
-    const targetStartedAt = targetRows[0]?.startedAt ?? new Date();
+    const targetStartedAt =
+      targetRows[0]?.waitQueuedAt ?? targetRows[0]?.startedAt ?? new Date();
 
     // Queue position is computed within the run's own pool — agent runs
     // never queue behind flow runs and vice versa.
@@ -663,7 +737,7 @@ export async function tryStartRun(
         and(
           eq(runs.status, "Pending"),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
-          lt(runs.startedAt, targetStartedAt),
+          sql`${queuedRunFifo} < ${targetStartedAt}`,
         ),
       );
 
@@ -954,6 +1028,9 @@ export async function promoteNextPending(
       priority: string | null;
       startedAt: Date | null;
       resumeStartedAt: Date | null;
+      projectId: string | null;
+      waitId: string | null;
+      waitQueuedAt: Date | null;
     }> = await tx
       .select({
         id: runs.id,
@@ -964,21 +1041,14 @@ export async function promoteNextPending(
         priority: tasks.priority,
         startedAt: runs.startedAt,
         resumeStartedAt: runs.resumeStartedAt,
+        projectId: runs.projectId,
+        waitId: pendingWaitColumn("id"),
+        waitQueuedAt: pendingWaitColumn("queued_at").mapWith(runs.startedAt),
       })
       .from(runs)
       .leftJoin(tasks, eq(runs.taskId, tasks.id))
-      .where(
-        and(
-          eq(runs.status, "Pending"),
-          sql`(${runs.taskLaunchIntentId} IS NULL OR EXISTS (SELECT 1 FROM task_launch_intents continuation WHERE continuation.id=${runs.taskLaunchIntentId} AND continuation.dispatch_committed_at IS NOT NULL))`,
-          inArray(runs.runKind, POOL_RUN_KINDS[pool]),
-          queuedRunHasAvailableSlots(),
-        ),
-      )
-      .orderBy(
-        sql`${priorityWeightSql(tasks.priority)} desc`,
-        asc(runs.startedAt),
-      )
+      .where(pendingContinuationAvailable(pool))
+      .orderBy(...pendingContinuationOrder())
       .limit(Math.max(1, cap));
 
     // C3 — answered-idle resumables: NeedsInputIdle + resume_requested_at set, the
@@ -1087,7 +1157,7 @@ export async function promoteNextPending(
       ...c1rows.map((r) => ({
         cls: "C1" as const,
         priority: r.priority as TaskPriority | null,
-        fifoMs: r.startedAt?.getTime() ?? 0,
+        fifoMs: r.waitQueuedAt?.getTime() ?? r.startedAt?.getTime() ?? 0,
         ref: {
           runId: r.id,
           runKind: r.runKind,
@@ -1095,6 +1165,8 @@ export async function promoteNextPending(
           rootRunId: r.rootRunId,
           parentRunId: r.parentRunId,
           resumeStartedAt: r.resumeStartedAt,
+          waitId: r.waitId,
+          projectId: r.projectId,
         },
       })),
       ...c3rows.map((r) => ({
@@ -1147,7 +1219,7 @@ export async function promoteNextPending(
     const now = new Date();
 
     for (const cand of ordered) {
-      const ref = cand.ref as Record<string, unknown>;
+      const ref = cand.ref;
 
       if (typeof ref.intentId === "string") {
         const [intent] = await tx
@@ -1239,6 +1311,24 @@ export async function promoteNextPending(
         const isAgent = runKind === "agent";
 
         if (cand.cls === "C1") {
+          if (ref.waitId && ref.projectId) {
+            const admitted = await admitConditionWaitResume(tx, {
+              runId,
+              waitId: ref.waitId,
+              projectId: ref.projectId,
+            });
+
+            if (!admitted) continue;
+
+            return {
+              kind: "run" as const,
+              id: runId,
+              isAgent: false,
+              isResume: false,
+              isScratchResume: false,
+            };
+          }
+
           // M19/M42: a checkpointed Pending run (acp session on its active session)
           // resumes via session/resume rather than re-running from step 0.
           // ADR-175: a queued RECOVER carries the same substep hazard the direct

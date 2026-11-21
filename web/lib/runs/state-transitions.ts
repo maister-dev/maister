@@ -44,6 +44,7 @@ import {
 import { isMaisterErrorCode } from "@/lib/errors-core";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { mintPlacement, releaseAssignmentForRun } from "@/lib/execution-host";
+import { closeConditionWaitsForRun } from "@/lib/waits/close";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import { authorizeAssignmentQuestionNodeResume } from "@/lib/specialist-assignments/flow-question";
@@ -986,11 +987,13 @@ export async function markReopenFromDone(
   opts: StateTransitionOptions = {},
 ): Promise<StateTransitionResult> {
   const db = opts.db ?? getDb();
-  const rows = await db
-    .update(runs)
-    .set({ status: "Review", endedAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, "Done")))
-    .returning({ id: runs.id });
+  const rows = await casToReviewAndEmit(
+    db,
+    runId,
+    { status: "Review", endedAt: null },
+    "Done",
+    "pr_reopened",
+  );
 
   if (rows.length === 0) {
     log.warn(
@@ -1323,6 +1326,7 @@ export const ABANDONABLE_STATUSES = [
   // M37 (ADR-098): a parked orchestrator is directly abandonable; abandon
   // cascades to its run-tree (T7.4).
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
 ] as const;
@@ -1351,6 +1355,8 @@ export async function abandonRunInTransaction(
 
   if (rows.length === 0) return false;
 
+  if (rows[0].projectId && rows[0].runKind === "flow")
+    await closeConditionWaitsForRun(tx, runId, "run_abandoned");
   await releaseSyncClaimOnTerminal(tx, runId, "CRASH");
   await releaseAssignmentForRun(tx, runId, "abandoned");
 
@@ -1532,6 +1538,7 @@ export async function crashResumedRun(
 // terminal crash. The caller (reconcile/GC) owns the promoteNextPending
 // follow-up — this helper only flips the run state (§3.3).
 export type CrashReason =
+  | "wait-park-timeout"
   | "worktree-gone"
   | "agent-session-gone"
   | "cli-not-retry-safe"

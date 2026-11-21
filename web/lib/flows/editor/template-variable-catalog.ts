@@ -1,5 +1,6 @@
 import type { FlowYamlV1, FormSchema } from "@/lib/config.schema";
 
+import { transitionNodeId } from "@/lib/flows/graph/transition-target";
 import { formSchemaSchema } from "@/lib/config.schema";
 import {
   isRootSchemaFilePath,
@@ -278,7 +279,9 @@ function buildEdges(nodes: readonly NodeLike[], ids: Set<string>): EdgeMap {
     if (!outgoing) continue;
 
     for (const target of Object.values(node.transitions ?? {})) {
-      if (ids.has(target)) outgoing.add(target);
+      const next = transitionNodeId(target);
+
+      if (next && ids.has(next)) outgoing.add(next);
     }
 
     for (const target of node.rework?.allowedTargets ?? []) {
@@ -287,7 +290,7 @@ function buildEdges(nodes: readonly NodeLike[], ids: Set<string>): EdgeMap {
 
     for (const target of decideTargets(node)) {
       if (ids.has(target)) outgoing.add(target);
-      const transitionTarget = node.transitions?.[target];
+      const transitionTarget = transitionNodeId(node.transitions?.[target]);
 
       if (transitionTarget && ids.has(transitionTarget)) {
         outgoing.add(transitionTarget);
@@ -297,7 +300,9 @@ function buildEdges(nodes: readonly NodeLike[], ids: Set<string>): EdgeMap {
     const mismatchTarget = node.output?.result?.on_mismatch;
 
     if (mismatchTarget && mismatchTarget !== "retry") {
-      const transitionTarget = node.transitions?.[mismatchTarget];
+      const transitionTarget = transitionNodeId(
+        node.transitions?.[mismatchTarget],
+      );
 
       if (transitionTarget && ids.has(transitionTarget)) {
         outgoing.add(transitionTarget);

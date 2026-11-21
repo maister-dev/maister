@@ -43,6 +43,7 @@ import {
   getActionableProjectIds,
 } from "@/lib/queries/visible-projects";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import { listWaitDecisions } from "@/lib/waits/attention";
 import {
   listOperationalAttention,
   listUngroupedOperationalAttention,
@@ -67,6 +68,7 @@ export const DECISION_KINDS = [
   "flagged",
   "clarification",
   "operational",
+  "wait",
 ] as const;
 
 export type DecisionKind = (typeof DECISION_KINDS)[number];
@@ -98,6 +100,10 @@ export interface DecisionBase extends DecisionOrderKey {
 }
 
 export type DecisionItem =
+  | (DecisionBase & {
+      kind: "wait";
+      wait: { reason: "overdue" | "timeout_handoff" };
+    })
   | (DecisionBase & {
       kind: "operational";
       operational: OperationalAttention | AgentIncidentGroupRecord;
@@ -150,6 +156,7 @@ const NON_HITL_RANK = {
   flagged: CRITICALITY_RANK.low,
   clarification: CRITICALITY_RANK.medium,
   operational: CRITICALITY_RANK.high,
+  wait: CRITICALITY_RANK.medium,
 } as const satisfies Record<Exclude<DecisionKind, "hitl">, number>;
 
 export function decisionRank(
@@ -193,6 +200,7 @@ const STAGE_BY_KIND = {
   flagged: "Held",
   clarification: "WaitingOnHuman",
   operational: "WaitingOnHuman",
+  wait: "WaitingOnHuman",
 } as const satisfies Record<DecisionKind, WorkStage>;
 
 function isCriticality(value: string | null): value is DecisionCriticality {
@@ -216,6 +224,7 @@ type DecisionReadContext = {
   promotable: Awaited<ReturnType<typeof listPromotableForProjects>>;
   crashed: Awaited<ReturnType<typeof listCrashedForProjects>>;
   flagged: Awaited<ReturnType<typeof listFlaggedForProjects>>;
+  waits: Awaited<ReturnType<typeof listWaitDecisions>>;
   clarifications: Awaited<
     ReturnType<typeof listOpenClarificationsForRecipient>
   >;
@@ -264,34 +273,43 @@ async function readDecisionContext(
       promotable: [],
       crashed: [],
       flagged: [],
+      waits: [],
       clarifications: [],
     };
 
-  const [projectRows, hitlInbox, promotable, crashed, flagged, clarifications] =
-    await Promise.all([
-      client
-        .select({ id: projects.id, slug: projects.slug, name: projects.name })
-        .from(projects)
-        .where(inArray(projects.id, projectIds)),
-      // The resolved set goes to ALL FOUR sources. This one would otherwise
-      // resolve its own — wider — visibility set, which is what made a
-      // project-scoped count include every other project's HITL and a viewer's
-      // count include projects they cannot act in.
-      getCrossProjectHitlInbox(
-        userId,
-        globalRole,
-        { projectIds, companyIds },
-        client,
-      ),
-      listPromotableForProjects(projectIds, { db: client }),
-      listCrashedForProjects(projectIds, { db: client }),
-      listFlaggedForProjects(projectIds, { db: client }),
-      listOpenClarificationsForRecipient(
-        userId,
-        projectIds,
-        client as ReturnType<typeof getDb>,
-      ),
-    ]);
+  const [
+    projectRows,
+    hitlInbox,
+    promotable,
+    crashed,
+    flagged,
+    clarifications,
+    waits,
+  ] = await Promise.all([
+    client
+      .select({ id: projects.id, slug: projects.slug, name: projects.name })
+      .from(projects)
+      .where(inArray(projects.id, projectIds)),
+    // The resolved set goes to ALL FOUR sources. This one would otherwise
+    // resolve its own — wider — visibility set, which is what made a
+    // project-scoped count include every other project's HITL and a viewer's
+    // count include projects they cannot act in.
+    getCrossProjectHitlInbox(
+      userId,
+      globalRole,
+      { projectIds, companyIds },
+      client,
+    ),
+    listPromotableForProjects(projectIds, { db: client }),
+    listCrashedForProjects(projectIds, { db: client }),
+    listFlaggedForProjects(projectIds, { db: client }),
+    listOpenClarificationsForRecipient(
+      userId,
+      projectIds,
+      client as ReturnType<typeof getDb>,
+    ),
+    listWaitDecisions(client, projectIds),
+  ]);
 
   return {
     client,
@@ -304,6 +322,7 @@ async function readDecisionContext(
     crashed,
     flagged,
     clarifications,
+    waits,
   };
 }
 
@@ -367,6 +386,7 @@ async function assembleDecisionsQueue(
     crashed,
     flagged,
     clarifications,
+    waits,
   } = context;
   const projectById = new Map(projectRows.map((row) => [row.id, row]));
 
@@ -375,6 +395,21 @@ async function assembleDecisionsQueue(
   }
 
   const unfiltered: DecisionItem[] = [
+    ...waits.map((item): DecisionItem => ({
+      kind: "wait",
+      stage: STAGE_BY_KIND.wait,
+      id: `wait:${item.waitId}`,
+      projectId: item.projectId,
+      projectSlug: project(item.projectId).slug,
+      projectName: project(item.projectId).name,
+      taskId: item.taskId,
+      taskKey: null,
+      taskTitle: null,
+      runId: item.runId,
+      criticality: null,
+      since: item.since,
+      wait: { reason: item.reason },
+    })),
     ...operational.map((item): DecisionItem => ({
       kind: "operational",
       stage: STAGE_BY_KIND.operational,
@@ -485,6 +520,7 @@ async function assembleDecisionsQueue(
       (item) =>
         item.kind === "clarification" ||
         item.kind === "operational" ||
+        item.kind === "wait" ||
         item.taskId === null ||
         (blockersByTask.get(item.taskId)?.length ?? 0) === 0,
     )

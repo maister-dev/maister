@@ -114,6 +114,9 @@ vi.mock("@/lib/gc/agent-materialization-gc", () => ({
 vi.mock("@/lib/runs/sync-recovery", () => ({
   runSyncRecoverySweep: runSyncRecoverySweepMock,
 }));
+vi.mock("@/lib/runs/flow-pr-conflict", () => ({
+  runFlowPrConflictSweep: async () => undefined,
+}));
 // ADR-185 (D19/D20): the librarian backstop reads the DB; mocked for the same
 // reason, so `errors: []` keeps guarding the composition.
 vi.mock("@/lib/librarian/turn-recovery", () => ({
@@ -135,6 +138,13 @@ vi.mock("@/lib/execution-host", () => ({
   executionCommandReconcilePass: executionCommandReconcilePassMock,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => ({}) }));
+vi.mock("@/lib/scheduler/handlers/wait-deadline", () => ({
+  runWaitDeadlineSweep: vi.fn(async () => ({
+    scanned: 0,
+    resolved: 0,
+    errors: [],
+  })),
+}));
 // ADR-183 amendment 2026-09-28: the pressure step's collaborators, so its
 // orchestration (isolation, drain on every admitting sample) is observable.
 vi.mock("@/lib/execution-host/host-pressure", async (importOriginal) => ({

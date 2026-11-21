@@ -755,6 +755,15 @@ async function readLaunchOptions(
     runnerSlots,
     consensusRunnerSlots,
     selectedFlowRevisionId: revision?.id ?? null,
+    flowPublicationRequired:
+      compatibleManifest?.nodes.some((node) => node.type === "publish") ??
+      false,
+    autonomousCompletionAvailable: Boolean(
+      compatibleManifest?.autonomous_completion &&
+      project.autonomousCompletion?.enabled === true &&
+      platformRuntime?.autonomousCompletionEnabled === true &&
+      revision?.id === flow?.enabledRevisionId,
+    ),
     enabledFlowRevisionId: flow?.enabledRevisionId ?? null,
     primarySessionName: runnerInspection?.primarySessionName ?? "default",
     canConfigureRunnerBindings,

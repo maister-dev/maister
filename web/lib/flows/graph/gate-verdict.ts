@@ -2,6 +2,8 @@ import type { GateVerdict } from "@/lib/db/schema";
 
 import { extractBalancedJsonObjects } from "./json-extract";
 
+import { completionRisk } from "@/lib/auto-promotion/completion-policy";
+
 export type GateOutput = Readonly<{
   depth: number;
   quoted: boolean;
@@ -117,11 +119,14 @@ export function parseVerdict(output: string): GateVerdict | null {
         )
           return null;
 
+        const risk = completionRisk.safeParse(obj.risk);
+
         return {
           verdict: obj.verdict,
           ...(typeof obj.confidence === "number"
             ? { confidence: obj.confidence }
             : {}),
+          ...(risk.success ? { risk: risk.data } : {}),
           ...(Array.isArray(obj.reasons)
             ? { reasons: obj.reasons.map((reason) => String(reason)) }
             : {}),

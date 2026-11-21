@@ -2,7 +2,141 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { describe, expect, it } from "vitest";
 
+import { flowYamlV1Schema } from "@/lib/config.schema";
+import { validateGraphManifest } from "@/lib/config";
+import { classifyStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { compileManifest, resolveTransition } from "@/lib/flows/graph/compile";
+
+it("C01/W02 rejects autonomous evidence declarations with missing sources or an old floor", () => {
+  const manifest = {
+    schemaVersion: 1,
+    name: "Completion",
+    compat: { engine_min: "3.15.0" },
+    autonomous_completion: {
+      ci: "ci",
+      gates: [{ node: "verify", gate: "check" }],
+      review: { node: "verify", gate: "judge" },
+    },
+    nodes: [
+      {
+        type: "cli",
+        id: "verify",
+        action: { command: "true" },
+        transitions: { success: "publish" },
+        pre_finish: {
+          gates: [
+            {
+              id: "check",
+              kind: "command_check",
+              mode: "blocking",
+              command: "true",
+            },
+            {
+              id: "judge",
+              kind: "ai_judgment",
+              mode: "blocking",
+              prompt: "Review the change",
+            },
+          ],
+        },
+      },
+      { type: "publish", id: "publish", transitions: { success: "ci" } },
+      {
+        type: "wait",
+        id: "ci",
+        timeout: 60,
+        on: {
+          kind: "ci",
+          publication: "publish",
+          transport: "pull",
+          checks: ["build"],
+          issuer: "github-actions",
+        },
+        transitions: {
+          success: "done",
+          failure: "done",
+          cancelled: "done",
+          stale: "done",
+          timeout: "done",
+        },
+      },
+    ],
+  };
+
+  expect(classifyStoredFlowManifest(manifest)).toMatchObject({
+    compatible: true,
+  });
+  const push = {
+    ...manifest,
+    nodes: manifest.nodes.map((node) =>
+      node.id === "ci"
+        ? {
+            ...node,
+            on: {
+              ...node.on,
+              transport: "push",
+              name: "build",
+              issuer: "token",
+            },
+          }
+        : node,
+    ),
+  };
+  const pushResult = flowYamlV1Schema.safeParse(push);
+
+  expect(pushResult.success).toBe(false);
+  if (!pushResult.success)
+    expect(pushResult.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["autonomous_completion", "ci"],
+          message: expect.stringContaining("provider_issuer"),
+        }),
+      ]),
+    );
+  expect(
+    classifyStoredFlowManifest({
+      ...push,
+      autonomous_completion: undefined,
+      compat: { engine_min: "3.14.0" },
+      nodes: push.nodes.map((node) =>
+        node.id === "ci"
+          ? { ...node, on: { ...node.on, provider_issuer: "github-actions" } }
+          : node,
+      ),
+    }),
+  ).toMatchObject({
+    compatible: false,
+    reason: { kind: "engine_incompatible" },
+  });
+  expect(
+    classifyStoredFlowManifest({
+      ...manifest,
+      compat: { engine_min: "3.14.0" },
+    }),
+  ).toMatchObject({
+    compatible: false,
+    reason: { kind: "engine_incompatible" },
+  });
+  expect(
+    flowYamlV1Schema.safeParse({
+      ...manifest,
+      autonomous_completion: {
+        ...manifest.autonomous_completion,
+        ci: "missing",
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    flowYamlV1Schema.safeParse({
+      ...manifest,
+      autonomous_completion: {
+        ...manifest.autonomous_completion,
+        review: { node: "verify", gate: "check" },
+      },
+    }).success,
+  ).toBe(false);
+});
 
 const graph: FlowYamlV1 = {
   schemaVersion: 1,
@@ -307,5 +441,141 @@ describe("compileManifest — session assignment (M42)", () => {
 
     expect(g.nodes.get("lint")?.session).toBeUndefined();
     expect(g.sessions.size).toBe(0);
+  });
+});
+
+describe("ADR-216 wait graph contracts", () => {
+  const withWait = (
+    on: unknown,
+    transitions: Record<string, string>,
+    floor = "3.14.0",
+  ) => {
+    return flowYamlV1Schema.parse({
+      schemaVersion: 1,
+      name: "condition tests",
+      compat: { engine_min: floor },
+      nodes: [{ id: "wait", type: "wait", on, timeout: 120, transitions }],
+    });
+  };
+
+  it.each([
+    [{ kind: "timer", after: 60 }, ["elapsed", "timeout", "cancelled"]],
+    [
+      { kind: "comment", actor: { type: "user", id: "reviewer-1" } },
+      ["commented", "timeout", "cancelled"],
+    ],
+    [
+      { kind: "run", run_id: "run-child", relation: "child" },
+      [
+        "done",
+        "failed",
+        "review",
+        "crashed",
+        "abandoned",
+        "timeout",
+        "cancelled",
+      ],
+    ],
+    [
+      { kind: "signal", name: "build", outcomes: ["pass"], bind: "head_sha" },
+      ["pass", "timeout", "cancelled", "stale"],
+    ],
+  ] as const)(
+    "W02 compiles the complete outcome set for %j",
+    (condition, outcomes) => {
+      const manifest = withWait(
+        condition,
+        Object.fromEntries(outcomes.map((outcome) => [outcome, "done"])),
+      );
+
+      validateGraphManifest(manifest, manifest.nodes, "wait.yaml");
+      const node = compileManifest(manifest).nodes.get("wait");
+
+      expect(node?.nodeType).toBe("wait");
+      expect(Object.keys(node?.transitions ?? {})).toEqual(outcomes);
+      expect(node?.session).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [
+      { kind: "timer", after: 60, until: "2026-11-20T12:00:00Z" },
+      /exactly one/,
+    ],
+    [{ kind: "run", run_id: "target" }, /one direct or task relation/],
+    [{ kind: "signal", name: "build", outcomes: ["timeout"] }, /reserved/],
+    [
+      {
+        kind: "signal",
+        name: "build",
+        outcomes: ["ok"],
+        payload_schema: { $ref: "https://example.com/schema" },
+      },
+      /local references/,
+    ],
+  ] as const)("W02 refuses invalid condition %j", (condition, refusal) => {
+    expect(() => withWait(condition, {})).toThrow(refusal);
+  });
+
+  it("W02 refuses a malformed local payload schema at execution and package intake", () => {
+    const manifest = withWait(
+      {
+        kind: "signal",
+        name: "build",
+        outcomes: ["ok"],
+        payload_schema: { type: "unknown" },
+      },
+      { ok: "done", timeout: "done", cancelled: "done" },
+    );
+
+    expect(classifyStoredFlowManifest(manifest)).toMatchObject({
+      compatible: false,
+      reason: { kind: "invalid_manifest" },
+    });
+    expect(() =>
+      validateGraphManifest(manifest, manifest.nodes, "wait.yaml"),
+    ).toThrow(/invalid wait payload_schema/i);
+  });
+
+  it("W02 refuses a lower feature floor, missing outcomes and unbounded reentry", () => {
+    const on = { kind: "timer", after: 30 };
+    const transitions = { elapsed: "done", timeout: "done", cancelled: "done" };
+    const belowFloor = withWait(on, transitions, "3.13.0");
+    const missing = withWait(on, { elapsed: "done", cancelled: "done" });
+    const loop = withWait(on, { ...transitions, elapsed: "wait" });
+    const bounded = flowYamlV1Schema.parse({
+      ...loop,
+      nodes: [
+        {
+          ...loop.nodes[0],
+          rework: {
+            allowedTargets: ["wait"],
+            workspacePolicies: ["keep"],
+            maxLoops: 1,
+            onExhaustion: "exhausted",
+          },
+          transitions: { ...loop.nodes[0].transitions, exhausted: "done" },
+        },
+      ],
+    });
+
+    expect(classifyStoredFlowManifest(belowFloor)).toMatchObject({
+      compatible: false,
+      reason: { kind: "engine_incompatible" },
+    });
+    expect(() =>
+      validateGraphManifest(bounded, bounded.nodes, "wait.yaml"),
+    ).not.toThrow();
+    expect(
+      compileManifest(bounded).nodes.get("wait")?.transitions.exhausted,
+    ).toBe("done");
+
+    expect(() =>
+      validateGraphManifest(belowFloor, belowFloor.nodes, "wait.yaml"),
+    ).toThrow(/3\.14\.0/);
+    expect(() => compileManifest(missing)).toThrow(/timeout/);
+    expect(() => validateGraphManifest(loop, loop.nodes, "wait.yaml")).toThrow(
+      /unbounded cycle/,
+    );
   });
 });

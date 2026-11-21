@@ -19,7 +19,7 @@ const runRowState: { rows: Record<string, unknown>[] } = { rows: [] };
 
 const selectChain = () => ({
   from: () => ({
-    where: async () => runRowState.rows,
+    leftJoin: () => ({ where: async () => runRowState.rows }),
   }),
 });
 

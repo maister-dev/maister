@@ -45,6 +45,7 @@ const STATUS_TONE: Record<RunsListRow["status"], string> = {
     "border-[color-mix(in_oklab,var(--accent-2)_35%,var(--line))] bg-[color-mix(in_oklab,var(--accent-2)_10%,transparent)] text-accent-2",
   Running:
     "border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-[color-mix(in_oklab,var(--accent-4)_12%,transparent)] text-accent-4",
+  Waiting: "border-line bg-paper text-ink-2",
   WaitingOnChildren:
     "border-[color-mix(in_oklab,var(--accent-2)_35%,var(--line))] bg-[color-mix(in_oklab,var(--accent-2)_10%,transparent)] text-accent-2",
 };

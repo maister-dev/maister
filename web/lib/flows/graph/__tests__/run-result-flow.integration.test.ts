@@ -8,6 +8,7 @@ import { asc, eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 import {
@@ -204,7 +205,7 @@ describe("flow-run public result — publish at the seam (AC-13)", () => {
     expect(plan?.outputContract).toMatchObject({
       schemaRef: "./schemas/result.json",
       transport: "sentinel",
-      engineVersion: "3.13.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     });
   }, 60_000);
 

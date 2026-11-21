@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -143,13 +144,14 @@ export async function seedFlowTask(
   input: FixtureTerminal & {
     projectId: string;
     installedPath: string;
+    manifest?: FlowYamlV1;
   },
 ): Promise<{ flowId: string; taskId: string; flowRevisionId: string }> {
   const flowId = randomUUID();
   const flowRevisionId = randomUUID();
   const taskId = randomUUID();
   const flowRefId = `dw-${flowId.slice(0, 8)}`;
-  const manifest = {
+  const manifest = input.manifest ?? {
     schemaVersion: 1,
     name: "durable-workers",
     compat: { engine_min: "1.1.0" },

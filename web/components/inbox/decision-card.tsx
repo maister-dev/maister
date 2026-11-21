@@ -12,6 +12,8 @@ import { WorkStageChip } from "@/components/work/work-stage-chip";
 export interface DecisionCardLabels {
   review: string;
   openTask: string;
+  waitOverdue: string;
+  waitHandoff: string;
   stage: WorkStageLabels;
 }
 
@@ -27,7 +29,12 @@ export function DecisionCard({
     DecisionItem,
     {
       kind:
-        "crashed" | "promotable" | "flagged" | "clarification" | "operational";
+        | "crashed"
+        | "promotable"
+        | "flagged"
+        | "clarification"
+        | "operational"
+        | "wait";
     }
   >;
   labels: DecisionCardLabels;
@@ -75,7 +82,11 @@ export function DecisionCard({
             : item.operational.code
           : item.kind === "clarification"
             ? item.clarification.question
-            : (item.taskTitle ?? item.taskKey ?? item.projectName)}
+            : item.kind === "wait"
+              ? item.wait.reason === "overdue"
+                ? labels.waitOverdue
+                : labels.waitHandoff
+              : (item.taskTitle ?? item.taskKey ?? item.projectName)}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -85,7 +96,9 @@ export function DecisionCard({
             runId={item.crashed.runId}
           />
         ) : null}
-        {(item.kind === "promotable" || item.kind === "operational") &&
+        {(item.kind === "promotable" ||
+          item.kind === "operational" ||
+          item.kind === "wait") &&
         item.runId !== null ? (
           <Link
             className="inline-flex h-8 items-center rounded-[10px] border border-line bg-ivory px-3 text-[12.5px] font-semibold text-ink no-underline"

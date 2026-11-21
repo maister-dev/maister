@@ -9,6 +9,13 @@ import {
   type MaisterErrorCode,
 } from "@/lib/errors";
 import { isEngineCompatible } from "@/lib/flows/engine-version";
+import { semverGte } from "@/lib/flows/semver";
+import { PUBLICATION_ENGINE_MIN, WAIT_ENGINE_MIN } from "@/lib/waits/contracts";
+import {
+  AUTONOMOUS_COMPLETION_ENGINE_MIN,
+  usesAutonomousCompletionSyntax,
+} from "@/lib/auto-promotion/completion-policy";
+import { compileWaitPayloadSchema } from "@/lib/waits/payload-schema";
 import {
   classifyFlowManifestShape,
   LEGACY_STEPS_REFUSAL_MESSAGE,
@@ -108,6 +115,35 @@ export function classifyGraphOnlyFlowManifestShape(
   const parsed = flowYamlV1Schema.safeParse(value);
 
   if (parsed.success) {
+    for (const node of parsed.data.nodes) {
+      if (
+        node.type !== "wait" ||
+        node.on.kind !== "signal" ||
+        node.on.payload_schema === undefined
+      )
+        continue;
+
+      try {
+        compileWaitPayloadSchema(node.on.payload_schema);
+      } catch (error: unknown) {
+        if (
+          !isMaisterError(error) ||
+          error.details?.reason !== "wait_invalid_payload_schema"
+        )
+          throw error;
+
+        return {
+          valid: false,
+          manifest: null,
+          manifestShape: "invalid",
+          reason: {
+            kind: "invalid_manifest",
+            message: `wait node "${node.id}" has an invalid payload_schema`,
+          },
+        };
+      }
+    }
+
     return {
       valid: true,
       manifest: parsed.data,
@@ -160,6 +196,57 @@ export function classifyStoredFlowManifest(
         kind: "engine_incompatible",
         message:
           engineCompatibility.reason ?? "engine compatibility check failed",
+      },
+    };
+  }
+
+  if (
+    shape.manifest.nodes.some((node) => node.type === "wait") &&
+    !semverGte(shape.manifest.compat?.engine_min ?? "", WAIT_ENGINE_MIN)
+  ) {
+    return {
+      compatible: false,
+      manifest: null,
+      manifestShape: "graph",
+      reason: {
+        kind: "engine_incompatible",
+        message: `Flow waits require compat.engine_min >= ${WAIT_ENGINE_MIN}`,
+      },
+    };
+  }
+  if (
+    shape.manifest.nodes.some(
+      (node) =>
+        node.type === "publish" ||
+        (node.type === "wait" &&
+          (node.on.kind === "ci" || node.on.kind === "pr")),
+    ) &&
+    !semverGte(shape.manifest.compat?.engine_min ?? "", PUBLICATION_ENGINE_MIN)
+  ) {
+    return {
+      compatible: false,
+      manifest: null,
+      manifestShape: "graph",
+      reason: {
+        kind: "engine_incompatible",
+        message: `Flow publication and provider waits require compat.engine_min >= ${PUBLICATION_ENGINE_MIN}`,
+      },
+    };
+  }
+  if (
+    usesAutonomousCompletionSyntax(shape.manifest) &&
+    !semverGte(
+      shape.manifest.compat?.engine_min ?? "",
+      AUTONOMOUS_COMPLETION_ENGINE_MIN,
+    )
+  ) {
+    return {
+      compatible: false,
+      manifest: null,
+      manifestShape: "graph",
+      reason: {
+        kind: "engine_incompatible",
+        message: `Autonomous completion requires compat.engine_min >= ${AUTONOMOUS_COMPLETION_ENGINE_MIN}`,
       },
     };
   }

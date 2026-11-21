@@ -124,7 +124,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 17;
+export const HOST_STATE_SCHEMA_VERSION = 18;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -248,6 +248,15 @@ export type WorkspaceRow = {
   contextMounts: unknown[] | null;
   adoptedAt: string;
   releasedAt: string | null;
+};
+
+export type WorkspaceWaitWitness = {
+  waitId: string;
+  workspaceId: string;
+  runId: string;
+  assignmentId: string;
+  generation: number;
+  headSha: string;
 };
 
 // This row is deliberately supervisor-private. `privatePath` is never put in
@@ -472,6 +481,8 @@ export type HostState = {
   getWorkspace(id: string): WorkspaceRow | null;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
+  getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
+  insertWorkspaceWait(witness: WorkspaceWaitWitness): void;
   getRuntimeObject(id: string): HostRuntimeObjectRow | null;
   runtimeObjectsByState(
     state: HostRuntimeObjectRow["state"],
@@ -635,6 +646,15 @@ const SESSION_PROCESS_COLUMNS = `command_id AS commandId, run_id AS runId,
   process_group AS processGroup, phase, registered_at AS registeredAt, retired_at AS retiredAt,
   os_boot_identity AS osBootIdentity,pid_namespace AS pidNamespace,retired_os_boot_identity AS retiredOsBootIdentity`;
 
+const WORKSPACE_WAIT_SCHEMA = `CREATE TABLE IF NOT EXISTS workspace_wait_witnesses (
+  wait_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  run_id TEXT NOT NULL,
+  assignment_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  head_sha TEXT NOT NULL
+);`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -649,6 +669,7 @@ CREATE TABLE IF NOT EXISTS run_fences (
 );
 CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS},company_id TEXT CHECK ((company_id IS NULL AND project_slug <> '_company') OR (company_id IS NOT NULL AND length(company_id) BETWEEN 1 AND 128 AND project_slug='_company' AND kind='directory' AND repo_path IS NULL AND context_mounts IS NULL)));
 ${WORKSPACES_ACTIVE_INDEX};
+${WORKSPACE_WAIT_SCHEMA}
 CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -1061,6 +1082,10 @@ function applySchema(
   if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
   if (Number(user_version) < 16) migrateV15ToV16(db, context, observedAt);
   if (Number(user_version) < 17) db.exec(MIGRATE_V16_TO_V17);
+  if (Number(user_version) < 18)
+    db.exec(
+      `BEGIN IMMEDIATE; ${WORKSPACE_WAIT_SCHEMA} PRAGMA user_version = 18; COMMIT;`,
+    );
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -2213,6 +2238,30 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       const row = db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
 
       return row ? toWorkspaceRow(row) : null;
+    },
+    getWorkspaceWait(waitId) {
+      return (
+        (db
+          .prepare(
+            `SELECT wait_id AS waitId, workspace_id AS workspaceId,
+        run_id AS runId, assignment_id AS assignmentId, generation, head_sha AS headSha
+        FROM workspace_wait_witnesses WHERE wait_id = ?`,
+          )
+          .get(waitId) as WorkspaceWaitWitness | undefined) ?? null
+      );
+    },
+    insertWorkspaceWait(witness) {
+      db.prepare(
+        `INSERT INTO workspace_wait_witnesses (wait_id, workspace_id, run_id, assignment_id,generation,head_sha)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(wait_id) DO NOTHING`,
+      ).run(
+        witness.waitId,
+        witness.workspaceId,
+        witness.runId,
+        witness.assignmentId,
+        witness.generation,
+        witness.headSha,
+      );
     },
     insertWorkspace(row) {
       return storage.write(() => {

@@ -35,13 +35,53 @@ type FlowStudioArtifactsFixture = {
   reviewNode: string;
 };
 
-function loadFixture(): FlowStudioArtifactsFixture {
+function loadFixture(
+  key: "flowStudioArtifacts" | "flowStudioWait" = "flowStudioArtifacts",
+): FlowStudioArtifactsFixture {
   const all = JSON.parse(
     readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-  ) as { byKey: { flowStudioArtifacts: FlowStudioArtifactsFixture } };
+  ) as {
+    byKey: Record<typeof key, FlowStudioArtifactsFixture>;
+  };
 
-  return all.byKey.flowStudioArtifacts;
+  return all.byKey[key];
 }
+
+test("W10 edits a bounded condition on a new wait node", async ({ page }) => {
+  const fixture = loadFixture("flowStudioWait");
+  const editorUrl = await openEditor(page, fixture);
+  const main = page.getByRole("main");
+
+  await main.getByTestId("flow-tab-graph").click();
+  await main.getByTestId("add-node-wait").click();
+  const fields = main.getByTestId("wait-condition-editor");
+
+  await expect(fields).toBeVisible();
+  await fields.getByLabel("Condition JSON").fill('{"kind":"timer","after":0}');
+  await fields.getByRole("button", { name: "Apply condition" }).click();
+  await expect(fields.getByRole("alert")).toBeVisible();
+  await fields
+    .getByLabel("Condition JSON")
+    .fill('{"kind":"signal","name":"ci","outcomes":["passed"]}');
+  await fields.getByRole("button", { name: "Apply condition" }).click();
+  await expect(fields.getByRole("alert")).toHaveText(
+    "Choose a target for every outcome.",
+  );
+  await expect(fields.getByLabel("Target for passed")).toHaveValue("");
+  await fields.getByLabel("Target for passed").selectOption(fixture.reviewNode);
+  await fields.getByLabel("Target for timeout").selectOption("done");
+  await fields.getByLabel("Target for cancelled").selectOption("done");
+  await fields.getByRole("button", { name: "Apply condition" }).click();
+  await expect(fields.getByRole("alert")).toHaveCount(0);
+  await saveDraft(page, editorUrl);
+  await page.goto(editorUrl);
+  await main.getByTestId("flow-tab-graph").click();
+  await main.locator('.react-flow__node[data-id="wait_1"]').click();
+  await expect(fields.getByLabel("Target for passed")).toHaveValue(
+    fixture.reviewNode,
+  );
+  await expect(fields.getByLabel("Target for timeout")).toHaveValue("done");
+});
 
 // Open the dedicated authored draft's editor directly (no fork). Returns the
 // editor URL so later journeys can reload the same draft in place.

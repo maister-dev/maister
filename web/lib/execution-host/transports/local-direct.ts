@@ -335,6 +335,16 @@ export function createLocalDirectTransport(
     releaseWorkspace(executionWorkspaceId, envelope, opts) {
       return wire.releaseWorkspace(executionWorkspaceId, envelope, opts);
     },
+    observeWaitWorkspaceHead(executionWorkspaceId, envelope, opts) {
+      return wire.observeWaitWorkspaceHead(
+        executionWorkspaceId,
+        envelope,
+        opts,
+      );
+    },
+    workspacePublication(executionWorkspaceId, envelope, opts) {
+      return wire.workspacePublication(executionWorkspaceId, envelope, opts);
+    },
     async createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
       try {
         await wire.listSessionsForRun(envelope.fence.runId);

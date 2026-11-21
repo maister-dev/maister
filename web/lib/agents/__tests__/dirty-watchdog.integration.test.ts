@@ -426,6 +426,14 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
       );
 
       expect(run.rows[0].status).toBe("Review");
+      expect(
+        (
+          await pool.query(
+            "SELECT payload->>'cause' AS cause FROM domain_events WHERE kind='run.review_opened' AND run_id=$1",
+            [runId],
+          )
+        ).rows,
+      ).toEqual([{ cause: "agent_exit" }]);
       await expect(stat(materializedPath)).resolves.toBeDefined();
       await expect(
         readFile(

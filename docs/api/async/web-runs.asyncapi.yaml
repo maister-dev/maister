@@ -85,6 +85,8 @@ channels:
       summary: Designed — content-free workbench change notifications
       description: Active browser session. At most the anchor and admitted selected descendant receive
         run.changed ticks. No SSE id/replay cursor; ready/resync causes canonical projection reads.
+        Designed (ADR-216/217) — wait or autonomy writes use the same content-free
+        invalidation after commit, including waits with no execution host event.
         New metadata and final projection changes remain observable after execution settles. HTTP
         heartbeats perform no data polling.
       message:

@@ -1695,6 +1695,20 @@ export function createFakeExecutionHost(
         },
       });
     },
+    async observeWaitWorkspaceHead(id, envelope, opts) {
+      await record("observeWaitWorkspaceHead", envelope, [id, opts]);
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "Fake host has no configured Git HEAD observation",
+      );
+    },
+    async workspacePublication(id, envelope, opts) {
+      await record("workspacePublication", envelope, [id, opts]);
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "Fake host has no configured Git publication",
+      );
+    },
     createSession(envelope: CommandEnvelope<CreateSessionPayload>, opts) {
       return runCommand<CreateSessionResult>({
         method: "createSession",
@@ -3030,6 +3044,41 @@ export function memoryBoundClient(args: {
     },
     releaseWorkspace: (id) =>
       fake.transport.releaseWorkspace(id, envelope("workspace.release", {})),
+    async registerWaitWorkspaceHead(waitId) {
+      const id = await client.ensureWorkspace();
+
+      return fake.transport.observeWaitWorkspaceHead(
+        id,
+        envelope("workspace.observe_head", {
+          waitId,
+          workspaceGeneration: current.epoch,
+          register: true,
+        }),
+      );
+    },
+    async workspacePublication(request) {
+      const id = await client.ensureWorkspace();
+
+      return fake.transport.workspacePublication(
+        id,
+        envelope("workspace.publication", request),
+      );
+    },
+    async observeWaitWorkspaceHead(waitId) {
+      if (!current.executionWorkspaceId)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Missing fake execution workspace",
+        );
+
+      return fake.transport.observeWaitWorkspaceHead(
+        current.executionWorkspaceId,
+        envelope("workspace.observe_head", {
+          waitId,
+          workspaceGeneration: current.epoch,
+        }),
+      );
+    },
     async createSession(payload, opts) {
       const sessionName = opts?.sessionName ?? payload.sessionName ?? "default";
       const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {

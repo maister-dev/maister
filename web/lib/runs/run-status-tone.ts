@@ -25,6 +25,7 @@ export const RUN_STATUS_KEYS = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
   "Done",
@@ -44,6 +45,7 @@ export function runStatusTone(status: string): RunStatusTone {
     case "HumanWorking":
       return "human";
     case "WaitingOnChildren":
+    case "Waiting":
       return "waiting";
     case "Review":
       return "review";

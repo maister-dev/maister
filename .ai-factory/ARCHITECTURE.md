@@ -207,6 +207,10 @@ mAIster/
     └── public/
 ```
 
+The Flow wait storage module (`web/lib/waits`) owns occurrence and receipt
+persistence under the exact project, run and attempt. Graph lifecycle and
+scheduler admission own run status and assignment effects.
+
 ## Dependency Rules
 
 **Strict direction — outer depends on inner, never the reverse:**

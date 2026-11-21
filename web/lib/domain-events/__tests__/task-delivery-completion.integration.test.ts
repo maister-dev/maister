@@ -31,6 +31,7 @@ const MERGED: PrStateReadResult = {
   mergedAt: "2026-11-15T10:00:00.000Z",
   mergeCommitSha: "merge-sha",
   hasConflicts: false,
+  baseRef: null,
   headSha: null,
 };
 

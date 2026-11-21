@@ -93,12 +93,18 @@ export function AutoPromotionPanel({
   canHold,
 }: AutoPromotionPanelProps): ReactElement | null {
   const t = useTranslations("autoPromotion");
+  const tCompletion = useTranslations("runAutonomy");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [held, setHeld] = useState<null | "hold" | "release">(null);
 
-  const { evaluation, promotedLane } = panel;
+  const { completionHold, promotedLane } = panel;
+  const evaluation = completionHold
+    ? completionHold.hold
+      ? { verdict: "held" as const, hold: completionHold.hold }
+      : null
+    : panel.evaluation;
 
   async function mutateHold(method: "PUT" | "DELETE"): Promise<void> {
     setBusy(true);
@@ -127,7 +133,7 @@ export function AutoPromotionPanel({
   }
 
   // A promoted run (Done) with no live evaluation: the audit note only.
-  if (!evaluation) {
+  if (!evaluation && (!completionHold || !canHold)) {
     if (!promotedLane) return null;
 
     return (
@@ -203,12 +209,14 @@ export function AutoPromotionPanel({
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="m-0 font-sans text-[12.5px] font-bold tracking-[-0.005em] text-ink">
-          {t("panel.title")}
+          {completionHold ? tCompletion("holdTitle") : t("panel.title")}
         </h3>
         {successGlyph}
       </div>
 
-      {evaluation.verdict === "eligible" ? (
+      {completionHold && !evaluation ? holdButton : null}
+
+      {evaluation?.verdict === "eligible" ? (
         <div className="flex flex-wrap items-center gap-2">
           <EligibleChip
             eligibleAt={evaluation.eligibleAt}
@@ -219,7 +227,7 @@ export function AutoPromotionPanel({
         </div>
       ) : null}
 
-      {evaluation.verdict === "held" ? (
+      {evaluation?.verdict === "held" ? (
         <div
           className="flex flex-wrap items-center gap-2"
           data-testid="auto-promotion-held"
@@ -240,7 +248,7 @@ export function AutoPromotionPanel({
         </div>
       ) : null}
 
-      {evaluation.verdict === "ineligible" ? (
+      {evaluation?.verdict === "ineligible" ? (
         <div data-testid="auto-promotion-ineligible">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -281,7 +289,7 @@ export function AutoPromotionPanel({
         </div>
       ) : null}
 
-      {evaluation.verdict === "disabled" ? (
+      {evaluation?.verdict === "disabled" ? (
         <p
           className="m-0 font-mono text-[11px] text-mute"
           data-testid="auto-promotion-disabled"
@@ -292,7 +300,7 @@ export function AutoPromotionPanel({
         </p>
       ) : null}
 
-      {evaluation.verdict === "not_applicable" ? (
+      {evaluation?.verdict === "not_applicable" ? (
         <p
           className="m-0 font-mono text-[11px] text-mute"
           data-testid="auto-promotion-not-applicable"

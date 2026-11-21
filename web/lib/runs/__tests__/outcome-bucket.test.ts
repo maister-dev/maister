@@ -57,6 +57,7 @@ describe("run outcome buckets (ADR-178 D3)", () => {
       Pending: "Queued",
       Running: "Executing",
       WaitingOnChildren: "Executing",
+      Waiting: "Executing",
       NeedsInput: "WaitingOnHuman",
       NeedsInputIdle: "WaitingOnHuman",
       HumanWorking: "WaitingOnHuman",

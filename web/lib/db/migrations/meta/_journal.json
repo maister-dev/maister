@@ -2500,6 +2500,27 @@
       "when": 1795258508258,
       "tag": "0360_workspace_integrity_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 361,
+      "version": "7",
+      "when": 1795258508259,
+      "tag": "0361_flow_waits",
+      "breakpoints": true
+    },
+    {
+      "idx": 362,
+      "version": "7",
+      "when": 1795258508260,
+      "tag": "0362_flow_publications",
+      "breakpoints": true
+    },
+    {
+      "idx": 363,
+      "version": "7",
+      "when": 1795258508261,
+      "tag": "0363_autonomous_completion",
+      "breakpoints": true
     }
   ]
 }

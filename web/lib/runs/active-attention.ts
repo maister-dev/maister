@@ -10,6 +10,7 @@ export type ActiveAttentionReason =
   | "needs_input"
   | "being_edited"
   | "waiting_on_children"
+  | "waiting_condition"
   | "awaiting_review"
   | "unpromoted_closed_task"
   | "recover_or_discard"
@@ -38,6 +39,7 @@ const ATTENTION_BY_STATUS = {
   NeedsInputIdle: () => "needs_input",
   HumanWorking: () => "being_edited",
   WaitingOnChildren: () => "waiting_on_children",
+  Waiting: () => "waiting_condition",
   Review: (input: ActiveAttentionInput) =>
     input.taskOpen === false ? "unpromoted_closed_task" : "awaiting_review",
   Crashed: retryable("recover_or_discard"),
@@ -63,6 +65,7 @@ export const UNCONDITIONAL_ATTENTION_STATUSES = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
 ] as const satisfies readonly RunStatus[];
 

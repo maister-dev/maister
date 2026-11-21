@@ -82,6 +82,7 @@ One row per file — this table is the **canonical index** of the folder
 | Manual takeover | [`manual-takeover.md`](manual-takeover.md) | Manual takeover (local worktree handoff): `HumanWorking`, claim/return, downstream staleness, run-detail timeline. |
 | MCP management | [`mcp-management.md`](mcp-management.md) | MCP Management v2 (ADR-129): project bindings, requirements ledger, hub, probe, overlay validation. |
 | Model catalog | [`model-catalog.md`](model-catalog.md) | Model discovery + application: supervisor-side resolver (ACP probe / provider API / curated GLM / CCR sources), in-memory TTL cache, passive harvest, per-adapter model pinning + mismatch advisory (ADR-076). |
+| Flow waits | [`waits.md`](waits.md) | Designed condition suspension, exact outcome evidence and continuation admission (ADR-216). |
 | Notifications | [`notifications.md`](notifications.md) | User-scoped notification subscriptions and web push (ADR-173) over the widened ADR-077 engine: nullable event scope, two-axis subscription matching, and the two-phase-commit sender. |
 | Observatory | [`observatory.md`](observatory.md) | Read-only Observatory metrics: correction rate, Autonomy Score, and repeatable signal clusters. |
 | Orchestrator | [`orchestrator.md`](orchestrator.md) | Orchestrator engine (ADR-098/099/100/163, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset (agent AND flow targets, carrier tasks) + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |

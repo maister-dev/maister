@@ -78,6 +78,7 @@ const STAGE_BY_RUN_STATUS = {
   HumanWorking: "WaitingOnHuman",
   // A parked orchestrator is still executing; the board buckets it the same way.
   WaitingOnChildren: "Executing",
+  Waiting: "Executing",
   Review: "Review",
   Crashed: "Crashed",
   Done: "Promoted",

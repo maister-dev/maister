@@ -915,7 +915,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     const readHistory = async () => ({
       run: (
         await partial.pool.query(
-          "SELECT to_jsonb(r)-ARRAY['knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format'] value FROM runs r WHERE id=$1",
+          "SELECT to_jsonb(r)-ARRAY['knowledge_access','company_id','company_execution_snapshot','company_cancellation_intent','agent_memory_hash_format','flow_publication_grant','autonomous_completion_grant'] value FROM runs r WHERE id=$1",
           [command.runId],
         )
       ).rows[0].value,
@@ -952,7 +952,7 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
     expect(
       (
         await partial.pool.query(
-          "SELECT knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format FROM runs WHERE id=$1",
+          "SELECT knowledge_access,company_id,company_execution_snapshot,company_cancellation_intent,agent_memory_hash_format,flow_publication_grant,autonomous_completion_grant FROM runs WHERE id=$1",
           [command.runId],
         )
       ).rows[0],
@@ -962,6 +962,8 @@ it("DB03 preserves populated 0226 history and leaves new origin, context and par
       company_execution_snapshot: null,
       company_cancellation_intent: null,
       agent_memory_hash_format: null,
+      flow_publication_grant: null,
+      autonomous_completion_grant: null,
     });
     expect(
       (

@@ -36,6 +36,8 @@ const labels: ToolbarProps["labels"] = {
     consensus: "Consensus",
     human: "Human",
     form: "Form",
+    wait: "Wait",
+    publish: "Publish",
   },
   nodeTypeHint: {
     ai_coding: "AI coding hint",
@@ -46,6 +48,8 @@ const labels: ToolbarProps["labels"] = {
     consensus: "Consensus hint",
     human: "Human hint",
     form: "Form hint",
+    wait: "Wait hint",
+    publish: "Publish hint",
   },
   gateKind: {
     command_check: "Command check",

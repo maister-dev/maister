@@ -2,7 +2,7 @@ import "server-only";
 
 import type { PromotionHold } from "@/lib/auto-promotion/types";
 
-import { and, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { autoPromotionEnabledFromEnv } from "@/lib/auto-promotion/config";
@@ -15,7 +15,12 @@ import { buildAutoPromotionReaders } from "@/lib/auto-promotion/readers";
 import { getDb } from "@/lib/db/client";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { promoteRun, type PromoteRunContext } from "@/lib/runs/promote";
+import { autonomousCompletionFromSnapshot } from "@/lib/runs/execution-policy";
+import {
+  promoteRun,
+  promoteRunWithAutonomousEvidence,
+  type PromoteRunContext,
+} from "@/lib/runs/promote";
 import { DEFAULT_AUTO_PROMOTE_JOB_ID } from "@/lib/scheduler/jobs";
 import { addTaskComment } from "@/lib/social/comments";
 import { diffChangeStats, type DiffChangeStatEntry } from "@/lib/worktree";
@@ -130,7 +135,10 @@ export async function runAutoPromoteJob(
         // (e.g. {"enabled":"x"}) must not throw a Postgres cast error and crash the
         // singleton sweep — resolveAutoPromotionConfig (→ config_invalid) is the
         // fail-closed authority.
-        sql`${projects.autoPromotion} @> '{"enabled": true}'::jsonb`,
+        or(
+          sql`${projects.autoPromotion} @> '{"enabled": true}'::jsonb`,
+          sql`${runs.executionPolicy}->'overrides'->>'autonomousCompletion' = 'evidence_gated'`,
+        ),
         // A shared-tree run has workspace_mode='shared'; exclude fail-closed.
         sql`${runs.workspaceMode} IS DISTINCT FROM 'shared'`,
         // ADR-150 (enforcing ADR-142 D3): a launched-lineage run (a launched
@@ -157,6 +165,25 @@ export async function runAutoPromoteJob(
   summary.candidates = candidates.length;
 
   for (const c of candidates) {
+    if (
+      autonomousCompletionFromSnapshot(c.executionPolicy) === "evidence_gated"
+    ) {
+      try {
+        const result = await promoteRunWithAutonomousEvidence(c.runId, db);
+
+        if (result.commit) summary.promoted += 1;
+        else summary.skipped += 1;
+      } catch (error: unknown) {
+        summary.skipped += 1;
+        if (!isMaisterError(error)) throw error;
+        log.debug(
+          { runId: c.runId, code: error.code, reason: error.details?.reason },
+          "autonomous promotion deferred",
+        );
+      }
+
+      continue;
+    }
     if (!c.baseCommit) {
       summary.skipped += 1;
       log.debug({ runId: c.runId }, "no base commit — skip");

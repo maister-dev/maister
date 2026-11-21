@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import {
   currentRunResult,
   markRunResultCollected,
@@ -102,7 +103,7 @@ describe("publishRunResult (ADR-165)", () => {
     expect(row.revision).toBe(1);
     expect(row.validity).toBe("valid");
     expect(row.value).toEqual({ summary: "one" });
-    expect(row.engineVersion).toBe("3.13.0");
+    expect(row.engineVersion).toBe(MAISTER_ENGINE_VERSION);
     expect(row.supersededById).toBeNull();
     expect(row.firstCollectedAt).toBeNull();
   });

@@ -100,7 +100,7 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.13.0`. Operational agents retain their 3.9.0 package floor,
+host engine is `3.15.0`. Operational agents retain their 3.9.0 package floor,
 and native evidence findings require 3.11.0. Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
@@ -2166,3 +2166,87 @@ outside the node's declared rework targets.
 The compiler rejects auto-pass, notify-only, safe-forward, takeover, implicit
 node-id/prompt matching, missing artifacts, and unbounded cycles. Runtime
 forces the human pause; decision answers re-enter only the declared target.
+
+## Durable wait and publication nodes (Implemented)
+
+A project Flow can await a condition with engine minimum 3.14.0. Put the
+condition selector in `on` and declare every result in `transitions`.
+A wait's positive integer `timeout` is in seconds. For a timer, `on.after`
+is a positive integer or `on.until` is an RFC 3339 instant. This example
+runs the normal completion path after sixty seconds and gives timeout and
+cancellation their own edges.
+
+```yaml
+compat: { engine_min: "3.14.0" }
+nodes:
+  - id: delay
+    type: wait
+    on: { kind: timer, after: 60 }
+    timeout: 120
+    transitions: { elapsed: done, timeout: on_timeout, cancelled: on_cancel }
+```
+
+| Selector | Additional fields | Outcome keys |
+| --- | --- | --- |
+| `timer` | Exactly one of `after`, `until` | elapsed, timeout, cancelled |
+| `comment` | Optional `actor` with `type` and `id` | commented, timeout, cancelled |
+| `run` | `run_id`; exactly one of `relation` (parent/child) or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
+| `signal` | `name`, finite `outcomes`, optional `payload_schema`, optional `bind: head_sha` | declared keys, timeout, cancelled; stale if bound |
+| `ci` | `publication` node ID, `transport` (push/pull), required `checks` (exact provider labels, up to 256 characters each), declared `issuer` and push `name`. `provider_issuer` is required on a push CI node used by `autonomous_completion`. | success, failure, cancelled, timeout, stale |
+| `pr` | `publication` node ID with a PR receipt | merged, closed, conflict, timeout, cancelled, stale |
+
+Missing timeout or cancellation routes, an undeclared signal outcome, a
+remote schema reference or a cycle without a bounded rework declaration
+are configuration errors. The resolver freezes the current input and graph
+revision. Rework creates a fresh occurrence. The attempt's wait-result
+is bounded data and includes provenance. It cannot supply command input or
+interpolation syntax.
+
+Each resolved attempt exports `steps.<id>.vars.waitData.kind`. Timer data includes
+`dueAt` and `deadline`, comment data includes `taskId`, related-run data includes
+`runId`, and signal data includes `name` and the boolean `hasPayload`. CI and PR
+data include `publicationId`, and CI includes an array of declared `failedChecks`.
+In a graph agent action prompt, `{{ steps.<id>.vars.waitData.content }}`
+requests a separate quoted JSON record for the latest successful wait attempt.
+Signal payloads retain their JSON types. Comment content is read from its exact
+project and task and appears as a JSON `text` field. The prompt renderer inserts
+this bounded record after instruction and capability rendering. CLI and check
+commands can read the public fields above. Content is available only at the
+agent prompt sink and through the authorized wait detail.
+
+Engine minimum 3.14.0 adds `publish` with PR mode absent, draft or ready,
+plus CI and PR wait selectors. A provider wait must reference the successful
+publication on its current path. Engine minimum 3.15.0 adds explicit
+terminal failure targets such as `{ end: failed, reason: wait_timeout }`.
+The existing `failed` node ID remains valid as a string target.
+
+For evidence-gated completion on 3.15.0, declare `autonomous_completion`
+on the reviewed Flow. Set `ci` to a CI wait node ID, `gates` to the
+required blocking `{ node, gate }` pairs, and `review` to a blocking
+AI judgment pair. Each pair names the producing node and its pre-finish
+gate. Optional `failure_reasons` lists the classified terminal outcomes
+that the Flow can authorize. At launch the server freezes the declaration
+and the project limits with the pinned revision. Live limits can narrow
+the grant.
+
+See [waits](system-analytics/waits.md) for precedence, authority and resume
+semantics and [execution policy](system-analytics/execution-policy.md) for
+completion grants and refusal behavior.
+
+Other valid `on` values (with outcome routes as listed above) include
+`{ kind: comment, actor: { type: user, id: reviewer-1 } }`,
+`{ kind: run, run_id: run-1, relation_id: relation-1 }`,
+`{ kind: signal, name: build, outcomes: [pass, fail], bind: head_sha }`,
+`{ kind: ci, publication: publish, transport: pull, checks: [test], issuer: github-main }`
+and `{ kind: pr, publication: publish }`. Phase B examples require 3.14.0.
+
+For push delivery, `issuer` identifies the authorized project signal token.
+The callback can advance the graph after the exact publication ref is verified.
+With `autonomous_completion`, `provider_issuer` names the check publisher for a
+separate current provider scan. Both source identities require project approval.
+A callback alone supplies no promotion authority.
+
+Refused variants include a timer with both `after` and `until`, a comment
+restricted to an unknown actor kind, a self-referencing run, a signal
+declaring the engine-owned `timeout` result, a CI declaration with an empty
+check list, and a PR wait referencing a publication that omits a PR.

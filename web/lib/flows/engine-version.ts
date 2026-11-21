@@ -103,7 +103,9 @@ const log = pino({
 // 3.12.0 adds declared company result-only graphs over the existing execution
 // ledger, with current authority, required results and durable native recovery.
 // 3.13.0 adds typed ACP retry selectors.
-export const MAISTER_ENGINE_VERSION = "3.13.0";
+// 3.14.0 adds bounded durable waits (ADR-216) and run-branch publication.
+// 3.15.0 adds autonomous completion declarations (ADR-217).
+export const MAISTER_ENGINE_VERSION = "3.15.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

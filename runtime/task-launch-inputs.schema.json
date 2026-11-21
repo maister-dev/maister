@@ -87,6 +87,10 @@
                 "type": "string",
                 "enum": ["manual", "auto_on_ready"]
               },
+              "autonomousCompletion": {
+                "type": "string",
+                "enum": ["off", "evidence_gated"]
+              },
               "commits": {
                 "type": "string",
                 "enum": [
@@ -402,6 +406,10 @@
               "promotion": {
                 "type": "string",
                 "enum": ["manual", "auto_on_ready"]
+              },
+              "autonomousCompletion": {
+                "type": "string",
+                "enum": ["off", "evidence_gated"]
               },
               "commits": {
                 "type": "string",

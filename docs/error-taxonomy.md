@@ -930,3 +930,18 @@ New routes use existing typed domain/auth codes with safe `details.reason` and l
 `PRECONDITION / operational_legacy_baseline_unverifiable` refuses a new continuation with an unverifiable historical ephemeral witness. `EXECUTOR_UNAVAILABLE / agent_execution_quiescence_unproven` still blocks dispatched cancellation and physical disposal when evidence is incomplete. `CONFLICT / operation_busy` on Pull reports repository ownership contention.
 
 `PRECONDITION / agent_continuation_settlement_pending` declines create or prompt admission when the Run already has a retained continuation failure. `CONFLICT / agent_continuation_attention_stale` means an operator's settlement recheck observation is no longer current. Refresh the Run and inspect its latest diagnosis before rechecking again.
+
+## Flow wait and autonomous delivery reasons (Designed)
+
+| Code | Reasons | Meaning |
+| --- | --- | --- |
+| `CONFIG` | `wait_invalid_condition`, `wait_invalid_payload`, `wait_engine_min` | Refused manifest, envelope or payload. |
+| `CONFLICT` | `wait_key_conflict`, `wait_closed`, `wait_wrong_head`, `wait_version_changed`, `wait_deadline_elapsed`, `wait_callback_ambiguous` | Replayed different intent, unavailable occurrence, wrong witness, ordering conflict or ambiguous correlation. |
+| `PRECONDITION` | `wait_unrelated_run`, `wait_deadline_cap`, `wait_content_unavailable`, `wait_content_too_large`, `autonomy_revert_unverified` | Refuse an unrelated run, a deadline beyond the cap, unavailable or oversized prompt data, or unverified reversal evidence. |
+| `CRASH` | `wait-park-timeout` | The assigned host did not prove quiescence by the preparation deadline. Existing crash actions apply. |
+| `CONFLICT` | `autonomy_revision_changed` | The admin setting CAS lost to a newer policy revision. |
+| `UNAUTHORIZED` or `NOT_FOUND` | — | Token/session refused or resource tuple hidden according to route authority. |
+
+Timeout, stale and autonomous refusal are recorded decisions with typed
+reasons. An uncertain host or provider read preserves the existing deadline
+and grants no delivery authority.

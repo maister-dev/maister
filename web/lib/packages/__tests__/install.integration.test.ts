@@ -5,9 +5,17 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { installPackageRevision } from "@/lib/packages/attach";
 import { installPackage } from "@/lib/packages/install";
 import {
   startMainPostgresTestDb,
@@ -132,4 +140,107 @@ describe("installPackage (real pipeline, local source)", () => {
       revision: result.resolvedRevision,
     });
   });
+});
+
+it("W02 installs all wait kinds at their exact engine floors", async () => {
+  const source = await mkdtemp(join(tmpdir(), "pkg-int-wait-floors-"));
+
+  onTestFinished(() => rm(source, { recursive: true, force: true }));
+  const wait = (
+    id: string,
+    on: Record<string, unknown>,
+    outcomes: readonly string[],
+    next: string,
+  ) => ({
+    type: "wait",
+    id,
+    on,
+    timeout: 120,
+    transitions: Object.fromEntries(
+      [...outcomes, "timeout", "cancelled"].map((outcome) => [outcome, next]),
+    ),
+  });
+  const manifests = [
+    {
+      name: "wait-conditions-floor",
+      compat: { engine_min: "3.14.0" },
+      nodes: [
+        wait("clock", { kind: "timer", after: 60 }, ["elapsed"], "comment"),
+        wait("comment", { kind: "comment" }, ["commented"], "related"),
+        wait(
+          "related",
+          { kind: "run", run_id: "linked-run", relation: "child" },
+          ["done", "failed", "review", "crashed", "abandoned"],
+          "report",
+        ),
+        wait(
+          "report",
+          { kind: "signal", name: "build", outcomes: ["ok"], bind: "head_sha" },
+          ["ok", "stale"],
+          "done",
+        ),
+      ],
+    },
+    {
+      name: "remote-waits-floor",
+      compat: { engine_min: "3.14.0" },
+      nodes: [
+        {
+          type: "publish",
+          id: "publish",
+          pr: "ready",
+          transitions: { success: "ci" },
+        },
+        wait(
+          "ci",
+          {
+            kind: "ci",
+            publication: "publish",
+            transport: "pull",
+            checks: ["build"],
+            issuer: "github-actions",
+          },
+          ["success", "failure", "stale"],
+          "pr",
+        ),
+        wait(
+          "pr",
+          { kind: "pr", publication: "publish" },
+          ["merged", "closed", "conflict", "stale"],
+          "done",
+        ),
+      ],
+    },
+  ];
+  const flows = manifests.map(({ name }) => ({ id: name, path: name }));
+
+  await writeFile(
+    join(source, "maister-package.yaml"),
+    JSON.stringify({ schemaVersion: 1, name: "wait-floors", flows }),
+  );
+  for (const manifest of manifests) {
+    await mkdir(join(source, manifest.name));
+    await writeFile(
+      join(source, manifest.name, "flow.yaml"),
+      JSON.stringify({ schemaVersion: 1, ...manifest }),
+    );
+  }
+  const installed = await installPackageRevision({
+    source,
+    version: "local",
+    db,
+  });
+  const revisions = await db
+    .select({ id: schemaModule.flowRevisions.flowRefId })
+    .from(schemaModule.flowRevisions)
+    .where(
+      eq(
+        schemaModule.flowRevisions.resolvedRevision,
+        installed.resolvedRevision,
+      ),
+    );
+
+  expect(revisions.map(({ id }) => id).sort()).toEqual(
+    flows.map(({ id }) => id).sort(),
+  );
 });

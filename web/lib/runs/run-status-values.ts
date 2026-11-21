@@ -11,6 +11,7 @@ export const RUN_STATUS_VALUES = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
   "Done",

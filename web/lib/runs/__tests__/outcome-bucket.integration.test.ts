@@ -107,6 +107,7 @@ const EXPECTED: Record<
   Pending: all("Queued"),
   Running: all("Executing"),
   WaitingOnChildren: all("Executing"),
+  Waiting: all("Executing"),
   NeedsInput: all("WaitingOnHuman"),
   NeedsInputIdle: all("WaitingOnHuman"),
   HumanWorking: all("WaitingOnHuman"),

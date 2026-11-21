@@ -30,6 +30,7 @@ const STATE = {
   state: "merged" as const,
   mergedAt: "2026-09-26T08:00:00Z",
   mergeCommitSha: null,
+  baseRef: "refs/heads/main",
   hasConflicts: null,
   headSha: "a".repeat(40),
 };

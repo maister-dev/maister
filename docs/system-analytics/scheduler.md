@@ -618,6 +618,14 @@ must not enter `bundleErrors` or disable the scheduler job.
   once the lock is taken again. See
   [scratch runs](scratch-runs.md#reconciliation-grace-and-recover-implemented).
 
+## Wait clock and provider checks (Implemented)
+
+One due job scans bounded batches by due instant and ID. Persist retry disposition and isolate bad inputs without starving later waits. Boot recovery catches up durable open rows. Keep deadlines enabled while stopping intake.
+
+Only the CI scanner schedules recurring provider reads. It uses bounded attempts, a durable cursor and backoff. PR observations come from the existing PR scanner.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - Spec: [`../../.ai-factory/specs/feature-m24-scheduler-service.md`](../../.ai-factory/specs/feature-m24-scheduler-service.md).

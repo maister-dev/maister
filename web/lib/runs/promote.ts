@@ -2,6 +2,9 @@ import "server-only";
 
 import type { Workspace } from "@/lib/db/schema";
 import type { PublishedTarget } from "@/lib/workbench-git/publication";
+import type { ExecutionHosts } from "@/lib/execution-host/client";
+import type { CompletionAuthorization } from "@/lib/auto-promotion/promotion-claim";
+import type { WorkspacePublicationSnapshot } from "../../../runtime/workspace-publication";
 
 import { randomUUID } from "node:crypto";
 
@@ -20,6 +23,12 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { isLaunchedLineageRun } from "@/lib/evaluations/membership";
+import { observeCompletionCandidate } from "@/lib/auto-promotion/completion-readers";
+import {
+  evaluatePromotionClaim,
+  readRetainedMergeClaim,
+} from "@/lib/auto-promotion/promotion-claim";
+import { recordAutonomousDecision } from "@/lib/auto-promotion/decisions";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import { gcAgeDays } from "@/lib/instance-config";
@@ -53,6 +62,7 @@ import {
   branchUpstream,
   deliveryCommitStats,
   deliveryHistoryStats,
+  findEvidenceBoundMerge,
   findTargetMergeByRunId,
   headCommit,
   listRemotes,
@@ -77,7 +87,10 @@ import {
   type RecordedPullRequest,
 } from "@/lib/workbench-git/pull-request";
 import { readWorktreeProvenanceForPromotion } from "@/lib/worktree-provenance";
-import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
+import {
+  autonomousCompletionFromSnapshot,
+  commitsFromSnapshot,
+} from "@/lib/runs/execution-policy";
 import { assertPushKeepsPublication } from "@/lib/runs/publication-guard";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -117,6 +130,8 @@ export type PromoteRunInput = {
   attribution?: { source: "auto_promotion"; laneClass: LaneClass };
 };
 
+const enginePromotion = Symbol("enginePromotion");
+
 export type PromoteRunContext = {
   sessionUser: { id: string; name?: string | null; email?: string | null };
   authorize: (projectId: string) => Promise<void>;
@@ -128,6 +143,7 @@ export type PromoteRunContext = {
   // coordinator / auto-promote leaves the child in Review for a human to resolve.
   actor?:
     { kind: "user" } | { kind: "agent"; agentId: string } | { kind: "system" };
+  [enginePromotion]?: { hosts?: Pick<ExecutionHosts, "forAssignment"> };
 };
 
 // M37 (ADR-100): the promotion owner — the session user for a human promote,
@@ -428,6 +444,7 @@ async function promoteMergeSideEffect(args: {
   sourceWorktreePath: string;
   targetBranch: string;
   provenance?: { runId: string; task?: string; flow?: string };
+  expected?: { head: string; base: string; runId: string; attemptId: string };
 }): Promise<string> {
   if (args.mode === "rebase_merge") {
     return promoteRebaseMerge({
@@ -443,6 +460,7 @@ async function promoteMergeSideEffect(args: {
     sourceBranch: args.sourceBranch,
     targetBranch: args.targetBranch,
     provenance: args.provenance,
+    ...(args.expected ? { expected: args.expected } : {}),
   });
 }
 
@@ -685,6 +703,52 @@ async function promoteWorkspaceRun(
   ctx: PromoteRunContext,
   db: Db,
 ): Promise<PromoteRunResult> {
+  const request = ctx[enginePromotion];
+  const observe = async (
+    run: typeof schemaModule.runs.$inferSelect,
+    workspace: Workspace,
+  ) => {
+    try {
+      return await observeCompletionCandidate(
+        db,
+        run,
+        workspace,
+        request?.hosts,
+      );
+    } catch (error: unknown) {
+      if (!isMaisterError(error)) throw error;
+      log.warn(
+        { runId, code: error.code },
+        "autonomous promotion candidate unavailable",
+      );
+
+      return null;
+    }
+  };
+  const candidate = request ? await loadRun(db, runId) : null;
+  const [candidateWorkspace] = request
+    ? await db.select().from(workspaces).where(eq(workspaces.runId, runId))
+    : [];
+  const retained =
+    candidate && candidateWorkspace && canReclaim(candidateWorkspace)
+      ? await readRetainedMergeClaim(db, candidate, candidateWorkspace)
+      : null;
+  const witnessedMerge =
+    retained && candidateWorkspace?.targetBranch
+      ? await findEvidenceBoundMerge({
+          projectRepoPath: candidateWorkspace.parentRepoPath,
+          targetBranch: candidateWorkspace.targetBranch,
+          runId,
+          attemptId: retained.effectAttemptId,
+          head: retained.authorization.head,
+          base: retained.authorization.base,
+        })
+      : null;
+  const observed =
+    !witnessedMerge && candidate && candidateWorkspace
+      ? await observe(candidate, candidateWorkspace)
+      : null;
+
   // ADR-150 (enforcing ADR-142 D3): launched-lineage runs never auto-promote —
   // winner promotion is the explicit human path (a launched Evaluation
   // participant; observed participants are excluded by construction). The guard
@@ -743,7 +807,11 @@ async function promoteWorkspaceRun(
     // it keeps the first read. Immutable run fields keep the first read.
     const isSharedTreeClaim =
       run.workspaceMode === "shared" && run.agentWorkspace === "worktree";
-    const liveRun = isSharedTreeClaim ? run : await loadRun(tx, runId);
+    const liveRun = isSharedTreeClaim
+      ? run
+      : request
+        ? await loadRunForUpdate(tx, runId)
+        : await loadRun(tx, runId);
     const liveStatus = liveRun.status;
 
     if (liveStatus !== "Review") {
@@ -752,6 +820,24 @@ async function promoteWorkspaceRun(
         `${run.runKind} run must be Review before promotion: ${liveStatus}`,
       );
     }
+    const recovery =
+      witnessedMerge &&
+      retained &&
+      workspace.id === candidateWorkspace?.id &&
+      workspace.targetBranch === candidateWorkspace.targetBranch &&
+      workspace.promotionAttemptId === retained.attemptId &&
+      liveRun.reviewEnteredAt?.toISOString() ===
+        retained.authorization.reviewEpoch
+        ? { commit: witnessedMerge, effectAttemptId: retained.effectAttemptId }
+        : null;
+    const authorization =
+      recovery && retained
+        ? retained.authorization
+        : request
+          ? await evaluatePromotionClaim(tx, liveRun, workspace, observed)
+          : null;
+
+    if (request && !authorization) return null;
 
     // ADR-126: auto-promotion-only supersede gate. A user promotion hold or a
     // project lane-disable committed AFTER the sweep evaluated eligible but before
@@ -889,7 +975,10 @@ async function promoteWorkspaceRun(
       );
     }
 
-    if (run.runKind === "flow" || resolvedMode === "publish_branch") {
+    if (
+      !recovery &&
+      (run.runKind === "flow" || resolvedMode === "publish_branch")
+    ) {
       // Readiness re-gate (T2.3) — NO claim, NO git on a not-ready verdict.
       const readiness = await assertEvidenceReady(runId, "review", tx);
 
@@ -965,6 +1054,21 @@ async function promoteWorkspaceRun(
         targetBranch: resolvedTarget,
       })
       .where(eq(workspaces.id, workspace.id));
+    if (authorization)
+      await recordAutonomousDecision(tx, {
+        projectId: authorization.projectId,
+        runId,
+        action: authorization.mergedPr ? "finalize_pr" : "promote",
+        phase: "claimed",
+        reason: recovery ? "reconcile_effect" : "evidence_gated",
+        projectRevision: authorization.projectRevision,
+        platformRevision: authorization.platformRevision,
+        witness: {
+          ...authorization,
+          attemptId,
+          ...(recovery ? { effectAttemptId: recovery.effectAttemptId } : {}),
+        },
+      });
 
     log.debug(
       { runId, attemptId, resolvedMode, resolvedTarget, policy },
@@ -984,8 +1088,19 @@ async function promoteWorkspaceRun(
       resolvedTarget,
       policy,
       baseCommit: workspace.baseCommit ?? null,
+      autonomous: authorization,
+      recovery,
     };
   });
+
+  if (!claim)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Autonomous promotion requires current evidence",
+      {
+        details: { reason: "autonomy_evidence_refused" },
+      },
+    );
 
   if (claim.resolvedMode === "ai_rebase_merge") {
     log.info(
@@ -1000,6 +1115,26 @@ async function promoteWorkspaceRun(
   }
 
   if (claim.resolvedMode === "pull_request") {
+    if (claim.autonomous) {
+      const merged = claim.autonomous.mergedPr;
+
+      if (!merged)
+        throw new MaisterError(
+          "PRECONDITION",
+          "Current merged PR evidence is required",
+        );
+
+      return finalizePullRequest({
+        runId,
+        ctx,
+        db,
+        claim,
+        pr: { url: merged.url, number: merged.number },
+        attribution: null,
+        sourceHead: claim.autonomous.head,
+        autonomousObservation: await observe(claim.run, claim.workspace),
+      });
+    }
     const delivered = await finalizeMergedRecordedPullRequest({
       runId,
       ctx,
@@ -1035,7 +1170,7 @@ async function promoteWorkspaceRun(
     });
   }
 
-  await squashForCommitPolicy(claim, runId);
+  if (!claim.autonomous) await squashForCommitPolicy(claim, runId);
 
   let commit: string;
   const targetBefore = await resolveBaseCommit({
@@ -1048,21 +1183,75 @@ async function promoteWorkspaceRun(
     const mergeMode =
       claim.promotionMode === "rebase_merge" ? "rebase_merge" : "local_merge";
 
-    const provenance = await promotionProvenance({
-      expectedRunId: claim.workspace.runId,
-      worktreePath: claim.workspace.worktreePath,
-    });
+    const provenance = claim.recovery
+      ? null
+      : await promotionProvenance({
+          expectedRunId: claim.workspace.runId,
+          worktreePath: claim.workspace.worktreePath,
+        });
 
     const recoveredCommit =
-      mergeMode === "local_merge" && provenance !== null
-        ? await findTargetMergeByRunId({
+      claim.recovery && claim.autonomous
+        ? await findEvidenceBoundMerge({
             projectRepoPath: claim.workspace.parentRepoPath,
             targetBranch: claim.resolvedTarget,
-            runId: provenance.runId,
+            runId,
+            attemptId: claim.recovery.effectAttemptId,
+            head: claim.autonomous.head,
+            base: claim.autonomous.base,
           })
-        : null;
+        : !claim.autonomous &&
+            mergeMode === "local_merge" &&
+            provenance !== null
+          ? await findTargetMergeByRunId({
+              projectRepoPath: claim.workspace.parentRepoPath,
+              targetBranch: claim.resolvedTarget,
+              runId: provenance.runId,
+            })
+          : null;
 
-    await assertNativeProjectPublication(() => db, claim.run);
+    if (claim.recovery && recoveredCommit !== claim.recovery.commit)
+      throw new MaisterError(
+        "PRECONDITION",
+        "The previously observed delivery is no longer on the target",
+        {
+          details: { reason: "target_drift" },
+        },
+      );
+    if (!claim.recovery)
+      await assertNativeProjectPublication(() => db, claim.run);
+    if (claim.autonomous && !recoveredCommit) {
+      const currentCandidate = await observe(claim.run, claim.workspace);
+      const current = await db.transaction(async (tx: Db) => {
+        const workspace = await loadPromotionWorkspaceForUpdate(tx, claim.run);
+        const run = await loadRunForUpdate(tx, runId);
+
+        if (
+          workspace.promotionAttemptId !== claim.attemptId ||
+          workspace.promotionState !== "claiming"
+        )
+          return null;
+
+        return evaluatePromotionClaim(tx, run, workspace, currentCandidate);
+      });
+
+      if (
+        !current ||
+        current.head !== claim.autonomous.head ||
+        current.base !== claim.autonomous.base ||
+        current.generation !== claim.autonomous.generation ||
+        current.reviewEpoch !== claim.autonomous.reviewEpoch
+      ) {
+        await markPromotionFailed(db, claim.workspace.id, claim.attemptId);
+        throw new MaisterError(
+          "PRECONDITION",
+          "Autonomous promotion evidence changed before delivery",
+          {
+            details: { reason: "autonomy_evidence_refused" },
+          },
+        );
+      }
+    }
     commit =
       recoveredCommit ??
       (await promoteMergeSideEffect({
@@ -1072,6 +1261,15 @@ async function promoteWorkspaceRun(
         sourceWorktreePath: claim.workspace.worktreePath,
         targetBranch: claim.resolvedTarget,
         provenance: provenance ?? undefined,
+        ...(claim.autonomous
+          ? {
+              expected: {
+                ...claim.autonomous,
+                runId,
+                attemptId: claim.attemptId,
+              },
+            }
+          : {}),
       }));
     if (recoveredCommit) {
       log.info(
@@ -1421,6 +1619,24 @@ async function finalizeWorkspaceDelivery(args: {
       );
 
     // One delivery produces one run.promoted event, keyed on the delivering run.
+    if (claim.autonomous)
+      await recordAutonomousDecision(tx, {
+        projectId: claim.autonomous.projectId,
+        runId,
+        action: "promote",
+        phase: "observed",
+        reason: "evidence_gated",
+        projectRevision: claim.autonomous.projectRevision,
+        platformRevision: claim.autonomous.platformRevision,
+        witness: {
+          ...claim.autonomous,
+          attemptId: claim.attemptId,
+          ...(claim.recovery
+            ? { effectAttemptId: claim.recovery.effectAttemptId }
+            : {}),
+          deliveredCommit: commit,
+        },
+      });
     await emitWebhookEvent({
       db: tx,
       type: "run.promoted",
@@ -1531,6 +1747,8 @@ type FlowClaim = {
   resolvedTarget: string;
   policy: DeliveryPolicy;
   baseCommit: string | null;
+  autonomous?: CompletionAuthorization | null;
+  recovery?: { commit: string; effectAttemptId: string } | null;
 };
 
 type WorkspaceDelivery = {
@@ -1939,6 +2157,7 @@ async function finalizePullRequest(args: {
   pr: { url: string; number: number | null };
   sourceHead: string;
   attribution: PromotionAttribution | null;
+  autonomousObservation?: WorkspacePublicationSnapshot | null;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim, pr, sourceHead, attribution } = args;
   const promotionLane =
@@ -1964,6 +2183,29 @@ async function finalizePullRequest(args: {
         "CONFLICT",
         "promotion superseded by a newer attempt",
       );
+    }
+    if (claim.autonomous) {
+      const run = await loadRunForUpdate(tx, runId);
+      const current = await evaluatePromotionClaim(
+        tx,
+        run,
+        ws,
+        args.autonomousObservation ?? null,
+      );
+      const prior = claim.autonomous;
+
+      if (
+        !current?.mergedPr ||
+        current.mergedPr.observationId !== prior.mergedPr?.observationId ||
+        current.head !== prior.head ||
+        current.base !== prior.base ||
+        current.generation !== prior.generation ||
+        current.reviewEpoch !== prior.reviewEpoch
+      ) {
+        await markPromotionFailed(tx, ws.id, claim.attemptId);
+
+        return { evidenceRefused: true as const };
+      }
     }
 
     const now = new Date();
@@ -2140,6 +2382,21 @@ async function finalizePullRequest(args: {
           : {}),
       },
     });
+    if (claim.autonomous?.mergedPr)
+      await recordAutonomousDecision(tx, {
+        projectId: claim.autonomous.projectId,
+        runId,
+        action: "finalize_pr",
+        phase: "observed",
+        reason: "confirmed_merged_pr",
+        projectRevision: claim.autonomous.projectRevision,
+        platformRevision: claim.autonomous.platformRevision,
+        witness: {
+          ...claim.autonomous,
+          attemptId: claim.attemptId,
+          deliveredCommit: claim.autonomous.mergedPr.mergeCommit,
+        },
+      });
 
     for (const child of settledChildren) {
       await systemCloseActiveAssignmentsForRun({
@@ -2191,9 +2448,21 @@ async function finalizePullRequest(args: {
       deliveryPolicy: claim.policy,
       pullRequestUrl: pr.url,
       prNumber: pr.number,
+      ...(claim.autonomous?.mergedPr
+        ? { commit: claim.autonomous.mergedPr.mergeCommit }
+        : {}),
     };
   });
 
+  if ("evidenceRefused" in result) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Autonomous PR completion evidence changed",
+      {
+        details: { reason: "autonomy_evidence_refused" },
+      },
+    );
+  }
   if ("aborted" in result) {
     throw new MaisterError(
       "CONFLICT",
@@ -2753,6 +3022,20 @@ export async function promoteRun(
 ): Promise<PromoteRunResult> {
   const d = (db ?? getDb()) as Db;
   const run = await loadRun(d, runId);
+
+  if (
+    autonomousCompletionFromSnapshot(run.executionPolicy) ===
+      "evidence_gated" &&
+    (isUnattendedPromotion(input) || !isHumanPromotion(ctx)) &&
+    !ctx[enginePromotion]
+  )
+    throw new MaisterError(
+      "PRECONDITION",
+      "Autonomous runs require the engine evidence path",
+      {
+        details: { reason: "autonomy_evidence_refused" },
+      },
+    );
   const result =
     run.runKind === "scratch"
       ? await promoteScratchRun(runId, input, ctx, d)
@@ -2761,6 +3044,24 @@ export async function promoteRun(
   await releaseTerminalRunMounts(runId, d);
 
   return result;
+}
+
+export async function promoteRunWithAutonomousEvidence(
+  runId: string,
+  db: Db,
+  hosts?: Pick<ExecutionHosts, "forAssignment">,
+): Promise<PromoteRunResult> {
+  return promoteRun(
+    runId,
+    { autoOnReady: true },
+    {
+      sessionUser: { id: "system" },
+      authorize: async () => undefined,
+      actor: { kind: "system" },
+      [enginePromotion]: { hosts },
+    },
+    db,
+  );
 }
 
 // ADR-157 (T32): a promoted run is terminal, so release its read-only sibling

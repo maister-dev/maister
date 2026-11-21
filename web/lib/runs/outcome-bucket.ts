@@ -57,6 +57,7 @@ export const BUCKET_BY_RUN_STATUS = {
   Pending: "Queued",
   Running: "Executing",
   WaitingOnChildren: "Executing",
+  Waiting: "Executing",
   NeedsInput: "WaitingOnHuman",
   NeedsInputIdle: "WaitingOnHuman",
   HumanWorking: "WaitingOnHuman",

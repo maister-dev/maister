@@ -2,6 +2,14 @@ import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type {
+  WorkspacePublicationRequest,
+  WorkspacePublicationSnapshot,
+} from "../../runtime/workspace-publication";
+import type {
+  WaitHeadObservation,
+  WaitHeadObservationRequest,
+} from "../../runtime/wait-head";
+import type {
   PlatformStatus,
   PlatformUnavailableReason,
   RuntimeEventCloseReason,
@@ -1772,6 +1780,40 @@ export async function getWorkspace(
     if (httpStatusOf(err) === 404) return null;
     throw err;
   }
+}
+
+export async function workspacePublication(
+  executionWorkspaceId: string,
+  envelope: WireEnvelope<WorkspacePublicationRequest>,
+  opts: CommandWireOptions = {},
+): Promise<WorkspacePublicationSnapshot> {
+  const response = await request<WorkspacePublicationSnapshot>({
+    method: "POST",
+    path: `/workspaces/${encodeURIComponent(executionWorkspaceId)}/publication`,
+    body: envelope,
+    ctx: "workspacePublication",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return response.body;
+}
+
+export async function observeWaitWorkspaceHead(
+  executionWorkspaceId: string,
+  envelope: WireEnvelope<WaitHeadObservationRequest>,
+  opts: CommandWireOptions = {},
+): Promise<WaitHeadObservation> {
+  const response = await request<WaitHeadObservation>({
+    method: "POST",
+    path: `/workspaces/${encodeURIComponent(executionWorkspaceId)}/head`,
+    body: envelope,
+    ctx: "observeWaitWorkspaceHead",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return response.body;
 }
 
 export async function releaseWorkspace(

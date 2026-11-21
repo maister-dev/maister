@@ -21,8 +21,11 @@ export const NODE_STATUS_KEYS = [
 export type NodeStatusKey = (typeof NODE_STATUS_KEYS)[number];
 
 // Presentation-only statuses derived by the run DTO (not node_attempts.status):
-// a coordinator node whose run parks on WaitingOnChildren.
-export const DERIVED_NODE_STATUS_KEYS = ["WaitingOnChildren"] as const;
+// An open condition wait or a parked coordinator.
+export const DERIVED_NODE_STATUS_KEYS = [
+  "Waiting",
+  "WaitingOnChildren",
+] as const;
 
 export type DerivedNodeStatusKey = (typeof DERIVED_NODE_STATUS_KEYS)[number];
 
@@ -50,6 +53,7 @@ const NODE_STATUS_VISUALS: Record<
   NeedsInput: { iconName: "HandRaisedIcon", tone: "needs" },
   Reworked: { iconName: "ArrowUturnLeftIcon", tone: "rework" },
   Stale: { iconName: "ExclamationTriangleIcon", tone: "stale" },
+  Waiting: { iconName: "PauseCircleIcon", tone: "pending" },
   WaitingOnChildren: { iconName: "PauseCircleIcon", tone: "pending" },
 };
 

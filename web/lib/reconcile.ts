@@ -76,6 +76,7 @@ import {
   takeAgentObserverFailure,
 } from "@/lib/agents/session-observer-registry";
 import { promoteNextPending } from "@/lib/scheduler";
+import { canRedriveConditionWait } from "@/lib/waits/lifecycle";
 import { createExecutionHosts, isFencedError } from "@/lib/execution-host";
 import { listWorktrees } from "@/lib/worktree";
 
@@ -221,6 +222,8 @@ export interface ReconcileInput {
     | "check"
     | "judge"
     | "guard"
+    | "wait"
+    | "publish"
     | "human"
     | "form"
     | "orchestrator"
@@ -431,7 +434,7 @@ function classifyInner(input: ReconcileInput): ReconcileDecision {
   //      and promoteNextPending would start it under a dead coordinator; a
   //      paused or reviewing child waited on a resume that could never come.
   if (coordinatorGone(input)) {
-    if (input.runStatus === "Pending") {
+    if (input.runStatus === "Pending" || input.runStatus === "Waiting") {
       return { action: "abandon", reason: "orphaned-child" };
     }
     if (ORPHANABLE_PAUSED_STATUSES.has(input.runStatus)) {
@@ -1415,6 +1418,7 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
           eq(runs.projectId, project.id),
           inArray(runs.status, [
             "Pending",
+            "Waiting",
             "NeedsInput",
             "NeedsInputIdle",
             "Review",
@@ -1969,6 +1973,25 @@ export async function runReconcileSweep(
   };
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    if (
+      cand.runKind === "flow" &&
+      cand.status === "Running" &&
+      cand.assignmentId &&
+      cand.currentStepId &&
+      (await canRedriveConditionWait(
+        db,
+        cand.runId,
+        cand.assignmentId,
+        cand.currentStepId,
+      ))
+    ) {
+      // Flow driver lease and the admitted assignment fence own repeat dispatch.
+      // A session inventory cannot classify a graph continuation with no ACP session.
+      await runFlow(cand.runId);
+      redispatched += 1;
+
+      return;
+    }
     let scopedRecords: SupervisorSessionRecord[];
 
     try {

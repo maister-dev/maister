@@ -105,6 +105,14 @@ function endpoints(entry: DiffChangeStatEntry): string[] {
   return entry.oldPath ? [entry.path, entry.oldPath] : [entry.path];
 }
 
+export function isHardDeniedChange(entry: DiffChangeStatEntry): boolean {
+  return endpoints(entry).some((path) => DENY_MATCHER(path));
+}
+
+export function changesDependencyManifest(entry: DiffChangeStatEntry): boolean {
+  return endpoints(entry).some((path) => LANE_MATCHERS.deps(path));
+}
+
 function laneMatchesFile(
   lane: AutoPromotionLane,
   entry: DiffChangeStatEntry,
@@ -130,9 +138,7 @@ export function classifyDiff(
   files: DiffChangeStatEntry[],
   config: AutoPromotionConfig,
 ): ClassifyVerdict {
-  const denied = files.filter((f) =>
-    endpoints(f).some((ep) => DENY_MATCHER(ep)),
-  );
+  const denied = files.filter(isHardDeniedChange);
 
   if (denied.length > 0) {
     return {

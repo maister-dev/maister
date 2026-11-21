@@ -603,6 +603,14 @@ branch treats it as handled without a launch decision; its reader is the
 `librarian_followup` consumer, which delivers the answer to the requester's
 conversation only while the requester can still read the task.
 
+## Flow wait and decision events (Implemented)
+
+Event kinds are run.wait_registered, run.wait_delivery_recorded, run.wait_resolved, run.wait_closed, run.workspace_head_changed, run.publication_observed, run.ci_observed, run.pr_observed and run.autonomous_decision. Each v1 envelope has projectId, runId, actor, event identity, occurrence time and an opaque source or receipt reference. Producer and state commit together and replay deduplicates by source fact, occurrence and phase.
+
+Only the wait resolver matches these facts against open waits. Registration requests catch-up after commit. Current owner and head binding are rechecked before applying. Autonomous-decision facts can feed Observatory and the run projection. Keep these events outside agent-trigger, outbound-webhook and terminal-kind sets. Browser consumers see content-free workbench or attention invalidations.
+
+See [the governing contract](waits.md).
+
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).

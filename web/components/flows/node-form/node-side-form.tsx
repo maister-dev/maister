@@ -7,6 +7,7 @@ import type {
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { TransitionTarget } from "@/lib/flows/graph/transition-target";
 import type {
   TemplateVariableEntry,
   TemplateVariableUsageWarning,
@@ -33,6 +34,7 @@ import { McpSelect } from "@/components/mcp/mcp-select";
 import { ReferenceCombobox } from "@/components/flows/node-form/reference-combobox";
 import { SchemaRefField } from "@/components/flows/node-form/schema-ref-field";
 import { StringListField } from "@/components/flows/node-form/string-list-field";
+import { WaitFields } from "@/components/flows/node-form/wait-fields";
 import { blankDecide } from "@/lib/flows/editor/node-form";
 import {
   resolveFreeTextSourceKind,
@@ -407,6 +409,7 @@ export function NodeSideForm({
   mcpOptions,
   presentation,
   readOnly = false,
+  waitTargets = [],
   onChange,
   onWriteSchemaFile,
   onPresentationChange,
@@ -434,6 +437,7 @@ export function NodeSideForm({
   // value, add/remove controls are dropped, and edits are no-ops. DEFAULTS to
   // false so the live Flow Studio editor render + behavior is byte-identical.
   readOnly?: boolean;
+  waitTargets?: readonly string[];
   onChange: (next: NodeDef) => void;
   onWriteSchemaFile?: (path: string, content: string) => void;
   onPresentationChange?: (patch: NodePresentationStyle) => void;
@@ -448,6 +452,17 @@ export function NodeSideForm({
       </div>
     );
   }
+
+  if (node.type === "wait")
+    return (
+      <WaitFields
+        key={node.id}
+        node={node}
+        readOnly={readOnly}
+        targets={waitTargets}
+        onChange={onChange}
+      />
+    );
 
   const n = node as unknown as Rec;
   const type = str(n.type);
@@ -558,14 +573,14 @@ export function NodeSideForm({
     emit({ ...n, pre_finish: { ...asRec(n.pre_finish), gates: nextGates } });
   };
 
-  const transitions = asRec(n.transitions) as Record<string, string>;
+  const transitions = asRec(n.transitions) as Record<string, TransitionTarget>;
   const transitionRows = Object.entries(transitions);
   const setTransitionRow = (
     index: number,
     outcome: string,
-    target: string,
+    target: TransitionTarget,
   ): void => {
-    const next: Record<string, string> = {};
+    const next: Record<string, TransitionTarget> = {};
 
     transitionRows.forEach(([o, t], i) => {
       if (i === index) {
@@ -1538,8 +1553,12 @@ export function NodeSideForm({
                   <input
                     className={FIELD_CLS}
                     data-testid={`transition-target-${index}`}
-                    readOnly={readOnly}
-                    value={target}
+                    readOnly={readOnly || typeof target !== "string"}
+                    value={
+                      typeof target === "string"
+                        ? target
+                        : JSON.stringify(target)
+                    }
                     onChange={(e) =>
                       setTransitionRow(index, outcome, e.target.value)
                     }

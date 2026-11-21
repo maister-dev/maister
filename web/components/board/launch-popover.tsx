@@ -160,6 +160,8 @@ type LaunchOptions = {
   runnerSlots?: FlowRunnerSlotPreview[];
   consensusRunnerSlots?: ConsensusRunnerSlotPreview[];
   selectedFlowRevisionId?: string | null;
+  flowPublicationRequired?: boolean;
+  autonomousCompletionAvailable?: boolean;
   enabledFlowRevisionId?: string | null;
   canConfigureRunnerBindings?: boolean;
   canManagePackages?: boolean;
@@ -686,6 +688,9 @@ export function LaunchPopover({
   }, [scheduledLocalTime, scheduleDisambiguation, scheduleTimezone]);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<LaunchOptions | null>(null);
+  const [authorizedPublication, setAuthorizedPublication] = useState<
+    string | null
+  >(null);
   const [optionsError, setOptionsError] = useState(false);
   const loadingOptions = open && options === null && !optionsError;
   const [previewSelection, setPreviewSelection] =
@@ -725,6 +730,7 @@ export function LaunchPopover({
   const [execHumanGate, setExecHumanGate] = useState<HumanGateAutonomy>("stop");
   const [execPromotion, setExecPromotion] =
     useState<PromotionTrigger>("manual");
+  const [execCompletion, setExecCompletion] = useState(false);
   const [execAdvancedOpen, setExecAdvancedOpen] = useState(false);
   // Budget axis raw text per scope/field (empty = unlimited). Kept as strings so
   // a half-typed / invalid value is rejected inline before it folds into the
@@ -734,7 +740,14 @@ export function LaunchPopover({
   const [executionBaseline, setExecutionBaseline] =
     useState<ExecutionPolicy | null>(null);
   const [executionEdits, setExecutionEdits] = useState<
-    ReadonlySet<"preset" | "checks" | "humanGate" | "promotion" | "budget">
+    ReadonlySet<
+      | "preset"
+      | "checks"
+      | "humanGate"
+      | "promotion"
+      | "budget"
+      | "autonomousCompletion"
+    >
   >(new Set());
   const [budgetChanges, setBudgetChanges] = useState<BudgetTextAxis>({});
   // M39 Stream B (ADR-107): per-package version-adopt choice (default keep).
@@ -856,6 +869,7 @@ export function LaunchPopover({
         setExecChecks(eff.checks);
         setExecHumanGate(eff.humanGate);
         setExecPromotion(eff.promotion);
+        setExecCompletion(eff.autonomousCompletion === "evidence_gated");
         setPackageVersions(
           Object.fromEntries(
             (payload.availablePackageVersions ?? []).map((v) => [
@@ -1000,9 +1014,17 @@ export function LaunchPopover({
     setExecChecks(eff.checks);
     setExecHumanGate(eff.humanGate);
     setExecPromotion(eff.promotion);
+    setExecCompletion(false);
     setExecutionEdits(
       (current) =>
-        new Set([...current, "preset", "checks", "humanGate", "promotion"]),
+        new Set([
+          ...current,
+          "preset",
+          "checks",
+          "humanGate",
+          "promotion",
+          "autonomousCompletion",
+        ]),
     );
   }
 
@@ -1038,6 +1060,10 @@ export function LaunchPopover({
       if (budgetAxis) overrides.budget = budgetAxis;
       else delete overrides.budget;
     }
+    if (executionEdits.has("autonomousCompletion")) {
+      if (execCompletion) overrides.autonomousCompletion = "evidence_gated";
+      else delete overrides.autonomousCompletion;
+    }
 
     return Object.keys(overrides).length
       ? { preset: execPreset, overrides }
@@ -1048,6 +1074,7 @@ export function LaunchPopover({
     execHumanGate,
     execPreset,
     execPromotion,
+    execCompletion,
     executionBaseline,
     executionEdits,
   ]);
@@ -1311,6 +1338,8 @@ export function LaunchPopover({
       !options ||
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
       previewPending ||
+      (options.flowPublicationRequired && !allowFlowPublication) ||
+      (execCompletion && !options.autonomousCompletionAvailable) ||
       savingBinding !== null ||
       optionsError
     )
@@ -1341,6 +1370,7 @@ export function LaunchPopover({
     await intent.submit(endpoint, {
       ...selection,
       ...(flowRunnerDraft ? { flowRunnerDraft } : {}),
+      ...(allowFlowPublication ? { allowFlowPublication } : {}),
       expectedTaskRevision: options.task.revision,
       expectedSettingsToken: options.settingsToken,
       autoPromote: currentPolicy.trigger === "auto_on_ready",
@@ -1351,7 +1381,13 @@ export function LaunchPopover({
   }
 
   async function scheduleLaunch(): Promise<void> {
-    if (!options || !scheduledLocalTime || !schedulePreview || flowRunnerDraft)
+    if (
+      !options ||
+      !scheduledLocalTime ||
+      !schedulePreview ||
+      flowRunnerDraft ||
+      options.flowPublicationRequired
+    )
       return;
     if (
       !effectiveLaunchVerdict(options, forceRelaunch).launchable ||
@@ -1453,6 +1489,7 @@ export function LaunchPopover({
     checks: execChecks,
     humanGate: execHumanGate,
     promotion: execPromotion,
+    autonomousCompletion: execCompletion ? "evidence_gated" : "off",
   });
   const execChecksOptions: Array<SelectOption<CheckStrictness>> = [
     { id: "strict", label: t("execChecksStrict") },
@@ -1511,6 +1548,16 @@ export function LaunchPopover({
   const launchVerdict = options
     ? effectiveLaunchVerdict(options, forceRelaunch)
     : null;
+  const publicationSelection = options?.flowPublicationRequired
+    ? JSON.stringify([
+        options.selectedFlowRevisionId,
+        options.settingsToken,
+        targetBranch,
+      ])
+    : null;
+  const allowFlowPublication =
+    publicationSelection !== null &&
+    publicationSelection === authorizedPublication;
   const createDisabled =
     busy ||
     pending ||
@@ -1519,6 +1566,8 @@ export function LaunchPopover({
     Boolean(intent.attempt) ||
     intent.errorReason === "launch_storage_unavailable" ||
     !launchVerdict?.launchable ||
+    (options?.flowPublicationRequired && !allowFlowPublication) ||
+    (execCompletion && !options?.autonomousCompletionAvailable) ||
     previewPending ||
     savingBinding !== null ||
     !flowId ||
@@ -1526,7 +1575,10 @@ export function LaunchPopover({
     hasPackageSetup ||
     budgetInvalid;
   const scheduleDisabled =
-    createDisabled || schedulePreview === null || flowRunnerDraft !== null;
+    createDisabled ||
+    schedulePreview === null ||
+    flowRunnerDraft !== null ||
+    options?.flowPublicationRequired;
   const budgetFieldLabels: Record<BudgetField, string> = {
     maxTokens: t("budgetMaxTokens"),
     hardMaxTokens: t("budgetHardMaxTokens"),
@@ -2366,6 +2418,45 @@ export function LaunchPopover({
                       </div>
                     </details>
 
+                    {publicationSelection !== null && (
+                      <label className="flex items-start gap-2 text-sm text-ink">
+                        <input
+                          checked={allowFlowPublication}
+                          type="checkbox"
+                          onChange={(event) =>
+                            setAuthorizedPublication(
+                              event.target.checked
+                                ? publicationSelection
+                                : null,
+                            )
+                          }
+                        />
+                        {t("authorizeFlowPublication")}
+                      </label>
+                    )}
+                    {(options.autonomousCompletionAvailable ||
+                      execCompletion) && (
+                      <label className="flex items-start gap-2 text-sm text-ink">
+                        <input
+                          checked={execCompletion}
+                          disabled={
+                            !execCompletion &&
+                            (!options.autonomousCompletionAvailable ||
+                              execChecks !== "strict")
+                          }
+                          type="checkbox"
+                          onChange={(event) => {
+                            setExecCompletion(event.target.checked);
+                            setExecutionEdits(
+                              (current) =>
+                                new Set([...current, "autonomousCompletion"]),
+                            );
+                          }}
+                        />
+                        {t("allowAutonomousCompletion")}
+                      </label>
+                    )}
+
                     <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <h3 className="text-[13px] font-semibold text-ink">
@@ -2612,6 +2703,7 @@ export function LaunchPopover({
                           busy ||
                           pending ||
                           flowRunnerDraft !== null ||
+                          options.flowPublicationRequired ||
                           (scheduleMode ? scheduleDisabled : createDisabled)
                         }
                         size="sm"

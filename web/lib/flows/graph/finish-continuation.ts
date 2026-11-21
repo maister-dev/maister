@@ -1,5 +1,6 @@
 import type { SessionPolicy } from "@/lib/config.schema";
 import type { Db } from "./runner-core";
+import type { TerminalFailureReason } from "./transition-target";
 
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 
@@ -10,9 +11,22 @@ import { MaisterError } from "@/lib/errors";
  * Written with that attempt's close and the run cursor. Recovery consumes this
  * same decision; it does not recalculate an edge or authorize another ACP turn.
  */
+export function flowConflictSyncAttemptId(waitId: string): string {
+  return `flow-pr-conflict:${waitId}`;
+}
+
+export type FlowPrConflictHandoff = Readonly<{
+  waitId: string;
+  publicationId: string;
+  assignmentId: string;
+  expiresAt: string;
+}>;
+
 export type FlowFinishContinuation = Readonly<{
   version: 1;
   targetNodeId: string | null;
+  classifiedFailure?: TerminalFailureReason;
+  prConflict?: FlowPrConflictHandoff;
   injectedVars: Readonly<Record<string, unknown>>;
   sessionPolicy: SessionPolicy | null;
   autoRetry: boolean;

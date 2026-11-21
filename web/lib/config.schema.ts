@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ACP_CONTEXT_FAILURE_REASONS } from "../../runtime/acp-context-failure";
 
+import { waitConditionSchema, waitSeconds } from "@/lib/waits/manifest";
 import {
   classifyFlowManifestShape,
   LEGACY_STEPS_REFUSAL_MESSAGE,
@@ -21,6 +22,13 @@ import {
 } from "@/lib/run-results/findings-contract";
 import { semverGte } from "@/lib/flows/semver";
 import { flowNativeContractSchema } from "@/lib/run-results/flow-native-contract";
+import { flowCompletionDeclaration } from "@/lib/auto-promotion/completion-policy";
+import {
+  transitionFailureReason,
+  transitionTargetSchema,
+} from "@/lib/flows/graph/transition-target";
+
+export { TERMINAL_TRANSITION_TARGET } from "@/lib/flows/graph/transition-target";
 
 // Replicated from flow-paths.ts to avoid pulling the `server-only` constraint
 // (and its transitive MaisterError dep) into config.schema.ts, which must remain
@@ -322,6 +330,7 @@ export const ARTIFACT_KINDS = [
   "generic_file",
   "mutation_report",
   "plan",
+  "wait-result",
 ] as const;
 
 // --- Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------------
@@ -331,8 +340,6 @@ export const ARTIFACT_KINDS = [
 // Reserved transition target meaning "the run is done" (reaches `Review`). A
 // transition (e.g. `approve`) may point here instead of a node id; the runner
 // treats it as terminal. Not a node — exempt from unknown-node-id validation.
-export const TERMINAL_TRANSITION_TARGET = "done";
-
 export const workspacePolicySchema = z.enum([
   "keep",
   "rewind-to-node-checkpoint",
@@ -519,7 +526,12 @@ export const nodeOutputSchema = z
         z
           .object({
             id: z.string().min(1),
-            kind: z.enum(ARTIFACT_KINDS),
+            kind: z
+              .enum(ARTIFACT_KINDS)
+              .refine(
+                (kind) => kind !== "wait-result",
+                "wait-result is produced by the wait engine",
+              ),
             schema: z.string().min(1).optional(),
             path: z.string().optional(),
             ref: z.string().optional(),
@@ -1018,7 +1030,7 @@ const nodeCommon = {
     .passthrough()
     .optional(),
   // decision/outcome -> target node id
-  transitions: z.record(z.string(), z.string().min(1)).optional(),
+  transitions: z.record(z.string(), transitionTargetSchema).optional(),
   rework: reworkSchema.optional(),
   // M19 crash-recover (ADR-034): opt-in that lets an operator Recover re-dispatch
   // this node after a crash. Session-less nodes (cli/check/judge/guard/human)
@@ -1179,6 +1191,37 @@ const formNodeSchema = z
   })
   .passthrough();
 
+const waitNodeSchema = z.strictObject({
+  id: flowNodeIdSchema,
+  type: z.literal("wait"),
+  on: waitConditionSchema,
+  timeout: waitSeconds,
+  transitions: z.record(z.string(), transitionTargetSchema),
+  rework: reworkSchema.optional(),
+  action: z.never().optional(),
+  // Compatibility with callers that access fields common to all graph nodes.
+  decide: z.never().optional(),
+  input: z.never().optional(),
+  output: z.never().optional(),
+  pre_finish: z.never().optional(),
+  finish: z.never().optional(),
+  settings: z.never().optional(),
+  session: z.never().optional(),
+  retry_safe: z.never().optional(),
+});
+
+const publishNodeSchema = waitNodeSchema
+  .omit({ on: true, timeout: true, type: true })
+  .extend({
+    type: z.literal("publish"),
+    remote: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/)
+      .optional(),
+    pr: z.enum(["draft", "ready"]).optional(),
+    transitions: z.record(z.string(), transitionTargetSchema).optional(),
+  });
+
 const nodeSchemaBase = z.discriminatedUnion("type", [
   aiCodingNodeSchema,
   orchestratorNodeSchema,
@@ -1188,6 +1231,8 @@ const nodeSchemaBase = z.discriminatedUnion("type", [
   checkNodeSchema,
   humanNodeSchema,
   formNodeSchema,
+  waitNodeSchema,
+  publishNodeSchema,
 ]);
 
 type NodeSchemaBase = z.infer<typeof nodeSchemaBase>;
@@ -1376,6 +1421,7 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
         .strict()
         .optional(),
       nodes: z.array(nodeSchema).min(1),
+      autonomous_completion: flowCompletionDeclaration.optional(),
       // ADR-165: the flow's PUBLIC run result — the schema and the producer set
       // an orchestrator reads through `run_collect`, and the fact that lets the
       // run finish without a human review step. Flow-level, like `reentry`, so
@@ -1408,6 +1454,67 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
     })
     .passthrough()
     .superRefine((manifest, ctx) => {
+      const completion = manifest.autonomous_completion;
+
+      for (const [index, node] of manifest.nodes.entries()) {
+        for (const [outcome, target] of Object.entries(
+          node.transitions ?? {},
+        )) {
+          const reason = transitionFailureReason(target);
+
+          if (
+            reason &&
+            (!completion?.failure_reasons?.includes(reason) ||
+              (reason === "wait_timeout" &&
+                (node.type !== "wait" || outcome !== "timeout")) ||
+              (reason === "rework_exhausted" &&
+                outcome !== node.rework?.onExhaustion))
+          )
+            ctx.addIssue({
+              code: "custom",
+              path: ["nodes", index, "transitions", outcome],
+              message:
+                "Classified failure requires a matching declared timeout or rework exhaustion",
+            });
+        }
+      }
+
+      if (completion) {
+        const nodes = new Map(manifest.nodes.map((node) => [node.id, node]));
+        const ci = nodes.get(completion.ci);
+        const findGate = ({ node, gate }: { node: string; gate: string }) =>
+          nodes
+            .get(node)
+            ?.pre_finish?.gates?.find(
+              (candidate) =>
+                candidate.id === gate && candidate.mode === "blocking",
+            );
+
+        if (manifest.execution || ci?.type !== "wait" || ci.on.kind !== "ci")
+          ctx.addIssue({
+            code: "custom",
+            path: ["autonomous_completion", "ci"],
+            message: "Completion requires a project CI wait node",
+          });
+        else if (ci.on.transport === "push" && !ci.on.provider_issuer)
+          ctx.addIssue({
+            code: "custom",
+            path: ["autonomous_completion", "ci"],
+            message: "Completion using push CI requires provider_issuer",
+          });
+        if (completion.gates.some((reference) => !findGate(reference)))
+          ctx.addIssue({
+            code: "custom",
+            path: ["autonomous_completion", "gates"],
+            message: "Each completion gate must name a declared blocking gate",
+          });
+        if (findGate(completion.review)?.kind !== "ai_judgment")
+          ctx.addIssue({
+            code: "custom",
+            path: ["autonomous_completion", "review"],
+            message: "Completion review must name a blocking AI judgment gate",
+          });
+      }
       if (manifest.execution === undefined) return;
       if (
         !semverGte(

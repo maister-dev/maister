@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Interval, RunTiming } from "@/lib/runs/run-timing";
 
-import { and, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -13,8 +13,14 @@ import {
 import { computeRunTiming } from "@/lib/runs/run-timing";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches services/tasks.ts).
-const { executionCommands, hitlRequests, nodeAttempts, runs } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  executionAssignments,
+  executionCommands,
+  hitlRequests,
+  nodeAttempts,
+  runs,
+  runWaits,
+} = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): narrow after the repository converges on one drizzle peer.
 type Db = any;
@@ -24,8 +30,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Human/form nodes are waits for a person, never execution.
-const NON_EXECUTION_NODE_TYPES = ["human", "form"];
+// Human/form and durable condition nodes represent suspension intervals.
+const NON_EXECUTION_NODE_TYPES = ["human", "form", "wait"];
 // These owners record standalone agent and scratch prompts in the same ledger.
 const TIMED_PROMPT_OWNERS = ["agent_turn", "scratch_message"];
 
@@ -78,7 +84,7 @@ export async function loadRunTimings(
   ]);
   const all = [...parents, ...children];
   const allIds = all.map((r) => r.id);
-  const [attempts, prompts, hitl] = await Promise.all([
+  const [attempts, prompts, hitl, conditionWaits] = await Promise.all([
     db
       .select({
         runId: nodeAttempts.runId,
@@ -120,6 +126,32 @@ export async function loadRunTimings(
       })
       .from(hitlRequests)
       .where(inArray(hitlRequests.runId, runIds)),
+    db
+      .select({
+        runId: runWaits.runId,
+        openedAt: runWaits.openedAt,
+        resolvedAt: runWaits.resolvedAt,
+        closedAt: runWaits.closedAt,
+        queuedAt: runWaits.queuedAt,
+        admittedAt: executionAssignments.createdAt,
+        firstConflictAdmissionAt: sql<Date | null>`(
+          SELECT initial_assignment.created_at
+          FROM ${nodeAttempts} wait_attempt
+          JOIN ${executionAssignments} initial_assignment
+            ON initial_assignment.id = wait_attempt.finish_continuation->'prConflict'->>'assignmentId'
+            AND initial_assignment.run_id = wait_attempt.run_id
+          WHERE wait_attempt.id = ${runWaits.nodeAttemptId}
+            AND wait_attempt.run_id = ${runWaits.runId}
+        )`.mapWith(runWaits.queuedAt),
+      })
+      .from(runWaits)
+      .leftJoin(
+        executionAssignments,
+        eq(runWaits.resumeAssignmentId, executionAssignments.id),
+      )
+      .where(
+        and(inArray(runWaits.runId, runIds), isNotNull(runWaits.openedAt)),
+      ),
   ]);
   const attemptsByRun = groupBy(
     attempts as Array<{ runId: string; startedAt: Date; endedAt: Date | null }>,
@@ -155,6 +187,18 @@ export async function loadRunTimings(
     (h) => h.runId,
   );
   const childrenByParent = groupBy(children, (c) => c.parentRunId as string);
+  const conditionWaitsByRun = groupBy(
+    conditionWaits as Array<{
+      runId: string;
+      openedAt: Date;
+      resolvedAt: Date | null;
+      closedAt: Date | null;
+      queuedAt: Date | null;
+      admittedAt: Date | null;
+      firstConflictAdmissionAt: Date | null;
+    }>,
+    (wait) => wait.runId,
+  );
   const ownExecution = (run: RunRow): Interval[] =>
     run.runKind === "flow"
       ? (attemptsByRun.get(run.id) ?? []).map((a) =>
@@ -169,6 +213,8 @@ export async function loadRunTimings(
   );
 
   for (const run of parents) {
+    const waits = conditionWaitsByRun.get(run.id) ?? [];
+
     if (run.endedAt && run.endedAt < run.startedAt) {
       log.warn({ runId: run.id }, "[runTiming] ended_at precedes started_at");
     }
@@ -188,6 +234,15 @@ export async function loadRunTimings(
         checkpoints: run.checkpointAt
           ? [span(run.checkpointAt, run.resumeStartedAt)]
           : [],
+        conditionWaits: waits.map((wait) =>
+          span(wait.openedAt, wait.resolvedAt ?? wait.closedAt),
+        ),
+        readmissions: waits.flatMap((wait) => [
+          ...(wait.resolvedAt && wait.firstConflictAdmissionAt
+            ? [span(wait.resolvedAt, wait.firstConflictAdmissionAt)]
+            : []),
+          ...(wait.queuedAt ? [span(wait.queuedAt, wait.admittedAt)] : []),
+        ]),
       }),
     );
   }

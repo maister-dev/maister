@@ -65,6 +65,15 @@ export const DOMAIN_EVENT_KINDS = [
   // same transaction as the merged edge. Drives platform-owned task completion;
   // its counted fact is the `run_pr_merged` task_activity twin.
   "run.pr_merged",
+  "run.wait_registered",
+  "run.wait_delivery_recorded",
+  "run.wait_resolved",
+  "run.wait_closed",
+  "run.workspace_head_changed",
+  "run.publication_observed",
+  "run.ci_observed",
+  "run.pr_observed",
+  "run.autonomous_decision",
 ] as const;
 
 export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
@@ -89,6 +98,15 @@ export function isDomainEventKind(value: string): value is DomainEventKind {
 export const NON_ATTENTION_EVENT_KINDS = [
   "knowledge.record_changed",
   "specialist.assignment_changed",
+  "run.wait_registered",
+  "run.wait_delivery_recorded",
+  "run.wait_resolved",
+  "run.wait_closed",
+  "run.workspace_head_changed",
+  "run.publication_observed",
+  "run.ci_observed",
+  "run.pr_observed",
+  "run.autonomous_decision",
 ] as const satisfies readonly DomainEventKind[];
 
 /** Internal projection facts invalidate read models and never trigger another agent. */
@@ -239,6 +257,7 @@ export const TERMINAL_CAUSE_REASONS = [
   "cli_not_retry_safe",
   "orphaned_child",
   "orchestrator_stuck",
+  "wait_park_timeout",
   "turn_lost",
   "session_crashed",
   "session_delete_exit_unconfirmed",
@@ -285,6 +304,8 @@ export const TERMINAL_CAUSE_REASONS = [
   // graph
   "stale_resume_pointer",
   "consensus_no_draft_available",
+  "wait_timeout",
+  "rework_exhausted",
   // resume
   "prompt_failed",
   "consumer_failed",
@@ -341,9 +362,11 @@ export function parseTerminalCause(value: unknown): TerminalCause | null {
 // the emit helper so a new Review path cannot default to "completed".
 export const RUN_REVIEW_CAUSES = [
   "graph_completed",
+  "classified_failure_review",
   "agent_exit",
   "operator_stop",
   "rework_released",
+  "pr_reopened",
   "sync_returned",
 ] as const;
 

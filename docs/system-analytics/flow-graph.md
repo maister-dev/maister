@@ -966,7 +966,26 @@ flowchart TD
 - Missing variable, unsupported target type, or non-consuming template is a
   contextual `MaisterError("CONFIG")` before side effects.
 
-### Linked artifacts
+### Wait and publish attempts (Implemented)
+
+Park one graph attempt after proving predecessor quiescence. A resolution transaction writes the typed result and next outcome against the pinned manifest. Resume continues the same occurrence, restoring its rework and attempt counters. An explicit exhausted edge is distinct from any operator-resolvable condition outcome.
+
+Studio requires a target for each outcome introduced by a new or edited wait.
+The editor preserves authored targets for unchanged outcomes and leaves new
+targets empty until the author selects a node or graph completion. Applying a
+condition with an empty target leaves the graph unchanged.
+
+The live graph shows the current open attempt's condition and a local countdown
+from the persisted deadline. Its status snapshot refreshes on stream events.
+The wait action menu uses server-supplied options. Cancellation prompts for
+confirmation and supplies the captured version and request identifier on
+submission. Action feedback uses localized messages keyed by refusal reason.
+
+A publish attempt completes only from the shared publication service receipt. A declared failure target in an opted-in Flow uses the classified terminal transaction and observes current policy.
+
+See [the governing contract](waits.md).
+
+## Linked artifacts
 
 - [ADR-138](../decisions.md#adr-138-flow-review-workspace--complete-working-tree-review-and-verified-rework-feedback-delivery),
   [`hitl.md`](hitl.md), [`review-comments.md`](review-comments.md), and

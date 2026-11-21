@@ -72,6 +72,9 @@ import {
   type FlowRunCenterLabels,
 } from "@/components/runs/flow-run-center";
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
+import { RunWaitCard } from "@/components/runs/run-wait-card";
+import { RunAutonomousDecisions } from "@/components/runs/run-autonomous-decisions";
+import { latestRunWaitId } from "@/lib/waits/session";
 import { RunLiveRefresh } from "@/components/runs/run-live-refresh";
 import { RunPeekController } from "@/components/runs/run-peek-controller";
 import { readRunPeekChildren } from "@/lib/runs/peek-read-model";
@@ -399,6 +402,8 @@ export default async function RunDetailLayout({
     if (isRunKnowledgeUnavailable(error)) return RunSourceUnavailable();
     throw error;
   }
+  const waitId =
+    detail.runKind === "flow" ? await latestRunWaitId(detail.runId) : null;
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   // The consensus draft download serves agent output that can quote repository
@@ -592,6 +597,7 @@ export default async function RunDetailLayout({
     node: {
       Pending: tWorkbench("graph.node.Pending"),
       Running: tWorkbench("graph.node.Running"),
+      Waiting: t("nodeStatus.Waiting"),
       Succeeded: tWorkbench("graph.node.Succeeded"),
       Failed: tWorkbench("graph.node.Failed"),
       NeedsInput: tWorkbench("graph.node.NeedsInput"),
@@ -1694,6 +1700,16 @@ export default async function RunDetailLayout({
         hideChangeSummary={isOperational}
         inspector={
           <>
+            {waitId ? (
+              <RunWaitCard key={waitId} runId={detail.runId} waitId={waitId} />
+            ) : null}
+            {detail.projectId ? (
+              <RunAutonomousDecisions
+                canAct={canAct}
+                projectId={detail.projectId}
+                runId={detail.runId}
+              />
+            ) : null}
             {nativeInput ? (
               <NativeInputInspectionPanel input={nativeInput} />
             ) : null}

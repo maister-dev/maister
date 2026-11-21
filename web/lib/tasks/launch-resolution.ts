@@ -9,6 +9,8 @@ import type { TaskLaunchFlowAssetsSnapshot } from "./launch-flow-assets";
 
 import { and, eq } from "drizzle-orm";
 
+import { normalizePublicationOrigin } from "../../../runtime/workspace-publication";
+
 import { captureConcurrentTaskLaunchRelaunchSource } from "./launch-continuation";
 import { resolveTaskLaunchCapabilities } from "./launch-capabilities";
 import { selectedTaskLaunchRevision } from "./launch-package-selection";
@@ -48,7 +50,12 @@ import {
 import {
   resolveExecutionPolicy,
   assertNoBlindShip,
+  autonomousCompletionFromSnapshot,
 } from "@/lib/runs/execution-policy";
+import {
+  completionSettingsSchema,
+  type CompletionGrant,
+} from "@/lib/auto-promotion/completion-policy";
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
@@ -492,6 +499,59 @@ async function resolveFlowLaunchSettingsForSource(
   );
 
   assertNoBlindShip(executionPolicy);
+  const hasPublication = manifest.nodes.some((node) => node.type === "publish");
+  const repoIdentity =
+    selection.allowFlowPublication && project.repoUrl
+      ? normalizePublicationOrigin(project.repoUrl)
+      : null;
+
+  if (
+    selection.allowFlowPublication &&
+    (!hasPublication || !repoIdentity || revision.id !== flow.enabledRevisionId)
+  )
+    throw launchRefusal(
+      "flow_publication_destination_unavailable",
+      "PRECONDITION",
+    );
+  let autonomousCompletionGrant: CompletionGrant | undefined;
+
+  if (autonomousCompletionFromSnapshot(executionPolicy) === "evidence_gated") {
+    const bounds = completionSettingsSchema.safeParse(
+      project.autonomousCompletion,
+    );
+    const [platform] = await db
+      .select({
+        enabled: platformRuntimeSettings.autonomousCompletionEnabled,
+        revision: platformRuntimeSettings.autonomousCompletionRevision,
+      })
+      .from(platformRuntimeSettings)
+      .where(eq(platformRuntimeSettings.id, "singleton"));
+    const declaration = manifest.autonomous_completion;
+    const ci = manifest.nodes.find((node) => node.id === declaration?.ci);
+
+    if (
+      !declaration ||
+      revision.id !== flow.enabledRevisionId ||
+      !repoIdentity ||
+      !platform?.enabled ||
+      !bounds.success ||
+      !bounds.data.enabled ||
+      ci?.type !== "wait" ||
+      ci.on.kind !== "ci" ||
+      !bounds.data.approvedCiSources.includes(ci.on.issuer) ||
+      (ci.on.transport === "push" &&
+        (!ci.on.provider_issuer ||
+          !bounds.data.approvedCiSources.includes(ci.on.provider_issuer)))
+    )
+      throw launchRefusal("autonomy_grant_unavailable", "PRECONDITION");
+    autonomousCompletionGrant = {
+      flowRevisionId: revision.id,
+      projectRevision: project.autonomousCompletionRevision,
+      platformRevision: platform.revision,
+      bounds: bounds.data,
+      declaration,
+    };
+  }
 
   return {
     version: 2,
@@ -508,6 +568,18 @@ async function resolveFlowLaunchSettingsForSource(
     targetBranch,
     deliveryPolicy,
     executionPolicy,
+    ...(autonomousCompletionGrant ? { autonomousCompletionGrant } : {}),
+    ...(hasPublication ? { flowPublicationRequired: true as const } : {}),
+    ...(repoIdentity
+      ? {
+          flowPublicationGrant: {
+            flowRevisionId: revision.id,
+            repoIdentity,
+            targetBranch,
+            branchTemplate: project.publicBranchTemplate,
+          },
+        }
+      : {}),
     promotionMode: legacyPromotionModeFromStrategy(deliveryPolicy.strategy),
     autoPromote: selection.autoPromote ?? true,
     brainContext: selection.brainContext ?? null,
