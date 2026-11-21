@@ -882,6 +882,19 @@ it("B01 replays a retained publication when the original delivery lost its ackno
 
   fake.transport.workspacePublication = observeExistingRef;
 
+  const { claimLifecycleOperation } = await import("@/lib/workbench-lifecycle/service");
+
+  await expect(
+    claimLifecycleOperation({
+      database: database.db,
+      runId,
+      workspaceId: workspace.id,
+      operation: "exportBranch",
+      expectedRunStatus: "Running",
+      actorUserId: "operator-contender",
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "busy" } });
+  expect(observeExistingRef).not.toHaveBeenCalled();
   await runFlow(runId, { db: database.db, runtimeRoot, executionHosts: hosts });
 
   expect(observeExistingRef).toHaveBeenCalledTimes(1);
