@@ -10,7 +10,10 @@ import pino from "pino";
 import { parse as parseYaml } from "yaml";
 
 import { PUBLICATION_ENGINE_MIN, WAIT_ENGINE_MIN } from "@/lib/waits/contracts";
-import { AUTONOMOUS_COMPLETION_ENGINE_MIN } from "@/lib/auto-promotion/completion-policy";
+import {
+  AUTONOMOUS_COMPLETION_ENGINE_MIN,
+  usesAutonomousCompletionSyntax,
+} from "@/lib/auto-promotion/completion-policy";
 import { transitionNodeId } from "@/lib/flows/graph/transition-target";
 import { waitTransitionError } from "@/lib/waits/manifest";
 import { compileWaitPayloadSchema } from "@/lib/waits/payload-schema";
@@ -1215,7 +1218,7 @@ export function validateGraphManifest(
   const engineMin = manifest.compat?.engine_min ?? "";
 
   if (
-    manifest.autonomous_completion &&
+    usesAutonomousCompletionSyntax(manifest) &&
     !semverGte(engineMin, AUTONOMOUS_COMPLETION_ENGINE_MIN)
   )
     throw new MaisterError(

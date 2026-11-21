@@ -112,11 +112,18 @@ export const waitConditionSchema = z.discriminatedUnion("kind", [
         .max(32)
         .refine((items) => new Set(items).size === items.length),
       issuer: identifier,
+      provider_issuer: identifier.optional(),
     })
     .refine(
       (condition) =>
         (condition.transport === "push") === (condition.name !== undefined),
       "CI push requires a signal name",
+    )
+    .refine(
+      (condition) =>
+        condition.provider_issuer === undefined ||
+        condition.transport === "push",
+      "provider_issuer applies only to push CI",
     ),
   z.strictObject({ kind: z.literal("pr"), publication: identifier }),
 ]);

@@ -11,7 +11,10 @@ import {
 import { isEngineCompatible } from "@/lib/flows/engine-version";
 import { semverGte } from "@/lib/flows/semver";
 import { PUBLICATION_ENGINE_MIN, WAIT_ENGINE_MIN } from "@/lib/waits/contracts";
-import { AUTONOMOUS_COMPLETION_ENGINE_MIN } from "@/lib/auto-promotion/completion-policy";
+import {
+  AUTONOMOUS_COMPLETION_ENGINE_MIN,
+  usesAutonomousCompletionSyntax,
+} from "@/lib/auto-promotion/completion-policy";
 import { compileWaitPayloadSchema } from "@/lib/waits/payload-schema";
 import {
   classifyFlowManifestShape,
@@ -231,7 +234,7 @@ export function classifyStoredFlowManifest(
     };
   }
   if (
-    shape.manifest.autonomous_completion &&
+    usesAutonomousCompletionSyntax(shape.manifest) &&
     !semverGte(
       shape.manifest.compat?.engine_min ?? "",
       AUTONOMOUS_COMPLETION_ENGINE_MIN,

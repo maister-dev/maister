@@ -231,8 +231,7 @@ export async function readCompletionEvidence(input: {
       ),
     );
 
-  const lastCiProof =
-    wait?.providerVerifiedAt ?? (mergedPr ? wait?.resolvedAt : null);
+  const lastCiProof = wait?.providerVerifiedAt;
 
   if (
     !artifact ||
@@ -268,40 +267,47 @@ export async function readCompletionEvidence(input: {
     .limit(1);
 
   if (verifiedRef !== anchor.head) return null;
-  let checks: unknown;
+  const providerIssuer =
+    ci.transport === "push" ? ci.provider_issuer : ci.issuer;
 
-  if (ci.transport === "pull" && wait.result.source === "provider") {
-    const [latest] = await db
-      .select()
-      .from(runPublicationObservations)
-      .where(
-        and(
-          eq(runPublicationObservations.publicationId, publication.id),
-          eq(runPublicationObservations.kind, "ci"),
-          sql`${runPublicationObservations.fact}->>'waitId' = ${wait.id}`,
-        ),
-      )
-      .orderBy(
-        desc(runPublicationObservations.observedAt),
-        desc(runPublicationObservations.id),
-      )
-      .limit(1);
-
-    const fact = latest?.fact;
-
-    if (
-      latest?.headSha !== anchor.head ||
-      !fact ||
-      typeof fact !== "object" ||
-      Array.isArray(fact) ||
-      fact.outcome !== "success" ||
-      fact.issuer !== ci.issuer
+  if (
+    !providerIssuer ||
+    !grant.data.bounds.approvedCiSources.includes(providerIssuer) ||
+    !currentLimits.approvedCiSources.includes(providerIssuer) ||
+    wait.result.source !== (ci.transport === "push" ? "signal" : "provider")
+  )
+    return null;
+  const [latestProviderCi] = await db
+    .select()
+    .from(runPublicationObservations)
+    .where(
+      and(
+        eq(runPublicationObservations.publicationId, publication.id),
+        eq(runPublicationObservations.kind, "ci"),
+        sql`${runPublicationObservations.fact}->>'waitId' = ${wait.id}`,
+      ),
     )
-      return null;
-    checks = fact.requiredChecks;
-  } else if (ci.transport === "push" && wait.result.source === "signal") {
+    .orderBy(
+      desc(runPublicationObservations.observedAt),
+      desc(runPublicationObservations.id),
+    )
+    .limit(1);
+  const fact = latestProviderCi?.fact;
+
+  if (
+    latestProviderCi?.headSha !== anchor.head ||
+    !fact ||
+    typeof fact !== "object" ||
+    Array.isArray(fact) ||
+    fact.outcome !== "success" ||
+    fact.issuer !== providerIssuer
+  )
+    return null;
+  const checks = fact.requiredChecks;
+
+  if (ci.transport === "push") {
     const [delivery] = await db
-      .select({ body: runWaitDeliveries.body })
+      .select({ id: runWaitDeliveries.id })
       .from(runWaitDeliveries)
       .innerJoin(
         projectTokens,
@@ -316,11 +322,8 @@ export async function readCompletionEvidence(input: {
           eq(runWaitDeliveries.application, "applied"),
         ),
       );
-    const payload = delivery?.body.payload;
 
-    if (!payload || typeof payload !== "object" || Array.isArray(payload))
-      return null;
-    checks = payload.passedChecks;
+    if (!delivery) return null;
   }
   if (
     !Array.isArray(checks) ||

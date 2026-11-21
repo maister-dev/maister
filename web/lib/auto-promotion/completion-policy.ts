@@ -1,6 +1,21 @@
+import type { FlowYamlV1 } from "@/lib/config.schema";
+
 import { z } from "zod";
 
 export const AUTONOMOUS_COMPLETION_ENGINE_MIN = "3.15.0";
+
+export function usesAutonomousCompletionSyntax(manifest: FlowYamlV1): boolean {
+  return (
+    manifest.autonomous_completion !== undefined ||
+    manifest.nodes.some(
+      (node) =>
+        node.type === "wait" &&
+        node.on.kind === "ci" &&
+        node.on.provider_issuer !== undefined,
+    )
+  );
+}
+
 export const autonomousFailureReason = z.enum([
   "wait_timeout",
   "rework_exhausted",

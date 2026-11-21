@@ -66,6 +66,49 @@ it("C01/W02 rejects autonomous evidence declarations with missing sources or an 
   expect(classifyStoredFlowManifest(manifest)).toMatchObject({
     compatible: true,
   });
+  const push = {
+    ...manifest,
+    nodes: manifest.nodes.map((node) =>
+      node.id === "ci"
+        ? {
+            ...node,
+            on: {
+              ...node.on,
+              transport: "push",
+              name: "build",
+              issuer: "token",
+            },
+          }
+        : node,
+    ),
+  };
+  const pushResult = flowYamlV1Schema.safeParse(push);
+
+  expect(pushResult.success).toBe(false);
+  if (!pushResult.success)
+    expect(pushResult.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["autonomous_completion", "ci"],
+          message: expect.stringContaining("provider_issuer"),
+        }),
+      ]),
+    );
+  expect(
+    classifyStoredFlowManifest({
+      ...push,
+      autonomous_completion: undefined,
+      compat: { engine_min: "3.14.0" },
+      nodes: push.nodes.map((node) =>
+        node.id === "ci"
+          ? { ...node, on: { ...node.on, provider_issuer: "github-actions" } }
+          : node,
+      ),
+    }),
+  ).toMatchObject({
+    compatible: false,
+    reason: { kind: "engine_incompatible" },
+  });
   expect(
     classifyStoredFlowManifest({
       ...manifest,

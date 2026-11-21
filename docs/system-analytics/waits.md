@@ -1,6 +1,6 @@
 # Durable Flow waits
 
-**Status:** Designed ([ADR-215](../decisions/adr-215.md)).
+**Status:** Implemented ([ADR-215](../decisions/adr-215.md)).
 
 ## Purpose
 
@@ -86,6 +86,8 @@ A related-run selector names one run. The server verifies the directed task rela
 | Released wait needs a workspace observation | Read the exact workspace under the latest released wait epoch. Ask for Git head only. The resolver checks the witness again before applying. |
 
 A validated mismatched head is a stale delivery. An authoritative changed head yields a stale outcome. Capture the head at park. Managed edits emit a change fact. Missing or unverified observations stay pending until deadline. Review and promotion recheck the provenance of evidence if a head or provider attempt changes after the wait has resolved.
+
+A push CI success settles the Flow after verification of the publication ref. For autonomous promotion, require current provider checks from the manifest's independently approved `provider_issuer` for the same SHA and required check names. An absent, pending or failing provider check leaves the run in Review.
 
 Operator access is session-only with `operateWait` for writes. Actions require the original request key, version and reason. Resolve-now can produce any compiled outcome with explicit override provenance. A project token with exact `waits:signal` scope can deliver a signal to the owned run/wait tuple. The wait store records the receipt before accepting the request. Evidence retains the authoritative source and reports payloads as bounded data. Browser invalidation carries identifiers/status only. An ordinary wait adds no Decisions item. Show overdue waits to authorized operators and transfer a timeout escalation to the actual HITL item once it exists.
 
