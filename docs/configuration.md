@@ -1758,3 +1758,18 @@ applying the optional Brain migration `0012` and configuring the Brain
 embedding provider. This opts in to sending private current note bodies and
 vector search queries to that provider. Lexical search runs entirely in the
 main database. A vector request reports provider failures after bounded retry.
+
+
+## Workspace integrity checks
+
+**Designed.** Active global administrators manage limits under **Settings → Workspace integrity checks**. Each field resolves its saved platform override, then its web service environment value, then its built-in value. Reset removes the saved override independently. A successful save applies to each subsequent check. An active check uses its captured settings.
+
+| Setting | Web environment variable | Default | Inclusive integer range |
+| --- | --- | ---: | --- |
+| Total size (MiB) | `MAISTER_WORKSPACE_INTEGRITY_MAX_SIZE_MIB` | 1,024 | 1–8,192 |
+| Duration (seconds) | `MAISTER_WORKSPACE_INTEGRITY_MAX_DURATION_SECONDS` | 120 | 1–240 |
+| Filesystem entries | `MAISTER_WORKSPACE_INTEGRITY_MAX_ENTRIES` | 100,000 | 1–500,000 |
+
+An inherited environment value must be a decimal integer in range. If a reset exposes invalid configuration, the update rolls back. Correct the environment or supply a platform override. Production host settings belong in `/etc/maister/maister.env`. Keep the environment consistent across web replicas. Project settings and repository files carry no authority over the limits.
+
+The per-file `config.worktree` limit is 1 MiB. See [operational integrity](system-analytics/operational-agent-lifecycle.md#integrity-boundary) for how to interpret failures.

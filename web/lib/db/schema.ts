@@ -594,10 +594,17 @@ export const platformRuntimeSettings = pgTable("platform_runtime_settings", {
     (): AnyPgColumn => platformAcpRunners.id,
     { onDelete: "set null" },
   ),
+  workspaceIntegrityMaxSizeMiB: integer("workspace_integrity_max_size_mib"),
+  workspaceIntegrityMaxDurationSeconds: integer("workspace_integrity_max_duration_seconds"),
+  workspaceIntegrityMaxEntries: integer("workspace_integrity_max_entries"),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [
+  check("platform_workspace_integrity_size_range", sql`${t.workspaceIntegrityMaxSizeMiB} BETWEEN 1 AND 8192`),
+  check("platform_workspace_integrity_duration_range", sql`${t.workspaceIntegrityMaxDurationSeconds} BETWEEN 1 AND 240`),
+  check("platform_workspace_integrity_entries_range", sql`${t.workspaceIntegrityMaxEntries} BETWEEN 1 AND 500000`),
+]);
 
 // Platform-scoped MCP capability catalog (M27/T-C2, ADR-067). Admin CRUD mirrors
 // platform_acp_runners (ADR-065). ADR-179: `env`/`headers` are

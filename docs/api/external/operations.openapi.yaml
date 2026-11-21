@@ -11117,12 +11117,38 @@ components:
           minLength: 1
           maxLength: 128
           description: Canonical schema-known field path with numeric indices, or $ for the root.
+    WorkspaceIntegrityLimit:
+      type: object
+      additionalProperties: false
+      required: [reason, stage, resource, limitAxis, unit, observed, maximum, observedEntries, observedBytes, elapsedMs]
+      properties:
+        reason: { type: string, enum: [operational_integrity_limit] }
+        stage: { type: string, enum: [baseline, materialization, dispatch, final_verification, cleanup, evidence_capture] }
+        resource: { type: string, enum: [primary, context] }
+        limitAxis: { type: string, enum: [bytes, entries, time, worktree_config_bytes] }
+        unit: { type: string, enum: [B, entries, ms] }
+        observed: { type: integer, minimum: 0 }
+        maximum: { type: integer, minimum: 1 }
+        observedEntries: { type: integer, minimum: 0 }
+        observedBytes: { type: integer, minimum: 0 }
+        elapsedMs: { type: integer, minimum: 0 }
+      oneOf:
+        - properties:
+            limitAxis: { enum: [bytes, worktree_config_bytes] }
+            unit: { enum: [B] }
+        - properties:
+            limitAxis: { enum: [entries] }
+            unit: { enum: [entries] }
+        - properties:
+            limitAxis: { enum: [time] }
+            unit: { enum: [ms] }
     OperationalPreparationFailure:
       type: object
       additionalProperties: false
       required: [causeChain]
       description: Safe primary workspace-preparation cause. Preparation can fail on a continuation after earlier model execution, so this record alone does not prove that the model never ran. Messages, paths, stderr, source and credentials are excluded; the record may be absent on historical receipts.
       properties:
+        integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
         runId: { type: string, minLength: 1, maxLength: 256 }
         assignmentId: { type: string, minLength: 1, maxLength: 256 }
         assignmentEpoch: { type: integer, minimum: 1 }
@@ -11242,6 +11268,8 @@ components:
           maxItems: 20
           items:
             $ref: "#/components/schemas/OperationalValidationDiagnostic"
+        integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
+        cleanupIntegrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
         infrastructureFailure:
           $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:

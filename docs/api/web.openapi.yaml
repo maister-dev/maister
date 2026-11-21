@@ -19000,6 +19000,39 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/admin/platform/workspace-integrity:
+    get:
+      tags: [admin]
+      operationId: getWorkspaceIntegritySettings
+      summary: Read workspace integrity settings (Designed)
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/WorkspaceIntegritySettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/WorkspaceIntegrityConfigError" }
+        "503": { $ref: "#/components/responses/WorkspaceIntegrityUnavailable" }
+        "500": { $ref: "#/components/responses/WorkspaceIntegrityInternalError" }
+    patch:
+      tags: [admin]
+      operationId: patchWorkspaceIntegritySettings
+      summary: Atomically update workspace integrity settings (Designed)
+      description: Global administrator only. An integer sets an override, null resets a field, and omission preserves it.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceIntegrityPatch" }
+            example: { maxSizeMiB: 512, maxEntries: null }
+      responses:
+        "200": { $ref: "#/components/responses/WorkspaceIntegritySettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/WorkspaceIntegrityConfigError" }
+        "503": { $ref: "#/components/responses/WorkspaceIntegrityUnavailable" }
+        "500": { $ref: "#/components/responses/WorkspaceIntegrityInternalError" }
+
   /api/admin/platform/librarian:
     get:
       tags: [admin, librarian]
@@ -24230,6 +24263,43 @@ components:
         Enforced by `web/lib/evaluations/route-helpers.ts:requireIfMatchRevision`.
       schema: { type: string }
   responses:
+    WorkspaceIntegritySettings:
+      description: Committed effective settings for the instance.
+      headers:
+        Cache-Control:
+          schema: { type: string, enum: ["private, no-store"] }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/WorkspaceIntegritySettings" }
+          example:
+            maxSizeMiB: { value: 1024, source: default }
+            maxDurationSeconds: { value: 90, source: environment }
+            maxEntries: { value: 75000, source: platform }
+    WorkspaceIntegrityConfigError:
+      description: Invalid request or configuration. No settings were changed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/WorkspaceIntegrityConfigError" }
+    WorkspaceIntegrityUnavailable:
+      description: Platform settings storage is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [EXECUTOR_UNAVAILABLE] }
+              message: { type: string }
+    WorkspaceIntegrityInternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: { type: string, enum: [CRASH] }
+              message: { type: string }
     AgentVault401:
       description: Active authentication required.
       headers:
@@ -28535,12 +28605,86 @@ components:
           minLength: 1
           maxLength: 128
           description: Canonical schema-known field path with numeric indices, or $ for the root.
+    WorkspaceIntegrityPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        maxSizeMiB: { type: integer, minimum: 1, maximum: 8192, nullable: true }
+        maxDurationSeconds: { type: integer, minimum: 1, maximum: 240, nullable: true }
+        maxEntries: { type: integer, minimum: 1, maximum: 500000, nullable: true }
+    WorkspaceIntegritySettings:
+      type: object
+      additionalProperties: false
+      required: [maxSizeMiB, maxDurationSeconds, maxEntries]
+      properties:
+        maxSizeMiB:
+          type: object
+          additionalProperties: false
+          required: [value, source]
+          properties:
+            value: { type: integer, minimum: 1, maximum: 8192 }
+            source: { type: string, enum: [platform, environment, default] }
+        maxDurationSeconds:
+          type: object
+          additionalProperties: false
+          required: [value, source]
+          properties:
+            value: { type: integer, minimum: 1, maximum: 240 }
+            source: { type: string, enum: [platform, environment, default] }
+        maxEntries:
+          type: object
+          additionalProperties: false
+          required: [value, source]
+          properties:
+            value: { type: integer, minimum: 1, maximum: 500000 }
+            source: { type: string, enum: [platform, environment, default] }
+    WorkspaceIntegrityConfigError:
+      type: object
+      additionalProperties: false
+      required: [code, message, details]
+      properties:
+        code: { type: string, enum: [CONFIG] }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: false
+          required: [reason]
+          properties:
+            reason: { type: string, enum: [invalid_body, invalid_value, invalid_environment, settings_missing] }
+            field: { type: string, enum: [maxSizeMiB, maxDurationSeconds, maxEntries] }
+    WorkspaceIntegrityLimit:
+      type: object
+      additionalProperties: false
+      required: [reason, stage, resource, limitAxis, unit, observed, maximum, observedEntries, observedBytes, elapsedMs]
+      properties:
+        reason: { type: string, enum: [operational_integrity_limit] }
+        stage: { type: string, enum: [baseline, materialization, dispatch, final_verification, cleanup, evidence_capture] }
+        resource: { type: string, enum: [primary, context] }
+        limitAxis: { type: string, enum: [bytes, entries, time, worktree_config_bytes] }
+        unit: { type: string, enum: [B, entries, ms] }
+        observed: { type: integer, minimum: 0 }
+        maximum: { type: integer, minimum: 1 }
+        observedEntries: { type: integer, minimum: 0 }
+        observedBytes: { type: integer, minimum: 0 }
+        elapsedMs: { type: integer, minimum: 0 }
+      oneOf:
+        - properties:
+            limitAxis: { enum: [bytes, worktree_config_bytes] }
+            unit: { enum: [B] }
+        - properties:
+            limitAxis: { enum: [entries] }
+            unit: { enum: [entries] }
+        - properties:
+            limitAxis: { enum: [time] }
+            unit: { enum: [ms] }
     OperationalPreparationFailure:
       type: object
       additionalProperties: false
       required: [causeChain]
       description: Safe primary workspace-preparation cause. Preparation can fail on a continuation after earlier model execution, so this record alone does not prove that the model never ran. Messages, paths, stderr, source and credentials are excluded; the record may be absent on historical receipts.
       properties:
+        integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
         runId: { type: string, minLength: 1, maxLength: 256 }
         assignmentId: { type: string, minLength: 1, maxLength: 256 }
         assignmentEpoch: { type: integer, minimum: 1 }
@@ -28661,6 +28805,8 @@ components:
           description: Optional safe rule/path details for invalid output; absent on legacy receipts. Does not make rejected output usable.
           items:
             $ref: "#/components/schemas/OperationalValidationDiagnostic"
+        integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
+        cleanupIntegrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
         infrastructureFailure:
           $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:

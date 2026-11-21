@@ -724,3 +724,28 @@ test("AV-13 review-only attention tick preserves the old cursor and omits projec
   assert.equal(validate({ ...reviewOnly, reviews: -1 }), false);
   assert.equal(validate({ ...reviewOnly, notePath: "/memories/index.md" }), false);
 });
+
+test("workspace integrity diagnostics preserve exact measurements and historical compatibility", () => {
+  const surfaces = ["docs/api/web.openapi.yaml", "docs/api/external/operations.openapi.yaml"];
+  const schemas = surfaces.map((file) => YAML.parse(readFileSync(file, "utf8")).components.schemas);
+  for (const name of ["WorkspaceIntegrityLimit", "OperationalPreparationFailure"])
+    assert.deepEqual(schemas[0][name], schemas[1][name]);
+
+  const receipt = {
+    stage: "baseline",
+    causeChain: [{ name: "MaisterError", code: "PRECONDITION" }],
+    integrityLimit: {
+      reason: "operational_integrity_limit", stage: "baseline", resource: "primary",
+      limitAxis: "bytes", unit: "B", observed: 268737798, maximum: 268435456,
+      observedEntries: 9266, observedBytes: 268737798, elapsedMs: 10354,
+    },
+  };
+  for (const surface of schemas) {
+    const ajv = new Ajv({ strict: false });
+    const document = { components: { schemas: surface }, $ref: "#/components/schemas/OperationalPreparationFailure" };
+    const validate = ajv.compile(document);
+    assert.equal(validate(receipt), true);
+    assert.equal(validate({ causeChain: receipt.causeChain }), true);
+    assert.equal(validate({ ...receipt, integrityLimit: { ...receipt.integrityLimit, unit: "ms" } }), false);
+  }
+});

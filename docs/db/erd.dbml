@@ -2691,6 +2691,9 @@ table platform_runtime_settings {
   distill_api_key_ref text
   librarian_enabled boolean [not null, default: false]
   librarian_runner_id text
+  workspace_integrity_max_size_mib integer
+  workspace_integrity_max_duration_seconds integer
+  workspace_integrity_max_entries integer
   updated_at "timestamp with time zone" [not null, default: `now()`]
 }
 

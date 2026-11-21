@@ -276,3 +276,6 @@ evidence and use the existing retry or relaunch action when admission permits
 a fresh Run. Check the cleanup receipt, Git worktree registration, exact path,
 and adopted workspace handle before reporting release. For an already-terminal
 Run, look up its exact ID because the discovery query selects Running rows.
+
+
+A preparation limit refusal retains the bounded integrity measurements on the preparation and terminal receipts. **Designed.** An authorized run reader sees the failed stage, workspace category, axis, threshold and corrective action. A later configuration change does not alter the receipt. Existing run access rules apply to this metadata.
