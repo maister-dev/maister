@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -544,6 +544,110 @@ it.each([
     expect(await counts()).toEqual({ done: 1, failed: 0, reverted: 1 });
   },
 );
+
+it("B01 replays a retained publication when the original delivery lost its acknowledgement", async () => {
+  const { runFlow } = await import("@/lib/flows/runner");
+  const { runId, projectId, flowRevisionId, runtimeRoot, worktreePath } =
+    await seedGraphRun(
+      database.db,
+      {
+        schemaVersion: 1,
+        name: "Publication receipt recovery",
+        compat: { engine_min: "3.14.0" },
+        nodes: [
+          { type: "publish", id: "publish", transitions: { success: "done" } },
+        ],
+      },
+      { flowRevision: true },
+    );
+
+  onTestFinished(async () => {
+    await Promise.all(
+      [runtimeRoot, worktreePath].map((path) =>
+        rm(path, { recursive: true, force: true }),
+      ),
+    );
+  });
+  await database.pool.query("UPDATE projects SET repo_url=$1 WHERE id=$2", [
+    `https://${repoIdentity}.git`,
+    projectId,
+  ]);
+  const { hosts, fake } = await fakeGraphHosts(database.db, runId);
+  const attemptId = randomUUID();
+  const operationKey = createHash("sha256")
+    .update(`flow-publication:${attemptId}`)
+    .digest("hex");
+  const {
+    rows: [run],
+  } = await database.pool.query<{
+    execution_assignment_id: string;
+    flow_revision: string;
+  }>(
+    `UPDATE runs r SET
+    current_step_id='publish', flow_publication_grant=jsonb_build_object('repoIdentity',$1::text,'flowRevisionId',$2::text,
+      'targetBranch',p.main_branch,'branchTemplate',p.public_branch_template)
+    FROM projects p WHERE p.id=r.project_id AND r.id=$3 RETURNING r.execution_assignment_id,r.flow_revision`,
+    [repoIdentity, flowRevisionId, runId],
+  );
+  const {
+    rows: [workspace],
+  } = await database.pool.query<{ id: string }>(
+    `UPDATE workspaces SET lifecycle_operation_state='claiming',
+    lifecycle_operation_attempt_id=$2,lifecycle_operation_claimed_at=statement_timestamp(),lifecycle_operation_name='exportBranch',
+    lifecycle_operation_expected_run_status='Running',lifecycle_operation_lease_expires_at=statement_timestamp()+interval '30 seconds'
+    WHERE run_id=$1 RETURNING id`,
+    [runId, operationKey],
+  );
+
+  await database.pool.query(
+    `INSERT INTO node_attempts (id,run_id,node_id,node_type,status,execution_assignment_id)
+    VALUES ($1,$2,'publish','publish','Running',$3)`,
+    [attemptId, runId, run.execution_assignment_id],
+  );
+  await database.pool.query(
+    `INSERT INTO run_publications (id,run_id,project_id,node_attempt_id,workspace_id,
+    operation_key,flow_revision,assignment_id,remote_name,repo_identity,head_ref,base_ref,source_head,generation,pr_mode,phase)
+    VALUES ($1,$2,$3,$4,$5,$1,$6,$7,'origin',$8,'refs/heads/run/candidate','refs/heads/main',$9,1,'none','claimed')`,
+    [
+      operationKey,
+      runId,
+      projectId,
+      attemptId,
+      workspace.id,
+      run.flow_revision,
+      run.execution_assignment_id,
+      repoIdentity,
+      head,
+    ],
+  );
+  const observeExistingRef = vi.fn(async () => ({
+    repoIdentity,
+    headSha: head,
+    remoteHeadSha: head,
+  }));
+
+  fake.transport.workspacePublication = observeExistingRef;
+
+  await runFlow(runId, { db: database.db, runtimeRoot, executionHosts: hosts });
+
+  expect(observeExistingRef).toHaveBeenCalledTimes(1);
+  expect(
+    (
+      await database.pool.query(
+        `SELECT id,phase,observed_head FROM run_publications WHERE run_id=$1`,
+        [runId],
+      )
+    ).rows,
+  ).toEqual([{ id: operationKey, phase: "observed", observed_head: head }]);
+  expect(
+    (
+      await database.pool.query(
+        `SELECT id,status FROM node_attempts WHERE run_id=$1 AND node_id='publish'`,
+        [runId],
+      )
+    ).rows,
+  ).toEqual([{ id: attemptId, status: "Succeeded" }]);
+});
 
 it("B01 refuses a graph publication without retained launch authority", async () => {
   const { runFlow } = await import("@/lib/flows/runner");

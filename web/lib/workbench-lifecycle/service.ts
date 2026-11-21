@@ -2692,6 +2692,10 @@ export async function claimLifecycleOperation(args: {
   // run lock; omitted by a system caller (GC, the reconciler recording a
   // vanished tree), which the policy never gated on the claim's owner.
   actorUserId?: string | null;
+  replay?: {
+    attemptId: string;
+    assertOwner(tx: NodePgDatabase<typeof schema>): Promise<void>;
+  };
 }): Promise<LifecycleOperationClaim> {
   const client = args.database ?? db();
 
@@ -2699,6 +2703,8 @@ export async function claimLifecycleOperation(args: {
     const rows = await tx
       .select({
         id: workspaces.id,
+        lifecycleOperationAttemptId: workspaces.lifecycleOperationAttemptId,
+        lifecycleOperationName: workspaces.lifecycleOperationName,
         lifecycleOperationState: workspaces.lifecycleOperationState,
         lifecycleOperationLeaseExpiresAt:
           workspaces.lifecycleOperationLeaseExpiresAt,
@@ -2717,7 +2723,12 @@ export async function claimLifecycleOperation(args: {
       );
     }
 
-    if (!canReclaimLifecycle(workspace)) {
+    const sameOperation =
+      args.replay &&
+      workspace.lifecycleOperationAttemptId === args.replay.attemptId &&
+      workspace.lifecycleOperationName === args.operation;
+
+    if (!sameOperation && !canReclaimLifecycle(workspace)) {
       throw new MaisterError(
         "CONFLICT",
         `lifecycle operation already in progress for run ${args.runId}`,
@@ -2781,7 +2792,8 @@ export async function claimLifecycleOperation(args: {
       await requireReworkClaimOwner(args.runId, args.actorUserId, tx);
     }
 
-    const attemptId = randomUUID();
+    if (args.replay) await args.replay.assertOwner(tx);
+    const attemptId = args.replay?.attemptId ?? randomUUID();
     const claimedAt = new Date();
     const leaseExpiresAt = new Date(
       claimedAt.getTime() + promotionClaimTimeoutSeconds() * 1000,
