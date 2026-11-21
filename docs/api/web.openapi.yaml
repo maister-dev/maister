@@ -19004,7 +19004,7 @@ paths:
     get:
       tags: [admin]
       operationId: getWorkspaceIntegritySettings
-      summary: Read workspace integrity settings (Designed)
+      summary: Read workspace integrity settings
       security: [{ sessionCookie: [] }]
       responses:
         "200": { $ref: "#/components/responses/WorkspaceIntegritySettings" }
@@ -19016,7 +19016,7 @@ paths:
     patch:
       tags: [admin]
       operationId: patchWorkspaceIntegritySettings
-      summary: Atomically update workspace integrity settings (Designed)
+      summary: Atomically update workspace integrity settings
       description: Global administrator only. An integer sets an override, null resets a field, and omission preserves it.
       security: [{ sessionCookie: [] }]
       requestBody:
