@@ -28,7 +28,11 @@ export async function seedProjectReviewQueue(fixture: StartedPostgresTestDb) {
       projectId: project.id,
       kind: "state",
       evidenceItemIds: [],
-      draft: { title: `Queue fixture ${index}` },
+      draft: {
+        title: `Queue fixture ${index}`,
+        path: "docs/review.md",
+        content: "Review the current retained source.",
+      },
       blastRadius: "low",
       autonomyDecision: "manual",
       actor: { type: "user", id: userId },

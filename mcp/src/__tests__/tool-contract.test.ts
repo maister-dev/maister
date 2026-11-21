@@ -33,6 +33,7 @@ type JsonSchema = {
   items?: JsonSchema;
   allOf?: JsonSchema[];
   oneOf?: JsonSchema[];
+  anyOf?: JsonSchema[];
   additionalProperties?: boolean | JsonSchema;
   propertyNames?: JsonSchema;
   "x-propertyNames"?: JsonSchema;
@@ -246,6 +247,14 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     path: "/api/v1/ext/knowledge/{recordId}/confirmations",
   },
   knowledge_search: { method: "get", path: "/api/v1/ext/knowledge" },
+  knowledge_revisions_list: { method: "get", path: "/api/v1/ext/knowledge/{recordId}/revisions" },
+  proposal_reviews_list: { method: "get", path: "/api/v1/ext/inbox/reviews" },
+  proposal_review_get: { method: "get", path: "/api/v1/ext/inbox/reviews/{kind}/{proposalId}" },
+  proposal_review_decide: { method: "post", path: "/api/v1/ext/inbox/reviews/{kind}/{proposalId}/decision" },
+  personal_vault_list: { method: "get", path: "/api/v1/ext/knowledge/vaults" },
+  personal_vault_view: { method: "get", path: "/api/v1/ext/knowledge/vaults/{locationId}/view" },
+  personal_vault_revisions: { method: "get", path: "/api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}/revisions" },
+  personal_vault_revision_get: { method: "get", path: "/api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}/revisions/{revisionId}" },
   knowledge_get: { method: "get", path: "/api/v1/ext/knowledge/{recordId}" },
   knowledge_evidence: {
     method: "get",
@@ -731,7 +740,8 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
     );
     const headerFields = headerParamNames(op);
 
-    const spec = toolSpec(toolName);
+    const generated = toolSpec(toolName);
+    const spec = toolName === "personal_vault_view" ? generated.anyOf?.find((variant) => variant.required?.includes("path")) ?? generated : generated;
     const toolProps = spec.properties ?? {};
     const toolRequired = spec.required ?? [];
 
@@ -773,6 +783,18 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       });
 
       return;
+    }
+    if (toolName === "personal_vault_view") {
+      it("also mirrors the stable note-ID selector without a path", () => {
+        const byNote = generated.anyOf?.find((variant) => variant.required?.includes("noteId"));
+        const notePath = "/api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}";
+        const noteOp = openapi.paths[notePath]?.get;
+
+        expect(noteOp).toBeDefined();
+        expect(byNote?.additionalProperties).toBe(false);
+        expect(byNote?.required?.sort()).toEqual(["locationId", "noteId"]);
+        expect(Object.keys(byNote?.properties ?? {}).sort()).toEqual(["cursor", "locationId", "noteId"]);
+      });
     }
 
     it("advertises exactly the operation's params + body properties", () => {

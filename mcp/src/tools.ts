@@ -18,6 +18,7 @@ import {
   librarianVaultToolSpecs,
 } from "./librarian-vault-tools";
 import { isToolsetName, TOOLSETS } from "./toolsets";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 import {
   isTaskLaunchTool,
   isLaunchAdmissionTool,
@@ -2879,13 +2880,16 @@ function resolveRouting(
   }
 }
 
-// The tools a facade process exposes. An unnamed or unknown toolset exposes
-// every registered tool — the default for project and agent tokens.
+// The default preserves the existing surface. New personal tools require opt-in.
 export function toolNamesForToolset(
   toolset: string | undefined,
   scopes: readonly string[] = [],
 ): string[] {
-  if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
+  if (!isToolsetName(toolset)) {
+    const personal = new Set<string>(PERSONAL_KNOWLEDGE_TOOLS);
+
+    return Object.keys(TOOL_SPECS).filter((name) => !personal.has(name));
+  }
 
   const allowed = new Set<string>(
     toolset === "installation"

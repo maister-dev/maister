@@ -22,6 +22,7 @@ import { parse } from "yaml";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import knowledgeToolSchemas from "../../../../../runtime/knowledge-tool-input.schema.json";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../../../../runtime/knowledge-tool-effects";
 
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
@@ -1010,7 +1011,7 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     };
 
     expect(result.tools.map((tool) => tool.name).sort()).toEqual(
-      Object.keys(knowledgeToolSchemas).sort(),
+      Object.keys(knowledgeToolSchemas).filter((name) => !new Set<string>(PERSONAL_KNOWLEDGE_TOOLS).has(name)).sort(),
     );
     for (const tool of result.tools)
       expect(tool.inputSchema).toEqual(

@@ -39,6 +39,14 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
     "Inspect accessible conflicting claims through bounded pages. Each edge retains the original opposing record revision. A score or a newer claim does not resolve a conflict; inaccessible claims remain withheld.",
   knowledge_capture_source:
     "Capture exact bounded submitted source bytes as attributable evidence, without asserting independent corroboration, historical observation time or factual confirmation. Reuse the same idempotencyKey for the same delivery. Company ownership requires no project.",
+  proposal_reviews_list: "List authorized pending decisions or retained decisions by scope. Requires a global personal token and the appropriate content scopes.",
+  proposal_review_get: "Inspect an exact authorized human review and its observed version, evidence or diff, and available decision outcome. This works independently of the current list page.",
+  proposal_review_decide: "Settle one inspected Brain or vault proposal with the exact version and a stable request key. Rejection needs a reason. Use knowledge_decide for structured knowledge.",
+  personal_vault_list: "Page project and installation memory locations available to this human. Requires explicit agent_memory:read.",
+  personal_vault_view: "Read the indicated vault location by directory or note path, or by stable note ID. Follow the authorized continuation for remaining content.",
+  personal_vault_revisions: "Page retained revisions for one exact note in an authorized vault.",
+  personal_vault_revision_get: "Read an exact authorized retained revision. A removed or concealed payload is unavailable.",
+  knowledge_revisions_list: "Page exact retained record revisions visible under current owner and source policies.",
 };
 
 export const KNOWLEDGE_TOOL_SPECS = Object.fromEntries(
@@ -78,6 +86,41 @@ export function knowledgeToolRouting(
   name: KnowledgeToolName,
   args: Record<string, unknown>,
 ): { method: "GET" | "POST" | "PATCH"; path: string; body?: unknown } {
+  const reviewRoot = "/api/v1/ext/inbox/reviews";
+  const vaultRoot = "/api/v1/ext/knowledge/vaults";
+  const encode = (value: unknown) => encodeURIComponent(String(value));
+  const get = (path: string, filters: Record<string, unknown>) => {
+    const query = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+
+    return { method: "GET" as const, path: query.size ? `${path}?${query}` : path };
+  };
+
+  if (name === "proposal_reviews_list") return get(reviewRoot, args);
+  if (name === "proposal_review_get" || name === "proposal_review_decide") {
+    const { kind, proposalId, ...input } = args;
+    const path = `${reviewRoot}/${encode(kind)}/${encode(proposalId)}`;
+
+    return name === "proposal_review_decide" ? { method: "POST", path: `${path}/decision`, body: input } : get(path, input);
+  }
+  if (name === "personal_vault_list") return get(vaultRoot, args);
+  if (name === "personal_vault_view" || name === "personal_vault_revisions" || name === "personal_vault_revision_get") {
+    const { locationId, noteId, revisionId, ...filters } = args;
+    const path = `${vaultRoot}/${encode(locationId)}`;
+
+    if (name === "personal_vault_view") return get(noteId ? `${path}/notes/${encode(noteId)}` : `${path}/view`, filters);
+    const note = `${path}/notes/${encode(noteId)}/revisions`;
+
+    return get(name === "personal_vault_revision_get" ? `${note}/${encode(revisionId)}` : note, filters);
+  }
+  if (name === "knowledge_revisions_list") {
+    const { recordId, ...filters } = args;
+
+    return get(`/api/v1/ext/knowledge/${encode(recordId)}/revisions`, filters);
+  }
   if (name === "assignment_question_ask") {
     const { assignmentId, ...body } = args;
 

@@ -15,6 +15,7 @@ import {
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
+import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
 import {
   knowledgeOwnerActions,
   knowledgeRecordActions,
@@ -34,7 +35,9 @@ export default async function KnowledgeProposalPage({
   const db = getDb();
 
   const view = await knowledgeReferenceView(async () => {
-    const proposal = await getKnowledgeProposal(db, principal, proposalId);
+    const proposal = await getKnowledgeProposal(db, principal, proposalId, {
+      historyRead: true,
+    });
     const { content } = proposal;
     const actions =
       content.change === "correct"
@@ -46,11 +49,26 @@ export default async function KnowledgeProposalPage({
           )
         : await knowledgeOwnerActions(db, principal, proposal.owner);
 
-    return { proposal, content, actions };
+    const revisions =
+      content.change === "correct"
+        ? await knowledgeReferenceView(async () => {
+            const [base, current] = await Promise.all([
+              getKnowledgeRecord(db, principal, {
+                recordId: content.recordId,
+                revision: content.expectedRevision,
+              }),
+              getKnowledgeRecord(db, principal, { recordId: content.recordId }),
+            ]);
+
+            return { base, current };
+          })
+        : null;
+
+    return { proposal, content, actions, revisions };
   });
 
   if (view.state === "unavailable") return <KnowledgeUnavailable />;
-  const { proposal, content, actions } = view.value;
+  const { proposal, content, actions, revisions } = view.value;
 
   return (
     <>
@@ -61,9 +79,37 @@ export default async function KnowledgeProposalPage({
             <p className="mb-3 text-sm font-semibold">
               {t(`state.${proposal.status}`)}
             </p>
-            <p className="whitespace-pre-wrap break-words text-[14px] leading-7 text-ink">
-              {content.assertion}
-            </p>
+            {revisions?.state === "available" ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <h2 className="font-semibold">
+                    {t("originalClaim")} · r{revisions.value.base.revision}
+                  </h2>
+                  <p className="whitespace-pre-wrap break-words text-sm">
+                    {revisions.value.base.assertion}
+                  </p>
+                </div>
+                <div>
+                  <h2 className="font-semibold">{t("proposedClaim")}</h2>
+                  <p className="whitespace-pre-wrap break-words text-sm">
+                    {content.assertion}
+                  </p>
+                </div>
+                {revisions.value.current.revision !==
+                revisions.value.base.revision ? (
+                  <Link
+                    className="underline md:col-span-2"
+                    href={`/knowledge/${encodeURIComponent(revisions.value.current.id)}?revision=${revisions.value.current.revision}`}
+                  >
+                    {t("currentRecord")} · r{revisions.value.current.revision}
+                  </Link>
+                ) : null}
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap break-words text-[14px] leading-7 text-ink">
+                {content.assertion}
+              </p>
+            )}
             <p className="mt-4 text-sm text-mute">
               {t("basis")}: {t(`state.${content.basis}`)} · {t("kind")}:{" "}
               {t(`kindValue.${content.kind}`)}
@@ -116,7 +162,7 @@ export default async function KnowledgeProposalPage({
             <section className={knowledgePanelClass}>
               {actions.review ? (
                 <Link
-                  href={`/inbox?${new URLSearchParams({ kind: "knowledge", proposalId: proposal.id })}#knowledge-memory`}
+                  href={`/knowledge/reviews?${new URLSearchParams({ proposalKind: "knowledge", proposalId: proposal.id })}#knowledge-memory`}
                 >
                   {tReviews("link")}
                 </Link>
@@ -150,6 +196,18 @@ export default async function KnowledgeProposalPage({
                 <KnowledgeDate value={proposal.createdAt} />
               </dd>
             </div>
+            {proposal.decision ? (
+              <div>
+                <dt className="text-mute">{t("decisionMetadata")}</dt>
+                <dd className="whitespace-pre-wrap break-words">
+                  {proposal.decision.by ?? t("state.unknown")}{" "}
+                  {proposal.decision.at ? (
+                    <KnowledgeDate value={proposal.decision.at} />
+                  ) : null}
+                  <p>{proposal.decision.reason ?? t("state.unknown")}</p>
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-mute">{t("identity")}</dt>
               <dd className="break-all font-mono text-xs">{proposal.id}</dd>

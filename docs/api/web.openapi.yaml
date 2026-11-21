@@ -24629,14 +24629,12 @@ paths:
       description: Evaluate each proposal kind's current decision and source rights. Target
         identity comes from current credentials and the resolved route resource.
       x-implementation-status: Implemented
-      x-designed-shared-review-schema: "#/components/schemas/HumanKnowledgeReviewPage"
       security:
         - sessionCookie: []
       parameters:
         - name: view
           in: query
-          description: History is designed and applies current reader and source rights.
-          x-implementation-status: Designed
+          description: History applies current reader and source rights.
           schema: { type: string, enum: [pending, history], default: pending }
         - name: kind
           in: query
@@ -24695,7 +24693,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentVaultReviewList"
+                $ref: "#/components/schemas/HumanKnowledgeReviewPage"
         "401":
           $ref: "#/components/responses/AgentVault401"
         "403":
@@ -24719,7 +24717,6 @@ paths:
         memory witness. Concatenate each summary in order without a separator to recover the
         complete preview. A null nextCursor marks the final page. Native knowledge is single-page.
       x-implementation-status: Implemented
-      x-designed-shared-review-schema: "#/components/schemas/HumanKnowledgeReviewDetail"
       security:
         - sessionCookie: []
       parameters:
@@ -24755,7 +24752,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentVaultReviewDetail"
+                $ref: "#/components/schemas/HumanKnowledgeReviewDetail"
         "401":
           $ref: "#/components/responses/AgentVault401"
         "403":
@@ -25648,7 +25645,7 @@ components:
     HumanKnowledgeVaultLocation:
       type: object
       additionalProperties: false
-      required: [ locationId, ownerKind, owner, agentId, bindingId, state, allowedActions, href ]
+      required: [ locationId, ownerKind, owner, agentId, agentName, bindingId, projectSlug, state, allowedActions, href ]
       properties:
         locationId: { type: string, minLength: 1, maxLength: 192 }
         ownerKind:
@@ -25656,6 +25653,8 @@ components:
           enum: [ project, installation ]
         owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
         agentId: { type: string, minLength: 1, maxLength: 192 }
+        agentName: { type: string }
+        projectSlug: { type: string, nullable: true }
         bindingId: { type: string, nullable: true }
         state:
           type: string
@@ -26020,6 +26019,8 @@ components:
           type: string
           minLength: 1
           maxLength: 192
+        proposalKind: { type: string, enum: [brain, knowledge] }
+        proposalHref: { type: string }
     AgentVaultPromotion:
       type: object
       additionalProperties: false
@@ -26030,6 +26031,7 @@ components:
         - requestKey
         - target
       properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
         path:
           type: string
           minLength: 1
@@ -26570,6 +26572,8 @@ components:
                 minLength: 1
                 maxLength: 192
                 nullable: true
+              domainState: { type: string }
+              outcome: { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
           minItems: 1
           maxItems: 50
     AgentVaultViewCommand:
@@ -46384,6 +46388,8 @@ components:
         - createdAt
         - updatedAt
       properties:
+        decision:
+          $ref: "#/components/schemas/HumanKnowledgeReviewDecision"
         id:
           type: string
           minLength: 1

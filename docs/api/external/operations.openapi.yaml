@@ -9025,7 +9025,7 @@ paths:
           schema: { type: string, minLength: 1, maxLength: 192 }
         - name: path
           in: query
-          schema: { type: string, minLength: 1, maxLength: 1024 }
+          schema: { type: string, minLength: 1, maxLength: 512 }
           required: true
         - name: cursor
           in: query
@@ -9165,10 +9165,6 @@ paths:
           in: path
           required: true
           schema: { type: string, minLength: 1, maxLength: 192 }
-        - name: cursor
-          in: query
-          schema: { type: string, minLength: 1, maxLength: 2048 }
-          description: Signed continuation for this credential, operation and effective selection.
       responses:
         "200":
           description: Read an exact note revision.
@@ -9869,7 +9865,7 @@ components:
     HumanKnowledgeVaultLocation:
       type: object
       additionalProperties: false
-      required: [ locationId, ownerKind, owner, agentId, bindingId, state, allowedActions, href ]
+      required: [ locationId, ownerKind, owner, agentId, agentName, bindingId, projectSlug, state, allowedActions, href ]
       properties:
         locationId: { type: string, minLength: 1, maxLength: 192 }
         ownerKind:
@@ -9877,6 +9873,8 @@ components:
           enum: [ project, installation ]
         owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
         agentId: { type: string, minLength: 1, maxLength: 192 }
+        agentName: { type: string }
+        projectSlug: { type: string, nullable: true }
         bindingId: { type: string, nullable: true }
         state:
           type: string
@@ -10277,6 +10275,8 @@ components:
           type: string
           minLength: 1
           maxLength: 192
+        proposalKind: { type: string, enum: [brain, knowledge] }
+        proposalHref: { type: string }
     AgentVaultPromotion:
       type: object
       additionalProperties: false
@@ -10287,6 +10287,7 @@ components:
         - requestKey
         - target
       properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
         path:
           type: string
           minLength: 1
@@ -22135,6 +22136,8 @@ components:
         - createdAt
         - updatedAt
       properties:
+        decision:
+          $ref: "#/components/schemas/HumanKnowledgeReviewDecision"
         id:
           type: string
           minLength: 1
