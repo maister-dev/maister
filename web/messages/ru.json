@@ -1671,6 +1671,7 @@
     "needsAttention": "Нужен ответ",
     "awaitingClarification": "Ожидает уточнения",
     "waitingOnChildren": "Ждёт дочерние",
+    "waitingForCondition": "Ожидает условия Flow",
     "openRun": "Открыть запуск",
     "activeNodeRunning": "в работе",
     "activeNodeNeeds": "ждёт ответ",

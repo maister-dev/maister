@@ -1671,6 +1671,7 @@
     "needsAttention": "Needs you",
     "awaitingClarification": "Awaiting clarification",
     "waitingOnChildren": "Waiting on children",
+    "waitingForCondition": "Waiting for a Flow condition",
     "openRun": "Open run",
     "activeNodeRunning": "running",
     "activeNodeNeeds": "needs input",
