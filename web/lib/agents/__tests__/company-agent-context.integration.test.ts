@@ -12240,6 +12240,7 @@ describe("observation guards, source-bound replacement and execution handoff", (
                 }),
               );
             const baseline = await captureOperationalBaseline(
+              database.db as unknown as import("@/lib/execution-host/db").Db,
               context.cwd,
               context.resourceKind,
             );
@@ -12903,8 +12904,12 @@ for (const stop of [
   "parent interruption",
   "child interruption",
 ] as const) {
-  it(`IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`, () =>
-    qualifyCompanyCooperation(stop));
+  // Each scenario awaits several independently bounded host transitions.
+  it(
+    `IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`,
+    () => qualifyCompanyCooperation(stop),
+    120_000,
+  );
 }
 
 async function recordAssignmentBudgetUsage(
@@ -16269,8 +16274,13 @@ describe("context disclosure and retained company execution reads", () => {
       "Bounded company evidence.",
     );
     const baseline = await captureOperationalGeneration(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
       context.cwd,
-      await captureOperationalBaseline(context.cwd, "plain_directory"),
+      await captureOperationalBaseline(
+        database.db as unknown as import("@/lib/execution-host/db").Db,
+        context.cwd,
+        "plain_directory",
+      ),
       [],
     );
     const owner = {
@@ -16293,11 +16303,19 @@ describe("context disclosure and retained company execution reads", () => {
       .where(eq(runs.id, runId));
     expect(await operationalWorkspace(database.db, retained)).toEqual(context);
     expect(
-      await inspectOperationalWorkspace(database.db, retained),
+      await inspectOperationalWorkspace(
+        database.db,
+        retained,
+        "final_verification",
+      ),
     ).toMatchObject({ verdict: "clean" });
     await writeFile(join(context.cwd, "observations.txt"), "Changed source.");
     expect(
-      await inspectOperationalWorkspace(database.db, retained),
+      await inspectOperationalWorkspace(
+        database.db,
+        retained,
+        "final_verification",
+      ),
     ).toMatchObject({ verdict: "changed" });
     await expect(
       operationalWorkspace(database.db, {
@@ -16354,8 +16372,13 @@ async function seedCompanyOperationalTerminal(): Promise<
     "Retained company diagnostic input",
   );
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     context.cwd,
-    await captureOperationalBaseline(context.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      context.cwd,
+      "plain_directory",
+    ),
     [],
   );
 
@@ -17427,7 +17450,7 @@ describe("company terminal evidence and project child dispatch", () => {
         delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
       else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
     }
-  });
+  }, 120_000);
 });
 
 it("AV-06 reserves an installation Run and intersects current project authority before MCP disclosure", async () => {

@@ -136,15 +136,17 @@ export async function loadGateCrashRecoveryWitness(
   const command = commands[0];
   const ref = command.ownerRef;
 
-  // Reattachment can close the attempt before the application worker gets
-  // its turn. That worker later marks the old command superseded; neither
-  // state weakens the already-committed crash boundary on the source attempt.
+  // Reattachment can close the attempt while the old command is queued or
+  // claimed for application. The committed crash boundary already discharges
+  // the gate. An application claim does not change that evidence.
   if (
     !ref ||
     (ref.variant !== "gate_ai" && ref.variant !== "gate_skill") ||
     ref.gateId !== evaluation.gateId ||
     command.state !== "failed" ||
-    !["applied", "pending", "superseded"].includes(command.applicationState) ||
+    !["applied", "pending", "applying", "superseded"].includes(
+      command.applicationState,
+    ) ||
     !command.terminalEventId ||
     !command.targetSessionId ||
     !ref.incarnationId

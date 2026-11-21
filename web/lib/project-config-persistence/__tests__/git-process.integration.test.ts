@@ -6,9 +6,67 @@ import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
-import { executeRepositoryGit, withGitOwnership } from "../git-process";
+import {
+  executeRepositoryGit,
+  GitExecutionTimeout,
+  withGitOwnership,
+} from "../git-process";
 
 const execute = promisify(execFile);
+
+it.each(["graceful", "forced"] as const)(
+  "waits for %s retirement before reporting an unregistered Git timeout",
+  async (retirement) => {
+    const root = await mkdtemp(join(tmpdir(), "git-timeout-retirement-"));
+    const pidFile = join(root, "git.pid");
+    const signal = retirement === "forced" ? "SIGKILL" : undefined;
+
+    async function childIsGone(): Promise<boolean> {
+      const pid = Number(await readFile(pidFile, "utf8"));
+
+      try {
+        process.kill(pid, 0);
+
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+
+        return true;
+      }
+    }
+
+    try {
+      await writeFile(
+        join(root, "git"),
+        `#!${process.execPath}
+const { writeFileSync } = require('node:fs');
+process.once('SIGTERM', () => {
+  if (${retirement === "graceful"}) setTimeout(() => process.exit(1), 150);
+});
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+setTimeout(() => process.exit(2), 4000);
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const operation = executeRepositoryGit(root, ["status"], {
+          timeout: 1000,
+          maxBuffer: 1024 * 1024,
+          env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
+        });
+
+        await expect(operation).rejects.toBeInstanceOf(GitExecutionTimeout);
+        await expect(operation).rejects.toMatchObject({ killed: true, signal });
+        expect(await childIsGone()).toBe(true);
+      } finally {
+        await expect.poll(childIsGone).toBe(true);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("IT-CPC-10: gated Git retains ownership until a short-lived hook child retires", async () => {
   const root = await mkdtemp(join(tmpdir(), "config-git-retirement-"));

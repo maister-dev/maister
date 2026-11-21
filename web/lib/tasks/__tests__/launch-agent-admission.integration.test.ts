@@ -15,6 +15,7 @@ import {
   runs,
   runSessions,
   platformAcpRunners,
+  platformRuntimeSettings,
   projects,
   flowRevisions,
   agentPreparationOperations,
@@ -56,6 +57,13 @@ import { agentWorkdirPath } from "@/lib/agents/workspace-paths";
 import { assertTaskLaunchUserAuthority } from "@/lib/tasks/launch-authority";
 import { cancelInteractiveTaskLaunch } from "@/lib/tasks/launch-cancel";
 import { ingestRuntimeEvent } from "@/lib/execution-host/events/ingest";
+import {
+  captureOperationalBaseline,
+  captureOperationalGeneration,
+} from "@/lib/agents/operational-integrity";
+import { taskAgentPreparationWorkspace } from "@/lib/tasks/launch-agent-execution";
+import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
 
 const missingAgentAsset = vi.hoisted(() => ({
   source: "",
@@ -739,6 +747,152 @@ it.each(["none", "repo_read", "worktree"] as const)(
   },
 );
 
+it("retains the real workspace limit for a recovered bound launch until the held revision changes", async () => {
+  const db = database.db;
+  const accepted = await acceptInteractiveTaskLaunch(
+    db,
+    await interactiveTaskLaunchPrincipal(),
+    await request("none"),
+    randomUUID(),
+  );
+  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+  const [run] = await db.select().from(runs).where(eq(runs.id, bound.runId!));
+  const { cwd, repoPath, projectSlug } = await taskAgentPreparationWorkspace(
+    db,
+    run,
+  );
+  const bytes = 1048577;
+
+  await mkdir(cwd, { recursive: true });
+  await writeFile(path.join(cwd, "large-source"), Buffer.alloc(bytes));
+  const baseline = await captureOperationalGeneration(
+    db,
+    cwd,
+    await captureOperationalBaseline(db, cwd, "plain_directory"),
+    [],
+  );
+
+  await db
+    .update(runs)
+    .set({
+      operationalIntegrityBaseline: {
+        ...baseline,
+        owner: { cwd, repoPath, projectSlug },
+      },
+    })
+    .where(eq(runs.id, run.id));
+  await db
+    .update(taskLaunchIntents)
+    .set({
+      state: "queued",
+      dueAt: new Date(0),
+      stateVersion: sql`${taskLaunchIntents.stateVersion} + 1`,
+    })
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+  const [seeded] = await db
+    .insert(platformRuntimeSettings)
+    .values({
+      id: "singleton",
+      defaultRunnerId: fixture.runnerId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: platformRuntimeSettings.id });
+  let heldRevision: number;
+
+  try {
+    await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+    const held = await prepareTaskLaunchIntent(db, accepted.intentId);
+
+    expect(held).toMatchObject({
+      runId: run.id,
+      state: "held",
+      reason: "launch_agent_integrity_refused",
+    });
+    heldRevision = held.stateVersion;
+  } finally {
+    if (seeded)
+      await db
+        .delete(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, seeded.id));
+    else await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+  }
+  expect(await loadTaskLaunchIntegrityLimit(db, run.id)).toMatchObject({
+    stage: "dispatch",
+    resource: "primary",
+    limitAxis: "bytes",
+    observed: bytes,
+    maximum: 1048576,
+    unit: "B",
+  });
+  await cancelInteractiveTaskLaunch(
+    db,
+    await interactiveTaskLaunchPrincipal(),
+    accepted.intentId,
+    { expectedStateVersion: heldRevision },
+    randomUUID(),
+  );
+  expect(await loadTaskLaunchIntegrityLimit(db, run.id)).toBeUndefined();
+});
+
+it("retains a first-dispatch limit in the terminal cause of a Running delivery agent", async () => {
+  const db = database.db;
+  const accepted = await acceptInteractiveTaskLaunch(
+    db,
+    await interactiveTaskLaunchPrincipal(),
+    await request("none"),
+    randomUUID(),
+  );
+  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+  const [run] = await db.select().from(runs).where(eq(runs.id, bound.runId!));
+  const { cwd } = await taskAgentPreparationWorkspace(db, run);
+
+  await mkdir(cwd, { recursive: true });
+  await writeFile(path.join(cwd, "large-source"), Buffer.alloc(1048577));
+  const { tryStartRun } = await import("@/lib/scheduler");
+  const { startAgentSession } = await import("@/lib/agents/launch");
+  const { loadRunTerminalCause } = await import("@/lib/runs/terminal-cause");
+
+  expect((await tryStartRun(run.id, { db })).started).toBe(true);
+  const [seeded] = await db
+    .insert(platformRuntimeSettings)
+    .values({
+      id: "singleton",
+      defaultRunnerId: fixture.runnerId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: platformRuntimeSettings.id });
+  const commit = taskLaunchFirstDispatch.commitTaskAgentLaunchFirstDispatch;
+  const check = vi
+    .spyOn(taskLaunchFirstDispatch, "commitTaskAgentLaunchFirstDispatch")
+    .mockImplementationOnce(async (...args) => {
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+      try {
+        return await commit(...args);
+      } finally {
+        await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+      }
+    });
+  const creates = fake.callsOf("createSession").length;
+
+  try {
+    await startAgentSession(run.id, { db });
+  } finally {
+    check.mockRestore();
+    if (seeded)
+      await db
+        .delete(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, seeded.id));
+  }
+  const [settled] = await db.select().from(runs).where(eq(runs.id, run.id));
+
+  expect(settled.status).toBe("Failed");
+  expect(fake.callsOf("createSession")).toHaveLength(creates);
+  expect(await loadRunTerminalCause(db, run.id, settled.status)).toMatchObject({
+    reason: "launch_agent_integrity_refused",
+    integrityLimit: { stage: "dispatch", limitAxis: "bytes", maximum: 1048576 },
+  });
+});
+
 it.each(["package", "definition", "capture", "captured_definition"] as const)(
   "refuses a missing accepted agent %s with a safe typed cause",
   async (stage) => {
@@ -1161,7 +1315,11 @@ it("defers terminal cleanup while an accepted baseline owner is active and fence
       ...descriptor,
     });
     const baseline = await owner.runEffect(() =>
-      captureOperationalBaseline(descriptor.cwd, descriptor.resourceKind),
+      captureOperationalBaseline(
+        database.db as unknown as import("@/lib/execution-host/db").Db,
+        descriptor.cwd,
+        descriptor.resourceKind,
+      ),
     );
     const terminal = await prepareAgentRunFinalization(run.id, "Abandoned", {
       db: database.db,

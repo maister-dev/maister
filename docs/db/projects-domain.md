@@ -219,6 +219,9 @@ erDiagram
     PLATFORM_RUNTIME_SETTINGS {
         boolean librarian_enabled "Designed 0184: NOT NULL DEFAULT false"
         text librarian_runner_id FK "Designed 0184: NULL -> platform_acp_runners SET NULL"
+        integer workspace_integrity_max_size_mib "nullable override, 0360"
+        integer workspace_integrity_max_duration_seconds "nullable override, 0360"
+        integer workspace_integrity_max_entries "nullable override, 0360"
     }
 ```
 

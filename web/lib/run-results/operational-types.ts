@@ -1,6 +1,9 @@
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { AgentFinalStatus } from "@/lib/agents/finalization";
-import type { OperationalFailureDiagnostic } from "@/lib/agents/operational-diagnostics";
+import type {
+  OperationalFailureDiagnostic,
+  WorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import type { AgentWorkspace } from "@/lib/db/schema";
 import type { EvidenceFindingsV1 } from "./findings-types";
 
@@ -141,6 +144,7 @@ export type OperationalTerminal = {
   validation: "valid" | "invalid" | "unchecked";
   validationDiagnostics?: OperationalValidationDiagnostic[];
   integrity: OperationalIntegrityVerdict;
+  integrityLimit?: WorkspaceIntegrityLimit;
   baselineGeneration: number | null;
   resultRevision: number | null;
   reasonCodes: string[];
@@ -167,6 +171,7 @@ export type OperationalCleanup = {
   attempts: number;
   dueAt: string | null;
   errorCode: string | null;
+  integrityLimit?: WorkspaceIntegrityLimit;
   evidenceIds: string[];
   removedAt: string | null;
   releasedAt: string | null;
@@ -191,8 +196,11 @@ export type OperationalOutcome = {
     reason: string;
     blockedReason: string;
     observation: string;
+    integrityLimit?: WorkspaceIntegrityLimit;
   };
   integrity: "pending" | OperationalIntegrityVerdict;
+  integrityLimit?: WorkspaceIntegrityLimit;
+  cleanupIntegrityLimit?: WorkspaceIntegrityLimit;
   resultRevision: number | null;
   reportedResult: OperationalResult | null;
   referenceLinks: Array<{

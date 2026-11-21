@@ -1,7 +1,7 @@
 "use client";
 
 import type { OperationalOutcome } from "@/lib/run-results/operational-types";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { ArrowPathIcon, CheckIcon } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/react";
@@ -9,16 +9,20 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 
+import { WorkspaceIntegrityNotice } from "./workspace-integrity-notice";
+
 import { useFeedback } from "@/components/feedback/feedback-provider";
 
 export function OperationalRunResult({
   runId,
   outcome,
   canAct,
+  isGlobalAdmin = false,
 }: {
   runId: string;
   outcome: OperationalOutcome;
   canAct: boolean;
+  isGlobalAdmin?: boolean;
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const router = useRouter();
@@ -69,7 +73,25 @@ export function OperationalRunResult({
       className="rounded-xl border border-line bg-paper p-5"
       data-testid="operational-result"
     >
-      <OperationalOutcomeDetails outcome={outcome} />
+      <OperationalOutcomeDetails
+        cleanupNotice={
+          outcome.cleanupIntegrityLimit ? (
+            <WorkspaceIntegrityNotice
+              isGlobalAdmin={isGlobalAdmin}
+              limit={outcome.cleanupIntegrityLimit}
+              runId={runId}
+            />
+          ) : null
+        }
+        executionNotices={
+          <OperationalExecutionIntegrityNotices
+            isGlobalAdmin={isGlobalAdmin}
+            outcome={outcome}
+            runId={runId}
+          />
+        }
+        outcome={outcome}
+      />
       {canAct && attention ? (
         <Button
           className="mt-3"
@@ -171,11 +193,44 @@ export function OperationalRunResult({
   );
 }
 
+export function OperationalExecutionIntegrityNotices({
+  outcome,
+  runId,
+  isGlobalAdmin,
+}: {
+  outcome: OperationalOutcome;
+  runId: string;
+  isGlobalAdmin: boolean;
+}): ReactElement {
+  return (
+    <>
+      {[
+        outcome.continuationAttention?.integrityLimit,
+        outcome.infrastructureFailure?.integrityLimit,
+        outcome.integrityLimit,
+      ].map((limit, index) =>
+        limit ? (
+          <WorkspaceIntegrityNotice
+            key={index}
+            isGlobalAdmin={isGlobalAdmin}
+            limit={limit}
+            runId={runId}
+          />
+        ) : null,
+      )}
+    </>
+  );
+}
+
 /** Read-only operational projection; evidence and actions keep their separate grants. */
 export function OperationalOutcomeDetails({
   outcome,
+  executionNotices,
+  cleanupNotice,
 }: {
   outcome: OperationalOutcome;
+  executionNotices?: ReactNode;
+  cleanupNotice?: ReactNode;
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const reported = outcome.reportedResult;
@@ -196,6 +251,7 @@ export function OperationalOutcomeDetails({
             : (outcome.effectiveOutcome ?? "pending"),
         )}
       </p>
+      {executionNotices}
       {attention ? (
         <div className="my-3 space-y-2">
           <p>{t("continuationGuidance")}</p>
@@ -327,6 +383,7 @@ export function OperationalOutcomeDetails({
           {outcome.cleanup.errorCode ? ` · ${outcome.cleanup.errorCode}` : ""}
         </p>
       ) : null}
+      {cleanupNotice}
     </>
   );
 }

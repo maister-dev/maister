@@ -58,7 +58,11 @@ export interface RunPeekSnapshot {
   selectedRunId: string;
   breadcrumbs: RunPeekSummary[];
   summary: RunPeekSummary;
-  capabilities: { canReadTranscript: boolean; canReadEvidence: boolean };
+  capabilities: {
+    canReadTranscript: boolean;
+    canReadEvidence: boolean;
+    canManageWorkspaceIntegrity: boolean;
+  };
   workspace: "none" | "present" | "removed";
   content: RunPeekContent;
   publicResult: RunPublicResultDto | null;

@@ -105,9 +105,11 @@ No broad .claude/.maister path exclusion proves integrity. Unexpected/tampered b
 are preserved before restore/delete; failed probes or limits fail closed and do not
 prove misconduct. Only attributable source-contract violation quarantines the agent.
 Shared-parent unrelated changes are conflict, never authority to reset the parent.
-Use existing output/evidence caps; integrity traversal is capped at 100000 entries,
-256 MiB hashed source/materialization bytes and 30s per probe; exceeding a cap is
-indeterminate, not clean. Do not follow symlinks into foreign roots. A replaced root symlink, Git local or
+**Implemented.** Each baseline, generation, verification or evidence capture loads one fresh committed [platform limits snapshot](../configuration.md#workspace-integrity-checks) before filesystem work. Configuration and database failure block the scan. A first limit refusal supplies its stage, primary or context resource, observed value and threshold in matching units. Capture publishes no partial witness and verification returns indeterminate. Publication and dispatch still require the existing integrity and ownership gates. A cleanup owner renews its actual claim during slow work and verifies it before publishing evidence or mutating resources. If preservation fails or the claim is lost, retain unpreserved resources. Archive budgets remain independent.
+
+The failed cleanup attempt retains its first limit measurement in actual inspection order. The final cleanup error records the current blocker, which may be a separate failure during evidence preservation. Starting or rearming a retry clears the previous attempt's advice. A successful attempt clears it on release. The Assignment view batches authorized Company Flow summaries and shows cleanup failures independently of the Flow outcome, including a `Done` Flow with retained workspace evidence.
+
+The run page explains the consequence using the failed check's retained values. Active global administrators get a link to the corresponding setting for size, duration or entries. Other authorized readers get the field and run ID to share with an admin. An oversized `config.worktree` directs the operator to the Git configuration source. Missing historical measurements are omitted. An incomplete check alone establishes neither a source edit nor safe removal. Do not follow symlinks into foreign roots. A replaced root symlink, Git local or
 worktree configuration drift, or a new .git directory in a plain resource fails
 verification. Configuration bytes are hashed with bounded no-follow reads; raw
 configuration is never returned in the public projection.

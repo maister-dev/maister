@@ -41,6 +41,11 @@ import {
   type ProjectionWorker,
 } from "@/lib/execution-host/events/projection-worker";
 import { mintPlacement } from "@/lib/execution-host/placement";
+import {
+  claimPromptOwner,
+  releasePromptOwnerClaim,
+  type PromptOwnerClaim,
+} from "@/lib/execution-host/prompt-owner-application";
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { recoverExecutionCommands } from "@/lib/execution-host/recovery";
 import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
@@ -862,7 +867,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     expect(await crashReason(runId)).toBe("session-crashed");
   }, 90_000);
 
-  it("settles the gate at reattachment when owner application is paused", async () => {
+  it("retains gate recovery at reattachment while the crashed prompt's owner claim is still active", async () => {
     const abort = new AbortController();
     const { runId, hitl, flow } = await flowOnPermission(
       "gate-reattach-crash",
@@ -875,6 +880,8 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     expect((await runRow(runId)).status).toBe("NeedsInput");
     await durable[1].stop();
     await durable[0].stop();
+    let claim: PromptOwnerClaim | null = null;
+
     try {
       await crashGateAdapter(hitl);
       await waitFor(async () => {
@@ -902,7 +909,14 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
           ),
         );
 
-      expect(["pending", "superseded"]).toContain(command.applicationState);
+      claim = await claimPromptOwner({
+        db,
+        commandId: command.id,
+        owners: composePromptOwnerRegistry(
+          createProductionPromptOwnerRegistries(),
+        ),
+      });
+      expect(claim?.command.applicationState).toBe("applying");
       await expect(
         reattachGatePrompt(
           { db, runId, stepId: "implement" },
@@ -923,7 +937,9 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
           nodeId: "implement",
         }),
       ).not.toBeNull();
+      expect((await getRunDetail(runId))?.recoverable).toBe(true);
     } finally {
+      if (claim) await releasePromptOwnerClaim(db, claim);
       durable[0] = startPromptOwnerWorker({
         db,
         owners: composePromptOwnerRegistry(

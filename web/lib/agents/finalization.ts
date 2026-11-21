@@ -1108,6 +1108,11 @@ async function prepareAgentFinalization(
           baselineGeneration:
             preparedRun.operationalIntegrityBaseline?.generation ?? null,
           evidenceIds: [],
+          ...(operationalIntegrity &&
+          "integrityLimit" in operationalIntegrity &&
+          operationalIntegrity.integrityLimit
+            ? { integrityLimit: operationalIntegrity.integrityLimit }
+            : {}),
           ...(opts.infrastructureFailure
             ? { infrastructureFailure: opts.infrastructureFailure }
             : {}),
@@ -1433,20 +1438,28 @@ async function prepareAgentFinalization(
       };
 
       if (kind === "run.done") await emitDomainEvent({ ...event, kind });
-      else
+      else {
+        const integrityLimit =
+          opts.infrastructureFailure?.integrityLimit ??
+          operationalTerminal?.integrityLimit;
+
         await emitDomainEvent({
           ...event,
           kind,
-          cause: agentTerminalCause(
-            terminalDecision?.status ?? outcome,
-            terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
-            referenceDecision.kind === "invalid"
-              ? referenceDecision.reason === "result_missing"
-                ? "result_missing"
-                : "result_invalid"
-              : null,
-          ),
+          cause: {
+            ...agentTerminalCause(
+              terminalDecision?.status ?? outcome,
+              terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
+              referenceDecision.kind === "invalid"
+                ? referenceDecision.reason === "result_missing"
+                  ? "result_missing"
+                  : "result_invalid"
+                : null,
+            ),
+            ...(integrityLimit ? { integrityLimit } : {}),
+          },
         });
+      }
     }
 
     return { finalized: true, status: terminalStatus, endedAt };

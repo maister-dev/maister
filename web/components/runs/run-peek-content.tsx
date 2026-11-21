@@ -9,7 +9,11 @@ import { useTranslations } from "next-intl";
 
 import { Tabs } from "@/components/navigation/tabs";
 import { FlowNodeDetails } from "@/components/runs/flow-node-details";
-import { OperationalOutcomeDetails } from "@/components/runs/operational-run-result";
+import {
+  OperationalExecutionIntegrityNotices,
+  OperationalOutcomeDetails,
+} from "@/components/runs/operational-run-result";
+import { WorkspaceIntegrityNotice } from "@/components/runs/workspace-integrity-notice";
 import { RunPublicResultPanel } from "@/components/runs/run-public-result-panel";
 import {
   TerminalCauseNotice,
@@ -29,6 +33,8 @@ export function RunPeekContent({
   const stream = useWorkbenchStream()!;
   const t = peek.t;
   const runT = useTranslations("run");
+  const operationalOutcome = snapshot.publicResult?.operationalOutcome;
+  const terminalIntegrityLimit = snapshot.terminalCause?.integrityLimit;
   const view =
     peek.view ??
     (snapshot.content.kind === "flow" ? "execution" : "conversation");
@@ -105,6 +111,26 @@ export function RunPeekContent({
         labels={terminalCauseLabels}
         status={snapshot.summary.status}
       />
+      {operationalOutcome ? (
+        <OperationalExecutionIntegrityNotices
+          isGlobalAdmin={snapshot.capabilities.canManageWorkspaceIntegrity}
+          outcome={operationalOutcome}
+          runId={snapshot.selectedRunId}
+        />
+      ) : terminalIntegrityLimit ? (
+        <WorkspaceIntegrityNotice
+          isGlobalAdmin={snapshot.capabilities.canManageWorkspaceIntegrity}
+          limit={terminalIntegrityLimit}
+          runId={snapshot.selectedRunId}
+        />
+      ) : null}
+      {operationalOutcome?.cleanupIntegrityLimit ? (
+        <WorkspaceIntegrityNotice
+          isGlobalAdmin={snapshot.capabilities.canManageWorkspaceIntegrity}
+          limit={operationalOutcome.cleanupIntegrityLimit}
+          runId={snapshot.selectedRunId}
+        />
+      ) : null}
       <Tabs
         activeKey={view}
         className="flex-wrap"
@@ -139,10 +165,8 @@ export function RunPeekContent({
                 <p role="status">{t("incompatible")}</p>
               )
             ) : null}
-            {snapshot.publicResult?.operationalOutcome ? (
-              <OperationalOutcomeDetails
-                outcome={snapshot.publicResult.operationalOutcome}
-              />
+            {operationalOutcome ? (
+              <OperationalOutcomeDetails outcome={operationalOutcome} />
             ) : null}
             {content.kind !== "flow"
               ? conversation

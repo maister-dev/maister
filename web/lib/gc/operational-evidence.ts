@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { BoundClient } from "@/lib/execution-host/client";
 import type { OperationalResourceKind } from "@/lib/run-results/operational-types";
 
@@ -25,6 +26,8 @@ function evidenceId(runId: string, bytes: Uint8Array): string {
  * Only opaque immutable objects leave the checkout; no source bytes enter DB.
  */
 export async function preserveOperationalEvidence(input: {
+  db: Db;
+  resource?: "primary" | "context";
   runId: string;
   cwd: string;
   resourceKind: OperationalResourceKind;
@@ -32,8 +35,10 @@ export async function preserveOperationalEvidence(input: {
   renew: () => Promise<void>;
 }): Promise<string[]> {
   const snapshot = await captureOperationalBaseline(
+    input.db,
     input.cwd,
     input.resourceKind,
+    { stage: "evidence_capture", resource: input.resource },
   );
   const root = await realpath(input.cwd);
   const objectIds: string[] = [];

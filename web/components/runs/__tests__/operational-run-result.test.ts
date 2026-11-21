@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
+import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 
@@ -185,5 +186,114 @@ it.each([
       messages.launch.admission.beforeModelFailure,
     );
     expect(provenTaskFailure).toContain('href="/runs/run"');
+  },
+);
+
+it.each([
+  {
+    axis: "bytes",
+    unit: "B",
+    anchor: "workspace-integrity-size",
+    stage: "final_verification",
+    resource: "context",
+  },
+  {
+    axis: "time",
+    unit: "ms",
+    anchor: "workspace-integrity-duration",
+    stage: "cleanup",
+    resource: "primary",
+  },
+  {
+    axis: "entries",
+    unit: "entries",
+    anchor: "workspace-integrity-entries",
+    stage: "dispatch",
+    resource: "primary",
+  },
+  {
+    axis: "worktree_config_bytes",
+    unit: "B",
+    anchor: null,
+    stage: "baseline",
+    resource: "primary",
+  },
+] as const)(
+  "WI-06 identifies $axis and renders the authorized corrective action",
+  ({ axis, unit, anchor, stage, resource }) => {
+    const reported =
+      stage === "final_verification" ? operationalSuccessFixture() : null;
+    const limit = {
+      reason: "operational_integrity_limit",
+      limitAxis: axis,
+      unit,
+      stage,
+      resource,
+      maximum: 1048576,
+      observed: 1048577,
+      elapsedMs: 17,
+      observedEntries: 4,
+      observedBytes: 1048577,
+    } as const;
+    const render = (
+      isGlobalAdmin: boolean,
+      locale: "en" | "ru" = "en",
+    ): string =>
+      renderToStaticMarkup(
+        createElement(NextIntlClientProvider, {
+          locale,
+          messages: locale === "ru" ? ru : en,
+          timeZone: "UTC",
+          // eslint-disable-next-line react-jsx/no-children-prop -- Non-JSX render.
+          children: createElement(OperationalRunResult, {
+            runId: "failed-run-66",
+            canAct: true,
+            isGlobalAdmin,
+            outcome: {
+              ...invalid,
+              ...(reported
+                ? {
+                    reportedResult: reported,
+                    reportedOutcome: reported.outcome,
+                    validation: "valid",
+                    integrity: "indeterminate",
+                  }
+                : {}),
+              ...(stage === "cleanup"
+                ? { cleanupIntegrityLimit: limit }
+                : { integrityLimit: limit }),
+            },
+          }),
+        }),
+      );
+
+    const admin = render(true);
+    const member = render(false);
+    for (const html of [admin, member]) {
+      expect(html).toContain(en.workspaceIntegrity.stages[stage]);
+      expect(html).toContain(en.workspaceIntegrity.resources[resource]);
+      expect(html).toContain(en.workspaceIntegrity.remediation[axis]);
+      expect(html).toContain("operational_integrity_limit");
+      if (reported) {
+        expect(html).toContain(reported.summary);
+        expect(html).toContain(en.workspaceIntegrity.indeterminate);
+      }
+    }
+    if (anchor) {
+      expect(admin).toContain(`href="/settings#${anchor}"`);
+      expect(member).toContain("Ask a global administrator");
+      expect(member).toContain("failed-run-66");
+    } else {
+      expect(admin).not.toContain("/settings#workspace-integrity");
+      expect(member).not.toContain("Ask a global administrator");
+    }
+    expect(member).not.toContain("/settings#workspace-integrity");
+    if (reported) {
+      const localized = render(false, "ru");
+
+      expect(localized).toContain(reported.summary);
+      expect(localized).toContain(ru.workspaceIntegrity.indeterminate);
+      expect(localized).toContain("failed-run-66");
+    }
   },
 );

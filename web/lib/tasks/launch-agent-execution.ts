@@ -1,3 +1,4 @@
+import { MaisterError } from "@/lib/errors";
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
@@ -305,12 +306,24 @@ export async function assertFrozenTaskAgentRepository(
     if (baseline.owner?.cwd !== descriptor.cwd)
       throw launchRefusal("launch_workspace_changed", "PRECONDITION");
     const integrity = await verifyOperationalIntegrity(
+      db,
       descriptor.cwd,
       baseline,
+      [],
+      { stage: "dispatch" },
     );
 
     if (integrity.verdict !== "clean")
-      throw launchRefusal("launch_agent_integrity_refused", "PRECONDITION");
+      throw new MaisterError(
+        "PRECONDITION",
+        "Task launch requires a new decision",
+        {
+          details: {
+            reason: "launch_agent_integrity_refused",
+            integrityLimit: integrity.integrityLimit,
+          },
+        },
+      );
   }
   if (settings.workspace !== "none") {
     if (!settings.baseCommit)

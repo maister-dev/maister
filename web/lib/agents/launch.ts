@@ -5333,11 +5333,19 @@ async function driveAgentSession(
           assertPreparationCommit(preparationCommit, integrityBaseline.head);
           const verdict =
             integrityBaseline.generation > 0
-              ? await inspectOperationalRun(_db, { ...run, contextMounts })
-              : await inspectOperationalContexts(_db, {
-                  ...run,
-                  contextMounts,
-                });
+              ? await inspectOperationalRun(
+                  _db,
+                  { ...run, contextMounts },
+                  "dispatch",
+                )
+              : await inspectOperationalContexts(
+                  _db,
+                  {
+                    ...run,
+                    contextMounts,
+                  },
+                  "dispatch",
+                );
 
           if (verdict.verdict !== "clean")
             throw new MaisterError(
@@ -5347,6 +5355,7 @@ async function driveAgentSession(
                 details: {
                   reason: "operational_integrity_refused",
                   reasons: verdict.reasonCodes,
+                  integrityLimit: verdict.integrityLimit,
                 },
               },
             );
@@ -5354,6 +5363,7 @@ async function driveAgentSession(
           if (run.taskLaunchIntentId)
             await assertTaskAgentPreparationSource(_db, run);
           integrityBaseline = await captureOperationalBaseline(
+            _db,
             cwd,
             preparationWorkspace?.resourceKind ?? operationalResourceKind(run),
             {
@@ -5382,7 +5392,10 @@ async function driveAgentSession(
                       preparationWorkspace?.repoPath ?? project.repoPath,
                     projectSlug: project.slug,
                   },
-            contextMounts: await captureOperationalContextMounts(contextMounts),
+            contextMounts: await captureOperationalContextMounts(
+              _db,
+              contextMounts,
+            ),
           };
           await preparation?.publishBaseline(integrityBaseline);
         }
@@ -5626,6 +5639,7 @@ async function driveAgentSession(
         integrityBaseline
       ) {
         const next = await captureOperationalGeneration(
+          _db,
           cwd,
           integrityBaseline,
           await agentMaterializationWitnessPathsForRun(cwd, runId),

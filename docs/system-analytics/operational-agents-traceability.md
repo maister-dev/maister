@@ -42,3 +42,6 @@ owns task execution; the three operational analytics own requirements.
 | EDGE-OPL-06 | Expired lease/poison/exhaustion | T11 | IT-EDGE-OPL-06 | Implemented |
 | EDGE-OPL-07 | Immediate cleanup/evidence/global archive push | T12 | IT-EDGE-OPL-07 | Implemented |
 | EDGE-OPL-08 | Per-reader revision ack and same-count invalidation | T14 | IT-EDGE-OPL-08 | Implemented |
+
+
+The [workspace integrity limits plan](../../.ai-factory/plans/feature-workspace-integrity-limits.md#requirement-and-test-ownership) maps WI-01 through WI-08 to the additional settings, traversal and diagnostics acceptance tests.

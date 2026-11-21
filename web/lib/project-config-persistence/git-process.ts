@@ -4,9 +4,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
+import pino from "pino";
+
 import { MaisterError } from "@/lib/errors";
 
 const execute = promisify(execFile);
+const log = pino({
+  name: "git-process",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+const GIT_RETIREMENT_GRACE_MS = 500;
 const ownership = new AsyncLocalStorage<
   ((processGroup: number) => Promise<void>) | undefined
 >();
@@ -14,6 +21,8 @@ const ownership = new AsyncLocalStorage<
 // The child cannot start Git until the owner has durably recorded its group.
 // If the web process dies before that acknowledgement, IPC disconnect exits it.
 export const GIT_OWNERSHIP_UNCERTAIN = "MAISTER_GIT_PROCESS_UNCERTAIN";
+export class GitExecutionTimeout extends Error {}
+
 export const GIT_GATE = `
 const { spawn, spawnSync } = require('node:child_process');
 const { writeSync } = require('node:fs');
@@ -82,18 +91,22 @@ type GitBufferFailure = NodeJS.ErrnoException & {
 function gitTextFailure(error: unknown, stdout: string, stderr: string): Error {
   const failure = error as GitBufferFailure;
 
-  return Object.assign(
-    new Error(error instanceof Error ? error.message : "Git execution failed", {
-      cause: error,
-    }),
-    {
-      code: failure.code,
-      killed: failure.killed,
-      signal: failure.signal,
-      stdout,
-      stderr,
-    },
-  );
+  const wrapped =
+    error instanceof GitExecutionTimeout &&
+    !stderr.includes(GIT_OWNERSHIP_UNCERTAIN)
+      ? new GitExecutionTimeout(error.message, { cause: error })
+      : new Error(
+          error instanceof Error ? error.message : "Git execution failed",
+          { cause: error },
+        );
+
+  return Object.assign(wrapped, {
+    code: failure.code,
+    killed: failure.killed,
+    signal: failure.signal,
+    stdout,
+    stderr,
+  });
 }
 
 function reviewedGitText(bytes: Uint8Array): string {
@@ -168,11 +181,57 @@ async function executeRepositoryGitBytes(
 ): Promise<{ stdout: Buffer; stderr: Buffer }> {
   const register = ownership.getStore();
 
-  if (!register)
-    return execute("git", ["-C", repo, ...args], {
-      ...options,
+  if (!register) {
+    const timeout = AbortSignal.timeout(options.timeout);
+    const execution = execute("git", ["-C", repo, ...args], {
+      env: options.env,
+      maxBuffer: options.maxBuffer,
+      signal: timeout,
       encoding: "buffer",
     });
+    const child = execution.child;
+    const retired = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+
+    try {
+      return await execution;
+    } catch (error) {
+      const failure = error as GitBufferFailure;
+
+      if (failure.code !== "ABORT_ERR" || !timeout.aborted) throw error;
+
+      // execFile reports AbortError when it sends SIGTERM. Callers can release
+      // a workbench claim after rejection, so wait for the child itself.
+      const escalation = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          log.warn(
+            { pid: child.pid, timeoutMs: options.timeout },
+            "[FIX:git-timeout] Git child still active after SIGTERM",
+          );
+          child.kill("SIGKILL");
+        }
+      }, GIT_RETIREMENT_GRACE_MS);
+
+      try {
+        await retired;
+      } finally {
+        clearTimeout(escalation);
+      }
+      throw Object.assign(
+        new GitExecutionTimeout("Git execution exceeded its bounded window", {
+          cause: error,
+        }),
+        {
+          code: failure.code,
+          killed: child.killed,
+          signal: child.signalCode ?? failure.signal,
+          stdout: failure.stdout,
+          stderr: failure.stderr,
+        },
+      );
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -201,7 +260,10 @@ async function executeRepositoryGitBytes(
       }
     };
     const timer = setTimeout(
-      () => stop(new Error("Git execution exceeded its bounded window")),
+      () =>
+        stop(
+          new GitExecutionTimeout("Git execution exceeded its bounded window"),
+        ),
       options.timeout,
     );
 

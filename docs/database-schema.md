@@ -4741,6 +4741,10 @@ UNIQUE `(delivery_id, attempt_no)` enforces the one-row-per-attempt invariant.
 Index `(delivery_id)` supports attempt-history joins. Cascade: `ON DELETE CASCADE`
 from `webhook_deliveries.id`.
 
+### Workspace integrity overrides
+
+**Implemented, migration `0360_workspace_integrity_limits`.** `platform_runtime_settings` has three nullable integer overrides `workspace_integrity_max_size_mib`, `workspace_integrity_max_duration_seconds` and `workspace_integrity_max_entries`. Independent CHECK constraints enforce the [platform configuration bounds](configuration.md#workspace-integrity-checks). NULL inherits the environment or built-in value. The migration preserves existing singleton data and the runner foreign key.
+
 ### `platform_runtime_settings.webhooks_enabled` (additive column)
 
 **(Implemented, ADR-077, migration `0041`.)** A single boolean column

@@ -40,7 +40,10 @@ import { launchAcceptedTaskRun } from "@/lib/services/runs";
 import { takeSchedulerLock, tryStartRun } from "@/lib/scheduler";
 import { runFlow } from "@/lib/flows/runner";
 import { isMaisterError } from "@/lib/errors";
-import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
+import {
+  operationalCauseChain,
+  readWorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import { pgErrorOf, queryErrorDiagnostics } from "@/lib/db/pg-error";
 
 const log = pino({
@@ -131,7 +134,14 @@ async function settlePreparationFailure(
       .where(eq(taskLaunchIntents.id, current.id))
       .returning();
 
-    await emitTaskLaunchChanged(tx, next, { type: "system", id: null });
+    const integrityLimit = readWorkspaceIntegrityLimit(error);
+
+    await emitTaskLaunchChanged(
+      tx,
+      next,
+      { type: "system", id: null },
+      integrityLimit,
+    );
     log.warn(
       {
         intentId: current.id,
@@ -140,6 +150,7 @@ async function settlePreparationFailure(
         state: next.state,
         attempts,
         reason,
+        integrityLimit,
         causeChain: operationalCauseChain(error),
         ...queryErrorDiagnostics(error),
       },
@@ -191,7 +202,12 @@ async function holdUndispatchedBoundRun(
       .where(eq(taskLaunchIntents.id, current.id))
       .returning();
 
-    await emitTaskLaunchChanged(tx, held, { type: "system", id: null });
+    await emitTaskLaunchChanged(
+      tx,
+      held,
+      { type: "system", id: null },
+      readWorkspaceIntegrityLimit(error),
+    );
   });
 }
 

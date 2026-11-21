@@ -51,7 +51,8 @@ async function send(message: object): Promise<void> {
 }
 
 async function capture(): Promise<number> {
-  const owner = await openAgentPreparation(getDb(), {
+  const db = getDb();
+  const owner = await openAgentPreparation(db, {
     ...resource,
     runId: input.runId,
     assignmentId: input.assignmentId,
@@ -102,6 +103,7 @@ async function capture(): Promise<number> {
       });
       await owner.advance({ phase: "checkout_ready" });
       const baseline = await captureOperationalBaseline(
+        db,
         input.cwd,
         "ephemeral_checkout",
         {
@@ -130,7 +132,8 @@ async function capture(): Promise<number> {
 
 try {
   if (action === "hold-plain") {
-    const owner = await openAgentPreparation(getDb(), {
+    const db = getDb();
+    const owner = await openAgentPreparation(db, {
       ...resource,
       resourceKind: "plain_directory",
       runId: input.runId,

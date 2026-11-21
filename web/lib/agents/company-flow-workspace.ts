@@ -49,16 +49,19 @@ export async function prepareCompanyFlowWorkspace(
   const cwd = companyAgentWorkdirPath(run.companyId, runId);
 
   if (run.operationalIntegrityBaseline) {
-    const integrity = await inspectOperationalWorkspace(db, run);
+    const integrity = await inspectOperationalWorkspace(db, run, "dispatch");
 
     if (integrity.verdict !== "clean")
       throw new MaisterError(
         "PRECONDITION",
-        "Company graph source changed before continuation; inspect its retained evidence before recovery",
+        integrity.verdict === "changed"
+          ? "Company graph source changed before continuation; inspect its retained evidence before recovery"
+          : "Company graph source integrity could not be verified before continuation",
         {
           details: {
             reason: "company_flow_integrity_refused",
             reasons: integrity.reasonCodes,
+            integrityLimit: integrity.integrityLimit,
           },
         },
       );
@@ -81,8 +84,9 @@ export async function prepareCompanyFlowWorkspace(
   await mkdir(runtimePath, { recursive: true });
   const baseline: OperationalIntegrityBaseline = {
     ...(await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "plain_directory"),
+      await captureOperationalBaseline(db, cwd, "plain_directory"),
       [],
     )),
     owner: {
@@ -136,6 +140,7 @@ export async function witnessCompanyFlowMaterialization(
     );
   const cwd = companyAgentWorkdirPath(run.companyId, runId);
   const next = await captureOperationalGeneration(
+    db,
     cwd,
     baseline,
     await agentMaterializationWitnessPathsForRun(cwd, runId),

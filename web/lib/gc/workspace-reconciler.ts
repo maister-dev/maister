@@ -672,6 +672,7 @@ async function processTrustedCandidate(args: {
               revision: cleanup.revision + 1,
               dueAt: null,
               errorCode: "operational_resource_reappeared",
+              integrityLimit: undefined,
             },
           })
           .where(

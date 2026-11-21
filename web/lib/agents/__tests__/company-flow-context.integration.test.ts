@@ -45,10 +45,13 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
+import * as executionQuiescence from "../execution-quiescence";
 import { acceptAgentRetry, getAgentRetryOptions } from "../retry";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
+import { prepareCompanyFlowWorkspace } from "../company-flow-workspace";
 import { resolveFlowBoundAgent } from "../flow-binding";
 import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
+
 import { companyAgentWorkdirPath } from "../workspace-paths";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
@@ -78,6 +81,12 @@ import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { runWebhookDeliveryJob } from "@/lib/scheduler/handlers/webhook-delivery";
 import { getSpecialistAssignmentAdmission } from "@/lib/specialist-assignments/admission-read";
+import {
+  listVisibleAssignmentRunIds,
+  readAssignmentRunSummaries,
+} from "@/lib/specialist-assignments/workspace-view";
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
+import { seedWorkspaceIntegritySettings } from "@/test-support/workspace-integrity-settings";
 import {
   getSpecialistAssignmentDelivery,
   replaySpecialistAssignmentDelivery,
@@ -665,6 +674,8 @@ beforeAll(async () => {
     coordinatorBindingRevision: coordinator.binding.revision,
     triggerSource: "manual",
   };
+  // The witness uses the current scanner while the Flow schema is still historical.
+  await applyMainMigration(database.db, "0360_workspace_integrity_limits");
   await seedRetainedStandalone();
   const project = await seedProjectRow(database.db);
 
@@ -752,8 +763,10 @@ beforeAll(async () => {
 
   if (runtimeBaseline < 0)
     throw new Error("The native Flow runtime migration baseline is missing");
-  for (const entry of journal.entries.slice(runtimeBaseline + 1))
-    await applyMainMigration(database.db, entry.tag);
+  for (const entry of journal.entries.slice(runtimeBaseline + 1)) {
+    if (entry.tag !== "0360_workspace_integrity_limits")
+      await applyMainMigration(database.db, entry.tag);
+  }
   await declareCurrentTestDatabaseWriter(database);
 
   await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
@@ -896,8 +909,13 @@ async function seedRetainedStandalone(): Promise<void> {
 
   await mkdir(owner.cwd, { recursive: true });
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     owner.cwd,
-    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      owner.cwd,
+      "plain_directory",
+    ),
     [],
   );
 
@@ -1786,8 +1804,13 @@ it("retains a v2 company graph plain-directory witness and adopts its explicit o
     "Bounded graph evidence",
   );
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     owner.cwd,
-    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      owner.cwd,
+      "plain_directory",
+    ),
     [],
   );
   const retained = {
@@ -1811,14 +1834,37 @@ it("retains a v2 company graph plain-directory witness and adopts its explicit o
     })
     .where(eq(runs.id, nativeFlowRunId));
   await expect(
-    inspectOperationalWorkspace(database.db, retained),
+    inspectOperationalWorkspace(database.db, retained, "final_verification"),
   ).resolves.toMatchObject({ verdict: "clean" });
+  const observations = join(owner.cwd, "observations.txt");
+
+  await seedWorkspaceIntegritySettings(database);
+  await updateIntegritySettings(database.db, { maxSizeMiB: 1 }, "test");
+  try {
+    await writeFile(observations, Buffer.alloc(1048577));
+    await expect(
+      prepareCompanyFlowWorkspace(database.db, nativeFlowRunId),
+    ).rejects.toMatchObject({
+      message:
+        "Company graph source integrity could not be verified before continuation",
+      details: {
+        reason: "company_flow_integrity_refused",
+        integrityLimit: {
+          stage: "dispatch",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      },
+    });
+  } finally {
+    await updateIntegritySettings(database.db, { maxSizeMiB: null }, "test");
+  }
   await writeFile(
     join(owner.cwd, "observations.txt"),
     "Changed graph evidence",
   );
   await expect(
-    inspectOperationalWorkspace(database.db, retained),
+    inspectOperationalWorkspace(database.db, retained, "final_verification"),
   ).resolves.toMatchObject({ verdict: "changed" });
   await writeFile(
     join(owner.cwd, "observations.txt"),
@@ -2175,7 +2221,34 @@ it("IT-CBS-03 cancels a Pending company Flow with current authority, one attribu
       },
     );
 
-    const responses = await Promise.all([stop(), stop()]);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const assertQuiescent =
+      executionQuiescence.assertAgentCancellationExecutionQuiescent;
+    const quiescence = vi
+      .spyOn(executionQuiescence, "assertAgentCancellationExecutionQuiescent")
+      .mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await release.promise;
+        await assertQuiescent(...args);
+      });
+    const delayed = stop();
+    let committed: Response;
+
+    try {
+      await Promise.race([
+        entered.promise,
+        delayed.then((response) => {
+          throw new Error(`Stop returned ${response.status} before quiescence`);
+        }),
+      ]);
+      committed = await stop();
+      expect(committed.status).toBe(200);
+    } finally {
+      release.resolve();
+      await delayed.finally(() => quiescence.mockRestore());
+    }
+    const responses = [committed, await delayed];
 
     for (const response of responses) {
       expect(response.status).toBe(200);
@@ -5996,12 +6069,54 @@ it("IT-CBS-03 resumes a checkpointed native permission after retained-host resta
         )
       ).rows,
     ).toEqual([{ state: "failed", attempts: 0, reason: "ORPHANED" }]);
+    const cleanupSource = join(
+      companyAgentWorkdirPath(request.companyId, receipt.runId),
+      "large-cleanup-source",
+    );
+
+    await seedWorkspaceIntegritySettings(database);
+    await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+    let nextCleanupAt: string;
+
+    try {
+      await writeFile(cleanupSource, Buffer.alloc(1048577));
+      for (let pass = 0; pass < 2; pass += 1)
+        await sweepOperationalDispositions({
+          db,
+          hosts,
+          now: new Date(deferred.due_at),
+        });
+      const visible = await listVisibleAssignmentRunIds(responderId, [
+        receipt.runId,
+      ]);
+
+      expect(await readAssignmentRunSummaries(db, visible)).toMatchObject([
+        {
+          id: receipt.runId,
+          status: "Done",
+          companyFlowIntegrityLimits: [
+            { stage: "cleanup", limitAxis: "bytes", maximum: 1048576 },
+          ],
+        },
+      ]);
+      const [row] = await db
+        .select({ cleanup: runs.operationalCleanup })
+        .from(runs)
+        .where(eq(runs.id, receipt.runId));
+
+      if (!row?.cleanup?.dueAt)
+        throw new Error("Expected the cleanup retry to be scheduled");
+      nextCleanupAt = row.cleanup.dueAt;
+    } finally {
+      await rm(cleanupSource, { force: true });
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
     // The existing sweep may first wrap its durable keyset cursor.
     for (let pass = 0; pass < 2; pass += 1)
       await sweepOperationalDispositions({
         db,
         hosts,
-        now: new Date(deferred.due_at),
+        now: new Date(nextCleanupAt),
       });
     expect(
       (

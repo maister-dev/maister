@@ -19,6 +19,10 @@ import {
   projects,
 } from "@/lib/db/schema";
 import { continuationObservation } from "@/lib/agents/continuation-episode";
+import {
+  currentCleanupIntegrityLimit,
+  parseWorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import { parseOperationalResult } from "@/lib/run-results/operational-schema";
 import { authorizeRunsKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 
@@ -144,6 +148,10 @@ export async function inspectOperationalOutcomes(
                 reason: row.continuation.failure.reason,
                 blockedReason: row.continuation.failure.blockedReason,
                 observation: row.continuation.observation,
+                integrityLimit: parseWorkspaceIntegrityLimit(
+                  row.continuation.failure.infrastructureFailure
+                    ?.integrityLimit,
+                ),
               },
             }
           : {}),
@@ -172,6 +180,7 @@ function projectOperationalOutcome(
   value: unknown,
 ): OperationalOutcome {
   const receipt = run.terminal;
+  const cleanupIntegrityLimit = currentCleanupIntegrityLimit(run.cleanup);
   const result =
     receipt?.validation === "valid"
       ? parseOperationalResult(
@@ -196,6 +205,10 @@ function projectOperationalOutcome(
       ? { infrastructureFailure: receipt.infrastructureFailure }
       : {}),
     integrity: receipt?.integrity ?? "pending",
+    ...(receipt?.integrityLimit
+      ? { integrityLimit: receipt.integrityLimit }
+      : {}),
+    ...(cleanupIntegrityLimit ? { cleanupIntegrityLimit } : {}),
     resultRevision: receipt?.resultRevision ?? null,
     reportedResult: result,
     reasonCodes: receipt?.reasonCodes ?? [],

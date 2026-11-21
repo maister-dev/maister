@@ -1,3 +1,5 @@
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
+import { seedWorkspaceIntegritySettings } from "@/test-support/workspace-integrity-settings";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { Db } from "@/lib/execution-host/db";
 import type { ReserveRuntimeObjectPayload } from "@/lib/execution-host/contracts";
@@ -43,6 +45,7 @@ import {
   releaseOperationalContextMounts,
 } from "@/lib/context-mounts/terminal";
 import * as worktreeModule from "@/lib/worktree";
+import * as operationalContext from "@/lib/agents/operational-context";
 import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
 import { prepareOperationalContextMounts } from "@/lib/context-mounts/launch";
 import { contextMountPath } from "@/lib/context-mounts/service";
@@ -186,15 +189,21 @@ async function seed(
     mounts.map(async (mount) => ({
       mount,
       baseline: await captureOperationalGeneration(
+        db,
         mount.mountPath,
-        await captureOperationalBaseline(mount.mountPath, "ephemeral_checkout"),
+        await captureOperationalBaseline(
+          db,
+          mount.mountPath,
+          "ephemeral_checkout",
+        ),
         [],
       ),
     })),
   );
   const baseline = await captureOperationalGeneration(
+    db,
     context.cwd,
-    await captureOperationalBaseline(context.cwd, context.resourceKind),
+    await captureOperationalBaseline(db, context.cwd, context.resourceKind),
     [],
   );
 
@@ -1099,6 +1108,178 @@ describe("operational disposition through existing lifecycle owners", () => {
     });
     expect(seam.fake.callsOf("deliverInput")).toHaveLength(0);
     expect((await lstat(seeded.context.cwd)).isDirectory()).toBe(true);
+  });
+
+  it("WI-05 retains the first limit of a failed cleanup attempt and clears it after retry", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+    await db.transaction((tx) => prepared.apply(tx));
+    const source = path.join(seeded.context.cwd, "large-source");
+    await writeFile(source, Buffer.alloc(1536 * 1024));
+    await seedWorkspaceIntegritySettings(database);
+
+    try {
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+      expect(
+        await disposeOperationalRun(seeded.runId, { db, hosts: seam.hosts }),
+      ).toBe("deferred");
+      const outcome = await loadOperationalOutcome(db, seeded.runId);
+      expect(outcome).toMatchObject({
+        effectiveOutcome: "success",
+        cleanup: { state: "retry", errorCode: "operational_integrity_limit" },
+        cleanupIntegrityLimit: {
+          stage: "cleanup",
+          resource: "primary",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      });
+      expect((await lstat(source)).size).toBe(1536 * 1024);
+
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const verify = operationalContext.inspectOperationalWorkspace;
+
+      vi.spyOn(
+        operationalContext,
+        "inspectOperationalWorkspace",
+      ).mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await release.promise;
+
+        return verify(...args);
+      });
+      const retry = disposeOperationalRun(seeded.runId, {
+        db,
+        hosts: seam.hosts,
+        now: new Date(Date.now() + 360_000),
+      });
+
+      try {
+        await Promise.race([entered.promise, retry]);
+        const preserving = await loadOperationalOutcome(db, seeded.runId);
+
+        expect(preserving?.cleanup?.state).toBe("preserving");
+        expect(preserving?.cleanupIntegrityLimit).toBeUndefined();
+      } finally {
+        release.resolve();
+        await retry;
+      }
+      expect(await retry).toBe("released");
+      const retried = await loadOperationalOutcome(db, seeded.runId);
+
+      expect(retried?.cleanup?.state).toBe("released");
+      expect(retried?.cleanupIntegrityLimit).toBeUndefined();
+    } finally {
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
+  });
+
+  it("retains the original cleanup measurement beside a distinct preservation failure", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+
+    await db.transaction((tx) => prepared.apply(tx));
+    const source = path.join(seeded.context.cwd, "large-source");
+
+    await writeFile(source, Buffer.alloc(1536 * 1024));
+    await seedWorkspaceIntegritySettings(database);
+    const verify = operationalContext.inspectOperationalWorkspace;
+
+    vi.spyOn(
+      operationalContext,
+      "inspectOperationalWorkspace",
+    ).mockImplementationOnce(async (...args) => {
+      const result = await verify(...args);
+
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+
+      return result;
+    });
+
+    try {
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+      expect(
+        await disposeOperationalRun(seeded.runId, {
+          db,
+          hosts: seam.hosts,
+          preserve: async () => ({
+            ok: false,
+            failureReason: "workspace_preservation_failed",
+          }),
+        }),
+      ).toBe("deferred");
+      expect(await loadOperationalOutcome(db, seeded.runId)).toMatchObject({
+        effectiveOutcome: "success",
+        cleanup: { state: "retry", errorCode: "workspace_preservation_failed" },
+        cleanupIntegrityLimit: {
+          stage: "cleanup",
+          resource: "primary",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      });
+      expect((await lstat(source)).size).toBe(1536 * 1024);
+    } finally {
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
+  });
+
+  it("WI-05 renews a short row-backed cleanup lease while a check is in progress", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+    await db.transaction((tx) => prepared.apply(tx));
+
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const verify = operationalContext.inspectOperationalWorkspace;
+    const barrier = vi
+      .spyOn(operationalContext, "inspectOperationalWorkspace")
+      .mockImplementation(async (...args) => {
+        entered.resolve();
+        await release.promise;
+        return verify(...args);
+      });
+    vi.stubEnv("MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS", "3");
+    const cleanup = disposeOperationalRun(seeded.runId, {
+      db,
+      hosts: seam.hosts,
+    });
+    const expiry = async (): Promise<number> => {
+      const [workspace] = await db
+        .select({ deadline: workspaces.lifecycleOperationLeaseExpiresAt })
+        .from(workspaces)
+        .where(eq(workspaces.runId, seeded.runId));
+      return workspace?.deadline?.getTime() ?? 0;
+    };
+
+    try {
+      await Promise.race([entered.promise, cleanup]);
+      const first = await expiry();
+      expect(first).toBeGreaterThan(Date.now());
+      await expect
+        .poll(async () => Date.now() > first && (await expiry()) > Date.now(), {
+          timeout: 10000,
+        })
+        .toBe(true);
+      release.resolve();
+      expect(await cleanup).toBe("released");
+    } finally {
+      release.resolve();
+      await cleanup;
+      barrier.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("IT-EDGE-OPL-06 fences a second cleaner and refuses stale completion after lease expiry", async () => {

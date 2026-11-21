@@ -2493,6 +2493,13 @@
       "when": 1795203751487,
       "tag": "0359_acp_context_projection_state",
       "breakpoints": true
+    },
+    {
+      "idx": 360,
+      "version": "7",
+      "when": 1795258508258,
+      "tag": "0360_workspace_integrity_limits",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,8 @@ When a Run delegates work, inspect a descendant's execution and public result wh
 
 Project viewers can inspect authorized metadata and public results; transcript/evidence content requires `readRepoFiles`. No interactive child action lives in peek. Each Run/path is independently authorized.
 
+Workspace integrity guidance appears above the tabs and identifies the selected child Run. A global administrator can open the corresponding Settings field. Other readers get the Run ID and measurements to share with an administrator.
+
 ## Navigation
 
 The child-run list lives only in the Run inspector and opens one anchored peek. Pagination uses compact arrow buttons with localized accessible names and tooltips; it is hidden for empty and single-page lists. Breadcrumbs, sibling selection, descendants and Previous change its content. Close returns focus. Open full Run goes to the selected Run's normal page without parent query keys.

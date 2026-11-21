@@ -20,23 +20,29 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
-import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
-import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
+import {
+  operationalCauseChain,
+  readWorkspaceIntegrityLimit,
+  type WorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
+import type { Db } from "@/lib/execution-host/db";
+import { readIntegrityCheckSettings } from "@/lib/workspace-integrity/settings";
+import {
+  executeRepositoryGit,
+  GitExecutionTimeout,
+} from "@/lib/project-config-persistence/git-process";
 import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
-const MAX_ENTRIES = 100_000;
-const MAX_BYTES = 256 * 1024 * 1024;
-const MAX_PROBE_MS = 30_000;
 const log = pino({ name: "operational-integrity" });
 
-type Limits = {
-  maxEntries?: number;
-  maxBytes?: number;
-  maxProbeMs?: number;
+type ProbeOptions = {
+  clock?: () => number;
+  stage?: WorkspaceIntegrityLimit["stage"];
+  resource?: WorkspaceIntegrityLimit["resource"];
   context?: OperationalProbeContext;
   legacyEphemeral?: boolean;
 };
-type ProbeLimitAxis = "time" | "bytes" | "entries" | "worktree_config_bytes";
+type ProbeLimitAxis = WorkspaceIntegrityLimit["limitAxis"];
 type ProbeLimitDetails = {
   limitAxis: ProbeLimitAxis;
   observed: number;
@@ -47,6 +53,7 @@ type ProbeLimitDetails = {
   maxEntries: number;
   maxBytes: number;
   maxProbeMs: number;
+  integrityLimit: WorkspaceIntegrityLimit;
 };
 type Tree = Omit<
   OperationalIntegrityBaseline,
@@ -61,6 +68,7 @@ export type OperationalIntegrityResult = {
   verdict: "clean" | "changed" | "indeterminate";
   reasonCodes: string[];
   changedPaths: string[];
+  integrityLimit?: WorkspaceIntegrityLimit;
 };
 
 const digest = (bytes: string | Uint8Array): string =>
@@ -71,7 +79,7 @@ const entryKey = (entry: OperationalIntegrityEntry): string =>
 function probeError(reason: string, details?: ProbeLimitDetails): MaisterError {
   return new MaisterError(
     "PRECONDITION",
-    "operational integrity could not be established; preserve the workspace for diagnosis",
+    "Operational integrity could not be established. Preserve the workspace for diagnosis.",
     { details: { reason, ...details } },
   );
 }
@@ -195,22 +203,25 @@ function scopedOperationalConfig(config: string): string[] {
 }
 
 async function captureTree(
+  db: Pick<Db, "select">,
   cwd: string,
   resourceKind: OperationalResourceKind,
-  limits: Limits,
+  limits: ProbeOptions,
   refScope?: readonly string[] | "detect_detached",
 ): Promise<Tree> {
+  const settings = await readIntegrityCheckSettings(db);
+  const clock = limits.clock ?? (() => performance.now());
+  const startedAt = clock();
+  const maxProbeMs = settings.maxDurationSeconds.value * 1000;
+  const deadline = startedAt + maxProbeMs;
+  const maxEntries = settings.maxEntries.value;
+  const maxBytes = settings.maxSizeMiB.value * 1024 * 1024;
   const candidate = path.resolve(cwd);
   const rootInfo = await probeOperation("lstat", () => lstat(candidate));
 
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
     throw probeError("operational_integrity_root_replaced");
   const root = await probeOperation("realpath", () => realpath(candidate));
-  const startedAt = performance.now();
-  const maxProbeMs = Math.min(limits.maxProbeMs ?? MAX_PROBE_MS, MAX_PROBE_MS);
-  const deadline = startedAt + maxProbeMs;
-  const maxEntries = Math.min(limits.maxEntries ?? MAX_ENTRIES, MAX_ENTRIES);
-  const maxBytes = Math.min(limits.maxBytes ?? MAX_BYTES, MAX_BYTES);
   const source: OperationalIntegrityEntry[] = [];
   let bytes = 0;
   let sharedBuffer: Buffer | null = null;
@@ -218,20 +229,38 @@ async function captureTree(
     limitAxis: ProbeLimitAxis,
     observed: number,
     maximum: number,
-  ): MaisterError =>
-    probeError("operational_integrity_limit", {
+  ): MaisterError => {
+    const elapsedMs = Math.ceil(clock() - startedAt);
+    const measurement = {
       limitAxis,
       observed,
       maximum,
       observedEntries: source.length,
       observedBytes: bytes,
-      elapsedMs: Math.ceil(performance.now() - startedAt),
+      elapsedMs,
+    };
+
+    return probeError("operational_integrity_limit", {
+      ...measurement,
+      integrityLimit: {
+        ...measurement,
+        reason: "operational_integrity_limit",
+        stage: limits.stage ?? "baseline",
+        resource: limits.resource ?? "primary",
+        unit:
+          limitAxis === "time"
+            ? "ms"
+            : limitAxis === "entries"
+              ? "entries"
+              : "B",
+      },
       maxEntries,
       maxBytes,
       maxProbeMs,
     });
+  };
   const check = (): void => {
-    const now = performance.now();
+    const now = clock();
 
     if (now >= deadline)
       throw limitError("time", Math.ceil(now - startedAt), maxProbeMs);
@@ -330,11 +359,13 @@ async function captureTree(
     check();
   };
 
+  check();
   for (const name of (
     await probeOperation("readdir", () => readdir(runtimeFileUrl(root)))
   ).sort())
     if (name !== ".git" || resourceKind === "plain_directory")
       await visit(name);
+  check();
   if (resourceKind === "plain_directory")
     return {
       source,
@@ -352,8 +383,16 @@ async function captureTree(
     const result = await probeOperation(`git.${args[0]}`, () =>
       executeRepositoryGit(root, ["-c", "core.fsmonitor=false", ...args], {
         env: { ...process.env, LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" },
-        timeout: Math.max(1, Math.ceil(deadline - performance.now())),
+        timeout: Math.max(1, Math.ceil(deadline - clock())),
         maxBuffer: 8 * 1024 * 1024,
+      }).catch((error: unknown) => {
+        if (error instanceof GitExecutionTimeout)
+          throw limitError(
+            "time",
+            Math.max(maxProbeMs, Math.ceil(clock() - startedAt)),
+            maxProbeMs,
+          );
+        throw error;
       }),
     );
 
@@ -459,6 +498,12 @@ async function captureTree(
     scopedRefs && worktreeConfigDigest
       ? await git(["config", "--worktree", "--includes", "--null", "--list"])
       : "";
+  const gitIdentity = await probeOperation("realpath", () =>
+    realpath(gitDirectory.trim()),
+  );
+
+  check();
+
   return {
     source,
     head: head.trim(),
@@ -466,9 +511,7 @@ async function captureTree(
     indexDigest: digest(index),
     indexContentDigest: digest(indexContent),
     historyDigest: digest(history),
-    gitIdentity: digest(
-      await probeOperation("realpath", () => realpath(gitDirectory.trim())),
-    ),
+    gitIdentity: digest(gitIdentity),
     gitConfigDigest: digest(
       scopedRefs
         ? canonicalCommandJson([
@@ -492,12 +535,14 @@ async function captureTree(
 }
 
 export async function captureOperationalBaseline(
+  db: Pick<Db, "select">,
   cwd: string,
   resourceKind: OperationalResourceKind,
-  limits: Limits = {},
+  limits: ProbeOptions = {},
 ): Promise<OperationalIntegrityBaseline> {
   try {
     const source = await captureTree(
+      db,
       cwd,
       resourceKind,
       limits,
@@ -565,9 +610,11 @@ function changedEntries(
 
 /** Only trusted generation writes may extend expected bytes; no directory exemptions survive. */
 export async function captureOperationalGeneration(
+  db: Pick<Db, "select">,
   cwd: string,
   baseline: OperationalIntegrityBaseline,
   ownedPaths: readonly string[],
+  limits: ProbeOptions = {},
 ): Promise<OperationalIntegrityBaseline> {
   if (
     ownedPaths.some(
@@ -584,7 +631,16 @@ export async function captureOperationalGeneration(
     throw probeError("operational_materialization_conflict");
   const ownedRefs =
     baseline.version === 2 ? baseline.refs.map(({ ref }) => ref) : undefined;
-  const tree = await captureTree(cwd, baseline.resourceKind, {}, ownedRefs);
+  const tree = await captureTree(
+    db,
+    cwd,
+    baseline.resourceKind,
+    { stage: "materialization", ...limits },
+    ownedRefs,
+  ).catch((error: unknown) => {
+    logProbeFailure("capture", baseline.resourceKind, error, limits.context);
+    throw error;
+  });
   const expected = expectedEntries(baseline);
   const changed = changedEntries(expected, tree.source);
   const owned = new Set(ownedPaths);
@@ -637,9 +693,11 @@ export async function captureOperationalGeneration(
 }
 
 export async function verifyOperationalIntegrity(
+  db: Pick<Db, "select">,
   cwd: string,
   baseline: OperationalIntegrityBaseline | null,
   refEvidence: readonly OperationalRefEvidence[] = [],
+  limits: ProbeOptions = {},
 ): Promise<OperationalIntegrityResult> {
   if (
     !baseline ||
@@ -654,7 +712,13 @@ export async function verifyOperationalIntegrity(
   try {
     const ownedRefs =
       baseline.version === 2 ? baseline.refs.map(({ ref }) => ref) : undefined;
-    const tree = await captureTree(cwd, baseline.resourceKind, {}, ownedRefs);
+    const tree = await captureTree(
+      db,
+      cwd,
+      baseline.resourceKind,
+      { stage: "final_verification", ...limits },
+      ownedRefs,
+    );
     const changedPaths = changedEntries(
       expectedEntries(baseline),
       tree.source,
@@ -716,10 +780,12 @@ export async function verifyOperationalIntegrity(
       changedPaths,
     };
   } catch (error) {
-    logProbeFailure("verify", baseline.resourceKind, error);
+    logProbeFailure("verify", baseline.resourceKind, error, limits.context);
+    const integrityLimit = readWorkspaceIntegrityLimit(error);
 
     return {
       verdict: "indeterminate",
+      ...(integrityLimit ? { integrityLimit } : {}),
       reasonCodes: [
         isMaisterError(error) && typeof error.details?.reason === "string"
           ? error.details.reason

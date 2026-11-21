@@ -180,16 +180,37 @@ export async function stopRunForUser(
   let finalized: boolean;
 
   if (isCompanyFlowResource(run)) {
-    finalized = await finalizeCompanyFlowRun({
-      db,
-      rootDb: db,
-      runId,
-      requested: "Abandoned",
-      userId: user.id,
-      errorCode: null,
-      reason: "operator",
-      driverToken: run.flowDriverToken ?? undefined,
-    });
+    try {
+      finalized = await finalizeCompanyFlowRun({
+        db,
+        rootDb: db,
+        runId,
+        requested: "Abandoned",
+        userId: user.id,
+        errorCode: null,
+        reason: "operator",
+        driverToken: run.flowDriverToken ?? undefined,
+      });
+    } catch (error) {
+      if (
+        !isMaisterError(error) ||
+        error.code !== "EXECUTOR_UNAVAILABLE" ||
+        error.details?.reason !== "agent_execution_quiescence_unproven"
+      )
+        throw error;
+
+      // A concurrent stop can finalize and release the assignment while this
+      // request is proving quiescence against its earlier snapshot.
+      const current = await authorizeCompanyStop(db, user.id, runId);
+
+      if (
+        current.status !== "Abandoned" ||
+        current.companyCancellationIntent?.userId !== user.id
+      )
+        throw error;
+
+      return { ok: true, runId, runStatus: "Abandoned", supervisorStopped };
+    }
   } else {
     const actor = await ensureCompanyUserActor({
       db,

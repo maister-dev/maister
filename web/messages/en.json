@@ -7603,5 +7603,64 @@
       "min": "min",
       "s": "s"
     }
+  },
+  "workspaceIntegrity": {
+    "title": "Workspace integrity checks",
+    "fields": {
+      "maxSizeMiB": "Total size (MiB)",
+      "maxDurationSeconds": "Duration (seconds)",
+      "maxEntries": "Filesystem entries"
+    },
+    "sources": {
+      "platform": "saved setting",
+      "environment": "service environment",
+      "default": "built-in default"
+    },
+    "reset": "Reset",
+    "resetField": "Reset {field}",
+    "pendingReset": "The override will be removed when you save.",
+    "effective": "Effective value {value, number} from {source}",
+    "save": "Save limits",
+    "saved": "Workspace integrity limits saved.",
+    "range": "Enter a whole number from 1 to {max, number}.",
+    "invalidEnvironment": "The service environment value is invalid. Enter a valid override or ask the service operator to correct it.",
+    "unavailable": "Workspace integrity settings are unavailable.",
+    "stopped": "The {stage} stopped for the {resource}.",
+    "stages": {
+      "baseline": "initial workspace check",
+      "materialization": "post-materialization check",
+      "dispatch": "pre-dispatch check",
+      "final_verification": "final verification",
+      "cleanup": "cleanup check",
+      "evidence_capture": "cleanup evidence capture"
+    },
+    "resources": {
+      "primary": "primary workspace",
+      "context": "context repository"
+    },
+    "observations": {
+      "bytes": "The check counted {observed} bytes against a {maximum} MiB limit. The full size is unknown.",
+      "time": "The check reached {observed} seconds against a {maximum}-second limit.",
+      "entries": "Entry {observed} exceeded the {maximum}-entry limit. Files, directories and symbolic links count.",
+      "worktree_config_bytes": "Git config.worktree reached {observed} bytes against the fixed 1 MiB limit."
+    },
+    "preparationBlocked": "This check could not establish workspace integrity for dispatch.",
+    "indeterminate": "Workspace integrity could not be verified.",
+    "cleanupBlocked": "Cleanup could not complete this check. Unpreserved files are retained.",
+    "remediation": {
+      "bytes": "Measure the complete intended checkout before adjusting the limit.",
+      "time": "Review execution-host storage and Git performance. Adjust the duration for expected work.",
+      "entries": "Review the checkout for generated or ignored entries before adjusting the limit.",
+      "worktree_config_bytes": "Ask the repository or execution-host operator to inspect config.worktree and correct the oversized Git configuration at its source."
+    },
+    "openSetting": "Open setting · {field}",
+    "askAdmin": "Ask a global administrator to review {field}. Share run {runId} and these measurements.",
+    "details": "Integrity check measurements",
+    "measurements": "Observed {observed} {unit} against {maximum} {unit}. Counted {bytes} bytes and {entries} completed entries in {elapsed} ms.",
+    "units": {
+      "B": "bytes",
+      "ms": "ms",
+      "entries": "entries"
+    }
   }
 }
