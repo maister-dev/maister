@@ -263,16 +263,28 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
     await expect(decisions.getByRole("status")).toHaveText(
       "Reversal verified.",
     );
+    await page.goto("/");
+    const deskDecisions = page.getByRole("region", {
+      name: "Engine decisions",
+    });
+    const completed = deskDecisions.getByRole("listitem").filter({
+      hasText: "Promotion · Completed",
+    });
+
+    await expect(completed.getByText("System", { exact: true })).toBeVisible();
+    await expect(
+      completed.getByRole("link", { name: "Completion requires review" }),
+    ).toHaveAttribute("href", `/runs/${runId}`);
     await context.addCookies([
       { name: "NEXT_LOCALE", value: "ru", url: baseURL! },
     ]);
     await page.reload();
-    const openLocalizedInspector = page.getByRole("button", {
-      name: "Открыть инспектор",
-    });
-
-    if (await openLocalizedInspector.isVisible())
-      await openLocalizedInspector.click();
+    await expect(
+      page
+        .getByRole("region", { name: "Решения движка" })
+        .getByText("Продвижение · Выполнено"),
+    ).toBeVisible();
+    await page.goto(`/runs/${runId}?inspector=open`);
     const localizedDecisions = page.getByRole("region", {
       name: "Решения движка",
     });
