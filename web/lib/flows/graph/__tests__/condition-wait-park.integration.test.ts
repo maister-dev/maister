@@ -37,7 +37,7 @@ it("W10 counts a wait only when overdue or handing off to its human node", async
     {
       schemaVersion: 1,
       name: "Deadline handoff",
-      compat: { engine_min: "3.13.0" },
+      compat: { engine_min: "3.14.0" },
       nodes: [
         {
           type: "wait",
@@ -526,7 +526,7 @@ it("W06 drives a timer wait through the normal graph entry and common Pending ad
   const seeded = await seedGraphRun(database.db, {
     schemaVersion: 1,
     name: "Wait integration",
-    compat: { engine_min: "3.13.0" },
+    compat: { engine_min: "3.14.0" },
     nodes: [
       {
         type: "wait",
@@ -658,7 +658,7 @@ it("W03 applies elapsed and equal-deadline timers even if another due wait fails
       {
         schemaVersion: 1,
         name: "Wait clock",
-        compat: { engine_min: "3.13.0" },
+        compat: { engine_min: "3.14.0" },
         nodes: [
           {
             type: "wait",
@@ -782,7 +782,7 @@ it.each(["parked", "queued"] as const)(
       {
         schemaVersion: 1,
         name: "Abandon a wait",
-        compat: { engine_min: "3.13.0" },
+        compat: { engine_min: "3.14.0" },
         nodes: [
           {
             type: "wait",
@@ -910,7 +910,7 @@ it.each(["head movement", "host outage"] as const)(
       {
         schemaVersion: 1,
         name: "Bound signal",
-        compat: { engine_min: "3.13.0" },
+        compat: { engine_min: "3.14.0" },
         nodes: [
           {
             type: "wait",

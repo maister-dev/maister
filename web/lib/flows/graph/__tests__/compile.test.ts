@@ -444,11 +444,11 @@ describe("compileManifest — session assignment (M42)", () => {
   });
 });
 
-describe("ADR-215 wait graph contracts", () => {
+describe("ADR-216 wait graph contracts", () => {
   const withWait = (
     on: unknown,
     transitions: Record<string, string>,
-    floor = "3.13.0",
+    floor = "3.14.0",
   ) => {
     return flowYamlV1Schema.parse({
       schemaVersion: 1,
@@ -540,7 +540,7 @@ describe("ADR-215 wait graph contracts", () => {
   it("W02 refuses a lower feature floor, missing outcomes and unbounded reentry", () => {
     const on = { kind: "timer", after: 30 };
     const transitions = { elapsed: "done", timeout: "done", cancelled: "done" };
-    const belowFloor = withWait(on, transitions, "3.12.0");
+    const belowFloor = withWait(on, transitions, "3.13.0");
     const missing = withWait(on, { elapsed: "done", cancelled: "done" });
     const loop = withWait(on, { ...transitions, elapsed: "wait" });
     const bounded = flowYamlV1Schema.parse({
@@ -572,7 +572,7 @@ describe("ADR-215 wait graph contracts", () => {
 
     expect(() =>
       validateGraphManifest(belowFloor, belowFloor.nodes, "wait.yaml"),
-    ).toThrow(/3\.13\.0/);
+    ).toThrow(/3\.14\.0/);
     expect(() => compileManifest(missing)).toThrow(/timeout/);
     expect(() => validateGraphManifest(loop, loop.nodes, "wait.yaml")).toThrow(
       /unbounded cycle/,

@@ -100,7 +100,7 @@ The graph-only cut-over started with engine 3.0.0: manifests require a non-empty
 top-level `nodes[]`. The parser and compiler reject any manifest containing
 `steps[]` with the locked migration message: `legacy steps[] flows are not
 supported since engine 3.0.0; republish the package with nodes[]`. The current
-host engine is `3.13.0`. Operational agents retain their 3.9.0 package floor,
+host engine is `3.15.0`. Operational agents retain their 3.9.0 package floor,
 and native evidence findings require 3.11.0. Graph packages remain
 compatible when their declared `compat` range includes that version. They do not
 need to raise an open-ended historical `engine_min`.
@@ -2169,7 +2169,7 @@ forces the human pause; decision answers re-enter only the declared target.
 
 ## Durable wait and publication nodes (Implemented)
 
-A project Flow can await a condition with engine minimum 3.13.0. Put the
+A project Flow can await a condition with engine minimum 3.14.0. Put the
 condition selector in `on` and declare every result in `transitions`.
 A wait's positive integer `timeout` is in seconds. For a timer, `on.after`
 is a positive integer or `on.until` is an RFC 3339 instant. This example
@@ -2177,7 +2177,7 @@ runs the normal completion path after sixty seconds and gives timeout and
 cancellation their own edges.
 
 ```yaml
-compat: { engine_min: "3.13.0" }
+compat: { engine_min: "3.14.0" }
 nodes:
   - id: delay
     type: wait

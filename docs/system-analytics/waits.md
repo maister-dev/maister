@@ -1,6 +1,6 @@
 # Durable Flow waits
 
-**Status:** Implemented ([ADR-215](../decisions/adr-215.md)).
+**Status:** Implemented ([ADR-216](../decisions/adr-216.md)).
 
 ## Purpose
 

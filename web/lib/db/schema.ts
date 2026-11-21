@@ -6884,7 +6884,7 @@ export const nodeAttempts = pgTable(
   }),
 );
 
-// ADR-215: an occurrence belongs to one exact project, run and Flow attempt.
+// ADR-216: an occurrence belongs to one exact project, run and Flow attempt.
 export const runAutonomousDecisions = pgTable(
   "run_autonomous_decisions",
   {
@@ -7480,7 +7480,7 @@ export const gateResults = pgTable(
   }),
 );
 
-// ADR-215: available before the independent lifecycle consumer binds an incarnation.
+// ADR-216: available before the independent lifecycle consumer binds an incarnation.
 const runContextIdentity = () => ({
   runId: text("run_id")
     .notNull()

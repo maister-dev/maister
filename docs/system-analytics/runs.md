@@ -1538,7 +1538,7 @@ resume or depend on supervisor availability.
 
 Waiting owns a retained workspace but no executor slot. Resolution enters Pending with the original host, a new queue timestamp and an exact continuation. Admission increments the assignment epoch and retains the original run start. An operator can stop an open wait or its queued continuation. A stop that wins before admission enters Review and invalidates the wake. If admission wins, the queued stop returns a conflict without sending a command to the new driver. Abandon closes the wait or queued wake.
 
-ADR-208 attributes the open wait and later admission delay to duration outside execution. ADR-216 counts only realized Done or classified Failed. With a revoked grant, stale evidence or a hold, leave an actionable Review.
+ADR-208 attributes the open wait and later admission delay to duration outside execution. ADR-217 counts only realized Done or classified Failed. With a revoked grant, stale evidence or a hold, leave an actionable Review.
 
 The Run inspector shows its decision ledger. Desk Activity links to the five latest engine decisions across visible projects and labels the system actor. A decision that ends execution shares its committed run transition timestamp, so a refusal stays visible for the current Review. An active run with the evidence-gated launch grant exposes the existing hold and release controls before its completion evidence becomes available.
 

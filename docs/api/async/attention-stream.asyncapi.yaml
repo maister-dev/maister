@@ -12,7 +12,7 @@ info:
     stream is a read path that happens to push: it never writes run state, never
     resolves a HITL deferred and never advances a read cursor.
 
-    Designed (ADR-215/216) — an overdue wait or autonomy refusal invalidates the
+    Designed (ADR-216/217) — an overdue wait or autonomy refusal invalidates the
     authorized region through the existing tick contract. A timeout-to-human handoff
     avoids adding an item for both the wait and its resulting HITL request.
 

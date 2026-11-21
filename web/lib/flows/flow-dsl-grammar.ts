@@ -136,7 +136,7 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   (required) is the JSON form it collects against, finishing on
   \`transitions.success\`.
 
-## Durable waits (engine_min >= 3.13.0)
+## Durable waits (engine_min >= 3.14.0)
 
 A \`type: wait\` node declares \`timeout\` in positive seconds, an \`on\`
 condition and one transition for each outcome. Wait nodes have no session,

@@ -163,7 +163,7 @@ it("W02 installs all wait kinds at their exact engine floors", async () => {
   const manifests = [
     {
       name: "wait-conditions-floor",
-      compat: { engine_min: "3.13.0" },
+      compat: { engine_min: "3.14.0" },
       nodes: [
         wait("clock", { kind: "timer", after: 60 }, ["elapsed"], "comment"),
         wait("comment", { kind: "comment" }, ["commented"], "related"),

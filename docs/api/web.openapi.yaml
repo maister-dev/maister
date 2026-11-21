@@ -30841,7 +30841,7 @@ components:
           type: object
           additionalProperties: false
           required: [expectedRevision, enabled]
-          description: Designed (ADR-216). Project admin session grant. This revision does not widen any retained launch snapshot.
+          description: Designed (ADR-217). Project admin session grant. This revision does not widen any retained launch snapshot.
           properties:
             expectedRevision: { type: integer, minimum: 0 }
             enabled: { type: boolean }

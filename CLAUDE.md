@@ -431,7 +431,7 @@ export-branch | handoff-branch` above (its 6th value — `stop` takes no
 
 ### 8. Promotion policy
 
-**Designed (ADR-215/216).** Flow publication and the Git panel share the
+**Designed (ADR-216/217).** Flow publication and the Git panel share the
 ADR-181 publication and PR writer. The human session facade, approved
 epoch-fenced Flow grant and provider scan each advance only their assigned
 fields from a confirmed receipt under the expected generation. A system

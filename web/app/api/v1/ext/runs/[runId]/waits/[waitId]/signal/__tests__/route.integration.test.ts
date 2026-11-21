@@ -43,7 +43,7 @@ it("W08 records an exact grant once, rejects changed replay, and denies revoked 
     {
       schemaVersion: 1,
       name: "Signal wait",
-      compat: { engine_min: "3.13.0" },
+      compat: { engine_min: "3.14.0" },
       nodes: [
         {
           type: "wait",

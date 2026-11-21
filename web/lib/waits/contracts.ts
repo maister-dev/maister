@@ -1,4 +1,4 @@
-export const WAIT_ENGINE_MIN = "3.13.0";
+export const WAIT_ENGINE_MIN = "3.14.0";
 export const PUBLICATION_ENGINE_MIN = "3.14.0";
 export const MAX_WAIT_SECONDS = 31 * 24 * 60 * 60;
 export const RESERVED_SIGNAL_OUTCOMES: readonly string[] = [

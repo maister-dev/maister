@@ -11,7 +11,7 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-const predecessor = "0357_agent_continuation_episodes";
+const predecessor = "0360_workspace_integrity_limits";
 const runId = randomUUID();
 const attemptId = randomUUID();
 

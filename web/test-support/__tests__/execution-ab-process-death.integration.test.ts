@@ -78,7 +78,7 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
   const manifest = flowYamlV1Schema.parse({
     schemaVersion: 1,
     name: "Durable wait fault fixture",
-    compat: { engine_min: "3.13.0" },
+    compat: { engine_min: "3.14.0" },
     defaults: { session_policy: "resume" },
     nodes: [
       {

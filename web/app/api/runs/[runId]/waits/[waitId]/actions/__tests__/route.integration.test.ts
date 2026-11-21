@@ -42,7 +42,7 @@ async function seedOperatorWait(
     {
       schemaVersion: 1,
       name: "Operator wait",
-      compat: { engine_min: "3.13.0" },
+      compat: { engine_min: "3.14.0" },
       nodes: [
         {
           type: "wait",

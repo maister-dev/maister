@@ -11,7 +11,7 @@ import {
 } from "@/test-support/pg-container";
 
 let database: StartedPostgresTestDb;
-const predecessor = "0358_flow_waits";
+const predecessor = "0361_flow_waits";
 
 beforeAll(async () => {
   database = await startMainPostgresTestDbUpTo(

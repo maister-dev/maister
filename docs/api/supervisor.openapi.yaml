@@ -1129,7 +1129,7 @@ paths:
   /workspaces/{id}/head:
     post:
       tags: [execution-host]
-      summary: Designed (ADR-215) — Observe an exact adopted workspace HEAD
+      summary: Designed (ADR-216) — Observe an exact adopted workspace HEAD
       operationId: observeWaitWorkspaceHead
       description: |
         Apply the ADR-166 fence without advancing the host high-water from

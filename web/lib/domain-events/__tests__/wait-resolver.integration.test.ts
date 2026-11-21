@@ -41,7 +41,7 @@ it.each(["deleted", "cross-project"] as const)(
       await seedGraphRun(database.db, {
         schemaVersion: 1,
         name: "Task relation wait",
-        compat: { engine_min: "3.13.0" },
+        compat: { engine_min: "3.14.0" },
         nodes: [
           {
             type: "wait",
@@ -158,7 +158,7 @@ it.each([
       {
         schemaVersion: 1,
         name: "Related run wait",
-        compat: { engine_min: "3.13.0" },
+        compat: { engine_min: "3.14.0" },
         nodes: [
           {
             type: "wait",
@@ -303,7 +303,7 @@ it("W04 resolves only a newly visible comment from the bound task and actor", as
     {
       schemaVersion: 1,
       name: "Comment wait",
-      compat: { engine_min: "3.13.0" },
+      compat: { engine_min: "3.14.0" },
       nodes: [
         {
           type: "wait",
