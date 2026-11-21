@@ -74,7 +74,7 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
     const row = page
       .getByTestId("desk-work")
       .getByTestId("work-row")
-      .filter({ hasText: "Build waits for a signal" });
+      .filter({ hasText: "Build waits for a signal", visible: true });
 
     await expect(row).toHaveAttribute("data-stage", "Executing");
     await row.click();
@@ -128,7 +128,9 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
         response.request().method() === "POST",
     );
 
-    await card.getByRole("button", { name: "Применить действие" }).click();
+    await card
+      .getByRole("button", { name: "Применить действие" })
+      .press("Enter");
     expect((await submitted).status()).toBe(200);
     await expect(card.getByText("Исход: success")).toBeVisible();
     await expect(
@@ -167,8 +169,35 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
         [taskId, projectId],
       );
       await db.query(
-        "INSERT INTO runs (id,project_id,task_id,run_kind,status,flow_version,flow_revision,review_entered_at) VALUES ($1,$2,$3,'flow','Review','1.0.0','fixture',statement_timestamp())",
-        [runId, projectId, taskId],
+        `INSERT INTO runs (id,project_id,task_id,run_kind,status,flow_version,flow_revision,review_entered_at,execution_policy,autonomous_completion_grant)
+         VALUES ($1,$2,$3,'flow','Review','1.0.0','fixture',statement_timestamp(),$4,$5)`,
+        [
+          runId,
+          projectId,
+          taskId,
+          {
+            preset: "supervised",
+            overrides: { autonomousCompletion: "evidence_gated" },
+          },
+          {
+            flowRevisionId: "fixture",
+            projectRevision: 1,
+            platformRevision: 1,
+            bounds: {
+              enabled: true,
+              riskMax: "low",
+              confidenceMin: 0.9,
+              changedFilesMax: 10,
+              changedLinesMax: 300,
+              approvedCiSources: ["github-actions"],
+            },
+            declaration: {
+              ci: "remote",
+              gates: [{ node: "check", gate: "test" }],
+              review: { node: "review", gate: "risk" },
+            },
+          },
+        ],
       );
       await db.query(
         `INSERT INTO workspaces (id,run_id,project_id,branch,worktree_path,parent_repo_path)
@@ -186,11 +215,27 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
         [projectId.replaceAll("-", "").repeat(2), runId, projectId],
       );
     });
+    await page.goto(`/projects/completion-${projectId}?tab=settings`);
+    await page
+      .getByRole("checkbox", { name: "Allow evidence-gated completion" })
+      .check();
+    await page
+      .getByRole("spinbutton", { name: "Minimum confidence" })
+      .fill("0.93");
+    await page
+      .getByRole("textbox", { name: /Approved CI sources/ })
+      .fill("github-actions");
+    await page
+      .getByRole("button", { name: "Save completion settings" })
+      .click();
+    await expect(
+      page.getByText("Settings saved.", { exact: true }),
+    ).toBeVisible();
     await page.goto("/?stage=Review");
     const reviewRow = page
       .getByTestId("desk-work")
       .getByTestId("work-row")
-      .filter({ hasText: "Completion requires review" });
+      .filter({ hasText: "Completion requires review", visible: true });
 
     await expect(reviewRow).toHaveAttribute("data-stage", "Review");
     await reviewRow.click();
@@ -208,6 +253,13 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
       decisions.getByText("Promotion · Requires attention"),
     ).toBeVisible();
     await expect(decisions.getByText("A run hold is active.")).toBeVisible();
+    const hold = page.getByRole("button", { name: "Hold", exact: true });
+    const release = page.getByRole("button", { name: "Release", exact: true });
+
+    await hold.click({ timeout: 5_000 });
+    await expect(release).toBeVisible();
+    await release.click();
+    await expect(hold).toBeVisible();
     const decisionId = randomUUID().replaceAll("-", "").repeat(2);
     const revertSha = "b".repeat(40);
 
@@ -295,6 +347,10 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
     await expect(
       localizedDecisions.getByRole("textbox", { name: "SHA коммита отката" }),
     ).toBeVisible();
+    await page.goto(`/projects/completion-${projectId}?tab=settings`);
+    await expect(
+      page.getByRole("spinbutton", { name: "Минимальная уверенность" }),
+    ).toHaveValue("0.93");
   } finally {
     await withE2EDb((db) =>
       db.query("DELETE FROM projects WHERE id=$1", [projectId]),

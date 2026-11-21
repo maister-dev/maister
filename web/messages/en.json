@@ -23,6 +23,7 @@
     }
   },
   "runAutonomy": {
+    "holdTitle": "Autonomous completion",
     "reversal": {
       "report": "Report a reversal",
       "commit": "Revert commit SHA",
