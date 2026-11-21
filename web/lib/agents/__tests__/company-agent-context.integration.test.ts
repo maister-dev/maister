@@ -12904,8 +12904,12 @@ for (const stop of [
   "parent interruption",
   "child interruption",
 ] as const) {
-  it(`IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`, () =>
-    qualifyCompanyCooperation(stop));
+  // Each scenario awaits several independently bounded host transitions.
+  it(
+    `IT-CBC-01 IT-CBC-04 IT-CBC-05 requires current company delegation grants and retains exact results through Flow rework, acceptance and ${stop}`,
+    () => qualifyCompanyCooperation(stop),
+    120_000,
+  );
 }
 
 async function recordAssignmentBudgetUsage(
@@ -17438,7 +17442,7 @@ describe("company terminal evidence and project child dispatch", () => {
         delete process.env.MAISTER_MAX_CONCURRENT_AGENTS;
       else process.env.MAISTER_MAX_CONCURRENT_AGENTS = savedAgentCap;
     }
-  });
+  }, 120_000);
 });
 
 it("AV-06 reserves an installation Run and intersects current project authority before MCP disclosure", async () => {

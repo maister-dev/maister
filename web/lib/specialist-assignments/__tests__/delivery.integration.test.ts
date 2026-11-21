@@ -400,7 +400,7 @@ async function recipient(): Promise<{
   return { userId, projectId: project.id, taskId, commentId };
 }
 
-async function readyResult(
+async function publishResultFixture(
   target: Awaited<ReturnType<typeof recipient>>,
   destination: AssignmentDestination,
   verification = preparedBase.objectiveInput.verification,
@@ -415,7 +415,7 @@ async function readyResult(
     standingDefinition: preparedBase.standingDefinition,
     scheduledRequest: null,
   },
-): Promise<{ assignmentId: string; runId: string; deliveryId: string }> {
+): Promise<{ assignmentId: string; runId: string }> {
   const { contract, value, standingDefinition, scheduledRequest } = source;
   const work = await createSpecialistAssignment(database.db, target.userId, {
     ...preparedBase,
@@ -501,22 +501,36 @@ async function readyResult(
       payload: { runId, resultStatus: "valid", cause: "completed" },
     });
   });
+
+  return { assignmentId: work.id, runId };
+}
+
+async function capturePublishedResults(maxBatches?: number): Promise<void> {
   expect(
     await dispatchDomainEvents({
       db: database.db,
       consumers: [specialistAssignmentDeliveryConsumer],
+      maxBatches,
     }),
   ).toMatchObject({ failures: 0 });
+}
+
+async function readyResult(
+  ...args: Parameters<typeof publishResultFixture>
+): Promise<{ assignmentId: string; runId: string; deliveryId: string }> {
+  const work = await publishResultFixture(...args);
+
+  await capturePublishedResults();
   const rows = (
     await database.pool.query<{ id: string }>(
       "SELECT id FROM specialist_delivery_receipts WHERE run_id=$1",
-      [runId],
+      [work.runId],
     )
   ).rows;
 
   expect(rows).toHaveLength(1);
 
-  return { assignmentId: work.id, runId, deliveryId: rows[0]!.id };
+  return { ...work, deliveryId: rows[0]!.id };
 }
 
 async function finishRootResult(
@@ -1030,15 +1044,31 @@ it("IT-CBA-06 sends a frozen result only to its configured peer and retries a lo
 
 it("IT-CBA-06 reads a large authorized native Inbox without combining independent source budgets and still rejects one oversized root", async () => {
   const target = await recipient();
-  const work: Awaited<ReturnType<typeof readyResult>>[] = [];
+  const work: Awaited<ReturnType<typeof publishResultFixture>>[] = [];
 
-  vi.stubEnv("MAISTER_WEBHOOK_DELIVERY_BATCH", "100");
-  for (let index = 0; index < 260; index++)
+  // Publish independent roots in bounded batches. Capture their outbox events
+  // once the fixtures exist, as the real consumer does on a scheduler tick.
+  for (let offset = 0; offset < 260; offset += 8) {
     work.push(
-      await readyResult(target, { kind: "inbox", userId: target.userId }),
+      ...(await Promise.all(
+        Array.from({ length: Math.min(8, 260 - offset) }, () =>
+          publishResultFixture(target, { kind: "inbox", userId: target.userId }),
+        ),
+      )),
     );
-  for (let batch = 0; batch < 3; batch++)
-    await runWebhookDeliveryJob({ db: database.db });
+  }
+  // A root publishes several domain events, so 260 roots exceed one tick's
+  // default 1,000-event allowance.
+  await capturePublishedResults(20);
+  const previousBatchSize = process.env.MAISTER_WEBHOOK_DELIVERY_BATCH;
+
+  try {
+    vi.stubEnv("MAISTER_WEBHOOK_DELIVERY_BATCH", "100");
+    for (let batch = 0; batch < 3; batch++)
+      await runWebhookDeliveryJob({ db: database.db });
+  } finally {
+    vi.stubEnv("MAISTER_WEBHOOK_DELIVERY_BATCH", previousBatchSize);
+  }
   expect(
     (
       await database.pool.query(
