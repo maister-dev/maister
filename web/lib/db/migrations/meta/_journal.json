@@ -2507,6 +2507,13 @@
       "when": 1795258508259,
       "tag": "0361_flow_waits",
       "breakpoints": true
+    },
+    {
+      "idx": 362,
+      "version": "7",
+      "when": 1795258508260,
+      "tag": "0362_flow_publications",
+      "breakpoints": true
     }
   ]
 }
