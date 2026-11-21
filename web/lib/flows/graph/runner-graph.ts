@@ -1887,7 +1887,7 @@ async function executeNodeAction(
     case "publish": {
       const execution = ctx.execution ?? (await ctx.bindExecution?.());
 
-      if (!execution)
+      if (!execution || ctx.flowDriverClaim?.scope !== "assignment")
         throw new MaisterError(
           "EXECUTOR_UNAVAILABLE",
           "Flow publication requires a bound execution host",
@@ -1896,6 +1896,7 @@ async function executeNodeAction(
         db: ctx.db,
         loaded: requireProjectFlowRun(loaded),
         client: execution.client,
+        driver: ctx.flowDriverClaim,
         nodeAttemptId: ctx.nodeAttemptId,
         nodeId: node.id,
         remote: def.remote ?? "origin",

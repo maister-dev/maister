@@ -22,6 +22,10 @@ import {
   workspaces,
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  assertFlowDriverClaim,
+  type FlowDriverClaim,
+} from "@/lib/flows/graph/driver-claim";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import {
   preflightedPrAdapter,
@@ -51,6 +55,7 @@ type PublishInput = {
   db: Db;
   loaded: LoadedProjectRun;
   client: BoundClient;
+  driver: FlowDriverClaim;
   nodeAttemptId: string;
   nodeId: string;
   remote: string;
@@ -105,6 +110,7 @@ function authorizePublication(
 }
 
 async function lockPublishAttempt(tx: Db, input: PublishInput): Promise<void> {
+  await assertFlowDriverClaim(tx, input.driver);
   const { run } = input.loaded;
   const [owner] = await tx
     .select({
@@ -202,6 +208,10 @@ export async function publishFlowBranch(
     workspaceId: workspace.id,
     operation: "exportBranch",
     expectedRunStatus: "Running",
+    replay: {
+      attemptId: id,
+      assertOwner: (tx) => lockPublishAttempt(tx, input),
+    },
   });
   const ownership = {
     database: db,
@@ -230,7 +240,19 @@ export async function publishFlowBranch(
     });
   } catch (error) {
     try {
-      await finalizeLifecycleOperation({ ...ownership, state: "failed" });
+      await db.transaction(async (tx) => {
+        await tx
+          .select({ id: workspaces.id })
+          .from(workspaces)
+          .where(eq(workspaces.id, ownership.workspaceId))
+          .for("update");
+        await assertFlowDriverClaim(tx, input.driver);
+        await finalizeLifecycleOperation({
+          ...ownership,
+          database: tx,
+          state: "failed",
+        });
+      });
     } catch (releaseError) {
       log.warn(
         {
