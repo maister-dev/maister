@@ -84,8 +84,8 @@ export default async function AgentMemoryPage({
   const settingsHref =
     location?.ownerKind === "installation"
       ? `/settings/specialists?binding=${encodeURIComponent(location.bindingId)}`
-      : location?.projectSlug
-        ? `/projects/${encodeURIComponent(location.projectSlug)}?tab=agents`
+      : projectAgentHref
+        ? `${projectAgentHref}?tab=settings`
         : null;
   const nextSelection = new URLSearchParams(selection);
   const promotionTargets: MemoryPromotionTarget[] = [];

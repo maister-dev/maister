@@ -116,7 +116,7 @@ Legacy migration creates an imported baseline revision with unknown submitting a
 
 DB changes are one transaction; the existing outbox publishes only after commit. Implemented internal storage emits `knowledge.record_changed` with owner, exact record revision, accepted change/confirmation decision identity and cause. General project pulse/attention, indexing and agent-trigger consumers do not treat this invalidation as project work. Crash before commit leaves the proposal pending; after commit returns the same content-guarded receipt. Failed projection/index refresh retries from the accepted revision; it cannot roll back the accepted fact history or bypass access. List/search failure does not mutate knowledge.
 
-## Shared human review (Designed)
+## Shared human review
 
 | Input and current authority | Accepted effect | Rejection or conflict |
 | --- | --- | --- |

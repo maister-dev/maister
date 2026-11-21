@@ -394,9 +394,6 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await page
     .getByRole("link", { name: "Propose knowledge", exact: true })
     .click();
-  await surface
-    .getByLabel("Ownership", { exact: true })
-    .selectOption({ label: "Company" });
   await surface.getByLabel("Title", { exact: true }).fill(title);
   await surface.getByLabel("Assertion", { exact: true }).fill(source);
   await page
@@ -405,6 +402,10 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await surface
     .getByLabel("Captured source text", { exact: true })
     .fill(source);
+  const ownerSelection = surface.getByLabel("Ownership", { exact: true });
+
+  await ownerSelection.selectOption({ label: "Company" });
+  await expect(ownerSelection).toHaveValue(/^c:/);
   const originalProposalUrl = await submitKnowledgeProposal(
     page,
     "Submit proposal",
@@ -440,6 +441,7 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
     await page.goBack();
     await expect(page).toHaveURL(originalProposalUrl);
     await page.getByRole("link", { name: "Open reviews in Inbox" }).click();
+    await expect(page).toHaveURL(/\/knowledge\/reviews\?/);
     const reviewUrl = page.url();
 
     await competingReview.goto(reviewUrl);
@@ -604,24 +606,74 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
     .getByRole("button", { name: "Отозвать доступ", exact: true })
     .click();
   await expect(grantDialog).toBeHidden();
-  await page.goto(recordUrl);
+  const revokedPage = await context.newPage();
+  const revokedSurface = revokedPage.getByRole("main");
+
+  await revokedPage.goto(recordUrl);
   await expect(
-    surface.getByRole("heading", { name: "Знание недоступно", exact: true }),
-  ).toBeVisible();
-  await expect(surface.getByText(corrected, { exact: true })).toBeHidden();
-  await page.goto(`/knowledge?q=${encodeURIComponent(title)}`);
-  await expect(
-    surface.getByText("Нет доступных знаний по этим фильтрам.", {
+    revokedSurface.getByRole("heading", {
+      name: "Знание недоступно",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    surface.getByRole("link", { name: title, exact: true }),
+    revokedSurface.getByText(corrected, { exact: true }),
   ).toBeHidden();
-  await page.goto(`/knowledge/witnesses/${randomUUID()}`);
+  await revokedPage.goto(`/knowledge?q=${encodeURIComponent(title)}`);
   await expect(
-    surface.getByRole("heading", { name: "Знание недоступно", exact: true }),
+    revokedSurface.getByText("Нет доступных знаний по этим фильтрам.", {
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(
+    revokedSurface.getByRole("link", { name: title, exact: true }),
+  ).toBeHidden();
+  await revokedPage.goto(`/knowledge/witnesses/${randomUUID()}`);
+  await expect(
+    revokedSurface.getByRole("heading", {
+      name: "Знание недоступно",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await revokedPage.close();
+});
+
+test("K11 issues an account token with independently selected review and vault scopes", async ({
+  page,
+}) => {
+  await page.goto("/account");
+  await page.getByRole("button", { name: "New token", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+
+  await dialog
+    .getByLabel("Name", { exact: true })
+    .fill(`Knowledge review ${randomUUID()}`);
+  await dialog
+    .getByRole("checkbox", {
+      name: "Settle authorized knowledge and vault reviews",
+    })
+    .check();
+  await dialog
+    .getByRole("checkbox", { name: "Read accessible agent memory" })
+    .check();
+  const receipt = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/account/tokens") &&
+      response.request().method() === "POST",
+  );
+
+  await dialog
+    .getByRole("button", { name: "Create token", exact: true })
+    .click();
+  const issued = await receipt;
+
+  expect(issued.status()).toBe(201);
+  const { scopes } = await issued.json();
+
+  expect(scopes).toEqual(
+    expect.arrayContaining(["agent_memory:read", "decisions:review"]),
+  );
+  expect(scopes).not.toContain("*");
 });
 
 // Browser inspection uses retained fixtures; installable-package/live ACP acceptance remains a separate required gate.
@@ -799,11 +851,13 @@ test("E2E-CBU-01 findings preserve exact evidence links and retained revisions i
         exact: true,
       }),
     ).toHaveAttribute("href", `/knowledge/witnesses/${witness.id}`);
-    await findings
-      .getByRole("link", { name: `witness:${witness.id}`, exact: true })
-      .click();
-    await expect(main.getByText(assertion, { exact: true })).toBeVisible();
-    await page.goBack();
+    const witnessPage = await context.newPage();
+
+    await witnessPage.goto(`/knowledge/witnesses/${witness.id}`);
+    await expect(
+      witnessPage.getByRole("main").getByText(assertion, { exact: true }),
+    ).toBeVisible();
+    await witnessPage.close();
     await page
       .getByTestId("native-findings")
       .getByRole("link", { name: `${childRunId}@1 · health`, exact: true })

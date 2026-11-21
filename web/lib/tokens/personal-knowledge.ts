@@ -3,11 +3,12 @@ import "server-only";
 import type { NextResponse } from "next/server";
 import type { Db } from "@/lib/execution-host/db";
 
+import { handleOwnedExt } from "./owned-ext-handler";
+import { tokenHasScope } from "./scopes";
+
 import { lockCurrentNativeKnowledgeToken } from "@/lib/brain/knowledge-token-lock";
 import { vaultErrorResponse } from "@/lib/agent-memory-vault/http";
 import { MaisterError } from "@/lib/errors";
-import { handleOwnedExt } from "./owned-ext-handler";
-import { tokenHasScope } from "./scopes";
 
 export type PersonalKnowledgeCredential = Readonly<{
   tokenId: string;

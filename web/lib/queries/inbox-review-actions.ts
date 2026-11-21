@@ -115,28 +115,38 @@ function projectKnowledgeOutcome(proposal: KnowledgeProposalView) {
   };
 }
 
-function projectVaultOutcome(
-  { proposal, locationId, applied }: Awaited<ReturnType<typeof lockVaultReview>>,
-) {
+function projectVaultOutcome({
+  proposal,
+  locationId,
+  applied,
+}: Awaited<ReturnType<typeof lockVaultReview>>) {
   if (proposal.state === "rejected")
     return rejectedOutcome({ kind: "vault", id: proposal.id });
   if (!proposal.appliedOperationId) return null;
 
-  const revision = applied[0];
-  const href = locationId
-    ? `/knowledge/memory?${new URLSearchParams({
-        locationId,
-        ...(revision && {
-          memoryRevision: revision.id,
-          memoryNoteId: revision.noteId,
-        }),
-      })}`
-    : null;
+  const revisions = locationId
+    ? applied.slice(0, 20).map(({ id, noteId, path }) => ({
+        noteId,
+        revisionId: id,
+        path,
+        href: `/knowledge/memory?${new URLSearchParams({
+          locationId,
+          memoryRevision: id,
+          memoryNoteId: noteId,
+        })}`,
+      }))
+    : [];
 
   return {
     type: "applied_vault_operation" as const,
     operationId: proposal.appliedOperationId,
-    href,
+    href:
+      revisions[0]?.href ??
+      (locationId
+        ? `/knowledge/memory?${new URLSearchParams({ locationId })}`
+        : null),
+    revisionCount: applied.length,
+    revisions,
   };
 }
 
@@ -398,6 +408,7 @@ export async function getProposalReviewDetail(
         selection.id,
         { historyRead: true },
       );
+
       if (
         String(proposal.revision) !== item.version ||
         proposal.status !== item.domainState
@@ -471,6 +482,7 @@ export async function getProposalReviewDetail(
 
       const witnessId = proposal.draft.witnessId;
       const promoted = await isVaultPromotion(tx, proposal.id);
+
       if (promoted && typeof witnessId !== "string") throw unavailableMemory();
       const content =
         promoted && typeof witnessId === "string"
@@ -536,20 +548,21 @@ async function authorizeBrainDecision(
 
   if (actor.kind !== "user") throw unavailableMemory();
   const [head] = (
-    await tx.execute<{ id: string; slug: string }>(sql`
-    SELECT p.id,p.slug FROM projects p JOIN brain_proposals b ON b.project_id=p.id
-    WHERE b.id=${item.id} AND p.archived_at IS NULL FOR SHARE OF p
+    await tx.execute<{
+      id: string;
+      slug: string;
+      kind: BrainProposalDto["kind"];
+    }>(sql`
+    SELECT p.id,p.slug,b.kind FROM projects p JOIN brain_proposals b ON b.project_id=p.id
+    WHERE b.id=${item.id} AND p.archived_at IS NULL
+      AND b.kind NOT IN ('knowledge_add','knowledge_correct') FOR SHARE OF p
   `)
   ).rows;
 
   if (!head) throw unavailableMemory();
-  const proposal = await getBrainProposal(tx, head.id, item.id, {
-    type: "user",
-    id: userId,
-  });
 
   if (actor.user.role !== "admin") {
-    const actions = brainReviewActions(proposal.kind, item.decision);
+    const actions = brainReviewActions(head.kind, item.decision);
     const roles = sql.join(
       projectRolesForActions(actions).map((role) => sql`${role}`),
       sql`, `,

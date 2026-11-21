@@ -433,7 +433,7 @@ match (UX-04A–C).
 [Company Brain records](company-brain.md) and [evidence](company-brain-evidence.md) specify repository-free company ownership, independent access grants, immutable assertion/witness revisions and separate confirmation. Existing confidence, reinforcement and mutable source anchors do not establish confirmation. Company-owned records require no repository; native reads and mutations use the shared current-authority services. Repository indexing remains project-only.
 
 
-## Human review and disposition (Designed)
+## Human review and disposition
 
 | Pending proposal | Acceptance prerequisite in addition to current source access | Durable outcome |
 | --- | --- | --- |

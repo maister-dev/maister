@@ -29,6 +29,7 @@ import {
 import { knowledgeWitnessSchema } from "@/lib/brain/knowledge-read-types";
 import { MaisterError } from "@/lib/errors-core";
 import { useFeedback } from "@/components/feedback/feedback-provider";
+import { useIsClient } from "@/lib/use-is-client";
 
 const fieldClass =
   "block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink";
@@ -45,10 +46,12 @@ export function KnowledgeProposalForm({
   const t = useTranslations("knowledge");
   const router = useRouter();
   const feedback = useFeedback();
+  const ready = useIsClient();
   const captureDelivery = useRef<KnowledgeDelivery | null>(null);
   const proposalDelivery = useRef<KnowledgeDelivery | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedOwner, setSelectedOwner] = useState("");
   const [witnessId, setWitnessId] = useState("");
   const [witness, setWitness] = useState<KnowledgeWitnessDto | null>(null);
   const [witnessStatus, setWitnessStatus] = useState<
@@ -72,6 +75,7 @@ export function KnowledgeProposalForm({
         parsed.data.availability !== "available"
       ) {
         setWitnessStatus("unavailable");
+
         return;
       }
       setWitness(parsed.data);
@@ -120,6 +124,7 @@ export function KnowledgeProposalForm({
               ]
             : [],
         ) ?? [];
+
       if (
         witness &&
         !evidence.some((entry) => entry.reference.id === witness.id)
@@ -242,7 +247,7 @@ export function KnowledgeProposalForm({
       className="max-w-3xl space-y-5 rounded-xl border border-line bg-paper p-5"
       onSubmit={(event) => void submit(event)}
     >
-      <fieldset className="space-y-4" disabled={busy}>
+      <fieldset className="space-y-4" disabled={!ready || busy}>
         {record ? (
           <p className="text-sm text-mute">{t("supportRetained")}</p>
         ) : inheritedOwner ? (
@@ -257,8 +262,9 @@ export function KnowledgeProposalForm({
               required
               aria-label={t("owner")}
               className={`${fieldClass} mt-1`}
-              defaultValue=""
               name="owner"
+              value={selectedOwner}
+              onChange={(event) => setSelectedOwner(event.target.value)}
             >
               <option disabled value="">
                 {t("chooseOwner")}

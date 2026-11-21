@@ -382,7 +382,7 @@ Directory generations describe the visible subtree selected by the request.
 A recursive mutation submits the original selected subtree generation and
 the exact complete set of member revisions for atomic revalidation.
 
-## Human catalog, historical identity and review rationale (Designed)
+## Human catalog, historical identity and review rationale
 
 | Object or state | Required behavior |
 | --- | --- |
@@ -392,7 +392,7 @@ the exact complete set of member revisions for atomic revalidation.
 | Edit under review policy | Submission leaves heads unchanged. Acceptance applies the frozen command only if its reviewed base and authorization still hold. Rejection records the reviewer, time and any validated reason and preserves all heads. |
 | Redacted revision | Recheck operation bases, applied revisions and inherited restrictions at every read. Erase stored dependent free-text reason alongside dependent proposal content while retaining authorized decision identity. |
 
-These invariants are qualified by K04, K05 and K08–K10. A conflict on a version, generation or selected head leaves the change atomic and the browser draft recoverable. The [vault review owner](../../web/lib/agent-memory-vault/review.ts) locks the proposal and vault. The [redaction owner](../../web/lib/agent-memory-vault/redaction.ts) invalidates dependent content. For pending promotion see [Project Brain disposition](project-brain.md#human-review-and-disposition-designed) or the [knowledge publication lifecycle](company-brain.md).
+The catalog, historical identity and decision-rationale contracts are implemented. K04, K05 and K08–K10 define their acceptance checks. A conflict on a version, generation or selected head leaves the change atomic and the browser draft recoverable. The [vault review owner](../../web/lib/agent-memory-vault/review.ts) locks the proposal and vault. The [redaction owner](../../web/lib/agent-memory-vault/redaction.ts) invalidates dependent content. For pending promotion see [Project Brain disposition](project-brain.md#human-review-and-disposition) or the [knowledge publication lifecycle](company-brain.md).
 
 ## Expectations
 

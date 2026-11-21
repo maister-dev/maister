@@ -24,13 +24,17 @@ import {
   AgentAttemptHistory,
 } from "@/components/agents/agent-history";
 import { AgentMemoryControl } from "@/components/agents/agent-memory-control";
+import { LegacyMemoryReader } from "@/components/agents/legacy-memory-reader";
 import { ProjectAgentSettings } from "@/components/agents/project-agent-settings";
+import { listHumanVaultLocations } from "@/lib/agent-memory-vault/human-catalog";
 
 const querySchema = z
   .object({
     memoryPath: z.string().min(1).max(512).optional(),
     memoryCursor: z.string().min(1).max(2048).optional(),
     memoryRevision: z.string().min(1).max(192).optional(),
+    memoryNoteId: z.string().min(1).max(192).optional(),
+    memoryView: z.enum(["source", "compare"]).optional(),
     memoryHistoryCursor: z.string().min(1).max(2048).optional(),
     memorySearch: z.string().min(1).max(2000).optional(),
     memoryTag: z.string().min(1).max(128).optional(),
@@ -152,6 +156,19 @@ export default async function ProjectAgentPage({
     }
   })();
   const { history, attempts } = evidence;
+  const memory =
+    query.tab === "memory" &&
+    access.canReadDefinition &&
+    access.attachmentState === "attached"
+      ? (
+          await listHumanVaultLocations(access.db, access.actor.id, {
+            projectId: access.projectId,
+            agentId: access.agentId,
+            limit: 1,
+          })
+        ).items[0]
+      : undefined;
+  const tMemory = await getTranslations("knowledge");
 
   return (
     <div
@@ -293,13 +310,29 @@ export default async function ProjectAgentPage({
         />
       ) : null}
       {query.tab === "memory" ? (
-        access.canReadDefinition && access.attachmentState === "attached" ? (
-          <AgentMemoryControl
-            agentId={access.agentId}
-            canEdit={access.canEditSettings}
-            canRedact={access.actor.role === "admin"}
-            location={{ kind: "project", slug, projectId: access.projectId }}
-          />
+        memory ? (
+          <section className="space-y-4">
+            <Link className="underline" href={memory.href}>
+              {tMemory("agentMemory")}
+            </Link>
+            {memory.allowedActions.includes("view") ? (
+              <AgentMemoryControl
+                agentId={access.agentId}
+                canEdit={memory.allowedActions.includes("edit")}
+                canRedact={access.actor.role === "admin"}
+                location={{
+                  kind: "project",
+                  slug,
+                  projectId: access.projectId,
+                }}
+              />
+            ) : (
+              <p role="status">{tMemory(`vaultState.${memory.state}`)}</p>
+            )}
+            {memory.allowedActions.includes("legacy_read") ? (
+              <LegacyMemoryReader endpoint={`/api${base}/memory`} />
+            ) : null}
+          </section>
         ) : (
           <p className="text-sm text-mute">
             {t(

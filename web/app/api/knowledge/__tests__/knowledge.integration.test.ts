@@ -37,6 +37,7 @@ import {
 import { GET as readEvidence } from "@/app/api/knowledge/[recordId]/evidence/route";
 import { GET as searchRecords } from "@/app/api/knowledge/route";
 import { GET as getRecord } from "@/app/api/knowledge/[recordId]/route";
+import { GET as browserRevisions } from "@/app/api/knowledge/[recordId]/revisions/route";
 import {
   createInvocation,
   invocationFromEnvironment,
@@ -49,6 +50,7 @@ import { GET as extEvidence } from "@/app/api/v1/ext/knowledge/[recordId]/eviden
 import { GET as extConflicts } from "@/app/api/v1/ext/knowledge/[recordId]/conflicts/route";
 import { GET as extSearch } from "@/app/api/v1/ext/knowledge/route";
 import { GET as extRecord } from "@/app/api/v1/ext/knowledge/[recordId]/route";
+import { GET as personalRevisions } from "@/app/api/v1/ext/knowledge/[recordId]/revisions/route";
 import { GET as extWitness } from "@/app/api/v1/ext/knowledge/witnesses/[witnessId]/route";
 import { GET as extProposal } from "@/app/api/v1/ext/knowledge/proposals/[proposalId]/route";
 import {
@@ -1011,7 +1013,9 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     };
 
     expect(result.tools.map((tool) => tool.name).sort()).toEqual(
-      Object.keys(knowledgeToolSchemas).filter((name) => !new Set<string>(PERSONAL_KNOWLEDGE_TOOLS).has(name)).sort(),
+      Object.keys(knowledgeToolSchemas)
+        .filter((name) => !new Set<string>(PERSONAL_KNOWLEDGE_TOOLS).has(name))
+        .sort(),
     );
     for (const tool of result.tools)
       expect(tool.inputSchema).toEqual(
@@ -1547,6 +1551,49 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     idempotencyKey: `${readerId}_correct`,
     draft: { ...draft, assertion: `Corrected ${readerId}` },
   });
+  const recordRevisions = {
+    params: Promise.resolve({ recordId: reference.id }),
+  };
+  const revisionUrl = `http://localhost/api/knowledge/${reference.id}/revisions?limit=1`;
+  const browserPage = await browserRevisions(
+    new Request(revisionUrl),
+    recordRevisions,
+  );
+  const latest = await browserPage.json();
+
+  expect(browserPage.status).toBe(200);
+  expect(latest).toMatchObject({
+    items: [{ recordId: reference.id, revision: 2 }],
+    nextCursor: expect.any(String),
+  });
+  const continuation = new URL(revisionUrl);
+
+  continuation.searchParams.set("cursor", latest.nextCursor);
+  expect(
+    await (
+      await browserRevisions(new Request(continuation), recordRevisions)
+    ).json(),
+  ).toMatchObject({
+    items: [{ recordId: reference.id, revision: 1 }],
+    nextCursor: null,
+  });
+  const token = await issueUserAccessToken(
+    {
+      ownerUserId: readerId,
+      name: "Personal record revision history",
+      scopes: ["knowledge:read"],
+    },
+    database.db,
+  );
+  const personalPage = await personalRevisions(
+    new Request(revisionUrl, {
+      headers: { authorization: `Bearer ${token.secret}` },
+    }),
+    recordRevisions,
+  );
+
+  expect(personalPage.status).toBe(200);
+  expect((await personalPage.json()).items).toEqual(latest.items);
   const retained = await getKnowledgeEvidencePage(
     database.db,
     principal,

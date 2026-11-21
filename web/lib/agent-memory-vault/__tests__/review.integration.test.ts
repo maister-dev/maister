@@ -136,6 +136,14 @@ it("AV-04 holds external input as one pending proposal across retries and a late
       outcome: {
         type: "applied_vault_operation",
         operationId: expect.any(String),
+        revisionCount: 1,
+        revisions: [
+          {
+            revisionId: expect.any(String),
+            path: "/memories/index.md",
+            href: expect.stringContaining("memoryRevision="),
+          },
+        ],
       },
     });
     expect(
@@ -166,31 +174,136 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     const head = heads[0]!;
 
     expect(head.author.runId).toEqual("run");
-    const another = await applyVaultMutation(fixture.db, parseAgentMemoryMutation({
-      command: "create", path: "/memories/reject.md", file_text: "Unreviewed note",
-      ifHash: null, ifRevisionId: null, requestKey: "external-reject",
-    }), async () => access, limits);
-
-    if (another.status !== "pending") throw new Error("Expected a proposal pending rejection");
-    const rejection = {
-      kind: "vault" as const, id: another.proposalId, decision: "reject" as const,
-      expectedVersion: "1", requestKey: "rollback-review", reason: "Unnecessary secondary note",
-    };
-    await fixture.pool.query("ALTER TABLE inbox_review_receipts ADD CONSTRAINT fixture_reject_receipt CHECK (request_key <> 'rollback-review')");
-    const refused = await decideProposalReviewBatch(fixture.db, admin, [rejection]);
-
-    expect(refused.results).toEqual([{ status: "refused", replayed: false, receiptId: null }]);
-    const inspectRejected = () => fixture.pool.query(
-      "SELECT state,version,decision_reason,reviewer_id FROM agent_memory_proposals WHERE id=$1", [another.proposalId],
+    const another = await applyVaultMutation(
+      fixture.db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: "/memories/reject.md",
+        file_text: "Unreviewed note",
+        ifHash: null,
+        ifRevisionId: null,
+        requestKey: "external-reject",
+      }),
+      async () => access,
+      limits,
     );
 
-    expect((await inspectRejected()).rows).toEqual([{ state: "pending", version: 1, decision_reason: null, reviewer_id: null }]);
-    await fixture.pool.query("ALTER TABLE inbox_review_receipts DROP CONSTRAINT fixture_reject_receipt");
-    expect((await decideProposalReviewBatch(fixture.db, admin, [rejection])).results[0]).toMatchObject({
-      status: "rejected", receiptId: expect.any(String), outcome: { type: "rejected", proposalId: another.proposalId },
+    if (another.status !== "pending")
+      throw new Error("Expected a proposal pending rejection");
+    const rejection = {
+      kind: "vault" as const,
+      id: another.proposalId,
+      decision: "reject" as const,
+      expectedVersion: "1",
+      requestKey: "rollback-review",
+      reason: "Unnecessary secondary note",
+    };
+
+    await fixture.pool.query(
+      "ALTER TABLE inbox_review_receipts ADD CONSTRAINT fixture_reject_receipt CHECK (request_key <> 'rollback-review')",
+    );
+    const refused = await decideProposalReviewBatch(fixture.db, admin, [
+      rejection,
+    ]);
+
+    expect(refused.results).toEqual([
+      { status: "refused", replayed: false, receiptId: null },
+    ]);
+    const inspectRejected = () =>
+      fixture.pool.query(
+        "SELECT state,version,decision_reason,reviewer_id FROM agent_memory_proposals WHERE id=$1",
+        [another.proposalId],
+      );
+
+    expect((await inspectRejected()).rows).toEqual([
+      {
+        state: "pending",
+        version: 1,
+        decision_reason: null,
+        reviewer_id: null,
+      },
+    ]);
+    await fixture.pool.query(
+      "ALTER TABLE inbox_review_receipts DROP CONSTRAINT fixture_reject_receipt",
+    );
+    expect(
+      (await decideProposalReviewBatch(fixture.db, admin, [rejection]))
+        .results[0],
+    ).toMatchObject({
+      status: "rejected",
+      receiptId: expect.any(String),
+      outcome: { type: "rejected", proposalId: another.proposalId },
     });
-    expect((await inspectRejected()).rows).toEqual([{ state: "rejected", version: 2, decision_reason: rejection.reason, reviewer_id: admin }]);
-    expect((await fixture.pool.query("SELECT id FROM agent_memory_notes WHERE vault_id=$1 AND path='/memories/reject.md'", [access.vaultId])).rows).toEqual([]);
+    expect((await inspectRejected()).rows).toEqual([
+      {
+        state: "rejected",
+        version: 2,
+        decision_reason: rejection.reason,
+        reviewer_id: admin,
+      },
+    ]);
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT id FROM agent_memory_notes WHERE vault_id=$1 AND path='/memories/reject.md'",
+          [access.vaultId],
+        )
+      ).rows,
+    ).toEqual([]);
+    const parallel = await applyVaultMutation(
+      fixture.db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: "/memories/competing.md",
+        file_text: "Reviewers may disagree.",
+        ifHash: null,
+        ifRevisionId: null,
+        requestKey: "parallel-opposite",
+      }),
+      async () => access,
+      limits,
+    );
+
+    if (parallel.status !== "pending")
+      throw new Error("Expected a proposal for independent decisions");
+    const [approval, refusal] = await Promise.all([
+      decideProposalReviewBatch(fixture.db, admin, [
+        {
+          ...decision,
+          id: parallel.proposalId,
+          requestKey: "parallel-approval",
+        },
+      ]),
+      decideProposalReviewBatch(fixture.db, secondReviewer, [
+        {
+          ...rejection,
+          id: parallel.proposalId,
+          requestKey: "parallel-refusal",
+        },
+      ]),
+    ]);
+    const outcomes = [approval.results[0]!, refusal.results[0]!];
+    const terminal = outcomes.find(({ receiptId }) => receiptId !== null);
+
+    expect(outcomes.filter(({ status }) => status === "conflict")).toHaveLength(
+      1,
+    );
+    expect(terminal?.domainState).toMatch(/^(accepted|rejected)$/);
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT state,version,(applied_operation_id IS NOT NULL) AS applied FROM agent_memory_proposals WHERE id=$1",
+          [parallel.proposalId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        state: terminal?.domainState,
+        version: 2,
+        applied: terminal?.domainState === "accepted",
+      },
+    ]);
+
     const followup = await applyVaultMutation(
       fixture.db,
       parseAgentMemoryMutation({

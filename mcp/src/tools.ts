@@ -675,12 +675,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   memory_promote: {
     description:
-      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
+      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Returns a pending submission receipt and a link for inspecting its review state.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["path", "ifRevisionId", "ifHash", "requestKey", "target"],
       properties: {
+        title: { type: "string", minLength: 1, maxLength: 256 },
         path: {
           type: "string",
           minLength: 1,

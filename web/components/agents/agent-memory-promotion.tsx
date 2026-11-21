@@ -58,6 +58,7 @@ export function AgentMemoryPromotion({
           ownerId: chosen.ownerId,
         },
       });
+
     setBody(command);
     try {
       setReceipt(
@@ -105,9 +106,9 @@ export function AgentMemoryPromotion({
       <label className="grid gap-1 text-sm">
         {t("promotionTarget")}
         <select
+          required
           className="rounded border border-line bg-paper p-2"
           disabled={busy}
-          required
           value={selection}
           onChange={(event) => {
             setSelection(event.target.value);

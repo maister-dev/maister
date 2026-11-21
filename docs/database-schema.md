@@ -21,10 +21,10 @@ supported.
 
 ## Tables
 
-### Vault decision rationale (Designed)
+### Vault decision rationale (Implemented)
 
-The main lineage adds nullable `agent_memory_proposals.decision_reason` after
-`0360_workspace_integrity_limits`. See the [domain persistence contract](db/agents-domain.md#review-rationale-designed)
+Migration `0365_agent_memory_proposal_decision_reason` adds nullable
+`agent_memory_proposals.decision_reason` after `0364_manual_backlog_admission`. See the [domain persistence contract](db/agents-domain.md#review-rationale)
 for its constraint, schema order and erasure behavior. Apply the additive
 migration before deploying the new reader and writer. An older application
 binary can still run against the expanded schema. Roll back the application

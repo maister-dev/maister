@@ -153,7 +153,14 @@ async function loadVaultReview(
         throw unavailableMemory();
     }
 
-    return { reviewer, proposal, enabled, bases, applied, locationId: owner.location_id };
+    return {
+      reviewer,
+      proposal,
+      enabled,
+      bases,
+      applied,
+      locationId: owner.location_id,
+    };
   } catch (error) {
     if (
       isMaisterError(error) &&

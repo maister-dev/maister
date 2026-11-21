@@ -936,7 +936,7 @@ reason or continuation return `CONFIG`/422. Oversized bodies return
 keys return `CONFLICT`/409. An authorized empty result is a successful read.
 Resolve `agent_memory_disabled` and `agent_memory_cutover_required` only after
 the owner/attachment check. The UI retains context for transient 5xx errors
-and offers retry. See [agent memory](system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale-designed).
+and offers retry. See [agent memory](system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale).
 
 ## Operational preparation recovery (Designed)
 

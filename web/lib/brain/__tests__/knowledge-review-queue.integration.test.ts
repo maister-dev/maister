@@ -1,11 +1,19 @@
 import { expect, it, vi } from "vitest";
 
-import { getProposalReviewDetail } from "@/lib/queries/inbox-review-actions";
+import { createBrainProposal } from "@/lib/brain/proposals";
+import {
+  decideProposalReview,
+  getProposalReviewDetail,
+} from "@/lib/queries/inbox-review-actions";
 import {
   listProposalReviews,
   parseReviewFilters,
 } from "@/lib/queries/knowledge-memory-reviews";
-import { removeProjectMember } from "@/test-support/librarian-seed";
+import {
+  addProjectMember,
+  removeProjectMember,
+  seedActiveUser,
+} from "@/test-support/librarian-seed";
 import { seedProjectReviewQueue } from "@/test-support/knowledge-review-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 
@@ -13,6 +21,7 @@ it("K02, K04 count and page the same authorized selection and permit an off-page
   const fixture = await startMainAndBrainPostgresTestDb({
     databaseName: "knowledge_review_queue",
   });
+
   vi.stubEnv("AUTH_SECRET", "knowledge-review-queue-test");
 
   try {
@@ -74,6 +83,80 @@ it("K02, K04 count and page the same authorized selection and permit an off-page
       domainState: "rejected",
       outcome: { type: "rejected", proposalId: offPage.id },
     });
+    const authored = await createBrainProposal(fixture.db, {
+      projectId: project.id,
+      kind: "rule",
+      draft: {
+        slug: "reviewed-rule",
+        title: "Reviewed project rule",
+        body: { markdown: "Review a change before publishing it." },
+      },
+      blastRadius: "low",
+      autonomyDecision: "manual",
+      evidenceItemIds: [],
+      actor: { type: "user", id: userId },
+    });
+    const catalogItem = { kind: "brain", id: authored.id } as const;
+
+    await fixture.pool.query(
+      "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",
+      [project.id, userId],
+    );
+    const refreshed = await list();
+
+    expect(refreshed.items[0]).toMatchObject({
+      id: authored.id,
+      allowed: ["reject"],
+    });
+    const inspected = await getProposalReviewDetail(
+      fixture.db,
+      userId,
+      catalogItem,
+    );
+    const decision = {
+      ...catalogItem,
+      decision: "accept",
+      expectedVersion: inspected.version,
+      requestKey: "project-draft-review",
+    } as const;
+
+    await expect(
+      decideProposalReview(fixture.db, userId, decision),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "agent_memory_unavailable" },
+    });
+    const editor = await seedActiveUser(fixture.db);
+
+    await addProjectMember(fixture.db, {
+      projectId: project.id,
+      userId: editor,
+      role: "admin",
+    });
+    const accepted = await decideProposalReview(fixture.db, editor, decision);
+
+    expect(accepted).toMatchObject({
+      domainState: "applied",
+      outcome: {
+        type: "catalog_draft",
+        draftId: expect.any(String),
+        href: expect.stringContaining(`/flows/${project.slug}/`),
+      },
+    });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT cap.lifecycle,cap.current_published_revision_id,b.task_id FROM brain_proposals b JOIN authored_capabilities cap ON cap.id=b.authored_draft_id AND cap.project_id=b.project_id WHERE b.id=$1",
+          [authored.id],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        lifecycle: "DRAFT",
+        current_published_revision_id: null,
+        task_id: null,
+      },
+    ]);
 
     await removeProjectMember(fixture.db, { projectId: project.id, userId });
     expect(await list(first.nextCursor!)).toMatchObject({

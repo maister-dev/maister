@@ -398,7 +398,7 @@ export function AgentMemoryControl({
       ) : null}
       {data === null ? <p role="status">{t("loading")}</p> : null}
       {data?.issue ? (
-        <div role="alert" className="flex gap-2">
+        <div className="flex gap-2" role="alert">
           {textFor(data.issue)}{" "}
           {data.issue.status >= 500 ? (
             <Button size="sm" onPress={() => refresh((value) => value + 1)}>

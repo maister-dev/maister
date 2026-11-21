@@ -507,6 +507,7 @@ export function ProjectBrainPanel({
 }: ProjectBrainPanelProps): ReactElement {
   const reviewUrl = new URLSearchParams({ kind: "brain", projectId });
   const historyUrl = new URLSearchParams(reviewUrl);
+
   historyUrl.set("view", "history");
   const projectUrl = `/projects/${encodeURIComponent(slug)}`;
   const sourcesHref = (page: number) => {
@@ -514,8 +515,10 @@ export function ProjectBrainPanel({
       tab: "brain",
       sourcePage: String(page),
     });
+
     if (sourceQuery) params.set("sourceQuery", sourceQuery);
     if (query) params.set("brain_query", query);
+
     return `${projectUrl}?${params}#brain-sources`;
   };
 

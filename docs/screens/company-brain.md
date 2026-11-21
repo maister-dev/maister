@@ -1,6 +1,6 @@
 # Company Brain and explicit access
 
-Routes: `/knowledge`, `/knowledge/{recordId}`, `/knowledge/proposals`,
+Routes: `/knowledge`, `/knowledge/reviews`, `/knowledge/memory`, `/knowledge/{recordId}`, `/knowledge/proposals`,
 `/knowledge/proposals/new`, `/knowledge/proposals/{proposalId}`,
 `/knowledge/{recordId}/correct`, `/knowledge/witnesses/{witnessId}`,
 `/settings/company-grants`, `/settings/company-grants/new`,
@@ -9,7 +9,7 @@ Status: Implemented locally; cross-surface and full runtime qualification remain
 Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 `web/components/brain/company-grant-*`.
 
-## Knowledge workspace designs (Designed)
+## Knowledge workspace
 
 [Linked mockups](../../.ai-factory/designs/knowledge-management.html) cover Records, the selected review, decision outcomes, the owner-aware vault catalog, note comparison and promotion. Use the scope and example-state controls to exercise accessible and unavailable selections. The production screen uses the existing HeroUI controls and i18n catalogs.
 
@@ -20,7 +20,7 @@ Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 | Vault and comparison | Owner and path navigation, safe preview/source, exact revision metadata and comparison | Navigate owner → folder → note → history as nested views. Historical detail offers comparison and restore as a new revision. Return to the current note before editing. |
 | Note promotion | Show destination, exact source version, excerpt and intended outcome before submitting | The receipt links to the pending decision. The decision links to its authorized outcome. |
 
-Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review-designed) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale-designed).
+Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale).
 
 ## JTBD
 

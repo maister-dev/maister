@@ -8765,7 +8765,7 @@ paths:
       description: An active global personal token is required. Requires exact decisions:review and the content
         scope for Brain or vault. Use the established native knowledge decision route for knowledge. Replays use
         the original receipt under current authority. A changed request or stale version conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -8822,7 +8822,7 @@ paths:
       summary: List authorized agent-memory locations
       description: An active global personal token is required. Catalog browsing has no creation side effects.
         Requires explicit agent_memory:read and current vault and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -8869,7 +8869,7 @@ paths:
       summary: List accessible retained record revisions
       description: An active global personal token is required. Requires knowledge:read. Apply current head and
         exact revision source rights before paginating.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -8912,7 +8912,7 @@ paths:
       description: "An active global personal token is required. Requires decisions:read and the content scope for
         each visible kind (knowledge:read, memory:read or explicit agent_memory:read). Apply current owner and
         source closure before list, count or continuation. "
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -8973,7 +8973,7 @@ paths:
       description: An active global personal token is required. Requires decisions:read and the content scope for
         each visible kind (knowledge:read, memory:read or explicit agent_memory:read). Check source and result
         visibility from the exact proposal ID independently of its list position.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -9015,7 +9015,7 @@ paths:
       summary: Read a folder or current note by path
       description: An active global personal token is required. Resolve each response within the selected owner.
         Requires explicit agent_memory:read and current vault and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -9063,7 +9063,7 @@ paths:
       summary: Read current note by stable identity
       description: An active global personal token is required.  Requires explicit agent_memory:read and current
         vault and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -9103,7 +9103,7 @@ paths:
       summary: List retained note revisions
       description: An active global personal token is required. The original note ID survives path reuse. Requires
         explicit agent_memory:read and current vault and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -9149,7 +9149,7 @@ paths:
       summary: Read an exact note revision
       description: An active global personal token is required. Redacted content is concealed. Requires explicit
         agent_memory:read and current vault and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - projectToken: []
       parameters:
@@ -9561,13 +9561,27 @@ components:
             href: { type: string, nullable: true }
         - type: object
           additionalProperties: false
-          required: [ type, operationId, href ]
+          required: [ type, operationId, href, revisionCount, revisions ]
           properties:
             type:
               type: string
               enum: [ applied_vault_operation ]
             operationId: { type: string, minLength: 1, maxLength: 192 }
             href: { type: string, nullable: true }
+            revisionCount: { type: integer, minimum: 0 }
+            revisions:
+              type: array
+              description: First 20 retained result revisions with authorized links.
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [ noteId, revisionId, path, href ]
+                properties:
+                  noteId: { type: string, minLength: 1, maxLength: 192 }
+                  revisionId: { type: string, minLength: 1, maxLength: 192 }
+                  path: { type: string, minLength: 1, maxLength: 512 }
+                  href: { type: string }
         - type: object
           additionalProperties: false
           required: [ type, proposalId, href ]

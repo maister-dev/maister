@@ -249,11 +249,13 @@ async function reviewPolicy(
         WHERE NOT (${knowledgeSourceReadPolicy(actor, sql`ref`)}))
     UNION ALL
     SELECT 'knowledge', kp.id, kp.revision::text, left(kp.draft->>'title',512),
-      CASE WHEN kp.status='pending' THEN ARRAY['accept','reject'] ELSE ARRAY[]::text[] END,
+      CASE WHEN kp.status='pending' AND kp.inspection_action='review'
+           THEN ARRAY['accept','reject'] ELSE ARRAY[]::text[] END,
       kp.created_at,kp.project_id,kp.company_id,NULL::text,coalesce(p.name,'Company'),
       kp.knowledge_attribution->>'id',kp.status,kp.status='rejected' OR kp.published_record_id IS NOT NULL
     FROM knowledge_readable_proposals kp LEFT JOIN projects p ON p.id=kp.project_id
-    WHERE kp.status<>'pending' OR kp.inspection_action='review'`
+    WHERE kp.status<>'pending' OR kp.inspection_action='review'
+      OR (${view === "detail"} AND kp.inspection_action='propose')`
     : sql``;
 
   const vaultProjectAction = sql`CASE WHEN vp.state='pending'

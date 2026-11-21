@@ -24821,7 +24821,7 @@ paths:
       summary: Settle one exact proposal decision
       description: An active browser session is required. Requires current review authority for the selected kind.
         Replays use the original receipt under current authority. A changed request or stale version conflicts.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -24878,7 +24878,7 @@ paths:
       summary: List authorized agent-memory locations
       description: An active browser session is required. Catalog browsing has no creation side effects. Requires
         current attachment or binding, owner and source access.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -24925,7 +24925,7 @@ paths:
       summary: List accessible retained record revisions
       description: An active browser session is required. Apply current head and exact revision source rights before
         paginating.
-      x-implementation-status: Designed
+      x-implementation-status: Implemented
       security:
         - sessionCookie: []
       parameters:
@@ -25341,13 +25341,27 @@ components:
             href: { type: string, nullable: true }
         - type: object
           additionalProperties: false
-          required: [ type, operationId, href ]
+          required: [ type, operationId, href, revisionCount, revisions ]
           properties:
             type:
               type: string
               enum: [ applied_vault_operation ]
             operationId: { type: string, minLength: 1, maxLength: 192 }
             href: { type: string, nullable: true }
+            revisionCount: { type: integer, minimum: 0 }
+            revisions:
+              type: array
+              description: First 20 retained result revisions with authorized links.
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [ noteId, revisionId, path, href ]
+                properties:
+                  noteId: { type: string, minLength: 1, maxLength: 192 }
+                  revisionId: { type: string, minLength: 1, maxLength: 192 }
+                  path: { type: string, minLength: 1, maxLength: 512 }
+                  href: { type: string }
         - type: object
           additionalProperties: false
           required: [ type, proposalId, href ]

@@ -340,6 +340,18 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   };
 
   expect(knowledgeEffect.kind).toBe("knowledge");
+  const ownerWork = await getLinkedWork(userId, db);
+  const cardLink = (id: string) =>
+    ownerWork.cards.find((card) => card.id === id)?.effectLink;
+
+  expect(cardLink(cardId)).toMatchObject({
+    kind: "proposal",
+    href: `/knowledge/reviews?proposalKind=brain&proposalId=${effect.proposalId}`,
+  });
+  expect(cardLink(knowledgeId)).toMatchObject({
+    kind: "proposal",
+    href: `/knowledge/reviews?proposalKind=knowledge&proposalId=${knowledgeEffect.proposalId}`,
+  });
   expect(
     (
       await database.pool.query(
@@ -483,6 +495,18 @@ it("AV-08 reads native knowledge through the turn's live access and refuses dire
   expect(vaultReceipt.body.effect).toMatchObject({
     kind: "vault",
     revisionIds: [expect.any(String)],
+  });
+  const appliedRevision = (
+    vaultReceipt.body.effect as { revisionIds: string[] }
+  ).revisionIds[0];
+
+  expect(
+    (await getLinkedWork(userId, db)).cards.find(
+      (card) => card.id === vaultCardId,
+    )?.effectLink,
+  ).toMatchObject({
+    kind: "vault",
+    href: expect.stringContaining(`memoryRevision=${appliedRevision}`),
   });
   await expect(
     decideLibrarianCard(

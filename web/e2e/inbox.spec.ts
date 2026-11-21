@@ -51,7 +51,7 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
       "INSERT INTO agent_memory_cutover(generation) VALUES (1) ON CONFLICT DO NOTHING",
     );
     await pool.query(
-      "INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES ($1,$2,'Inbox vault fixture',$3,$4)",
+      "INSERT INTO projects(id,slug,name,repo_path,task_key,brain_enabled) VALUES ($1,$2,'Inbox vault fixture',$3,$4,true)",
       [
         projectId,
         slug,
@@ -164,6 +164,23 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   await dialog.getByRole("button", { name: "Close proposal" }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   const direct = `/api/inbox/reviews/vault/${receipt.proposalId}`;
+  const workspace = `/knowledge/reviews?${new URLSearchParams({ kind: "vault", projectId })}`;
+
+  await page.goto(workspace);
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+  const rowLink = page.getByRole("link", {
+    name: "View proposal",
+    exact: true,
+  });
+
+  await rowLink.focus();
+  await page.keyboard.press("Enter");
+  const selected = page.getByRole("region", { name: pathname });
+
+  await expect(selected.getByRole("heading", { name: pathname })).toBeFocused();
+  await selected.getByRole("button", { name: "Close proposal" }).click();
+  await expect(rowLink).toBeFocused();
 
   await page.route(
     `**${direct}`,
@@ -178,8 +195,6 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   ).toBeVisible();
   await page.getByRole("button", { name: "Retry" }).focus();
   await page.keyboard.press("Enter");
-  const selected = page.getByRole("region", { name: pathname });
-
   await expect(
     selected.getByText("+Permanent after review", { exact: false }),
   ).toBeVisible();
@@ -219,11 +234,68 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     ]);
   });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.context().addCookies([{ name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin }]);
-  await page.evaluate(() => localStorage.setItem("theme", "light"));
+  await page
+    .context()
+    .addCookies([
+      { name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin },
+    ]);
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
   await page.reload();
-  await expect(page.getByText("Применённое изменение памяти", { exact: true })).toBeVisible();
+  const applied = page.getByRole("link", {
+    name: "Применённое изменение памяти",
+    exact: true,
+  });
+
+  await expect(applied).toBeVisible();
   await expect(page.locator("html")).toHaveClass(/\blight\b/);
+  await applied.click();
+  await expect(page).toHaveURL(/\/knowledge\/memory\?.*memoryRevision=/);
+  const vault = page.getByRole("region", { name: "Хранилище памяти" });
+
+  await expect(
+    vault.getByText("Permanent after review", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    vault.getByRole("button", { name: "Изменить заметку" }),
+  ).toHaveCount(0);
+  const exact = new URL(page.url()).searchParams;
+  const legacy = new URLSearchParams({
+    tab: "memory",
+    memoryNoteId: exact.get("memoryNoteId")!,
+    memoryRevision: exact.get("memoryRevision")!,
+    memoryView: "source",
+  });
+
+  await page.goto(
+    `/projects/${slug}/agents/${encodeURIComponent(agentId)}?${legacy}`,
+  );
+  await expect(
+    vault.getByText("Permanent after review", { exact: true }),
+  ).toBeVisible();
+  const current = new URLSearchParams({
+    locationId: exact.get("locationId")!,
+    memoryNoteId: exact.get("memoryNoteId")!,
+  });
+
+  await page.goto(`/knowledge/memory?${current}`);
+  await vault
+    .getByRole("button", { name: "Предложить на основе заметки" })
+    .click();
+  await vault.getByLabel("Назначение и тип предложения").selectOption({
+    label: "Inbox vault fixture · Изменение проекта",
+  });
+  const title = "Project knowledge from the reviewed note";
+
+  await vault.getByLabel("Заголовок предложения").fill(title);
+  await vault.getByRole("button", { name: "Отправить на проверку" }).click();
+  await expect(
+    vault.getByText("Отправлено на проверку.", { exact: true }),
+  ).toBeVisible();
+  await vault.getByRole("link", { name: "Открыть предложение" }).click();
+  await expect(page.getByRole("region", { name: title })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/knowledge\/reviews\?proposalKind=brain&proposalId=/,
+  );
 });
 
 test.describe("Inbox card redesign", () => {

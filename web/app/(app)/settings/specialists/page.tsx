@@ -122,6 +122,16 @@ export default async function SpecialistsSettings({
               {t("installationMemory")}
             </a>
           ) : null}
+          {installation ? (
+            <a
+              className="underline"
+              href={`/knowledge/memory?${new URLSearchParams({
+                locationId: `installation:${installation.bindingId}`,
+              })}`}
+            >
+              {t("memoryCatalog")}
+            </a>
+          ) : null}
           {installationCandidate ? (
             <a
               className="underline"

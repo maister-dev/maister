@@ -12,9 +12,22 @@ import { GET as list } from "../route";
 import { GET as detail } from "../[kind]/[proposalId]/route";
 import { POST as decide } from "../[kind]/[proposalId]/decision/route";
 
+import { GET as listVaults } from "@/app/api/v1/ext/knowledge/vaults/route";
+import { GET as readVaultPath } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/view/route";
+import { GET as readVaultNote } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/route";
+import { GET as listVaultRevisions } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/revisions/route";
+import { GET as readVaultRevision } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/revisions/[revisionId]/route";
+import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
+import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
+import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
+import { seedActiveUser } from "@/test-support/librarian-seed";
 import { seedProjectReviewQueue } from "@/test-support/knowledge-review-seed";
-import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
+import {
+  startMainAndBrainPostgresTestDb,
+  startMainPostgresTestDb,
+} from "@/test-support/pg-container";
 
 let fixture: StartedPostgresTestDb;
 
@@ -183,6 +196,7 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
       "vault",
     ]) {
       const refused = await run(profile, personal.secret);
+
       expect(refused.error).toBe(true);
       expect(
         refused.tools.map((tool: { name: string }) => tool.name),
@@ -204,6 +218,154 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
     if (http.listening)
       await new Promise<void>((closed) => http.close(() => closed()));
     vi.unstubAllEnvs();
+    await fixture.stop();
+  }
+}, 180_000);
+
+it("K11 reads human vaults using an exact current scope and keeps note identities inside their owner", async () => {
+  fixture = await startMainPostgresTestDb({
+    databaseName: "personal_vault_routes",
+  });
+  const endpoint = "/api/v1/ext/knowledge/vaults";
+
+  try {
+    const userId = await seedActiveUser(fixture.db, { role: "admin" });
+    const [project, other] = await Promise.all([
+      seedProjectRow(fixture.db),
+      seedProjectRow(fixture.db),
+    ]);
+    const agentId = "fixture:personal-memory";
+    const path = "/memories/fixture.md";
+
+    await fixture.pool.query(
+      "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+    );
+    await fixture.pool.query(
+      `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
+      VALUES ($1,'fixture','v1','git','Memory specialist','Fixture','none','session','[]','read_only','/unused/specialist.md')`,
+      [agentId],
+    );
+    await fixture.pool.query(
+      `INSERT INTO agent_project_links(id,project_id,agent_id,memory_enabled)
+      VALUES ('primary-vault',$1,$3,true),('other-vault',$2,$3,true)`,
+      [project.id, other.id, agentId],
+    );
+    const content = "Exact revision inside its owner.";
+    const write = await applyVaultMutation(
+      fixture.db,
+      {
+        command: "create",
+        path,
+        file_text: content,
+        requestKey: "personal-vault-fixture",
+        ifHash: null,
+        ifRevisionId: null,
+      },
+      prepareHumanProjectVault({
+        userId,
+        agentId,
+        slug: project.slug,
+        action: "editSettings",
+      }),
+      agentMemoryVaultLimits(),
+    );
+
+    if (write.status !== "applied" || !write.affected[0])
+      throw new Error("Expected one retained revision");
+    const { noteId, revisionId } = write.affected[0];
+    const [personal, broad] = await Promise.all([
+      issueUserAccessToken(
+        {
+          ownerUserId: userId,
+          name: "Vault reader",
+          scopes: ["agent_memory:read"],
+        },
+        fixture.db,
+      ),
+      issueUserAccessToken(
+        { ownerUserId: userId, name: "Wildcard", scopes: ["*"] },
+        fixture.db,
+      ),
+    ]);
+    const request = (suffix = "", token = personal.secret) =>
+      new Request(`http://127.0.0.1${endpoint}${suffix}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+    const locationId = "project:primary-vault";
+    const locationParams = { params: Promise.resolve({ locationId }) };
+    const noteParams = { params: Promise.resolve({ locationId, noteId }) };
+    const revisionParams = {
+      params: Promise.resolve({ locationId, noteId, revisionId }),
+    };
+    const selection = `/${locationId}/notes/${noteId}`;
+
+    const catalog = await listVaults(request());
+
+    expect(catalog.status).toBe(200);
+    expect((await catalog.json()).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ locationId, state: "ready" }),
+        expect.objectContaining({
+          locationId: "project:other-vault",
+          state: "empty",
+        }),
+      ]),
+    );
+    expect((await listVaults(request("", broad.secret))).status).toBe(403);
+    const folder = await readVaultPath(
+      request(`/${locationId}/view?path=/memories`),
+      locationParams,
+    );
+
+    expect(await folder.json()).toMatchObject({
+      kind: "directory",
+      entries: [{ kind: "note", path, noteId }],
+    });
+    const note = await readVaultNote(request(selection), noteParams);
+
+    expect(await note.json()).toMatchObject({
+      id: noteId,
+      revisionId,
+      path,
+      content,
+    });
+    const revisions = await listVaultRevisions(
+      request(`${selection}/revisions`),
+      noteParams,
+    );
+
+    expect(await revisions.json()).toMatchObject({
+      items: [{ id: revisionId, path }],
+      nextCursor: null,
+    });
+    const exact = await readVaultRevision(
+      request(`${selection}/revisions/${revisionId}`),
+      revisionParams,
+    );
+
+    expect(await exact.json()).toMatchObject({
+      id: noteId,
+      revisionId,
+      content,
+    });
+    const crossOwner = await readVaultRevision(
+      request(`/project:other-vault/notes/${noteId}/revisions/${revisionId}`),
+      {
+        params: Promise.resolve({
+          locationId: "project:other-vault",
+          noteId,
+          revisionId,
+        }),
+      },
+    );
+
+    expect(crossOwner.status).toBe(404);
+    await fixture.pool.query(
+      "UPDATE project_tokens SET expires_at=now()-interval '1 minute' WHERE id=$1",
+      [personal.tokenId],
+    );
+    expect((await listVaults(request())).status).toBe(401);
+  } finally {
     await fixture.stop();
   }
 }, 180_000);

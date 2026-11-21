@@ -108,12 +108,12 @@ export default async function KnowledgeReviewPage({
         </Button>
       </form>
       <ProposalReviews
-        key={JSON.stringify([filters, initial])}
+        key={JSON.stringify(filters)}
+        workspace
         filters={filters}
         initial={initial}
         page={page}
         reviewVersion={count.reviewVersion}
-        workspace
       />
     </>
   );

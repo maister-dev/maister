@@ -191,7 +191,7 @@ flowchart TD
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`observatory.md`](observatory.md) | Observatory (delivery attribution, cost/budget, flow-ledger process metrics) | `/observatory`, `/projects/{slug}/observatory` | Existing panels and ADR-134 additions Implemented |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
-| [`company-brain.md`](company-brain.md)                                       | Native knowledge, evidence, proposal review and company authority                                             | `/knowledge`, `/settings/company-grants`                                                    | Implemented locally; runtime qualification separate                |
+| [`company-brain.md`](company-brain.md)                                       | Native knowledge, evidence, proposal review, agent memory and company authority                                | `/knowledge`, `/knowledge/reviews`, `/knowledge/memory`, `/settings/company-grants`          | Implemented locally                                                |
 | [`settings-brain.md`](settings-brain.md) | Settings → Brain provider config (admin) | `/settings` | Implemented |
 | [`specialist-assignments.md`](specialist-assignments.md) | Specialist assignment list, detail, delegated work, delivery and stand operation controls | `/specialist-assignments`, `/specialist-assignments/{assignmentId}` | Implemented |
 | [`settings-specialists.md`](settings-specialists.md) | Settings → company specialist and coordinator bindings, stand inspection schedules | `/settings/specialists` | Implemented |

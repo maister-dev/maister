@@ -1069,6 +1069,7 @@
       "baseRevision": "Open base revision",
       "nextReview": "Next proposal",
       "receipt": "Receipt {id}",
+      "appliedRevisions": "Applied revisions ({count})",
       "outcomeLabel": {
         "published_revision": "Published revision",
         "catalog_draft": "Unpublished catalog draft",
@@ -7318,6 +7319,7 @@
     "installationGrant": "Installation reach",
     "installationGrantDescription": "This agent can read current and future active projects only through the selected scopes. It runs without a repository workspace and can submit proposals.",
     "installationMemory": "Memory vault",
+    "memoryCatalog": "Open in Agent memory",
     "editInstallationBinding": "Edit installation binding",
     "newBinding": "Review new specialist binding",
     "newCoordinator": "Review new coordinator binding",

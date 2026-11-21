@@ -33,12 +33,12 @@ const cursorSchema = z.strictObject({
 
 export function parseKnowledgeRevisionPage(params: URLSearchParams) {
   requireKnowledgeQueryKeys(params, ["limit", "cursor"]);
-  const limit = Number(params.get("limit") ?? "20");
+  const rawLimit = params.get("limit") ?? "20";
+  const limit = Number(rawLimit);
   const cursor = params.get("cursor") ?? undefined;
 
   if (
-    !Number.isInteger(limit) ||
-    limit < 1 ||
+    !/^[1-9][0-9]{0,2}$/.test(rawLimit) ||
     limit > 100 ||
     (cursor !== undefined && (!cursor || cursor.length > 2048))
   )

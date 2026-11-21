@@ -130,6 +130,7 @@ function ReviewPreview({
 
         setFailure(problem);
         if (problem !== "retryable") setCommand(null);
+
         return;
       }
 
@@ -287,7 +288,7 @@ function ReviewPreview({
         </div>
       ) : null}
       {failure ? (
-        <div role="alert" className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" role="alert">
           {t(
             failure === "conflict"
               ? "outcome.conflict"
@@ -311,7 +312,7 @@ function ReviewPreview({
         </div>
       ) : null}
       {outcome ? (
-        <div role="status" className="space-y-1">
+        <div className="space-y-1" role="status">
           <p>
             {outcome.href ? (
               <Link className="underline" href={outcome.href}>
@@ -321,6 +322,23 @@ function ReviewPreview({
               t(`outcomeLabel.${outcome.type}`)
             )}
           </p>
+          {outcome.type === "applied_vault_operation" &&
+          outcome.revisions?.length ? (
+            <details>
+              <summary>
+                {t("appliedRevisions", { count: outcome.revisionCount })}
+              </summary>
+              <ul className="list-inside list-disc break-all text-sm">
+                {outcome.revisions.map((revision) => (
+                  <li key={revision.revisionId}>
+                    <Link className="underline" href={revision.href}>
+                      {revision.path}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
           {receipt ? (
             <p className="break-all text-xs text-mute">
               {t("receipt", { id: receipt.receiptId })}
@@ -405,9 +423,10 @@ export function ProposalReviews({
   const router = useRouter();
   const knowledge = useTranslations("knowledge");
   const [selected, setSelected] = useState<string[]>([]);
-  const [preview, setPreview] = useState<ReviewSelector | null>(
+  const [modalSelection, setModalSelection] = useState<ReviewSelector | null>(
     initial ?? null,
   );
+  const preview = workspace ? (initial ?? null) : modalSelection;
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState(false);
   const [submitted, setSubmitted] = useState<ReviewSubmission | null>(null);
@@ -415,15 +434,20 @@ export function ProposalReviews({
   const [outcomes, setOutcomes] = useState<
     { title: string; status: Outcome }[]
   >([]);
-  const lastReviewed = useRef<string | null>(null);
+  const lastReviewed = useRef<ReviewSelector | null>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (preview !== null || lastReviewed.current === null) return;
-    const button = document.getElementById(lastReviewed.current);
+    if (!workspace) return;
+    if (preview === null && lastReviewed.current !== null) {
+      const opener = document.getElementById(
+        reviewLinkId(lastReviewed.current),
+      );
 
-    button?.focus();
-    lastReviewed.current = null;
-  }, [preview]);
+      (opener ?? listHeading.current)?.focus({ preventScroll: true });
+    }
+    lastReviewed.current = preview;
+  }, [preview, workspace]);
   const chosen = useMemo(
     () => page.items.filter((row) => selected.includes(rowKey(row))),
     [page.items, selected],
@@ -533,7 +557,13 @@ export function ProposalReviews({
       className="min-w-0 space-y-3"
       id="knowledge-memory"
     >
-      <h2 className="m-0 text-sm font-bold text-ink">{t("title")}</h2>
+      <h2
+        ref={listHeading}
+        className="m-0 text-sm font-bold text-ink"
+        tabIndex={-1}
+      >
+        {t("title")}
+      </h2>
       <nav
         aria-label={t("reviewState")}
         className="flex flex-wrap items-center gap-3 text-sm"
@@ -675,7 +705,7 @@ export function ProposalReviews({
                           size="sm"
                           variant="ghost"
                           onPress={() =>
-                            setPreview({ kind: row.kind, id: row.id })
+                            setModalSelection({ kind: row.kind, id: row.id })
                           }
                         >
                           {t("preview")}
@@ -735,8 +765,7 @@ export function ProposalReviews({
           <ReviewPreview
             key={`${preview.kind}:${preview.id}`}
             close={() => {
-              lastReviewed.current = reviewLinkId(preview);
-              setPreview(null);
+              if (!workspace) setModalSelection(null);
               if (initial) router.replace(href(selection), { scroll: false });
             }}
             inline={workspace}

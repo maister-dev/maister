@@ -17,6 +17,7 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
   const fixture = await startMainPostgresTestDb({
     databaseName: "human_vault_catalog",
   });
+
   vi.stubEnv("AUTH_SECRET", "human-vault-catalog-fixture");
 
   try {
@@ -113,7 +114,11 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
       [companyId, userId],
     );
     const installation = () =>
-      getHumanVaultLocation(fixture.db, userId, "installation:catalog-install-51");
+      getHumanVaultLocation(
+        fixture.db,
+        userId,
+        "installation:catalog-install-51",
+      );
 
     await expect(installation()).rejects.toMatchObject({
       details: { reason: "agent_memory_unavailable" },
@@ -134,8 +139,17 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
       state: "awaiting_cutover",
     });
     expect(
-      (await listHumanVaultLocations(fixture.db, userId, { limit: 20, agentId: "fixture:catalog-51" })).items.map(({ locationId }) => locationId),
-    ).toEqual(["installation:catalog-install-51", "project:catalog-51", "project:other-project"]);
+      (
+        await listHumanVaultLocations(fixture.db, userId, {
+          limit: 20,
+          agentId: "fixture:catalog-51",
+        })
+      ).items.map(({ locationId }) => locationId),
+    ).toEqual([
+      "installation:catalog-install-51",
+      "project:catalog-51",
+      "project:other-project",
+    ]);
     await fixture.pool.query(
       "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
     );
