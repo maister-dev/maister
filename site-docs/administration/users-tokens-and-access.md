@@ -66,6 +66,19 @@ assistant can relay an Inbox request to chat, return the person's answer, and
 close the request in MAIster. The built-in Inbox remains the primary in-product
 surface; chat is one optional API client.
 
+## Personal review and agent-memory integrations
+
+Issue a global personal token from **Account → Personal API tokens**. Grant only the scopes for the intended operation.
+
+| Operation | Token scopes |
+| --- | --- |
+| Read the human review queue | `decisions:read` and the content scope for the desired proposal kind |
+| Read Brain, structured knowledge, or agent-memory proposals | `memory:read`, `knowledge:read`, or explicit `agent_memory:read`, respectively |
+| Decide a specific Brain or vault proposal | Explicit `decisions:review` and the content scope |
+| Read the vault catalog, notes or their revisions | Explicit `agent_memory:read` |
+
+For a personal MCP process, set `MAISTER_MCP_TOOLSET=personal-knowledge` and supply the token in `MAISTER_ACCESS_TOKEN`. Open an item with `proposal_review_get` before calling `proposal_review_decide`. Reuse the original request key for a retry after a lost response. Select a fresh version and key after a conflict. The server reapplies current access when returning results.
+
 ## Project API tokens
 
 Open **Project → Integrations** for a token owned by the project rather than a

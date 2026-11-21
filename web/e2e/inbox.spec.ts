@@ -162,14 +162,44 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     dialog.getByText("+Permanent after review", { exact: false }),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Close proposal" }).click();
-  await group.getByRole("checkbox", { name: pathname }).check();
-  const settled = page.waitForResponse("**/api/inbox/reviews/decisions", {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const direct = `/api/inbox/reviews/vault/${receipt.proposalId}`;
+
+  await page.route(
+    `**${direct}`,
+    (route) => route.fulfill({ status: 503, json: { code: "CRASH" } }),
+    { times: 1 },
+  );
+  await page.goto(
+    `/knowledge/reviews?${new URLSearchParams({ kind: "vault", projectId, proposalKind: "vault", proposalId: receipt.proposalId })}`,
+  );
+  await expect(
+    page.getByText("The proposal could not be loaded."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry" }).focus();
+  await page.keyboard.press("Enter");
+  const selected = page.getByRole("region", { name: pathname });
+
+  await expect(
+    selected.getByText("+Permanent after review", { exact: false }),
+  ).toBeVisible();
+  const settled = page.waitForResponse(`**${direct}/decision`, {
     timeout: 30_000,
   });
 
-  await group.getByRole("button", { name: "Accept selected" }).click();
-  expect((await settled).ok()).toBe(true);
-  await expect(group.getByText("Accepted", { exact: false })).toBeVisible();
+  await selected.getByRole("button", { name: "Accept proposal" }).focus();
+  await page.keyboard.press("Enter");
+  const result = await settled;
+
+  expect(result.ok()).toBe(true);
+  expect(await result.json()).toMatchObject({
+    receiptId: expect.any(String),
+    domainState: "accepted",
+    outcome: { type: "applied_vault_operation" },
+  });
+  await expect(
+    selected.getByText("Applied vault operation", { exact: true }),
+  ).toBeVisible();
   await expect(reviews).toHaveCount(0, { timeout: 45_000 });
   await expect(decisions).toHaveText("1");
   await withE2EDb(async (pool) => {
@@ -188,6 +218,12 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
       },
     ]);
   });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.context().addCookies([{ name: "NEXT_LOCALE", value: "ru", url: new URL(page.url()).origin }]);
+  await page.evaluate(() => localStorage.setItem("theme", "light"));
+  await page.reload();
+  await expect(page.getByText("Применённое изменение памяти", { exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveClass(/\blight\b/);
 });
 
 test.describe("Inbox card redesign", () => {

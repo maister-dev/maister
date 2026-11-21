@@ -97,14 +97,17 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
       INSERT INTO company_specialist_bindings(id,company_id,agent_id,package_install_id,enabled,created_by,creation_key,creation_digest)
       SELECT 'catalog-install-'||lpad(i::text,2,'0'),$1,'fixture:catalog-'||i,
         'catalog-package',true,$2,'catalog-install-'||i,repeat('a',64)
-      FROM generate_series(1,51) i RETURNING id
+      FROM generate_series(1,51) i RETURNING id, agent_id, creation_key, creation_digest
       )
       INSERT INTO company_specialist_binding_revisions(binding_id,revision,snapshot,authority_snapshot,actor,
           request_actor_id,operation,request_key,request_digest,snapshot_digest)
-      SELECT b.id,1,'{"schemaVersion":1,"name":"Catalog agent","definition":{},"configuration":{},"effectiveConfiguration":{},
-        "grantActions":[],"executionPolicy":{},"installationGrant":{"reach":"active_projects","memoryEnabled":true}}',
-        jsonb_build_object('schemaVersion',1,'actor',a.actor,'witness','{}'::jsonb),
-        a.actor,$2,'created','catalog-create',repeat('a',64),repeat('b',64)
+      SELECT b.id,1,
+        '{"schemaVersion":1,"name":"Catalog agent","definition":{},"configuration":{},"effectiveConfiguration":{},
+        "grantActions":[],"executionPolicy":{},"installationGrant":{"reach":"active_projects","memoryEnabled":true}}'::jsonb
+          || jsonb_build_object('agentId',b.agent_id,'enabled',true,'packageInstallId','catalog-package'),
+        jsonb_build_object('schemaVersion',1,'actor',a.actor,'witness',
+          jsonb_build_object('owner',jsonb_build_object('companyId',$1::text),'action','specialists:manage')),
+        a.actor,$2,'created',b.creation_key,b.creation_digest,repeat('b',64)
       FROM bindings b CROSS JOIN LATERAL
       (SELECT jsonb_build_object('kind','user','id',$2::text,'runId',NULL,'attemptId',NULL) AS actor) a`,
       [companyId, userId],
