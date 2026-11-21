@@ -316,6 +316,7 @@ async function releaseToOperator(
       action: "finalize_pr",
       phase: "refused",
       reason: "pr_conflict_action_required",
+      createdAt: now,
       projectRevision: project?.revision ?? 0,
       platformRevision: platform?.revision ?? 0,
       witness: { waitId },

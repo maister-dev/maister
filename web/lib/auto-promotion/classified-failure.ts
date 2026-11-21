@@ -99,6 +99,7 @@ export async function finalizeClassifiedFlowFailure(
     action: "fail",
     phase: refusal === null ? "observed" : "refused",
     reason: refusal ?? input.reason,
+    createdAt: input.at,
     projectRevision: project?.revision ?? 0,
     platformRevision: platform?.revision ?? 0,
     witness: {

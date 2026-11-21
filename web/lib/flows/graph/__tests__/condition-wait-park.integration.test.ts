@@ -277,18 +277,27 @@ it.each(["enabled", "disabled"] as const)(
       ).rows,
     ).toEqual([{ status }]);
     const decisions = await database.pool.query(
-      "SELECT phase,reason,platform_revision FROM run_autonomous_decisions WHERE run_id=$1",
+      `SELECT d.phase,d.reason,d.platform_revision,d.created_at = r.ended_at AS same_terminal_instant
+       FROM run_autonomous_decisions d JOIN runs r ON r.id=d.run_id WHERE d.run_id=$1`,
       [runId],
     );
 
     expect(decisions.rows).toEqual(
       setting === "enabled"
-        ? [{ phase: "observed", reason: "wait_timeout", platform_revision: 1 }]
+        ? [
+            {
+              phase: "observed",
+              reason: "wait_timeout",
+              platform_revision: 1,
+              same_terminal_instant: true,
+            },
+          ]
         : [
             {
               phase: "refused",
               reason: "platform_disabled",
               platform_revision: 2,
+              same_terminal_instant: true,
             },
           ],
     );
