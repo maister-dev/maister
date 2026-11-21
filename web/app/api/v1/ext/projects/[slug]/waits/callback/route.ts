@@ -99,6 +99,7 @@ export async function GET(
             eq(runPublications.sourceHead, headSha),
             sql`${runWaits.condition}->'parameters'->>'transport' = 'push'`,
             sql`${runWaits.condition}->'parameters'->>'name' = ${signal}`,
+            sql`${runWaits.condition}->'parameters'->>'issuer' = ${actor.tokenId}`,
           ),
         )
         .limit(2);

@@ -160,14 +160,40 @@ export function signalWaitOutcomes(
   );
 }
 
+export function pushSignalIssuer(
+  wait: Pick<WaitRow, "conditionKind" | "condition">,
+): string | null | undefined {
+  if (
+    wait.conditionKind !== "ci" ||
+    wait.condition.parameters.transport !== "push"
+  )
+    return undefined;
+  const issuer = wait.condition.parameters.issuer;
+
+  return typeof issuer === "string" && issuer.length > 0 ? issuer : null;
+}
+
 function signalDecision(
   wait: WaitRow,
   signal: WaitSignal,
+  actor: SignalInput["actor"],
   now: Date,
 ): Pick<Delivery, "disposition" | "application" | "reason"> {
   const ciPush =
     wait.conditionKind === "ci" &&
     wait.condition.parameters.transport === "push";
+  const issuer = pushSignalIssuer(wait);
+
+  if (
+    actor.kind === "project_token" &&
+    issuer !== undefined &&
+    actor.id !== issuer
+  )
+    return {
+      disposition: "rejected",
+      application: "not_applied",
+      reason: "wait_signal_issuer",
+    };
   const open =
     wait.state === "open" && wait.deadlineAt && now < wait.deadlineAt;
   const reserved =
@@ -271,7 +297,7 @@ export async function recordWaitSignalInTransaction(
   }
 
   const receivedAt = await readWaitClock(tx);
-  let disposition = signalDecision(wait, input.signal, receivedAt);
+  let disposition = signalDecision(wait, input.signal, input.actor, receivedAt);
   const schema = wait.condition.parameters.payload_schema;
 
   if (
