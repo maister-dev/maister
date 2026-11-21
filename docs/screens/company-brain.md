@@ -9,6 +9,19 @@ Status: Implemented locally; cross-surface and full runtime qualification remain
 Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 `web/components/brain/company-grant-*`.
 
+## Knowledge workspace designs (Designed)
+
+[Linked mockups](../../.ai-factory/designs/knowledge-management.html) cover Records, the selected review, decision outcomes, the owner-aware vault catalog, note comparison and promotion. Use the scope and example-state controls to exercise accessible and unavailable selections. The production screen uses the existing HeroUI controls and i18n catalogs.
+
+| Screen | Wide layout | Narrow layout and focus |
+| --- | --- | --- |
+| Records and proposals | Owner scope and filters above a paged list; selected record or proposal beside the list | A selected detail occupies the screen. Back restores the filter, scroll position and row focus. Keyboard activation moves focus to the detail heading. |
+| Decision | Show owner, author, source, observed version, reason and verb for the actual effect | Place actions after evidence in reading order. Announce the current outcome. On conflict retain the reason and offer to load the new version. |
+| Vault and comparison | Owner and path navigation, safe preview/source, exact revision metadata and comparison | Navigate owner → folder → note → history as nested views. Historical detail offers comparison and restore as a new revision. Return to the current note before editing. |
+| Note promotion | Show destination, exact source version, excerpt and intended outcome before submitting | The receipt links to the pending decision. The decision links to its authorized outcome. |
+
+Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review-designed) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale-designed).
+
 ## JTBD
 
 When I need a supported company or project assertion, I want to inspect its

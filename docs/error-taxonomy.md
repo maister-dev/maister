@@ -925,6 +925,19 @@ Operational contract/combination failures use CONFIG or PRECONDITION before exec
 
 New routes use existing typed domain/auth codes with safe `details.reason` and localized EN/RU remediation; no raw SQL/source/log/provider body is public. Session/API `CONFIG`/400 (existing external facade `CONFIG`/422): invalid_native_findings, invalid_owner, unsupported_stand_config, invalid_source_witness. `PRECONDITION`/409 or existence-safe lookup 404: reference_unavailable, target_identity_mismatch, verification_required. `CONFLICT`/409: stale_record_revision, stale_assignment_revision, idempotency_payload_mismatch, assignment_fenced, resource_conflict, effect_unknown, verification_unhealthy, verification_inconclusive. `EXECUTOR_UNAVAILABLE`/503: target_unavailable, authority_unavailable, journal_unavailable. Current invalid/revoked authentication remains 401; known action forbidden 403; hidden resource 404; payload limit 413. Accepted pending/unknown operation returns 202 with explicit state, never an assertion of success. Transient read pressure/timeouts do not consume a business-effect failure budget or establish not-applied. [Record](system-analytics/company-brain.md), [cooperation](system-analytics/specialist-cooperation.md) and [stand](system-analytics/stand-maintenance.md) tables own state/refusal decisions.
 
+## Human proposal review and vault availability (Designed)
+
+A missing or concealed proposal, vault, note or source returns the same
+404 shape under the current owner/source policy. An authenticated caller
+with the wrong credential class or missing operation scope receives 403.
+Invalid/expired bearer authentication returns 401. Invalid selectors,
+reason or continuation return `CONFIG`/422. Oversized bodies return
+`CONFIG`/413. Stale reviewed or source versions and changed-payload request
+keys return `CONFLICT`/409. An authorized empty result is a successful read.
+Resolve `agent_memory_disabled` and `agent_memory_cutover_required` only after
+the owner/attachment check. The UI retains context for transient 5xx errors
+and offers retry. See [agent memory](system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale-designed).
+
 ## Operational preparation recovery (Designed)
 
 `PRECONDITION / operational_legacy_baseline_unverifiable` refuses a new continuation with an unverifiable historical ephemeral witness. `EXECUTOR_UNAVAILABLE / agent_execution_quiescence_unproven` still blocks dispatched cancellation and physical disposal when evidence is incomplete. `CONFLICT / operation_busy` on Pull reports repository ownership contention.

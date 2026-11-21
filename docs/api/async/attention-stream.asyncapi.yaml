@@ -78,6 +78,11 @@ channels:
         even when count and cursor match. Missing or invalid baselines reconcile
         once. Older clients ignore the additive fields and reviews region.
 
+        The review count covers the authenticated actor's pending queue. A
+        browser with project or agent filters rereads the scoped count and
+        selected item after a version change or reconnection; the stream
+        does not carry the selected proposal, history, or protected content.
+
         A quiet stream emits `attention.heartbeat`; a stream that stays quiet
         past the module-level cap is closed with `attention.stream_timeout`
         rather than held open. Poll interval, heartbeat period and quiet cap are

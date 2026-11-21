@@ -21,6 +21,15 @@ supported.
 
 ## Tables
 
+### Vault decision rationale (Designed)
+
+The main lineage adds nullable `agent_memory_proposals.decision_reason` after
+`0360_workspace_integrity_limits`. See the [domain persistence contract](db/agents-domain.md#review-rationale-designed)
+for its constraint, schema order and erasure behavior. Apply the additive
+migration before deploying the new reader and writer. An older application
+binary can still run against the expanded schema. Roll back the application
+while retaining the column. The optional Brain lineage has no new migration.
+
 ### ACP context observations (Implemented, ADR-215)
 
 Migration `0358_acp_context` adds the numeric projections and the nullable

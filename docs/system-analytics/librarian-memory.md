@@ -176,6 +176,10 @@ sequenceDiagram
 - Context reset changes the active segment and retires prior default receipts without deleting messages, links, memory or operations.
 - Clear increments history generation and detaches the existing cleared references. The client cannot merge any prior-generation message or attachment into the cleared transcript. Surviving operations and task links remain accessible through authorized history.
 
+## Vault confirmation to shared review (Designed)
+
+When the owner confirms a specific edit card, the destination policy determines whether the card links to an applied operation or a pending proposal. Record only the actual returned effect. Resolve the link under current visibility and source access. A second human decision is required for a pending proposal. Turn credentials do not gain authority to settle it. Personal remember/forget remains in the owner’s memory dialog (K10). See the [card effects owner](../../web/lib/librarian/knowledge-card-effects.ts) and [vault lifecycle](agent-memory.md).
+
 ## Expectations
 
 - **LMM-01:** Direct memory writes MUST require an owner-message turn token. Instructions require an explicit owner "remember" request, but the server cannot infer the meaning of free-form text; other inferred items MUST remain visible suggestions until the owner accepts a card. The turn-kind gate on `POST /api/v1/ext/librarian/memory` and the card decide route enforce the server-observable boundary (Implemented).

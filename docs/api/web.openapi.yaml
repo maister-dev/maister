@@ -24629,9 +24629,15 @@ paths:
       description: Evaluate each proposal kind's current decision and source rights. Target
         identity comes from current credentials and the resolved route resource.
       x-implementation-status: Implemented
+      x-designed-shared-review-schema: "#/components/schemas/HumanKnowledgeReviewPage"
       security:
         - sessionCookie: []
       parameters:
+        - name: view
+          in: query
+          description: History is designed and applies current reader and source rights.
+          x-implementation-status: Designed
+          schema: { type: string, enum: [pending, history], default: pending }
         - name: kind
           in: query
           required: false
@@ -24713,6 +24719,7 @@ paths:
         memory witness. Concatenate each summary in order without a separator to recover the
         complete preview. A null nextCursor marks the final page. Native knowledge is single-page.
       x-implementation-status: Implemented
+      x-designed-shared-review-schema: "#/components/schemas/HumanKnowledgeReviewDetail"
       security:
         - sessionCookie: []
       parameters:
@@ -24810,6 +24817,153 @@ paths:
           $ref: "#/components/responses/AgentVault413"
         "422":
           $ref: "#/components/responses/AgentVault422"
+
+  /api/inbox/reviews/{kind}/{proposalId}/decision:
+    post:
+      operationId: decideSessionProposalReview
+      summary: Settle one exact proposal decision
+      description: An active browser session is required. Requires current review authority for the selected kind.
+        Replays use the original receipt under current authority. A changed request or stale version conflicts.
+      x-implementation-status: Designed
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ brain, knowledge, vault ]
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HumanKnowledgeDecisionInput" }
+            example: { expectedVersion: 2026-11-21 10:00:00+00, decision: accept, requestKey: example-001 }
+      responses:
+        "200":
+          description: Settle one exact proposal decision.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeDecisionReceipt" }
+              example:
+                id: example-proposal
+                kind: brain
+                reviewedVersion: 2026-11-21 10:00:00+00
+                domainState: accepted
+                outcome:
+                  {
+                    type: accepted_proposal,
+                    proposalId: example-proposal,
+                    href: /knowledge?view=reviews&kind=brain&proposalId=example-proposal
+                  }
+                receiptId: example-receipt
+                replayed: false
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/knowledge/vaults:
+    get:
+      operationId: listSessionKnowledgeVaults
+      summary: List authorized agent-memory locations
+      description: An active browser session is required. Catalog browsing has no creation side effects. Requires
+        current attachment or binding, owner and source access.
+      x-implementation-status: Designed
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: projectId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: companyId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: agentId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List authorized agent-memory locations.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultCatalog" }
+              example:
+                items: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/knowledge/{recordId}/revisions:
+    get:
+      operationId: listSessionKnowledgeRevisions
+      summary: List accessible retained record revisions
+      description: An active browser session is required. Apply current head and exact revision source rights before
+        paginating.
+      x-implementation-status: Designed
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List accessible retained record revisions.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeRevisionPage" }
+              example:
+                items: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
 
 components:
   securitySchemes:
@@ -25139,6 +25293,410 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    HumanKnowledgeOwner:
+      type: object
+      additionalProperties: false
+      required: [ kind, id, label ]
+      properties:
+        kind:
+          type: string
+          enum: [ project, company ]
+        id: { type: string, minLength: 1, maxLength: 192 }
+        label: { type: string, minLength: 1, maxLength: 512 }
+    HumanKnowledgeOutcome:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [ type, recordId, revision, href ]
+          properties:
+            type:
+              type: string
+              enum: [ published_revision ]
+            recordId: { type: string, minLength: 1, maxLength: 192 }
+            revision: { type: integer, minimum: 1 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, draftId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ catalog_draft ]
+            draftId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, taskId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ project_task ]
+            taskId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, proposalId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ accepted_proposal ]
+            proposalId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, operationId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ applied_vault_operation ]
+            operationId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, proposalId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ rejected ]
+            proposalId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+    HumanKnowledgeReviewDecision:
+      type: object
+      additionalProperties: false
+      required: [ by, at, reason, reviewedVersion ]
+      properties:
+        by: { type: string, nullable: true }
+        at: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true, maxLength: 2000 }
+        reviewedVersion: { type: string, nullable: true, maxLength: 128 }
+    HumanKnowledgeReviewRow:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          kind,
+          id,
+          version,
+          title,
+          allowed,
+          createdAt,
+          owner,
+          agentId,
+          author,
+          domainState,
+          outcomeAvailable
+        ]
+      properties:
+        kind:
+          type: string
+          enum: [ brain, knowledge, vault ]
+        id: { type: string, minLength: 1, maxLength: 192 }
+        version: { type: string, minLength: 1, maxLength: 128 }
+        title: { type: string, minLength: 1, maxLength: 512 }
+        allowed:
+          type: array
+          items:
+            type: string
+            enum: [ accept, reject ]
+          maxItems: 2
+        createdAt: { type: string, format: date-time }
+        owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+        agentId: { type: string, nullable: true }
+        author: { type: string, nullable: true }
+        domainState: { type: string }
+        outcomeAvailable: { type: boolean }
+    HumanKnowledgeReviewPage:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor, total ]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HumanKnowledgeReviewRow" }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
+        total: { type: integer, minimum: 0 }
+    HumanKnowledgeReviewDetail:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ knowledge ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ proposalRevision, baseRevision, proposalHref, sourceHref ]
+              properties:
+                proposalRevision: { type: integer, minimum: 1 }
+                baseRevision: { type: integer, minimum: 1, nullable: true }
+                proposalHref: { type: string }
+                sourceHref: { type: string, nullable: true }
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ brain ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ proposalKind, origin, expectedEffect ]
+              properties:
+                proposalKind:
+                  type: string
+                  enum: [ rule, skill, flow, adr, roadmap, state ]
+                origin:
+                  type: string
+                  enum: [ ordinary, vault_promotion ]
+                expectedEffect:
+                  type: string
+                  enum: [ catalog_draft, project_task, accepted_proposal ]
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ vault ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ operationId, changeCount, vaultHref ]
+              properties:
+                operationId: { type: string, minLength: 1, maxLength: 192 }
+                changeCount: { type: integer, minimum: 1, maximum: 1024 }
+                vaultHref: { type: string, nullable: true }
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+    HumanKnowledgeDecisionInput:
+      type: object
+      additionalProperties: false
+      required: [ expectedVersion, requestKey, decision ]
+      properties:
+        expectedVersion: { type: string, minLength: 1, maxLength: 128 }
+        requestKey: { type: string, minLength: 8, maxLength: 128, pattern: "^[A-Za-z0-9_.:-]{8,128}$" }
+        decision:
+          type: string
+          enum: [ accept, reject ]
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 2000,
+            description: Required for rejection and for native knowledge.
+          }
+    HumanKnowledgeDecisionReceipt:
+      type: object
+      additionalProperties: false
+      required: [ id, kind, reviewedVersion, domainState, outcome, receiptId, replayed ]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 192 }
+        kind:
+          type: string
+          enum: [ brain, knowledge, vault ]
+        reviewedVersion: { type: string, minLength: 1, maxLength: 128 }
+        domainState: { type: string }
+        outcome: { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+        receiptId: { type: string, minLength: 1, maxLength: 192 }
+        replayed: { type: boolean }
+    HumanKnowledgeVaultLocation:
+      type: object
+      additionalProperties: false
+      required: [ locationId, ownerKind, owner, agentId, bindingId, state, allowedActions, href ]
+      properties:
+        locationId: { type: string, minLength: 1, maxLength: 192 }
+        ownerKind:
+          type: string
+          enum: [ project, installation ]
+        owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+        agentId: { type: string, minLength: 1, maxLength: 192 }
+        bindingId: { type: string, nullable: true }
+        state:
+          type: string
+          enum: [ ready, empty, disabled_attachment, disabled_memory, legacy, awaiting_cutover ]
+        allowedActions:
+          type: array
+          items:
+            type: string
+            enum: [ view, edit, settings, legacy_read ]
+          maxItems: 4
+        href: { type: string, nullable: true }
+    HumanKnowledgeVaultCatalog:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor ]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HumanKnowledgeVaultLocation" }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
+    HumanKnowledgeRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor ]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ recordId, revision, title, status, createdAt, href ]
+            properties:
+              recordId: { type: string, minLength: 1, maxLength: 192 }
+              revision: { type: integer, minimum: 1 }
+              title: { type: string }
+              status: { type: string }
+              createdAt: { type: string, format: date-time }
+              href: { type: string }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
     AgentVaultCardKnowledge:
       type: object
       additionalProperties: false

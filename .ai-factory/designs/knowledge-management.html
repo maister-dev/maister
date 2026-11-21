@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAIster Knowledge — interaction prototype</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; --surface: light-dark(#fff,#15191c); --canvas: light-dark(#f4f6f8,#101315); --line: light-dark(#c6ccd4,#3e464f); --fg: light-dark(#1b232d,#edf1f5); --accent: light-dark(#134f77,#91daff); }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--fg); }
+header, main { max-width: 76rem; margin: auto; padding: 1rem; }
+header { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); gap: .5rem; flex-wrap: wrap; }
+h1 { font-size: 1.8rem; margin-bottom: .8rem; }
+h2 { font-size: 1.25rem; }
+nav, .controls { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; padding: .5rem 0; }
+a { color: var(--accent); text-underline-offset: .2em; }
+a[aria-current] { font-weight: 750; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+button, select, textarea { font: inherit; padding: .45rem .65rem; }
+label { display: grid; gap: .2rem; }
+.card { border: 1px solid var(--line); background: var(--surface); border-radius: .65rem; padding: 1rem; min-width: 0; }
+.layout { display: grid; grid-template-columns: minmax(15rem,1fr) minmax(0,2fr); gap: .85rem; align-items: start; }
+.rows { list-style: none; padding: 0; margin: 0; }
+.rows li { padding: .75rem 0; border-bottom: 1px solid var(--line); }
+small { display: block; margin-top: .35rem; }
+dl { display: grid; grid-template-columns: minmax(6rem,1fr) 2fr; gap: .4rem; }
+dd { margin: 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+textarea { width: 100%; }
+#message:empty { display: none; }
+@media (max-width: 640px) { .layout { display: block; } .layout[data-selected="true"] > :first-child { display: none; } }
+</style>
+<header><strong>MAIster</strong><div><button id="locale" type="button">Русский</button> <button id="theme" type="button">☾ / ☀</button></div></header>
+<main>
+<h1 id="heading"></h1>
+<nav id="nav" aria-label="Knowledge"></nav>
+<div class="controls" id="filters"></div>
+<p id="message" role="status"></p>
+<div id="screen"></div>
+</main>
+<script>
+const copy = {
+  records: ["Records", "Записи"], reviews: ["Awaiting review", "На рассмотрении"], memory: ["Agent memory", "Память агентов"],
+  heading: ["Knowledge", "Знания"], scope: ["Scope", "Область"], all: ["All accessible", "Все доступные"], company: ["Company", "Компания"],
+  pending: ["Needs my decision", "Требуется моё решение"], history: ["History", "История"], state: ["Example state", "Состояние примера"],
+  ready: ["Available", "Доступно"], empty: ["Empty", "Пусто"], forbidden: ["Restricted", "Ограничено"], down: ["Temporary failure", "Временная ошибка"],
+  stale: ["Version conflict", "Конфликт версий"], missing: ["Insufficient evidence", "Недостаточно подтверждений"], retry: ["Retry", "Повторить"],
+  back: ["Back to list", "К списку"], confirm: ["Confirm fact", "Подтвердить факт"], revise: ["Propose correction", "Предложить исправление"],
+  evidence: ["Evidence", "Доказательства"], base: ["Base revision", "Базовая версия"], result: ["Outcome", "Результат"], owner: ["Owner", "Владелец"],
+  accepted: ["Accepted", "Принято"], rejected: ["Rejected", "Отклонено"], publish: ["Publish revision", "Опубликовать версию"], reject: ["Reject", "Отклонить"],
+  reason: ["Reason", "Обоснование"], next: ["Next proposal", "Следующее предложение"],
+  install: ["Installation vault", "Память инсталляции"], project: ["Project vault", "Память проекта"], compare: ["Compare revisions", "Сравнить версии"],
+  preview: ["Preview", "Предпросмотр"], source: ["Markdown source", "Исходный Markdown"], restore: ["Restore as new revision", "Восстановить новой версией"],
+  promote: ["Propose as knowledge", "Предложить как знание"], promoteBrain: ["Propose a project change", "Предложить изменение проекта"],
+  send: ["Submit for review", "Отправить на рассмотрение"], task: ["Create project task", "Создать задачу проекта"],
+  note: ["Review checklist", "Чек-лист проверки"], record: ["Review requires a retained receipt", "Для проверки нужна сохранённая квитанция"],
+  promotion: ["Accept proposed project state", "Принять предложенное состояние проекта"], personal: ["Personal memory is in the Librarian dialog.", "Личная память находится в диалоге Библиотекаря."],
+  reload: ["Reload reviewed version", "Загрузить актуальную версию"], draft: ["Decision draft retained.", "Черновик решения сохранён."],
+  disabled: ["Memory disabled", "Память отключена"], legacy: ["Read legacy project memory", "Открыть прежнюю память проекта"], saved: ["Review receipt", "Квитанция решения"],
+};
+let language = 0, status = "ready";
+const drafts = new Map();
+const outcomes = new Map();
+const t = (key) => copy[key]?.[language] ?? key;
+const get = (id) => document.getElementById(id);
+const state = () => new URLSearchParams(location.hash.slice(1));
+function link(label, view, changes = {}) {
+  const next = state();
+  for (const [key, value] of Object.entries({ view, detail: "", panel: "", ...changes })) {
+    if (value) next.set(key, value); else next.delete(key);
+  }
+  return '<a href="#' + next + '">' + t(label) + '</a>';
+}
+function selector(label, key, values, active) {
+  return '<label>' + t(label) + '<select data-setting="' + key + '">' +
+    values.map(value => '<option value="' + value + '"' + (active === value ? ' selected' : '') + '>' + t(value) + '</option>').join("") + '</select></label>';
+}
+function list(entries) {
+  return '<ul class="rows">' + entries.map(([anchor, meta]) => '<li>' + anchor + '<small>' + meta + '</small></li>').join("") + '</ul>';
+}
+function render() {
+  const selected = state(), view = selected.get("view") ?? "records", detail = selected.get("detail"), panel = selected.get("panel");
+  const scope = selected.get("scope") ?? "all", history = selected.get("history") ?? "pending";
+  document.documentElement.lang = language ? "ru" : "en";
+  get("heading").textContent = t("heading");
+  get("locale").textContent = language ? "English" : "Русский";
+  get("nav").innerHTML = ["records","reviews","memory"].map(key => link(key,key).replace("<a ", key === view ? '<a aria-current="page" ' : "<a ")).join(" ");
+  get("filters").innerHTML = selector("scope","scope",["all","company","Atlas","Orion"],scope) +
+    (view === "reviews" ? selector(history,"history",["pending","history"],history) : "") +
+    selector("state","fixture",["ready","empty","forbidden","down","stale","missing","disabled","legacy"],status);
+  const blocked = ["forbidden","down","empty","disabled","legacy"].includes(status);
+  get("message").innerHTML = ["ready","missing"].includes(status) ? "" : t(status) +
+    (status === "down" || status === "stale" ? ' <button type="button" data-action="retry">' + t(status === "down" ? "retry" : "reload") + '</button>' : "");
+  if (blocked) { get("screen").innerHTML = ""; return; }
+  const back = link("back",view);
+  let left, right;
+  if (view === "records") {
+    left = list([[link("record",view,{detail:"record"}),"Atlas · 3"]]);
+    right = '<h2 id="detail">' + t("record") + '</h2><p>Atlas · r3</p><p>' + t("evidence") + ' · Run / 120</p>' +
+      (status === "missing" ? '<p>' + t("missing") + '</p>' : '<button type="button">' + t("confirm") + '</button>') +
+      ' ' + link("revise","reviews",{detail:"correction"});
+  } else if (view === "reviews") {
+    left = list(["correction","ordinary","promotion","vault"].map((key,i) =>
+      [link(["record","task","promotion","note"][i],view,{detail:key}), ["Atlas · r3","Atlas · state","Atlas · vault → state","Installation · v1"][i]]));
+    const effect = { correction:"publish", ordinary:"task", promotion:"promotion", vault:"restore" }[detail] ?? "publish";
+    right = '<h2 id="detail">' + t(effect) + '</h2><dl><dt>' + t("owner") +
+      '</dt><dd>Atlas</dd><dt>' + t("base") + '</dt><dd>3 → 4</dd><dt>' + t("evidence") + '</dt><dd>Run / 120</dd></dl>' +
+      ((outcomes.has(detail) || history === "history" || panel === "outcome")
+        ? '<p>' + t("result") + ' · ' + t(outcomes.get(detail) ?? "accepted") + '</p><p>' + t("saved") + ' · review-42</p>' + link("next",view,{detail:detail === "ordinary" ? "vault" : "ordinary"})
+        : '<form id="decision"><label>' + t("reason") + '<textarea rows="3" required></textarea></label><div class="controls"><button value="accepted">' + t(effect) + '</button><button value="rejected">' + t("reject") + '</button></div></form>');
+  } else {
+    left = list(["Atlas","Orion","installation"].map(key => [link("note",view,{detail:key}), (key === "installation" ? t("install") : key + " · " + t("project")) + " · triager"])) +
+      '<p>' + t("personal") + '</p>';
+    right = '<p>' + link(t(detail ?? "Atlas"),view) + ' / ' + link("memories",view,{detail}) + '</p><h2 id="detail">' + t("note") + '</h2>' +
+      '<div class="controls">' + link("preview",view,{detail}) + link("source",view,{detail,panel:"source"}) + link("compare",view,{detail,panel:"compare"}) + '</div>';
+    if (panel === "compare") right += '<pre>r1  - Keep receipt\nr2  + Keep exact receipt</pre><button type="button">' + t("restore") + '</button> ' + link("preview",view,{detail});
+    else if (panel === "knowledge" || panel === "brain") right += selector("owner","destination",["Atlas","company"],selected.get("destination") ?? "Atlas") +
+      '<p>/memories/review.md · r2 · sha256:1a09…</p><blockquote>Keep exact receipt</blockquote>' + link("send","reviews",{detail:panel === "brain" ? "promotion" : "correction"});
+    else right += (panel === "source" ? '<pre># Review\nKeep exact receipt</pre>' : '<p>Keep exact receipt</p>') +
+      '<div class="controls">' + link("promote",view,{detail,panel:"knowledge"}) + link("promoteBrain",view,{detail,panel:"brain"}) + '</div>';
+  }
+  get("screen").innerHTML = '<div class="layout" data-selected="' + Boolean(detail) + '"><section class="card">' + left + '</section>' +
+    (detail ? '<section class="card">' + back + right + '</section>' : "") + '</div>';
+  const input = get("screen").querySelector("textarea");
+  if (input) { input.value = drafts.get(detail) ?? ""; input.addEventListener("input", () => drafts.set(detail, input.value)); }
+  get("decision")?.addEventListener("submit", event => {
+    event.preventDefault();
+    if (status === "stale") { get("message").firstChild.textContent = t("stale") + " · " + t("draft") + " "; return; }
+    outcomes.set(detail, event.submitter.value);
+    drafts.delete(detail);
+    render();
+    get("detail").tabIndex = -1;
+    get("detail").focus();
+  });
+}
+get("message").addEventListener("click", () => { status = "ready"; render(); get("screen").querySelector("textarea, a")?.focus(); });
+get("filters").addEventListener("change", event => {
+  const {setting} = event.target.dataset, value = event.target.value;
+  if (setting === "fixture") { status = value; render(); return; }
+  const updated = state();
+  updated.set(setting, value);
+  location.hash = updated;
+});
+get("locale").onclick = () => { language = 1 - language; render(); };
+get("theme").onclick = () => { document.documentElement.style.colorScheme = document.documentElement.style.colorScheme === "dark" ? "light" : "dark"; };
+window.addEventListener("hashchange", () => {
+  render();
+  const target = get("detail") ?? get("screen").querySelector("a");
+  if (target) { target.tabIndex = 0; target.focus(); }
+});
+render();
+</script>

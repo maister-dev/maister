@@ -89,6 +89,10 @@ Indexed captures record source/version/content and server capture attribution; s
 
 Witness rows and evidence links are immutable; source deletion retires capture availability without cascading accepted revision/evidence history. Restricted captured content stays restricted after workspace cleanup. Explicit project deletion cascades its observations/witnesses without obstruction. Cross-owner links retain immutable identity/version snapshots and resolve unavailable; they have no restrictive FK to the removed witness. Current rank/confidence is retrieval metadata only. Derived summary output inherits every server-recorded accessed restriction, including sources absent from model citations.
 
+## Revision history and correction evidence (Designed)
+
+The record revision list must gate the head and each retained revision before pagination (K06). It links to the exact revision and its reviewable witnesses under current source policy. A correction can select an exact available witness or capture text using the existing evidence intake. The proposal retains the relation, version and digest. Derived evidence remains inspectable when authorized. Only qualifying `supports` evidence can enable confirmation. See the [record lifecycle](company-brain.md) and [session API](../api/web.openapi.yaml).
+
 ## Expectations
 
 - **CBE-01:** Original witnesses survive source edits/reindex/deletion with explicit availability, enforced by immutable witness rows separate from current anchors (`IT-CBE-01`).

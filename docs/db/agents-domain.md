@@ -316,6 +316,27 @@ erDiagram
 | `inbox_review_receipts` | Actor-scoped request key, digest and receipt ID. | A batch item commits this receipt with its domain decision. |
 | Brain `agent_memory_embeddings` | Rebuildable exact revision FK. Primary key `(vault_id,note_id,revision_id,model,dimensions,generation)`. Leases fence retryable work. | Optional Brain migration `0012` follows main. Search joins only the visible current head and configured generation. |
 
+### Review rationale (Designed)
+
+`agent_memory_proposals.decision_reason` adds nullable text under the existing
+proposal identity. A stored value is trimmed, contains 1–2,000 characters,
+and is permitted only for `accepted` or `rejected` rows. A missing reason
+stays NULL for existing rows and compatible clients. Set reason, reviewer,
+timestamp and applied operation in the settlement transaction with the Inbox
+receipt. Clear reasons on proposals dependent on an erased revision under
+the same redaction transaction that removes their command payload. The
+original actor, outcome and operation identities remain governed by current
+access.
+
+```mermaid
+erDiagram
+    agent_memory_proposals {
+        text id PK
+        text decision_reason "nullable protected rationale, designed"
+    }
+    agent_memory_operations ||--o| agent_memory_proposals : proposes
+```
+
 Unless noted otherwise, FKs within retained vault history restrict deletes.
 Only rebuildable projections may cascade from their exact owners. Vault
 services acquire the vault row before changing the head, quota or generation.
