@@ -45,6 +45,7 @@ import {
 } from "../company-flow-context";
 import { updateCompanyFlowBinding } from "../company-flow-binding-mutations";
 import { reserveCompanyFlowRun } from "../company-flow-launch";
+import * as executionQuiescence from "../execution-quiescence";
 import { acceptAgentRetry, getAgentRetryOptions } from "../retry";
 import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { resolveFlowBoundAgent } from "../flow-binding";
@@ -2189,7 +2190,34 @@ it("IT-CBS-03 cancels a Pending company Flow with current authority, one attribu
       },
     );
 
-    const responses = await Promise.all([stop(), stop()]);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const assertQuiescent =
+      executionQuiescence.assertAgentCancellationExecutionQuiescent;
+    const quiescence = vi
+      .spyOn(executionQuiescence, "assertAgentCancellationExecutionQuiescent")
+      .mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await release.promise;
+        await assertQuiescent(...args);
+      });
+    const delayed = stop();
+    let committed: Response;
+
+    try {
+      await Promise.race([
+        entered.promise,
+        delayed.then((response) => {
+          throw new Error(`Stop returned ${response.status} before quiescence`);
+        }),
+      ]);
+      committed = await stop();
+      expect(committed.status).toBe(200);
+    } finally {
+      release.resolve();
+      await delayed.finally(() => quiescence.mockRestore());
+    }
+    const responses = [committed, await delayed];
 
     for (const response of responses) {
       expect(response.status).toBe(200);
