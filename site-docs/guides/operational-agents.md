@@ -48,6 +48,11 @@ references, actionable diagnostics and source integrity.
 - Missing or malformed output cannot establish success. Cancellation remains
   **Abandoned**; lost execution remains **Crashed**.
 
+If setup or a tool call fails before the first item is scanned, report
+`coverage.state: not_started` with all work-item counts at zero. Record the
+failure in diagnostics and put the known number of pending items in
+`coverage.remainingKnown` (use `null` if unknown).
+
 A GitHub 403 is an authorization failure, never an empty successful scan.
 Unknown task or comment writes require reconciliation before retrying. Do not
 repeat an operation merely because a response was lost.
@@ -83,6 +88,21 @@ Cleanup retries are bounded. After correcting an exhausted cleanup failure, use
 operation. Starting an operation again is a separate attempt. A package update
 changes future launches; existing Runs keep their original kind, contract and
 instructions. Historical code-delivery Runs retain their original review rules.
+
+### Recover a stalled continuation
+
+If the Run still shows **Running** and asks for attention, open **Operation
+result**. Read the original preparation failure and the reason MAIster still
+cannot confirm how execution ended. After restoring the host or resolving
+that blocker, choose **Recheck execution** if you have recovery permission.
+This schedules one check of the same execution. If evidence is still missing,
+the Run returns to attention.
+
+Use **Stop** to request cancellation. When MAIster can prove the pending
+continuation never dispatched, the Run becomes **Abandoned** and releases its
+execution slot. The checkout can remain until earlier processes are confirmed
+to have stopped. For a size, time or entry refusal, see
+[workspace integrity limits](/operations/troubleshooting#a-workspace-integrity-check-reached-a-limit).
 
 ## Find activity and retry a failed runner
 

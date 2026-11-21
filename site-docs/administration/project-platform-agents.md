@@ -45,12 +45,28 @@ Set these fields before enabling the attachment:
 | Branch base | Choose the branch used for taskless or maintenance work. |
 | Execution policy | Decide which permissions may pass without a person and how a budget breach pauses or ends work. |
 | Project Brain | Grant read and write separately. |
-| Agent memory | Enable the agent's private `memory.md`; this is separate from Project Brain. |
+| Agent memory | Keep private Markdown notes across Runs. Enable **Review agent changes before applying them** to send proposed edits to the Inbox. |
 | Context projects | Grant cross-project reach and read-only repository mounts where the installation supports them. |
 
 The attachment is the grant. Disabling or detaching it stops future triggers
-and revokes live agent tokens. A flow-bound agent cannot use private agent
-memory because its work runs through Flow sessions.
+and revokes live agent tokens.
+
+### Read and edit an agent’s memory
+
+Once the operator has [activated the memory vault](/operations/deployment#activate-the-agent-memory-vault),
+open **Project → Agents**, select the agent and open its **Memory** tab. Browse Markdown notes
+under `/memories`, search by text or tag, and open a note to inspect its
+revision history and backlinks. Reading requires repository-read access.
+With project settings access you can edit a note. If someone saves first,
+reload their revision and reapply your changes.
+
+An eligible agent starts with the accessible index (`/memories/index.md` when
+present) and a list of paths. It can read additional notes as needed. A Flow
+node can use the vault of its assigned agent when that identity is verified
+and its attachment has memory enabled. Private notes stay with the agent
+across package upgrades. Edits from webhook-triggered Runs and externally
+sourced tasks go to review even under the automatic write policy. Sharing
+a note with Project Brain requires a proposal.
 
 ## 3. Configure triggers
 
