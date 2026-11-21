@@ -20,6 +20,30 @@ checks the exact actions to permit. Administrator status alone grants no company
 content access: an administrator who needs to read or review must explicitly
 grant those actions to their own account. Company access needs no dummy project.
 
+## Give a specialist access across projects
+
+A global administrator authorized to manage the company specialist can set
+`installationGrant` when creating or updating a company binding with
+`POST /api/specialists/{specialistId}/bindings` or
+`PATCH /api/specialists/{specialistId}/bindings/{bindingId}`. For a specialist running without a repository,
+include this field in the binding request to allow task reads across
+non-archived projects.
+
+```json
+{
+  "installationGrant": {
+    "schemaVersion": 1,
+    "reach": "active_projects",
+    "scopes": ["tasks:read"],
+    "memoryEnabled": false
+  }
+}
+```
+
+A manual Run can read only what both the grant and its initiating user permit. A reviewed cron or event runs as the bound agent.
+After changing the binding revision, review the trigger again. If enabled,
+the installation agent’s vault accepts proposed changes for review.
+
 ## Find and inspect an assertion
 
 ![Company Brain with search filters and knowledge records](/assets/screens/en/knowledge.png)
@@ -65,9 +89,16 @@ fresh proposal rather than overwriting someone else's work.
 
 ## Review publication and confirmation separately
 
-**Proposal review** lists the proposals you may currently review. Inspect the
-assertion and evidence, enter a decision reason, then accept or reject.
-Acceptance publishes a record; it does not confirm the fact.
+Open **Inbox → Knowledge & memory**. You can also follow the review link from
+Knowledge, Project Brain or an agent’s Memory tab to see proposals for that
+source. These optional reviews have their own count. Leaving one pending lets
+the Run continue.
+
+Open a proposal to inspect its changes or evidence. Select one or more rows,
+then accept or reject them. Knowledge decisions require a reason. Check the
+outcome of each row. If the source changed, inspect the current revision
+before deciding again. Accepting a knowledge proposal publishes the record.
+Confirming the assertion takes a separate decision.
 
 **Published record** opens the exact accepted revision. **Open current record**
 resolves the current head. With confirmation authority, select available
@@ -104,7 +135,7 @@ not be replaced by a guessed citation or resolved by retrieval score.
 If you explicitly request a knowledge proposal, grant the root coordinator
 `knowledge:propose`. Only root Flows expose proposal submission; intermediate
 research and control remain read-only. Inspect the resulting proposal in
-**Proposal review**. Neither a successful run nor acceptance of child work
+**Inbox → Knowledge & memory**. Neither a successful run nor acceptance of child work
 confirms its assertions. Review and factual confirmation require separate
 current authority.
 

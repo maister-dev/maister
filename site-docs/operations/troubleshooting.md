@@ -18,6 +18,28 @@ Verify that the parent repository is clean, the target branch exists, the Run
 branch is not already owned, and the worktree path is available. Check that the
 selected Flow revision and runner still exist and are trusted.
 
+## A workspace integrity check reached a limit
+
+Open the Run’s integrity details. Identify the stage, the affected workspace
+and the first limit reached. The byte count measures what the scan read before
+it stopped. Measure the full working copy before changing the size limit. For
+an entry limit, inspect generated and ignored files. For a timeout, check disk
+and Git performance on the execution host.
+
+A global administrator can open **Settings → Workspace integrity checks**.
+Other readers can give the administrator the Run ID and its measurements.
+
+| Setting | Built-in default | Allowed range | Web service environment variable |
+| --- | ---: | ---: | --- |
+| Total size (MiB) | 1,024 | 1–8,192 | `MAISTER_WORKSPACE_INTEGRITY_MAX_SIZE_MIB` |
+| Duration (seconds) | 120 | 1–240 | `MAISTER_WORKSPACE_INTEGRITY_MAX_DURATION_SECONDS` |
+| Filesystem entries | 100,000 | 1–500,000 | `MAISTER_WORKSPACE_INTEGRITY_MAX_ENTRIES` |
+
+Each saved field takes effect on the next check. Resetting a field restores its
+web environment value, or its built-in default if unset. A separate, fixed 1 MiB
+limit applies to Git’s `config.worktree` file. If that file exceeds the limit,
+ask the repository operator to inspect the Git configuration.
+
 ## Agent runtime is unavailable
 
 Open platform runner settings and inspect readiness reason codes. On the

@@ -52,7 +52,9 @@ a project.
 
 **Activity** (`/activity`) shows what changed chronologically. Reading activity
 and marking it read do not resolve an Inbox decision. **Needs you** counts
-outstanding decisions; **Updates** tracks unread activity. Browser push
+outstanding decisions. A separate Inbox count shows pending
+[knowledge and memory reviews](/guides/company-brain#review-publication-and-confirmation-separately).
+**Updates** tracks unread activity. Browser push
 notifications can be enabled from Account on supported browsers with permission.
 
 Administrators land on Desk after sign-in; members and viewers land on Work.

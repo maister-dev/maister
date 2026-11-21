@@ -57,3 +57,26 @@ run `pnpm --filter maister-web build`. Restart the supervisor before the web
 service. On each execution host, check the deployed facade with
 `pnpm --filter @maister/mcp verify:stdio-contract`. Confirm adapter readiness and
 launch a non-critical smoke Run before restoring normal traffic.
+
+## Activate the agent memory vault
+
+Apply the main database migrations. During a maintenance window, drain running
+agents and stop services that can write legacy memory files. Back up Postgres
+and the runtime directory together. Run the following from the checkout with
+the web service’s database configuration and `MAISTER_RUNTIME_ROOT` pointing
+to the original runtime directory. Set `ADMIN_ID` to an active global
+administrator’s user ID.
+
+```bash
+pnpm --filter maister-web agent-memory:import
+pnpm --filter maister-web agent-memory:import --import --actor-user-id "$ADMIN_ID"
+pnpm --filter maister-web agent-memory:import --activate --actor-user-id "$ADMIN_ID"
+```
+
+The first command previews the inventory. Check for unresolved owners or
+changed files before activation. Activation switches writes to Postgres after
+verifying the imported files. Start the upgraded services and verify that you
+can read an imported note and save an edit from the agent’s **Memory** tab.
+Keep the originals until then. To return to a pre-vault release, restore the
+matching database and runtime backups together. That restores notes to the
+time of the backup.

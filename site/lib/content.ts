@@ -324,14 +324,14 @@ const CONTENT = {
           id: "run",
           label: "Run",
           title: "A Flow you can inspect while it runs.",
-          body: "The Run page shows the graph, the current node, readiness, tokens, and the branch the work lives on. Every attempt stays in the ledger.",
+          body: "Follow the active node and inspect each attempt. When the agent reports context usage or compacts its conversation, you can see how much of the window it used and where the compaction happened.",
           alt: "MAIster Run page with the outcome, flow verification, and the Flow graph",
         },
         {
           id: "inbox",
           label: "Inbox",
           title: "Give each teammate one queue for decisions.",
-          body: "When an agent needs a human decision, MAIster opens the request in the inbox and on the Run page: a permission, form, review, or escalation. The answer returns to the originating Run.",
+          body: "Answer a permission request to resume its Run. In the same inbox, review proposed edits to agent notes and shared knowledge when you have time.",
           alt: "MAIster inbox with a held task and two operations that need attention",
         },
         {
@@ -794,14 +794,14 @@ const CONTENT = {
           id: "run",
           label: "Запуск",
           title: "Flow, который можно рассмотреть прямо во время работы.",
-          body: "Страница запуска показывает граф, текущий узел, готовность, токены и ветку, в которой идёт работа. Каждая попытка остаётся в реестре.",
+          body: "Следите за активным узлом и открывайте историю его попыток. По данным агента видно, сколько токенов занято в окне контекста. Когда агент сжимает диалог, в истории появляется отметка.",
           alt: "Страница запуска MAIster с результатом, проверкой Flow и графом Flow",
         },
         {
           id: "inbox",
           label: "Входящие",
           title: "Одна очередь решений вместо обхода терминалов.",
-          body: "Когда агенту нужно решение человека, MAIster открывает запрос во «Входящих» и на странице запуска: разрешение, форму, проверку или уведомление о проблеме. Ответ возвращается в исходный запуск.",
+          body: "Ответьте на запрос разрешения, чтобы агент продолжил работу. В тех же «Входящих» можно в удобное время проверить правки, которые агенты предлагают для своих заметок и общей базы знаний.",
           alt: "Раздел «Входящие» MAIster с удержанной задачей и двумя операциями, требующими внимания",
         },
         {

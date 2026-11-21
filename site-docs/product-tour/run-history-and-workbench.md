@@ -61,6 +61,25 @@ dispatched initial, resume, rework, and message prompts alongside responses.
 Steered messages appear in the same conversation. Open full artifacts when a
 node or consensus result only shows a bounded excerpt.
 
+## Read context usage and compaction
+
+On the Run page or in the workbench inspector, open the context meter for the
+selected agent session or node attempt. Scratch and Studio dialogs also show
+the meter. It reports the tokens in use and the window size supplied by the
+adapter. **Not reported** means there is no current measurement. A resumed
+process needs a fresh reading.
+
+When the adapter compacts the conversation, look for its marker in the
+transcript. It shows the outcome and, when available, a summary and token
+counts before and after compaction. After completion, the meter waits for
+the next sample. See [runner settings](/administration/runners-and-models#context-window-and-compaction)
+if the reported window looks wrong.
+
+If a scratch turn ends with `context_exhausted`, open a fresh scratch session.
+Check any queued instructions in the old dialog before deciding which ones to
+carry over. For `max_output_tokens`, read the partial response and ask for a
+smaller next step in the same dialog.
+
 ## Inspect a delegated child Run
 
 Select a child in the Run tree or inspector to open a read-only peek beside the

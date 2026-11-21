@@ -82,6 +82,20 @@ resolved before execution and snapshotted on the Run.
 Bound every automatic loop. Use a human escalation when the Flow cannot make a
 safe decision after the declared number of attempts.
 
+With `compat.engine_min: "3.13.0"` or later, an `ai_coding` node can retry a
+specific token limit. This policy starts a fresh session on the same workspace
+when the input exceeds the context window.
+
+```yaml
+retry_policy:
+  attempts: 2
+  on_reasons: [context_exhausted]
+  workspace: keep
+```
+
+Use `max_output_tokens` to match a response that reached its output cap.
+Leave out a broad `on_errors` selector if only the listed reasons should retry.
+
 ## Evidence, result, and logs
 
 Do not combine these channels:

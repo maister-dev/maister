@@ -89,6 +89,14 @@ input, finishes, fails, or receives a clarification answer. **Explain** requests
 a read-only explanation; an update itself does not start another action.
 A finished or merged Run does not prove that anything was deployed.
 
+## Ask about knowledge and agent notes
+
+Ask the librarian to find a knowledge record or search an agent’s notes.
+It can show the sources you currently have permission to read. In Explain
+mode it can only read. For an edit, inspect the proposed target and content
+on the confirmation card. Confirming a vault edit requires your current
+editing rights. Confirming a knowledge proposal submits it for review.
+
 ## Control memory and history
 
 Ask explicitly to remember a preference, goal, commitment, or fact. Inferred
