@@ -26,8 +26,7 @@ afterAll(async () => {
   await database?.stop();
 });
 
-it("W09 authorizes and audits one resolve-now, including mixed-credential and viewer refusals", async () => {
-  const { POST } = await import("../route");
+async function seedOperatorWait() {
   const { runFlow } = await import("@/lib/flows/runner");
   const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
     database.db,
@@ -75,6 +74,12 @@ it("W09 authorizes and audits one resolve-now, including mixed-credential and vi
     "SELECT id,version FROM run_waits WHERE run_id=$1",
     [runId],
   );
+  return { runId, projectId, wait };
+}
+
+it("W09 authorizes and audits one resolve-now, including mixed-credential and viewer refusals", async () => {
+  const { POST } = await import("../route");
+  const { runId, projectId, wait } = await seedOperatorWait();
   const origin = process.env.AUTH_URL
     ? new URL(process.env.AUTH_URL).origin
     : "http://localhost";
@@ -187,4 +192,55 @@ it("W09 authorizes and audits one resolve-now, including mixed-credential and vi
       { id: "1".padStart(64, "0"), receivedAt: "2026-01-01T00:00:00.000001Z" },
     ],
   });
+});
+
+it("W09 cancels through the operator route only against the current version", async () => {
+  const { POST } = await import("../route");
+  const { runId, projectId, wait } = await seedOperatorWait();
+
+  await database.pool.query(
+    "UPDATE project_members SET role='member' WHERE user_id=$1 AND project_id=$2",
+    [userId, projectId],
+  );
+  const origin = process.env.AUTH_URL
+    ? new URL(process.env.AUTH_URL).origin
+    : "http://localhost";
+  const cancel = (expectedVersion: number) =>
+    POST(
+      new Request(`${origin}/api/runs/${runId}/waits/${wait.id}/actions`, {
+        method: "POST",
+        headers: {
+          origin,
+          "content-type": "application/json",
+          "idempotency-key": "cancel-wait",
+        },
+        body: JSON.stringify({
+          action: "cancel",
+          expectedVersion,
+          reason: "The operator withdrew verification.",
+        }),
+      }),
+      { params: Promise.resolve({ runId, waitId: wait.id }) },
+    );
+
+  expect((await cancel(wait.version + 1)).status).toBe(409);
+  const applied = await cancel(wait.version);
+
+  expect(applied.status).toBe(200);
+  expect(await applied.json()).toMatchObject({
+    state: "resolved",
+    outcome: "cancelled",
+  });
+  const { rows } = await database.pool.query(
+    "SELECT user_id,action,reason FROM run_wait_actions WHERE wait_id=$1",
+    [wait.id],
+  );
+
+  expect(rows).toEqual([
+    {
+      user_id: userId,
+      action: "cancel",
+      reason: "The operator withdrew verification.",
+    },
+  ]);
 });
