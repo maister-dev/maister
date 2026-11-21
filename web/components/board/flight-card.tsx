@@ -58,6 +58,7 @@ export interface FlightCardLabels {
   // in the InProduction column but is blocked on its run-tree children, not
   // actively working.
   waitingOnChildren: string;
+  waitingForCondition: string;
   // ADR-112: "needs review" chip for a flagged task (held for a human).
   flagged: string;
   openRun: string;
@@ -274,7 +275,9 @@ export function FlightCard({
             className={clsx(BADGE, "border-line bg-paper text-accent-2")}
             data-testid="flight-card-waiting"
           >
-            {labels.waitingOnChildren}
+            {card.runStatus === "Waiting"
+              ? labels.waitingForCondition
+              : labels.waitingOnChildren}
           </span>
         ) : null}
         {card.activeNode ? (

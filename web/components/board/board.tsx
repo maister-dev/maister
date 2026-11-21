@@ -133,6 +133,7 @@ export async function Board({
     awaitingClarification: t("awaitingClarification"),
     flagged: t("flagged"),
     waitingOnChildren: t("waitingOnChildren"),
+    waitingForCondition: t("waitingForCondition"),
     openRun: t("openRun"),
     activeNodeStatus: {
       running: t("activeNodeRunning"),

@@ -68,6 +68,7 @@ const labels: FlightCardLabels = {
   awaitingClarification: "Awaiting clarification",
   flagged: "Needs review",
   waitingOnChildren: "Waiting on children",
+  waitingForCondition: "Waiting for a Flow condition",
   openRun: "Open run",
   delegatedBy: "delegated by",
   activeNodeStatus: {

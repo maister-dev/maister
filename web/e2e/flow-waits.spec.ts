@@ -13,6 +13,8 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
 }) => {
   const projectId = randomUUID();
   const runId = randomUUID();
+  const taskId = randomUUID();
+  const slug = `wait-${projectId}`;
   const attemptId = randomUUID();
   const waitId = randomUUID().replaceAll("-", "").repeat(2);
   const condition = {
@@ -29,15 +31,19 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
         VALUES ($1,$2,'Flow wait fixture',$3,$3,$4)`,
         [
           projectId,
-          `wait-${projectId}`,
+          slug,
           `/tmp/wait-${projectId}`,
           `W${projectId.slice(0, 6).toUpperCase()}`,
         ],
       );
       await db.query(
-        `INSERT INTO runs (id,project_id,run_kind,status,flow_version,flow_revision,current_step_id)
-        VALUES ($1,$2,'flow','Waiting','1.0.0','fixture','verify')`,
-        [runId, projectId],
+        "INSERT INTO tasks (id,project_id,number,title,prompt) VALUES ($1,$2,1,'Build waits for a signal','fixture')",
+        [taskId, projectId],
+      );
+      await db.query(
+        `INSERT INTO runs (id,project_id,task_id,run_kind,status,flow_version,flow_revision,current_step_id)
+        VALUES ($1,$2,$3,'flow','Waiting','1.0.0','fixture','verify')`,
+        [runId, projectId, taskId],
       );
       await db.query(
         `INSERT INTO workspaces (id,run_id,project_id,branch,worktree_path,parent_repo_path)
@@ -58,6 +64,25 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
       );
     });
 
+    await page.goto(`/projects/${slug}`);
+    await expect(
+      page
+        .getByRole("region", { name: "Task board", exact: true })
+        .getByTestId("flight-card-waiting"),
+    ).toHaveText("Waiting for a Flow condition");
+    await page.goto("/?stage=Executing");
+    const row = page
+      .getByTestId("desk-work")
+      .getByTestId("work-row")
+      .filter({ hasText: "Build waits for a signal" });
+
+    await expect(row).toHaveAttribute("data-stage", "Executing");
+    await row.click();
+    await expect(
+      page
+        .getByTestId("desk-work")
+        .getByText("Waiting for build", { exact: true }),
+    ).toBeVisible();
     await page.goto(`/runs/${runId}`);
     await expect(
       page.getByRole("img", { name: "Waiting for build", exact: true }),
@@ -172,6 +197,9 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
     await expect(
       page.getByTestId("desk-work").getByText("A run hold is active."),
     ).toBeVisible();
+    const streamRoute = "**/peek/stream*";
+
+    await page.route(streamRoute, (route) => route.abort());
     await page.goto(`/runs/${runId}`);
     await page.getByRole("button", { name: "Open inspector" }).click();
     const decisions = page.getByRole("region", { name: "Engine decisions" });
@@ -207,10 +235,24 @@ test("C05 exposes engine decisions and verifies a reported reversal in the run i
         json: { receiptId: "test-reversal-receipt" },
       });
     });
-    await page.reload();
-    const openInspector = page.getByRole("button", { name: "Open inspector" });
+    await expect(
+      decisions.getByText("Report a reversal", { exact: true }),
+    ).toHaveCount(0);
+    const nextStream = page.waitForResponse(
+      (response) =>
+        response.request().resourceType() === "eventsource" &&
+        response.url().includes("/peek/stream") &&
+        response.ok(),
+    );
 
-    if (await openInspector.isVisible()) await openInspector.click();
+    await page.unroute(streamRoute);
+    const reconnect = page.getByRole("button", {
+      name: "Reconnect",
+      exact: true,
+    });
+
+    if (await reconnect.isVisible()) await reconnect.click();
+    await nextStream;
     await decisions
       .getByText("Report a reversal", { exact: true })
       .click({ timeout: 5_000 });
