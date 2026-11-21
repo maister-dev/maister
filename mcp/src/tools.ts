@@ -342,8 +342,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         slug: { type: "string" },
         taskId: { type: "string" },
         recipientUserId: { type: "string", minLength: 1 },
-        question: { type: "string", minLength: 1 },
-        reason: { type: "string", minLength: 1 },
+        question: { type: "string", minLength: 1, maxLength: 2000 },
+        reason: { type: "string", minLength: 1, maxLength: 2000 },
         answerFormat: { type: "string", enum: ["text", "choice", "yes_no"] },
         blocking: { type: "boolean" },
         operationKey: { type: "string", minLength: 1, maxLength: 128 },
@@ -587,7 +587,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           enum: ["low", "medium", "high"],
         },
         clusterHash: { type: ["string", "null"] },
-        rationale: { type: "string" },
+        rationale: { type: "string", maxLength: 4000 },
       },
       required: ["slug", "kind", "draft"],
     },
@@ -738,7 +738,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   task_update: {
     description:
-      "Update fields on a task (title/prompt — e.g. triage clarify-mode sharpening the statement)",
+      "Update a task's title or prompt. Pass the revision from task_get as expectedRevision to guard against concurrent edits.",
     inputSchema: {
       type: "object",
       properties: {
@@ -746,6 +746,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         title: { type: "string", minLength: 1 },
         prompt: { type: "string", minLength: 1 },
+        expectedRevision: { type: "integer", minimum: 0 },
         operationKey: {
           type: "string",
           minLength: 1,
@@ -874,6 +875,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         addressableKey: {
           type: "string",
           minLength: 1,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9._-]+$",
           description:
             "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
         },
@@ -1129,7 +1132,12 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       properties: {
-        addressableKey: { type: "string", minLength: 1 },
+        addressableKey: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9._-]+$",
+        },
         childRunId: { type: "string" },
         prompt: { type: "string", minLength: 1, maxLength: 1000000 },
         requestKey: { type: "string", minLength: 1, maxLength: 128 },
@@ -1370,7 +1378,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        body: { type: "string", minLength: 1 },
+        body: { type: "string", minLength: 1, maxLength: 10000 },
         operationKey: {
           type: "string",
           minLength: 1,
@@ -1392,8 +1400,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         flowId: { type: "string", minLength: 1 },
         runnerId: { type: "string", minLength: 1 },
-        baseBranch: { type: "string", minLength: 1 },
-        targetBranch: { type: "string", minLength: 1 },
+        baseBranch: { type: "string", minLength: 1, maxLength: 255 },
+        targetBranch: { type: "string", minLength: 1, maxLength: 255 },
         promotionMode: {
           type: "string",
           enum: ["local_merge", "pull_request"],
@@ -1519,8 +1527,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       properties: {
-        q: { type: "string", minLength: 1 },
-        cursor: { type: "string" },
+        q: { type: "string", minLength: 1, maxLength: 200 },
+        cursor: { type: "string", maxLength: 512 },
       },
       required: ["q"],
     },
@@ -2295,16 +2303,19 @@ function resolveRouting(
       };
     }
     case "task_update": {
-      const { slug, taskId, title, prompt } = args as {
+      const { slug, taskId, title, prompt, expectedRevision } = args as {
         slug: string;
         taskId: string;
         title?: string;
         prompt?: string;
+        expectedRevision?: number;
       };
       const body: Record<string, unknown> = {};
 
       if (title !== undefined) body.title = title;
       if (prompt !== undefined) body.prompt = prompt;
+      if (expectedRevision !== undefined)
+        body.expectedRevision = expectedRevision;
 
       return {
         method: "PATCH",
@@ -2891,6 +2902,28 @@ export function toolSpecForToolset(
 ): ToolSpec {
   const standard = TOOL_SPECS[name];
 
+  if (toolset === "librarian" && name === "memory_propose") {
+    return {
+      ...standard,
+      description:
+        "Ask the owner to confirm a Project Brain proposal. Returns a pending card.",
+      inputSchema: {
+        ...standard.inputSchema,
+        required: [...(standard.inputSchema.required ?? []), "operationKey"],
+        properties: {
+          ...standard.inputSchema.properties,
+          operationKey: { type: "string", minLength: 1, maxLength: 128 },
+        },
+      },
+    };
+  }
+  if (toolset === "librarian" && name === "knowledge_propose") {
+    return {
+      ...standard,
+      description:
+        "Ask the owner to confirm a structured knowledge proposal for governed review.",
+    };
+  }
   if (
     toolset !== "installation" ||
     !Object.hasOwn(installationReadDescriptions, name)

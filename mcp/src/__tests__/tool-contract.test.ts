@@ -50,7 +50,12 @@ type JsonSchema = {
 
 // Bounds the facade must mirror when the spec declares them — a bounds-only
 // drift (tool max 200 vs spec max 100) is as silent as a type drift.
-const MIRRORED_BOUNDS = ["minimum", "maximum", "minLength"] as const;
+const MIRRORED_BOUNDS = [
+  "minimum",
+  "maximum",
+  "minLength",
+  "maxLength",
+] as const;
 
 function inclusiveMinimum(schema: JsonSchema): number | undefined {
   if (
@@ -844,12 +849,14 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
               : openapiField[bound];
 
           if (specBound !== undefined) {
-            expect(
-              bound === "minimum"
-                ? inclusiveMinimum(toolField)
-                : toolField[bound],
-              `${toolName}.${field} ${bound}`,
-            ).toBe(specBound);
+            expect
+              .soft(
+                bound === "minimum"
+                  ? inclusiveMinimum(toolField)
+                  : toolField[bound],
+                `${toolName}.${field} ${bound}`,
+              )
+              .toBe(specBound);
           }
         }
         if (isTaskLaunchTool(toolName)) {

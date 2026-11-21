@@ -33,8 +33,9 @@ docker compose up -d postgres
 pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:migrate:brain
 pnpm --filter maister-web build
-pnpm --filter @maister/mcp build
 ```
+
+Сборка web также собирает внутренний MCP-фасад для агентов.
 
 Запускайте supervisor и web как отдельные systemd-сервисы под одним доверенным
 пользователем. Задайте надёжный `AUTH_SECRET`, production `DB_URL` и URL
@@ -50,5 +51,7 @@ SSE и передавайте исходные заголовки host и protoc
 
 Закрепляйте ревизию исходного кода или тег образа. До обновления сохраните
 резервную копию Postgres и runtime state. Установите зависимости по lockfile,
-выполните обе линии миграций и сборку, затем перезапустите supervisor перед web.
+выполните обе линии миграций и запустите `pnpm --filter maister-web build`.
+Перезапустите supervisor перед web. На каждом хосте исполнения проверьте
+развёрнутый фасад командой `pnpm --filter @maister/mcp verify:stdio-contract`.
 Проверьте готовность адаптеров и выполните некритичный smoke-прогон.

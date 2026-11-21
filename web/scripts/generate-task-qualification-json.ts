@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
@@ -14,11 +15,11 @@ const target = resolve(
   process.cwd(),
   "../runtime/task-qualification.schema.json",
 );
-const content = `${JSON.stringify(schema, null, 2)}\n`;
-
 if (process.argv.includes("--check")) {
-  if ((await readFile(target, "utf8")) !== content)
+  const committed: unknown = JSON.parse(await readFile(target, "utf8"));
+
+  if (!isDeepStrictEqual(committed, schema))
     throw new Error(
       "Task qualification MCP schema is stale; run pnpm --filter maister-web generate:qualification-schema",
     );
-} else await writeFile(target, content);
+} else await writeFile(target, `${JSON.stringify(schema, null, 2)}\n`);

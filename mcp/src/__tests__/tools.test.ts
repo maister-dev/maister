@@ -695,7 +695,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toBeUndefined();
   });
 
-  it("task_update → PATCH /api/v1/ext/projects/{slug}/tasks/{taskId} (strips executorOverrideId — the strict route refuses it)", async () => {
+  it("task_update forwards the revision guard and strips unsupported executorOverrideId", async () => {
     mockOnce({ id: "task-1" }, 200);
 
     await dispatchTool({
@@ -705,6 +705,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
         taskId: "task-1",
         title: "New title",
         prompt: "New prompt",
+        expectedRevision: 0,
         executorOverrideId: null,
       },
       ctx: httpCtx,
@@ -719,6 +720,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toEqual({
       title: "New title",
       prompt: "New prompt",
+      expectedRevision: 0,
     });
   });
 

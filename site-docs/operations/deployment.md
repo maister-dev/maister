@@ -35,8 +35,9 @@ docker compose up -d postgres
 pnpm --filter maister-web db:migrate
 pnpm --filter maister-web db:migrate:brain
 pnpm --filter maister-web build
-pnpm --filter @maister/mcp build
 ```
+
+The web build also builds the internal MCP facade used by agents.
 
 Run the supervisor and web application as separate systemd services under the
 same trusted service account. Set a strong `AUTH_SECRET`, a production `DB_URL`,
@@ -51,7 +52,8 @@ only the web port; keep port `7777` private.
 ## Upgrades
 
 Pin the source revision or image tag. Back up Postgres and runtime state before
-an upgrade, install with the frozen lockfile, run both migration lineages, build
-the applications, then restart the supervisor before the web service. Confirm
-adapter readiness and launch a non-critical smoke Run before restoring normal
-traffic.
+an upgrade, install with the frozen lockfile, run both migration lineages, and
+run `pnpm --filter maister-web build`. Restart the supervisor before the web
+service. On each execution host, check the deployed facade with
+`pnpm --filter @maister/mcp verify:stdio-contract`. Confirm adapter readiness and
+launch a non-critical smoke Run before restoring normal traffic.

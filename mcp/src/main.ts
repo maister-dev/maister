@@ -21,7 +21,6 @@ import {
   dispatchTool,
   isDelegationAdmissionTool,
   isToolInToolset,
-  TOOL_SPECS,
   toolNamesForToolset,
   toolSpecForToolset,
 } from "./tools";
@@ -56,27 +55,6 @@ function buildServer(transportType: "stdio" | "http"): Server {
     tools: toolNamesForToolset(TOOLSET, INSTALLATION_SCOPES).map((name) => ({
       name,
       ...toolSpecForToolset(name, TOOLSET),
-      ...(TOOLSET === "librarian" &&
-        name === "memory_propose" && {
-          description:
-            "Ask the owner to confirm a Project Brain proposal. Returns a pending card.",
-          inputSchema: {
-            ...TOOL_SPECS[name].inputSchema,
-            required: [
-              ...(TOOL_SPECS[name].inputSchema.required ?? []),
-              "operationKey",
-            ],
-            properties: {
-              ...TOOL_SPECS[name].inputSchema.properties,
-              operationKey: { type: "string", minLength: 1, maxLength: 128 },
-            },
-          },
-        }),
-      ...(TOOLSET === "librarian" &&
-        name === "knowledge_propose" && {
-          description:
-            "Ask the owner to confirm a structured knowledge proposal for governed review.",
-        }),
       execution: { taskSupport: "forbidden" as const },
     })),
   }));

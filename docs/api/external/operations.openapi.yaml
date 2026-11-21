@@ -492,7 +492,7 @@ paths:
         Returns the full updated `TaskDTO` on success. Writes a
         `token_audit_log` row with scope `tasks:update` after success.
 
-        (Designed — ADR-188) Optional `expectedRevision`: the update runs under
+        (Implemented — ADR-188) Optional `expectedRevision`: the update runs under
         the task row lock (`SELECT … FOR UPDATE`), and a value that differs from
         `tasks.revision` is refused `409 CONFLICT` with `details.reason:
         "stale_revision"`, nothing written. Every successful update increments
@@ -4548,11 +4548,10 @@ paths:
           required: false
           description: |
             Narrow to one feed kind (a `task_activity` event kind, an attention
-            domain-event kind, `webhook_delivered` or `webhook_dead`). An
-            unknown kind → `422 CONFIG`.
+            domain-event kind, `webhook_delivered` or `webhook_dead`). Unknown
+            kinds leave the feed unfiltered by kind.
           schema:
             type: string
-            maxLength: 64
         - name: limit
           in: query
           required: false
@@ -13292,11 +13291,10 @@ components:
           type: string
           minLength: 1
         expectedRevision:
-          x-maister-designed: true
           type: integer
           minimum: 0
           description: |
-            (Designed — ADR-188, `TST-02`) Optional optimistic guard: the
+            (Implemented — ADR-188, `TST-02`) Optional optimistic guard: the
             `TaskDTO.revision` the caller last read. A mismatch is refused
             `409 CONFLICT` with `details.reason: "stale_revision"`.
 
@@ -14895,7 +14893,7 @@ components:
         message:
           type: string
           minLength: 1
-          maxLength: 20000
+          maxLength: 60000
           description: The owner's instruction, delivered verbatim.
 
     ExtOperatorMessageResult:

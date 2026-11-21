@@ -55,7 +55,7 @@ As the `maister` user, into `/opt/maister`:
 git clone <maister-repo-url> /opt/maister
 cd /opt/maister
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build          # cleans .next, then next build (required before `start`)
+pnpm --filter maister-web build          # builds the internal MCP facade, then the web app
 ```
 
 ## 3. Postgres (Docker)
@@ -416,22 +416,32 @@ the local web/supervisor processes.
 ```bash
 curl -fsS http://127.0.0.1:7777/health        # supervisor: {"status":"ready",..., "host":{"hostKey":"eh_…","bootId":"…","protocolVersion":1}}
 curl -fsS http://127.0.0.1:3000/ >/dev/null    # web responds
+pnpm --filter @maister/mcp verify:stdio-contract  # run from the release checkout on the execution host
 journalctl -u maister-web -n 200 | grep execution-host-registered   # (ADR-166) the web tier registered the host
 journalctl -u maister-supervisor -n 50 | grep execution-host-key-conflict  # MUST be empty — a hit means a MAISTER_EXECUTION_HOST_KEY pin conflicts with the stored identity (unset the pin or wipe the state dir)
 ```
 
 Then open `https://maister.example.com/login` and sign in with the seeded admin.
 
+The MCP check compares the running stdio server's `tools/list` with the release
+schemas. For a split-host deployment, install the same revision on each
+execution host and check its effective facade command. If
+`MAISTER_MCP_FACADE_COMMAND` is set, pass that command and its actual arguments
+after `verify:stdio-contract`. The check needs neither a project token nor a
+running web service.
+
 ## 11. Updates
 
 ```bash
 cd /opt/maister && git pull
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build          # cleans stale Next.js artifacts before rebuilding
+pnpm --filter maister-web build          # rebuilds the internal MCP facade and the web app
 set -a; . /etc/maister/maister.env; set +a
 pnpm --filter maister-web db:migrate
 sudo systemctl restart maister-supervisor maister-web
 ```
+
+Run the MCP contract check from the smoke test before starting new agent runs.
 
 Restart `maister-supervisor` during a quiet window: it drops its in-memory ACP
 session registry, so `Running` runs orphan until startup reconciliation lands
