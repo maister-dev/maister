@@ -66,7 +66,9 @@ type Command = {
 };
 
 it("W06 keeps a parked Flow across web and supervisor death and resumes its single continuation", async () => {
-  const current = await suite.startFixture();
+  const current = await suite.startFixture({
+    webEnvironment: { MAISTER_RECONCILE_GRACE_SECONDS: "1" },
+  });
 
   fixture = current;
   const runId = await current.launchFlow(
@@ -206,6 +208,31 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
     assignment_state: "released",
     epoch: parked.epoch,
   });
+  const { promoteNextPending } = await import("@/lib/scheduler");
+
+  expect(
+    (
+      await promoteNextPending({
+        db: current.database.db,
+        runFlow: () => undefined,
+      })
+    ).promotedRunId,
+  ).toBe(runId);
+  expect(await readWait()).toMatchObject({
+    status: "Running",
+    assignment_state: "active",
+    epoch: parked.epoch + 1,
+  });
+  expect(
+    (
+      await current.database.pool.query(
+        "SELECT id FROM node_attempts WHERE run_id=$1 AND node_id='verify'",
+        [runId],
+      )
+    ).rows,
+  ).toEqual([]);
+  await current.web.kill("SIGKILL");
+  await current.restartWeb();
   expect((await current.requestSweep()).ok).toBe(true);
   const resumed = await poll(
     async () => {
