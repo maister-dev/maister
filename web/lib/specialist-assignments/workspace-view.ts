@@ -2,10 +2,11 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { Owner } from "@/lib/company/types";
+import type { WorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import type { SpecialistAssignment } from "./types";
 import type { AssignmentAction } from "./access";
 
-import { inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { authorizeAssignment } from "./access";
 import {
@@ -19,11 +20,16 @@ import {
 } from "./company-intake";
 
 import { listCompanySpecialists } from "@/lib/agents/company-binding-list";
+import { currentCleanupIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import { authorizeCompanyRunUserActionInTransaction } from "@/lib/agents/company-run-read-access";
 import { authorizeRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { installationCompany } from "@/lib/company/grants";
-import { runs } from "@/lib/db/schema";
+import { domainEvents, runs } from "@/lib/db/schema";
+import {
+  parseTerminalCause,
+  TERMINAL_CAUSE_KIND_FOR_STATUS,
+} from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
 import { authorizePeekRun } from "@/lib/runs/peek-read-model";
 import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
@@ -457,6 +463,7 @@ export type AssignmentRunSummary = Readonly<{
   status: string;
   runKind: string;
   launchedAt: Date | null;
+  companyFlowIntegrityLimits?: readonly WorkspaceIntegrityLimit[];
 }>;
 
 /** Status and kind for runs the caller was already authorized to see. */
@@ -466,16 +473,56 @@ export async function readAssignmentRunSummaries(
 ): Promise<AssignmentRunSummary[]> {
   if (!visibleRunIds.length) return [];
 
-  return db
+  const companyFlow = sql<boolean>`${runs.companyId} IS NOT NULL AND ${runs.runKind} = 'flow'`;
+  const cause = db
+    .select({
+      value: sql<unknown>`${domainEvents.payload}->'cause'`.as(
+        "terminal_cause",
+      ),
+    })
+    .from(domainEvents)
+    .where(
+      and(
+        companyFlow,
+        eq(domainEvents.runId, runs.id),
+        sql`${domainEvents.kind} IN ('run.failed','run.crashed','run.abandoned')`,
+        eq(
+          domainEvents.kind,
+          sql`CASE ${runs.status}
+        WHEN 'Failed' THEN ${TERMINAL_CAUSE_KIND_FOR_STATUS.Failed}
+        WHEN 'Crashed' THEN ${TERMINAL_CAUSE_KIND_FOR_STATUS.Crashed}
+        WHEN 'Abandoned' THEN ${TERMINAL_CAUSE_KIND_FOR_STATUS.Abandoned}
+      END`,
+        ),
+      ),
+    )
+    .orderBy(desc(domainEvents.occurredAt), desc(domainEvents.id))
+    .limit(1)
+    .as("company_flow_cause");
+  const rows = await db
     .select({
       id: runs.id,
       status: runs.status,
       runKind: runs.runKind,
       launchedAt: runs.launchedAt,
+      cleanup: sql<
+        typeof runs.$inferSelect.operationalCleanup
+      >`CASE WHEN ${companyFlow} THEN ${runs.operationalCleanup} END`,
+      terminal: cause.value,
     })
     .from(runs)
+    .leftJoinLateral(cause, sql`true`)
     .where(inArray(runs.id, visibleRunIds))
     .orderBy(sql`${runs.activitySortAt} DESC NULLS LAST`, runs.id);
+
+  return rows.map(({ cleanup, terminal, ...run }) => {
+    const limits = [
+      parseTerminalCause(terminal)?.integrityLimit,
+      currentCleanupIntegrityLimit(cleanup),
+    ].filter((limit) => limit !== undefined);
+
+    return limits.length ? { ...run, companyFlowIntegrityLimits: limits } : run;
+  });
 }
 
 /** Display names for context authors; unknown or removed principals keep their ID. */

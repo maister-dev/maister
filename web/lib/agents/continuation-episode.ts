@@ -270,6 +270,7 @@ export async function claimAgentContinuation(
           ? {
               firstFailureAt: sql`coalesce(${episodes.firstFailureAt}, clock_timestamp())`,
               failure: {
+                ...current.failure,
                 code: current.failure?.code ?? "SPAWN",
                 reason: "agent_continuation_attempts_exhausted",
                 reasons: current.failure
@@ -383,6 +384,11 @@ export async function recordAgentContinuationFailure(
 ): Promise<void> {
   const { failure, definitive } = classifyFailure(error);
   const exhausted = claim.attempts >= MAX_ATTEMPTS;
+  const diagnostic = operationalFailureDiagnostic(error, context);
+  const retained = {
+    ...failure,
+    ...(diagnostic.integrityLimit ? { infrastructureFailure: diagnostic } : {}),
+  };
   await db.transaction(async (tx) => {
     const owner = await lockCurrentSessionAssignment(tx, claim);
     if (owner?.epoch !== claim.assignmentEpoch) return;
@@ -401,11 +407,11 @@ export async function recordAgentContinuationFailure(
         failure:
           exhausted && !definitive
             ? {
-                ...failure,
+                ...retained,
                 reason: "agent_continuation_attempts_exhausted",
                 reasons: [failure.reason, ...failure.reasons],
               }
-            : failure,
+            : retained,
         updatedAt: sql`clock_timestamp()`,
       })
       .where(claimMatches(claim))
@@ -415,7 +421,7 @@ export async function recordAgentContinuationFailure(
       preparation.assertHeld();
       await advanceAgentPreparation(tx, preparation.operation, {
         phase: "failed",
-        failure: operationalFailureDiagnostic(error, context),
+        failure: diagnostic,
       });
     }
     log[definitive || exhausted ? "info" : "debug"](
@@ -424,6 +430,7 @@ export async function recordAgentContinuationFailure(
         assignmentId: claim.assignmentId,
         attempts: claim.attempts,
         reason: failure.reason,
+        integrityLimit: diagnostic.integrityLimit,
         dueAt: changed.dueAt,
       },
       "agent-continuation-failure-recorded",
@@ -554,6 +561,12 @@ export async function recordAgentDispatchIntegrityFailure(
     if (existing?.state === "settlement" || existing?.state === "attention")
       return true;
 
+    const diagnostic = operationalFailureDiagnostic(error, {
+      runId: input.runId,
+      assignmentId: assignment.id,
+      assignmentEpoch: assignment.epoch,
+      stage: "dispatch",
+    });
     const state = {
       state: "settlement" as const,
       assignmentId: assignment.id,
@@ -565,6 +578,9 @@ export async function recordAgentDispatchIntegrityFailure(
       claimExpiresAt: null,
       failure: {
         ...failure,
+        ...(diagnostic.integrityLimit
+          ? { infrastructureFailure: diagnostic }
+          : {}),
         dispatch: {
           assignmentId: assignment.id,
           turnId: turn.id,
@@ -593,7 +609,14 @@ export async function recordAgentDispatchIntegrityFailure(
       });
     }
     log.info(
-      { ...input, assignmentEpoch: assignment.epoch, reason: failure.reason },
+      {
+        runId: input.runId,
+        turnId: turn.id,
+        assignmentId: assignment.id,
+        assignmentEpoch: assignment.epoch,
+        reason: failure.reason,
+        integrityLimit: diagnostic.integrityLimit,
+      },
       "agent-prompt-integrity-refusal-recorded",
     );
 
@@ -719,6 +742,7 @@ export async function settleAgentContinuation(
         ? "agent_prompt_dispatch_failed"
         : "agent_workspace_prepare_failed",
       causeReason: failure.reason,
+      infrastructureFailure: failure.infrastructureFailure,
       continuationFailure: {
         logicalKey: claim.logicalKey,
         claimToken: claim.claimToken,

@@ -16303,11 +16303,19 @@ describe("context disclosure and retained company execution reads", () => {
       .where(eq(runs.id, runId));
     expect(await operationalWorkspace(database.db, retained)).toEqual(context);
     expect(
-      await inspectOperationalWorkspace(database.db, retained),
+      await inspectOperationalWorkspace(
+        database.db,
+        retained,
+        "final_verification",
+      ),
     ).toMatchObject({ verdict: "clean" });
     await writeFile(join(context.cwd, "observations.txt"), "Changed source.");
     expect(
-      await inspectOperationalWorkspace(database.db, retained),
+      await inspectOperationalWorkspace(
+        database.db,
+        retained,
+        "final_verification",
+      ),
     ).toMatchObject({ verdict: "changed" });
     await expect(
       operationalWorkspace(database.db, {

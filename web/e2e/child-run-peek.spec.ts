@@ -60,6 +60,79 @@ function peek(page: Page) {
   return page.getByTestId("run-peek-panel");
 }
 
+test("shows operational integrity guidance when Peek opens and across tabs", async ({
+  page,
+}) => {
+  const runId = randomUUID();
+  const operationalContract = readFileSync(
+    new URL("./_seed/operational-contract.json", import.meta.url),
+    "utf8",
+  );
+  const limit = {
+    reason: "operational_integrity_limit",
+    stage: "baseline",
+    resource: "primary",
+    limitAxis: "bytes",
+    unit: "B",
+    observed: 1048577,
+    maximum: 1048576,
+    observedEntries: 0,
+    observedBytes: 1048577,
+    elapsedMs: 17,
+  };
+
+  try {
+    await withE2EDb((pool) =>
+      pool.query(
+        `INSERT INTO runs (id, project_id, run_kind, agent_kind, status, ended_at, flow_version, flow_revision, parent_run_id, root_run_id, agent_workspace, result_contract, operational_terminal)
+     SELECT $1, project_id, 'agent', 'operational', 'Failed', now(), 'agent', 'peek', id, id, 'none', $3::jsonb, $4::jsonb FROM runs WHERE id=$2`,
+        [
+          runId,
+          fixture.anchor,
+          operationalContract,
+          {
+            version: 1,
+            status: "Failed",
+            cause: "operational_preparation_failed",
+            effectiveOutcome: "failed",
+            successful: false,
+            validation: "unchecked",
+            integrity: "indeterminate",
+            baselineGeneration: null,
+            resultRevision: null,
+            reasonCodes: [limit.reason],
+            evidenceIds: [],
+            infrastructureFailure: {
+              stage: limit.stage,
+              integrityLimit: limit,
+              causeChain: [],
+            },
+          },
+        ],
+      ),
+    );
+    await page.goto(`/runs/${fixture.anchor}?peek=${runId}`);
+    await expect(
+      peek(page).getByRole("tab", { name: "Conversation" }),
+    ).toHaveAttribute("aria-selected", "true");
+    const notice = peek(page).getByTestId("workspace-integrity-refusal");
+
+    await expect(notice).toContainText("against a 1 MiB limit");
+    await expect(
+      notice.getByRole("link", { name: /Open setting.*Total size/ }),
+    ).toHaveAttribute("href", "/settings#workspace-integrity-size");
+    for (const tab of ["Execution", "Public result"]) {
+      await peek(page).getByRole("tab", { name: tab, exact: true }).click();
+      await expect(notice).toHaveCount(1);
+      await expect(notice).toBeVisible();
+    }
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM runs WHERE id=$1", [runId]),
+    );
+  }
+});
+
 async function scrollWithinPeek(
   message: Locator,
   viewportFraction: number,

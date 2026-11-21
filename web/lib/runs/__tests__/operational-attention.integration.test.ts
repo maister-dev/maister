@@ -89,7 +89,19 @@ async function seed(): Promise<string> {
     armedAt: new Date().toISOString(),
     attempts: 5,
     dueAt: null,
-    errorCode: "operational_preservation_failed",
+    errorCode: "operational_integrity_limit",
+    integrityLimit: {
+      reason: "operational_integrity_limit",
+      stage: "evidence_capture",
+      resource: "primary",
+      limitAxis: "bytes",
+      unit: "B",
+      observed: 1048577,
+      maximum: 1048576,
+      observedEntries: 1,
+      observedBytes: 1048577,
+      elapsedMs: 1,
+    },
     evidenceIds: ["opaque-evidence"],
     removedAt: null,
     releasedAt: null,
@@ -165,6 +177,7 @@ describe("operational attention and cleanup mutation contracts", () => {
     });
 
     expect(armed).toMatchObject({ state: "armed", revision: 7, attempts: 0 });
+    expect(armed.integrityLimit).toBeUndefined();
     expect(
       await retryOperationalCleanup(db, {
         runId,

@@ -11,27 +11,34 @@ import type { DomainEventActor } from "@/lib/domain-events/outbox";
 
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 
-/** State and its content-free invalidation commit together; replay emits nothing. */
+/** The durable state event and any held-revision diagnosis commit together. */
 export async function emitTaskLaunchChanged(
   db: Db,
   intent: typeof taskLaunchIntents.$inferSelect,
   actor: DomainEventActor,
   integrityLimit?: WorkspaceIntegrityLimit,
 ): Promise<void> {
+  const limit =
+    intent.state === "held" &&
+    intent.runId &&
+    intent.reason === "launch_agent_integrity_refused"
+      ? integrityLimit
+      : undefined;
+
   await emitDomainEvent({
     db,
     kind: "task.launch_changed",
     projectId: intent.projectId,
     taskId: intent.taskId,
     actor,
-    ...(integrityLimit && intent.runId ? { runId: intent.runId } : {}),
+    ...(limit ? { runId: intent.runId } : {}),
     payload: {
       intentId: intent.id,
       state: intent.state,
       stateVersion: intent.stateVersion,
       basis: intent.basis.kind,
       ...(intent.reason ? { reason: intent.reason } : {}),
-      ...(integrityLimit ? { integrityLimit } : {}),
+      ...(limit ? { integrityLimit: limit } : {}),
     },
   });
 }

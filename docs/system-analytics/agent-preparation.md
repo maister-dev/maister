@@ -278,6 +278,6 @@ and adopted workspace handle before reporting release. For an already-terminal
 Run, look up its exact ID because the discovery query selects Running rows.
 
 
-A preparation limit refusal retains the bounded integrity measurements on the preparation and terminal receipts. **Implemented.** An authorized run reader sees the failed stage, workspace category, axis, threshold and corrective action. A later configuration change does not alter the receipt. Existing run access rules apply to this metadata.
+A preparation limit refusal retains the bounded integrity measurements. **Implemented.** The current preparation or continuation owner records the evidence, including a failure after session creation and before prompt admission. Continuation attention and terminal settlement project that original measurement even if a subsequent verification succeeds under a higher threshold. An authorized run reader sees the failed stage, workspace category, axis, threshold and corrective action. Existing run access rules apply to this metadata.
 
 When reuse of a bound task workspace is refused by a limit, the held launch revision retains the bounded diagnostic in its transaction event. The authorized Run view reads that exact revision. Browser invalidation remains content-free.

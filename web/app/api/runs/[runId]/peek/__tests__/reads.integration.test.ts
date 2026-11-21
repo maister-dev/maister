@@ -227,14 +227,41 @@ describe("authorized descendant projections", () => {
       availability: "ready",
     });
     expect(body.capabilities.canReadTranscript).toBe(true);
+    expect(body.capabilities.canManageWorkspaceIntegrity).toBe(false);
     expect(body.publicResult).toBeNull();
+  });
+
+  it("uses the current global role for workspace integrity guidance in the selected run", async () => {
+    await database.pool.query("UPDATE users SET role='admin' WHERE id=$1", [
+      userId,
+    ]);
+    const response = await requestSnapshot(root, child);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as RunPeekSnapshot;
+
+    expect(body.selectedRunId).toBe(child);
+    expect(body.capabilities.canManageWorkspaceIntegrity).toBe(true);
+    expectContract("RunPeekSnapshot", body);
   });
 
   it("IT-PKD-04: failed snapshots reuse the matching token-only terminal cause without exposing raw event content", async () => {
     const cause = {
-      code: "BUDGET_EXCEEDED",
-      reason: "budget_breach",
-      source: "sweeper",
+      code: "PRECONDITION",
+      reason: "launch_agent_integrity_refused",
+      source: "agent",
+      integrityLimit: {
+        reason: "operational_integrity_limit",
+        stage: "dispatch",
+        resource: "primary",
+        limitAxis: "bytes",
+        unit: "B",
+        observed: 1048577,
+        maximum: 1048576,
+        observedEntries: 0,
+        observedBytes: 1048577,
+        elapsedMs: 2,
+      },
     };
 
     await database.pool.query("UPDATE runs SET status='Failed' WHERE id=$1", [
@@ -278,6 +305,7 @@ describe("authorized descendant projections", () => {
     expect(((await response.json()) as RunPeekSnapshot).capabilities).toEqual({
       canReadTranscript: false,
       canReadEvidence: false,
+      canManageWorkspaceIntegrity: false,
     });
   });
 

@@ -1110,7 +1110,7 @@ describe("operational disposition through existing lifecycle owners", () => {
     expect((await lstat(seeded.context.cwd)).isDirectory()).toBe(true);
   });
 
-  it("WI-05 retains a failed archive limit on the current cleanup attempt and clears it after retry", async () => {
+  it("WI-05 retains the first limit of a failed cleanup attempt and clears it after retry", async () => {
     const seeded = await seed();
     const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
       db,
@@ -1131,7 +1131,7 @@ describe("operational disposition through existing lifecycle owners", () => {
         effectiveOutcome: "success",
         cleanup: { state: "retry", errorCode: "operational_integrity_limit" },
         cleanupIntegrityLimit: {
-          stage: "evidence_capture",
+          stage: "cleanup",
           resource: "primary",
           limitAxis: "bytes",
           maximum: 1048576,
@@ -1140,16 +1140,93 @@ describe("operational disposition through existing lifecycle owners", () => {
       expect((await lstat(source)).size).toBe(1536 * 1024);
 
       await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const verify = operationalContext.inspectOperationalWorkspace;
+
+      vi.spyOn(
+        operationalContext,
+        "inspectOperationalWorkspace",
+      ).mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await release.promise;
+
+        return verify(...args);
+      });
+      const retry = disposeOperationalRun(seeded.runId, {
+        db,
+        hosts: seam.hosts,
+        now: new Date(Date.now() + 360_000),
+      });
+
+      try {
+        await Promise.race([entered.promise, retry]);
+        const preserving = await loadOperationalOutcome(db, seeded.runId);
+
+        expect(preserving?.cleanup?.state).toBe("preserving");
+        expect(preserving?.cleanupIntegrityLimit).toBeUndefined();
+      } finally {
+        release.resolve();
+        await retry;
+      }
+      expect(await retry).toBe("released");
+      const retried = await loadOperationalOutcome(db, seeded.runId);
+
+      expect(retried?.cleanup?.state).toBe("released");
+      expect(retried?.cleanupIntegrityLimit).toBeUndefined();
+    } finally {
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
+  });
+
+  it("retains the original cleanup measurement beside a distinct preservation failure", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+
+    await db.transaction((tx) => prepared.apply(tx));
+    const source = path.join(seeded.context.cwd, "large-source");
+
+    await writeFile(source, Buffer.alloc(1536 * 1024));
+    await seedWorkspaceIntegritySettings(database);
+    const verify = operationalContext.inspectOperationalWorkspace;
+
+    vi.spyOn(
+      operationalContext,
+      "inspectOperationalWorkspace",
+    ).mockImplementationOnce(async (...args) => {
+      const result = await verify(...args);
+
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+
+      return result;
+    });
+
+    try {
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
       expect(
         await disposeOperationalRun(seeded.runId, {
           db,
           hosts: seam.hosts,
-          now: new Date(Date.now() + 360_000),
+          preserve: async () => ({
+            ok: false,
+            failureReason: "workspace_preservation_failed",
+          }),
         }),
-      ).toBe("released");
-      const retried = await loadOperationalOutcome(db, seeded.runId);
-      expect(retried?.cleanup?.state).toBe("released");
-      expect(retried?.cleanupIntegrityLimit).toBeUndefined();
+      ).toBe("deferred");
+      expect(await loadOperationalOutcome(db, seeded.runId)).toMatchObject({
+        effectiveOutcome: "success",
+        cleanup: { state: "retry", errorCode: "workspace_preservation_failed" },
+        cleanupIntegrityLimit: {
+          stage: "cleanup",
+          resource: "primary",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      });
+      expect((await lstat(source)).size).toBe(1536 * 1024);
     } finally {
       await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
     }

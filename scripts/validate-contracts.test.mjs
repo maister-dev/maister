@@ -730,6 +730,8 @@ test("workspace integrity diagnostics preserve exact measurements and historical
   const schemas = surfaces.map((file) => YAML.parse(readFileSync(file, "utf8")).components.schemas);
   for (const name of ["WorkspaceIntegrityLimit", "OperationalPreparationFailure"])
     assert.deepEqual(schemas[0][name], schemas[1][name]);
+  for (const name of ["continuationAttention", "cleanupIntegrityLimit"])
+    assert.deepEqual(schemas[0].OperationalOutcome.properties[name], schemas[1].OperationalOutcome.properties[name]);
 
   const receipt = {
     stage: "baseline",

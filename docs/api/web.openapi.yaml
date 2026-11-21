@@ -26914,11 +26914,15 @@ components:
           required:
             - canReadTranscript
             - canReadEvidence
+            - canManageWorkspaceIntegrity
           properties:
             canReadTranscript:
               type: boolean
             canReadEvidence:
               type: boolean
+            canManageWorkspaceIntegrity:
+              type: boolean
+              description: The authorized viewer currently has the global administrator role.
         workspace:
           type: string
           enum:
@@ -26981,6 +26985,7 @@ components:
         capabilities:
           canReadTranscript: true
           canReadEvidence: true
+          canManageWorkspaceIntegrity: false
         workspace: none
         content:
           kind: conversation
@@ -28752,6 +28757,8 @@ components:
             observation:
               type: string
               pattern: "^[0-9a-f]{32}$"
+            integrityLimit:
+              $ref: "#/components/schemas/WorkspaceIntegrityLimit"
         reportedOutcome:
           type: string
           nullable: true
@@ -28807,7 +28814,10 @@ components:
           items:
             $ref: "#/components/schemas/OperationalValidationDiagnostic"
         integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
-        cleanupIntegrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
+        cleanupIntegrityLimit:
+          description: First workspace limit encountered in the current failed cleanup attempt. The cleanup error code can identify a subsequent preservation failure.
+          allOf:
+            - $ref: "#/components/schemas/WorkspaceIntegrityLimit"
         infrastructureFailure:
           $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:

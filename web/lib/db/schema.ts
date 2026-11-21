@@ -3724,6 +3724,7 @@ export const agentContinuationEpisodes = pgTable(
       code: string;
       reason: string;
       reasons?: string[];
+      infrastructureFailure?: OperationalFailureDiagnostic;
       blockedReason?: string;
       blockedAssignmentId?: string;
       dispatch?: {

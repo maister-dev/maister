@@ -134,7 +134,14 @@ async function settlePreparationFailure(
       .where(eq(taskLaunchIntents.id, current.id))
       .returning();
 
-    await emitTaskLaunchChanged(tx, next, { type: "system", id: null });
+    const integrityLimit = readWorkspaceIntegrityLimit(error);
+
+    await emitTaskLaunchChanged(
+      tx,
+      next,
+      { type: "system", id: null },
+      integrityLimit,
+    );
     log.warn(
       {
         intentId: current.id,
@@ -143,6 +150,7 @@ async function settlePreparationFailure(
         state: next.state,
         attempts,
         reason,
+        integrityLimit,
         causeChain: operationalCauseChain(error),
         ...queryErrorDiagnostics(error),
       },
@@ -198,9 +206,7 @@ async function holdUndispatchedBoundRun(
       tx,
       held,
       { type: "system", id: null },
-      reason === "launch_agent_integrity_refused"
-        ? readWorkspaceIntegrityLimit(error)
-        : undefined,
+      readWorkspaceIntegrityLimit(error),
     );
   });
 }

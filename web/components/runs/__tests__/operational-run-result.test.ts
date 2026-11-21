@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import { TaskQualificationSourceFailureNotice } from "@/components/agents/task-qualification-source-failure-notice";
+import { operationalSuccessFixture } from "@/test-support/operational-agent";
 import en from "@/messages/en.json";
 import ru from "@/messages/ru.json";
 
@@ -220,6 +221,8 @@ it.each([
 ] as const)(
   "WI-06 identifies $axis and renders the authorized corrective action",
   ({ axis, unit, anchor, stage, resource }) => {
+    const reported =
+      stage === "final_verification" ? operationalSuccessFixture() : null;
     const limit = {
       reason: "operational_integrity_limit",
       limitAxis: axis,
@@ -232,11 +235,14 @@ it.each([
       observedEntries: 4,
       observedBytes: 1048577,
     } as const;
-    const render = (isGlobalAdmin: boolean): string =>
+    const render = (
+      isGlobalAdmin: boolean,
+      locale: "en" | "ru" = "en",
+    ): string =>
       renderToStaticMarkup(
         createElement(NextIntlClientProvider, {
-          locale: "en",
-          messages: en,
+          locale,
+          messages: locale === "ru" ? ru : en,
           timeZone: "UTC",
           // eslint-disable-next-line react-jsx/no-children-prop -- Non-JSX render.
           children: createElement(OperationalRunResult, {
@@ -245,6 +251,14 @@ it.each([
             isGlobalAdmin,
             outcome: {
               ...invalid,
+              ...(reported
+                ? {
+                    reportedResult: reported,
+                    reportedOutcome: reported.outcome,
+                    validation: "valid",
+                    integrity: "indeterminate",
+                  }
+                : {}),
               ...(stage === "cleanup"
                 ? { cleanupIntegrityLimit: limit }
                 : { integrityLimit: limit }),
@@ -260,6 +274,10 @@ it.each([
       expect(html).toContain(en.workspaceIntegrity.resources[resource]);
       expect(html).toContain(en.workspaceIntegrity.remediation[axis]);
       expect(html).toContain("operational_integrity_limit");
+      if (reported) {
+        expect(html).toContain(reported.summary);
+        expect(html).toContain(en.workspaceIntegrity.indeterminate);
+      }
     }
     if (anchor) {
       expect(admin).toContain(`href="/settings#${anchor}"`);
@@ -270,5 +288,12 @@ it.each([
       expect(member).not.toContain("Ask a global administrator");
     }
     expect(member).not.toContain("/settings#workspace-integrity");
+    if (reported) {
+      const localized = render(false, "ru");
+
+      expect(localized).toContain(reported.summary);
+      expect(localized).toContain(ru.workspaceIntegrity.indeterminate);
+      expect(localized).toContain("failed-run-66");
+    }
   },
 );

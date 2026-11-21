@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { SafeErrorCause } from "../../../runtime/safe-error-cause";
+import type { OperationalCleanup } from "@/lib/run-results/operational-types";
 
 import { safeErrorCauseChain as operationalCauseChain } from "../../../runtime/safe-error-cause";
 
@@ -62,6 +63,23 @@ export function parseWorkspaceIntegrityLimit(
   const result = workspaceIntegrityLimitSchema.safeParse(value);
 
   return result.success ? result.data : undefined;
+}
+
+export function currentCleanupIntegrityLimit(
+  cleanup: OperationalCleanup | null,
+): WorkspaceIntegrityLimit | undefined {
+  if (
+    !cleanup ||
+    !cleanup.errorCode ||
+    (cleanup.state !== "retry" && cleanup.state !== "exhausted")
+  )
+    return undefined;
+
+  const limit = parseWorkspaceIntegrityLimit(cleanup.integrityLimit);
+
+  return limit?.stage === "cleanup" || limit?.stage === "evidence_capture"
+    ? limit
+    : undefined;
 }
 
 export type OperationalFailureDiagnostic = OperationalProbeContext &

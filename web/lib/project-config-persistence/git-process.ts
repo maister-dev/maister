@@ -4,9 +4,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
+import pino from "pino";
+
 import { MaisterError } from "@/lib/errors";
 
 const execute = promisify(execFile);
+const log = pino({
+  name: "git-process",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+const GIT_RETIREMENT_GRACE_MS = 500;
 const ownership = new AsyncLocalStorage<
   ((processGroup: number) => Promise<void>) | undefined
 >();
@@ -176,23 +183,53 @@ async function executeRepositoryGitBytes(
 
   if (!register) {
     const timeout = AbortSignal.timeout(options.timeout);
+    const execution = execute("git", ["-C", repo, ...args], {
+      env: options.env,
+      maxBuffer: options.maxBuffer,
+      signal: timeout,
+      encoding: "buffer",
+    });
+    const child = execution.child;
+    const retired = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+
     try {
-      return await execute("git", ["-C", repo, ...args], {
-        env: options.env,
-        maxBuffer: options.maxBuffer,
-        signal: timeout,
-        encoding: "buffer",
-      });
+      return await execution;
     } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code === "ABORT_ERR" &&
-        timeout.aborted
-      )
-        throw new GitExecutionTimeout(
-          "Git execution exceeded its bounded window",
-          { cause: error },
-        );
-      throw error;
+      const failure = error as GitBufferFailure;
+
+      if (failure.code !== "ABORT_ERR" || !timeout.aborted) throw error;
+
+      // execFile reports AbortError when it sends SIGTERM. Callers can release
+      // a workbench claim after rejection, so wait for the child itself.
+      const escalation = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          log.warn(
+            { pid: child.pid, timeoutMs: options.timeout },
+            "[FIX:git-timeout] Git child still active after SIGTERM",
+          );
+          child.kill("SIGKILL");
+        }
+      }, GIT_RETIREMENT_GRACE_MS);
+
+      try {
+        await retired;
+      } finally {
+        clearTimeout(escalation);
+      }
+      throw Object.assign(
+        new GitExecutionTimeout("Git execution exceeded its bounded window", {
+          cause: error,
+        }),
+        {
+          code: failure.code,
+          killed: child.killed,
+          signal: child.signalCode ?? failure.signal,
+          stdout: failure.stdout,
+          stderr: failure.stderr,
+        },
+      );
     }
   }
 

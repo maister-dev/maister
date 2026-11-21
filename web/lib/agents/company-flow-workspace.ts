@@ -49,12 +49,14 @@ export async function prepareCompanyFlowWorkspace(
   const cwd = companyAgentWorkdirPath(run.companyId, runId);
 
   if (run.operationalIntegrityBaseline) {
-    const integrity = await inspectOperationalWorkspace(db, run);
+    const integrity = await inspectOperationalWorkspace(db, run, "dispatch");
 
     if (integrity.verdict !== "clean")
       throw new MaisterError(
         "PRECONDITION",
-        "Company graph source changed before continuation; inspect its retained evidence before recovery",
+        integrity.verdict === "changed"
+          ? "Company graph source changed before continuation; inspect its retained evidence before recovery"
+          : "Company graph source integrity could not be verified before continuation",
         {
           details: {
             reason: "company_flow_integrity_refused",

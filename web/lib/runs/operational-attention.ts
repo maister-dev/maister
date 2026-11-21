@@ -368,6 +368,7 @@ export async function retryOperationalCleanup(
       attempts: 0,
       dueAt: new Date().toISOString(),
       errorCode: null,
+      integrityLimit: undefined,
       lease: null,
       rearmReceipt: { expectedRevision: args.expectedRevision, revision },
     };

@@ -6,7 +6,7 @@ import type { PromptResult } from "@/lib/supervisor-client";
 import type { RunResultContract } from "@/lib/run-results/types";
 
 import { randomUUID } from "node:crypto";
-import { stat, writeFile } from "node:fs/promises";
+import { rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -101,6 +101,8 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 import { mkdtempReal } from "@/test-support/worktree-test-root";
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
+import { seedWorkspaceIntegritySettings } from "@/test-support/workspace-integrity-settings";
 
 let database: StartedPostgresTestDb;
 let db: Db;
@@ -1579,6 +1581,60 @@ it("settles source refusal after create without admitting a prompt or preparing 
   ).not.toContainEqual({ kind: "session.prompt" });
 }, 30_000);
 
+it("retains a post-create dispatch limit after reset and clean settlement verification", async () => {
+  const { runId, resumed } = await seedUndispatchedOperationalResume(
+    "repo_read",
+    false,
+    async (id) => {
+      const [run] = await db.select().from(runs).where(eq(runs.id, id));
+      const { repoPath } = await operationalWorkspace(db, run);
+
+      if (!repoPath)
+        throw new Error("Expected the fixture to own a project repository");
+      await writeFile(
+        join(repoPath, "large-source"),
+        Buffer.alloc(1536 * 1024),
+      );
+      await git(repoPath, "add", "large-source");
+      await git(repoPath, "commit", "-m", "Add large tracked source");
+    },
+  );
+
+  await seedWorkspaceIntegritySettings(database);
+  const remove = fake.onCall("createSession", async () => {
+    await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+  });
+
+  try {
+    await startAgentSession(runId, { db, executionHosts: hosts });
+  } finally {
+    remove();
+    await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+  }
+  expect(await recoverAgentContinuationSettlement(db, hosts, runId)).toBe(true);
+  expect(await loadOperationalOutcome(db, runId)).toMatchObject({
+    state: "terminal",
+    integrity: "clean",
+    infrastructureFailure: {
+      stage: "dispatch",
+      integrityLimit: {
+        stage: "dispatch",
+        resource: "primary",
+        limitAxis: "bytes",
+        unit: "B",
+        observed: expect.any(Number),
+        maximum: 1048576,
+      },
+    },
+  });
+  expect(
+    await db
+      .select({ kind: executionCommands.kind })
+      .from(executionCommands)
+      .where(eq(executionCommands.executionAssignmentId, resumed.successor.id)),
+  ).not.toContainEqual({ kind: "session.prompt" });
+}, 30_000);
+
 it("reconciles a retired predecessor using its retained canonical checkpoint", async () => {
   const { runId, command, resumed } =
     await seedUndispatchedOperationalResume("repo_read");
@@ -1695,8 +1751,17 @@ it("an authorized recheck retries only settlement after host inventory recovers"
   const [run] = await db.select().from(runs).where(eq(runs.id, runId));
   const cwd = run.operationalIntegrityBaseline?.owner?.cwd;
   if (!cwd) throw new Error("expected checkout");
-  await writeFile(join(cwd, "changed"), "changed");
-  await startAgentSession(runId, { db, executionHosts: hosts });
+  const source = join(cwd, "large-source");
+
+  await seedWorkspaceIntegritySettings(database);
+  await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+  try {
+    await writeFile(source, Buffer.alloc(1048577));
+    await startAgentSession(runId, { db, executionHosts: hosts });
+  } finally {
+    await rm(source, { force: true });
+    await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+  }
   for (let attempt = 1; attempt <= 5; attempt++) {
     fake.failOnce(
       "listSessionsForRun",
@@ -1722,6 +1787,7 @@ it("an authorized recheck retries only settlement after host inventory recovers"
     assignmentEpoch: resumed.successor.epoch,
     reason: "operational_integrity_refused",
     blockedReason: "session_process_owner_unconfirmed",
+    integrityLimit: { stage: "dispatch", limitAxis: "bytes", maximum: 1048576 },
   });
   if (!attention) throw new Error("expected visible continuation attention");
   const recheck = (observation: string) =>

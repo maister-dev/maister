@@ -11216,6 +11216,8 @@ components:
             observation:
               type: string
               pattern: "^[0-9a-f]{32}$"
+            integrityLimit:
+              $ref: "#/components/schemas/WorkspaceIntegrityLimit"
         reportedOutcome:
           type: string
           nullable: true
@@ -11270,7 +11272,10 @@ components:
           items:
             $ref: "#/components/schemas/OperationalValidationDiagnostic"
         integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
-        cleanupIntegrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
+        cleanupIntegrityLimit:
+          description: First workspace limit encountered in the current failed cleanup attempt. The cleanup error code can identify a subsequent preservation failure.
+          allOf:
+            - $ref: "#/components/schemas/WorkspaceIntegrityLimit"
         infrastructureFailure:
           $ref: "#/components/schemas/OperationalPreparationFailure"
         referenceLinks:

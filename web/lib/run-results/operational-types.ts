@@ -196,6 +196,7 @@ export type OperationalOutcome = {
     reason: string;
     blockedReason: string;
     observation: string;
+    integrityLimit?: WorkspaceIntegrityLimit;
   };
   integrity: "pending" | OperationalIntegrityVerdict;
   integrityLimit?: WorkspaceIntegrityLimit;

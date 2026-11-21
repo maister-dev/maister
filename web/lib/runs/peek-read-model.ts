@@ -15,6 +15,7 @@ import { eq, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 
 import {
+  hasActiveGlobalRole,
   projectRolesForActions,
   requireActiveUserById,
   requireProjectRoleForUser,
@@ -546,6 +547,7 @@ export async function readRunPeekSnapshot(
     capabilities: {
       canReadTranscript: access.canReadTranscript,
       canReadEvidence: access.canReadTranscript,
+      canManageWorkspaceIntegrity: hasActiveGlobalRole(access.user, "admin"),
     },
     workspace,
     content,

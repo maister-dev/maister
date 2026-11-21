@@ -811,7 +811,7 @@ describe("operational source integrity", () => {
   it("WI-04 keeps the captured settings until the next scan", async () => {
     const fixture = join(root, "in-flight");
     await mkdir(fixture);
-    const first = join(fixture, "first");
+    const first = join(await realpath(fixture), "first");
     await writeFile(first, Buffer.alloc(1024));
     await writeFile(join(fixture, "second"), Buffer.alloc(1536 * 1024));
     const entered = Promise.withResolvers<void>();
@@ -825,7 +825,13 @@ describe("operational source integrity", () => {
     try {
       await updateIntegritySettings(db, { maxSizeMiB: 2 }, "test");
       const scan = captureOperationalBaseline(db, fixture, "plain_directory");
-      await Promise.race([entered.promise, scan]);
+
+      expect(
+        await Promise.race([
+          entered.promise.then(() => "paused"),
+          scan.then(() => "finished"),
+        ]),
+      ).toBe("paused");
       await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
       release.resolve();
       const baseline = await scan;
@@ -856,6 +862,41 @@ describe("operational source integrity", () => {
           maximum: 1048576,
         },
       });
+      const lowCapEntered = Promise.withResolvers<void>();
+      const lowCapRelease = Promise.withResolvers<void>();
+
+      probeFault.beforeOpen = async (file) => {
+        if (file !== first) return;
+        lowCapEntered.resolve();
+        await lowCapRelease.promise;
+      };
+      const lowCapScan = verifyOperationalIntegrity(db, fixture, {
+        ...baseline,
+        generation: 1,
+      });
+
+      try {
+        expect(
+          await Promise.race([
+            lowCapEntered.promise.then(() => "paused"),
+            lowCapScan.then(() => "finished"),
+          ]),
+        ).toBe("paused");
+        await updateIntegritySettings(db, { maxSizeMiB: 2 }, "test");
+      } finally {
+        lowCapRelease.resolve();
+        await lowCapScan;
+      }
+      expect(await lowCapScan).toMatchObject({
+        verdict: "indeterminate",
+        integrityLimit: { limitAxis: "bytes", maximum: 1048576 },
+      });
+      expect(
+        await verifyOperationalIntegrity(db, fixture, {
+          ...baseline,
+          generation: 1,
+        }),
+      ).toMatchObject({ verdict: "clean" });
     } finally {
       release.resolve();
       await updateIntegritySettings(db, { maxSizeMiB: null }, "test");

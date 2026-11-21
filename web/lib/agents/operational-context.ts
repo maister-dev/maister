@@ -326,7 +326,7 @@ export async function inspectOperationalWorkspace(
     | "operationalIntegrityBaseline"
   > &
     Partial<Pick<Run, "companyId" | "companyExecutionSnapshot" | "runKind">>,
-  stage: "dispatch" | "final_verification" | "cleanup" = "final_verification",
+  stage: "dispatch" | "final_verification" | "cleanup",
 ): Promise<OperationalIntegrityResult> {
   frozenOperationalDefinition(run);
   const context = await operationalWorkspace(db, run);
@@ -341,8 +341,10 @@ export async function inspectOperationalWorkspace(
   log.info(
     {
       runId: run.id,
+      stage,
       verdict: result.verdict,
       reasons: result.reasonCodes,
+      integrityLimit: result.integrityLimit,
       changedPathCount: result.changedPaths.length,
       generation: run.operationalIntegrityBaseline?.generation ?? null,
     },
