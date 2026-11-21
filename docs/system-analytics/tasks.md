@@ -728,7 +728,7 @@ agent-origin answer; answering never edits the statement or launches work.
 Task detail lists open, answered and cancelled requests — see
 [task-clarifications.md](task-clarifications.md).
 
-## Task completion after autonomous delivery (Designed)
+## Task completion after autonomous delivery (Implemented)
 
 Task ownership still follows ADR-207. System finalization changes the run after verifying the pinned source and merge commit. Task completion additionally requires the newest eligible run and task resolution grant. Both event orderings converge.
 

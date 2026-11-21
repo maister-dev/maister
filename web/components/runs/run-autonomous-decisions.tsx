@@ -1,14 +1,18 @@
 import { getLocale, getTranslations } from "next-intl/server";
 
+import { ReportAutonomousReversal } from "./report-autonomous-reversal";
+
 import { getDb } from "@/lib/db/client";
 import { getRecentAutonomousDecisions } from "@/lib/queries/autonomous-completion";
 
 export async function RunAutonomousDecisions({
   runId,
   projectId,
+  canAct,
 }: {
   runId: string;
   projectId: string;
+  canAct: boolean;
 }) {
   const decisions = await getRecentAutonomousDecisions(
     getDb(),
@@ -46,6 +50,17 @@ export async function RunAutonomousDecisions({
             <time className="text-mute" dateTime={decision.at.toISOString()}>
               {format.format(decision.at)}
             </time>
+            {decision.verifiedReversals > 0 ? (
+              <span>
+                {t("reversal.recorded", { count: decision.verifiedReversals })}
+              </span>
+            ) : null}
+            {canAct && decision.canReportReversal ? (
+              <ReportAutonomousReversal
+                decisionId={decision.id}
+                runId={runId}
+              />
+            ) : null}
           </li>
         ))}
       </ul>

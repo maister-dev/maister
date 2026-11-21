@@ -23,6 +23,15 @@
     }
   },
   "runAutonomy": {
+    "reversal": {
+      "report": "Report a reversal",
+      "commit": "Revert commit SHA",
+      "verify": "Verify reversal",
+      "pending": "Checking the merged revert…",
+      "verified": "Reversal verified.",
+      "failed": "Could not verify this revert. Check the commit and try again.",
+      "recorded": "Verified reversals: {count}"
+    },
     "title": "Engine decisions",
     "action": {
       "promote": "Promotion",

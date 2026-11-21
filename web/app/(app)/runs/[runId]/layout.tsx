@@ -1692,6 +1692,7 @@ export default async function RunDetailLayout({
             ) : null}
             {detail.projectId ? (
               <RunAutonomousDecisions
+                canAct={canAct}
                 projectId={detail.projectId}
                 runId={detail.runId}
               />

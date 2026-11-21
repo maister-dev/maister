@@ -1534,7 +1534,7 @@ wake. The final idle handoff claims capacity under the scheduler lock, changes
 only to `NeedsInput`, and invokes `runFlow()`; at the cap it stays
 `NeedsInputIdle` with `resume_requested_at`. It must not call ACP permission
 resume or depend on supervisor availability.
-## Flow condition waits and autonomous completion (Designed)
+## Flow condition waits and autonomous completion (Implemented)
 
 Waiting owns a retained workspace but no executor slot. Resolution enters Pending with the original host, a new queue timestamp and an exact continuation. Admission increments the assignment epoch and retains the original run start. Stop enters Review and invalidates the wake. Abandon closes the wait or queued wake.
 

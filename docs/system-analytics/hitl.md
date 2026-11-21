@@ -1594,7 +1594,7 @@ sequenceDiagram
   CONFLICT`.
 - `approve` never needs preview fingerprints and retains current semantics.
 
-### Condition wait operators (Designed)
+### Condition wait operators (Implemented)
 
 The session-only operateWait grant authorizes delivery, resolution, extension and cancellation. In a timeout-to-human handoff the actual HITL request owns the Decisions item once it exists. A routine wait carries no Decisions item.
 

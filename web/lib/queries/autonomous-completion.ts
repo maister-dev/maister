@@ -4,7 +4,11 @@ import type { Db } from "@/lib/execution-host/db";
 
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
+import { normalizePublicationOrigin } from "../../../runtime/workspace-publication";
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
+
 import {
+  projects,
   runAutonomousDecisions,
   runAutonomousReversals,
   runs,
@@ -63,15 +67,26 @@ export async function getRecentAutonomousDecisions(
   runId: string,
   projectId: string,
 ) {
-  return db
+  const decisions = await db
     .select({
       id: runAutonomousDecisions.id,
       action: runAutonomousDecisions.action,
       phase: runAutonomousDecisions.phase,
       reason: runAutonomousDecisions.reason,
       at: runAutonomousDecisions.createdAt,
+      deliveredCommit: sql<
+        string | null
+      >`${runAutonomousDecisions.witness}->>'deliveredCommit'`,
+      repoUrl: projects.repoUrl,
+      archivedAt: projects.archivedAt,
+      verifiedReversals:
+        sql<number>`(SELECT count(*) FROM ${runAutonomousReversals}
+        WHERE ${runAutonomousReversals.decisionId} = ${runAutonomousDecisions.id})`.mapWith(
+          Number,
+        ),
     })
     .from(runAutonomousDecisions)
+    .innerJoin(projects, eq(projects.id, runAutonomousDecisions.projectId))
     .where(
       and(
         eq(runAutonomousDecisions.runId, runId),
@@ -83,6 +98,21 @@ export async function getRecentAutonomousDecisions(
       desc(runAutonomousDecisions.id),
     )
     .limit(5);
+
+  return decisions.map(
+    ({ deliveredCommit, repoUrl, archivedAt, ...decision }) => ({
+      ...decision,
+      canReportReversal:
+        decision.phase === "observed" &&
+        decision.action !== "fail" &&
+        !archivedAt &&
+        !!repoUrl &&
+        normalizePublicationOrigin(repoUrl)?.startsWith("github.com/") ===
+          true &&
+        deliveredCommit !== null &&
+        GIT_OBJECT_ID.test(deliveredCommit),
+    }),
+  );
 }
 
 export async function getCurrentReviewRefusals(
