@@ -176,6 +176,7 @@ type ProductionFaultOptions = {
   fixture?: string;
   fixtureArgs?: string[];
   fixtureEnv?: Record<string, string>;
+  webEnvironment?: Record<string, string>;
 };
 
 export type ProductionFaultSuite = {
@@ -283,7 +284,7 @@ async function startProductionFaultFixture(
       supervisorUrl: proxy.url,
       runtimeRoot: path.join(root, "web"),
       worktreesRoot,
-      env: { MAISTER_CRON_TOKEN: cronToken },
+      env: { ...options.webEnvironment, MAISTER_CRON_TOKEN: cronToken },
     });
     const cookie = await signInWithCredentials(web.url, WORKER_ADMIN);
     const api = (route: string, init: RequestInit = {}): Promise<Response> =>
