@@ -4,7 +4,7 @@ import type { SqlDatabase, SqlTransaction } from "@/lib/db/sql-types";
 import type { RunStatusValue } from "@/lib/runs/run-status-sets";
 import type { SpecialistAssignmentStatus } from "./types";
 
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
@@ -124,13 +124,13 @@ async function retainReceipt(
   tx: SqlTransaction,
   key: ControlKey & Readonly<{ reason: string | null }>,
   receipt: AssignmentControlReceipt,
-  nextAttemptAt: Date | null = null,
+  nextAttemptAt: SQL = sql`NULL`,
 ): Promise<void> {
   await tx.execute(sql`
     INSERT INTO specialist_assignment_control_receipts
       (assignment_id,actor_user_id,action,idempotency_key,request_sha256,revision,status,reason,next_attempt_at)
     VALUES (${key.assignmentId},${key.userId},${key.action},${key.idempotencyKey},
-      ${key.digest},${receipt.revision},${receipt.status},${key.reason},${nextAttemptAt?.toISOString() ?? null}::timestamptz)
+      ${key.digest},${receipt.revision},${receipt.status},${key.reason},${nextAttemptAt}::timestamptz)
   `);
 }
 
@@ -465,7 +465,7 @@ export async function cancelAssignmentExecution(
         duplicate: false,
       };
 
-      await retainReceipt(tx, key, receipt, new Date());
+      await retainReceipt(tx, key, receipt, sql`clock_timestamp()`);
 
       return { receipt, settled: false };
     });
