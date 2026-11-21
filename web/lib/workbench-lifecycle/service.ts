@@ -57,6 +57,7 @@ import {
 } from "@/lib/execution-host";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { queuedConditionResumeExists } from "@/lib/waits/close";
 import { closeOpenScratchPermissions } from "@/lib/scratch-runs/open-permissions";
 import {
   branchNameSchema,
@@ -257,6 +258,7 @@ export type WorkbenchLifecycleDeps = {
     runId: string;
     endedAt: Date;
     reason: string;
+    expectedRunStatus?: "Pending";
   }) => Promise<void>;
   promoteNextPending: () => Promise<void>;
   finalizeAgentRun: (args: {
@@ -1880,12 +1882,20 @@ async function stopFlowAfterAuth(
 
   await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
-  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
+  // A queued condition wait has no live session. If admission wins, leave
+  // its successor alone and let the exact Pending CAS report the conflict.
+  const supervisorStopped =
+    ctx.run.status === "Pending"
+      ? false
+      : await stopLiveSupervisorSession(ctx, deps);
 
   await deps.markStoppedAndCloseAssignments({
     runId,
     endedAt: new Date(),
     reason: "run stopped by operator",
+    ...(ctx.run.status === "Pending"
+      ? { expectedRunStatus: ctx.run.status }
+      : {}),
   });
 
   try {
@@ -2613,6 +2623,7 @@ async function markRunStoppedAndCloseAssignments(args: {
   runId: string;
   endedAt: Date;
   reason: string;
+  expectedRunStatus?: "Pending";
 }): Promise<void> {
   await db().transaction(async (tx) => {
     const rows = await tx
@@ -2625,7 +2636,18 @@ async function markRunStoppedAndCloseAssignments(args: {
         // the auto-promotion grace window.
         reviewEnteredAt: args.endedAt,
       })
-      .where(and(eq(runs.id, args.runId), inArray(runs.status, STOP_STATUSES)))
+      .where(
+        and(
+          eq(runs.id, args.runId),
+          args.expectedRunStatus === "Pending"
+            ? and(
+                eq(runs.status, args.expectedRunStatus),
+                eq(runs.runKind, "flow"),
+                queuedConditionResumeExists(runs.id),
+              )
+            : inArray(runs.status, STOP_STATUSES),
+        ),
+      )
       .returning({
         id: runs.id,
         projectId: runs.projectId,

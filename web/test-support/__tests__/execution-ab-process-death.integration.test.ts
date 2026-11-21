@@ -75,41 +75,40 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
   });
 
   fixture = current;
-  const runId = await current.launchFlow(
-    flowYamlV1Schema.parse({
-      schemaVersion: 1,
-      name: "Durable wait fault fixture",
-      compat: { engine_min: "3.13.0" },
-      defaults: { session_policy: "resume" },
-      nodes: [
-        {
-          type: "ai_coding",
-          id: "prepare",
-          action: {
-            prompt: fixturePrompt({ terminalDelayMs: 0, text: "prepared" }),
-          },
-          transitions: { success: "await_signal" },
+  const manifest = flowYamlV1Schema.parse({
+    schemaVersion: 1,
+    name: "Durable wait fault fixture",
+    compat: { engine_min: "3.13.0" },
+    defaults: { session_policy: "resume" },
+    nodes: [
+      {
+        type: "ai_coding",
+        id: "prepare",
+        action: {
+          prompt: fixturePrompt({ terminalDelayMs: 0, text: "prepared" }),
         },
-        {
-          type: "wait",
-          id: "await_signal",
-          timeout: 600,
-          on: { kind: "signal", name: "build", outcomes: ["success"] },
-          transitions: {
-            success: "verify",
-            timeout: "done",
-            cancelled: "done",
-          },
+        transitions: { success: "await_signal" },
+      },
+      {
+        type: "wait",
+        id: "await_signal",
+        timeout: 600,
+        on: { kind: "signal", name: "build", outcomes: ["success"] },
+        transitions: {
+          success: "verify",
+          timeout: "done",
+          cancelled: "done",
         },
-        {
-          type: "cli",
-          id: "verify",
-          action: { command: "true" },
-          transitions: { success: "done" },
-        },
-      ],
-    }),
-  );
+      },
+      {
+        type: "cli",
+        id: "verify",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
+  });
+  const runId = await current.launchFlow(manifest);
   const readWait = async () =>
     (
       await current.database.pool.query<{
@@ -202,9 +201,9 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
     "INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes) VALUES (gen_random_uuid()::text,$1,'restart CI fixture',$2,$3,$4)",
     [current.projectId, prefix, hash, JSON.stringify(["waits:signal"])],
   );
-  const signal = () =>
+  const signal = (targetRunId: string, targetWaitId: string) =>
     fetch(
-      `${current.web.url}/api/v1/ext/runs/${runId}/waits/${parked.wait_id}/signal`,
+      `${current.web.url}/api/v1/ext/runs/${targetRunId}/waits/${targetWaitId}/signal`,
       {
         method: "POST",
         headers: {
@@ -215,7 +214,7 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
         body: JSON.stringify({ name: "build", outcome: "success" }),
       },
     );
-  const response = await signal();
+  const response = await signal(runId, parked.wait_id);
 
   expect(response.status, await response.clone().text()).toBe(202);
   const receipt = await response.json();
@@ -234,7 +233,7 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
   await current.restartWeb();
   expect(await readDelivery()).toEqual([delivery]);
   expect(await readWait()).toEqual(extended);
-  const replay = await signal();
+  const replay = await signal(runId, parked.wait_id);
 
   expect(replay.status, await replay.clone().text()).toBe(200);
   expect(await replay.json()).toEqual({
@@ -322,6 +321,65 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
       )
     ).rows,
   ).toEqual([{ action: "extend", reason: "Verified after restart" }]);
+
+  const cancelledRunId = await current.launchFlow(manifest);
+  const readStoppedWait = async () =>
+    (
+      await current.database.pool.query<{
+        id: string;
+        status: string;
+        resume_state: string | null;
+      }>(
+        `SELECT w.id,r.status,w.resume_state FROM run_waits w
+         JOIN runs r ON r.id=w.run_id WHERE r.id=$1`,
+        [cancelledRunId],
+      )
+    ).rows[0];
+  const waiting = await poll(
+    async () => {
+      const state = await readStoppedWait();
+
+      return state?.status === "Waiting" ? state : null;
+    },
+    45_000,
+    "second run to park before the operator stop",
+  );
+
+  expect((await signal(cancelledRunId, waiting.id)).status).toBe(202);
+  await current.database.pool.query(
+    "UPDATE scheduler_jobs SET next_run_at=clock_timestamp()-interval '1 second' WHERE job_kind='domain_event_dispatch'",
+  );
+  expect(await (await current.dispatchDomainEvents()).json()).toMatchObject({
+    failedCount: 0,
+    succeededCount: 1,
+  });
+  expect(await readStoppedWait()).toMatchObject({
+    status: "Pending",
+    resume_state: "queued",
+  });
+  const stopped = await current.api(`/api/runs/${cancelledRunId}/stop`, {
+    method: "POST",
+    headers: { origin: current.web.url },
+  });
+
+  expect(stopped.status, await stopped.clone().text()).toBe(200);
+  expect(await stopped.json()).toMatchObject({
+    runStatus: "Review",
+    supervisorStopped: false,
+  });
+  expect((await current.requestSweep()).ok).toBe(true);
+  expect(await readStoppedWait()).toMatchObject({
+    status: "Review",
+    resume_state: "invalidated",
+  });
+  expect(
+    (
+      await current.database.pool.query(
+        "SELECT id FROM node_attempts WHERE run_id=$1 AND node_id='verify'",
+        [cancelledRunId],
+      )
+    ).rows,
+  ).toEqual([]);
 }, 240_000);
 async function commands(runId: string, kind: string): Promise<Command[]> {
   return (
