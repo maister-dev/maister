@@ -7,9 +7,10 @@ MAIster records each execution attempt as a Run. The active-workspaces rail
 shows current work; the Run ledger also keeps finished, failed, scheduled, and
 scratch attempts.
 
-Each rail row names why the Run needs attention: it is executing, needs input,
-is being edited, waits on child Runs, awaits review, or failed or crashed as the
-latest attempt of an open task. Finished and abandoned Runs, failed or crashed
+Each rail row shows what the Run is doing or where it needs help. It may be
+executing, waiting for a condition or child Runs, awaiting input or review,
+or being edited. It may also be the latest failed or crashed attempt of an
+open task. Finished and abandoned Runs, failed or crashed
 attempts replaced by a newer one, and failed or crashed attempts of a closed
 task leave the rail. They stay in the ledger, the task's Run history, and the
 project's **Runs and working copies** list.
@@ -28,8 +29,8 @@ time zone. Flow and platform-agent rows open `/runs/{runId}`. Scratch rows open
 `/scratch-runs/{runId}`.
 
 **Duration** is the wall clock from start to end. **Execution** counts only the
-time agents and automated steps were working: queueing, human input, and idle
-checkpoints are excluded, and parallel branches are not counted twice. The
+time agents and automated steps were working. It excludes queueing, condition
+waits, human input, and idle checkpoints and counts parallel time once. The
 button beside Execution opens the breakdown. A value marked `≈` was still open
 when the Run ended; `—` means no execution evidence was recorded.
 
@@ -52,6 +53,10 @@ The graph shows the route taken through the Flow. Select a node to inspect its
 attempts, resolved prompt, structured result, output artifacts, gates, and
 transition. Rework may create several attempts for one node; MAIster keeps the
 older attempts and marks superseded results as stale.
+
+While a Run is `Waiting`, its wait node shows the condition and deadline.
+The Run keeps its worktree and frees its execution slot. Open the wait card
+to inspect deliveries and available [operator actions](/guides/flow-waits-and-ci#operate-a-wait).
 
 ![Selected node and its execution state](/assets/screens/en/run-nodes.png)
 

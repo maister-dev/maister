@@ -382,8 +382,8 @@ const CONTENT = {
         {
           number: "02",
           title: "Evidence-gated readiness",
-          body: "A Flow can bring up an isolated application stack and its dependencies, run integration and E2E suites, and keep reports and logs as required evidence. Together with AI judgments, external checks, and human review, that evidence blocks or clears promotion.",
-          meta: "system bring-up · E2E · promotion gate",
+          body: "Run integration and E2E checks inside a Flow, then publish a branch and wait for CI on that commit without holding an execution slot. With project approval, MAIster can finish delivery once the required evidence and review pass.",
+          meta: "in-run checks · CI waits · verified delivery",
         },
         {
           number: "03",
@@ -852,8 +852,8 @@ const CONTENT = {
         {
           number: "02",
           title: "Готовность по доказательствам",
-          body: "Прямо внутри Flow можно поднять изолированный контур приложения с зависимостями, прогнать интеграционные и E2E-тесты, а отчёты и журналы сохранить как обязательные доказательства. Вместе с оценками ИИ, внешними проверками и решением человека они блокируют или разрешают доставку результата.",
-          meta: "запуск системы · E2E · проверка доставки",
+          body: "Запускайте интеграционные и E2E-проверки внутри Flow. После публикации ветки Flow ждёт CI для конкретного коммита и освобождает слот исполнения. Если это разрешено в проекте, MAIster может завершить доставку после обязательных проверок и ревью.",
+          meta: "проверки в прогоне · ожидание CI · проверенная доставка",
         },
         {
           number: "03",

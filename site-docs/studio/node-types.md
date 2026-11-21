@@ -22,12 +22,19 @@ independent graph nodes.
 | `judge` | An AI assessment that should be distinct from implementation. | Uses an ACP runner and judge capabilities, emits a verdict or structured result, and can route to approval, rework, or a person. |
 | `cli` | A package script or deterministic command that changes or produces work. | Runs a command in the worktree. It can write structured JSON to `MAISTER_OUTPUT_FILE` and supports bounded automatic retry for transient infrastructure errors. |
 | `check` | A deterministic validation command. | Uses the same command transport as `cli`, but communicates validation intent and does not carry the agent retry policy. |
+| `publish` | Pushing a Run branch and optionally opening a draft or ready PR. | Uses the project's branch template and the publication approval captured at launch. |
+| `wait` | Waiting for a timer, task comment, related Run, named signal, CI, or PR. | Retains the worktree and releases the execution slot. Resolves once and queues the declared continuation. |
 | `human` | Review, approval, escalation, or manual takeover choice. | Creates a human-in-the-loop request with declared decisions, roles, assignees, severity, and rework options. Submitted values become node variables. |
 | `form` | Collecting typed input before later work. | Pauses for fields defined by a schema, has no action, follows `transitions.success`, and exposes submitted fields as node variables. |
 
 Choose by authority, not by presentation. Use `check` for a deterministic test,
 `judge` for an AI interpretation, and `human` when accountability or missing
 business context requires a person.
+
+`publish` and `wait` require engine 3.14.0 or later. A `wait` needs a condition
+in `on`, a timeout in seconds, and a transition for every possible outcome.
+See [wait for CI and complete a Flow](/guides/flow-waits-and-ci) for a complete
+publication and wait example.
 
 ## Common node sections
 
