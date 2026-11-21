@@ -867,6 +867,7 @@ paths:
               - NeedsInputIdle
               - HumanWorking
               - WaitingOnChildren
+              - Waiting
               - Review
               - Done
               - Failed
@@ -21528,7 +21529,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Done, Failed, Crashed, Abandoned]
+            enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Waiting, Review, Done, Failed, Crashed, Abandoned]
         - name: triggerSource
           in: query
           schema:
@@ -26994,6 +26995,7 @@ components:
             - NeedsInputIdle
             - HumanWorking
             - WaitingOnChildren
+            - Waiting
             - Review
             - Done
             - Failed
@@ -27280,6 +27282,7 @@ components:
             - NeedsInputIdle
             - HumanWorking
             - WaitingOnChildren
+            - Waiting
             - Review
             - Done
             - Abandoned
@@ -27861,6 +27864,7 @@ components:
                 - NeedsInputIdle
                 - HumanWorking
                 - WaitingOnChildren
+                - Waiting
                 - Review
                 - Done
                 - Failed
@@ -33824,6 +33828,15 @@ components:
             (M30 — Implemented, ADR-080) True when the latest attempt for this node
             was an automatic retry (`node_attempts.auto_retry`) scheduled by the
             node's `retry_policy`. Absent/false on manually-driven attempts.
+        wait:
+          type: object
+          additionalProperties: false
+          required: [kind, deadline]
+          description: Open wait on this exact node attempt. The browser displays a countdown from the deadline.
+          properties:
+            kind: { type: string, enum: [timer, comment, run, signal, ci, pr] }
+            label: { type: string }
+            deadline: { type: string, format: date-time }
         gates:
           type: array
           items: { $ref: "#/components/schemas/GraphGateStatus" }
@@ -34113,6 +34126,7 @@ components:
               NeedsInputIdle,
               HumanWorking,
               WaitingOnChildren,
+              Waiting,
               Review,
               Crashed,
               Failed,

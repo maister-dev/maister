@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
+import { parse } from "yaml";
 import {
   afterAll,
   beforeAll,
@@ -99,6 +101,7 @@ async function seedRun(
   taskId: string,
   flowId: string,
   executorId: string,
+  status: "Running" | "Waiting" = "Running",
 ) {
   const runId = randomUUID();
   const workspaceId = randomUUID();
@@ -111,7 +114,7 @@ async function seedRun(
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
-    status: "Running",
+    status,
     scheduledRequestSnapshot: {
       version: 1,
       scheduleId: randomUUID(),
@@ -228,55 +231,71 @@ describe("GET /api/v1/ext/runs/[runId]", () => {
     });
   });
 
-  it("valid token, correct runId → 200 RunDTO, audit row, no leaked fields", async () => {
-    const { projectId, flowId, executorId } = {
-      ...(await seedProject(`ext-run-detail-${randomUUID().slice(0, 8)}`)),
-    };
-    const taskId = await seedTask(projectId, flowId);
-    const runId = await seedRun(projectId, taskId, flowId, executorId);
+  it.each(["Running", "Waiting"] as const)(
+    "valid token receives an audited, contract-valid %s RunDTO",
+    async (status) => {
+      const { projectId, flowId, executorId } = {
+        ...(await seedProject(`ext-run-detail-${randomUUID().slice(0, 8)}`)),
+      };
+      const taskId = await seedTask(projectId, flowId);
+      const runId = await seedRun(
+        projectId,
+        taskId,
+        flowId,
+        executorId,
+        status,
+      );
 
-    const token = await issueToken({ projectId, name: "Test Token" }, db);
+      const token = await issueToken({ projectId, name: "Test Token" }, db);
 
-    const req = makeRequest(runId);
+      const req = makeRequest(runId);
 
-    req.headers.set("authorization", `Bearer ${token.secret}`);
+      req.headers.set("authorization", `Bearer ${token.secret}`);
 
-    const res = await GET(req, {
-      params: Promise.resolve({ runId }),
-    });
+      const res = await GET(req, {
+        params: Promise.resolve({ runId }),
+      });
 
-    expect(res.status).toBe(200);
+      expect(res.status).toBe(200);
 
-    const body = await res.json();
+      const body = await res.json();
 
-    expect(body).toHaveProperty("id", runId);
-    expect(body).toHaveProperty("taskId");
-    expect(body).toHaveProperty("projectId");
-    expect(body).toHaveProperty("status");
-    expect(body).toHaveProperty("flowId");
-    expect(body).toHaveProperty("runnerId");
-    // B6: a Running run has no terminal cause.
-    expect(body.terminalCause).toBeNull();
+      expect(body).toHaveProperty("id", runId);
+      expect(body).toHaveProperty("taskId");
+      expect(body).toHaveProperty("projectId");
+      expect(body).toHaveProperty("status", status);
+      const contract = parse(
+        await readFile("../docs/api/external/operations.openapi.yaml", "utf8"),
+      );
 
-    expect(JSON.stringify(body)).not.toContain("PROTECTED-SCHEDULED-REQUEST");
-    expect(body).not.toHaveProperty("scheduledRequestSnapshot");
-    // Verify no leaked fields
-    expect((body as any).acp_session_id).toBeUndefined();
-    expect((body as any).worktree_path).toBeUndefined();
-    expect((body as any).token_hash).toBeUndefined();
+      expect(
+        contract.components.schemas.RunDTO.properties.status.enum,
+      ).toContain(body.status);
+      expect(body).toHaveProperty("flowId");
+      expect(body).toHaveProperty("runnerId");
+      // Both live statuses have no terminal cause.
+      expect(body.terminalCause).toBeNull();
 
-    const auditRows = await db
-      .select()
-      .from(schema.tokenAuditLog as any)
-      .execute();
+      expect(JSON.stringify(body)).not.toContain("PROTECTED-SCHEDULED-REQUEST");
+      expect(body).not.toHaveProperty("scheduledRequestSnapshot");
+      // Verify no leaked fields
+      expect((body as any).acp_session_id).toBeUndefined();
+      expect((body as any).worktree_path).toBeUndefined();
+      expect((body as any).token_hash).toBeUndefined();
 
-    expect(auditRows).toHaveLength(1);
-    expect(auditRows[0]).toMatchObject({
-      result: "ok",
-      status_code: 200,
-      scope_used: "runs:read",
-    });
-  });
+      const auditRows = await db
+        .select()
+        .from(schema.tokenAuditLog as any)
+        .execute();
+
+      expect(auditRows).toHaveLength(1);
+      expect(auditRows[0]).toMatchObject({
+        result: "ok",
+        status_code: 200,
+        scope_used: "runs:read",
+      });
+    },
+  );
 
   // B6 (ADR-177 amendment): a Failed run says why, read from its run.failed.
   it("a Failed run carries terminalCause from its terminal event", async () => {

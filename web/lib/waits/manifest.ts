@@ -14,6 +14,14 @@ const identifier = z
     (value) => !["constructor", "prototype", "__proto__"].includes(value),
   );
 
+// Match the provider label exactly. Provider job names may contain spaces and
+// punctuation, while control characters are unsuitable for reports.
+const providerCheckLabel = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine((label) => label.trim().length > 0 && !/\p{Cc}/u.test(label));
+
 export const waitSeconds = z.number().int().positive().max(MAX_WAIT_SECONDS);
 const outcomeLabel = identifier.refine(
   (value) => !RESERVED_SIGNAL_OUTCOMES.includes(value),
@@ -107,7 +115,7 @@ export const waitConditionSchema = z.discriminatedUnion("kind", [
       transport: z.enum(["push", "pull"]),
       name: identifier.optional(),
       checks: z
-        .array(identifier)
+        .array(providerCheckLabel)
         .min(1)
         .max(32)
         .refine((items) => new Set(items).size === items.length),

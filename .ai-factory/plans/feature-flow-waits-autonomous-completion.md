@@ -2,7 +2,7 @@
 
 Branch `feature/flow-waits-autonomous-completion` · Original base `master` at `cd9e37f071f7` · Rebased onto `master` at `99279c6cb686` · Created 2026-11-20
 
-Status: Implemented and qualified 2026-11-21. Tasks 01–21 are complete. All 18 requirements passed during the original qualification. The installed Linux web service gate in task 08 passed on Ubuntu at `965600cae`.
+Status: Review remediation in progress. Tasks 01–21 retain their original qualification evidence. Recheck all 18 requirements on the remediated branch before closing this plan.
 
 ## Settings
 
@@ -181,6 +181,21 @@ Official contracts for the scanner are [GitHub check runs](https://docs.github.c
 - [x] **19 — Finalize confirmed PRs and classified failures** (14,16–18). Factor a system-safe entry to `workbench-git/service.ts::finalizePullRequestRun` and `runs/promote.ts`; retain the human wrapper's exact guards. Eligible engine calls require graph completion, matching merged PR/head, current authority and readiness; avoid the parked human shortcut for open/failed/abandoned runs. Attach the provider observation to the exact PR incarnation even when an older request for a replaced PR returns later. If the ADR-141 resolver returns Review with the existing sync-returned cause, resume only the captured conflict continuation under its bounded loop and admission. An arbitrary sync return or operator stop cannot count as graph completion. If merge precedes graph review, retain the fact; if review precedes merge, await the observation, then re-evaluate. Enrolled PR runs stay live until merged or human handling. Preserve `domain-events/task-delivery-completion.ts` and newest-run/resolvesTask rules. Route confirmed conflict to the ADR-141 sync/resolver on the assigned host through admission; time-bound and loop-bound it, respect human stop/hold and explicit-SHA leases, republish/recheck then wait on a fresh observation. For declared terminal failure, extend the existing `flows/graph/runner-graph.ts` Failed path with enumerated reasons (e.g. `wait_timeout`, `rework_exhausted`), release resources, append the decision ledger and emit once in the same transaction. A new typed terminal target must pass through string-target consumers in schema, compiler, reachability/rework, Studio and graph dispatch via one target discriminator; legacy node IDs and `done` keep their meanings. Guard crash-retry/Ralph from turning final exhaustion into endless relaunch. Logging: INFO actual terminal transition, cause and operation ID.
 - [x] **20 — Record decisions, interventions and reverts** (16–19). Project the immutable decisions and domain events written by tasks 16–19. Verify every machine entry uses that writer for grant/refusal, hold/kill application, classified failure, finalize and effect reconciliation. Give identical evaluations a stable key by evidence/config generation; log noisy scans at DEBUG. A failed or pending operation cannot count as completion. Project the reason, evidence and next human action on Run/Desk and in existing SSE; show hold/release and standard manual intervention paths. Extend Observatory with distinct autonomous Done/Failed counts and subsequent human reverts linked to a specific completed decision/delivered commit. Use the session-authorized reversal receipt specified in the wire contract. Require an authenticated provider actor record or platform effect receipt identifying the actual human. A Git author string or self-reported commit message alone cannot establish that identity. Deduplicate observations through the same verified link. Validate a reachable revert commit against the delivered commit/change (account for merge mainline), plus a platform-observed human action or trusted provider actor for the reversal. Keep externally reported/unverified or unattributed reversals separate from confirmed human reverts; deduplicate repeat observations. Count confirmed linked reversals only; expose attribution/coverage for unobserved external reverts. A reopen, abandoned run, or another commit alone is insufficient. Logging: INFO decision/reversal identity and actor; restricted evidence detail.
 - [x] **21 — Qualify autonomy and isolate regressions** (15–20). Run the matrix below on the installed reference package. Capture the system-actor chain from graph terminal → Review → promotion/finalize → Done, exact provider/published/candidate identity, zero human API calls, one terminal fact and Observatory increment. Prove one missing/stale predicate at a time leaves Review; demonstrate human intervention from that very state. Exercise phase C settings/authority and CI source provenance across human UI, system worker and ext routes. Verify new threshold/revert UI in EN/RU, accessibility and SSE updates. Update docs/ADR implementation status, actual API examples, generated ERD and smoke instructions. Logging: redacted acceptance receipts plus phase gate.
+
+## Review remediation
+
+- [ ] **22 — Wait lifecycle and evidence.** Exercise current related-run settlement, bounded park recovery, callback-time ref proof and safe typed wait data.
+- [ ] **23 — Publication and autonomous authority.** Verify the PR's actual base, apply the platform switch consistently and fence provider writes at the execution host.
+- [x] **24 — Contracts and operator UX.** Fan out the Waiting status on the wire, accept exact provider labels, require explicit Studio targets and qualify the wait graph and operator actions.
+- [ ] **25 — Requalify W01–W10, B01–B03 and C01–C05.** Record the test, runtime and lineage for each requirement.
+
+**Task 24 evidence.** RED reproduced a 200 RunDTO rejected by its status
+enum, provider labels rejected at manifest parsing, and browser failures for
+implicit targets, missing graph wait metadata and unconfirmed cancel. GREEN
+accepted the Waiting response in five route tests, preserved exact provider
+labels, and passed the Studio persistence and run-operator Playwright cases.
+The refactor rerun also confirmed SSE removes the countdown after cancellation
+and a stale action shows localized recovery feedback.
 
 ## Verification and phase exits
 

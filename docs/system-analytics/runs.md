@@ -139,6 +139,12 @@ stateDiagram-v2
     [*] --> Pending: created, awaiting slot
     Pending --> Running: scheduler promotes<br/>(cap has free slot)
 
+    Running --> Waiting: park Flow condition after host quiescence
+    Waiting --> Pending: settle and queue the exact continuation
+    Waiting --> Review: operator stop
+    Waiting --> Abandoned: abandon
+    Pending --> Review: stop queued Flow continuation
+
     Running --> NeedsInput: agent requests permission<br/>or writes needs-input.json
     NeedsInput --> NeedsInput: web activity bumps<br/>keepalive_until +30min
     NeedsInput --> NeedsInputIdle: now > keepalive_until<br/>(sweeper-driven checkpoint)

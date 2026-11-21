@@ -3143,6 +3143,7 @@ paths:
                         NeedsInputIdle,
                         HumanWorking,
                         WaitingOnChildren,
+                        Waiting,
                         Review,
                         Crashed,
                         Done,
@@ -10633,6 +10634,7 @@ components:
             - NeedsInputIdle
             - HumanWorking
             - WaitingOnChildren
+            - Waiting
             - Review
             - Done
             - Failed
@@ -12789,6 +12791,7 @@ components:
             - NeedsInputIdle
             - HumanWorking
             - WaitingOnChildren
+            - Waiting
             - Review
             - Crashed
             - Done
@@ -12998,6 +13001,7 @@ components:
               NeedsInputIdle,
               HumanWorking,
               WaitingOnChildren,
+              Waiting,
               Review,
               Crashed,
               Done,
@@ -13758,6 +13762,7 @@ components:
                   NeedsInputIdle,
                   HumanWorking,
                   WaitingOnChildren,
+                  Waiting,
                   Review,
                   Done,
                   Failed,
@@ -15590,7 +15595,7 @@ components:
         slug: { type: string, minLength: 1, description: Owning project slug. }
         status:
           type: string
-          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Review, Crashed, Done, Abandoned, Failed]
+          enum: [Pending, Running, NeedsInput, NeedsInputIdle, HumanWorking, WaitingOnChildren, Waiting, Review, Crashed, Done, Abandoned, Failed]
         runKind: { type: string, enum: [flow, scratch, agent, librarian] }
         taskId: { type: string, format: uuid, nullable: true }
         startedAt: { type: string, format: date-time, nullable: true }

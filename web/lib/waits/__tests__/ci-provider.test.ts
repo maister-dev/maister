@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import { readProviderCi } from "../ci-provider";
 import { evaluateCiObservation } from "../ci-evidence";
+import { waitConditionSchema } from "../manifest";
 
 const sha = "1".repeat(40);
 const target = {
@@ -64,7 +65,7 @@ it.each([
     [
       {
         id: 2,
-        name: "build",
+        name: "Build pipeline",
         sha,
         ref: "run/1",
         source: "push",
@@ -79,7 +80,7 @@ it.each([
     [
       {
         id: 2,
-        context: "build",
+        context: "build / integration",
         status: "success",
         creator: { login: "robot" },
       },
@@ -89,6 +90,17 @@ it.each([
 ] as const)(
   "B02 scopes %s to its exact revision and authenticated issuer",
   async (provider, apiBase, response, issuer) => {
+    const label =
+      "name" in response[0] ? response[0].name : response[0].context;
+    const condition = waitConditionSchema.parse({
+      kind: "ci",
+      transport: "pull",
+      publication: "publish",
+      issuer,
+      checks: [label],
+    });
+
+    if (condition.kind !== "ci") throw new Error("Expected CI condition");
     const observation = await readProviderCi(
       {
         provider,
@@ -101,7 +113,10 @@ it.each([
     );
 
     expect(
-      evaluateCiObservation({ ...target, issuer }, observation),
+      evaluateCiObservation(
+        { ...target, issuer, checks: condition.checks },
+        observation,
+      ),
     ).toMatchObject({ outcome: "success" });
   },
 );

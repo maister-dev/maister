@@ -53,6 +53,7 @@ components:
                 NeedsInputIdle,
                 HumanWorking,
                 WaitingOnChildren,
+                Waiting,
                 Review,
                 Done,
                 Failed,

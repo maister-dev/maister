@@ -2192,7 +2192,7 @@ nodes:
 | `comment` | Optional `actor` with `type` and `id` | commented, timeout, cancelled |
 | `run` | `run_id`; exactly one of `relation` (parent/child) or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
 | `signal` | `name`, finite `outcomes`, optional `payload_schema`, optional `bind: head_sha` | declared keys, timeout, cancelled; stale if bound |
-| `ci` | `publication` node ID, `transport` (push/pull), required `checks`, declared `issuer` and push `name`. `provider_issuer` is required on a push CI node used by `autonomous_completion`. | success, failure, cancelled, timeout, stale |
+| `ci` | `publication` node ID, `transport` (push/pull), required `checks` (exact provider labels, up to 256 characters each), declared `issuer` and push `name`. `provider_issuer` is required on a push CI node used by `autonomous_completion`. | success, failure, cancelled, timeout, stale |
 | `pr` | `publication` node ID with a PR receipt | merged, closed, conflict, timeout, cancelled, stale |
 
 Missing timeout or cancellation routes, an undeclared signal outcome, a

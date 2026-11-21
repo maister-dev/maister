@@ -409,6 +409,7 @@ export function NodeSideForm({
   mcpOptions,
   presentation,
   readOnly = false,
+  waitTargets = [],
   onChange,
   onWriteSchemaFile,
   onPresentationChange,
@@ -436,6 +437,7 @@ export function NodeSideForm({
   // value, add/remove controls are dropped, and edits are no-ops. DEFAULTS to
   // false so the live Flow Studio editor render + behavior is byte-identical.
   readOnly?: boolean;
+  waitTargets?: readonly string[];
   onChange: (next: NodeDef) => void;
   onWriteSchemaFile?: (path: string, content: string) => void;
   onPresentationChange?: (patch: NodePresentationStyle) => void;
@@ -457,6 +459,7 @@ export function NodeSideForm({
         key={node.id}
         node={node}
         readOnly={readOnly}
+        targets={waitTargets}
         onChange={onChange}
       />
     );

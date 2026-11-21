@@ -3,6 +3,7 @@
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type {
   GraphNodeStatus,
+  GraphNodeWait,
   RunNodeStatuses,
 } from "@/lib/queries/run-node-status";
 import type {
@@ -26,6 +27,7 @@ import {
   getBezierPath,
 } from "@xyflow/react";
 import { Chip } from "@heroui/react";
+import { useTranslations } from "next-intl";
 
 import {
   colorForNodeStatus,
@@ -35,6 +37,7 @@ import {
 } from "@/lib/board/flow-graph-view-layout";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import { useRunPageStream } from "@/components/runs/run-stream-provider";
+import { WaitCountdown } from "@/components/runs/wait-countdown";
 import { nodeVisual } from "@/lib/flows/node-visuals";
 import { buildFlowNodeTooltipsFromTopology } from "@/lib/flows/graph/node-tooltips";
 
@@ -117,6 +120,7 @@ interface FlowNodeBodyProps {
     kinds: string[];
   };
   runtimeGateSummary?: GraphNodeStatus["gateSummary"];
+  wait?: GraphNodeWait;
   labels: {
     currentNode: string;
     declaredGateSummary?: string;
@@ -388,6 +392,19 @@ function RestrictionGlyph(): ReactElement {
   );
 }
 
+function GraphWaitStatus({ wait }: { wait: GraphNodeWait }): ReactElement {
+  const t = useTranslations("flowWait");
+
+  return (
+    <div className="grid gap-0.5 text-[11px] text-ink-2">
+      <span className="break-words">
+        {t("waitingFor", { condition: wait.label ?? t(`kind.${wait.kind}`) })}
+      </span>
+      <WaitCountdown deadline={wait.deadline} />
+    </div>
+  );
+}
+
 export function FlowNodeBody({
   label,
   nodeType,
@@ -410,6 +427,7 @@ export function FlowNodeBody({
   restricted,
   restrictedLabel,
   labels,
+  wait,
 }: FlowNodeBodyProps): ReactElement {
   const declaredCount = declaredGateSummary?.total ?? 0;
   const runtimeGateCount = runtimeGateSummary?.total ?? 0;
@@ -519,6 +537,7 @@ export function FlowNodeBody({
           <p className="truncate text-[13.5px] font-semibold leading-tight text-ink">
             {displayLabel ?? label}
           </p>
+          {wait ? <GraphWaitStatus wait={wait} /> : null}
           {sessionName ? (
             <span
               className="inline-flex max-w-full items-center gap-1 self-start rounded-full border border-line bg-paper px-1.5 py-0.5 text-[9px] font-medium leading-none text-ink-2"
@@ -637,6 +656,7 @@ type FlowNodeRenderData = {
   isCurrent?: boolean;
   rollup?: string;
   runtimeGateSummary?: GraphNodeStatus["gateSummary"];
+  wait?: GraphNodeWait;
   presentationColor?: string;
   presentationWidth?: number;
   presentationHeight?: number;
@@ -655,7 +675,7 @@ function makeFlowNodeView(
 ): (props: NodeProps) => ReactElement {
   return function FlowNodeView({ data }: NodeProps): ReactElement {
     const d = data as unknown as FlowNodeRenderData;
-    const status = d.status ?? "Pending";
+    const status = d.wait ? "Waiting" : (d.status ?? "Pending");
 
     return (
       <>
@@ -686,6 +706,7 @@ function makeFlowNodeView(
           status={status}
           statusLabel={labels.node[status] ?? status}
           tooltip={d.tooltip}
+          wait={d.wait}
         />
         <Handle position={Position.Right} type="source" />
       </>
@@ -803,6 +824,7 @@ function FlowGraphCanvas({
                 isCurrent: n.id === currentStep,
                 rollup: statusByNode?.[n.id]?.rollup ?? "none",
                 runtimeGateSummary: statusByNode?.[n.id]?.gateSummary,
+                wait: statusByNode?.[n.id]?.wait,
               }),
           selected: n.id === selectedNodeId,
           tooltip: nodeTooltips?.[n.id] ?? topologyTooltips[n.id],

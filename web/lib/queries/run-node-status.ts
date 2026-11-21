@@ -1,15 +1,16 @@
 import "server-only";
 
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { WaitConditionKind } from "@/lib/waits/contracts";
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { getRunTimeline, type TimelineEntry } from "@/lib/queries/run";
 
-const { runs } = schema;
+const { runWaits, runs } = schema;
 
 const log = pino({
   name: "run-node-status",
@@ -40,6 +41,13 @@ export interface GraphNodeStatus {
   gates: GraphGateStatus[];
   rollup: string;
   gateSummary: RuntimeGateSummary;
+  wait?: GraphNodeWait;
+}
+
+export interface GraphNodeWait {
+  kind: WaitConditionKind;
+  label?: string;
+  deadline: string;
 }
 
 export interface RunNodeStatuses {
@@ -138,10 +146,44 @@ export async function getRunNodeStatuses(
 
   const client = getDb() as unknown as Db;
   const runRows = await client
-    .select({ status: runs.status, currentStepId: runs.currentStepId })
+    .select({
+      status: runs.status,
+      currentStepId: runs.currentStepId,
+      wait: {
+        attemptId: runWaits.nodeAttemptId,
+        kind: runWaits.conditionKind,
+        label: sql<string | null>`${runWaits.condition}->'parameters'->>'name'`,
+        deadline: runWaits.deadlineAt,
+      },
+    })
     .from(runs)
+    .leftJoin(
+      runWaits,
+      and(
+        eq(runWaits.runId, runs.id),
+        eq(runWaits.projectId, runs.projectId),
+        eq(runWaits.state, "open"),
+        eq(runs.status, "Waiting"),
+      ),
+    )
     .where(eq(runs.id, runId));
   const run = runRows[0];
+  const current = run?.currentStepId;
+  const currentAttempt = current ? winners.get(current) : undefined;
+  const wait =
+    currentAttempt?.nodeType === "wait"
+      ? runRows.find(
+          (row) => row.wait?.attemptId === currentAttempt.nodeAttemptId,
+        )?.wait
+      : undefined;
+
+  if (current && wait?.deadline) {
+    nodes[current].wait = {
+      kind: wait.kind,
+      ...(wait.label ? { label: wait.label } : {}),
+      deadline: wait.deadline.toISOString(),
+    };
+  }
 
   log.debug(
     { runId, nodeCount: Object.keys(nodes).length },

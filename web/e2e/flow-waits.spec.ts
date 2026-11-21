@@ -14,6 +14,7 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
   const projectId = randomUUID();
   const runId = randomUUID();
   const taskId = randomUUID();
+  const flowId = randomUUID();
   const slug = `wait-${projectId}`;
   const attemptId = randomUUID();
   const waitId = randomUUID().replaceAll("-", "").repeat(2);
@@ -22,6 +23,20 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
     kind: "signal",
     outcomes: ["success", "timeout", "cancelled"],
     parameters: { name: "build", timeoutSeconds: 3600 },
+  };
+  const manifest = {
+    schemaVersion: 1,
+    name: "Bound signal",
+    compat: { engine_min: "3.14.0" },
+    nodes: [
+      {
+        id: "verify",
+        type: "wait",
+        timeout: 3600,
+        on: { kind: "signal", name: "build", outcomes: ["success"] },
+        transitions: { success: "done", timeout: "done", cancelled: "done" },
+      },
+    ],
   };
 
   try {
@@ -41,9 +56,14 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
         [taskId, projectId],
       );
       await db.query(
-        `INSERT INTO runs (id,project_id,task_id,run_kind,status,flow_version,flow_revision,current_step_id)
-        VALUES ($1,$2,$3,'flow','Waiting','1.0.0','fixture','verify')`,
-        [runId, projectId, taskId],
+        `INSERT INTO flows (id,project_id,flow_ref_id,source,version,installed_path,manifest,schema_version)
+        VALUES ($1,$2,'bound-signal','fixture','1.0.0',$3,$4,1)`,
+        [flowId, projectId, `/tmp/wait-${projectId}`, manifest],
+      );
+      await db.query(
+        `INSERT INTO runs (id,project_id,task_id,flow_id,run_kind,status,flow_version,flow_revision,current_step_id)
+        VALUES ($1,$2,$3,$4,'flow','Waiting','1.0.0','fixture','verify')`,
+        [runId, projectId, taskId, flowId],
       );
       await db.query(
         `INSERT INTO workspaces (id,run_id,project_id,branch,worktree_path,parent_repo_path)
@@ -87,6 +107,12 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
     await expect(
       page.getByRole("img", { name: "Waiting for build", exact: true }),
     ).toBeVisible();
+    const graph = page.getByTestId("flow-run-graph-view");
+
+    await expect(
+      graph.getByText("Waiting for build", { exact: true }),
+    ).toBeVisible();
+    await expect(graph.getByText(/seconds remaining/)).toBeVisible();
     await page.getByRole("button", { name: "Open inspector" }).click();
     let card = page.getByRole("region", { name: "Flow wait" });
 
@@ -117,22 +143,67 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
     ).toHaveText(["success"]);
     await card
       .getByRole("combobox", { name: "Действие с ожиданием" })
-      .selectOption("resolve_now");
-    await card.getByRole("combobox", { name: "Исход" }).selectOption("success");
+      .selectOption("cancel");
     await card
       .getByRole("textbox", { name: "Причина" })
-      .fill("Результат подтверждён оператором");
+      .fill("Проверка отменена оператором");
+    const submitAction = card.getByRole("button", {
+      name: "Применить действие",
+    });
+    const actionRequests: string[] = [];
+
+    page.on("request", (request) => {
+      if (
+        request.url().endsWith(`/waits/${waitId}/actions`) &&
+        request.method() === "POST"
+      )
+        actionRequests.push(request.postData() ?? "");
+    });
+
+    await submitAction.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Отменить ожидание?" });
+
+    await expect(dialog).toBeVisible();
+    await dialog.getByText("Продолжить ожидание", { exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(actionRequests).toEqual([]);
+
+    await withE2EDb((db) =>
+      db.query("UPDATE run_waits SET version=version+1 WHERE id=$1", [waitId]),
+    );
+    await submitAction.press("Enter");
+    const refused = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/waits/${waitId}/actions`) &&
+        response.request().method() === "POST",
+    );
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/waits/${waitId}`) &&
+        response.request().method() === "GET",
+    );
+
+    await dialog.getByRole("button", { name: "Отменить ожидание" }).click();
+    expect((await refused).status()).toBe(409);
+    await expect(card.getByRole("alert")).toHaveText(
+      "Ожидание изменилось. Проверьте данные и повторите действие.",
+    );
+    await (await refreshed).finished();
+
     const submitted = page.waitForResponse(
       (response) =>
         response.url().endsWith(`/waits/${waitId}/actions`) &&
         response.request().method() === "POST",
     );
 
-    await card
-      .getByRole("button", { name: "Применить действие" })
-      .press("Enter");
+    await submitAction.press("Enter");
+    await dialog.getByRole("button", { name: "Отменить ожидание" }).click();
     expect((await submitted).status()).toBe(200);
-    await expect(card.getByText("Исход: success")).toBeVisible();
+    expect(actionRequests).toHaveLength(2);
+    await expect(card.getByText("Исход: cancelled")).toBeVisible();
+    await expect(
+      graph.getByText("Ожидание: build", { exact: true }),
+    ).toHaveCount(0);
     await expect(
       card.getByRole("combobox", { name: "Действие с ожиданием" }),
     ).toHaveCount(0);

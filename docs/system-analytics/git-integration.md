@@ -548,7 +548,7 @@ metadata fails closed.
 
 ## Provider evidence for Flow waits (Implemented)
 
-Select approved GitHub check runs and commit statuses, GitLab pipeline source and Gitea contexts for the published head. Use all required checks from the current attempt across pages. Failure precedes cancellation. Success requires every required trusted result. Missing pages, unknown or revoked outcomes and newer pending attempts remain pending and can invalidate prior green proof for promotion.
+Select approved GitHub check runs and commit statuses, GitLab pipeline source and Gitea contexts for the published head. Match declared check labels exactly, including spaces and punctuation. Use all required checks from the current attempt across pages. Failure precedes cancellation. Success requires every required trusted result. Missing pages, unknown or revoked outcomes and newer pending attempts remain pending and can invalidate prior green proof for promotion.
 
 See [the governing contract](waits.md).
 

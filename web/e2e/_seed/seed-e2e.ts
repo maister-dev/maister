@@ -7050,6 +7050,8 @@ type FlowStudioArtifactsFixtureRecord = {
 async function seedFlowStudioArtifactsFixture(
   pool: Pool,
   userId: string,
+  projectSlug: string,
+  taskKey: string,
 ): Promise<FlowStudioArtifactsFixtureRecord> {
   const ids = {
     project: randomUUID(),
@@ -7076,20 +7078,18 @@ async function seedFlowStudioArtifactsFixture(
     },
   };
 
-  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
-    FLOW_STUDIO_ARTIFACTS_SLUG,
-  ]);
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [projectSlug]);
 
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
      VALUES ($1, $2, $3, $4, 'main', $5, $6)`,
     [
       ids.project,
-      FLOW_STUDIO_ARTIFACTS_SLUG,
+      projectSlug,
       "MAIster E2E Flow Studio Artifacts",
       repoPath,
       `${repoPath}/maister.yaml`,
-      "E2EFSA",
+      taskKey,
     ],
   );
   await pool.query(
@@ -7129,7 +7129,7 @@ async function seedFlowStudioArtifactsFixture(
   );
 
   return {
-    projectSlug: FLOW_STUDIO_ARTIFACTS_SLUG,
+    projectSlug,
     capId: ids.cap,
     implementNode: FLOW_VIEWER_IMPLEMENT_NODE,
     reviewNode: FLOW_VIEWER_REVIEW_NODE,
@@ -8707,6 +8707,14 @@ async function main(): Promise<void> {
     const flowStudioArtifacts = await seedFlowStudioArtifactsFixture(
       pool,
       admin.id,
+      FLOW_STUDIO_ARTIFACTS_SLUG,
+      "E2EFSA",
+    );
+    const flowStudioWait = await seedFlowStudioArtifactsFixture(
+      pool,
+      admin.id,
+      "e2e-flow-studio-wait",
+      "E2EFSW",
     );
     const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
     const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
@@ -8880,6 +8888,7 @@ You answer when summoned by an @mention.
         reviewComments,
         reviewDiffScopes,
         flowStudioArtifacts,
+        flowStudioWait,
         flowViewer,
         platformAgents,
         orchestrator,

@@ -152,7 +152,7 @@ export function blankNode(
         type: "wait",
         on: { kind: "timer", after: 60 },
         timeout: 300,
-        transitions: { elapsed: "done", timeout: "done", cancelled: "done" },
+        transitions: {},
       };
     case "publish":
       return { id, type: "publish", transitions: { success: "done" } };

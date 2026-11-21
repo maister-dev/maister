@@ -597,6 +597,7 @@ export default async function RunDetailLayout({
     node: {
       Pending: tWorkbench("graph.node.Pending"),
       Running: tWorkbench("graph.node.Running"),
+      Waiting: t("nodeStatus.Waiting"),
       Succeeded: tWorkbench("graph.node.Succeeded"),
       Failed: tWorkbench("graph.node.Failed"),
       NeedsInput: tWorkbench("graph.node.NeedsInput"),

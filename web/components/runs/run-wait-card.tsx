@@ -6,12 +6,37 @@ import type {
   WaitSource,
 } from "@/lib/waits/contracts";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 
+import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
+import { useFeedback } from "@/components/feedback/feedback-provider";
 import { useWorkbenchStream } from "@/components/runs/run-workbench-stream-provider";
+import { WaitCountdown } from "@/components/runs/wait-countdown";
 
 type Action = "deliver_signal" | "resolve_now" | "extend" | "cancel";
+type ActionRequest = { body: string; key: string; action: Action };
+const waitErrorLabels = {
+  wait_version_changed: "changed",
+  wait_key_conflict: "changed",
+  wait_closed: "closed",
+  wait_deadline_elapsed: "closed",
+  wait_deadline_cap: "invalidDeadline",
+  wait_wrong_head: "wrongHead",
+  wait_invalid_payload: "invalidAction",
+} as const;
+
+async function waitActionErrorKey(response: Response) {
+  if (response.status === 401 || response.status === 403) return "forbidden";
+
+  const refusal: { details?: { reason?: string } } = await response.json();
+  const reason = refusal.details?.reason;
+
+  if (reason && Object.hasOwn(waitErrorLabels, reason))
+    return waitErrorLabels[reason as keyof typeof waitErrorLabels];
+  return "actionFailed";
+}
+
 type Inspection = {
   id: string;
   status: "reserved" | "parking" | "open" | "resolved" | "closed";
@@ -43,15 +68,20 @@ export function RunWaitCard({
   waitId: string;
 }) {
   const t = useTranslations("flowWait");
+  const feedback = useFeedback();
   const stream = useWorkbenchStream();
   const [view, setView] = useState<Inspection | null>(null);
   const [revision, refresh] = useState(0);
-  const [now, setNow] = useState(Date.now);
   const [busy, setBusy] = useState(false);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<Action | "">("");
-  const pending = useRef<{ body: string; key: string } | null>(null);
+  const [cancelRequest, setCancelRequest] = useState<ActionRequest | null>(
+    null,
+  );
+  const confirmTitleId = useId();
+  const pending = useRef<ActionRequest | null>(null);
+  const sending = useRef(false);
   const url = `/api/runs/${encodeURIComponent(runId)}/waits/${encodeURIComponent(waitId)}`;
 
   useEffect(() => {
@@ -70,13 +100,6 @@ export function RunWaitCard({
 
     return () => controller.abort();
   }, [url, revision, stream?.mainSummaryTick, stream?.main.liveness, t]);
-
-  useEffect(() => {
-    if (view?.status !== "open") return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-
-    return () => clearInterval(timer);
-  }, [view?.status]);
 
   const currentAction =
     view?.allowedActions.find((value) => value === action) ?? "";
@@ -111,7 +134,7 @@ export function RunWaitCard({
 
   async function operate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!view || !currentAction || busy) return;
+    if (!view || !currentAction || sending.current || cancelRequest) return;
 
     const fields = new FormData(event.currentTarget);
     const reason = String(fields.get("reason") ?? "").trim();
@@ -119,8 +142,16 @@ export function RunWaitCard({
     const detail: Record<string, unknown> = {};
 
     if (currentAction === "resolve_now") detail.outcome = outcome;
-    if (currentAction === "extend")
-      detail.deadline = new Date(String(fields.get("deadline"))).toISOString();
+    if (currentAction === "extend") {
+      const deadline = Date.parse(String(fields.get("deadline")));
+
+      if (!Number.isFinite(deadline)) {
+        setError(t("invalidDeadline"));
+
+        return;
+      }
+      detail.deadline = new Date(deadline).toISOString();
+    }
     if (currentAction === "deliver_signal") {
       const payload = String(fields.get("payload") ?? "").trim();
       const headSha = String(fields.get("headSha") ?? "").trim();
@@ -146,43 +177,69 @@ export function RunWaitCard({
       ...detail,
     });
 
-    if (pending.current?.body !== body)
-      pending.current = { body, key: crypto.randomUUID() };
+    const request =
+      pending.current?.body === body
+        ? pending.current
+        : { body, key: crypto.randomUUID(), action: currentAction };
+
+    pending.current = request;
+    if (currentAction === "cancel") {
+      setError(null);
+      setCancelRequest(request);
+
+      return;
+    }
+    await sendAction(request);
+  }
+
+  async function sendAction(request: ActionRequest): Promise<void> {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setError(null);
+
+    function reportError(message: string): void {
+      setError(message);
+      feedback.error({ message, mutationId: request.key });
+    }
 
     try {
       const response = await fetch(`${url}/actions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "idempotency-key": pending.current.key,
+          "idempotency-key": request.key,
         },
-        body,
+        body: request.body,
       });
 
       if (!response.ok) {
-        const refusal: { message?: string } = await response.json();
-
-        setError(refusal.message ?? t("unavailable"));
+        reportError(t(await waitActionErrorKey(response)));
 
         return;
       }
       pending.current = null;
       setAction("");
+      feedback.success({
+        message: t(
+          request.action === "deliver_signal"
+            ? "signalAccepted"
+            : "actionSaved",
+        ),
+        mutationId: request.key,
+      });
     } catch {
-      setError(t("unavailable"));
+      reportError(t("actionFailed"));
     } finally {
+      sending.current = false;
       setBusy(false);
+      setCancelRequest(null);
       refresh((value) => value + 1);
     }
   }
 
   if (!view && !error) return null;
   const deadline = view?.deadline ? new Date(view.deadline) : null;
-  const remaining = deadline
-    ? Math.max(0, Math.ceil((deadline.getTime() - now) / 1000))
-    : null;
   const options =
     (currentAction === "deliver_signal"
       ? view?.allowedSignalOutcomes
@@ -204,10 +261,7 @@ export function RunWaitCard({
       </h3>
       {view?.status === "open" && deadline && (
         <p>
-          {remaining
-            ? t("secondsRemaining", { seconds: remaining })
-            : t("overdue")}{" "}
-          ·{" "}
+          <WaitCountdown deadline={deadline.toISOString()} /> ·{" "}
           <time dateTime={deadline.toISOString()}>
             {deadline.toLocaleString()}
           </time>
@@ -309,6 +363,36 @@ export function RunWaitCard({
         </form>
       ) : null}
       {error && <p role="alert">{error}</p>}
+      {cancelRequest ? (
+        <ConfirmDialog
+          body={t("cancelBody")}
+          busy={busy}
+          cancelLabel={t("keepWaiting")}
+          testId="wait-cancel-confirm"
+          title={t("cancelTitle")}
+          titleId={confirmTitleId}
+          onClose={() => setCancelRequest(null)}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              className="rounded border border-line px-3 py-2"
+              disabled={busy}
+              type="button"
+              onClick={() => setCancelRequest(null)}
+            >
+              {t("keepWaiting")}
+            </button>
+            <button
+              className="rounded border border-amber-line bg-amber-soft px-3 py-2 font-semibold text-amber"
+              disabled={busy}
+              type="button"
+              onClick={() => void sendAction(cancelRequest)}
+            >
+              {t("actions.cancel")}
+            </button>
+          </div>
+        </ConfirmDialog>
+      ) : null}
     </section>
   );
 }
