@@ -116,8 +116,10 @@ test("W09/W10 exposes the server's wait controls in a localized run detail", asy
   }
 });
 
-test("C05 shows the engine's refusal in Desk and the named run-detail region", async ({
+test("C05 exposes engine decisions and verifies a reported reversal in the run inspector", async ({
   page,
+  context,
+  baseURL,
 }) => {
   const projectId = randomUUID();
   const runId = randomUUID();
@@ -178,6 +180,67 @@ test("C05 shows the engine's refusal in Desk and the named run-detail region", a
       decisions.getByText("Promotion · Requires attention"),
     ).toBeVisible();
     await expect(decisions.getByText("A run hold is active.")).toBeVisible();
+    const decisionId = randomUUID().replaceAll("-", "").repeat(2);
+    const revertSha = "b".repeat(40);
+
+    await withE2EDb(async (db) => {
+      await db.query(
+        "UPDATE projects SET repo_url='https://github.com/example/repo.git' WHERE id=$1",
+        [projectId],
+      );
+      await db.query(
+        "UPDATE runs SET status='Done',ended_at=clock_timestamp() WHERE id=$1",
+        [runId],
+      );
+      await db.query(
+        `INSERT INTO run_autonomous_decisions (id,run_id,project_id,action,phase,reason,project_revision,platform_revision,witness)
+         VALUES ($1,$2,$3,'promote','observed','evidence_gated',1,1,$4)`,
+        [decisionId, runId, projectId, { deliveredCommit: "a".repeat(40) }],
+      );
+    });
+    const endpoint = `/api/runs/${runId}/autonomous-decisions/${decisionId}/reverts`;
+
+    await page.route(`**${endpoint}`, async (route) => {
+      expect(route.request().postDataJSON()).toEqual({ revertSha });
+      await route.fulfill({
+        status: 201,
+        json: { receiptId: "test-reversal-receipt" },
+      });
+    });
+    await page.reload();
+    const openInspector = page.getByRole("button", { name: "Open inspector" });
+
+    if (await openInspector.isVisible()) await openInspector.click();
+    await decisions
+      .getByText("Report a reversal", { exact: true })
+      .click({ timeout: 5_000 });
+    await decisions
+      .getByRole("textbox", { name: "Revert commit SHA" })
+      .fill(revertSha);
+    await decisions.getByRole("button", { name: "Verify reversal" }).click();
+    await expect(decisions.getByRole("status")).toHaveText(
+      "Reversal verified.",
+    );
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: "ru", url: baseURL! },
+    ]);
+    await page.reload();
+    const openLocalizedInspector = page.getByRole("button", {
+      name: "Открыть инспектор",
+    });
+
+    if (await openLocalizedInspector.isVisible())
+      await openLocalizedInspector.click();
+    const localizedDecisions = page.getByRole("region", {
+      name: "Решения движка",
+    });
+
+    await localizedDecisions
+      .getByText("Сообщить об откате", { exact: true })
+      .click({ timeout: 5_000 });
+    await expect(
+      localizedDecisions.getByRole("textbox", { name: "SHA коммита отката" }),
+    ).toBeVisible();
   } finally {
     await withE2EDb((db) =>
       db.query("DELETE FROM projects WHERE id=$1", [projectId]),

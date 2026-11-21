@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Interval, RunTiming } from "@/lib/runs/run-timing";
 
-import { and, eq, inArray, isNotNull, notInArray, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notInArray, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import * as schemaModule from "@/lib/db/schema";
@@ -134,6 +134,15 @@ export async function loadRunTimings(
         closedAt: runWaits.closedAt,
         queuedAt: runWaits.queuedAt,
         admittedAt: executionAssignments.createdAt,
+        firstConflictAdmissionAt: sql<Date | null>`(
+          SELECT initial_assignment.created_at
+          FROM ${nodeAttempts} wait_attempt
+          JOIN ${executionAssignments} initial_assignment
+            ON initial_assignment.id = wait_attempt.finish_continuation->'prConflict'->>'assignmentId'
+            AND initial_assignment.run_id = wait_attempt.run_id
+          WHERE wait_attempt.id = ${runWaits.nodeAttemptId}
+            AND wait_attempt.run_id = ${runWaits.runId}
+        )`.mapWith(runWaits.queuedAt),
       })
       .from(runWaits)
       .leftJoin(
@@ -186,6 +195,7 @@ export async function loadRunTimings(
       closedAt: Date | null;
       queuedAt: Date | null;
       admittedAt: Date | null;
+      firstConflictAdmissionAt: Date | null;
     }>,
     (wait) => wait.runId,
   );
@@ -227,9 +237,12 @@ export async function loadRunTimings(
         conditionWaits: waits.map((wait) =>
           span(wait.openedAt, wait.resolvedAt ?? wait.closedAt),
         ),
-        readmissions: waits.flatMap((wait) =>
-          wait.queuedAt ? [span(wait.queuedAt, wait.admittedAt)] : [],
-        ),
+        readmissions: waits.flatMap((wait) => [
+          ...(wait.resolvedAt && wait.firstConflictAdmissionAt
+            ? [span(wait.resolvedAt, wait.firstConflictAdmissionAt)]
+            : []),
+          ...(wait.queuedAt ? [span(wait.queuedAt, wait.admittedAt)] : []),
+        ]),
       }),
     );
   }

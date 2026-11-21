@@ -559,6 +559,25 @@ it.each([
           "UPDATE runs SET flow_driver_token=$2,flow_driver_lease_expires_at=now()-interval '1 second' WHERE id=$1",
           [runId, randomUUID()],
         );
+        // Give the first PR-wait admission a distinct interval so replacing its
+        // assignment at the second admission cannot silently lose that time.
+        await database.pool.query(
+          `UPDATE run_waits SET opened_at=opened_at-interval '1 minute',
+            resolved_at=resolved_at-interval '20 seconds',queued_at=queued_at-interval '20 seconds'
+           WHERE id=$1`,
+          [handoff.rows[0].wait_id],
+        );
+        await database.pool.query(
+          "UPDATE runs SET started_at=started_at-interval '1 minute' WHERE id=$1",
+          [runId],
+        );
+        const { loadRunTimings } = await import("@/lib/queries/run-timing");
+        const readAdmissions = async () =>
+          (await loadRunTimings(db, [runId])).get(runId)?.breakdown
+            ?.admissionMs ?? 0;
+        const firstAdmission = await readAdmissions();
+
+        expect(firstAdmission).toBeGreaterThanOrEqual(20_000);
         const readSync = async () =>
           (
             await database.pool.query(
@@ -620,6 +639,7 @@ it.each([
           },
         ]);
         expect(await git(worktreePath, "rev-parse", "HEAD")).not.toBe(head);
+        expect(await readAdmissions()).toBeGreaterThanOrEqual(firstAdmission);
 
         return;
       }

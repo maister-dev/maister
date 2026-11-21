@@ -386,7 +386,7 @@ restart time degrades to workspace policy `keep` with a WARN and is never guesse
 gates staled by a return move through the ordinary `gate_results` lifecycle and
 throw nothing.
 
-## Crash recovery of a condition wait (Designed)
+## Crash recovery of a condition wait (Implemented)
 
 Before a park, the graph records intent and the exact predecessor command. Recover the quiescence receipt before release. Once resolved, recover the persisted next edge and its dispatch claim. A newer epoch adopts the same logical key after fencing the old driver.
 

@@ -2167,7 +2167,7 @@ The compiler rejects auto-pass, notify-only, safe-forward, takeover, implicit
 node-id/prompt matching, missing artifacts, and unbounded cycles. Runtime
 forces the human pause; decision answers re-enter only the declared target.
 
-## Durable wait and publication nodes (Designed)
+## Durable wait and publication nodes (Implemented)
 
 A project Flow can await a condition with engine minimum 3.13.0. Put the
 condition selector in `on` and declare every result in `transitions`.

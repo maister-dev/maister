@@ -190,7 +190,7 @@ paths:
   /api/runs/{runId}/waits/{waitId}:
     get:
       operationId: getFlowWait
-      summary: Designed — Read wait and authorized receipt metadata
+      summary: Read wait and authorized receipt metadata
       security: &a3
         - sessionCookie: []
       parameters:
@@ -437,7 +437,7 @@ paths:
   /api/runs/{runId}/waits/{waitId}/actions:
     post:
       operationId: operateFlowWait
-      summary: Designed — Operate one Flow wait
+      summary: Operate one Flow wait
       security: *a3
       description: Session, same-origin and operateWait required. Bearer or mixed identity is refused. Resolve-now
         carries override provenance. Manual signal is queued for the resolver.
@@ -657,7 +657,7 @@ paths:
   /api/admin/autonomous-completion:
     patch:
       operationId: updateAutonomousCompletion
-      summary: Designed — Set the live platform autonomous-completion switch
+      summary: Set the live platform autonomous-completion switch
       security: *a3
       description: Global admin session required. The new revision is visible to the next decision.
       requestBody:
@@ -731,7 +731,7 @@ paths:
   /api/runs/{runId}/autonomous-decisions/{decisionId}/reverts:
     post:
       operationId: recordAutonomousDeliveryRevert
-      summary: Designed — Record a verified reversal of a completed autonomous delivery
+      summary: Record a verified reversal of a completed autonomous delivery
       security: *a3
       description: Requires a session with promoteRun. The server independently verifies the delivered change,
         reachable reversal, and actual human actor.

@@ -1039,7 +1039,7 @@ The [specialist cooperation contract](specialist-cooperation.md) specifies the o
 - **`run_promote` from a child agent token** → 403 by scope (`runs:promote` is
   held only by the run-bound orchestrator token, not child agent tokens).
 
-## Condition waits and child waits (Designed)
+## Condition waits and child waits (Implemented)
 
 The condition continuation uses Pending admission and the released workspace witness. Coordinator WaitingOnChildren retains the existing child wake and checkpoint behavior. Both report eligible child Review facts to the shared domain outbox.
 

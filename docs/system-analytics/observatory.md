@@ -812,9 +812,13 @@ Record<RunStatus, RunOutcomeBucket>`, so a new `runs.status` value is a compile
   that renders no artifact control, and `?view=overview&flowId=…` narrowed
   `getCostSummary` behind one that renders no flow control.
 
-## Autonomous decision and reversal counts (Designed)
+## Autonomous decision and reversal counts (Implemented)
 
 Count each observed autonomous delivery or classified failure once using its decision receipt and terminal time. Count verified human reversals at their verified reversal time, keyed to the exact original decision and inverse commit. Refusals, pending effects, unrelated commits and reopening by itself contribute zero. Human attribution currently uses an authenticated GitHub.com merged pull request and a Git-verified inverse on the target history. An unattributed revert contributes zero. Apply the same project and period access to both counters.
+
+An authorized operator can report the exact revert commit from the original
+completed decision in the Run inspector. The receipt is recorded after provider
+and Git verification, and submitting the same commit again returns that receipt.
 
 See [the governing contract](execution-policy.md).
 

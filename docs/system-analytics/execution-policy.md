@@ -402,7 +402,7 @@ E1–E12 invariants.)
   retried on the next watchdog tick (the run is NEVER marked `Failed` until the
   session is confirmed stopped; a `404` proceeds).
 
-## Autonomous completion axis (Designed)
+## Autonomous completion axis (Implemented)
 
 The default is off, including legacy or malformed snapshots. A project admin configures eligible CI sources and limits, and an approved Flow pins the actual gates, review and CI. The launch grant freezes the effective authority. Current project settings, the live global admin switch, MAISTER_AUTO_PROMOTION and the per-run or study hold can narrow it. Recheck inside the effect claim. Removing a hold cannot restore authority that was absent at launch.
 
