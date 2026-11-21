@@ -2883,6 +2883,7 @@ export async function runGraph(
               retryPolicy.workspace === "fresh-attempt"
                 ? () =>
                     materializeProjectBundlesIntoWorktree({
+                      runId,
                       projectId: requireProjectFlowRun(loaded).run.projectId,
                       worktreePath:
                         requireProjectFlowRun(loaded).workspace.worktreePath,
@@ -4315,6 +4316,7 @@ export async function runGraph(
                     onMismatchPolicy === "fresh-attempt"
                       ? () =>
                           materializeProjectBundlesIntoWorktree({
+                            runId,
                             projectId:
                               requireProjectFlowRun(loaded).run.projectId,
                             worktreePath,
@@ -5353,6 +5355,7 @@ export async function runGraph(
                   chosenPolicy === "fresh-attempt"
                     ? () =>
                         materializeProjectBundlesIntoWorktree({
+                          runId,
                           projectId:
                             requireProjectFlowRun(loaded).run.projectId,
                           worktreePath,

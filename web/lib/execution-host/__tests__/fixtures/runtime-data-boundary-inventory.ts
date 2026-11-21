@@ -1105,6 +1105,18 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/capabilities/package-skills.ts",
+      "repository-worktree",
+      "copy installed package skills into a lease-owned directory inside the session workspace",
+      [
+        ["entryStat", "node:fs/promises.lstat", "stat"],
+        ["skillEntries", "node:fs/promises.readdir", "list"],
+        ["<object>.materialize", "node:fs/promises.mkdir", "write"],
+        ["<object>.materialize", "node:fs/promises.cp", "write"],
+        ["<object>.filter", "node:fs/promises.lstat", "stat"],
+      ],
+    ),
+    ...classified(
       "lib/capabilities/cleanup.ts",
       "repository-worktree",
       "worktree, repository, package and capability materialization on the shared checkout — Stage C repository cut",
@@ -3015,6 +3027,10 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["cleanupNodeMaterialization", false],
     ["cleanupRunMaterializations", false],
     ["runCapabilitiesCleanupSweep", false],
+  ]),
+  ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
+    ["materializeWorkspacePackageSkills", false],
+    ["workspacePackageSkillsPrompt", false],
   ]),
   ...wrappers("lib/capabilities/import.ts", "repository-worktree", [
     ["confirmCapabilityTrust", false],

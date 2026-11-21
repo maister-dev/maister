@@ -15,8 +15,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   materializeAdapterCapabilityHome,
+  materializeOperationalAdapterCapabilityHome,
   materializeSubagentDefinition,
 } from "@/lib/capabilities/adapter-home";
+import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import { releaseAgentMaterialization } from "@/lib/agents/materialization-manifest";
 
 let base: string;
@@ -57,6 +59,52 @@ afterEach(async () => {
 });
 
 describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", () => {
+  it.each(["claude", "codex", "gemini", "opencode", "mimo"] as const)(
+    "%s exposes the pinned skill and its references inside the operational checkout",
+    async (agent) => {
+      const runtime = path.join(base, "private-runtime");
+      const references = path.join(pkg, "skills", "aif-plan", "references");
+
+      await mkdir(runtime);
+      await mkdir(references);
+      await writeFile(path.join(references, "checks.md"), "PACKAGE checks");
+      const result = await materializeOperationalAdapterCapabilityHome({
+        agent,
+        worktreePath: work,
+        runtimePath: runtime,
+        runId: "run",
+        installedPaths: [pkg],
+        codexGlobalHome: codexGlobal,
+      });
+      const relative = ".maister/capabilities/run/package-skills/aif-plan";
+
+      expect(await workspacePackageSkillsPrompt(work, "run")).toContain(
+        `${relative}/SKILL.md`,
+      );
+      expect(
+        await readFile(path.join(work, relative, "SKILL.md"), "utf8"),
+      ).toBe("PROJECT aif-plan");
+      expect(
+        await readFile(
+          path.join(work, relative, "references/checks.md"),
+          "utf8",
+        ),
+      ).toBe("PACKAGE checks");
+      for (const redirect of Object.values(result.env)) {
+        expect(path.relative(runtime, redirect)).not.toMatch(/^\.\./);
+      }
+      await expect(
+        lstat(path.join(work, relative, "auth.json")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await releaseAgentMaterialization(work, "run");
+      await expect(lstat(path.join(work, relative))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("claude (cwd-dir): copies bundle skills and subagents into worktree .claude/, no redirect env", async () => {
     const res = await materializeAdapterCapabilityHome({
       agent: "claude",
@@ -150,6 +198,32 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
     expect(
       await readFile(path.join(work, ".claude", "agents", "helper.md"), "utf8"),
     ).toBe("USER helper");
+    await expect(
+      readFile(
+        path.join(
+          work,
+          ".maister/capabilities/r1/package-skills/aif-plan/SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe("PROJECT aif-plan");
+  });
+
+  it("refuses an escaping companion link before advertising the package skill", async () => {
+    const secret = path.join(codexGlobal, "auth.json");
+
+    await symlink(secret, path.join(pkg, "skills", "aif-plan", "reference.md"));
+    await expect(
+      materializeAdapterCapabilityHome({
+        agent: "codex",
+        worktreePath: work,
+        runId: "r1",
+        installedPaths: [pkg],
+        codexGlobalHome: codexGlobal,
+      }),
+    ).rejects.toThrow(/symlink or special file/);
+    await releaseAgentMaterialization(work, "r1");
+    await expect(workspacePackageSkillsPrompt(work, "r1")).resolves.toBe("");
   });
 
   it("codex (home-redirect): composes CODEX_HOME with symlinked global auth/config + global skills + project skills", async () => {

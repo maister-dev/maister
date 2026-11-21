@@ -452,7 +452,16 @@ describe("startAgentSession — autoApply → supervisor auto-approve (M39 T5.2,
     );
 
     const cwd = host.adoptedPath();
+    const relativeSkillPath = `.maister/capabilities/${runId}/package-skills/aif-review/SKILL.md`;
+    const promptResult = await pool.query<{ prompt: string }>(
+      "SELECT prompt FROM agent_turns WHERE run_id=$1 AND variant='initial'",
+      [runId],
+    );
 
+    expect(promptResult.rows[0]?.prompt).toContain(relativeSkillPath);
+    await expect(
+      readFile(path.join(cwd, relativeSkillPath), "utf8"),
+    ).resolves.toBe("PINNED aif-review");
     expect(
       await readFile(
         path.join(cwd, ".claude", "skills", "aif-review", "SKILL.md"),

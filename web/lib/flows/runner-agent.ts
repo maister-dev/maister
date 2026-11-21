@@ -81,6 +81,10 @@ import {
   appendScheduledRequest,
 } from "@/lib/agents/scheduled-request";
 import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
+import {
+  appendPackageSkillsPrompt,
+  workspacePackageSkillsPrompt,
+} from "@/lib/capabilities/package-skills";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
 import { appendCapped } from "@/lib/flows/capped-text";
 import {
@@ -1448,12 +1452,16 @@ async function dispatchAgentStep(
     );
   }
 
+  const skillPrompt =
+    "owner" in ctx.context.run
+      ? ""
+      : await workspacePackageSkillsPrompt(ctx.worktreePath, ctx.runId);
   const ordinaryPrompt = appendScheduledRequest(
     nativeFindingsCompletionPrompt(
       isResultProducerNode(ctx.resultContract ?? null, ctx.stepId)
         ? ctx.resultContract
         : null,
-      normalized.text,
+      appendPackageSkillsPrompt(normalized.text, skillPrompt),
     ),
     parseScheduledRequestSnapshot(ctx.scheduledRequestSnapshot),
   );

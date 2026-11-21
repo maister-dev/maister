@@ -66,6 +66,10 @@ import {
   materializeFlowAuthoringSkill,
 } from "@/lib/capabilities/adapter-home";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
+import {
+  appendPackageSkillsPrompt,
+  workspacePackageSkillsPrompt,
+} from "@/lib/capabilities/package-skills";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
 import {
   loadSelectableCapabilities,
@@ -1031,7 +1035,7 @@ export async function* launchScratchRunStaged(
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
   // FR-C2/C3: per-adapter capability env (e.g. codex CODEX_HOME), merged into
   // the session adapterLaunch below. Empty for cwd adapters (claude/gemini).
-  let adapterHomeEnv: Record<string, string> = {};
+  let adapterLaunch: typeof materialized.adapterLaunch;
 
   let initialPromptStarted = false;
   // ADR-166: the `launch` generation the run-insert tx mints; the session is
@@ -1073,7 +1077,10 @@ export async function* launchScratchRunStaged(
       installedPaths: installedImports.map((imp) => imp.installedPath),
     });
 
-    adapterHomeEnv = adapterHome.env;
+    adapterLaunch = {
+      ...materialized.adapterLaunch,
+      env: { ...materialized.adapterLaunch.env, ...adapterHome.env },
+    };
     launchAssignmentId = await db.transaction(async (tx: Db) => {
       await assertScratchCapacityAvailableInTransaction(tx);
 
@@ -1168,7 +1175,7 @@ export async function* launchScratchRunStaged(
           selectedRestrictionIds: profile.selectedRestrictionIds,
           selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
         },
-        adapterLaunch: materialized.adapterLaunch,
+        adapterLaunch,
         downgradeNotes: downgradeNotes(profile),
       });
 
@@ -1283,9 +1290,10 @@ export async function* launchScratchRunStaged(
       instructionsLogicalName: "scratch-capability-instructions.md",
       instructionsPath: materialized.instructionsPath,
     });
-    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
-      runId,
-    });
+    const launchPrompt = appendPackageSkillsPrompt(
+      normalizeScratchPrompt(prompt, executor.agent, { runId }),
+      await workspacePackageSkillsPrompt(worktreePath, runId),
+    );
     const launchPayload = {
       stepId: scratchStepId(),
       prompt: launchPrompt,
@@ -1319,13 +1327,7 @@ export async function* launchScratchRunStaged(
         capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
         adapterLaunch: mergeRunnerAdapterLaunch(
           runnerResolution.runnerSnapshot,
-          {
-            ...materialized.adapterLaunch,
-            env: {
-              ...(materialized.adapterLaunch.env ?? {}),
-              ...adapterHomeEnv,
-            },
-          },
+          adapterLaunch,
         ),
         mcpServers: gated.mcpServers,
       }),
@@ -1859,7 +1861,7 @@ export async function* launchLocalPackageAssistantStaged(
   yield launchProgress("materializing", executor.agent);
 
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
-  let authoringSkill: Awaited<ReturnType<typeof materializeFlowAuthoringSkill>>;
+  let adapterLaunch: typeof materialized.adapterLaunch;
   // ADR-166: the `launch` generation the run-insert tx mints; the session is
   // created through the client bound to it.
   let launchAssignmentId: string | null = null;
@@ -1882,11 +1884,16 @@ export async function* launchLocalPackageAssistantStaged(
     // (the assistant has no project catalog, so this is its only skill). The
     // returned env (codex CODEX_HOME redirect; empty for cwd adapters) is merged
     // into the session adapterLaunch below.
-    authoringSkill = await materializeFlowAuthoringSkill({
+    const authoringSkill = await materializeFlowAuthoringSkill({
       agent: executor.agent,
       worktreePath: workingDir,
       runId,
     });
+
+    adapterLaunch = {
+      ...materialized.adapterLaunch,
+      env: { ...materialized.adapterLaunch.env, ...authoringSkill.env },
+    };
 
     // Single launch insert: project-less runs + scratch_runs rows, snapshotting
     // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
@@ -1962,7 +1969,7 @@ export async function* launchLocalPackageAssistantStaged(
           selectedRestrictionIds: profile.selectedRestrictionIds,
           selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
         },
-        adapterLaunch: materialized.adapterLaunch,
+        adapterLaunch,
         downgradeNotes: downgradeNotes(profile),
       });
 
@@ -1999,13 +2006,16 @@ export async function* launchLocalPackageAssistantStaged(
       instructionsLogicalName: "scratch-capability-instructions.md",
       instructionsPath: materialized.instructionsPath,
     });
-    const launchPrompt = normalizeScratchPrompt(
-      groundedFlowAssistantPrompt({
-        context: flowContext?.prompt ?? "",
-        prompt,
-      }),
-      executor.agent,
-      { runId },
+    const launchPrompt = appendPackageSkillsPrompt(
+      normalizeScratchPrompt(
+        groundedFlowAssistantPrompt({
+          context: flowContext?.prompt ?? "",
+          prompt,
+        }),
+        executor.agent,
+        { runId },
+      ),
+      await workspacePackageSkillsPrompt(workingDir, runId),
     );
     const postprocessActionId = randomUUID();
     const launchOwner = {
@@ -2044,13 +2054,7 @@ export async function* launchLocalPackageAssistantStaged(
         capabilityInstructionsObjectId: capabilityBundle.instructionsObjectId,
         adapterLaunch: mergeRunnerAdapterLaunch(
           runnerResolution.runnerSnapshot,
-          {
-            ...materialized.adapterLaunch,
-            env: {
-              ...(materialized.adapterLaunch.env ?? {}),
-              ...authoringSkill.env,
-            },
-          },
+          adapterLaunch,
         ),
         mcpServers: materialized.mcpServers,
       }),
@@ -2642,8 +2646,12 @@ export async function dispatchQueuedScratchMessages(
         `scratch run ${runId} has no live supervisor session`,
       );
     const [owner] = await tx
-      .select({ projectId: runs.projectId })
+      .select({
+        projectId: runs.projectId,
+        worktreePath: workspaces.worktreePath,
+      })
       .from(runs)
+      .leftJoin(workspaces, eq(workspaces.runId, runs.id))
       .where(eq(runs.id, runId));
     const now = new Date();
 
@@ -2676,10 +2684,13 @@ export async function dispatchQueuedScratchMessages(
       .from(scratchAttachments)
       .where(eq(scratchAttachments.messageId, oldest.id));
 
-    const prompt = normalizeScratchPrompt(
-      oldest.content,
-      activeSession.capabilityAgent,
-      { runId },
+    const prompt = appendPackageSkillsPrompt(
+      normalizeScratchPrompt(oldest.content, activeSession.capabilityAgent, {
+        runId,
+      }),
+      owner?.worktreePath
+        ? await workspacePackageSkillsPrompt(owner.worktreePath, runId)
+        : "",
     );
     const intent = await freezeScratchPromptIntent(tx, {
       client: execution.client,
@@ -2860,6 +2871,7 @@ async function appendScratchUserMessage(args: {
       messageId: string;
       sequence: number;
       capabilityAgent: string | null;
+      skillsPrompt: string;
       attachments: Parameters<typeof scratchPromptContentBlocks>[1];
     }>,
   ) => Readonly<{ owner: ScratchPromptOwner; payload: SendPromptInput }>;
@@ -3074,6 +3086,10 @@ async function appendScratchUserMessage(args: {
           messageId,
           sequence,
           capabilityAgent,
+          skillsPrompt: await workspacePackageSkillsPrompt(
+            workspace.worktreePath,
+            args.runId,
+          ),
           attachments: [...metadataAttachments, ...uploadedAttachments],
         });
 
@@ -3169,11 +3185,18 @@ export async function sendScratchUserMessage(args: {
 }): Promise<ScratchMessageResponse> {
   const db = getDb() as Db;
   const appended = await appendScratchUserMessage({
-    preparePrompt: ({ messageId, sequence, capabilityAgent, attachments }) => {
-      const prompt = normalizeScratchPrompt(
-        args.body.content,
-        capabilityAgent,
-        { runId: args.runId },
+    preparePrompt: ({
+      messageId,
+      sequence,
+      capabilityAgent,
+      attachments,
+      skillsPrompt,
+    }) => {
+      const prompt = appendPackageSkillsPrompt(
+        normalizeScratchPrompt(args.body.content, capabilityAgent, {
+          runId: args.runId,
+        }),
+        skillsPrompt,
       );
 
       return {
@@ -3296,7 +3319,12 @@ export async function sendLocalPackageAssistantMessage(args: {
   const postprocessActionId = randomUUID();
   const appended = await appendScratchUserMessage({
     executionHosts: args.executionHosts,
-    preparePrompt: ({ messageId, sequence, capabilityAgent }) => ({
+    preparePrompt: ({
+      messageId,
+      sequence,
+      capabilityAgent,
+      skillsPrompt,
+    }) => ({
       owner: {
         variant: "package_message",
         messageId,
@@ -3307,13 +3335,16 @@ export async function sendLocalPackageAssistantMessage(args: {
       },
       payload: {
         stepId: scratchStepId(),
-        prompt: normalizeScratchPrompt(
-          followUpFlowAssistantPrompt({
-            context: flowContext.prompt,
-            prompt: args.body.content,
-          }),
-          capabilityAgent,
-          { runId: args.runId },
+        prompt: appendPackageSkillsPrompt(
+          normalizeScratchPrompt(
+            followUpFlowAssistantPrompt({
+              context: flowContext.prompt,
+              prompt: args.body.content,
+            }),
+            capabilityAgent,
+            { runId: args.runId },
+          ),
+          skillsPrompt,
         ),
       },
     }),

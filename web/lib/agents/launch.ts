@@ -251,6 +251,7 @@ import {
 import {
   withAgentMaterializationLock,
   agentMaterializationWitnessPathsForRun,
+  assertSafeAgentMaterializationPath,
 } from "@/lib/agents/materialization-manifest";
 import {
   prepareContextMounts,
@@ -294,6 +295,7 @@ import {
   materializeAdapterCapabilityHome,
   materializeOperationalAdapterCapabilityHome,
 } from "@/lib/capabilities/adapter-home";
+import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import { getDb } from "@/lib/db/client";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import * as schemaModule from "@/lib/db/schema";
@@ -767,9 +769,12 @@ async function packageSkillMaterializationRoots(
   const roots: string[] = [];
 
   for (const capability of capabilities) {
-    const root = path.join(effective.installedPath, capability.path);
-
     try {
+      const packageRoot = await assertSafeAgentMaterializationPath(
+        effective.installedPath,
+        capability.path,
+      );
+      const root = path.join(packageRoot, capability.path);
       const rootStat = await stat(root);
 
       if (!rootStat.isDirectory()) {
@@ -778,6 +783,7 @@ async function packageSkillMaterializationRoots(
           `agent "${effective.parsed.id}": package install ${effective.packageInstallId} capability ${capability.id} path ${capability.path} is not a directory`,
         );
       }
+      roots.push(root);
     } catch (err) {
       if (err instanceof MaisterError) throw err;
 
@@ -786,8 +792,6 @@ async function packageSkillMaterializationRoots(
         `agent "${effective.parsed.id}": package install ${effective.packageInstallId} capability ${capability.id} path ${capability.path} is missing`,
       );
     }
-
-    roots.push(root);
   }
 
   return roots;
@@ -5498,7 +5502,7 @@ async function driveAgentSession(
       // RD7: the agent's capability_profile.mcps resolve through the existing
       // platform/project catalog (precedence + exec-trust stdio gate) and ride
       // createSession alongside the facade.
-      const prompt = usesStructuredKnowledgeContext(run)
+      const contextPrompt = usesStructuredKnowledgeContext(run)
         ? await appendSpecialistAssignmentContextPrompt(
             _db,
             runId,
@@ -5567,19 +5571,28 @@ async function driveAgentSession(
 
       if (packageSkillRoots.length > 0 && redirectsHome)
         await mkdir(capabilityRoot, { recursive: true });
-      const materializeCapabilityHome =
-        run.agentKind === "operational"
-          ? materializeOperationalAdapterCapabilityHome
-          : materializeAdapterCapabilityHome;
+      const capabilityHomeInput = {
+        agent: snapshot.adapter as AdapterId,
+        worktreePath: cwd,
+        runId,
+        installedPaths: packageSkillRoots,
+      };
       const packageSkillHome =
-        packageSkillRoots.length > 0
-          ? await materializeCapabilityHome({
-              agent: snapshot.adapter as AdapterId,
-              worktreePath: capabilityRoot,
-              runId,
-              installedPaths: packageSkillRoots,
-            })
-          : null;
+        packageSkillRoots.length === 0
+          ? null
+          : run.agentKind === "operational"
+            ? await materializeOperationalAdapterCapabilityHome({
+                ...capabilityHomeInput,
+                runtimePath: capabilityRoot,
+              })
+            : await materializeAdapterCapabilityHome(capabilityHomeInput);
+      const skillPrompt = packageSkillHome
+        ? await workspacePackageSkillsPrompt(cwd, runId)
+        : "";
+      const prompt =
+        skillPrompt && !contextPrompt.startsWith(`${skillPrompt}\n\n`)
+          ? `${skillPrompt}\n\n${contextPrompt}`
+          : contextPrompt;
 
       if (packageCapture.current) {
         await packageCapture.current.release();

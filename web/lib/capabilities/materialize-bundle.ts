@@ -11,6 +11,11 @@ import pino from "pino";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteText } from "@/lib/atomic";
+import {
+  AGENT_MATERIALIZATION_ROOT_RELATIVE,
+  assertSafeAgentMaterializationPath,
+} from "@/lib/agents/materialization-manifest";
+import { materializeWorkspacePackageSkills } from "@/lib/capabilities/package-skills";
 import { capabilityImports } from "@/lib/db/schema";
 import { runtimeFileUrl, runtimePathUrl } from "@/lib/runtime-file-url";
 
@@ -276,6 +281,7 @@ export async function ensureWorktreeGitignore(
 // every such mutation. No-op for projects without Installed imports (a
 // non-AIF project never gets a stray config override).
 export async function materializeProjectBundlesIntoWorktree(args: {
+  runId: string;
   projectId: string;
   worktreePath: string;
   baseBranch: string;
@@ -295,6 +301,7 @@ export async function materializeProjectBundlesIntoWorktree(args: {
   return materializeBundleSet(
     {
       bundles: installedImports,
+      runId: args.runId,
       worktreePath: args.worktreePath,
       baseBranch: args.baseBranch,
     },
@@ -306,6 +313,7 @@ export type CapabilityBundleSource = Readonly<{ installedPath: string }>;
 
 /** Materialize an explicit bundle set; accepted launches supply only verified private captures. */
 type BundleSetMaterialization = Readonly<{
+  runId: string;
   bundles: ReadonlyArray<CapabilityBundleSource>;
   worktreePath: string;
   baseBranch: string;
@@ -323,21 +331,34 @@ async function materializeBundleSet(
 ): Promise<{ bundles: number }> {
   if (args.bundles.length === 0) return { bundles: 0 };
 
-  const materializedPaths: string[] = [];
+  const worktreePath = await assertSafeAgentMaterializationPath(
+    args.worktreePath,
+    ".maister/capabilities",
+  );
+  const materializedPaths = await materializeWorkspacePackageSkills({
+    cwd: worktreePath,
+    runId: args.runId,
+    installedPaths: args.bundles.map((bundle) => bundle.installedPath),
+  });
+
+  if (materializedPaths.length > 0)
+    materializedPaths.push(
+      path.join(worktreePath, AGENT_MATERIALIZATION_ROOT_RELATIVE),
+    );
 
   for (const imp of args.bundles) {
     const copied = await copyArtifacts({
       installedPath: imp.installedPath,
-      worktreePath: args.worktreePath,
+      worktreePath,
     });
 
     materializedPaths.push(...copied.materializedPaths);
   }
   await writeAiFactoryConfigOverride({
-    worktreePath: args.worktreePath,
+    worktreePath,
     baseBranch: args.baseBranch,
   });
-  await ensureWorktreeGitignore(args.worktreePath, materializedPaths);
+  await ensureWorktreeGitignore(worktreePath, materializedPaths);
 
   log.debug(
     {

@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 // FIXME(any): dual drizzle-orm peer-dep variants (store idiom).
 import * as fullSchema from "@/lib/db/schema";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
+import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -130,7 +131,9 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
       packageStatus: "Installing",
     });
 
+    const runId = randomUUID();
     const { bundles } = await materializeProjectBundlesIntoWorktree({
+      runId,
       projectId,
       worktreePath: worktree,
       baseBranch: "develop",
@@ -138,6 +141,11 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
     });
 
     expect(bundles).toBe(2);
+    const prompt = await workspacePackageSkillsPrompt(worktree, runId);
+
+    expect(prompt).toContain(`/package-skills/skill-a/SKILL.md`);
+    expect(prompt).toContain(`/package-skills/skill-b/SKILL.md`);
+    expect(prompt).not.toContain("skill-half");
     expect(
       await pathExists(join(worktree, ".claude", "skills", "skill-a")),
     ).toBe(true);
@@ -182,6 +190,7 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
     });
 
     const { bundles } = await materializeProjectBundlesIntoWorktree({
+      runId: randomUUID(),
       projectId,
       worktreePath: worktree,
       baseBranch: "main",
@@ -208,7 +217,9 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
       packageStatus: "Installed",
     });
 
+    const runId = randomUUID();
     const first = await materializeProjectBundlesIntoWorktree({
+      runId,
       projectId,
       worktreePath: worktree,
       baseBranch: "main",
@@ -222,6 +233,7 @@ describe("materializeProjectBundlesIntoWorktree (ADR-079 §4)", () => {
     await rm(join(worktree, ".ai-factory"), { recursive: true, force: true });
 
     const second = await materializeProjectBundlesIntoWorktree({
+      runId,
       projectId,
       worktreePath: worktree,
       baseBranch: "main",

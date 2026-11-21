@@ -257,6 +257,7 @@ describe("operational source integrity", () => {
 
     await materializeAgentReadOnlySettings(materializationCwd, "claude", runId);
     const home = await materializeOperationalAdapterCapabilityHome({
+      runtimePath: cwd,
       agent: "claude",
       worktreePath: materializationCwd,
       runId,

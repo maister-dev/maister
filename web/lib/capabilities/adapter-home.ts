@@ -23,11 +23,13 @@ import {
 import { assertAgentId, assertAgentStem } from "@/lib/agents/definition";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
 import { ensureWorktreeGitignore } from "@/lib/capabilities/materialize-bundle";
+import { materializeWorkspacePackageSkills } from "@/lib/capabilities/package-skills";
 import {
   FLOW_AUTHORING_SKILL_FILES,
   FLOW_AUTHORING_SKILL_ID,
 } from "@/lib/flows/authoring-skill";
 import {
+  AGENT_MATERIALIZATION_ROOT_RELATIVE,
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
@@ -211,42 +213,63 @@ async function listDir(dir: string): Promise<string[]> {
  * `.gitignore` bytes and Git index state.
  */
 export async function materializeOperationalAdapterCapabilityHome(
-  args: AdapterCapabilityHomeInput,
+  args: AdapterCapabilityHomeInput & { readonly runtimePath: string },
 ): Promise<AdapterHomeResult> {
-  return materializeAdapterCapabilityEntries(args);
+  return materializeAdapterCapabilities(args, args.runtimePath);
 }
 
 /** Delivery worktrees additionally hide generated capability artifacts from Git promotion. */
 export async function materializeAdapterCapabilityHome(
   args: AdapterCapabilityHomeInput,
 ): Promise<AdapterHomeResult> {
-  const result = await materializeAdapterCapabilityEntries(args);
+  const result = await materializeAdapterCapabilities(args, args.worktreePath);
 
-  if (getAdapterSupportById(args.agent)?.materialization?.mode === "cwd-dir") {
+  if (result.materializedRoots.length > 0) {
     const worktreePath = await assertSafeAgentMaterializationPath(
       args.worktreePath,
       ".maister/capabilities",
     );
 
-    await ensureWorktreeGitignore(worktreePath, result.materializedRoots);
+    await ensureWorktreeGitignore(worktreePath, [
+      ...result.materializedRoots,
+      path.join(worktreePath, AGENT_MATERIALIZATION_ROOT_RELATIVE),
+    ]);
   }
 
   return result;
 }
 
-/** Copies lease-owned artifacts; the caller owns delivery Git ignore policy. */
-async function materializeAdapterCapabilityEntries(
+async function materializeAdapterCapabilities(
   args: AdapterCapabilityHomeInput,
+  runtimePath: string,
 ): Promise<AdapterHomeResult> {
-  const worktreePath = await assertSafeAgentMaterializationPath(
-    args.worktreePath,
-    ".maister/capabilities",
-  );
+  const skillRoots = await materializeWorkspacePackageSkills({
+    cwd: args.worktreePath,
+    runId: args.runId,
+    installedPaths: args.installedPaths,
+  });
+  const native = await materializeNativeAdapterCapabilities(args, runtimePath);
+
+  return {
+    ...native,
+    materializedRoots: [...native.materializedRoots, ...skillRoots],
+  };
+}
+
+/** Copies lease-owned artifacts; the caller owns delivery Git ignore policy. */
+async function materializeNativeAdapterCapabilities(
+  args: AdapterCapabilityHomeInput,
+  runtimePath: string,
+): Promise<AdapterHomeResult> {
   const materialization = getAdapterSupportById(args.agent)?.materialization;
 
   if (!materialization) {
     return { env: {}, materializedRoots: [] };
   }
+  const worktreePath = await assertSafeAgentMaterializationPath(
+    materialization.mode === "home-redirect" ? runtimePath : args.worktreePath,
+    ".maister/capabilities",
+  );
 
   if (materialization.mode === "cwd-dir") {
     let skillCount = 0;
@@ -546,12 +569,18 @@ export async function materializeFlowAuthoringSkill(args: {
       await atomicWriteText(target, file.content);
     }
 
-    return await materializeAdapterCapabilityHome({
+    const input = {
       agent: args.agent,
       worktreePath: args.worktreePath,
       runId: args.runId,
       installedPaths: [stageRoot],
-    });
+    };
+
+    // Local package Git excludes already cover native homes and workspace skills under .maister/.
+    return await (getAdapterSupportById(args.agent)?.materialization?.mode ===
+    "cwd-dir"
+      ? materializeAdapterCapabilityHome(input)
+      : materializeAdapterCapabilities(input, args.worktreePath));
   } finally {
     await rm(stageRoot, { recursive: true, force: true }).catch((err) =>
       log.debug(

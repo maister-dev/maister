@@ -305,6 +305,7 @@ export async function resolveDirtyWorktree(
         args.rematerialize ??
         (() =>
           materializeProjectBundlesIntoWorktree({
+            runId: run.id,
             projectId: run.projectId,
             worktreePath: workspace.worktreePath,
             baseBranch: workspace.baseBranch ?? "main",

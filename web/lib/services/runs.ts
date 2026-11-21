@@ -1950,6 +1950,7 @@ async function* executeFlowLaunch(
           materializeWorkspace(() =>
             materializeCapabilityBundlesIntoWorktree({
               bundles,
+              runId,
               worktreePath,
               baseBranch: base,
             }),
@@ -1958,6 +1959,7 @@ async function* executeFlowLaunch(
       else
         await materializeWorkspace(() =>
           materializeProjectBundlesIntoWorktree({
+            runId,
             projectId: project.id,
             worktreePath,
             baseBranch: base,

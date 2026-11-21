@@ -925,27 +925,60 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
     ).rejects.toThrow();
   });
 
-  it("seeds the flow-authoring skill into the session working dir", async () => {
-    const pkg = await createLocalPackage({
-      name: `assistant-skill-${randomUUID().slice(0, 8)}`,
-      createdBy: userId,
-      db: db as never,
-    });
-    const sessionId = await lockLocalPackage(pkg.id, "assistant-skill");
+  it.each(["claude", "codex"] as const)(
+    "seeds and advertises the flow-authoring skill for %s",
+    async (adapter) => {
+      const pkg = await createLocalPackage({
+        name: `assistant-skill-${randomUUID().slice(0, 8)}`,
+        createdBy: userId,
+        db: db as never,
+      });
+      const sessionId = await lockLocalPackage(pkg.id, "assistant-skill");
+      const skillRunnerId = randomUUID();
 
-    await launchLocalPackageAssistant({
-      body: { localPackageId: pkg.id, sessionId, prompt: "hi" },
-      userId,
-    });
+      await db
+        .insert(schemaModule.platformAcpRunners)
+        .values(testPlatformRunnerRow(skillRunnerId, adapter));
+      const launched = await launchLocalPackageAssistant({
+        body: {
+          localPackageId: pkg.id,
+          sessionId,
+          prompt: "hi",
+          runnerId: skillRunnerId,
+        },
+        userId,
+      });
+      const relative = `.maister/capabilities/${launched.runId}/package-skills/flow-authoring/SKILL.md`;
+      const [profile] = await db
+        .select()
+        .from(schemaModule.scratchCapabilityProfiles)
+        .where(
+          eq(schemaModule.scratchCapabilityProfiles.runId, launched.runId),
+        );
+      const nativeRoot =
+        adapter === "codex"
+          ? profile.adapterLaunch?.env?.CODEX_HOME
+          : join(pkg.workingDir, ".claude");
 
-    // claude (cwd-dir) materializes the skill under the working dir .claude/skills.
-    const skillMd = await readFile(
-      join(pkg.workingDir, ".claude", "skills", "flow-authoring", "SKILL.md"),
-      "utf8",
-    );
+      expect(nativeRoot).toBeDefined();
+      if (!nativeRoot) throw new Error("Missing native skill registration");
+      if (adapter === "codex")
+        expect(
+          supervisorMock.createSession.mock.calls[0][0].adapterLaunch.env
+            .CODEX_HOME,
+        ).toBe(nativeRoot);
+      const skillMd = await readFile(join(pkg.workingDir, relative), "utf8");
 
-    expect(skillMd).toContain("name: flow-authoring");
-  });
+      expect(supervisorMock.sendPrompt).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ prompt: expect.stringContaining(relative) }),
+      );
+      expect(skillMd).toContain("name: flow-authoring");
+      await expect(
+        readFile(join(nativeRoot, "skills/flow-authoring/SKILL.md"), "utf8"),
+      ).resolves.toBe(skillMd);
+    },
+  );
 
   it("reclaims local-package assistant materialization when the session is stopped", async () => {
     const pkg = await createLocalPackage({

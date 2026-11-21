@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +37,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
+import { materializeWorkspacePackageSkills } from "@/lib/capabilities/package-skills";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import {
   startMainPostgresTestDb,
@@ -326,6 +328,16 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
   it("does NOT write settings.local.json for a settings-less CODEX node (pins supervisor-side)", async () => {
     const seeded = await seedGraphRun(settingsLessFlow, "codex");
     const api = await makeSupervisorSpy(seeded.runId);
+    await materializeWorkspacePackageSkills({
+      cwd: seeded.worktreePath,
+      runId: seeded.runId,
+      installedPaths: [
+        join(
+          process.cwd(),
+          "test-support/fixtures/operational-core/capability",
+        ),
+      ],
+    });
 
     await runFlow(seeded.runId, {
       db,
@@ -340,6 +352,14 @@ describe("runGraph — capability materialization → createSession (T4.1)", () 
     };
 
     expect(arg.mcpServers).toBeUndefined();
+    const [attempt] = await db
+      .select({ prompt: fullSchema.nodeAttempts.resolvedPrompt })
+      .from(fullSchema.nodeAttempts)
+      .where(eq(fullSchema.nodeAttempts.runId, seeded.runId));
+
+    expect(attempt?.prompt).toContain(
+      `/package-skills/task-qualification/SKILL.md`,
+    );
 
     const settingsLocalPath = join(
       seeded.worktreePath,
