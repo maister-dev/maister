@@ -1,9 +1,12 @@
 import path from "node:path";
+import { stat } from "node:fs/promises";
 
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
+import { flowYamlV1Schema } from "@/lib/config.schema";
 import { buildProductionWeb } from "@/test-support/real-web";
 import { poll } from "@/test-support/durable-workers-ledger";
+import { fixturePrompt } from "@/test-support/durable-workers-seed";
 import {
   startProductionFaultSuite,
   type ProductionFaultSuite,
@@ -61,6 +64,190 @@ type Command = {
   target_session_id: string | null;
   assignment_epoch: number;
 };
+
+it("W06 keeps a parked Flow across web and supervisor death and resumes its single continuation", async () => {
+  const current = await suite.startFixture();
+
+  fixture = current;
+  const runId = await current.launchFlow(
+    flowYamlV1Schema.parse({
+      schemaVersion: 1,
+      name: "Durable wait fault fixture",
+      compat: { engine_min: "3.13.0" },
+      defaults: { session_policy: "resume" },
+      nodes: [
+        {
+          type: "ai_coding",
+          id: "prepare",
+          action: {
+            prompt: fixturePrompt({ terminalDelayMs: 0, text: "prepared" }),
+          },
+          transitions: { success: "await_signal" },
+        },
+        {
+          type: "wait",
+          id: "await_signal",
+          timeout: 600,
+          on: { kind: "signal", name: "build", outcomes: ["success"] },
+          transitions: {
+            success: "verify",
+            timeout: "done",
+            cancelled: "done",
+          },
+        },
+        {
+          type: "cli",
+          id: "verify",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    }),
+  );
+  const readWait = async () =>
+    (
+      await current.database.pool.query<{
+        wait_id: string;
+        version: number;
+        status: string;
+        started_at: Date;
+        state: string;
+        deadline_at: Date;
+        worktree_path: string;
+        removed_at: Date | null;
+        execution_host_id: string;
+        epoch: number;
+        assignment_state: string;
+        released_reason: string;
+      }>(
+        `SELECT r.status,r.started_at,w.id AS wait_id,w.version,w.state,w.deadline_at,ws.worktree_path,ws.removed_at,
+      a.execution_host_id,a.epoch,a.state AS assignment_state,a.released_reason FROM runs r
+      JOIN run_waits w ON r.id=w.run_id JOIN workspaces ws ON r.id=ws.run_id
+      JOIN execution_assignments a ON r.execution_assignment_id=a.id WHERE r.id=$1`,
+        [runId],
+      )
+    ).rows[0];
+  const parked = await poll(
+    async () => {
+      const state = await readWait();
+
+      return state?.status === "Waiting" ? state : null;
+    },
+    45_000,
+    "Flow condition wait to park",
+  );
+
+  expect(parked).toMatchObject({
+    state: "open",
+    assignment_state: "released",
+    released_reason: "waiting_condition",
+    removed_at: null,
+  });
+  expect(await current.supervisor.captureOwnedSessionGroups()).toEqual([]);
+  expect(await commands(runId, "session.create")).toHaveLength(1);
+  await current.database.pool.query(
+    "UPDATE workspaces SET scheduled_removal_at=statement_timestamp()-interval '1 hour' WHERE run_id=$1",
+    [runId],
+  );
+
+  await current.web.kill("SIGKILL");
+  await current.supervisor.kill("SIGKILL");
+  await current.restartSupervisor();
+  await current.restartWeb();
+  expect((await current.requestSweep()).ok).toBe(true);
+  expect(await readWait()).toEqual(parked);
+  expect((await stat(parked.worktree_path)).isDirectory()).toBe(true);
+  expect(await current.supervisor.captureOwnedSessionGroups()).toEqual([]);
+
+  const response = await current.api(
+    `/api/runs/${runId}/waits/${parked.wait_id}/actions`,
+    {
+      method: "POST",
+      headers: {
+        Origin: current.web.url,
+        "content-type": "application/json",
+        "Idempotency-Key": "confirm-after-restart",
+      },
+      body: JSON.stringify({
+        action: "deliver_signal",
+        expectedVersion: parked.version,
+        reason: "Verified after restart",
+        signal: { name: "build", outcome: "success" },
+      }),
+    },
+  );
+
+  expect(response.status, await response.text()).toBe(202);
+  const readDelivery = async () =>
+    (
+      await current.database.pool.query<{ id: string; application: string }>(
+        "SELECT id,application FROM run_wait_deliveries WHERE wait_id=$1",
+        [parked.wait_id],
+      )
+    ).rows;
+  const [delivery] = await readDelivery();
+
+  expect(delivery).toMatchObject({ application: "pending" });
+  await current.web.kill("SIGKILL");
+  await current.restartWeb();
+  expect(await readDelivery()).toEqual([delivery]);
+  expect(await readWait()).toEqual(parked);
+  const dispatch = await current.dispatchDomainEvents();
+
+  expect(await dispatch.json()).toMatchObject({
+    failedCount: 0,
+    succeededCount: 1,
+  });
+  expect(await readDelivery()).toEqual([
+    { ...delivery, application: "applied" },
+  ]);
+  expect(await readWait()).toMatchObject({
+    status: "Pending",
+    assignment_state: "released",
+    epoch: parked.epoch,
+  });
+  expect((await current.requestSweep()).ok).toBe(true);
+  const resumed = await poll(
+    async () => {
+      const state = await readWait();
+
+      return state?.status === "Review" ? state : null;
+    },
+    45_000,
+    "Flow condition wait continuation to finish",
+  );
+
+  expect(resumed).toMatchObject({
+    wait_id: parked.wait_id,
+    state: "resolved",
+    started_at: parked.started_at,
+    execution_host_id: parked.execution_host_id,
+    epoch: parked.epoch + 1,
+    removed_at: null,
+    worktree_path: parked.worktree_path,
+  });
+  expect(
+    (
+      await current.database.pool.query(
+        "SELECT node_id,status,decision FROM node_attempts WHERE run_id=$1 ORDER BY started_at",
+        [runId],
+      )
+    ).rows,
+  ).toEqual([
+    { node_id: "prepare", status: "Succeeded", decision: null },
+    { node_id: "await_signal", status: "Succeeded", decision: "success" },
+    { node_id: "verify", status: "Succeeded", decision: null },
+  ]);
+  expect(await commands(runId, "session.create")).toHaveLength(1);
+  expect(
+    (
+      await current.database.pool.query(
+        "SELECT action,reason FROM run_wait_actions WHERE wait_id=$1",
+        [parked.wait_id],
+      )
+    ).rows,
+  ).toEqual([{ action: "deliver_signal", reason: "Verified after restart" }]);
+}, 240_000);
 async function commands(runId: string, kind: string): Promise<Command[]> {
   return (
     await fixture!.database.pool.query<Command>(

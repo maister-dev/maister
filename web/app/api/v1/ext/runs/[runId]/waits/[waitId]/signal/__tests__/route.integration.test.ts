@@ -1,12 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import { dispatchDomainEvents } from "@/lib/domain-events/dispatch";
 import { waitResolverConsumer } from "@/lib/domain-events/wait-resolver";
+import { issueLibrarianTurnToken } from "@/lib/librarian/authority";
+import { issueToken } from "@/lib/tokens/issue";
 import { generateToken } from "@/lib/tokens/secret";
 import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
+import {
+  seedActiveUser,
+  seedLibrarianTurn,
+} from "@/test-support/librarian-seed";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -81,13 +88,13 @@ it("W08 records an exact grant once, rejects changed replay, and denies revoked 
     "SELECT id FROM run_waits WHERE run_id=$1",
     [runId],
   );
-  const issue = async (scopes: string[]) => {
+  const issue = async (scopes: string[], ownerProjectId = projectId) => {
     const { secret, prefix, hash } = generateToken();
     const {
       rows: [issued],
     } = await database.pool.query<{ id: string }>(
       "INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes) VALUES (gen_random_uuid()::text,$1,'signal test',$2,$3,$4) RETURNING id",
-      [projectId, prefix, hash, JSON.stringify(scopes)],
+      [ownerProjectId, prefix, hash, JSON.stringify(scopes)],
     );
 
     return { token: secret, id: issued.id };
@@ -120,6 +127,65 @@ it("W08 records an exact grant once, rejects changed replay, and denies revoked 
   const payload = { name: "build", outcome: "success", payload: { tests: 42 } };
 
   expect((await send(wildcard.token, payload)).status).toBe(403);
+  const foreignProjectId = randomUUID();
+  const agentId = `fixture:${randomUUID()}`;
+
+  await database.pool.query(
+    `INSERT INTO projects (id,slug,name,repo_path,maister_yaml_path,task_key)
+    VALUES ($1,$2,'Foreign fixture',$3,$4,$5)`,
+    [
+      foreignProjectId,
+      `foreign-${foreignProjectId}`,
+      `/tmp/${foreignProjectId}`,
+      `/tmp/${foreignProjectId}/maister.yaml`,
+      `F${foreignProjectId.slice(0, 6).toUpperCase()}`,
+    ],
+  );
+  const foreign = await issue(["waits:signal"], foreignProjectId);
+
+  expect((await send(foreign.token, payload)).status).toBe(404);
+  await database.pool.query(
+    `INSERT INTO agents (id,package_name,version_label,origin,name,description,
+    workspace,mode,triggers,risk_tier,source_path)
+    VALUES ($1,'fixture','v1','git',$1,'Fixture','none','session','["manual"]','read_only','/tmp/fixture.md')`,
+    [agentId],
+  );
+  const agent = await issue(["waits:signal"]);
+
+  await database.pool.query(
+    "UPDATE project_tokens SET token_kind='agent',agent_id=$1 WHERE id=$2",
+    [agentId, agent.id],
+  );
+  expect((await send(agent.token, payload)).status).toBe(403);
+  const ownerUserId = await seedActiveUser(database.db);
+  const personal = await issueToken(
+    {
+      projectId: null,
+      ownerUserId,
+      tokenKind: "user",
+      name: "personal signal fixture",
+      scopes: ["waits:signal"],
+    },
+    database.db,
+  );
+  const turnId = await seedLibrarianTurn(database.db, ownerUserId);
+  const librarian = await issueLibrarianTurnToken(
+    {
+      ownerUserId,
+      turnId,
+      scopes: ["waits:signal"],
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+    database.db,
+  );
+
+  expect((await send(personal.secret, payload)).status).toBe(403);
+  const librarianResponse = await send(librarian.secret, payload);
+
+  expect(librarianResponse.status).toBe(403);
+  expect(await librarianResponse.json()).toMatchObject({
+    details: { reason: "librarian_not_admitted" },
+  });
   expect((await sendRaw(allowed.token, "{invalid")).status).toBe(400);
   expect((await send(allowed.token, payload, " ")).status).toBe(422);
   expect(
