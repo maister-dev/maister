@@ -299,6 +299,22 @@ it.each(["enabled", "disabled"] as const)(
         )
       ).rows,
     ).toEqual(setting === "enabled" ? [{ reason: "wait_timeout" }] : []);
+
+    const { getCurrentReviewRefusals } =
+      await import("@/lib/queries/autonomous-completion");
+    const deskRefusal = async () =>
+      (await getCurrentReviewRefusals(database.db, [runId])).get(runId);
+
+    expect(await deskRefusal()).toBe(
+      setting === "disabled" ? "platform_disabled" : undefined,
+    );
+    if (setting === "disabled") {
+      await database.pool.query(
+        "UPDATE runs SET review_entered_at = statement_timestamp() WHERE id = $1",
+        [runId],
+      );
+      expect(await deskRefusal()).toBeUndefined();
+    }
   },
 );
 
@@ -614,7 +630,7 @@ it("W06 drives a timer wait through the normal graph entry and common Pending ad
   ]);
 });
 
-it("W03 resolves a timer already due at registration and uses timeout for an equal deadline", async () => {
+it("W03 applies elapsed and equal-deadline timers even if another due wait fails", async () => {
   const { runFlow } = await import("@/lib/flows/runner");
   const { runWaitDeadlineSweep } =
     await import("@/lib/scheduler/handlers/wait-deadline");
@@ -622,7 +638,11 @@ it("W03 resolves a timer already due at registration and uses timeout for an equ
   const { fakeGraphHosts } = await import("@/test-support/fake-execution-host");
   const parked: string[] = [];
 
-  for (const timer of [{ until: "2020-01-01T00:00:00Z" }, { after: 120 }]) {
+  for (const timer of [
+    { until: "2020-01-01T00:00:00Z" },
+    { after: 120 },
+    { after: 60 },
+  ]) {
     const { runId, runtimeRoot, worktreePath } = await seedGraphRun(
       database.db,
       {
@@ -674,9 +694,30 @@ it("W03 resolves a timer already due at registration and uses timeout for an equ
     deadline_at=opened_at+interval '1 microsecond',next_due_at=opened_at+interval '1 microsecond' WHERE run_id=$1`,
     [parked[1]],
   );
+  const {
+    rows: [poison],
+  } = await database.pool.query<{ id: string }>(
+    `UPDATE run_waits SET timer_at=opened_at-interval '1 hour',
+    next_due_at=opened_at-interval '1 hour' WHERE run_id=$1 RETURNING id`,
+    [parked[2]],
+  );
+  const resolver = await import("@/lib/waits/resolve");
+  const resolveNormally = resolver.resolveObservedWait;
+  const transient = vi
+    .spyOn(resolver, "resolveObservedWait")
+    .mockImplementation((db, address, hosts) => {
+      if (address.waitId === poison.id)
+        return Promise.reject(new Error("Test fixture refuses this candidate"));
+
+      return resolveNormally(db, address, hosts);
+    });
+
+  onTestFinished(() => {
+    transient.mockRestore();
+  });
   expect(await runWaitDeadlineSweep(database.db)).toMatchObject({
     resolved: 1,
-    errors: [],
+    errors: [poison.id],
   });
   expect(await runWaitDeadlineSweep(database.db)).toMatchObject({
     resolved: 0,
@@ -687,7 +728,11 @@ it("W03 resolves a timer already due at registration and uses timeout for an equ
     [parked],
   );
 
-  expect(rows).toEqual([{ outcome: "elapsed" }, { outcome: "timeout" }]);
+  expect(rows).toEqual([
+    { outcome: "elapsed" },
+    { outcome: "timeout" },
+    { outcome: null },
+  ]);
 });
 
 it("W05 closes a parked wait on abandon and refuses a later signal", async () => {

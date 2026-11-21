@@ -2,11 +2,12 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import {
   runAutonomousDecisions,
   runAutonomousReversals,
+  runs,
 } from "@/lib/db/schema";
 
 export type AutonomousCompletionCounts = Readonly<{
@@ -96,7 +97,28 @@ export async function getCurrentReviewRefusals(
       phase: runAutonomousDecisions.phase,
     })
     .from(runAutonomousDecisions)
-    .where(inArray(runAutonomousDecisions.runId, runIds))
+    .innerJoin(
+      runs,
+      and(
+        eq(runs.id, runAutonomousDecisions.runId),
+        eq(runs.projectId, runAutonomousDecisions.projectId),
+      ),
+    )
+    .where(
+      and(
+        inArray(runAutonomousDecisions.runId, runIds),
+        eq(runs.status, "Review"),
+        or(
+          gte(runAutonomousDecisions.createdAt, runs.reviewEnteredAt),
+          // A refused failure enters Review without a promotable Review epoch.
+          and(
+            isNull(runs.reviewEnteredAt),
+            eq(runAutonomousDecisions.action, "fail"),
+            gte(runAutonomousDecisions.createdAt, runs.endedAt),
+          ),
+        ),
+      ),
+    )
     .orderBy(
       runAutonomousDecisions.runId,
       desc(runAutonomousDecisions.createdAt),
