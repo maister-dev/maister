@@ -17,7 +17,8 @@ vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string) => translate(key),
 }));
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@/lib/authz", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/authz")>()),
   getSessionUser: getSessionUserMock,
 }));
 
@@ -25,7 +26,10 @@ vi.mock("@/lib/db/client", () => ({
   getDb: getDbMock,
 }));
 
-vi.mock("@/lib/db/schema", () => schemaTables);
+vi.mock("@/lib/db/schema", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/schema")>()),
+  ...schemaTables,
+}));
 
 vi.mock("@/lib/instance-config", () => ({
   hostToolStatus: hostToolStatusMock,
@@ -59,6 +63,12 @@ vi.mock("@/components/settings/brain-settings-panel", () => ({
 vi.mock("@/components/settings/librarian-settings-card", () => ({
   LibrarianSettingsCard: () => null,
 }));
+vi.mock("@/lib/workspace-integrity/settings", () => ({
+  integritySettingsPageView: () => ({ settings: null, invalidFields: [] }),
+}));
+vi.mock("@/components/settings/workspace-integrity-settings-card", () => ({
+  WorkspaceIntegritySettingsCard: () => null,
+}));
 vi.mock("@/components/settings/webhooks-panel", () => ({
   WebhooksPanel: () => null,
 }));
@@ -91,7 +101,12 @@ describe("SettingsPage authorization contract", () => {
   });
 
   it("renders the forbidden panel and loads NO admin data for a non-admin", async () => {
-    getSessionUserMock.mockResolvedValue({ id: "u1", role: "member" });
+    getSessionUserMock.mockResolvedValue({
+      id: "u1",
+      role: "member",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
 
     const { default: SettingsPage } = await import("../page");
     const html = renderToStaticMarkup(await SettingsPage());
@@ -106,7 +121,12 @@ describe("SettingsPage authorization contract", () => {
   });
 
   it("renders admin content and loads admin data for an admin", async () => {
-    getSessionUserMock.mockResolvedValue({ id: "u2", role: "admin" });
+    getSessionUserMock.mockResolvedValue({
+      id: "u2",
+      role: "admin",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
 
     const { default: SettingsPage } = await import("../page");
     const html = renderToStaticMarkup(await SettingsPage());

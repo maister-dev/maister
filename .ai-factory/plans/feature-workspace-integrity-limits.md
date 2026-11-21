@@ -152,7 +152,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
   **Acceptance.** Start the isolated web process with one env value, confirm that field reports `environment`, and confirm unset fields report `default`. The templates and configuration table agree on names, units and defaults. Use the existing service startup/error logs.
 
-- [ ] **5. Replace the hard-coded ceilings at the shared walker** (after 3). Wire each path in the caller table, including diagnostics context/legacy flags, direct task reuse and GC evidence recapture. Thread the test/worker's actual settings database through callers lacking it. Update `web/test-support/preparation-owner-process.ts` and existing callers/fixtures of the three signatures.
+- [x] **5. Replace the hard-coded ceilings at the shared walker** (after 3). Wire each path in the caller table, including diagnostics context/legacy flags, direct task reuse and GC evidence recapture. Thread the test/worker's actual settings database through callers lacking it. Update `web/test-support/preparation-owner-process.ts` and existing callers/fixtures of the three signatures.
 
   Cover both cleanup owners. Rowless GC uses the 300-second run claim in `web/lib/gc/operational-disposition.ts`. Row-backed GC uses `promotionClaimTimeoutSeconds()` through `web/lib/workbench-lifecycle/service.ts` and can have a lease shorter than one permitted scan. Keep the actual owner renewed during long work and across siblings, using serialized, owner-fenced renewals and stopping renewal on exit. Check ownership before publishing evidence, restoring, removing or releasing resources. On loss, defer to the current owner and retain unpreserved bytes. Exercise a blocked scan that spans the shorter lease and a stale owner after takeover. The evidence archive's separate 384 MiB total and 256 MiB per-file limits retain their current refusal semantics.
 
@@ -166,7 +166,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
   **Acceptance.** Each fixture fails on its intended axis only, respects exact boundary semantics, and pre-existing integrity/cleanup tests still pass. Verify all three exported paths and each production caller family, including nested contexts, preservation failure with resource retained, and lost-lease refusal.
 
-- [ ] **6. Retain the primary limit diagnostic and render preparation details** (after 5). Extend `web/lib/agents/operational-diagnostics.ts`, `preparation-workspace.ts`, `create-failure.ts`, `launch.ts`, `finalization.ts` and `web/lib/run-results/operational-{types,projection}.ts` where the failure is normalized, retained and projected.
+- [x] **6. Retain the primary limit diagnostic and render preparation details** (after 5). Extend `web/lib/agents/operational-diagnostics.ts`, `preparation-workspace.ts`, `create-failure.ts`, `launch.ts`, `finalization.ts` and `web/lib/run-results/operational-{types,projection}.ts` where the failure is normalized, retained and projected.
 
   Carry bounded evidence through verification results, `combineIntegrityResults` and preparation refusal wrappers without replacing their outer reasons. Exercise the undispatched settlement branch.
 
@@ -189,7 +189,7 @@ Existing direct-caller integration fixtures to migrate in task 5 (paths under `w
 
 ### Phase 3 — Admin UI and end-to-end qualification
 
-- [ ] **7. Add the global settings section** (after 3). Compose an admin-gated `WorkspaceIntegritySettingsCard` on `web/app/(app)/settings/page.tsx`, following the adjacent librarian card and shared mutation feedback.
+- [x] **7. Add the global settings section** (after 3). Compose an admin-gated `WorkspaceIntegritySettingsCard` on `web/app/(app)/settings/page.tsx`, following the adjacent librarian card and shared mutation feedback.
 
   Use the existing singleton read in `loadPlatformRuntimeView` for the initial authorized page view and the same effective-value resolver as GET/PATCH. On an invalid active env value, display a field-specific configuration error and allow the admin to supply a valid override. A failed read must never display a fabricated effective value. Give the three labeled controls the stable anchor IDs from the remediation table. Submit only edited fields and explicit resets so an unrelated concurrent edit survives.
 
@@ -199,7 +199,7 @@ Existing direct-caller integration fixtures to migrate in task 5 (paths under `w
 
   **Acceptance.** Exercise the form in both locales in the browser journey from Task 8, using DOM assertions in the same fixture. Assert labeled units and sources, keyboard-accessible independent reset, omission of untouched values from the PATCH, field errors with preserved edits, and save confirmation using the returned values. Task 8 owns persistence across a full page reload and confirms a member receives neither section nor settings payload.
 
-- [ ] **8. Prove the browser-to-traversal path and direct authorization** (after 4–7). Add `web/e2e/execution-ab-workspace-integrity.spec.ts` to the existing serial `execution-ab` project in `web/playwright.execution-ab.config.ts`. Its global setup boots the real supervisor with a controlled ACP adapter. Use the existing isolated invocation `pnpm --filter maister-web test:e2e:execution-ab execution-ab-workspace-integrity.spec.ts` with env scoped to this invocation. Confirm discovery in this lane and exclusion from the default lane. Use `admin-execution-host.spec.ts` for real member authentication.
+- [x] **8. Prove the browser-to-traversal path and direct authorization** (after 4–7). Add `web/e2e/execution-ab-workspace-integrity.spec.ts` to the existing serial `execution-ab` project in `web/playwright.execution-ab.config.ts`. Its global setup boots the real supervisor with a controlled ACP adapter. Use the existing isolated invocation `pnpm --filter maister-web test:e2e:execution-ab execution-ab-workspace-integrity.spec.ts` with env scoped to this invocation. Confirm discovery in this lane and exclusion from the default lane. Use `admin-execution-host.spec.ts` for real member authentication.
 
   Launch a dedicated test web process with an env size limit of 3 MiB and an isolated DB, seed an operational agent and a small committed repo whose measured tree is between 1 and 3 MiB. Record the initial 3 MiB/environment and both built-ins. Through the UI save 1 MiB and an independent entry override high enough for this tree, verify confirmation/source, reload, then trigger a fresh real operational preparation through its normal launch entry. Assert the new run's own baseline refuses on bytes at 1,048,576 B before session creation, and open its run page to verify observed/maximum/unit.
 
@@ -224,7 +224,9 @@ Existing direct-caller integration fixtures to migrate in task 5 (paths under `w
 - WI-01 went RED against the predecessor because the migration was absent. The real PostgreSQL upgrade then passed, preserving the existing row and enforcing all three CHECKs. The normal full migrator also booted the settings and browser fixtures. A second Drizzle generation reported no schema changes and the canonical DBML check passed.
 - WI-02 uses the isolated PostgreSQL route suite for atomic save/reset, source precedence, invalid-env rollback and database writer order. Admin authorization is also exercised with real sessions in WI-03.
 - The pinned production probe read the cap through the settings HTTP handlers in a migrated isolated database. On Darwin arm64 with Node 24.22.3, the old 256 MiB cap stopped at 268,737,798 B. The full witness for `cd9e37f071f7d29e6fbc03d36e1e83c8a0ffdb5f` measured 482,517,365 B and 11,749 entries. The observed wall times under concurrent local test load were 12,818 ms to refusal, 13,234 ms for capture, 15,873 ms for generation and 12,187 ms for verification. Final verdict was clean with an unchanged detached checkout.
-- The initial browser journey passed the admin override/reload/real preparation refusal/reset/fresh generation and EN/RU admin/member diagnostics in one web lifetime. Broader integration and the final browser rerun are separate gates.
+- The execution-ab browser journey passed with a real supervisor in one production web lifetime (boot `3akSJ_FH4zlricDPdOW5T:35659`). It covered the byte refusal before session creation, the persisted historical threshold, EN/RU admin and member guidance, keyboard reset, field validation, both inheritance sources, and direct anonymous, project-owner and stale-admin denial.
+- The complete web unit suite passed 9,231 tests across 894 files with four workers. The primary PostgreSQL settings, traversal and task admission/publication run passed 75 tests. The targeted cleanup run passed retention, retry and short-lease renewal. The prompt-owner finalization check separately passed with the fixed 1 MiB Git config cap. OpenAPI and documentation validators, the 19 migration-journal tests and web typecheck passed.
+- The first broad integration run overlapped implementation and production-build fixtures. It reported failures in scratch dispatch, execution A/B process fixtures and early integrity callers. The real targeted reruns covered the settings, admission, package and disposal fixes. Full integration on the final source remains the Task 9 gate.
 
 ## Commit plan for implementation
 

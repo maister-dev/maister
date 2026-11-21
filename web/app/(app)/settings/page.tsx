@@ -3,11 +3,13 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
-import { getSessionUser } from "@/lib/authz";
+import { getSessionUser, hasActiveGlobalRole } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { BrainSettingsPanel } from "@/components/settings/brain-settings-panel";
 import { LibrarianSettingsCard } from "@/components/settings/librarian-settings-card";
+import { WorkspaceIntegritySettingsCard } from "@/components/settings/workspace-integrity-settings-card";
+import { integritySettingsPageView } from "@/lib/workspace-integrity/settings";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { getBrainSettings } from "@/lib/brain/settings";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
@@ -35,7 +37,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function SettingsPage(): Promise<ReactElement> {
   const t = await getTranslations("settings");
   const user = await getSessionUser();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user !== null && hasActiveGlobalRole(user, "admin");
 
   const tools = isAdmin ? await hostToolStatus() : [];
   const diagnostics = isAdmin ? await getPlatformDiagnostics() : null;
@@ -164,6 +166,10 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 unavailableAdapters={unavailableAdapters}
               />
               <LibrarianSettingsCard view={runtime.librarian} />
+              <WorkspaceIntegritySettingsCard
+                initial={runtime.integrity.settings}
+                invalidFields={runtime.integrity.invalidFields}
+              />
               <WebhooksPanel />
               <BrainSettingsPanel settings={runtime.brainSettings} />
             </div>
@@ -199,7 +205,19 @@ async function loadPlatformRuntimeView(
     getBrainSettings(db),
   ]);
 
+  const settingsRow = (
+    settingsRows as (typeof platformRuntimeSettings.$inferSelect)[]
+  ).find(({ id }) => id === "singleton");
+  const integrity = integritySettingsPageView(
+    settingsRow && {
+      maxSizeMiB: settingsRow.workspaceIntegrityMaxSizeMiB,
+      maxDurationSeconds: settingsRow.workspaceIntegrityMaxDurationSeconds,
+      maxEntries: settingsRow.workspaceIntegrityMaxEntries,
+    },
+  );
+
   return {
+    integrity,
     adapters: getAdapterSupport(),
     defaultRunnerId: settingsRows[0]?.defaultRunnerId ?? null,
     presets: platformRunnerPresetRows(),

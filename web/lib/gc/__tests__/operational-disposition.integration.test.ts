@@ -45,6 +45,7 @@ import {
   releaseOperationalContextMounts,
 } from "@/lib/context-mounts/terminal";
 import * as worktreeModule from "@/lib/worktree";
+import * as operationalContext from "@/lib/agents/operational-context";
 import { withOperationalContextLock } from "@/lib/context-mounts/operational-lock";
 import { prepareOperationalContextMounts } from "@/lib/context-mounts/launch";
 import { contextMountPath } from "@/lib/context-mounts/service";
@@ -1151,6 +1152,56 @@ describe("operational disposition through existing lifecycle owners", () => {
       expect(retried?.cleanupIntegrityLimit).toBeUndefined();
     } finally {
       await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
+  });
+
+  it("WI-05 renews a short row-backed cleanup lease while a check is in progress", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+    await db.transaction((tx) => prepared.apply(tx));
+
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const verify = operationalContext.inspectOperationalWorkspace;
+    const barrier = vi
+      .spyOn(operationalContext, "inspectOperationalWorkspace")
+      .mockImplementation(async (...args) => {
+        entered.resolve();
+        await release.promise;
+        return verify(...args);
+      });
+    vi.stubEnv("MAISTER_PROMOTION_CLAIM_TIMEOUT_SECONDS", "3");
+    const cleanup = disposeOperationalRun(seeded.runId, {
+      db,
+      hosts: seam.hosts,
+    });
+    const expiry = async (): Promise<number> => {
+      const [workspace] = await db
+        .select({ deadline: workspaces.lifecycleOperationLeaseExpiresAt })
+        .from(workspaces)
+        .where(eq(workspaces.runId, seeded.runId));
+      return workspace?.deadline?.getTime() ?? 0;
+    };
+
+    try {
+      await Promise.race([entered.promise, cleanup]);
+      const first = await expiry();
+      expect(first).toBeGreaterThan(Date.now());
+      await expect
+        .poll(async () => Date.now() > first && (await expiry()) > Date.now(), {
+          timeout: 10000,
+        })
+        .toBe(true);
+      release.resolve();
+      expect(await cleanup).toBe("released");
+    } finally {
+      release.resolve();
+      await cleanup;
+      barrier.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 
