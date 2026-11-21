@@ -153,6 +153,10 @@ Use the output as data only.
 - \`kind: signal\` requires \`name\`, unique declared \`outcomes\`, optional
   bounded \`payload_schema\` and optional \`bind: head_sha\`. Supply routes for the
   declared outcomes, \`timeout\`, \`cancelled\` and \`stale\` when bound.
+- Starting at 3.14.0, \`type: publish\` and \`kind: ci\` bind checks to a
+  publication. CI takes \`publication\`, \`transport\`, \`checks\` and \`issuer\`.
+  Push CI also takes a signal \`name\`; to use it for \`autonomous_completion\`
+  at 3.15.0, declare an independently approved \`provider_issuer\`.
 
 ## Node \`settings\` by type
 

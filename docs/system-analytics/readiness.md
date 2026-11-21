@@ -334,6 +334,8 @@ describes that attempt (UX-07A–C).
 
 The code lane requires strict gate passes, current trusted CI, a passing reviewed AI verdict within the approved risk and confidence thresholds and a bounded base-to-HEAD diff. Match each producer attempt to the candidate, base and publication generation. Override, supersession, stale source, policy revocation, unsupported base drift, renamed deny-listed path and unmeasurable diff each refuse machine delivery.
 
+Both CI transports require the most recent complete provider check set for the bound commit. A push wait also requires the original applied receipt from its currently authorized project token. The approved provider issuer and signal token come from the pinned Flow declaration and current project settings.
+
 See [the governing contract](execution-policy.md).
 
 ## Linked artifacts

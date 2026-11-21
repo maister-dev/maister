@@ -7,9 +7,11 @@ import type { ProviderSource } from "@/lib/waits/ci-provider";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import { normalizePublicationOrigin } from "../../../runtime/workspace-publication";
 
 import { runs, runPublications, runWaits } from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 import { getPrState } from "@/lib/runs/pr-adapter";
 import { evaluateCiObservation } from "@/lib/waits/ci-evidence";
 import {
@@ -110,37 +112,72 @@ export async function scanWaitPublications(input: {
         const source = providerSourceForPublication(provider, publication);
 
         if (!source) continue;
-        const initialHead = await readProviderPublicationHead(
-          source,
-          input.fetchPage,
-        );
+        const observeHead = async (): Promise<string> => {
+          try {
+            return await readProviderPublicationHead(source, input.fetchPage);
+          } catch (error) {
+            if (
+              !isMaisterError(error) ||
+              error.details?.status !== 404 ||
+              !publication.prNumber ||
+              wait.resumeState !== "applied"
+            )
+              throw error;
+            const readPr = input.readPr ?? getPrState;
+            const pr = await readPr({
+              provider,
+              remoteUrl,
+              prNumber: publication.prNumber,
+            });
+
+            if (
+              pr.kind !== "state" ||
+              pr.state !== "merged" ||
+              pr.headSha !== publication.sourceHead ||
+              !pr.mergeCommitSha ||
+              !GIT_OBJECT_ID.test(pr.mergeCommitSha)
+            )
+              throw error;
+
+            return pr.headSha;
+          }
+        };
+        const initialHead = await observeHead();
+        const push = condition.transport === "push";
+        const providerIssuer = push
+          ? condition.provider_issuer
+          : condition.issuer;
+
+        // Push delivery can enter the graph even when provider check access fails.
+        if (push)
+          await recordPublicationObservation(db, {
+            ...scope,
+            kind: "ref",
+            headSha: initialHead,
+            fact: {},
+          });
         const ci =
-          initialHead === publication.sourceHead &&
-          condition.transport === "pull"
+          initialHead === publication.sourceHead && providerIssuer
             ? evaluateCiObservation(
                 {
                   headSha: publication.sourceHead,
                   ref: publication.headRef,
-                  issuer: condition.issuer,
+                  issuer: providerIssuer,
                   checks: condition.checks,
                 },
                 await readProviderCi(source, input.fetchPage),
               )
             : null;
-        const headSha = ci
-          ? await readProviderPublicationHead(source, input.fetchPage)
-          : initialHead;
+        const headSha = ci ? await observeHead() : initialHead;
 
-        await recordPublicationObservation(db, {
-          ...scope,
-          kind: "ref",
-          headSha,
-          fact: {},
-        });
-        if (
-          condition.transport === "pull" &&
-          headSha === publication.sourceHead
-        )
+        if (!push || headSha !== initialHead)
+          await recordPublicationObservation(db, {
+            ...scope,
+            kind: "ref",
+            headSha,
+            fact: {},
+          });
+        if (providerIssuer && headSha === publication.sourceHead)
           await recordPublicationObservation(db, {
             ...scope,
             kind: "ci",
@@ -149,7 +186,7 @@ export async function scanWaitPublications(input: {
               outcome: ci?.outcome ?? "pending",
               checks: [...(ci?.nonPassingChecks ?? [])],
               requiredChecks: condition.checks,
-              issuer: condition.issuer,
+              issuer: providerIssuer,
             },
           });
         verifiedAt = new Date();

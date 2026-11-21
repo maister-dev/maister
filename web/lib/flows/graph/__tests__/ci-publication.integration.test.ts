@@ -37,13 +37,17 @@ it.each([
   "stale-review",
   "merged-pr",
   "wrong-pr-head",
+  "closed-pr",
   "recover-merge",
 ] as const)(
   "C02/C04/C05 settles %s retained evidence through the engine promotion service",
   async (scenario) => {
     const { runFlow } = await import("@/lib/flows/runner");
     const { promoteNextPending } = await import("@/lib/scheduler");
-    const prBacked = scenario === "merged-pr" || scenario === "wrong-pr-head";
+    const prBacked =
+      scenario === "merged-pr" ||
+      scenario === "wrong-pr-head" ||
+      scenario === "closed-pr";
     const prNumber = 31;
     const mergeCommitSha = "b".repeat(40);
 
@@ -304,10 +308,11 @@ it.each([
 
           return {
             kind: "state",
-            state: "merged",
+            state: scenario === "closed-pr" ? "closed" : "merged",
             headSha: scenario === "wrong-pr-head" ? "e".repeat(40) : head,
-            mergeCommitSha,
-            mergedAt: new Date().toISOString(),
+            mergeCommitSha: scenario === "closed-pr" ? null : mergeCommitSha,
+            mergedAt:
+              scenario === "closed-pr" ? null : new Date().toISOString(),
             hasConflicts: false,
           };
         },
@@ -410,9 +415,24 @@ it.each([
           ])
         ).rows,
       ).toEqual([{ status: "Waiting" }]);
-      remoteHeadSha = null;
+      if (scenario !== "closed-pr") remoteHeadSha = null;
       await scan();
       await resume();
+      const prResult = await database.pool.query<{ outcome: string }>(
+        "SELECT result->>'outcome' AS outcome FROM run_waits WHERE run_id=$1 AND condition_kind='pr'",
+        [runId],
+      );
+
+      expect(prResult.rows).toEqual([
+        {
+          outcome:
+            scenario === "closed-pr"
+              ? "closed"
+              : scenario === "wrong-pr-head"
+                ? "stale"
+                : "merged",
+        },
+      ]);
     }
 
     const localDelivery = scenario === "green" || scenario === "recover-merge";

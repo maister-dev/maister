@@ -2192,7 +2192,7 @@ nodes:
 | `comment` | Optional `actor` with `type` and `id` | commented, timeout, cancelled |
 | `run` | `run_id`; exactly one of `relation` (parent/child) or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
 | `signal` | `name`, finite `outcomes`, optional `payload_schema`, optional `bind: head_sha` | declared keys, timeout, cancelled; stale if bound |
-| `ci` | `publication` node ID, `transport` (push/pull), required `checks`, declared `issuer` and push `name` | success, failure, cancelled, timeout, stale |
+| `ci` | `publication` node ID, `transport` (push/pull), required `checks`, declared `issuer` and push `name`. `provider_issuer` is required on a push CI node used by `autonomous_completion`. | success, failure, cancelled, timeout, stale |
 | `pr` | `publication` node ID with a PR receipt | merged, closed, conflict, timeout, cancelled, stale |
 
 Missing timeout or cancellation routes, an undeclared signal outcome, a
@@ -2227,6 +2227,12 @@ Other valid `on` values (with outcome routes as listed above) include
 `{ kind: signal, name: build, outcomes: [pass, fail], bind: head_sha }`,
 `{ kind: ci, publication: publish, transport: pull, checks: [test], issuer: github-main }`
 and `{ kind: pr, publication: publish }`. Phase B examples require 3.14.0.
+
+For push delivery, `issuer` identifies the authorized project signal token.
+The callback can advance the graph after the exact publication ref is verified.
+With `autonomous_completion`, `provider_issuer` names the check publisher for a
+separate current provider scan. Both source identities require project approval.
+A callback alone supplies no promotion authority.
 
 Refused variants include a timer with both `after` and `until`, a comment
 restricted to an unknown actor kind, a self-referencing run, a signal

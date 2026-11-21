@@ -1496,6 +1496,12 @@ export const flowYamlV1Schema = graphOnlyManifestInputSchema.pipe(
             path: ["autonomous_completion", "ci"],
             message: "Completion requires a project CI wait node",
           });
+        else if (ci.on.transport === "push" && !ci.on.provider_issuer)
+          ctx.addIssue({
+            code: "custom",
+            path: ["autonomous_completion", "ci"],
+            message: "Completion using push CI requires provider_issuer",
+          });
         if (completion.gates.some((reference) => !findGate(reference)))
           ctx.addIssue({
             code: "custom",

@@ -538,7 +538,10 @@ async function resolveFlowLaunchSettingsForSource(
       !bounds.data.enabled ||
       ci?.type !== "wait" ||
       ci.on.kind !== "ci" ||
-      !bounds.data.approvedCiSources.includes(ci.on.issuer)
+      !bounds.data.approvedCiSources.includes(ci.on.issuer) ||
+      (ci.on.transport === "push" &&
+        (!ci.on.provider_issuer ||
+          !bounds.data.approvedCiSources.includes(ci.on.provider_issuer)))
     )
       throw launchRefusal("autonomy_grant_unavailable", "PRECONDITION");
     autonomousCompletionGrant = {
