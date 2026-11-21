@@ -155,10 +155,11 @@ paths:
   /api/v1/ext/runs/{runId}/waits/{waitId}/signal:
     post:
       operationId: deliverFlowWaitSignal
-      summary: Designed — Record an authenticated Flow wait signal
-      description: Requires a project token carrying the exact waits:signal scope. A bounded wait with head binding
-        also requires headSha. Retry requires the original canonical body and key. A stale delivery never
-        resolves the wait.
+      summary: Record an authenticated Flow wait signal
+      description: >-
+        Requires a project token with the exact waits:signal scope. For push CI, the token must match the wait issuer;
+        a different project token receives 403 with reason wait_signal_issuer. A head-bound wait requires headSha.
+        Retry with the original canonical body and key. Stale deliveries cannot resolve the wait.
       security: &a4
         - projectToken: []
       parameters:
@@ -427,9 +428,10 @@ paths:
   /api/v1/ext/projects/{slug}/waits/callback:
     get:
       operationId: findFlowWaitCallback
-      summary: Designed — Find the callback for one approved publication
-      description: Uses the project token issuer and reviewed publication. Repeated natural keys require
-        independently verified provider execution identity or the originally supplied callback.
+      summary: Find the callback for one approved publication
+      description: >-
+        The reviewed publication callback is visible to the push CI wait issuer. For repeated ref, SHA and signal
+        tuples, use the original callback address. A supplied provider execution ID alone cannot disambiguate a run.
       security: *a4
       parameters:
         - name: slug

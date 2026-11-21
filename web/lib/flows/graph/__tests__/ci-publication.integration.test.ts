@@ -726,6 +726,7 @@ it.each(["pull", "push"] as const)(
   async (transport) => {
     const { runFlow } = await import("@/lib/flows/runner");
     const { promoteNextPending } = await import("@/lib/scheduler");
+    const expectedPushIssuer = randomUUID();
     const seeded = await seedGraphRun(
       database.db,
       {
@@ -743,7 +744,8 @@ it.each(["pull", "push"] as const)(
               publication: "publish",
               transport,
               checks: ["build"],
-              issuer: "github-actions",
+              issuer:
+                transport === "push" ? expectedPushIssuer : "github-actions",
               ...(transport === "push" ? { name: "build" } : {}),
             },
             transitions: {
@@ -783,6 +785,8 @@ it.each(["pull", "push"] as const)(
     const { hosts, fake } = await fakeGraphHosts(database.db, runId);
     let remoteHeadSha: string | null = null;
     let earlyReceipt: string | undefined;
+    let rejectedReceipt:
+      Awaited<ReturnType<typeof recordWaitSignal>> | undefined;
 
     fake.transport.workspacePublication = async (_handle, envelope) => {
       if (envelope.payload.action === "push") {
@@ -833,11 +837,29 @@ it.each(["pull", "push"] as const)(
             node_attempt_id: null,
             phase: "claimed",
           });
-          const receipt = await recordWaitSignal(database.db, {
+          const signal = { name: "build", outcome: "success", headSha: head };
+
+          rejectedReceipt = await recordWaitSignal(database.db, {
             runId,
             projectId,
             waitId: reservation.id,
             actor: { kind: "project_token", id: token.id },
+            idempotencyKey: "wrong-ci-token",
+            signal,
+          });
+
+          const approved = generateToken();
+
+          await database.pool.query(
+            `INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes)
+             VALUES ($1,$2,'approved CI',$3,$4,'["waits:signal"]')`,
+            [expectedPushIssuer, projectId, approved.prefix, approved.hash],
+          );
+          const receipt = await recordWaitSignal(database.db, {
+            runId,
+            projectId,
+            waitId: reservation.id,
+            actor: { kind: "project_token", id: expectedPushIssuer },
             idempotencyKey: "run-1",
             signal: { name: "build", outcome: "success", headSha: head },
           });
@@ -874,7 +896,14 @@ it.each(["pull", "push"] as const)(
 
     expect(wait).toBeDefined();
 
-    if (transport === "push") expect(wait.id).toBe(earlyReceipt);
+    if (transport === "push") {
+      expect(wait.id).toBe(earlyReceipt);
+      expect(rejectedReceipt).toMatchObject({
+        disposition: "rejected",
+        application: "not_applied",
+        reason: "wait_signal_issuer",
+      });
+    }
 
     const seen: string[] = [];
 

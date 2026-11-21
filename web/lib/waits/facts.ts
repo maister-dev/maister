@@ -5,6 +5,7 @@ import type { WaitRow, WaitTx } from "@/lib/waits/store";
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
+import { pushSignalIssuer } from "@/lib/waits/store";
 import {
   domainEvents,
   projectTokens,
@@ -198,6 +199,7 @@ async function readTrustedWaitDelivery(
   wait: WaitRow,
 ): Promise<ObservedFact | null> {
   if (!wait.deadlineAt) return null;
+  const issuer = pushSignalIssuer(wait);
   const [delivery] = await tx
     .select({ id: runWaitDeliveries.id, body: runWaitDeliveries.body })
     .from(runWaitDeliveries)
@@ -211,10 +213,18 @@ async function readTrustedWaitDelivery(
         sql`${runWaitDeliveries.receivedAt} < ${wait.deadlineAt}`,
         or(
           eq(runWaitDeliveries.sourceKind, "operator"),
-          sql`EXISTS (
-        SELECT 1 FROM ${projectTokens}
-        WHERE ${projectWaitSignalGrant(wait.projectId, sql`${runWaitDeliveries.sourceId}`)}
-      )`,
+          and(
+            eq(runWaitDeliveries.sourceKind, "project_token"),
+            issuer === undefined
+              ? undefined
+              : issuer === null
+                ? sql`false`
+                : eq(runWaitDeliveries.sourceId, issuer),
+            sql`EXISTS (
+              SELECT 1 FROM ${projectTokens}
+              WHERE ${projectWaitSignalGrant(wait.projectId, sql`${runWaitDeliveries.sourceId}`)}
+            )`,
+          ),
         ),
       ),
     )

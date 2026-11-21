@@ -77,6 +77,15 @@ export async function POST(
             },
           );
 
+          if (reason === "wait_signal_issuer")
+            return privateJson(
+              {
+                code: "UNAUTHORIZED",
+                message: "The push CI wait requires its declared project token",
+                details: { reason },
+              },
+              403,
+            );
           if (reason === "wait_invalid_payload")
             return privateJson(
               {

@@ -327,6 +327,7 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
         waitId: string,
         headSha: string,
         generation: number,
+        bearer = secret,
       ) =>
         POST(
           new Request(
@@ -334,7 +335,7 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
             {
               method: "POST",
               headers: {
-                authorization: `Bearer ${secret}`,
+                authorization: `Bearer ${bearer}`,
                 "idempotency-key": `build-${generation}`,
                 "content-type": "application/json",
               },
@@ -491,10 +492,64 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
           ).toBe(0);
           expect(await state()).toBe("Waiting");
         }
-        if (transport === "push")
+        if (transport === "push") {
+          if (strategy === "unconfirmed" && generation === 1) {
+            const decoy = generateToken();
+
+            await database.pool.query(
+              `INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes)
+               VALUES (gen_random_uuid()::text,$1,'Other CI',$2,$3,'["waits:signal"]')`,
+              [projectId, decoy.prefix, decoy.hash],
+            );
+            const refused = await signal(
+              candidate.waitId,
+              candidate.head,
+              generation,
+              decoy.secret,
+            );
+
+            expect(refused.status).toBe(403);
+            expect(await refused.json()).toMatchObject({
+              details: { reason: "wait_signal_issuer" },
+            });
+            const { GET } =
+              await import("@/app/api/v1/ext/projects/[slug]/waits/callback/route");
+            const {
+              rows: [project],
+            } = await database.pool.query<{ slug: string }>(
+              "SELECT slug FROM projects WHERE id=$1",
+              [projectId],
+            );
+            const callbackUrl = new URL(
+              `http://localhost/api/v1/ext/projects/${project.slug}/waits/callback`,
+            );
+
+            callbackUrl.search = new URLSearchParams({
+              signal: "build",
+              ref: candidate.ref,
+              headSha: candidate.head,
+            }).toString();
+            const lookup = (token: string) =>
+              GET(
+                new Request(callbackUrl, {
+                  headers: { authorization: `Bearer ${token}` },
+                }),
+                { params: Promise.resolve({ slug: project.slug }) },
+              );
+
+            expect((await lookup(decoy.secret)).status).toBe(404);
+            const address = await lookup(secret);
+
+            expect(address.status).toBe(200);
+            expect(await address.json()).toEqual({
+              runId,
+              waitId: candidate.waitId,
+            });
+          }
           expect(
             (await signal(candidate.waitId, candidate.head, generation)).status,
           ).toBe(200);
+        }
         await scanWaitPublications({
           db,
           projectId,
