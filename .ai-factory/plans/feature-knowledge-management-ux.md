@@ -174,7 +174,11 @@ The recorded RED cases cover capped count and off-page review, vault decision ra
 
 ### Repository-wide gate
 
-T04 remains open. The required fully green baseline could not be established. The six scratch-run unit failures reproduce on untouched master. The pinned integration run also hit a launch capability materialization failure which reproduced on untouched master. The focused acceptance above qualifies the changed workflows locally. The repository-wide suite remains outside that green result.
+T04 remains open. The required fully green baseline could not be established.
+
+- Full web unit at `df2f13d18`: 9,272 passed and six scratch-run cases failed. The same six assertions failed on untouched `cdef8433d`. Final log: `/tmp/maister-knowledge-final-web-unit.log`.
+- Full web integration at pinned merge checkpoint `88e6c19ee`: 6,619 passed, two failed and 11 skipped. The launch capability materialization failure reproduced on untouched `cdef8433d`. The worker heap case passed when rerun alone on untouched master, the pinned checkpoint and the final feature checkout. The full-suite result remains red. Full log: `/tmp/maister-knowledge-full-integration-88e6c19ee.log`.
+- The focused acceptance matrix above passed on the later feature checkpoint. It qualifies the changed workflows locally.
 
 ## Commit plan
 
