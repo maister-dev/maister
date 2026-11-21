@@ -37,6 +37,7 @@ it.each([
   "stale-review",
   "superseded-ci",
   "merged-pr",
+  "disabled-finalize-pr",
   "wrong-pr-head",
   "closed-pr",
   "conflict-pr",
@@ -51,6 +52,7 @@ it.each([
       scenario === "conflict-pr" || scenario === "held-conflict-pr";
     const prBacked =
       scenario === "merged-pr" ||
+      scenario === "disabled-finalize-pr" ||
       scenario === "wrong-pr-head" ||
       scenario === "closed-pr" ||
       conflictCase;
@@ -489,7 +491,42 @@ it.each([
         remoteHeadSha = null;
       }
       await scan();
-      await resume();
+      if (scenario === "disabled-finalize-pr") {
+        const settingsWriter = await database.pool.connect();
+
+        try {
+          await settingsWriter.query("BEGIN");
+          const {
+            rows: [{ pid }],
+          } = await settingsWriter.query<{ pid: number }>(
+            "SELECT pg_backend_pid() AS pid",
+          );
+
+          await settingsWriter.query(
+            "UPDATE platform_runtime_settings SET autonomous_completion_enabled=false,autonomous_completion_revision=2 WHERE id='singleton'",
+          );
+          const finalizing = resume();
+
+          try {
+            await expect
+              .poll(
+                async () =>
+                  (
+                    await database.pool.query<{ blocked: boolean }>(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid))) AS blocked",
+                      [pid],
+                    )
+                  ).rows[0].blocked,
+              )
+              .toBe(true);
+          } finally {
+            await settingsWriter.query("COMMIT");
+            await finalizing;
+          }
+        } finally {
+          settingsWriter.release();
+        }
+      } else await resume();
       if (conflictCase) {
         const handoff = await database.pool.query(
           `SELECT r.status,r.current_step_id,a.state AS assignment_state,a.execution_host_id,a.epoch,
@@ -703,9 +740,11 @@ it.each([
             {
               phase: "refused",
               reason:
-                prBacked || scenario === "superseded-ci"
-                  ? "missing_required_evidence"
-                  : "required_gate",
+                scenario === "disabled-finalize-pr"
+                  ? "platform_disabled"
+                  : prBacked || scenario === "superseded-ci"
+                    ? "missing_required_evidence"
+                    : "required_gate",
             },
           ],
     );
@@ -882,7 +921,8 @@ it("B01 replays a retained publication when the original delivery lost its ackno
 
   fake.transport.workspacePublication = observeExistingRef;
 
-  const { claimLifecycleOperation } = await import("@/lib/workbench-lifecycle/service");
+  const { claimLifecycleOperation } =
+    await import("@/lib/workbench-lifecycle/service");
 
   await expect(
     claimLifecycleOperation({

@@ -45,6 +45,7 @@
     }
   },
   "runAutonomy": {
+    "holdTitle": "Автономное завершение",
     "reversal": {
       "report": "Сообщить об откате",
       "commit": "SHA коммита отката",

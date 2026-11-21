@@ -1,7 +1,9 @@
 import type { LaneClass } from "./config";
+import type { PromotionHold } from "./types";
 
 import { eq } from "drizzle-orm";
 
+import { completionGrantSchema } from "./completion-policy";
 import {
   evaluateAutoPromotion,
   type AutoPromotionEvaluation,
@@ -9,6 +11,8 @@ import {
 import { buildAutoPromotionReaders } from "./readers";
 
 import { projects, runs, workspaces } from "@/lib/db/schema";
+import { autonomousCompletionFromSnapshot } from "@/lib/runs/execution-policy";
+import { isTerminalRunStatus } from "@/lib/runs/run-status-sets";
 import { diffChangeStats } from "@/lib/worktree";
 
 // FIXME(any): tests pass a Testcontainers pg client.
@@ -20,6 +24,7 @@ export interface RunAutoPromotionPanel {
   evaluation: AutoPromotionEvaluation | null;
   // The "promoted automatically via lane X" datum (workspaces.promotion_lane).
   promotedLane: LaneClass | null;
+  completionHold?: { hold: PromotionHold | null };
 }
 
 // The ONE run-scoped evaluation entry point for the panel surfaces.
@@ -39,6 +44,7 @@ export async function computeRunAutoPromotion(
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       executionPolicy: runs.executionPolicy,
       promotionHold: runs.promotionHold,
+      autonomousCompletionGrant: runs.autonomousCompletionGrant,
       reviewEnteredAt: runs.reviewEnteredAt,
       worktreePath: workspaces.worktreePath,
       branch: workspaces.branch,
@@ -47,7 +53,7 @@ export async function computeRunAutoPromotion(
       autoPromotion: projects.autoPromotion,
     })
     .from(runs)
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId));
 
@@ -57,6 +63,18 @@ export async function computeRunAutoPromotion(
 
   const promotedLane = (c.promotionLane ?? null) as LaneClass | null;
 
+  if (
+    c.runKind === "flow" &&
+    !isTerminalRunStatus(c.status) &&
+    autonomousCompletionFromSnapshot(c.executionPolicy) === "evidence_gated" &&
+    completionGrantSchema.safeParse(c.autonomousCompletionGrant).success
+  ) {
+    return {
+      evaluation: null,
+      promotedLane,
+      completionHold: { hold: c.promotionHold ?? null },
+    };
+  }
   if (c.status !== "Review" || c.runKind !== "flow" || !c.baseCommit) {
     return { evaluation: null, promotedLane };
   }
