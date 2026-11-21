@@ -14,13 +14,20 @@ type RevisionRoute = {
   >;
 };
 
-export async function GET(_request: Request, route: RevisionRoute) {
+export async function GET(request: Request, route: RevisionRoute) {
   return withInstallationVault(route, "read", async (prepare) => {
     const revisionId = decodeRouteParam(
       (await route.params).revisionId,
       "revisionId",
     );
 
-    return privateJson(await vaultRevisionDetail(getDb(), revisionId, prepare));
+    return privateJson(
+      await vaultRevisionDetail(
+        getDb(),
+        revisionId,
+        prepare,
+        new URL(request.url).searchParams.get("noteId") ?? undefined,
+      ),
+    );
   });
 }

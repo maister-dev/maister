@@ -4,9 +4,10 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { parseAgentMemoryMutation, parseAgentMemoryView } from "../commands";
+import { vaultRevisionDetail } from "../history";
 import { agentMemoryVaultLimits, MAX_PAGE_CHARS } from "../limits";
 import { applyVaultMutation } from "../store";
-import { viewAgentMemory } from "../view";
+import { viewAgentMemory, viewAgentNote } from "../view";
 import { executionVaultWriteAdmission } from "../write-admission";
 
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
@@ -263,6 +264,21 @@ it("AV-01 admits one first writer, then keeps deleted notes addressable for CAS 
   expect(deletions.find((result) => result.status === "conflict")).toEqual({
     status: "conflict",
   });
+  const historical = await vaultRevisionDetail(
+    fixture.db,
+    head.revisionId,
+    async () => access,
+    head.noteId,
+  );
+
+  expect(historical.revision).toMatchObject({
+    noteId: head.noteId,
+    path,
+    state: "available",
+  });
+  await expect(
+    viewAgentNote(fixture.db, { noteId: head.noteId }, async () => access),
+  ).rejects.toMatchObject({ details: { reason: "agent_memory_unavailable" } });
   const restored = applied(
     await apply(access, {
       command: "revert",
@@ -280,6 +296,17 @@ it("AV-01 admits one first writer, then keeps deleted notes addressable for CAS 
     path,
   });
   expect(restored?.revisionId).not.toBe(head.revisionId);
+  expect(
+    await viewAgentNote(
+      fixture.db,
+      { noteId: head.noteId },
+      async () => access,
+    ),
+  ).toMatchObject({
+    noteId: head.noteId,
+    revisionId: restored?.revisionId,
+    path,
+  });
 });
 
 it("AV-01 directory rename and clear cannot both apply from the same generation", async () => {

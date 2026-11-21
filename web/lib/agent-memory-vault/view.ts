@@ -265,3 +265,37 @@ export async function viewAgentMemory(
     );
   });
 }
+
+export async function viewAgentNote(
+  db: Db,
+  selection: Readonly<{ noteId: string; cursor?: string }>,
+  prepare: PrepareVaultAccess,
+): Promise<NotePage> {
+  return db.transaction(async (tx) => {
+    const access = await prepare(tx);
+    const vault = await lockVault(tx, access.vaultId);
+    const active = await loadActiveHeads(tx, vault.id);
+    const note = active.find(({ note: row }) => row.id === selection.noteId);
+
+    if (!note) throw unavailableMemory();
+    const scope = createHash("sha256")
+      .update(
+        JSON.stringify([
+          vault.id,
+          access.principalKey,
+          "note-id",
+          selection.noteId,
+        ]),
+      )
+      .digest("hex");
+
+    return pageNote(
+      tx,
+      access,
+      note.revision,
+      parseCursor(selection.cursor, scope),
+      scope,
+      undefined,
+    );
+  });
+}

@@ -13,6 +13,7 @@ export type RevisionDetail = Awaited<ReturnType<typeof vaultRevisionDetail>>;
 export type Issue = Readonly<{
   code: string;
   status: number;
+  reason?: string;
   current?: VaultConflict["current"];
 }>;
 export type Draft = Readonly<{
@@ -20,7 +21,15 @@ export type Draft = Readonly<{
   destination: string;
   text: string;
   requestKey: string;
-  selection: View;
+  selection:
+    | View
+    | Readonly<{
+        kind: "note";
+        noteId: string;
+        path: string;
+        revisionId: string;
+        hash: null;
+      }>;
   revisionId?: string;
 }>;
 
@@ -44,11 +53,16 @@ export async function vaultRequest<T>(
   const body: unknown = await response.json();
 
   if (!response.ok) {
-    const issue = body as { code?: string; current?: VaultConflict["current"] };
+    const issue = body as {
+      code?: string;
+      current?: VaultConflict["current"];
+      details?: { reason?: string };
+    };
 
     throw new VaultRequestError({
       code: issue.code ?? "CRASH",
       status: response.status,
+      reason: issue.details?.reason,
       current: issue.current,
     });
   }

@@ -93,6 +93,18 @@ function Card({
           {t(`cardStatus_${card.status}`)}
         </span>
       </div>
+      {card.available && card.effectLink ? (
+        <Link
+          className="mt-2 inline-block text-sm underline"
+          href={card.effectLink.href}
+        >
+          {t(
+            card.effectLink.kind === "vault"
+              ? "openAppliedMemory"
+              : "openKnowledgeProposal",
+          )}
+        </Link>
+      ) : null}
       {!card.available ? (
         <p className="m-0 mt-1 text-[11px] text-mute">
           {t("linkedUnavailable")}

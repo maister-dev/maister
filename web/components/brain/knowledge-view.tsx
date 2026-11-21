@@ -39,6 +39,7 @@ export async function KnowledgeHeader({
       >
         <Link href="/knowledge">{t("records")}</Link>
         <Link href="/knowledge/reviews">{t("reviewWorkspace")}</Link>
+        <Link href="/knowledge/memory">{t("agentMemory")}</Link>
         {children}
       </nav>
     </header>
