@@ -1,5 +1,6 @@
 import type { Db } from "@/lib/execution-host/db";
 
+import { randomUUID } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
@@ -354,6 +355,9 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
         );
       const generations: Array<{ waitId: string; head: string; ref: string }> =
         [];
+      let lookupFirstCallback:
+        | ((token: string, providerExecutionId?: string) => Promise<Response>)
+        | undefined;
 
       fake.transport.workspacePublication = async (_handle, envelope) => {
         const payload = envelope.payload;
@@ -467,30 +471,34 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
         const candidate = generations[generation - 1];
 
         if (flowId === "env-e2e-ci" && generation === 1) {
-          await scanWaitPublications({
-            db,
-            projectId,
-            provider: "github",
-            remoteUrl,
-            deadline: Date.now() + 20_000,
-            fetchPage: async (request) => {
-              const path = new URL(String(request)).pathname;
+          for (const forbidden of [true, false]) {
+            await scanWaitPublications({
+              db,
+              projectId,
+              provider: "github",
+              remoteUrl,
+              deadline: Date.now() + 20_000,
+              fetchPage: async (request) => {
+                const path = new URL(String(request)).pathname;
 
-              if (path.includes("/branches/")) return readHead(request);
-              if (path.endsWith("/statuses")) return Response.json([]);
+                if (path.includes("/branches/")) return readHead(request);
+                if (path.endsWith("/statuses")) return Response.json([]);
 
-              return Response.json({ check_runs: [] });
-            },
-          });
-          expect(
-            (
-              await dispatchDomainEvents({
-                db: database.db,
-                consumers: [buildWaitResolver(() => database.db)],
-              })
-            ).failures,
-          ).toBe(0);
-          expect(await state()).toBe("Waiting");
+                return forbidden
+                  ? new Response(null, { status: 403 })
+                  : Response.json({ check_runs: [] });
+              },
+            });
+            expect(
+              (
+                await dispatchDomainEvents({
+                  db: database.db,
+                  consumers: [buildWaitResolver(() => database.db)],
+                })
+              ).failures,
+            ).toBe(0);
+            expect(await state()).toBe("Waiting");
+          }
         }
         if (transport === "push") {
           if (strategy === "unconfirmed" && generation === 1) {
@@ -529,13 +537,24 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
               ref: candidate.ref,
               headSha: candidate.head,
             }).toString();
-            const lookup = (token: string) =>
-              GET(
-                new Request(callbackUrl, {
+            const lookup = (token: string, providerExecutionId?: string) => {
+              const url = new URL(callbackUrl);
+
+              if (providerExecutionId)
+                url.searchParams.set(
+                  "providerExecutionId",
+                  providerExecutionId,
+                );
+
+              return GET(
+                new Request(url, {
                   headers: { authorization: `Bearer ${token}` },
                 }),
                 { params: Promise.resolve({ slug: project.slug }) },
               );
+            };
+
+            lookupFirstCallback = lookup;
 
             expect((await lookup(decoy.secret)).status).toBe(404);
             const address = await lookup(secret);
@@ -608,6 +627,52 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
             )
           ).rows,
         ).toEqual([{ phase: "refused", reason: "missing_required_evidence" }]);
+        const original = generations[0];
+        const repeatedPublicationId = randomUUID();
+        const repeatedWaitId = randomUUID().replaceAll("-", "").repeat(2);
+
+        await database.pool.query(
+          `INSERT INTO run_publications (id,project_id,run_id,node_attempt_id,workspace_id,operation_key,generation,
+             flow_revision,remote_name,repo_identity,head_ref,base_ref,source_head,pr_mode,phase)
+           SELECT $2,p.project_id,p.run_id,p.node_attempt_id,p.workspace_id,p.operation_key||':repeat',3,
+             p.flow_revision,p.remote_name,p.repo_identity,p.head_ref,p.base_ref,p.source_head,p.pr_mode,'claimed'
+           FROM run_waits w JOIN run_publications p ON p.id=w.publication_id WHERE w.id=$1`,
+          [original.waitId, repeatedPublicationId],
+        );
+        await database.pool.query(
+          `INSERT INTO run_waits (id,project_id,run_id,owner_kind,occurrence_key,flow_revision,condition_kind,
+             condition,source_target_id,publication_id,reserved_until,binding_head_sha,state)
+           SELECT $2,project_id,run_id,owner_kind,$2,flow_revision,condition_kind,condition,source_target_id,
+             $3,statement_timestamp()+interval '1 hour',binding_head_sha,'reserved' FROM run_waits WHERE id=$1`,
+          [original.waitId, repeatedWaitId, repeatedPublicationId],
+        );
+        if (!lookupFirstCallback)
+          throw new Error("Push callback fixture did not initialize");
+        const ambiguous = await lookupFirstCallback(
+          secret,
+          "unverified-provider-id",
+        );
+
+        expect(ambiguous.status).toBe(409);
+        expect(await ambiguous.json()).toMatchObject({
+          details: { reason: "wait_callback_ambiguous" },
+        });
+        const replay = await signal(original.waitId, original.head, 1);
+
+        expect(replay.status).toBe(200);
+        expect(await replay.json()).toMatchObject({
+          waitId: original.waitId,
+          disposition: "duplicate",
+          application: "applied",
+        });
+        expect(
+          (
+            await database.pool.query(
+              "SELECT state,result FROM run_waits WHERE id=$1",
+              [repeatedWaitId],
+            )
+          ).rows,
+        ).toEqual([{ state: "reserved", result: null }]);
 
         return;
       }
