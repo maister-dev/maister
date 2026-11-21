@@ -1,7 +1,8 @@
 import type { Db } from "@/lib/execution-host/db";
+import type { RealWeb } from "@/test-support/real-web";
 
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 
@@ -21,7 +22,7 @@ import { fakeGraphHosts } from "@/test-support/fake-execution-host";
 import { git, initRepoWithWorktree } from "@/test-support/git-fixture";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import {
-  startMainPostgresTestDb,
+  startMainAndBrainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
@@ -40,7 +41,7 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
   let resolvedRevision: string;
 
   beforeAll(async () => {
-    database = await startMainPostgresTestDb({
+    database = await startMainAndBrainPostgresTestDb({
       databaseName: "flow_waits_reference_install",
     });
     cacheRoot = await mkdtemp(join(os.tmpdir(), "flow-waits-package-"));
@@ -175,6 +176,30 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
       const root = await mkdtemp(join(os.tmpdir(), "flow-waits-reference-"));
 
       onTestFinished(() => rm(root, { recursive: true, force: true }));
+      let callbackWeb: RealWeb | undefined;
+
+      if (transport === "push" && strategy === "recover") {
+        const { buildProductionWeb, startRealWeb } =
+          await import("@/test-support/real-web");
+        const callbackRuntime = join(root, "callback-runtime");
+
+        await mkdir(callbackRuntime);
+        await buildProductionWeb(join(root, "callback-web-build.log"));
+        callbackWeb = await startRealWeb({
+          databaseUrl: database.databaseUrl,
+          supervisorUrl: "http://127.0.0.1:1",
+          runtimeRoot: callbackRuntime,
+          worktreesRoot: root,
+          env: {
+            MAISTER_SCHEDULER_TIMER_ENABLED: "false",
+            MAISTER_CRON_TOKEN: "flow-wait-reference-test-cron",
+            MAISTER_RECONCILE_GRACE_SECONDS: "3600",
+          },
+        });
+        onTestFinished(async () => {
+          await callbackWeb?.stop();
+        });
+      }
       const { repoPath, worktreePath, branch } =
         await initRepoWithWorktree(root);
       const remote = join(root, "origin.git");
@@ -329,30 +354,32 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
         headSha: string,
         generation: number,
         bearer = secret,
-      ) =>
-        POST(
-          new Request(
-            `http://localhost/api/v1/ext/runs/${runId}/waits/${waitId}/signal`,
-            {
-              method: "POST",
-              headers: {
-                authorization: `Bearer ${bearer}`,
-                "idempotency-key": `build-${generation}`,
-                "content-type": "application/json",
-              },
-              body: JSON.stringify({
-                name: "build",
-                outcome: generation === 1 ? "failure" : "success",
-                headSha,
-                payload:
-                  generation === 1
-                    ? { checks: ["build", "untrusted instruction"] }
-                    : { passedChecks: ["build"] },
-              }),
-            },
-          ),
-          { params: Promise.resolve({ runId, waitId }) },
-        );
+      ): Promise<Response> => {
+        const address = `/api/v1/ext/runs/${runId}/waits/${waitId}/signal`;
+        const init = {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${bearer}`,
+            "idempotency-key": `build-${generation}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "build",
+            outcome: generation === 1 ? "failure" : "success",
+            headSha,
+            payload:
+              generation === 1
+                ? { checks: ["build", "untrusted instruction"] }
+                : { passedChecks: ["build"] },
+          }),
+        };
+
+        return callbackWeb
+          ? fetch(callbackWeb.url + address, init)
+          : POST(new Request("http://localhost" + address, init), {
+              params: Promise.resolve({ runId, waitId }),
+            });
+      };
       const generations: Array<{ waitId: string; head: string; ref: string }> =
         [];
       let lookupFirstCallback:
@@ -403,10 +430,47 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
             head: headSha,
             ref: payload.headRef,
           });
-          if (transport === "push")
-            expect(
-              (await signal(receipt.id, headSha, receipt.generation)).status,
-            ).toBe(202);
+          if (transport === "push") {
+            const first = await signal(receipt.id, headSha, receipt.generation);
+
+            expect(first.status, await first.clone().text()).toBe(202);
+            if (callbackWeb && receipt.generation === 1) {
+              const earliest = await first.json();
+              const priorPid = callbackWeb.pid;
+
+              await callbackWeb.kill("SIGKILL");
+              callbackWeb = await callbackWeb.restart();
+              expect(callbackWeb.pid).not.toBe(priorPid);
+              const replay = await signal(
+                receipt.id,
+                headSha,
+                receipt.generation,
+              );
+
+              expect(replay.status, await replay.clone().text()).toBe(200);
+              expect(await replay.json()).toEqual({
+                ...earliest,
+                disposition: "duplicate",
+                application: "pending",
+              });
+              expect(
+                (
+                  await database.pool.query(
+                    "SELECT phase FROM run_publications WHERE run_id=$1 AND generation=1",
+                    [runId],
+                  )
+                ).rows,
+              ).toEqual([{ phase: "claimed" }]);
+              // The HTTP fixture owns ingress only. Restore the simulated
+              // execution host's health after stopping its loopback registrar.
+              await callbackWeb.stop();
+              callbackWeb = undefined;
+              await database.pool.query(
+                "UPDATE execution_hosts SET readiness='ready',readiness_reason=NULL,last_seen_at=clock_timestamp() WHERE host_key=$1 AND retired_at IS NULL",
+                [fake.identity.hostKey],
+              );
+            }
+          }
         }
 
         const remoteHeadSha = await git(
@@ -437,6 +501,7 @@ describe.runIf(!!source)("B03 installed remote CI reference package", () => {
             })
           ).failures,
         ).toBe(0);
+        expect(await state()).toBe("Pending");
         expect(
           (
             await promoteNextPending({
