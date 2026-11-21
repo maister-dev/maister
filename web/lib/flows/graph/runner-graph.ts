@@ -1,3 +1,7 @@
+import {
+  readWorkspaceIntegrityLimit,
+  type WorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import type {
@@ -2759,6 +2763,7 @@ export async function runGraph(
   // B6: the refusal's own token beside its code — what carries e.g.
   // `consensus_no_draft_available` onto the terminal event's cause.
   let runErrorReason: string | undefined;
+  let integrityLimit: WorkspaceIntegrityLimit | undefined;
   // M37 (ADR-098): native facade nodes require family cleanup even when a
   // resumed traversal reuses its existing credential. Terminal settlement revokes it on a
   // non-park terminal (Review/Failed/Crashed); the NeedsInput/checkpoint park
@@ -5721,6 +5726,7 @@ export async function runGraph(
     failed = true;
     runErrorCode = e.code;
     runErrorReason = refusalReason(e);
+    integrityLimit = readWorkspaceIntegrityLimit(e);
   }
 
   if (needsInput) {
@@ -5754,6 +5760,7 @@ export async function runGraph(
       driverToken: opts.driver?.claim.token,
       signal: opts.driver?.signal ?? opts.signal,
       reason: runErrorReason,
+      integrityLimit,
       hosts: opts.executionHosts,
     });
     await safeProject();

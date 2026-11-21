@@ -9,16 +9,20 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 
+import { WorkspaceIntegrityNotice } from "./workspace-integrity-notice";
+
 import { useFeedback } from "@/components/feedback/feedback-provider";
 
 export function OperationalRunResult({
   runId,
   outcome,
   canAct,
+  isGlobalAdmin = false,
 }: {
   runId: string;
   outcome: OperationalOutcome;
   canAct: boolean;
+  isGlobalAdmin?: boolean;
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const router = useRouter();
@@ -69,7 +73,11 @@ export function OperationalRunResult({
       className="rounded-xl border border-line bg-paper p-5"
       data-testid="operational-result"
     >
-      <OperationalOutcomeDetails outcome={outcome} />
+      <OperationalOutcomeDetails
+        outcome={outcome}
+        runId={runId}
+        isGlobalAdmin={isGlobalAdmin}
+      />
       {canAct && attention ? (
         <Button
           className="mt-3"
@@ -174,8 +182,12 @@ export function OperationalRunResult({
 /** Read-only operational projection; evidence and actions keep their separate grants. */
 export function OperationalOutcomeDetails({
   outcome,
+  runId = "",
+  isGlobalAdmin = false,
 }: {
   outcome: OperationalOutcome;
+  runId?: string;
+  isGlobalAdmin?: boolean;
 }): ReactElement {
   const t = useTranslations("operationalAgents");
   const reported = outcome.reportedResult;
@@ -196,6 +208,19 @@ export function OperationalOutcomeDetails({
             : (outcome.effectiveOutcome ?? "pending"),
         )}
       </p>
+      {[
+        outcome.infrastructureFailure?.integrityLimit,
+        outcome.integrityLimit,
+      ].map((limit, index) =>
+        limit ? (
+          <WorkspaceIntegrityNotice
+            key={index}
+            limit={limit}
+            runId={runId}
+            isGlobalAdmin={isGlobalAdmin}
+          />
+        ) : null,
+      )}
       {attention ? (
         <div className="my-3 space-y-2">
           <p>{t("continuationGuidance")}</p>
@@ -326,6 +351,13 @@ export function OperationalOutcomeDetails({
           {t("cleanup")}: {t(`cleanupState.${outcome.cleanup.state}`)}
           {outcome.cleanup.errorCode ? ` · ${outcome.cleanup.errorCode}` : ""}
         </p>
+      ) : null}
+      {outcome.cleanupIntegrityLimit ? (
+        <WorkspaceIntegrityNotice
+          limit={outcome.cleanupIntegrityLimit}
+          runId={runId}
+          isGlobalAdmin={isGlobalAdmin}
+        />
       ) : null}
     </>
   );

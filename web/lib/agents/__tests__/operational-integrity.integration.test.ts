@@ -1,3 +1,5 @@
+import { withGitOwnership } from "@/lib/project-config-persistence/git-process";
+import { seedWorkspaceIntegritySettings } from "@/test-support/workspace-integrity-settings";
 import type { FileHandle } from "node:fs/promises";
 
 import { execFile } from "node:child_process";
@@ -18,7 +20,16 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { materializeOperationalContextMounts } from "@/lib/context-mounts/service";
 import { materializeOperationalAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
@@ -35,6 +46,12 @@ import {
 import { releaseTaskAgentCaptureAfterFailure } from "@/lib/tasks/launch-agent-definition";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { isFencedError } from "@/lib/execution-host/deliverer";
+import type { Db } from "@/lib/execution-host/db";
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
+import {
+  startMainPostgresTestDb,
+  type StartedPostgresTestDb,
+} from "@/test-support/pg-container";
 import { MaisterError } from "@/lib/errors";
 
 const probeFault = vi.hoisted(() => ({
@@ -45,6 +62,7 @@ const probeFault = vi.hoisted(() => ({
     closed: () => void;
   }> | null,
   diagnostics: [] as Readonly<Record<string, unknown>>[],
+  beforeOpen: undefined as ((path: string) => Promise<void>) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (original) => {
@@ -55,11 +73,11 @@ vi.mock("node:fs/promises", async (original) => {
     open: async (
       ...args: Parameters<typeof actual.open>
     ): Promise<FileHandle> => {
-      const handle = await actual.open(...args);
-      const fault = probeFault.current;
-
       const openedPath =
         args[0] instanceof URL ? fileURLToPath(args[0]) : args[0].toString();
+      await probeFault.beforeOpen?.(openedPath);
+      const handle = await actual.open(...args);
+      const fault = probeFault.current;
 
       if (!fault || openedPath !== fault.file) return handle;
 
@@ -111,6 +129,17 @@ vi.mock("pino", async (original) => {
   };
 });
 
+let database: StartedPostgresTestDb;
+let db: Db;
+beforeAll(async () => {
+  database = await startMainPostgresTestDb({
+    databaseName: "operational_integrity",
+  });
+  db = database.db as unknown as Db;
+  await seedWorkspaceIntegritySettings(database);
+}, 120_000);
+afterAll(async () => database?.stop());
+
 const exec = promisify(execFile);
 let root: string;
 let cwd: string;
@@ -132,6 +161,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   probeFault.current = null;
+  probeFault.beforeOpen = undefined;
   probeFault.diagnostics = [];
   await rm(root, { recursive: true, force: true });
 });
@@ -151,10 +181,16 @@ describe("operational source integrity", () => {
       '[diff "fixture"]\n\twordRegex = one\n\twordRegex = two\n',
     );
     const frozen = await captureOperationalBaseline(
+      db,
       checkout,
       "ephemeral_checkout",
     );
-    const baseline = await captureOperationalGeneration(checkout, frozen, []);
+    const baseline = await captureOperationalGeneration(
+      db,
+      checkout,
+      frozen,
+      [],
+    );
 
     await git("branch", "maister/sibling");
     await git("update-ref", "refs/maister/archive/sibling", "HEAD");
@@ -164,7 +200,9 @@ describe("operational source integrity", () => {
     await git("push", "origin", "main");
     await git("fetch", "origin");
 
-    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+    expect(
+      await verifyOperationalIntegrity(db, checkout, baseline),
+    ).toMatchObject({
       verdict: "clean",
       reasonCodes: [],
     });
@@ -173,7 +211,9 @@ describe("operational source integrity", () => {
       config,
       '[diff "fixture"]\n\twordRegex = two\n\twordRegex = one\n',
     );
-    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+    expect(
+      await verifyOperationalIntegrity(db, checkout, baseline),
+    ).toMatchObject({
       verdict: "changed",
       reasonCodes: ["operational_history_changed"],
     });
@@ -189,7 +229,9 @@ describe("operational source integrity", () => {
       "core.fileMode",
       currentFileMode === "true" ? "false" : "true",
     );
-    expect(await verifyOperationalIntegrity(checkout, baseline)).toMatchObject({
+    expect(
+      await verifyOperationalIntegrity(db, checkout, baseline),
+    ).toMatchObject({
       verdict: "changed",
       reasonCodes: ["operational_history_changed"],
     });
@@ -206,6 +248,7 @@ describe("operational source integrity", () => {
       "---\nname: qualify\ndescription: fixture\n---\nInspect source.\n",
     );
     const baseline = await captureOperationalBaseline(
+      db,
       materializationCwd,
       "ephemeral_checkout",
     );
@@ -239,6 +282,7 @@ describe("operational source integrity", () => {
       ".maister/agent-materialization/mutex.sqlite-wal",
     ];
     const ready = await captureOperationalGeneration(
+      db,
       materializationCwd,
       baseline,
       generationPaths,
@@ -246,11 +290,16 @@ describe("operational source integrity", () => {
 
     expect(ready.generation).toBe(1);
     expect(
-      (await verifyOperationalIntegrity(materializationCwd, ready)).verdict,
+      (await verifyOperationalIntegrity(db, materializationCwd, ready)).verdict,
     ).toBe("clean");
     await writeFile(join(cwd, "unowned-source.txt"), "Unexpected write.\n");
     await expect(
-      captureOperationalGeneration(materializationCwd, ready, generationPaths),
+      captureOperationalGeneration(
+        db,
+        materializationCwd,
+        ready,
+        generationPaths,
+      ),
     ).rejects.toMatchObject({
       code: "PRECONDITION",
       details: { reason: "operational_materialization_conflict" },
@@ -344,7 +393,7 @@ describe("operational source integrity", () => {
       let failure: unknown;
 
       try {
-        await captureOperationalBaseline(plain, "plain_directory", {
+        await captureOperationalBaseline(db, plain, "plain_directory", {
           context: {
             runId: "probe-failure-owner",
             assignmentId: "probe-assignment",
@@ -394,7 +443,7 @@ describe("operational source integrity", () => {
     let failure: unknown;
 
     try {
-      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+      await captureOperationalBaseline(db, cwd, "ephemeral_checkout");
     } catch (error) {
       failure = error;
     }
@@ -418,7 +467,7 @@ describe("operational source integrity", () => {
     let failure: unknown;
 
     try {
-      await captureOperationalBaseline(cwd, "ephemeral_checkout");
+      await captureOperationalBaseline(db, cwd, "ephemeral_checkout");
     } catch (error) {
       failure = error;
     }
@@ -469,20 +518,21 @@ describe("operational source integrity", () => {
     try {
       const baselines = await Promise.all(
         fixtures.map((fixture) =>
-          captureOperationalBaseline(fixture.plain, "plain_directory"),
+          captureOperationalBaseline(db, fixture.plain, "plain_directory"),
         ),
       );
 
       for (const [index, baseline] of baselines.entries()) {
         const fixture = fixtures[index];
         const ready = await captureOperationalGeneration(
+          db,
           fixture.plain,
           baseline,
           [],
         );
 
         expect(
-          await verifyOperationalIntegrity(fixture.plain, ready),
+          await verifyOperationalIntegrity(db, fixture.plain, ready),
         ).toMatchObject({
           verdict: "clean",
         });
@@ -496,7 +546,7 @@ describe("operational source integrity", () => {
         );
       }
       allocatedBytes = allocation.mock.calls.reduce(
-        (total, [size]) => total + size,
+        (total, [size]) => total + (size >= 1024 * 1024 ? size : 0),
         0,
       );
     } finally {
@@ -532,25 +582,25 @@ describe("operational source integrity", () => {
   });
 
   it("IT-OPL-04 accepts exact platform bytes and rejects later changes even inside owned directories", async () => {
-    const baseline = await captureOperationalBaseline(cwd, "worktree");
+    const baseline = await captureOperationalBaseline(db, cwd, "worktree");
 
     await mkdir(join(cwd, ".claude", "skills", "scan"), { recursive: true });
     await writeFile(
       join(cwd, ".claude", "skills", "scan", "SKILL.md"),
       "Trusted materialization.\n",
     );
-    const ready = await captureOperationalGeneration(cwd, baseline, [
+    const ready = await captureOperationalGeneration(db, cwd, baseline, [
       ".claude/skills/scan",
     ]);
 
-    expect((await verifyOperationalIntegrity(cwd, ready)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, ready)).verdict).toBe(
       "clean",
     );
     await writeFile(
       join(cwd, ".claude", "skills", "scan", "injected.ts"),
       "unexpected",
     );
-    expect(await verifyOperationalIntegrity(cwd, ready)).toMatchObject({
+    expect(await verifyOperationalIntegrity(db, cwd, ready)).toMatchObject({
       verdict: "changed",
       changedPaths: [".claude/skills/scan/injected.ts"],
     });
@@ -559,7 +609,7 @@ describe("operational source integrity", () => {
       join(cwd, ".claude", "skills", "scan", "SKILL.md"),
       "Tampered platform bytes.",
     );
-    expect(await verifyOperationalIntegrity(cwd, ready)).toMatchObject({
+    expect(await verifyOperationalIntegrity(db, cwd, ready)).toMatchObject({
       verdict: "changed",
       changedPaths: [".claude/skills/scan/SKILL.md"],
     });
@@ -569,8 +619,9 @@ describe("operational source integrity", () => {
 
   it("IT-EDGE-OPL-04 rejects a replaced execution root and Git configuration drift", async () => {
     const baseline = await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "worktree"),
+      await captureOperationalBaseline(db, cwd, "worktree"),
       [],
     );
 
@@ -579,17 +630,17 @@ describe("operational source integrity", () => {
       "remote.origin.url",
       "https://example.invalid/unexpected.git",
     );
-    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, baseline)).verdict).toBe(
       "changed",
     );
     await git("config", "--unset", "remote.origin.url");
     await rename(cwd, join(root, "moved"));
     await symlink(join(root, "moved"), cwd, "dir");
-    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, baseline)).verdict).toBe(
       "indeterminate",
     );
     await expect(
-      captureOperationalBaseline(cwd, "worktree"),
+      captureOperationalBaseline(db, cwd, "worktree"),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
@@ -604,8 +655,9 @@ describe("operational source integrity", () => {
     "rename",
   ])("detects %s without destroying bytes", async (change) => {
     const baseline = await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "worktree"),
+      await captureOperationalBaseline(db, cwd, "worktree"),
       [],
     );
 
@@ -633,7 +685,7 @@ describe("operational source integrity", () => {
         await git("revert", "--no-edit", "HEAD");
       if (change === "commit_and_reset") await git("reset", "--hard", "HEAD~1");
     }
-    const verdict = await verifyOperationalIntegrity(cwd, baseline);
+    const verdict = await verifyOperationalIntegrity(db, cwd, baseline);
 
     expect(verdict.verdict).toBe("changed");
     if (change === "ignored")
@@ -643,38 +695,20 @@ describe("operational source integrity", () => {
   });
 
   it("IT-EDGE-OPL-04 refuses untrusted generation changes, symlink traversal, missing evidence and probe limits", async () => {
-    const baseline = await captureOperationalBaseline(cwd, "worktree");
+    const baseline = await captureOperationalBaseline(db, cwd, "worktree");
 
     await writeFile(join(cwd, "source.ts"), "unrelated source edit");
     await expect(
-      captureOperationalGeneration(cwd, baseline, [".claude/skills/scan"]),
+      captureOperationalGeneration(db, cwd, baseline, [".claude/skills/scan"]),
     ).rejects.toMatchObject({
       code: "PRECONDITION",
       details: { reason: "operational_materialization_conflict" },
     });
-    expect((await verifyOperationalIntegrity(cwd, null)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, null)).verdict).toBe(
       "indeterminate",
     );
-    for (const [limits, limitAxis, maximum] of [
-      [{ maxBytes: 1 }, "bytes", 1],
-      [{ maxEntries: 1 }, "entries", 1],
-      [{ maxProbeMs: 0 }, "time", 0],
-    ] as const)
-      await expect(
-        captureOperationalBaseline(cwd, "worktree", limits),
-      ).rejects.toMatchObject({
-        details: {
-          reason: "operational_integrity_limit",
-          limitAxis,
-          maximum,
-          observed: expect.any(Number),
-          observedBytes: expect.any(Number),
-          observedEntries: expect.any(Number),
-          elapsedMs: expect.any(Number),
-        },
-      });
     await symlink(root, join(cwd, "external"));
-    const snapshot = await captureOperationalBaseline(cwd, "worktree");
+    const snapshot = await captureOperationalBaseline(db, cwd, "worktree");
 
     expect(
       snapshot.source.find((entry) => entry.path === "external")?.type,
@@ -684,10 +718,191 @@ describe("operational source integrity", () => {
     ).toBe(false);
   });
 
+  it("WI-04 enforces committed size, entry and time settings", async () => {
+    const fixture = join(root, "limits");
+    await mkdir(fixture);
+    const file = join(fixture, "payload");
+
+    try {
+      await updateIntegritySettings(
+        db,
+        { maxSizeMiB: 1, maxEntries: 1 },
+        "test",
+      );
+      await writeFile(file, Buffer.alloc(1048576));
+      await expect(
+        captureOperationalBaseline(db, fixture, "plain_directory"),
+      ).resolves.toMatchObject({
+        source: [{ path: "payload" }],
+      });
+      await writeFile(file, Buffer.alloc(1048577));
+      await expect(
+        captureOperationalBaseline(db, fixture, "plain_directory"),
+      ).rejects.toMatchObject({
+        details: {
+          integrityLimit: {
+            limitAxis: "bytes",
+            observed: 1048577,
+            maximum: 1048576,
+            unit: "B",
+          },
+        },
+      });
+      await writeFile(file, "");
+      await writeFile(join(fixture, "second"), "");
+      await expect(
+        captureOperationalBaseline(db, fixture, "plain_directory"),
+      ).rejects.toMatchObject({
+        details: {
+          integrityLimit: {
+            limitAxis: "entries",
+            observed: 2,
+            maximum: 1,
+            unit: "entries",
+          },
+        },
+      });
+      await updateIntegritySettings(
+        db,
+        { maxEntries: 200000, maxDurationSeconds: 60 },
+        "test",
+      );
+      let first = true;
+      await expect(
+        captureOperationalBaseline(db, fixture, "plain_directory", {
+          clock: () => {
+            if (!first) return 31000;
+            first = false;
+            return 0;
+          },
+        }),
+      ).resolves.toMatchObject({ source: expect.any(Array) });
+
+      await updateIntegritySettings(db, { maxDurationSeconds: 1 }, "test");
+      first = true;
+      await expect(
+        captureOperationalBaseline(db, fixture, "plain_directory", {
+          clock: () => {
+            if (!first) return 1000;
+            first = false;
+            return 0;
+          },
+        }),
+      ).rejects.toMatchObject({
+        details: {
+          maxEntries: 200000,
+          integrityLimit: {
+            limitAxis: "time",
+            observed: 1000,
+            maximum: 1000,
+            unit: "ms",
+          },
+        },
+      });
+    } finally {
+      await updateIntegritySettings(
+        db,
+        { maxSizeMiB: null, maxEntries: null, maxDurationSeconds: null },
+        "test",
+      );
+    }
+  });
+
+  it("WI-04 keeps the captured settings until the next scan", async () => {
+    const fixture = join(root, "in-flight");
+    await mkdir(fixture);
+    const first = join(fixture, "first");
+    await writeFile(first, Buffer.alloc(1024));
+    await writeFile(join(fixture, "second"), Buffer.alloc(1536 * 1024));
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    probeFault.beforeOpen = async (path) => {
+      if (path !== first) return;
+      entered.resolve();
+      await release.promise;
+    };
+
+    try {
+      await updateIntegritySettings(db, { maxSizeMiB: 2 }, "test");
+      const scan = captureOperationalBaseline(db, fixture, "plain_directory");
+      await Promise.race([entered.promise, scan]);
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+      release.resolve();
+      const baseline = await scan;
+      expect(baseline.source.map((entry) => entry.path)).toEqual([
+        "first",
+        "second",
+      ]);
+      await expect(
+        captureOperationalGeneration(db, fixture, baseline, []),
+      ).rejects.toMatchObject({
+        details: {
+          integrityLimit: {
+            stage: "materialization",
+            limitAxis: "bytes",
+            maximum: 1048576,
+          },
+        },
+      });
+      await expect(
+        verifyOperationalIntegrity(db, fixture, { ...baseline, generation: 1 }),
+      ).resolves.toMatchObject({
+        verdict: "indeterminate",
+        reasonCodes: ["operational_integrity_limit"],
+        changedPaths: [],
+        integrityLimit: {
+          stage: "final_verification",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      });
+    } finally {
+      release.resolve();
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
+  });
+
+  it("WI-04 classifies a scan-owned Git deadline separately from a Git command error", async () => {
+    const release = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    try {
+      await updateIntegritySettings(db, { maxDurationSeconds: 1 }, "test");
+      const scan = withGitOwnership(
+        () => {
+          entered.resolve();
+          return release.promise;
+        },
+        () => captureOperationalBaseline(db, cwd, "ephemeral_checkout"),
+      );
+      await Promise.race([entered.promise, scan]);
+      await expect(scan).rejects.toMatchObject({
+        details: {
+          reason: "operational_integrity_limit",
+          integrityLimit: { limitAxis: "time", maximum: 1000, unit: "ms" },
+        },
+      });
+
+      const plain = join(root, "missing-repository");
+      await mkdir(plain);
+      await expect(
+        captureOperationalBaseline(db, plain, "worktree"),
+      ).rejects.toMatchObject({
+        details: {
+          reason: "operational_integrity_probe_failed",
+          probeOperation: expect.stringMatching(/^git\./),
+        },
+      });
+    } finally {
+      release.resolve();
+      await updateIntegritySettings(db, { maxDurationSeconds: null }, "test");
+    }
+  });
+
   it("identifies the worktree configuration byte cap and still refuses final integrity", async () => {
     const ready = await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "worktree"),
+      await captureOperationalBaseline(db, cwd, "worktree"),
       [],
     );
 
@@ -696,7 +911,7 @@ describe("operational source integrity", () => {
       "x".repeat(1024 * 1024 + 1),
     );
     await expect(
-      captureOperationalBaseline(cwd, "worktree"),
+      captureOperationalBaseline(db, cwd, "worktree"),
     ).rejects.toMatchObject({
       details: {
         reason: "operational_integrity_limit",
@@ -705,7 +920,7 @@ describe("operational source integrity", () => {
         maximum: 1024 * 1024,
       },
     });
-    expect(await verifyOperationalIntegrity(cwd, ready)).toMatchObject({
+    expect(await verifyOperationalIntegrity(db, cwd, ready)).toMatchObject({
       verdict: "indeterminate",
       reasonCodes: ["operational_integrity_limit"],
     });
@@ -713,20 +928,21 @@ describe("operational source integrity", () => {
 
   it("accepts only server-proven parallel allocation or disposal, never a changed foreign ref", async () => {
     const baseline = await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "worktree"),
+      await captureOperationalBaseline(db, cwd, "worktree"),
       [],
     );
 
     await git("branch", "parallel-operation");
     const ref = "refs/heads/parallel-operation";
 
-    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, baseline)).verdict).toBe(
       "indeterminate",
     );
     expect(
       (
-        await verifyOperationalIntegrity(cwd, baseline, [
+        await verifyOperationalIntegrity(db, cwd, baseline, [
           { kind: "allocated", ref, sha: baseline.head! },
         ])
       ).verdict,
@@ -737,7 +953,7 @@ describe("operational source integrity", () => {
     await git("branch", "-f", "parallel-operation", "HEAD");
     expect(
       (
-        await verifyOperationalIntegrity(cwd, baseline, [
+        await verifyOperationalIntegrity(db, cwd, baseline, [
           { kind: "allocated", ref, sha: baseline.head! },
         ])
       ).verdict,
@@ -746,26 +962,28 @@ describe("operational source integrity", () => {
 
   it("marks shared-repository conflicts indeterminate and validates plain owned directories", async () => {
     const baseline = await captureOperationalGeneration(
+      db,
       cwd,
-      await captureOperationalBaseline(cwd, "shared_repository"),
+      await captureOperationalBaseline(db, cwd, "shared_repository"),
       [],
     );
 
     await writeFile(join(cwd, "source.ts"), "concurrent parent edit");
-    expect((await verifyOperationalIntegrity(cwd, baseline)).verdict).toBe(
+    expect((await verifyOperationalIntegrity(db, cwd, baseline)).verdict).toBe(
       "indeterminate",
     );
     const plain = join(root, "plain");
 
     await mkdir(plain);
     const plainBaseline = await captureOperationalGeneration(
+      db,
       plain,
-      await captureOperationalBaseline(plain, "plain_directory"),
+      await captureOperationalBaseline(db, plain, "plain_directory"),
       [],
     );
 
     expect(
-      (await verifyOperationalIntegrity(plain, plainBaseline)).verdict,
+      (await verifyOperationalIntegrity(db, plain, plainBaseline)).verdict,
     ).toBe("clean");
     await mkdir(join(plain, ".git"));
     await writeFile(
@@ -773,7 +991,7 @@ describe("operational source integrity", () => {
       "unexpected repository state",
     );
     expect(
-      (await verifyOperationalIntegrity(plain, plainBaseline)).verdict,
+      (await verifyOperationalIntegrity(db, plain, plainBaseline)).verdict,
     ).toBe("changed");
   });
 });

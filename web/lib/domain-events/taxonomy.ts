@@ -1,3 +1,7 @@
+import {
+  parseWorkspaceIntegrityLimit,
+  type WorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import { isMaisterErrorCode, type MaisterErrorCode } from "@/lib/errors-core";
 
 // Domain-event kind taxonomy v1 (ADR-086). Extension rule: one entry here +
@@ -202,6 +206,7 @@ export type TerminalCause = Readonly<{
   code: MaisterErrorCode | null;
   reason?: string;
   source: TerminalCauseSource;
+  integrityLimit?: WorkspaceIntegrityLimit;
 }>;
 
 // A token, bounded: `cascade/<token>` is the one two-part form.
@@ -316,7 +321,12 @@ export function parseTerminalCause(value: unknown): TerminalCause | null {
       ? reason
       : undefined;
 
+  const integrityLimit = parseWorkspaceIntegrityLimit(
+    (value as Record<string, unknown>).integrityLimit,
+  );
+
   return {
+    ...(integrityLimit ? { integrityLimit } : {}),
     code: code as MaisterErrorCode | null,
     ...(token === undefined ? {} : { reason: token }),
     source: source as TerminalCauseSource,

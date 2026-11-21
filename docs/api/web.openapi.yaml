@@ -25867,6 +25867,7 @@ components:
               additionalProperties: false
               required: [reason]
               properties:
+                integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
                 reason:
                   type: string
                   maxLength: 256
@@ -32728,13 +32729,14 @@ components:
       description: |
         (Implemented) A run's terminal cause, read from its terminal domain
         event (`run.failed | run.crashed | run.abandoned` payload `cause`).
-        Tokens only — never a message: `emitDomainEvent` normalizes a reason
+        Reason tokens and optional bounded integrity measurements: `emitDomainEvent` normalizes a reason
         at the write (snake_case, a `:<message>` suffix dropped) and drops one
         that is still not a token, keeping `code` and `source`; the read drops
         a malformed reason, never the whole cause. `source: legacy` marks an
         event written before `cause` existed, synthesized from its `reason` /
         `errorCode`.
       properties:
+        integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
         code:
           type: string
           nullable: true

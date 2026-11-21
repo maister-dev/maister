@@ -1,3 +1,4 @@
+import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
 import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
@@ -17,6 +18,7 @@ import { ScheduledRequestEvidence } from "@/components/agents/scheduled-request-
 import { AgentRetryControl } from "@/components/agents/agent-retry-control";
 import { RunOutcome, type RunNextAction } from "@/components/runs/run-outcome";
 import { loadOperationalOutcome } from "@/lib/run-results/operational-projection";
+import { WorkspaceIntegrityNotice } from "@/components/runs/workspace-integrity-notice";
 import { OperationalRunResult } from "@/components/runs/operational-run-result";
 import {
   CRASH_RECOVER_DECISION,
@@ -109,6 +111,7 @@ import {
 import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
 import {
+  hasActiveGlobalRole,
   getProjectRole,
   getSessionUser,
   projectRolesForActions,
@@ -456,12 +459,24 @@ export default async function RunDetailLayout({
     userId: user.id,
   });
   const isOperational =
-    detail.agentKind === "operational" || publicResult?.operationalOutcome != null;
+    detail.agentKind === "operational" ||
+    publicResult?.operationalOutcome != null;
   const operational = isOperational
     ? (publicResult?.operationalOutcome ??
-      (await loadOperationalOutcome(getDb(), runId, { kind: "user", userId: user.id })))
+      (await loadOperationalOutcome(getDb(), runId, {
+        kind: "user",
+        userId: user.id,
+      })))
     : null;
   const tOperational = await getTranslations("operationalAgents");
+  const admissionLimit =
+    detail.status === "Pending" && detail.taskNumber !== null
+      ? await loadTaskLaunchIntegrityLimit(getDb(), runId)
+      : undefined;
+  const runIntegrityLimit =
+    admissionLimit ??
+    (!isOperational ? detail.terminalCause?.integrityLimit : undefined);
+
   const hasOperationalResult =
     operational?.state === "terminal" || isLiveRunStatus(detail.status);
   const resultStatusLabels: Record<ResultStatus, string> = {
@@ -1535,6 +1550,7 @@ export default async function RunDetailLayout({
               <section id="operation-result" tabIndex={-1}>
                 {operational && hasOperationalResult ? (
                   <OperationalRunResult
+                    isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
                     canAct={canAct}
                     outcome={operational}
                     runId={detail.runId}
@@ -1915,6 +1931,14 @@ export default async function RunDetailLayout({
           ) : null}
 
           {!detail.pendingHitl || isCutoverHistory ? primaryResult : null}
+
+          {runIntegrityLimit ? (
+            <WorkspaceIntegrityNotice
+              limit={runIntegrityLimit}
+              runId={runId}
+              isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
+            />
+          ) : null}
 
           {detail.status === "Failed" || detail.status === "Abandoned" ? (
             <TerminalCauseNotice

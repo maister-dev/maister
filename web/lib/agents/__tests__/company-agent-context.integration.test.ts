@@ -12240,6 +12240,7 @@ describe("observation guards, source-bound replacement and execution handoff", (
                 }),
               );
             const baseline = await captureOperationalBaseline(
+              database.db as unknown as import("@/lib/execution-host/db").Db,
               context.cwd,
               context.resourceKind,
             );
@@ -16269,8 +16270,13 @@ describe("context disclosure and retained company execution reads", () => {
       "Bounded company evidence.",
     );
     const baseline = await captureOperationalGeneration(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
       context.cwd,
-      await captureOperationalBaseline(context.cwd, "plain_directory"),
+      await captureOperationalBaseline(
+        database.db as unknown as import("@/lib/execution-host/db").Db,
+        context.cwd,
+        "plain_directory",
+      ),
       [],
     );
     const owner = {
@@ -16354,8 +16360,13 @@ async function seedCompanyOperationalTerminal(): Promise<
     "Retained company diagnostic input",
   );
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     context.cwd,
-    await captureOperationalBaseline(context.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      context.cwd,
+      "plain_directory",
+    ),
     [],
   );
 

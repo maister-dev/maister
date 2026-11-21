@@ -1762,7 +1762,7 @@ main database. A vector request reports provider failures after bounded retry.
 
 ## Workspace integrity checks
 
-**Designed.** Active global administrators manage limits under **Settings → Workspace integrity checks**. Each field resolves its saved platform override, then its web service environment value, then its built-in value. Reset removes the saved override independently. A successful save applies to each subsequent check. An active check uses its captured settings.
+**Designed.** Active global administrators manage limits under **Settings → Workspace integrity checks**. Each field resolves its saved platform override, then its web service environment value, then its built-in value. Reset removes the saved override independently. A successful save applies to each subsequent check. A check before platform runner bootstrap inherits env or built-ins if its settings query succeeds and finds no override row. The admin API requires the bootstrap row for reads and writes. An active check uses its captured settings.
 
 | Setting | Web environment variable | Default | Inclusive integer range |
 | --- | --- | ---: | --- |

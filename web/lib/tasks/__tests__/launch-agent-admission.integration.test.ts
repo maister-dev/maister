@@ -1161,7 +1161,11 @@ it("defers terminal cleanup while an accepted baseline owner is active and fence
       ...descriptor,
     });
     const baseline = await owner.runEffect(() =>
-      captureOperationalBaseline(descriptor.cwd, descriptor.resourceKind),
+      captureOperationalBaseline(
+        database.db as unknown as import("@/lib/execution-host/db").Db,
+        descriptor.cwd,
+        descriptor.resourceKind,
+      ),
     );
     const terminal = await prepareAgentRunFinalization(run.id, "Abandoned", {
       db: database.db,

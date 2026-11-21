@@ -358,8 +358,9 @@ async function seedOperationalRun(
 
   await git("worktree", "add", "-q", "-b", `operation-${runId}`, cwd);
   const baseline = await captureOperationalGeneration(
+    db,
     cwd,
-    await captureOperationalBaseline(cwd, "worktree"),
+    await captureOperationalBaseline(db, cwd, "worktree"),
     [],
   );
 

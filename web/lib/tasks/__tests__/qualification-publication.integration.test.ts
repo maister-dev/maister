@@ -98,8 +98,9 @@ async function fixture(snapshot?: null) {
     committish: "main",
   });
   const baseline = await captureOperationalGeneration(
+    db,
     context.cwd,
-    await captureOperationalBaseline(context.cwd, "ephemeral_checkout"),
+    await captureOperationalBaseline(db, context.cwd, "ephemeral_checkout"),
     [],
   );
 

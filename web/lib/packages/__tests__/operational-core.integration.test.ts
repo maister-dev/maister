@@ -285,8 +285,9 @@ for (const transport of ["gh", "mcp"] as const) {
         startPoint: "main",
       });
       const baseline = await captureOperationalGeneration(
+        db,
         cwd,
-        await captureOperationalBaseline(cwd, "worktree"),
+        await captureOperationalBaseline(db, cwd, "worktree"),
         [],
       );
 

@@ -1108,6 +1108,11 @@ async function prepareAgentFinalization(
           baselineGeneration:
             preparedRun.operationalIntegrityBaseline?.generation ?? null,
           evidenceIds: [],
+          ...(operationalIntegrity &&
+          "integrityLimit" in operationalIntegrity &&
+          operationalIntegrity.integrityLimit
+            ? { integrityLimit: operationalIntegrity.integrityLimit }
+            : {}),
           ...(opts.infrastructureFailure
             ? { infrastructureFailure: opts.infrastructureFailure }
             : {}),

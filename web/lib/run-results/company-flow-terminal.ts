@@ -1,3 +1,4 @@
+import type { WorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
@@ -80,6 +81,7 @@ export async function finalizeCompanyFlowRun(
     runId: string;
     errorCode: MaisterErrorCode | null;
     reason?: string;
+    integrityLimit?: WorkspaceIntegrityLimit;
     hosts?: ExecutionHosts;
     driverToken?: string;
     budgetTerminationId?: string;
@@ -420,7 +422,9 @@ export async function finalizeCompanyFlowRun(
     if (status === "Done")
       await emitDomainEvent({ ...scope, kind: "run.done" });
     else {
+      const integrityLimit = args.integrityLimit ?? integrity.integrityLimit;
       const cause: TerminalCause = {
+        ...(integrityLimit ? { integrityLimit } : {}),
         code: status === "Abandoned" ? null : (args.errorCode ?? "CONFIG"),
         reason,
         source:

@@ -40,7 +40,10 @@ import { launchAcceptedTaskRun } from "@/lib/services/runs";
 import { takeSchedulerLock, tryStartRun } from "@/lib/scheduler";
 import { runFlow } from "@/lib/flows/runner";
 import { isMaisterError } from "@/lib/errors";
-import { operationalCauseChain } from "@/lib/agents/operational-diagnostics";
+import {
+  operationalCauseChain,
+  readWorkspaceIntegrityLimit,
+} from "@/lib/agents/operational-diagnostics";
 import { pgErrorOf, queryErrorDiagnostics } from "@/lib/db/pg-error";
 
 const log = pino({
@@ -191,7 +194,14 @@ async function holdUndispatchedBoundRun(
       .where(eq(taskLaunchIntents.id, current.id))
       .returning();
 
-    await emitTaskLaunchChanged(tx, held, { type: "system", id: null });
+    await emitTaskLaunchChanged(
+      tx,
+      held,
+      { type: "system", id: null },
+      reason === "launch_agent_integrity_refused"
+        ? readWorkspaceIntegrityLimit(error)
+        : undefined,
+    );
   });
 }
 

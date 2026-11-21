@@ -5,6 +5,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFormatter, getTranslations } from "next-intl/server";
 
+import { WorkspaceIntegrityNotice } from "@/components/runs/workspace-integrity-notice";
+import { loadRunTerminalCause } from "@/lib/runs/terminal-cause";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import { AssignmentAcceptanceForm } from "@/components/specialist-assignments/assignment-acceptance-form";
 import { AssignmentDelivery } from "@/components/specialist-assignments/assignment-delivery";
@@ -14,7 +16,7 @@ import { AssignmentKnowledge } from "@/components/specialist-assignments/assignm
 import { AssignmentLifecycle } from "@/components/specialist-assignments/assignment-lifecycle";
 import { AssignmentLiveRefresh } from "@/components/specialist-assignments/assignment-live-refresh";
 import { StandOperationControls } from "@/components/specialist-assignments/operation-controls";
-import { requireActiveSession } from "@/lib/authz";
+import { hasActiveGlobalRole, requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { getSpecialistAssignmentContext } from "@/lib/specialist-assignments/context";
@@ -425,6 +427,15 @@ export default async function SpecialistAssignmentPage({
                     : t("runLaunchTimeUnavailable")}
                 </Link>
                 <span className="text-mute">{run.status}</span>
+                {run.companyFlowLimit ? (
+                  <div className="basis-full">
+                    <WorkspaceIntegrityNotice
+                      limit={run.companyFlowLimit}
+                      runId={run.id}
+                      isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -529,13 +540,24 @@ async function readAssignmentPage(
       if (delivery) break;
     }
 
+    const runSummaries = await Promise.all(
+      runs.map(async (run) => ({
+        ...run,
+        companyFlowLimit:
+          assignment.owner.kind === "company" && run.runKind === "flow"
+            ? (await loadRunTerminalCause(db, run.id, run.status))
+                ?.integrityLimit
+            : undefined,
+      })),
+    );
+
     return {
       assignment,
       recovery,
       coordinatorRecovery,
       context,
       input,
-      runs,
+      runs: runSummaries,
       stand,
       review,
       live,

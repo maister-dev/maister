@@ -1,3 +1,4 @@
+import { readWorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -235,6 +236,10 @@ export function taskLaunchErrorResponse(error: unknown): NextResponse {
         ? taskLaunchConflictReferenceSchema.safeParse(error.details?.existing)
         : null;
 
+    const integrityLimit =
+      reason === "launch_agent_integrity_refused"
+        ? readWorkspaceIntegrityLimit(error)
+        : undefined;
     const runnerSlot =
       reason === "flow_runner_unresolved"
         ? runnerSlotSchema.safeParse({
@@ -261,6 +266,7 @@ export function taskLaunchErrorResponse(error: unknown): NextResponse {
           : "Task launch request could not be accepted",
         details: {
           reason,
+          ...(integrityLimit ? { integrityLimit } : {}),
           ...(conflict?.success ? { existing: conflict.data } : {}),
           ...(runnerSlot?.success ? runnerSlot.data : {}),
           ...(enforcement?.success ? enforcement.data : {}),

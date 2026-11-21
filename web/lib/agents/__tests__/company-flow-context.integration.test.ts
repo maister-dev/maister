@@ -665,6 +665,8 @@ beforeAll(async () => {
     coordinatorBindingRevision: coordinator.binding.revision,
     triggerSource: "manual",
   };
+  // The witness uses the current scanner while the Flow schema is still historical.
+  await applyMainMigration(database.db, "0360_workspace_integrity_limits");
   await seedRetainedStandalone();
   const project = await seedProjectRow(database.db);
 
@@ -752,8 +754,10 @@ beforeAll(async () => {
 
   if (runtimeBaseline < 0)
     throw new Error("The native Flow runtime migration baseline is missing");
-  for (const entry of journal.entries.slice(runtimeBaseline + 1))
-    await applyMainMigration(database.db, entry.tag);
+  for (const entry of journal.entries.slice(runtimeBaseline + 1)) {
+    if (entry.tag !== "0360_workspace_integrity_limits")
+      await applyMainMigration(database.db, entry.tag);
+  }
   await declareCurrentTestDatabaseWriter(database);
 
   await database.pool.query("DELETE FROM projects WHERE id=$1", [project.id]);
@@ -896,8 +900,13 @@ async function seedRetainedStandalone(): Promise<void> {
 
   await mkdir(owner.cwd, { recursive: true });
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     owner.cwd,
-    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      owner.cwd,
+      "plain_directory",
+    ),
     [],
   );
 
@@ -1786,8 +1795,13 @@ it("retains a v2 company graph plain-directory witness and adopts its explicit o
     "Bounded graph evidence",
   );
   const baseline = await captureOperationalGeneration(
+    database.db as unknown as import("@/lib/execution-host/db").Db,
     owner.cwd,
-    await captureOperationalBaseline(owner.cwd, "plain_directory"),
+    await captureOperationalBaseline(
+      database.db as unknown as import("@/lib/execution-host/db").Db,
+      owner.cwd,
+      "plain_directory",
+    ),
     [],
   );
   const retained = {

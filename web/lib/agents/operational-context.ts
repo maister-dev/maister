@@ -326,13 +326,16 @@ export async function inspectOperationalWorkspace(
     | "operationalIntegrityBaseline"
   > &
     Partial<Pick<Run, "companyId" | "companyExecutionSnapshot" | "runKind">>,
+  stage: "dispatch" | "final_verification" | "cleanup" = "final_verification",
 ): Promise<OperationalIntegrityResult> {
   frozenOperationalDefinition(run);
   const context = await operationalWorkspace(db, run);
   const result = await verifyOperationalIntegrity(
+    db,
     context.cwd,
     run.operationalIntegrityBaseline,
     await operationalReferenceEvidence(db, run),
+    { stage },
   );
 
   log.info(
@@ -351,6 +354,7 @@ export async function inspectOperationalWorkspace(
 
 /** Captured before the first source baseline is committed; never re-materialized on resume. */
 export async function captureOperationalContextMounts(
+  db: Db,
   mounts: readonly ContextMountSnapshot[],
 ): Promise<NonNullable<OperationalIntegrityBaseline["contextMounts"]>> {
   const witnesses: NonNullable<OperationalIntegrityBaseline["contextMounts"]> =
@@ -358,9 +362,16 @@ export async function captureOperationalContextMounts(
 
   for (const mount of mounts) {
     const baseline = await captureOperationalGeneration(
+      db,
       mount.mountPath,
-      await captureOperationalBaseline(mount.mountPath, "ephemeral_checkout"),
+      await captureOperationalBaseline(
+        db,
+        mount.mountPath,
+        "ephemeral_checkout",
+        { resource: "context" },
+      ),
       [],
+      { resource: "context" },
     );
 
     if (baseline.head !== mount.committish)
@@ -416,6 +427,7 @@ export async function inspectOperationalContextMount(
   db: Db,
   run: OperationalContextRun,
   mount: ContextMountSnapshot,
+  stage: "dispatch" | "final_verification" | "cleanup" = "final_verification",
 ): Promise<OperationalIntegrityResult> {
   const witness = run.operationalIntegrityBaseline?.contextMounts?.find(
     (entry) =>
@@ -430,18 +442,21 @@ export async function inspectOperationalContextMount(
     };
 
   return verifyOperationalIntegrity(
+    db,
     mount.mountPath,
     witness.baseline,
     await operationalReferenceEvidence(db, {
       id: run.id,
       projectId: mount.projectId,
     }),
+    { resource: "context", stage },
   );
 }
 
 export async function inspectOperationalContexts(
   db: Db,
   run: OperationalContextRun,
+  stage: "dispatch" | "final_verification" = "final_verification",
 ): Promise<OperationalIntegrityResult> {
   const results: OperationalIntegrityResult[] = [];
   const mounts = operationalContextMountSnapshots(run);
@@ -457,7 +472,7 @@ export async function inspectOperationalContexts(
     });
 
   for (const mount of mounts) {
-    const result = await inspectOperationalContextMount(db, run, mount);
+    const result = await inspectOperationalContextMount(db, run, mount, stage);
 
     results.push({
       ...result,
@@ -486,7 +501,12 @@ export async function inspectOperationalContexts(
 function combineIntegrityResults(
   results: readonly OperationalIntegrityResult[],
 ): OperationalIntegrityResult {
+  const integrityLimit = results.find(
+    (result) => result.integrityLimit,
+  )?.integrityLimit;
+
   return {
+    ...(integrityLimit ? { integrityLimit } : {}),
     verdict: results.some(({ verdict }) => verdict === "changed")
       ? "changed"
       : results.some(({ verdict }) => verdict !== "clean")
@@ -503,10 +523,11 @@ export async function inspectOperationalRun(
   db: Db,
   run: Parameters<typeof inspectOperationalWorkspace>[1] &
     Pick<Run, "contextMounts">,
+  stage: "dispatch" | "final_verification" = "final_verification",
 ): Promise<OperationalIntegrityResult> {
   return combineIntegrityResults([
-    await inspectOperationalWorkspace(db, run),
-    await inspectOperationalContexts(db, run),
+    await inspectOperationalWorkspace(db, run, stage),
+    await inspectOperationalContexts(db, run, stage),
   ]);
 }
 
@@ -518,7 +539,7 @@ export async function assertOperationalDispatchIntegrity(
 
   if (!run || (run.agentKind !== "operational" && !isCompanyFlowResource(run)))
     return;
-  const result = await inspectOperationalRun(db, run);
+  const result = await inspectOperationalRun(db, run, "dispatch");
 
   if (result.verdict !== "clean")
     throw new MaisterError(
@@ -528,6 +549,7 @@ export async function assertOperationalDispatchIntegrity(
         details: {
           reason: "operational_integrity_refused",
           reasons: result.reasonCodes,
+          integrityLimit: result.integrityLimit,
         },
       },
     );

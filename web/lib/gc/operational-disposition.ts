@@ -1,5 +1,6 @@
 import "server-only";
 
+import { readWorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import type { Db } from "@/lib/execution-host/db";
 import type { ExecutionHosts } from "@/lib/execution-host/client";
 import type { OperationalCleanup } from "@/lib/run-results/operational-types";
@@ -58,7 +59,10 @@ import { TERMINAL_COMMAND_STATES } from "@/lib/execution-host/types";
 import { preserveOperationalEvidence } from "@/lib/gc/operational-evidence";
 import { removeOwnedPlainAgentDirectory } from "@/lib/gc/plain-agent-directory-gc";
 import { preserveWorktree } from "@/lib/gc/preserve";
-import { worktreesRoot } from "@/lib/instance-config";
+import {
+  promotionClaimTimeoutSeconds,
+  worktreesRoot,
+} from "@/lib/instance-config";
 import {
   claimLifecycleOperation,
   finalizeLifecycleOperation,
@@ -244,7 +248,7 @@ export async function disposeOperationalRun(
     });
     cleanup = next;
   };
-  const renew = async (): Promise<void> => {
+  const renewLease = async (): Promise<void> => {
     if (workspace)
       await renewLifecycleOperationLease({
         database: db,
@@ -261,6 +265,48 @@ export async function disposeOperationalRun(
         },
       });
   };
+
+  let renewal: Promise<void> | undefined;
+  let renewalFailure: unknown;
+  function renew(): Promise<void> {
+    if (renewalFailure) return Promise.reject(renewalFailure);
+    renewal ??= renewLease()
+      .catch((error: unknown) => {
+        renewalFailure = error;
+        throw error;
+      })
+      .finally(() => {
+        renewal = undefined;
+      });
+
+    return renewal;
+  }
+
+  async function withCleanupLease<T>(operation: () => Promise<T>): Promise<T> {
+    await renew();
+    const interval =
+      (workspace ? promotionClaimTimeoutSeconds() * 1000 : LEASE_MS) / 4;
+    const timer = setInterval(() => {
+      void renew().catch((error: unknown) => {
+        clearInterval(timer);
+        log.warn(
+          { runId, errorType: error instanceof Error ? error.name : "unknown" },
+          "operational-cleanup-lease-lost",
+        );
+      });
+    }, interval);
+    timer.unref();
+
+    try {
+      const result = await operation();
+      await renew();
+      return result;
+    } finally {
+      clearInterval(timer);
+      // Preserve the probe's primary error when renewal also fails.
+      await renewal?.catch(() => undefined);
+    }
+  }
 
   try {
     if (workspace) {
@@ -386,22 +432,24 @@ export async function disposeOperationalRun(
             for (const mount of contextMounts) {
               // A previous cleanup attempt may have removed an independent sibling.
               if (!(await exists(mount.mountPath))) continue;
-              const verdict = await inspectOperationalContextMount(
-                db,
-                run,
-                mount,
+              const verdict = await withCleanupLease(() =>
+                inspectOperationalContextMount(db, run, mount, "cleanup"),
               );
 
               if (verdict.verdict !== "clean") {
                 if (!client)
                   throw cleanupError("operational_evidence_host_missing");
-                const ids = await preserveOperationalEvidence({
-                  runId,
-                  cwd: mount.mountPath,
-                  resourceKind: "ephemeral_checkout",
-                  client,
-                  renew,
-                });
+                const ids = await withCleanupLease(() =>
+                  preserveOperationalEvidence({
+                    db,
+                    resource: "context",
+                    runId,
+                    cwd: mount.mountPath,
+                    resourceKind: "ephemeral_checkout",
+                    client,
+                    renew,
+                  }),
+                );
 
                 await persist({
                   ...cleanup,
@@ -416,20 +464,25 @@ export async function disposeOperationalRun(
             });
           });
         if (!cleanup.removedAt && present) {
-          const integrity = await inspectOperationalWorkspace(db, run);
+          const integrity = await withCleanupLease(() =>
+            inspectOperationalWorkspace(db, run, "cleanup"),
+          );
           const preserveBytes =
             run.status !== "Done" || integrity.verdict !== "clean";
 
           if (preserveBytes) {
             if (!client)
               throw cleanupError("operational_evidence_host_missing");
-            const evidenceIds = await preserveOperationalEvidence({
-              runId,
-              cwd: context.cwd,
-              resourceKind: context.resourceKind,
-              client,
-              renew,
-            });
+            const evidenceIds = await withCleanupLease(() =>
+              preserveOperationalEvidence({
+                db,
+                runId,
+                cwd: context.cwd,
+                resourceKind: context.resourceKind,
+                client,
+                renew,
+              }),
+            );
 
             await persist({
               ...cleanup,
@@ -521,6 +574,7 @@ export async function disposeOperationalRun(
       releasedAt: new Date().toISOString(),
       dueAt: null,
       errorCode: null,
+      integrityLimit: undefined,
       lease: null,
     });
     if (workspace)
@@ -573,6 +627,7 @@ export async function disposeOperationalRun(
               now.getTime() + DELAYS[Math.max(0, attempts - 1)],
             ).toISOString(),
         errorCode: reason,
+        integrityLimit: readWorkspaceIntegrityLimit(error),
         revision: cleanup.revision + 1,
         lease: null,
       });

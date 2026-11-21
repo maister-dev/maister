@@ -38,7 +38,7 @@ Each value governs **one invocation of the shared traversal**. The following inc
 - For each field select the first applicable source in order `platform` (non-NULL singleton column), `environment` (present service variable), `default`. A saved value equal to the default still has source `platform`. A reset writes SQL NULL. Never materialize inherited values in the database. Convert MiB × 1,048,576 and seconds × 1,000 exactly once at the traversal boundary using safe-integer arithmetic.
 - Parse applicable env values as whole decimal integers within the same ranges. An unset variable inherits the built-in. Reject empty, fractional, signed, malformed or out-of-range env input with a typed `CONFIG` failure naming the field and variable. Do not silently substitute a default or clamp an invalid value. A valid stored override shadows the corresponding env value. If resetting would reveal invalid configuration, reject the entire PATCH and retain the stored overrides. A DB failure cannot authorize a default-only scan.
 - Add **GET /api/admin/platform/workspace-integrity** for effective settings and **PATCH** on that resource for an atomic partial update. Both return 200 with the same complete view, for example `{"maxSizeMiB":{"value":1024,"source":"default"},"maxDurationSeconds":{"value":90,"source":"environment"},"maxEntries":{"value":75000,"source":"platform"}}`. Field names define units. Use a strict nonempty PATCH object, for example `{"maxSizeMiB":512,"maxEntries":null}`. A JSON integer sets an override, null resets that field, and omitted fields retain their stored state. Reject unknown keys, strings, booleans, nonintegers, out-of-range values and invalid JSON. Server owns actor, row ID, scope, source and units.
-- Require `requireGlobalRole("admin")` on both methods before reading settings, parsing the body or performing writes. Follow the admin JSON error envelope with typed code/reason and a bounded field identifier for localized validation. Specify 401 for unauthenticated, 403 for insufficient authority or account restrictions, 422 for invalid input/configuration including an uninitialized singleton, 503 for recognized temporary DB unavailability and 500 for unexpected failures. Serve uncached authenticated views. Use the existing singleton bootstrap in `web/lib/acp-runners/native-defaults.ts`. A missing required row is an explicit initialization failure. Preserve its required runner FK and other settings.
+- Require `requireGlobalRole("admin")` on both methods before reading settings, parsing the body or performing writes. Follow the admin JSON error envelope with typed code/reason and a bounded field identifier for localized validation. Specify 401 for unauthenticated, 403 for insufficient authority or account restrictions, 422 for invalid input/configuration including an uninitialized singleton, 503 for recognized temporary DB unavailability and 500 for unexpected failures. Serve uncached authenticated views. Use the existing singleton bootstrap in `web/lib/acp-runners/native-defaults.ts`. The admin API refuses an uninitialized singleton. A runtime query that succeeds with zero rows inherits the environment or built-in limits, preserving explicit-runner operation before singleton bootstrap. A failed query still refuses the check. Preserve its required runner FK and other settings.
 - Update only present columns plus the existing update timestamp, using one row UPDATE with RETURNING inside a short transaction. Resolve and validate the complete response against those returned values before commit. Roll back on failure and acknowledge success only after commit. Concurrent disjoint edits survive. If two administrators change the same field, the last committed update wins. Never hold a settings transaction or row lock for a filesystem scan.
 
 ### HTTP and failure schemas to specify in Phase 0
@@ -114,7 +114,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
 ### Phase 0 — Specify the contracts
 
-- [ ] **1. Document the design before coding.** Add the settings/read/update/reset and failure flows to `docs/configuration.md`, `docs/system-analytics/operational-agent-lifecycle.md` and the preparation disclosure to `docs/system-analytics/agent-preparation.md`. Specify the two admin operations and additive `OperationalPreparationFailure` shape in `docs/api/web.openapi.yaml`. Mirror the shared failure shape in `docs/api/external/operations.openapi.yaml`. Describe the nullable singleton columns in `docs/database-schema.md` and the relevant platform settings ER diagram in `docs/db/projects-domain.md`.
+- [x] **1. Document the design before coding.** Add the settings/read/update/reset and failure flows to `docs/configuration.md`, `docs/system-analytics/operational-agent-lifecycle.md` and the preparation disclosure to `docs/system-analytics/agent-preparation.md`. Specify the two admin operations and additive `OperationalPreparationFailure` shape in `docs/api/web.openapi.yaml`. Mirror the shared failure shape in `docs/api/external/operations.openapi.yaml`. Describe the nullable singleton columns in `docs/database-schema.md` and the relevant platform settings ER diagram in `docs/db/projects-domain.md`.
 
   Replace the hard-coded contract paragraph in `docs/db/task-launch-domain.md` with a reference to the lifecycle integrity boundary. Retain the separate lease durations there. In the lifecycle document specify the order of load, capture, generation, verification, refusal, evidence preservation and disposition. Enumerate the failure outcome for each transition, including unavailable settings, the first limit reached, partial context failure and stale cleanup ownership. Identify the owner and observable postcondition for every transition. Link `docs/system-analytics/operational-agents-traceability.md` to the new acceptance mapping and preserve the original OPL-02/04/05 and EDGE-OPL-04/05/06 requirements and their primary tests. The existing operational coverage validator is tied to its historical plan. Check this feature's WI rows against actual test discovery and execution separately.
 
@@ -124,7 +124,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
 ### Phase 1 — Persist and resolve settings
 
-- [ ] **2. Migrate existing installations** (after 1). Extend `web/lib/db/schema.ts`. Generate an additive main-line migration under `web/lib/db/migrations/` with three nullable integer columns and independent range CHECKs. The next candidate on the inspected journal is `0360`. Reconcile against the latest base at implementation and before merge. Include SQL, journal entry, Drizzle snapshot and regenerated `docs/db/erd.dbml`. Leave populated singleton values intact. NULL inherits configuration on upgrade and fresh bootstrap.
+- [x] **2. Migrate existing installations** (after 1). Extend `web/lib/db/schema.ts`. Generate an additive main-line migration under `web/lib/db/migrations/` with three nullable integer columns and independent range CHECKs. The next candidate on the inspected journal is `0360`. Reconcile against the latest base at implementation and before merge. Include SQL, journal entry, Drizzle snapshot and regenerated `docs/db/erd.dbml`. Leave populated singleton values intact. NULL inherits configuration on upgrade and fresh bootstrap.
 
   Use `web/test-support/pg-container.ts` in a migration integration test. Open the immediate predecessor with `startMainPostgresTestDbUpTo` (currently `0359_acp_context_projection_state`). Seed the required runner and singleton with recognizable sibling settings. Snapshot that row, then call `applyMainMigration(database.db, newTag)` for the single new additive migration. Compare all pre-existing values and the FK and assert the three new values are NULL. Exercise a valid lower/upper value, NULL and values immediately outside both bounds for each column in direct SQL. For the fresh-install case use the normal full migrator and native singleton bootstrap. Deploy the additive migration before updating web processes. On a binary rollback keep the nullable columns and stored values for the next rollout.
 
@@ -132,7 +132,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
   Use existing migration diagnostics.
 
-- [ ] **3. Implement resolution and admin API** (after 2).
+- [x] **3. Implement resolution and admin API** (after 2).
 
   Add the typed settings store/view alongside the web platform settings modules and `web/app/api/admin/platform/workspace-integrity/route.ts`. Follow `web/lib/librarian/settings.ts` and its admin route for singleton access and role enforcement.
 
@@ -144,7 +144,7 @@ At each implementation phase exit require the focused tests and the complete exi
 
 ### Phase 2 — Enforce and explain every check
 
-- [ ] **4. Wire runtime and deployment configuration** (after 3).
+- [x] **4. Wire runtime and deployment configuration** (after 3).
 
   Document the three optional variables as commented examples in `.env.example` and `deploy/maister.env.example`. `deploy/maister-web.service` loads `/etc/maister/maister.env`.
 
@@ -197,7 +197,7 @@ Existing direct-caller integration fixtures to migrate in task 5 (paths under `w
 
   In `web/messages/en.json` and `web/messages/ru.json` include “Workspace integrity checks” / “Проверки целостности рабочей области”, “Total size (MiB)” / “Общий размер (МиБ)”, “Duration (seconds)” / “Длительность (секунды)”, “Filesystem entries” / “Объекты файловой системы”. Translate source labels, reset actions, integer/range errors and save confirmation.
 
-  **Acceptance.** Exercise the form in both locales with the repository’s component DOM runner. Assert labeled units and sources, keyboard-accessible independent reset, omission of untouched values from the PATCH, field errors with preserved edits, and save confirmation using the returned values. Task 8 owns persistence across a full page reload and confirms a member receives neither section nor settings payload.
+  **Acceptance.** Exercise the form in both locales in the browser journey from Task 8, using DOM assertions in the same fixture. Assert labeled units and sources, keyboard-accessible independent reset, omission of untouched values from the PATCH, field errors with preserved edits, and save confirmation using the returned values. Task 8 owns persistence across a full page reload and confirms a member receives neither section nor settings payload.
 
 - [ ] **8. Prove the browser-to-traversal path and direct authorization** (after 4–7). Add `web/e2e/execution-ab-workspace-integrity.spec.ts` to the existing serial `execution-ab` project in `web/playwright.execution-ab.config.ts`. Its global setup boots the real supervisor with a controlled ACP adapter. Use the existing isolated invocation `pnpm --filter maister-web test:e2e:execution-ab execution-ab-workspace-integrity.spec.ts` with env scoped to this invocation. Confirm discovery in this lane and exclusion from the default lane. Use `admin-execution-host.spec.ts` for real member authentication.
 
@@ -218,6 +218,13 @@ Existing direct-caller integration fixtures to migrate in task 5 (paths under `w
   Confirm configuration docs, operational lifecycle/traceability, API examples and schema describe the qualified behavior. Reconcile migration numbering on current base. Require successful `pnpm validate:contracts`, `pnpm validate:docs:all`, `pnpm --filter maister-web typecheck`, `pnpm --filter maister-web test:unit`, `pnpm --filter maister-web test:integration`, the Task 8 execution-ab browser invocation and the Task 9 qualification invocation. Record revision, actual tests executed and exit status per gate. Resolve red tests and rerun on the final tree. Skipped cases, zero-test discovery and a partial suite leave the corresponding gate open.
 
   **Acceptance.** Retain the RED and GREEN receipts, all three fresh-default sources and complete measurements together with the test results. Mark documentation Implemented only after these gates pass.
+
+## Implementation evidence
+
+- WI-01 went RED against the predecessor because the migration was absent. The real PostgreSQL upgrade then passed, preserving the existing row and enforcing all three CHECKs. The normal full migrator also booted the settings and browser fixtures. A second Drizzle generation reported no schema changes and the canonical DBML check passed.
+- WI-02 uses the isolated PostgreSQL route suite for atomic save/reset, source precedence, invalid-env rollback and database writer order. Admin authorization is also exercised with real sessions in WI-03.
+- The pinned production probe read the cap through the settings HTTP handlers in a migrated isolated database. On Darwin arm64 with Node 24.22.3, the old 256 MiB cap stopped at 268,737,798 B. The full witness for `cd9e37f071f7d29e6fbc03d36e1e83c8a0ffdb5f` measured 482,517,365 B and 11,749 entries. The observed wall times under concurrent local test load were 12,818 ms to refusal, 13,234 ms for capture, 15,873 ms for generation and 12,187 ms for verification. Final verdict was clean with an unchanged detached checkout.
+- The initial browser journey passed the admin override/reload/real preparation refusal/reset/fresh generation and EN/RU admin/member diagnostics in one web lifetime. Broader integration and the final browser rerun are separate gates.
 
 ## Commit plan for implementation
 

@@ -196,6 +196,12 @@ function projectOperationalOutcome(
       ? { infrastructureFailure: receipt.infrastructureFailure }
       : {}),
     integrity: receipt?.integrity ?? "pending",
+    ...(receipt?.integrityLimit
+      ? { integrityLimit: receipt.integrityLimit }
+      : {}),
+    ...(run.cleanup?.integrityLimit
+      ? { cleanupIntegrityLimit: run.cleanup.integrityLimit }
+      : {}),
     resultRevision: receipt?.resultRevision ?? null,
     reportedResult: result,
     reasonCodes: receipt?.reasonCodes ?? [],

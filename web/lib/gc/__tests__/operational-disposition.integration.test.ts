@@ -1,3 +1,5 @@
+import { updateIntegritySettings } from "@/lib/workspace-integrity/settings";
+import { seedWorkspaceIntegritySettings } from "@/test-support/workspace-integrity-settings";
 import type { ContextMountSnapshot } from "@/lib/context-mounts/types";
 import type { Db } from "@/lib/execution-host/db";
 import type { ReserveRuntimeObjectPayload } from "@/lib/execution-host/contracts";
@@ -186,15 +188,21 @@ async function seed(
     mounts.map(async (mount) => ({
       mount,
       baseline: await captureOperationalGeneration(
+        db,
         mount.mountPath,
-        await captureOperationalBaseline(mount.mountPath, "ephemeral_checkout"),
+        await captureOperationalBaseline(
+          db,
+          mount.mountPath,
+          "ephemeral_checkout",
+        ),
         [],
       ),
     })),
   );
   const baseline = await captureOperationalGeneration(
+    db,
     context.cwd,
-    await captureOperationalBaseline(context.cwd, context.resourceKind),
+    await captureOperationalBaseline(db, context.cwd, context.resourceKind),
     [],
   );
 
@@ -1099,6 +1107,51 @@ describe("operational disposition through existing lifecycle owners", () => {
     });
     expect(seam.fake.callsOf("deliverInput")).toHaveLength(0);
     expect((await lstat(seeded.context.cwd)).isDirectory()).toBe(true);
+  });
+
+  it("WI-05 retains a failed archive limit on the current cleanup attempt and clears it after retry", async () => {
+    const seeded = await seed();
+    const prepared = await prepareAgentRunFinalization(seeded.runId, "Done", {
+      db,
+      finalText: output,
+    });
+    await db.transaction((tx) => prepared.apply(tx));
+    const source = path.join(seeded.context.cwd, "large-source");
+    await writeFile(source, Buffer.alloc(1536 * 1024));
+    await seedWorkspaceIntegritySettings(database);
+
+    try {
+      await updateIntegritySettings(db, { maxSizeMiB: 1 }, "test");
+      expect(
+        await disposeOperationalRun(seeded.runId, { db, hosts: seam.hosts }),
+      ).toBe("deferred");
+      const outcome = await loadOperationalOutcome(db, seeded.runId);
+      expect(outcome).toMatchObject({
+        effectiveOutcome: "success",
+        cleanup: { state: "retry", errorCode: "operational_integrity_limit" },
+        cleanupIntegrityLimit: {
+          stage: "evidence_capture",
+          resource: "primary",
+          limitAxis: "bytes",
+          maximum: 1048576,
+        },
+      });
+      expect((await lstat(source)).size).toBe(1536 * 1024);
+
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+      expect(
+        await disposeOperationalRun(seeded.runId, {
+          db,
+          hosts: seam.hosts,
+          now: new Date(Date.now() + 360_000),
+        }),
+      ).toBe("released");
+      const retried = await loadOperationalOutcome(db, seeded.runId);
+      expect(retried?.cleanup?.state).toBe("released");
+      expect(retried?.cleanupIntegrityLimit).toBeUndefined();
+    } finally {
+      await updateIntegritySettings(db, { maxSizeMiB: null }, "test");
+    }
   });
 
   it("IT-EDGE-OPL-06 fences a second cleaner and refuses stale completion after lease expiry", async () => {

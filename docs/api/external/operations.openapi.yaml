@@ -9870,6 +9870,7 @@ components:
               additionalProperties: false
               minProperties: 1
               properties:
+                integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
                 reason:
                   type: string
                   maxLength: 256

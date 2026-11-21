@@ -387,9 +387,14 @@ async function freezeLegacyCheckout(runId: string): Promise<void> {
     worktreePath: cwd,
     committish: "main",
   });
-  const baseline = await captureOperationalBaseline(cwd, "ephemeral_checkout", {
-    legacyEphemeral: true,
-  });
+  const baseline = await captureOperationalBaseline(
+    db,
+    cwd,
+    "ephemeral_checkout",
+    {
+      legacyEphemeral: true,
+    },
+  );
   await db
     .update(runs)
     .set({

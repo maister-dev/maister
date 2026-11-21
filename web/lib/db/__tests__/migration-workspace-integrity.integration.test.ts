@@ -24,17 +24,23 @@ it("WI-01 upgrades populated settings without materializing inherited limits", a
       SET webhooks_enabled = false, librarian_enabled = true, distill_model = 'legacy'
       WHERE id = 'singleton'
     `);
-    const before = await database.pool.query("SELECT * FROM platform_runtime_settings WHERE id = 'singleton'");
+    const before = await database.pool.query(
+      "SELECT * FROM platform_runtime_settings WHERE id = 'singleton'",
+    );
 
     await applyMainMigration(database.db, "0360_workspace_integrity_limits");
-    const after = await database.pool.query("SELECT * FROM platform_runtime_settings WHERE id = 'singleton'");
+    const after = await database.pool.query(
+      "SELECT * FROM platform_runtime_settings WHERE id = 'singleton'",
+    );
     expect(before.rows).toHaveLength(1);
-    expect(after.rows).toEqual([{
-      ...before.rows[0],
-      workspace_integrity_max_size_mib: null,
-      workspace_integrity_max_duration_seconds: null,
-      workspace_integrity_max_entries: null,
-    }]);
+    expect(after.rows).toEqual([
+      {
+        ...before.rows[0],
+        workspace_integrity_max_size_mib: null,
+        workspace_integrity_max_duration_seconds: null,
+        workspace_integrity_max_entries: null,
+      },
+    ]);
 
     for (const [column, max] of [
       ["workspace_integrity_max_size_mib", 8192],
@@ -42,12 +48,16 @@ it("WI-01 upgrades populated settings without materializing inherited limits", a
       ["workspace_integrity_max_entries", 500000],
     ] as const) {
       for (const value of [1, max, null])
-        await database.db.execute(sql`UPDATE platform_runtime_settings SET ${sql.identifier(column)} = ${value}`);
+        await database.db.execute(
+          sql`UPDATE platform_runtime_settings SET ${sql.identifier(column)} = ${value}`,
+        );
       for (const value of [0, max + 1])
-        await expect(database.pool.query(
-          `UPDATE platform_runtime_settings SET ${column} = $1`,
-          [value],
-        )).rejects.toMatchObject({ code: "23514" });
+        await expect(
+          database.pool.query(
+            `UPDATE platform_runtime_settings SET ${column} = $1`,
+            [value],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
     }
   } finally {
     await database.stop();

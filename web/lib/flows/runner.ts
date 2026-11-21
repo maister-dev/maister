@@ -1,3 +1,4 @@
+import { readWorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import pino from "pino";
@@ -62,6 +63,7 @@ export async function runFlow(
         requested: "Failed",
         errorCode: error.code,
         admissionRefusedBeforeTraversal: true,
+        integrityLimit: readWorkspaceIntegrityLimit(error),
         reason:
           typeof error.details?.reason === "string"
             ? error.details.reason

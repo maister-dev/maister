@@ -1,3 +1,4 @@
+import { parseWorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
 import type {
@@ -191,7 +192,10 @@ function tokenOnlyCause(
       "terminal-cause-reason-normalized",
     );
 
+  const integrityLimit = parseWorkspaceIntegrityLimit(cause.integrityLimit);
+
   return {
+    ...(integrityLimit ? { integrityLimit } : {}),
     code: cause.code,
     ...(reason === undefined ? {} : { reason }),
     source: cause.source,
