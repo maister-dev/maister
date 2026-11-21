@@ -240,7 +240,27 @@ it.each([
           [runId],
         )
       ).rows[0];
-    const { hosts } = await fakeGraphHosts(database.db, runId);
+    const { hosts, fake } = await fakeGraphHosts(database.db, runId);
+    let settledWhileParking = false;
+
+    if (kind === "run.failed") {
+      const inventory = fake.transport.listSessionsForRun;
+
+      fake.transport.listSessionsForRun = async (inventoryRunId) => {
+        if (
+          !settledWhileParking &&
+          inventoryRunId === runId &&
+          (await state())?.state === "parking"
+        ) {
+          settledWhileParking = true;
+          await fact(relatedRunId, kind);
+          expect((await dispatch()).failures).toBe(0);
+          expect(await state()).toEqual({ state: "parking", result: null });
+        }
+
+        return inventory(inventoryRunId);
+      };
+    }
 
     if (kind === "run.done") await fact(relatedRunId, kind);
     await runFlow(runId, {
@@ -249,7 +269,8 @@ it.each([
       executionHosts: hosts,
     });
 
-    if (kind !== "run.done") {
+    if (kind === "run.failed") expect(settledWhileParking).toBe(true);
+    if (kind !== "run.done" && kind !== "run.failed") {
       await fact(decoy, kind);
       expect((await dispatch()).failures).toBe(0);
       expect(await state()).toEqual({ state: "open", result: null });
