@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
+import { MaisterError } from "@/lib/errors";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import {
   startMainPostgresTestDb,
@@ -733,170 +734,297 @@ it("W03 applies elapsed and equal-deadline timers even if another due wait fails
     { outcome: "timeout" },
     { outcome: null },
   ]);
-});
 
-it("W05 closes a parked wait on abandon and refuses a later signal", async () => {
-  const { runFlow } = await import("@/lib/flows/runner");
-  const { markAbandoned } = await import("@/lib/runs/state-transitions");
-  const { recordWaitSignal } = await import("@/lib/waits/store");
-  const { seedGraphRun } = await import("@/test-support/graph-run-seed");
-  const { fakeGraphHosts } = await import("@/test-support/fake-execution-host");
-  const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
-    database.db,
-    {
-      schemaVersion: 1,
-      name: "Abandon a wait",
-      compat: { engine_min: "3.13.0" },
-      nodes: [
-        {
-          type: "wait",
-          id: "build",
-          on: { kind: "signal", name: "build", outcomes: ["success"] },
-          timeout: 120,
-          transitions: { success: "done", timeout: "done", cancelled: "done" },
-        },
-      ],
-    },
-  );
-
-  onTestFinished(async () => {
-    await Promise.all(
-      [runtimeRoot, worktreePath].map((path) =>
-        rm(path, { recursive: true, force: true }),
-      ),
-    );
-  });
-  const { hosts } = await fakeGraphHosts(database.db, runId);
-
-  await runFlow(runId, { db: database.db, runtimeRoot, executionHosts: hosts });
-  const {
-    rows: [wait],
-  } = await database.pool.query<{ id: string }>(
-    "SELECT id FROM run_waits WHERE run_id=$1",
-    [runId],
-  );
-  const tokenId = randomUUID();
-
+  transient.mockRestore();
   await database.pool.query(
-    "INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes) VALUES ($1,$2,'late CI',$1,$1,'[\"waits:signal\"]')",
-    [tokenId, projectId],
+    `UPDATE run_waits SET opened_at=opened_at-interval '8 days',
+    timer_at=timer_at-interval '8 days',deadline_at=deadline_at-interval '8 days',
+    deadline_retry_at=deadline_retry_at-interval '8 days',
+    next_due_at=next_due_at-interval '8 days',absolute_cap_at=absolute_cap_at-interval '8 days'
+    WHERE id=$1`,
+    [poison.id],
   );
-  expect(
-    await markAbandoned(runId, {
-      db: database.db as unknown as import("@/lib/execution-host/db").Db,
-    }),
-  ).toMatchObject({ ok: true });
-  expect(
-    await recordWaitSignal(database.db, {
-      projectId,
-      runId,
-      waitId: wait.id,
-      actor: { kind: "project_token", id: tokenId },
-      idempotencyKey: "after-abandon",
-      signal: { name: "build", outcome: "success" },
-    }),
-  ).toMatchObject({
-    disposition: "rejected",
-    application: "not_applied",
-    reason: "wait_closed",
+  expect(await runWaitDeadlineSweep(database.db)).toMatchObject({
+    resolved: 1,
+    errors: [],
   });
+  expect(await runWaitDeadlineSweep(database.db)).toMatchObject({ scanned: 0 });
   expect(
     (
       await database.pool.query(
-        `SELECT r.status,w.state,w.resume_state,w.result FROM runs r JOIN run_waits w ON r.id=w.run_id WHERE r.id=$1`,
-        [runId],
+        "SELECT result->>'outcome' AS outcome FROM run_waits WHERE id=$1",
+        [poison.id],
       )
     ).rows,
-  ).toEqual([
-    { status: "Abandoned", state: "closed", resume_state: null, result: null },
-  ]);
+  ).toEqual([{ outcome: "elapsed" }]);
 });
 
-it("W07 separates a wrong-SHA delivery from verified movement on the released assignment", async () => {
-  const { runFlow } = await import("@/lib/flows/runner");
-  const { resolveObservedWait } = await import("@/lib/waits/resolve");
-  const { recordWaitSignal } = await import("@/lib/waits/store");
-  const { seedGraphRun } = await import("@/test-support/graph-run-seed");
-  const { fakeGraphHosts } = await import("@/test-support/fake-execution-host");
-  const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
-    database.db,
-    {
-      schemaVersion: 1,
-      name: "Bound signal",
-      compat: { engine_min: "3.13.0" },
-      nodes: [
-        {
-          type: "wait",
-          id: "ci",
-          timeout: 120,
-          on: {
-            kind: "signal",
-            name: "ci",
-            outcomes: ["success"],
-            bind: "head_sha",
+it.each(["parked", "queued"] as const)(
+  "W05 closes a %s wait on abandon and refuses a later signal",
+  async (state) => {
+    const { runFlow } = await import("@/lib/flows/runner");
+    const { markAbandoned } = await import("@/lib/runs/state-transitions");
+    const { recordWaitSignal } = await import("@/lib/waits/store");
+    const { seedGraphRun } = await import("@/test-support/graph-run-seed");
+    const { fakeGraphHosts } =
+      await import("@/test-support/fake-execution-host");
+    const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
+      database.db,
+      {
+        schemaVersion: 1,
+        name: "Abandon a wait",
+        compat: { engine_min: "3.13.0" },
+        nodes: [
+          {
+            type: "wait",
+            id: "build",
+            on: { kind: "signal", name: "build", outcomes: ["success"] },
+            timeout: 120,
+            transitions: {
+              success: "done",
+              timeout: "done",
+              cancelled: "done",
+            },
           },
-          transitions: {
-            success: "done",
-            stale: "done",
-            timeout: "done",
-            cancelled: "done",
-          },
-        },
-      ],
-    },
-  );
-
-  onTestFinished(async () => {
-    await Promise.all(
-      [runtimeRoot, worktreePath].map((path) =>
-        rm(path, { recursive: true, force: true }),
-      ),
+        ],
+      },
     );
-  });
 
-  const { hosts, fake } = await fakeGraphHosts(database.db, runId);
-  const a = "a".repeat(40);
-  const b = "b".repeat(40);
-  let observed = a;
-  const reads: Array<{ register?: true }> = [];
+    onTestFinished(async () => {
+      await Promise.all(
+        [runtimeRoot, worktreePath].map((path) =>
+          rm(path, { recursive: true, force: true }),
+        ),
+      );
+    });
+    const { hosts } = await fakeGraphHosts(database.db, runId);
 
-  fake.transport.observeWaitWorkspaceHead = async (_id, envelope) => {
-    reads.push(envelope.payload);
+    await runFlow(runId, {
+      db: database.db,
+      runtimeRoot,
+      executionHosts: hosts,
+    });
+    const {
+      rows: [wait],
+    } = await database.pool.query<{ id: string }>(
+      "SELECT id FROM run_waits WHERE run_id=$1",
+      [runId],
+    );
+    const tokenId = randomUUID();
 
-    return { headSha: observed };
-  };
-  await runFlow(runId, { db: database.db, runtimeRoot, executionHosts: hosts });
+    await database.pool.query(
+      "INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes) VALUES ($1,$2,'late CI',$1,$1,'[\"waits:signal\"]')",
+      [tokenId, projectId],
+    );
+    if (state === "queued") {
+      const { resolveObservedWait } = await import("@/lib/waits/resolve");
 
-  const {
-    rows: [wait],
-  } = await database.pool.query<{ id: string; binding_head_sha: string }>(
-    "SELECT id,binding_head_sha FROM run_waits WHERE run_id=$1",
-    [runId],
-  );
-  const address = { runId, projectId, waitId: wait.id };
+      expect(
+        await recordWaitSignal(database.db, {
+          projectId,
+          runId,
+          waitId: wait.id,
+          actor: { kind: "project_token", id: tokenId },
+          idempotencyKey: "before-abandon",
+          signal: { name: "build", outcome: "success" },
+        }),
+      ).toMatchObject({ disposition: "accepted" });
+      expect(
+        await resolveObservedWait(
+          database.db,
+          { projectId, runId, waitId: wait.id },
+          hosts,
+        ),
+      ).toBe(true);
+    }
+    expect(
+      await markAbandoned(runId, {
+        db: database.db as unknown as import("@/lib/execution-host/db").Db,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await recordWaitSignal(database.db, {
+        projectId,
+        runId,
+        waitId: wait.id,
+        actor: { kind: "project_token", id: tokenId },
+        idempotencyKey: "after-abandon",
+        signal: { name: "build", outcome: "success" },
+      }),
+    ).toMatchObject({
+      disposition: "rejected",
+      application: "not_applied",
+      reason: "wait_closed",
+    });
+    expect(
+      (
+        await database.pool.query(
+          `SELECT r.status,w.state,w.resume_state,w.result FROM runs r JOIN run_waits w ON r.id=w.run_id WHERE r.id=$1`,
+          [runId],
+        )
+      ).rows,
+    ).toEqual([
+      state === "queued"
+        ? {
+            status: "Abandoned",
+            state: "resolved",
+            resume_state: "invalidated",
+            result: expect.objectContaining({ outcome: "success" }),
+          }
+        : {
+            status: "Abandoned",
+            state: "closed",
+            resume_state: null,
+            result: null,
+          },
+    ]);
+    const { promoteNextPending } = await import("@/lib/scheduler");
 
-  expect(wait.binding_head_sha).toBe(a);
-  expect(
-    await recordWaitSignal(database.db, {
-      ...address,
-      actor: { kind: "project_token", id: "fixture" },
-      idempotencyKey: "old-receipt",
-      signal: { name: "ci", outcome: "success", headSha: b },
-    }),
-  ).toMatchObject({ disposition: "stale", application: "not_applied" });
-  expect(await resolveObservedWait(database.db, address, hosts)).toBe(false);
-  observed = b;
-  expect(await resolveObservedWait(database.db, address, hosts)).toBe(true);
-  expect(await resolveObservedWait(database.db, address, hosts)).toBe(false);
-  const state = await database.pool.query(
-    "SELECT result FROM run_waits WHERE id=$1",
-    [wait.id],
-  );
+    expect(
+      (await promoteNextPending({ db: database.db, runFlow: () => undefined }))
+        .promotedRunId,
+    ).not.toBe(runId);
+  },
+);
 
-  expect(state.rows[0].result).toMatchObject({
-    outcome: "stale",
-    source: "head",
-    data: { boundHeadSha: a, observedHeadSha: b },
-  });
-  expect(reads).toMatchObject([{ register: true }, {}, {}]);
-});
+it.each(["head movement", "host outage"] as const)(
+  "W07 separates a wrong-SHA delivery from %s on the released assignment",
+  async (source) => {
+    const { runFlow } = await import("@/lib/flows/runner");
+    const { resolveObservedWait } = await import("@/lib/waits/resolve");
+    const { recordWaitSignal } = await import("@/lib/waits/store");
+    const { seedGraphRun } = await import("@/test-support/graph-run-seed");
+    const { fakeGraphHosts } =
+      await import("@/test-support/fake-execution-host");
+    const { runId, projectId, runtimeRoot, worktreePath } = await seedGraphRun(
+      database.db,
+      {
+        schemaVersion: 1,
+        name: "Bound signal",
+        compat: { engine_min: "3.13.0" },
+        nodes: [
+          {
+            type: "wait",
+            id: "ci",
+            timeout: 120,
+            on: {
+              kind: "signal",
+              name: "ci",
+              outcomes: ["success"],
+              bind: "head_sha",
+            },
+            transitions: {
+              success: "done",
+              stale: "done",
+              timeout: "done",
+              cancelled: "done",
+            },
+          },
+        ],
+      },
+    );
+
+    onTestFinished(async () => {
+      await Promise.all(
+        [runtimeRoot, worktreePath].map((path) =>
+          rm(path, { recursive: true, force: true }),
+        ),
+      );
+    });
+
+    const { hosts, fake } = await fakeGraphHosts(database.db, runId);
+    const a = "a".repeat(40);
+    const b = "b".repeat(40);
+    let observed = a;
+    let unavailable = false;
+    const reads: Array<{ register?: true }> = [];
+
+    fake.transport.observeWaitWorkspaceHead = async (_id, envelope) => {
+      reads.push(envelope.payload);
+      if (unavailable)
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Host offline in fixture",
+        );
+
+      return { headSha: observed };
+    };
+    await runFlow(runId, {
+      db: database.db,
+      runtimeRoot,
+      executionHosts: hosts,
+    });
+
+    const {
+      rows: [wait],
+    } = await database.pool.query<{ id: string; binding_head_sha: string }>(
+      "SELECT id,binding_head_sha FROM run_waits WHERE run_id=$1",
+      [runId],
+    );
+    const address = { runId, projectId, waitId: wait.id };
+
+    expect(wait.binding_head_sha).toBe(a);
+    expect(
+      await recordWaitSignal(database.db, {
+        ...address,
+        actor: { kind: "project_token", id: "fixture" },
+        idempotencyKey: "old-receipt",
+        signal: { name: "ci", outcome: "success", headSha: b },
+      }),
+    ).toMatchObject({ disposition: "stale", application: "not_applied" });
+    expect(await resolveObservedWait(database.db, address, hosts)).toBe(false);
+    if (source === "host outage") {
+      const tokenId = randomUUID();
+
+      await database.pool.query(
+        `INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes)
+       VALUES ($1,$2,'CI for offline host',$1,$1,'["waits:signal"]')`,
+        [tokenId, projectId],
+      );
+      expect(
+        await recordWaitSignal(database.db, {
+          ...address,
+          actor: { kind: "project_token", id: tokenId },
+          idempotencyKey: "correct-but-unconfirmed",
+          signal: { name: "ci", outcome: "success", headSha: a },
+        }),
+      ).toMatchObject({ disposition: "accepted", application: "pending" });
+      unavailable = true;
+      expect(await resolveObservedWait(database.db, address, hosts)).toBe(
+        false,
+      );
+      await database.pool.query(
+        `UPDATE run_waits SET deadline_at=opened_at,next_due_at=opened_at WHERE id=$1`,
+        [wait.id],
+      );
+      expect(await resolveObservedWait(database.db, address, hosts)).toBe(true);
+      expect(await resolveObservedWait(database.db, address, hosts)).toBe(
+        false,
+      );
+      expect(
+        (
+          await database.pool.query(
+            `SELECT result->>'outcome' AS outcome, result->>'source' AS source FROM run_waits WHERE id=$1`,
+            [wait.id],
+          )
+        ).rows,
+      ).toEqual([{ outcome: "timeout", source: "timer" }]);
+
+      return;
+    }
+    observed = b;
+    expect(await resolveObservedWait(database.db, address, hosts)).toBe(true);
+    expect(await resolveObservedWait(database.db, address, hosts)).toBe(false);
+    const state = await database.pool.query(
+      "SELECT result FROM run_waits WHERE id=$1",
+      [wait.id],
+    );
+
+    expect(state.rows[0].result).toMatchObject({
+      outcome: "stale",
+      source: "head",
+      data: { boundHeadSha: a, observedHeadSha: b },
+    });
+    expect(reads).toMatchObject([{ register: true }, {}, {}]);
+  },
+);

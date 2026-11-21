@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
+import { generateToken } from "@/lib/tokens/secret";
 import { buildProductionWeb } from "@/test-support/real-web";
 import { poll } from "@/test-support/durable-workers-ledger";
 import { fixturePrompt } from "@/test-support/durable-workers-seed";
@@ -65,9 +66,12 @@ type Command = {
   assignment_epoch: number;
 };
 
-it("W06 keeps a parked Flow across web and supervisor death and resumes its single continuation", async () => {
+it("W06/W08 keeps a parked Flow across web and supervisor death and replays its external signal once", async () => {
   const current = await suite.startFixture({
-    webEnvironment: { MAISTER_RECONCILE_GRACE_SECONDS: "1" },
+    webEnvironment: {
+      MAISTER_RECONCILE_GRACE_SECONDS: "1",
+      MAISTER_MAX_WAIT_SECONDS: "900",
+    },
   });
 
   fixture = current;
@@ -115,6 +119,8 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
         started_at: Date;
         state: string;
         deadline_at: Date;
+        opened_at: Date;
+        absolute_cap_at: Date;
         worktree_path: string;
         removed_at: Date | null;
         execution_host_id: string;
@@ -122,7 +128,7 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
         assignment_state: string;
         released_reason: string;
       }>(
-        `SELECT r.status,r.started_at,w.id AS wait_id,w.version,w.state,w.deadline_at,ws.worktree_path,ws.removed_at,
+        `SELECT r.status,r.started_at,w.id AS wait_id,w.version,w.state,w.deadline_at,w.opened_at,w.absolute_cap_at,ws.worktree_path,ws.removed_at,
       a.execution_host_id,a.epoch,a.state AS assignment_state,a.released_reason FROM runs r
       JOIN run_waits w ON r.id=w.run_id JOIN workspaces ws ON r.id=ws.run_id
       JOIN execution_assignments a ON r.execution_assignment_id=a.id WHERE r.id=$1`,
@@ -145,6 +151,9 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
     released_reason: "waiting_condition",
     removed_at: null,
   });
+  expect(parked.absolute_cap_at.getTime() - parked.opened_at.getTime()).toBe(
+    900_000,
+  );
   expect(await current.supervisor.captureOwnedSessionGroups()).toEqual([]);
   expect(await commands(runId, "session.create")).toHaveLength(1);
   await current.database.pool.query(
@@ -161,25 +170,56 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
   expect((await stat(parked.worktree_path)).isDirectory()).toBe(true);
   expect(await current.supervisor.captureOwnedSessionGroups()).toEqual([]);
 
-  const response = await current.api(
+  const extensionDeadline = new Date(parked.deadline_at.getTime() + 60_000);
+  const extension = await current.api(
     `/api/runs/${runId}/waits/${parked.wait_id}/actions`,
     {
       method: "POST",
       headers: {
         Origin: current.web.url,
         "content-type": "application/json",
-        "Idempotency-Key": "confirm-after-restart",
+        "Idempotency-Key": "extend-after-restart",
       },
       body: JSON.stringify({
-        action: "deliver_signal",
+        action: "extend",
         expectedVersion: parked.version,
         reason: "Verified after restart",
-        signal: { name: "build", outcome: "success" },
+        deadline: extensionDeadline.toISOString(),
       }),
     },
   );
 
-  expect(response.status, await response.text()).toBe(202);
+  expect(extension.status, await extension.text()).toBe(200);
+  const extended = await readWait();
+
+  expect(extended).toMatchObject({
+    version: parked.version + 1,
+    deadline_at: extensionDeadline,
+  });
+  const { secret, prefix, hash } = generateToken();
+
+  await current.database.pool.query(
+    "INSERT INTO project_tokens (id,project_id,name,prefix,token_hash,scopes) VALUES (gen_random_uuid()::text,$1,'restart CI fixture',$2,$3,$4)",
+    [current.projectId, prefix, hash, JSON.stringify(["waits:signal"])],
+  );
+  const signal = () =>
+    fetch(
+      `${current.web.url}/api/v1/ext/runs/${runId}/waits/${parked.wait_id}/signal`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${secret}`,
+          "content-type": "application/json",
+          "idempotency-key": "ci-confirm-after-restart",
+        },
+        body: JSON.stringify({ name: "build", outcome: "success" }),
+      },
+    );
+  const response = await signal();
+
+  expect(response.status, await response.clone().text()).toBe(202);
+  const receipt = await response.json();
+
   const readDelivery = async () =>
     (
       await current.database.pool.query<{ id: string; application: string }>(
@@ -193,7 +233,15 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
   await current.web.kill("SIGKILL");
   await current.restartWeb();
   expect(await readDelivery()).toEqual([delivery]);
-  expect(await readWait()).toEqual(parked);
+  expect(await readWait()).toEqual(extended);
+  const replay = await signal();
+
+  expect(replay.status, await replay.clone().text()).toBe(200);
+  expect(await replay.json()).toEqual({
+    ...receipt,
+    disposition: "duplicate",
+    application: "pending",
+  });
   const dispatch = await current.dispatchDomainEvents();
 
   expect(await dispatch.json()).toMatchObject({
@@ -273,7 +321,7 @@ it("W06 keeps a parked Flow across web and supervisor death and resumes its sing
         [parked.wait_id],
       )
     ).rows,
-  ).toEqual([{ action: "deliver_signal", reason: "Verified after restart" }]);
+  ).toEqual([{ action: "extend", reason: "Verified after restart" }]);
 }, 240_000);
 async function commands(runId: string, kind: string): Promise<Command[]> {
   return (
