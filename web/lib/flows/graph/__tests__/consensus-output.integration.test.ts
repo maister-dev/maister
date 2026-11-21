@@ -221,10 +221,13 @@ describe("P0-5 consensus pending graph yield", () => {
     expect(attempt.status).toBe("Running");
     scriptCompletion({});
     await redrive();
-    const [resumed] = await getAttempts(seeded.runId);
+    const resumedAttempts = (await getAttempts(seeded.runId)).filter(
+      (entry) => entry.nodeId === "decide",
+    );
 
-    expect(resumed.id).toBe(attempt.id);
-    expect(resumed.status).toBe("Succeeded");
+    expect(resumedAttempts).toEqual([
+      expect.objectContaining({ id: attempt.id, status: "Succeeded" }),
+    ]);
     expect((await getRun(seeded.runId)).status).not.toBe("Failed");
   }, 60_000);
 });
