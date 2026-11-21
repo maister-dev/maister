@@ -23,7 +23,7 @@ function launchAuthorityRevoked(): MaisterError {
 }
 
 async function lockTaskLaunchMembership(
-  db: Db,
+  db: Pick<Db, "execute">,
   projectId: string,
   userId: string,
   actions: readonly ProjectAction[],
@@ -60,7 +60,7 @@ export async function assertTaskLaunchReadAuthority(
 
 /** Keep the durable actor and project grants stable through the admitting transaction. */
 export async function assertTaskLaunchUserAuthority(
-  db: Db,
+  db: Pick<Db, "execute">,
   projectId: string,
   userId: string,
   actions: readonly ProjectAction[],

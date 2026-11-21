@@ -227,6 +227,8 @@ paths:
                   - condition
                   - deadline
                   - allowedActions
+                  - allowedOutcomes
+                  - allowedSignalOutcomes
                   - deliveries
                   - nextCursor
                 properties:
@@ -261,10 +263,13 @@ paths:
                         type: string
                         minLength: 1
                         maxLength: 128
-                  deadline: &a2
+                  deadline:
                     type: string
                     format: date-time
-                  dueAt: *a2
+                    nullable: true
+                  dueAt: &a2
+                    type: string
+                    format: date-time
                   allowedActions:
                     type: array
                     items:
@@ -274,6 +279,12 @@ paths:
                         - resolve_now
                         - extend
                         - cancel
+                  allowedOutcomes:
+                    type: array
+                    items: { type: string, minLength: 1, maxLength: 64 }
+                  allowedSignalOutcomes:
+                    type: array
+                    items: { type: string, minLength: 1, maxLength: 64 }
                   result:
                     type: object
                     additionalProperties: false
@@ -295,6 +306,7 @@ paths:
                           - signal
                           - provider
                           - operator
+                          - head
                       redacted:
                         type: boolean
                       data:
@@ -334,6 +346,8 @@ paths:
                   - resolve_now
                   - extend
                   - cancel
+                allowedOutcomes: [success, failure, timeout, cancelled]
+                allowedSignalOutcomes: [success, failure]
                 deliveries: []
                 nextCursor: null
         "401": &a7
@@ -26609,6 +26623,9 @@ components:
             type: string
             enum: [keep, try_once]
         flowRunnerDraft: { $ref: "#/components/schemas/FlowRunnerDraft" }
+        allowFlowPublication:
+          type: boolean
+          description: Explicit session approval for the selected reviewed revision to publish to the configured project origin and open its declared PR. Requires promoteRun.
       not:
         anyOf:
           - required: [flowRunnerDraft, runnerId]
@@ -26799,6 +26816,9 @@ components:
           minimum: 1
           maximum: 9007199254740991
         flowRunnerDraft: { $ref: "#/components/schemas/FlowRunnerDraft" }
+        allowFlowPublication:
+          type: boolean
+          description: Fresh session approval for publication by the replacement run.
       not:
         anyOf:
           - required: [flowRunnerDraft, runnerId]
@@ -30436,6 +30456,10 @@ components:
         promotion:
           type: string
           enum: [manual, auto_on_ready]
+        autonomousCompletion:
+          type: string
+          enum: [off, evidence_gated]
+          description: Defaults to off for all presets and requires strict checks and unattended launch authority when enabled.
         commits:
           type: string
           enum: [keep_all, squash_rework, squash_on_promote, defer]
@@ -32121,6 +32145,9 @@ components:
         enabledFlowRevisionId: { type: string, nullable: true }
         primarySessionName: { type: string }
         selectedFlowRevisionId: { type: string, nullable: true }
+        flowPublicationRequired:
+          type: boolean
+          description: The selected revision has a publish node and requires explicit approval at interactive launch.
         canConfigureRunnerBindings:
           type: boolean
           description: Whether the caller can save project-scoped slot bindings (editSettings).

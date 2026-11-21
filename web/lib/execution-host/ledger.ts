@@ -14,6 +14,8 @@ import type {
 import type { PromptOwner } from "./prompt-owner-contract";
 import type { SendPromptInput } from "@/lib/supervisor-client";
 import type { SessionCreateIntent } from "./create-intent";
+import type { WaitHeadObservationRequest } from "../../../runtime/wait-head";
+import type { WorkspacePublicationRequest } from "../../../runtime/workspace-publication";
 
 import { randomUUID } from "node:crypto";
 
@@ -49,14 +51,164 @@ import {
   executionCommands,
   executionRuntimeObjects,
   runs,
+  runWaits,
+  runPublications,
   runSessions,
   runSessionIncarnations,
+  workspaces,
 } from "@/lib/db/schema";
 
 const defaultLog = pino({
   name: "execution-host",
   level: process.env.LOG_LEVEL ?? "info",
 }).child({ component: "ledger" });
+
+async function admitsWaitHeadObservation(
+  db: Db,
+  input: IssueCommandInput<unknown>,
+  live:
+    | {
+        state: ExecutionAssignment["state"];
+        releasedReason: string | null;
+        workspaceId: string | null;
+      }
+    | undefined,
+): Promise<boolean> {
+  const payload = input.payload as Partial<WaitHeadObservationRequest> | null;
+  const assignment = input.assignment;
+
+  if (
+    !payload ||
+    typeof payload.waitId !== "string" ||
+    payload.workspaceGeneration !== assignment.epoch ||
+    !live?.workspaceId ||
+    live.workspaceId !== input.targetSessionId ||
+    live.state !== assignment.state
+  )
+    return false;
+  const registering = payload.register === true;
+
+  if (
+    registering
+      ? live.state !== "active"
+      : live.state !== "released" || live.releasedReason !== "waiting_condition"
+  )
+    return false;
+
+  const [wait] = await db
+    .select({ id: runWaits.id })
+    .from(runWaits)
+    .innerJoin(
+      runs,
+      and(eq(runs.id, runWaits.runId), eq(runs.projectId, runWaits.projectId)),
+    )
+    .innerJoin(
+      nodeAttempts,
+      and(
+        eq(nodeAttempts.id, runWaits.nodeAttemptId),
+        eq(nodeAttempts.runId, runs.id),
+      ),
+    )
+    .where(
+      and(
+        eq(runWaits.id, payload.waitId),
+        eq(runs.id, assignment.runId),
+        eq(runs.executionAssignmentId, assignment.id),
+        eq(nodeAttempts.executionAssignmentId, assignment.id),
+        eq(runs.status, registering ? "Running" : "Waiting"),
+        eq(runWaits.state, registering ? "parking" : "open"),
+        sql`${runWaits.condition}->'parameters'->>'bind' = 'head_sha'`,
+      ),
+    );
+
+  return wait !== undefined;
+}
+
+async function admitsWorkspacePublication(
+  db: Db,
+  input: IssueCommandInput<unknown>,
+  live:
+    | { state: ExecutionAssignment["state"]; workspaceId: string | null }
+    | undefined,
+): Promise<boolean> {
+  const command = input.payload as WorkspacePublicationRequest | null;
+
+  if (
+    !command ||
+    !live?.workspaceId ||
+    live.workspaceId !== input.targetSessionId ||
+    command.remote !== "origin"
+  )
+    return false;
+  if (command.action === "evidence") {
+    const [owner] = await db
+      .select({ id: runs.id })
+      .from(runs)
+      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .where(
+        and(
+          eq(runs.id, input.assignment.runId),
+          eq(runs.executionAssignmentId, input.assignment.id),
+          sql`${runs.autonomousCompletionGrant} IS NOT NULL`,
+          sql`'refs/heads/' || ${workspaces.targetBranch} = ${command.headRef}`,
+          input.assignment.state === "active" && live.state === "active"
+            ? eq(runs.status, "Running")
+            : input.assignment.state === "released" &&
+                live.state === "released" &&
+                input.assignment.releasedReason === "run_terminal"
+              ? eq(runs.status, "Review")
+              : sql`false`,
+        ),
+      );
+
+    return owner !== undefined;
+  }
+
+  if (input.assignment.state !== "active" || live.state !== "active")
+    return false;
+  const [owner] = await db
+    .select({ attemptId: nodeAttempts.id })
+    .from(runs)
+    .innerJoin(
+      nodeAttempts,
+      and(
+        eq(nodeAttempts.runId, runs.id),
+        eq(nodeAttempts.nodeId, runs.currentStepId),
+      ),
+    )
+    .where(
+      and(
+        eq(runs.id, input.assignment.runId),
+        eq(runs.status, "Running"),
+        eq(runs.executionAssignmentId, input.assignment.id),
+        eq(nodeAttempts.executionAssignmentId, input.assignment.id),
+        eq(nodeAttempts.nodeType, "publish"),
+        eq(nodeAttempts.status, "Running"),
+      ),
+    );
+
+  if (!owner || command.action === "inspect") return owner !== undefined;
+  if (command.action !== "push") return false;
+
+  const [claim] = await db
+    .select({ id: runPublications.id })
+    .from(runPublications)
+    .where(
+      and(
+        eq(runPublications.runId, input.assignment.runId),
+        eq(runPublications.nodeAttemptId, owner.attemptId),
+        eq(runPublications.assignmentId, input.assignment.id),
+        eq(runPublications.phase, "claimed"),
+        eq(runPublications.sourceHead, command.expectedHead),
+        eq(runPublications.headRef, command.headRef),
+        eq(runPublications.remoteName, command.remote),
+        eq(runPublications.repoIdentity, command.repoIdentity),
+        sql`${runPublications.expectedRemoteHead} IS NOT DISTINCT FROM ${command.expectedRemoteHead}`,
+      ),
+    );
+
+  return claim !== undefined;
+}
 
 export type IssueCommandInput<TPayload> = {
   assignment: ExecutionAssignment;
@@ -181,7 +333,11 @@ export async function issueCommand<TPayload>(
   // against a long-released assignment looked identical to a healthy one, and
   // the stale id in `command-fenced-locally` read as a database inconsistency.
   const [live] = await db
-    .select({ state: executionAssignments.state })
+    .select({
+      state: executionAssignments.state,
+      releasedReason: executionAssignments.releasedReason,
+      workspaceId: executionAssignments.executionWorkspaceId,
+    })
     .from(executionAssignments)
     .where(eq(executionAssignments.id, input.assignment.id))
     .limit(1);
@@ -274,12 +430,17 @@ export async function issueCommand<TPayload>(
       );
     }
   }
-  if (
-    !operationalEvidence &&
-    !isAdmissible(input.kind, input.assignment.state, {
-      inputAction: inputAction(input.payload),
-    })
-  ) {
+  const admissible =
+    input.kind === "workspace.observe_head"
+      ? await admitsWaitHeadObservation(db, input, live)
+      : input.kind === "workspace.publication"
+        ? await admitsWorkspacePublication(db, input, live)
+        : operationalEvidence ||
+          isAdmissible(input.kind, input.assignment.state, {
+            inputAction: inputAction(input.payload),
+          });
+
+  if (!admissible) {
     const err = fencedLocallyError({
       runId: input.assignment.runId,
       assignmentId: input.assignment.id,

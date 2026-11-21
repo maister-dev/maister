@@ -21,6 +21,7 @@ import {
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { AutoPromotionSettingsControl } from "@/components/board/panels/auto-promotion-settings-control";
+import { AutonomousCompletionSettings } from "@/components/board/panels/autonomous-completion-settings";
 import { getBrainSettings, isBrainFullyConfigured } from "@/lib/brain/settings";
 import { getDb } from "@/lib/db/client";
 import { listProjectRemotes, reconcileOriginRepoUrl } from "@/lib/git-remotes";
@@ -186,10 +187,17 @@ export async function SettingsPanel({
         </>
       ) : null}
       {isAdmin ? (
-        <AutoPromotionSettingsControl
-          config={project.autoPromotion ?? null}
-          projectSlug={project.slug}
-        />
+        <>
+          <AutoPromotionSettingsControl
+            config={project.autoPromotion ?? null}
+            projectSlug={project.slug}
+          />
+          <AutonomousCompletionSettings
+            revision={project.autonomousCompletionRevision}
+            settings={project.autonomousCompletion}
+            slug={project.slug}
+          />
+        </>
       ) : null}
       {isAdmin ? (
         <ProjectGitSettingsControl

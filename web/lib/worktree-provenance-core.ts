@@ -3,6 +3,7 @@ const TRAILER_KEYS = {
   task: "Maister-Task",
   flow: "Maister-Flow",
   node: "Maister-Node",
+  promotionAttempt: "Maister-Promotion-Attempt",
 } as const;
 
 type TrailerField = keyof typeof TRAILER_KEYS;
@@ -12,6 +13,7 @@ export type MaisterCommitProvenance = {
   task?: string;
   flow?: string;
   node?: string;
+  promotionAttempt?: string;
 };
 
 export type WorktreeProvenanceWorkspaceKind = "flow" | "scratch" | "agent";
@@ -71,6 +73,7 @@ function expectedTrailers(
     ["task", metadata.task],
     ["flow", metadata.flow],
     ["node", metadata.node],
+    ["promotionAttempt", metadata.promotionAttempt],
   ];
 
   return trailerValues
@@ -127,7 +130,7 @@ export function composeCommitMessage(
     }
   }
 
-  for (const field of ["task", "flow", "node"] as const) {
+  for (const field of ["task", "flow", "node", "promotionAttempt"] as const) {
     if (metadata[field] === undefined && existing[field] !== undefined) {
       throw new MaisterProvenanceError(
         `unexpected ${TRAILER_KEYS[field]} trailer`,

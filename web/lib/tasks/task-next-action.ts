@@ -49,6 +49,7 @@ const BACKLOG_SECONDARY: TaskSecondaryAction[] = [
 const IN_FLIGHT_BY_RUN_STATUS = {
   Pending: () => ({ primary: "open_run", secondary: ["queue", "run_agent"] }),
   Running: () => ({ primary: "open_run", secondary: ["queue", "run_agent"] }),
+  Waiting: () => ({ primary: "open_run", secondary: [] }),
   WaitingOnChildren: () => ({
     primary: "open_run",
     secondary: ["queue", "run_agent"],

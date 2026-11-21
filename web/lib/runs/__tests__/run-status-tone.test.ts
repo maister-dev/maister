@@ -20,6 +20,7 @@ const EXPECTED_TONE: Record<RunStatusKey, RunStatusTone> = {
   NeedsInputIdle: "needs",
   HumanWorking: "human",
   WaitingOnChildren: "waiting",
+  Waiting: "waiting",
   Review: "review",
   Crashed: "crashed",
   Done: "done",

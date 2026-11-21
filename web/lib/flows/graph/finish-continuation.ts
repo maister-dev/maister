@@ -1,5 +1,6 @@
 import type { SessionPolicy } from "@/lib/config.schema";
 import type { Db } from "./runner-core";
+import type { TerminalFailureReason } from "./transition-target";
 
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 
@@ -13,6 +14,7 @@ import { MaisterError } from "@/lib/errors";
 export type FlowFinishContinuation = Readonly<{
   version: 1;
   targetNodeId: string | null;
+  classifiedFailure?: TerminalFailureReason;
   injectedVars: Readonly<Record<string, unknown>>;
   sessionPolicy: SessionPolicy | null;
   autoRetry: boolean;

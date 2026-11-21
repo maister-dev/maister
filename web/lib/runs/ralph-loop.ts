@@ -12,6 +12,8 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { isGraphOnlyCutoverFailure } from "@/lib/domain-events/cutover";
+import { parseTerminalCause } from "@/lib/domain-events/taxonomy";
+import { autonomousFailureReason } from "@/lib/auto-promotion/completion-policy";
 import { ralphMaxAttempts } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { crashRetryFromSnapshot } from "@/lib/runs/execution-policy";
@@ -65,6 +67,12 @@ export function buildRalphLoopConsumer(
 
       for (const event of events) {
         if (event.kind !== "run.failed" || !event.runId) continue;
+        if (
+          autonomousFailureReason.safeParse(
+            parseTerminalCause(event.payload.cause)?.reason,
+          ).success
+        )
+          continue;
         if (isGraphOnlyCutoverFailure(event)) {
           log.debug(
             { eventId: event.id, runId: event.runId, reason: "graph-cutover" },

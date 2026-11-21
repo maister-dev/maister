@@ -27,6 +27,7 @@ import {
   vi,
 } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import { closeDb } from "@/lib/db/client";
 import { recordCurrentArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
@@ -259,7 +260,7 @@ describe("runGraph — ADR-162 consensus engine_vars transport", () => {
       schemaVersion: 1,
       sha256: createHash("sha256").update(new Uint8Array(bytes)).digest("hex"),
       transport: "engine_vars",
-      engineVersion: "3.12.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     });
   }, 60_000);
 

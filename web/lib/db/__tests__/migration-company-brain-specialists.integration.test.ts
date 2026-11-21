@@ -569,13 +569,19 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   expect(after.company_execution_snapshot).toBeNull();
   expect(after.company_cancellation_intent).toBeNull();
   expect(after.agent_memory_hash_format).toBeNull();
+  expect(after.flow_publication_grant).toBeNull();
+  expect(after.autonomous_completion_grant).toBeNull();
   expect(
     (
       await database.pool.query(
         "SELECT to_jsonb(a) AS value FROM node_attempts a WHERE id='legacy-native-actor-attempt'",
       )
     ).rows[0]?.value,
-  ).toEqual({ ...attemptBefore, knowledge_actor: null });
+  ).toEqual({
+    ...attemptBefore,
+    knowledge_actor: null,
+    completion_git_anchor: null,
+  });
   expect(
     (
       await database.pool.query(
@@ -601,6 +607,8 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
       "company_execution_snapshot",
       "company_cancellation_intent",
       "agent_memory_hash_format",
+      "flow_publication_grant",
+      "autonomous_completion_grant",
     ].sort(),
   );
   expect(

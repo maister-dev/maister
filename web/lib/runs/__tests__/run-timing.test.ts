@@ -18,6 +18,30 @@ function evidence(over: Partial<RunTimingEvidence> = {}): RunTimingEvidence {
 }
 
 describe("computeRunTiming (ADR-208)", () => {
+  it("W10 attributes condition waits and readmission separately from execution", () => {
+    const timing = computeRunTiming(
+      evidence({
+        execution: [
+          { start: 0, end: 5 * MIN },
+          { start: 35 * MIN, end: 40 * MIN },
+        ],
+        childExecution: [{ start: 10 * MIN, end: 15 * MIN }],
+        conditionWaits: [{ start: 5 * MIN, end: 25 * MIN }],
+        readmissions: [{ start: 25 * MIN, end: 35 * MIN }],
+      }),
+    );
+
+    expect(timing).toMatchObject({
+      durationMs: 40 * MIN,
+      executionMs: 15 * MIN,
+      breakdown: {
+        admissionMs: 10 * MIN,
+        idleMs: 15 * MIN,
+        childExecutionMs: 5 * MIN,
+        otherMs: 0,
+      },
+    });
+  });
   it("T-1: a 30 min human wait between two 5 min nodes", () => {
     const timing = computeRunTiming(
       evidence({

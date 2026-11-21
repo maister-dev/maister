@@ -9,9 +9,10 @@ import type {
 import pino from "pino";
 
 import { parseWhen } from "./when-grammar";
+import { transitionNodeId, type TransitionTarget } from "./transition-target";
 
-import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors-core";
+import { waitTransitionError } from "@/lib/waits/manifest";
 import {
   findMustacheClose,
   parseDefaultExpression,
@@ -27,7 +28,7 @@ export type CompiledNode = {
   nodeType: NodeAttemptType;
   source: { kind: "node"; node: NodeDef };
   // decision/outcome -> target node id, or TERMINAL_TRANSITION_TARGET ("done").
-  transitions: Record<string, string>;
+  transitions: Record<string, TransitionTarget>;
   gates: GateDef[];
   rework?: NodeDef["rework"];
   finishHuman?: NonNullable<NodeDef["finish"]>["human"];
@@ -172,9 +173,9 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
     }
 
     if (onMismatch !== "retry") {
-      const target = transitions[onMismatch];
+      const target = transitionNodeId(transitions[onMismatch]);
 
-      if (target === undefined) {
+      if (target === null) {
         throw new MaisterError(
           "CONFIG",
           `node "${node.id}" on_mismatch "${onMismatch}" has no declared transition`,
@@ -211,9 +212,9 @@ function forwardReachableNodeIds(
     if (node === undefined) continue;
 
     for (const target of Object.values(node.transitions ?? {})) {
-      if (target !== TERMINAL_TRANSITION_TARGET && !reachable.has(target)) {
-        queue.push(target);
-      }
+      const next = transitionNodeId(target);
+
+      if (next && !reachable.has(next)) queue.push(next);
     }
   }
 
@@ -253,9 +254,12 @@ function verifyReworkReset(
     // backstop on re-entry — a runtime CONFIG where a compile refusal is clearer.
     // The intended pattern routes onExhaustion to a node OUTSIDE the loop (e.g. a
     // human node, which may itself re-baseline the loop via rework.resetTargets).
-    const onExhaustionTarget = transitions[onExhaustion];
+    const onExhaustionTarget = transitionNodeId(transitions[onExhaustion]);
 
-    if (rework.allowedTargets.includes(onExhaustionTarget)) {
+    if (
+      onExhaustionTarget &&
+      rework.allowedTargets.includes(onExhaustionTarget)
+    ) {
       throw new MaisterError(
         "CONFIG",
         `node "${node.id}" rework.onExhaustion "${onExhaustion}" routes to "${onExhaustionTarget}", which is one of this node's rework.allowedTargets [${rework.allowedTargets.join(", ")}] — exhaustion must route OUT of the loop, not back into it`,
@@ -347,8 +351,12 @@ function verifyHumanReviewFeedbackConsumers(
 ): void {
   if (node.type !== "human" || node.rework === undefined) return;
 
-  const reworkDecisionTargets = Object.values(node.transitions ?? {}).filter(
-    (target) => node.rework?.allowedTargets.includes(target),
+  const reworkDecisionTargets = Object.values(node.transitions ?? {}).flatMap(
+    (target) => {
+      const next = transitionNodeId(target);
+
+      return next && node.rework?.allowedTargets.includes(next) ? [next] : [];
+    },
   );
 
   if (reworkDecisionTargets.length === 0) return;
@@ -454,6 +462,16 @@ function compileGraph(
   const nodesById = new Map(graphNodes.map((n) => [n.id, n]));
 
   for (const node of graphNodes) {
+    if (node.type === "wait") {
+      const error = waitTransitionError(
+        node.on,
+        node.transitions,
+        node.rework?.onExhaustion,
+      );
+
+      if (error)
+        throw new MaisterError("CONFIG", `wait node "${node.id}" ${error}`);
+    }
     verifyDecideAndOnMismatch(node);
     verifyReworkReset(node, nodesById);
     verifyHumanReviewFeedbackConsumers(node, nodesById);
@@ -512,7 +530,57 @@ function compileGraph(
     "[compile] reentry resolved",
   );
 
+  validatePublicationPaths(graphNodes[0].id, nodes);
+
   return { entry: graphNodes[0].id, order, nodes, sessions, reentry };
+}
+
+function validatePublicationPaths(
+  entry: string,
+  nodes: ReadonlyMap<string, CompiledNode>,
+): void {
+  for (const node of nodes.values()) {
+    const definition = node.source.node;
+
+    if (
+      definition.type !== "wait" ||
+      (definition.on.kind !== "ci" && definition.on.kind !== "pr")
+    )
+      continue;
+    const publishId = definition.on.publication;
+    const publication = nodes.get(publishId)?.source.node;
+
+    if (
+      publication?.type !== "publish" ||
+      (definition.on.kind === "pr" && !publication.pr)
+    )
+      throw new MaisterError(
+        "CONFIG",
+        `Wait "${node.id}" requires a matching publication node`,
+      );
+
+    const frontier = [entry];
+    const visited = new Set<string>();
+
+    for (const id of frontier) {
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (id === node.id)
+        throw new MaisterError(
+          "CONFIG",
+          `Wait "${node.id}" is reachable without a successful "${publishId}" publication`,
+        );
+
+      for (const [outcome, target] of Object.entries(
+        nodes.get(id)?.transitions ?? {},
+      )) {
+        if (id === publishId && outcome === "success") continue;
+        const next = transitionNodeId(target);
+
+        if (next && nodes.has(next)) frontier.push(next);
+      }
+    }
+  }
 }
 
 // Compile a validated graph-only manifest into its runtime traversal model.
@@ -532,10 +600,5 @@ export function resolveTransition(
   node: CompiledNode,
   outcome: string,
 ): string | null {
-  const target = node.transitions[outcome];
-
-  if (target === undefined || target === TERMINAL_TRANSITION_TARGET)
-    return null;
-
-  return target;
+  return transitionNodeId(node.transitions[outcome]);
 }

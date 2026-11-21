@@ -14,6 +14,8 @@ export type RunTimingEvidence = {
   childExecution: Interval[];
   hitl: Interval[];
   checkpoints: Interval[];
+  conditionWaits?: Interval[];
+  readmissions?: Interval[];
 };
 
 export type RunTimingQuality = "exact" | "partial" | "unavailable";
@@ -90,8 +92,9 @@ export function computeRunTiming(e: RunTimingEvidence): RunTiming {
   const own = clip(e.execution, window);
   const children = clip(e.childExecution, window);
   const executing = union([...own, ...children]);
+  const conditionWaits = union(clip(e.conditionWaits ?? [], window));
 
-  if (executing.length === 0) {
+  if (executing.length === 0 && conditionWaits.length === 0) {
     return {
       durationMs,
       live,
@@ -101,9 +104,19 @@ export function computeRunTiming(e: RunTimingEvidence): RunTiming {
     };
   }
 
-  const admission: Span[] = [{ start: window.start, end: executing[0].start }];
+  const firstKnownStart = Math.min(
+    executing[0]?.start ?? Infinity,
+    conditionWaits[0]?.start ?? Infinity,
+  );
+  const admission = union([
+    { start: window.start, end: firstKnownStart },
+    ...clip(e.readmissions ?? [], window),
+  ]);
   const human = union(clip(e.hitl, window));
-  const idle = union(clip(e.checkpoints, window));
+  const idle = union([
+    ...clip(e.checkpoints, window),
+    ...subtract(conditionWaits, executing),
+  ]);
   const waits = [...admission, ...human, ...idle];
   const execution = subtract(executing, waits);
   const executionMs = measure(execution);

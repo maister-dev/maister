@@ -335,6 +335,7 @@ export async function prepareTaskLaunchRecovery(
           "NeedsInputIdle",
           "HumanWorking",
           "WaitingOnChildren",
+          "Waiting",
         ]),
       ),
     )

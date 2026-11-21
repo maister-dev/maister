@@ -21,7 +21,7 @@ const SCOPE = "decisions:read";
 // resumed can still always be discarded, which is why `null` maps to `discard`
 // rather than to an absent action the contract has no room for.
 function nextActionOf(
-  item: DecisionItem,
+  item: Exclude<DecisionItem, { kind: "wait" }>,
 ): "respond" | "promote" | "recover" | "discard" | "review" | "answer" {
   if (item.kind === "hitl") return "respond";
   if (item.kind === "promotable") return "promote";
@@ -99,6 +99,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // handle. Field by field, never a spread.
       // ATN-08: a `decision_request` HITL never crosses this boundary.
       const items = queue.items
+        .filter((item) => item.kind !== "wait")
         .filter(
           (item) =>
             item.kind !== "hitl" || item.hitl.kind !== "decision_request",

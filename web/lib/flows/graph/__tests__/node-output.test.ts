@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { MAISTER_ENGINE_VERSION } from "@/lib/flows/engine-version";
 import {
   NODE_OUTPUT_TRANSPORT,
   cliOutputFilePath,
@@ -739,7 +740,7 @@ describe("validateNodeStructuredOutput", () => {
         schemaVersion: 1,
         sha256: SCHEMA_SHA256,
         transport: "sentinel",
-        engineVersion: "3.12.0",
+        engineVersion: MAISTER_ENGINE_VERSION,
       },
       // ADR-165: the seam also returns the PURE validated value. `result.vars`
       // is a merged bag (engine vars + this payload), so a caller that must
@@ -775,7 +776,7 @@ describe("validateNodeStructuredOutput", () => {
       schemaVersion: 1,
       sha256: SCHEMA_SHA256,
       transport: "file",
-      engineVersion: "3.12.0",
+      engineVersion: MAISTER_ENGINE_VERSION,
     });
   });
 
@@ -944,6 +945,8 @@ describe("NODE_OUTPUT_TRANSPORT (AC-14)", () => {
       consensus: "engine_vars",
       human: null,
       form: null,
+      wait: null,
+      publish: null,
     });
   });
 });

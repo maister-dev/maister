@@ -12,6 +12,8 @@ export const NODE_TYPES = [
   "human",
   "orchestrator",
   "form",
+  "wait",
+  "publish",
 ] as const;
 
 export const GATE_KINDS = [
@@ -144,6 +146,16 @@ export function blankNode(
     // validates (a form node with no schema is the empty-prompt analogue).
     case "form":
       return { id, type: "form", settings: { form_schema: "TODO" } };
+    case "wait":
+      return {
+        id,
+        type: "wait",
+        on: { kind: "timer", after: 60 },
+        timeout: 300,
+        transitions: { elapsed: "done", timeout: "done", cancelled: "done" },
+      };
+    case "publish":
+      return { id, type: "publish", transitions: { success: "done" } };
   }
 }
 

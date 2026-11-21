@@ -221,7 +221,10 @@ const result = {
 const manifest = {
   schemaVersion: 1,
   name: "rah-control",
-  compat: { engine_min: "3.12.0", engine_max: "3.12.0" },
+  compat: {
+    engine_min: engine.MAISTER_ENGINE_VERSION,
+    engine_max: engine.MAISTER_ENGINE_VERSION,
+  },
   execution: { workspace: "none", completion: "result" },
   result: {
     export: {
@@ -883,6 +886,8 @@ async function seedRetainedStandalone(): Promise<void> {
   const {
     companyCancellationIntent: _newCancellationColumn,
     agentMemoryHashFormat: _newMemoryHashFormat,
+    flowPublicationGrant: _newPublicationColumn,
+    autonomousCompletionGrant: _newCompletionColumn,
     ...legacyRunColumns
   } = getTableColumns(runs);
   const [retainedRun] = await database.db

@@ -11,6 +11,8 @@ import type {
 import type { StoredDeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskExecutionChildProof } from "./qualification-types";
+import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
+import type { CompletionGrant } from "@/lib/auto-promotion/completion-policy";
 
 export const TASK_LAUNCH_STATES = [
   "queued",
@@ -214,6 +216,9 @@ export type TaskLaunchSettingsV2Snapshot = Omit<
     serverExecution?: TaskLaunchServerSourceSnapshot;
     agentSnapshot?: TaskAgentLaunchSnapshot;
     flowAssets?: TaskLaunchFlowAssetsSnapshot;
+    flowPublicationRequired?: true;
+    flowPublicationGrant?: FlowPublicationGrant;
+    autonomousCompletionGrant?: CompletionGrant;
     resolvedCapabilitySet: ResolvedCapabilitySet | null;
     capabilityResolutionDigest: string;
     brainContext?: boolean | null;

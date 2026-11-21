@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 
 import { getLocale, getTranslations } from "next-intl/server";
 
+import { AutonomousCompletionCounts } from "@/components/observatory/autonomous-completion-counts";
 import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
 import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
@@ -104,6 +105,7 @@ export default async function ObservatoryPage({
 
       {current.view === "overview" ? (
         <>
+          <AutonomousCompletionCounts counts={data.autonomous} />
           <OverviewTable
             current={barCurrent}
             labels={labels}

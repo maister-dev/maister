@@ -13,6 +13,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { transitionNodeId } from "@/lib/flows/graph/transition-target";
 import {
   getActiveTakeover,
   markDownstreamStale,
@@ -198,7 +199,7 @@ export async function POST(
     // transitions.takeover target (server-state; NOT body-controlled).
     const graph = compileManifest(loaded.manifest);
     const reviewNode = graph.nodes.get(nodeId);
-    const reentryNode = reviewNode?.transitions.takeover;
+    const reentryNode = transitionNodeId(reviewNode?.transitions.takeover);
 
     if (!reentryNode) {
       throw new MaisterError(

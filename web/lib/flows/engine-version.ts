@@ -102,7 +102,10 @@ const log = pino({
 // 3.11.1 fixes native safe-tool arbitration and read-only facade classification.
 // 3.12.0 adds declared company result-only graphs over the existing execution
 // ledger, with current authority, required results and durable native recovery.
-export const MAISTER_ENGINE_VERSION = "3.12.0";
+// 3.13.0 adds bounded durable wait conditions (ADR-215).
+// 3.14.0 adds run-branch publication and provider-bound waits.
+// 3.15.0 adds autonomous completion declarations (ADR-216).
+export const MAISTER_ENGINE_VERSION = "3.15.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

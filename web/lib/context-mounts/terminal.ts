@@ -42,6 +42,7 @@ export const CONTEXT_MOUNT_LIVE_RUN_STATUSES = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
 ] as const;
 

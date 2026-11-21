@@ -30,6 +30,9 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
 import { taskQueueSettingsSchema } from "@/lib/tasks/queue-settings";
 import { autoPromotionConfigSchema } from "@/lib/auto-promotion/config";
+import { projectCompletionPatchSchema } from "@/lib/auto-promotion/completion-policy";
+import { setProjectCompletion } from "@/lib/auto-promotion/completion-settings";
+import { assertInteractiveLaunchOrigin } from "@/lib/tasks/launch-http";
 
 // FIXME(any): remove the schema-module bridge once Drizzle's generated table
 // types remain stable across route and integration-test boundaries.
@@ -60,6 +63,7 @@ const patchBodySchema = z
     // ADR-126: auto-promotion lane config. `null` clears to shipped defaults +
     // master OFF. `.strict()` rejects unknown keys → 422.
     autoPromotion: autoPromotionConfigSchema.nullable().optional(),
+    autonomousCompletion: projectCompletionPatchSchema.optional(),
     // ADR-141: branch-sync defaults. `syncStrategyDefault` is non-nullable
     // (clear = back to "rebase"); `syncRunnerId` null clears the resolver-runner
     // override (launch-time resolver chain applies).
@@ -133,7 +137,7 @@ export async function PATCH(
     // Auth-first (Codex-4): authenticate + resolve + authorize BEFORE touching the
     // request body, so an unauthenticated caller gets 401/403 and can never probe
     // the body schema or force body parsing via a validation error.
-    await requireActiveSession();
+    const actor = await requireActiveSession();
 
     const db = getDb() as any;
     const projectRows = await db
@@ -157,6 +161,14 @@ export async function PATCH(
         "CONFIG",
         `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+    if (body.autonomousCompletion !== undefined) {
+      if (req.headers.has("authorization"))
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "Session authorization required",
+        );
+      assertInteractiveLaunchOrigin(req);
     }
 
     async function assertRunnerUsable(runnerId: string): Promise<void> {
@@ -253,6 +265,7 @@ export async function PATCH(
 
     if (
       Object.keys(update).length === 0 &&
+      body.autonomousCompletion === undefined &&
       body.homeResolution === undefined &&
       body.brainIndexingProfile === undefined &&
       body.projectionFlowId === undefined &&
@@ -261,7 +274,17 @@ export async function PATCH(
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
     }
 
-    await db.transaction(async (tx: any) => {
+    const completionSettings = await db.transaction(async (tx: any) => {
+      const completion =
+        body.autonomousCompletion === undefined
+          ? undefined
+          : await setProjectCompletion(
+              tx,
+              project.id,
+              actor.id,
+              body.autonomousCompletion,
+            );
+
       if (Object.keys(update).length > 0) {
         await tx
           .update(projects)
@@ -297,6 +320,8 @@ export async function PATCH(
           profile: body.brainIndexingProfile,
         });
       }
+
+      return completion;
     });
 
     // ADR-122: a project re-enabled AFTER a generation switch has old-generation
@@ -355,6 +380,12 @@ export async function PATCH(
         brainIndexingProfileChanged: body.brainIndexingProfile !== undefined,
         projectionFlowChanged: body.projectionFlowId !== undefined,
         autonomyPolicyChanged: body.autonomyDefaults !== undefined,
+        ...(completionSettings
+          ? {
+              autonomousCompletionRevision: completionSettings.revision,
+              actorId: actor.id,
+            }
+          : {}),
       },
       "project settings updated",
     );
@@ -362,6 +393,9 @@ export async function PATCH(
     return NextResponse.json({
       ok: true,
       projectId: project.id,
+      ...(completionSettings
+        ? { autonomousCompletion: completionSettings }
+        : {}),
       taskQualificationPolicy: {
         version: 1,
         baseline: project.taskQualificationBaseline,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isMaisterError } from "@/lib/errors-core";
 import {
   assertNoBlindShip,
+  autonomousCompletionFromSnapshot,
   blindShipLockedOptions,
   budgetFromSnapshot,
   budgetWarnStatus,
@@ -40,6 +41,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       humanGate: "stop",
       onStuck: "escalate",
       promotion: "manual",
+      autonomousCompletion: "off",
       commits: "keep_all",
       dirtyResolve: "ask",
       budget: {},
@@ -67,6 +69,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       humanGate: "auto_pass",
       onStuck: "escalate",
       promotion: "auto_on_ready",
+      autonomousCompletion: "off",
       commits: "squash_rework",
       dirtyResolve: "proceed",
       budget: {},
@@ -956,5 +959,38 @@ describe("applyDefaultBudgetForUnattended (launch auto-fill, never throws)", () 
     expect(() =>
       applyDefaultBudgetForUnattended({ preset: "unattended" }),
     ).not.toThrow();
+  });
+});
+
+describe("C01 autonomous completion launch policy", () => {
+  it("preserves old snapshots and rejects malformed or relaxed-check opt-ins", () => {
+    const enrolled = {
+      preset: "supervised",
+      overrides: { autonomousCompletion: "evidence_gated" },
+    } as const;
+
+    expect(autonomousCompletionFromSnapshot(enrolled)).toBe("evidence_gated");
+    expect(requiresLaunchUnattended(enrolled)).toBe(true);
+    expect(autonomousCompletionFromSnapshot({ preset: "unattended" })).toBe(
+      "off",
+    );
+    expect(
+      autonomousCompletionFromSnapshot({
+        ...enrolled,
+        overrides: { ...enrolled.overrides, checks: "advisory" },
+      }),
+    ).toBe("off");
+    expect(
+      autonomousCompletionFromSnapshot({
+        ...enrolled,
+        overrides: { autonomousCompletion: "approved" },
+      }),
+    ).toBe("off");
+    expect(() =>
+      assertNoBlindShip({
+        ...enrolled,
+        overrides: { ...enrolled.overrides, checks: "skip" },
+      }),
+    ).toThrow(expect.objectContaining({ code: "PRECONDITION" }));
   });
 });

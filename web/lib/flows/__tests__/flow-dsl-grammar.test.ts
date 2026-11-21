@@ -96,6 +96,7 @@ describe("buildFlowDslGrammar drift guard", () => {
         "check",
         "human",
         "form",
+        "wait",
       ]),
     );
     expect(consensusNode).toBeDefined();
@@ -113,7 +114,7 @@ describe("buildFlowDslGrammar drift guard", () => {
     for (const option of nodeOptions) {
       const settings = shapeOf(option).settings;
 
-      if (settings !== undefined) {
+      if (settings !== undefined && !isNever(settings)) {
         for (const key of realShapeKeys(settings)) settingsKeys.add(key);
       }
     }

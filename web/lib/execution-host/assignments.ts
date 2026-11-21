@@ -53,7 +53,7 @@ export function isAdmissible(
 }
 
 export async function getActiveAssignment(
-  db: Db,
+  db: Pick<Db, "select">,
   runId: string,
 ): Promise<ExecutionAssignment | null> {
   const rows = await db
@@ -74,7 +74,7 @@ export async function getActiveAssignment(
 // binds to when the run's incarnation already ended (`released`), so a
 // checkpoint/delete never mints a fresh epoch just to address a dead session.
 export async function getLatestAssignment(
-  db: Db,
+  db: Pick<Db, "select">,
   runId: string,
 ): Promise<ExecutionAssignment | null> {
   const rows = await db
@@ -105,7 +105,7 @@ export async function getAssignmentById(
 // stable parent — the new row does not exist yet, so locking it cannot
 // serialize); the unique constraints are the backstop and map to CONFLICT.
 export async function mintAssignment(
-  tx: Db,
+  tx: Pick<Db, "select" | "insert" | "update" | "execute">,
   input: {
     runId: string;
     hostId: string;
@@ -255,7 +255,7 @@ export async function mintAssignment(
 
 // Advisory for fencing (the next mint supersedes anything); idempotent.
 export async function releaseAssignmentForRun(
-  tx: Db,
+  tx: Pick<Db, "update">,
   runId: string,
   reason: string,
   opts: { now?: Date; logger?: Logger } = {},

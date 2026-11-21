@@ -2,7 +2,8 @@
 import type { SessionEvent } from "../types";
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -60,6 +61,213 @@ async function tempRoot(): Promise<string> {
 function fenceFor(host: BootedHost, runId: string, epoch = 1) {
   return { hostKey: host.hostState.hostKey, runId, assignmentEpoch: epoch };
 }
+
+it("B01 publishes the exact observed HEAD under a remote ref lease to a local Git origin", async () => {
+  const root = await tempRoot();
+  const repoPath = join(root, "source");
+  const worktree = join(root, "worktree");
+  const remotePath = join(root, "remote.git");
+  const git = (args: string[]) =>
+    execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+
+  git(["init", "-b", "main", repoPath]);
+  git(["init", "--bare", remotePath]);
+  git([
+    "-C",
+    repoPath,
+    "-c",
+    "user.name=Publish Test",
+    "-c",
+    "user.email=pub@example.test",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  ]);
+  git(["-C", repoPath, "remote", "add", "origin", remotePath]);
+  git(["-C", repoPath, "worktree", "add", "--detach", worktree]);
+  const base = git(["-C", worktree, "rev-parse", "HEAD"]);
+
+  await writeFile(join(worktree, "result.txt"), "ready\n");
+  git(["-C", worktree, "add", "--", "result.txt"]);
+  git([
+    "-C",
+    worktree,
+    "-c",
+    "user.name=Publish Test",
+    "-c",
+    "user.email=pub@example.test",
+    "commit",
+    "-m",
+    "candidate",
+  ]);
+  const head = git(["-C", worktree, "rev-parse", "HEAD"]);
+  const host = await bootHost({ runtimeRoot: root });
+
+  booted.push(host);
+  const runId = randomUUID();
+  const fence = fenceFor(host, runId);
+  const adopted = await postJson(
+    `${host.url}/workspaces/adopt`,
+    envelope("workspace.adopt", fence, {
+      runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: worktree,
+      repoPath,
+    }),
+  );
+  const endpoint = `${host.url}/workspaces/${adopted.body.executionWorkspaceId}/publication`;
+  const target = { remote: "origin", headRef: "refs/heads/run/evidence" };
+  const inspect = await postJson(
+    endpoint,
+    envelope("workspace.publication", fence, { ...target, action: "inspect" }),
+  );
+
+  expect(inspect).toMatchObject({
+    status: 200,
+    body: { headSha: head, remoteHeadSha: null },
+  });
+  expect(
+    await postJson(
+      endpoint,
+      envelope("workspace.publication", fence, {
+        remote: "origin",
+        headRef: "refs/heads/main",
+        action: "evidence",
+      }),
+    ),
+  ).toMatchObject({
+    status: 200,
+    body: {
+      headSha: head,
+      evidence: {
+        baseSha: base,
+        clean: true,
+        files: [
+          { path: "result.txt", additions: 1, deletions: 0, binary: false },
+        ],
+      },
+    },
+  });
+  const push = envelope("workspace.publication", fence, {
+    ...target,
+    action: "push",
+    expectedHead: head,
+    expectedRemoteHead: null,
+    repoIdentity: inspect.body.repoIdentity,
+  });
+
+  expect(
+    await postJson(endpoint, {
+      ...push,
+      payload: { ...push.payload, expectedHead: "a".repeat(40) },
+    }),
+  ).toMatchObject({ status: 409 });
+  const pushed = await postJson(endpoint, {
+    ...push,
+    command: { ...push.command, id: randomUUID() },
+  });
+
+  expect(pushed).toMatchObject({ status: 200, body: { remoteHeadSha: head } });
+  expect(git(["-C", remotePath, "rev-parse", target.headRef])).toBe(head);
+});
+
+it("W07 retains the exact read-only wait witness across a supervisor restart", async () => {
+  const root = await tempRoot();
+  const repoPath = join(root, "source");
+  const workspacePath = join(root, "checkout");
+  const git = (args: string[]) =>
+    execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+
+  git(["init", repoPath]);
+  git([
+    "-C",
+    repoPath,
+    "-c",
+    "user.name=Wait Test",
+    "-c",
+    "user.email=wait@example.test",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  ]);
+  git(["-C", repoPath, "worktree", "add", "--detach", workspacePath]);
+  const stateDir = join(root, ".maister", "execution-host");
+  let host = await bootHost({ runtimeRoot: root, stateDir });
+
+  booted.push(host);
+  const runId = randomUUID();
+  const fence = fenceFor(host, runId);
+  const adopted = await postJson(
+    `${host.url}/workspaces/adopt`,
+    envelope("workspace.adopt", fence, {
+      runId,
+      projectSlug: "demo",
+      kind: "git_worktree",
+      path: workspacePath,
+      repoPath,
+    }),
+  );
+
+  expect(adopted.status).toBe(200);
+  const handle = adopted.body.executionWorkspaceId;
+  const payload = { waitId: "a".repeat(64), workspaceGeneration: 1 };
+  const observe = (
+    f: ReturnType<typeof fenceFor>,
+    witness: typeof payload & { register?: boolean },
+  ) =>
+    postJson(
+      `${host.url}/workspaces/${handle}/head`,
+      envelope("workspace.observe_head", f, witness),
+    );
+
+  expect((await observe(fence, payload)).status).toBe(409);
+  expect(await observe(fence, { ...payload, register: true })).toMatchObject({
+    status: 200,
+    body: { headSha: git(["-C", workspacePath, "rev-parse", "HEAD"]) },
+  });
+  await host.stop();
+  booted.pop();
+  host = await bootHost({ runtimeRoot: root, stateDir });
+  booted.push(host);
+  git([
+    "-C",
+    workspacePath,
+    "-c",
+    "user.name=Wait Test",
+    "-c",
+    "user.email=wait@example.test",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "next",
+  ]);
+
+  expect(await observe(fence, payload)).toMatchObject({
+    status: 200,
+    body: { headSha: git(["-C", workspacePath, "rev-parse", "HEAD"]) },
+  });
+  expect(
+    (await observe(fence, { ...payload, waitId: "b".repeat(64) })).status,
+  ).toBe(409);
+  expect(
+    (
+      await observe(fenceFor(host, runId, 2), {
+        ...payload,
+        workspaceGeneration: 2,
+      })
+    ).status,
+  ).toBe(409);
+  expect(host.hostState.getFence(runId)?.epoch).toBe(1);
+});
 
 it("IT-CBO-02 fences and retains exactly one stand dispatch on the existing command receipt path", async () => {
   const root = await tempRoot();

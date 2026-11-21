@@ -8,6 +8,7 @@ import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { BrainSettingsPanel } from "@/components/settings/brain-settings-panel";
 import { LibrarianSettingsCard } from "@/components/settings/librarian-settings-card";
+import { PlatformCompletionSettings } from "@/components/settings/platform-completion-settings";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { getBrainSettings } from "@/lib/brain/settings";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
@@ -164,6 +165,9 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 unavailableAdapters={unavailableAdapters}
               />
               <LibrarianSettingsCard view={runtime.librarian} />
+              {runtime.completion ? (
+                <PlatformCompletionSettings initial={runtime.completion} />
+              ) : null}
               <WebhooksPanel />
               <BrainSettingsPanel settings={runtime.brainSettings} />
             </div>
@@ -206,5 +210,11 @@ async function loadPlatformRuntimeView(
     runners,
     brainSettings,
     librarian: librarianSettingsView(settingsRows[0] ?? null, runners),
+    completion: settingsRows[0]
+      ? {
+          enabled: Boolean(settingsRows[0].autonomousCompletionEnabled),
+          revision: Number(settingsRows[0].autonomousCompletionRevision),
+        }
+      : null,
   };
 }

@@ -1198,6 +1198,29 @@ async function* executeFlowLaunch(
 
     const compiled = compileManifest(manifest);
 
+    const flowPublicationGrant =
+      accepted?.settings.version === 2
+        ? accepted.settings.flowPublicationGrant
+        : undefined;
+    const autonomousCompletionGrant =
+      accepted?.settings.version === 2
+        ? accepted.settings.autonomousCompletionGrant
+        : undefined;
+
+    if (
+      manifest.nodes.some((node) => node.type === "publish") &&
+      (flowPublicationGrant?.flowRevisionId !== revision.id ||
+        accepted?.intent.principalKind !== "session_user")
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "Flow publication needs a reviewed revision and a session launch grant",
+        {
+          details: { reason: "flow_publication_grant_required" },
+        },
+      );
+    }
+
     if (scheduledRequestSnapshot?.requestAtLaunch)
       assertScheduledRequestConsumer(compiled);
 
@@ -2083,6 +2106,8 @@ async function* executeFlowLaunch(
             resolvedCapabilitySet,
             deliveryPolicySnapshot: deliveryPolicy,
             executionPolicy,
+            flowPublicationGrant,
+            autonomousCompletionGrant,
             // ADR-126 T10: launch opt-out persists as a `launch`-sourced hold so
             // the sweep never considers this run (survives rework like any hold).
             // ADR-146 D15: a launched evaluation participant (controlled launch

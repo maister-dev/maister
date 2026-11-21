@@ -2179,7 +2179,7 @@ nodes:
 | --- | --- | --- |
 | `timer` | Exactly one of `after`, `until` | elapsed, timeout, cancelled |
 | `comment` | Optional `actor` with `type` and `id` | commented, timeout, cancelled |
-| `run` | `run_id`; exactly one of direct child/parent proof or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
+| `run` | `run_id`; exactly one of `relation` (parent/child) or directed `relation_id` | done, failed, review, crashed, abandoned, timeout, cancelled |
 | `signal` | `name`, finite `outcomes`, optional `payload_schema`, optional `bind: head_sha` | declared keys, timeout, cancelled; stale if bound |
 | `ci` | `publication` node ID, `transport` (push/pull), required `checks`, declared `issuer` and push `name` | success, failure, cancelled, timeout, stale |
 | `pr` | `publication` node ID with a PR receipt | merged, closed, conflict, timeout, cancelled, stale |
@@ -2196,6 +2196,15 @@ plus CI and PR wait selectors. A provider wait must reference the successful
 publication on its current path. Engine minimum 3.15.0 adds explicit
 terminal failure targets such as `{ end: failed, reason: wait_timeout }`.
 The existing `failed` node ID remains valid as a string target.
+
+For evidence-gated completion on 3.15.0, declare `autonomous_completion`
+on the reviewed Flow. Set `ci` to a CI wait node ID, `gates` to the
+required blocking `{ node, gate }` pairs, and `review` to a blocking
+AI judgment pair. Each pair names the producing node and its pre-finish
+gate. Optional `failure_reasons` lists the classified terminal outcomes
+that the Flow can authorize. At launch the server freezes the declaration
+and the project limits with the pinned revision. Live limits can narrow
+the grant.
 
 See [waits](system-analytics/waits.md) for precedence, authority and resume
 semantics and [execution policy](system-analytics/execution-policy.md) for

@@ -65,6 +65,8 @@ export const NODE_OUTPUT_TRANSPORT: Record<
   consensus: "engine_vars",
   human: null,
   form: null,
+  wait: null,
+  publish: null,
 };
 
 const SENTINEL_OPEN_RE = /^```json maister:output[ \t]*\r?$/;

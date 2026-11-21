@@ -1118,6 +1118,7 @@ const CASCADE_NON_TERMINAL_RUN_STATUSES = [
   "NeedsInputIdle",
   "HumanWorking",
   "WaitingOnChildren",
+  "Waiting",
   "Review",
   "Crashed",
 ] as const;

@@ -97,6 +97,7 @@ const STATUS_CLASS = {
   NeedsInput: "live",
   NeedsInputIdle: "live",
   WaitingOnChildren: "live",
+  Waiting: "live",
   HumanWorking: "human",
   Review: "parked",
   Crashed: "parked",
@@ -126,6 +127,7 @@ const FLOW_STOP_STATUSES: ReadonlySet<string> = new Set([
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  "Waiting",
 ]);
 
 const SCRATCH_STOP_DIALOG_STATUSES: ReadonlySet<string> = new Set([

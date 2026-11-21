@@ -39,6 +39,8 @@ export type OnStuckAction = "escalate" | "ship_with_warning" | "notify_only";
 // C1 — promotion trigger.
 export type PromotionTrigger = "manual" | "auto_on_ready";
 
+export type AutonomousCompletion = "off" | "evidence_gated";
+
 // C2 — how much commit history survives.
 export type CommitPolicy =
   "keep_all" | "squash_rework" | "squash_on_promote" | "defer";
@@ -63,6 +65,7 @@ export type ExecutionPolicyOverrides = {
   humanGate?: HumanGateAutonomy;
   onStuck?: OnStuckAction;
   promotion?: PromotionTrigger;
+  autonomousCompletion?: AutonomousCompletion;
   commits?: CommitPolicy;
   dirtyResolve?: DirtyResolution;
   budget?: BudgetAxis;
@@ -84,6 +87,7 @@ export type ResolvedExecutionPolicy = {
   humanGate: HumanGateAutonomy;
   onStuck: OnStuckAction;
   promotion: PromotionTrigger;
+  autonomousCompletion: AutonomousCompletion;
   commits: CommitPolicy;
   dirtyResolve: DirtyResolution;
   budget: BudgetAxis;
@@ -104,6 +108,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     humanGate: "stop",
     onStuck: "escalate",
     promotion: "manual",
+    autonomousCompletion: "off",
     commits: "keep_all",
     dirtyResolve: "ask",
     budget: {},
@@ -117,6 +122,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     humanGate: "stop",
     onStuck: "escalate",
     promotion: "manual",
+    autonomousCompletion: "off",
     commits: "keep_all",
     dirtyResolve: "proceed",
     budget: {},
@@ -130,6 +136,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     humanGate: "auto_pass",
     onStuck: "escalate",
     promotion: "auto_on_ready",
+    autonomousCompletion: "off",
     commits: "squash_rework",
     dirtyResolve: "proceed",
     budget: {},
@@ -152,6 +159,7 @@ export function expandExecutionPolicy(
     humanGate: o.humanGate ?? base.humanGate,
     onStuck: o.onStuck ?? base.onStuck,
     promotion: o.promotion ?? base.promotion,
+    autonomousCompletion: o.autonomousCompletion ?? base.autonomousCompletion,
     commits: o.commits ?? base.commits,
     dirtyResolve: o.dirtyResolve ?? base.dirtyResolve,
     budget: o.budget ?? base.budget,
@@ -187,7 +195,9 @@ export function isBlindShip(policy: ExecutionPolicy): boolean {
   const r = expandExecutionPolicy(policy);
   const checksRelaxed = r.checks !== "strict";
   const noHumanFloor =
-    r.humanGate === "auto_pass" || r.promotion === "auto_on_ready";
+    r.humanGate === "auto_pass" ||
+    r.promotion === "auto_on_ready" ||
+    r.autonomousCompletion === "evidence_gated";
 
   return checksRelaxed && noHumanFloor;
 }
@@ -196,7 +206,7 @@ export function assertNoBlindShip(policy: ExecutionPolicy): void {
   if (isBlindShip(policy)) {
     throw new MaisterError(
       "PRECONDITION",
-      "Execution policy would ship with no validation: relaxed checks (advisory/skip) cannot be combined with auto-passed human gates or auto-promotion. Keep checks strict, or keep a human review / manual promotion.",
+      "Execution policy would ship with no validation: relaxed checks (advisory/skip) cannot be combined with auto-passed human gates, auto-promotion, or evidence-gated completion. Keep checks strict, or keep a human review / manual promotion.",
     );
   }
 }
@@ -243,6 +253,7 @@ export function requiresLaunchUnattended(policy: ExecutionPolicy): boolean {
   return (
     r.humanGate === "auto_pass" ||
     r.promotion === "auto_on_ready" ||
+    r.autonomousCompletion === "evidence_gated" ||
     r.checks !== "strict" ||
     r.onStuck !== "escalate"
   );
@@ -256,6 +267,7 @@ export type BlindShipAxes = {
   checks: CheckStrictness;
   humanGate: HumanGateAutonomy;
   promotion: PromotionTrigger;
+  autonomousCompletion?: AutonomousCompletion;
 };
 
 export function blindShipLockedOptions(current: BlindShipAxes): {
@@ -264,7 +276,9 @@ export function blindShipLockedOptions(current: BlindShipAxes): {
   autoPromoteDisabled: boolean;
 } {
   const autoShip =
-    current.humanGate === "auto_pass" || current.promotion === "auto_on_ready";
+    current.humanGate === "auto_pass" ||
+    current.promotion === "auto_on_ready" ||
+    current.autonomousCompletion === "evidence_gated";
   const checksRelaxed = current.checks !== "strict";
 
   return {
@@ -360,6 +374,7 @@ export const executionPolicyOverridesSchema = z
     humanGate: z.enum(["stop", "auto_pass"]),
     onStuck: z.enum(["escalate", "ship_with_warning", "notify_only"]),
     promotion: z.enum(["manual", "auto_on_ready"]),
+    autonomousCompletion: z.enum(["off", "evidence_gated"]),
     commits: z.enum([
       "keep_all",
       "squash_rework",
@@ -467,6 +482,16 @@ export function promotionFromSnapshot(snapshot: unknown): PromotionTrigger {
   return parsed.success
     ? expandExecutionPolicy(parsed.data).promotion
     : "manual";
+}
+
+export function autonomousCompletionFromSnapshot(
+  snapshot: unknown,
+): AutonomousCompletion {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  if (!parsed.success || isBlindShip(parsed.data)) return "off";
+
+  return expandExecutionPolicy(parsed.data).autonomousCompletion;
 }
 
 // Resolve just the commit-policy axis (C2) from a run's execution_policy

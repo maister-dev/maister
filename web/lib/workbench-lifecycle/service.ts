@@ -479,6 +479,7 @@ const STOP_STATUSES: WorkbenchRunStatus[] = [
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  "Waiting",
 ];
 
 // Exported with `requireWorkspace` and `markLifecycleClaimFailed` for the run
@@ -2642,6 +2643,11 @@ async function markRunStoppedAndCloseAssignments(args: {
     }
 
     // ADR-166 D7: the stop ends the run's driver generation.
+    if (rows[0].runKind === "flow" && rows[0].projectId) {
+      const { closeConditionWaitsForRun } = await import("@/lib/waits/close");
+
+      await closeConditionWaitsForRun(tx, args.runId, "run_stopped");
+    }
     await releaseAssignmentForRun(
       tx as unknown as ExecutionDb,
       args.runId,

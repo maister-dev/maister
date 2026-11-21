@@ -96,6 +96,7 @@ export type FlowRunnerDraft = z.infer<typeof flowRunnerDraftSchema>;
 
 const interactiveFields = taskLaunchFieldsSchema.extend({
   flowRunnerDraft: flowRunnerDraftSchema.optional(),
+  allowFlowPublication: z.boolean().optional(),
 });
 
 function validateInteractiveTarget(

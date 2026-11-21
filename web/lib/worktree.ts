@@ -18,7 +18,7 @@ import { branchNameSchema } from "@/lib/git-ref-names";
 import { withRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 import { tracePreparationOperation } from "@/lib/agents/preparation-trace";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   DELIVERY_PATHSPEC,
   type DeliveryDiffStat,
@@ -770,11 +770,103 @@ export type PromoteLocalMergeArgs = {
   sourceBranch: string;
   targetBranch: string;
   provenance?: MaisterProvenance;
+  expected?: { head: string; base: string; runId: string; attemptId: string };
 };
 
 export type PromoteRebaseMergeArgs = PromoteLocalMergeArgs & {
   worktreePath: string;
 };
+
+/** Validate an exact inverse of the first-parent delivery, reachable from the witnessed target. */
+export async function verifyDeliveredCommitReversal(input: {
+  projectRepoPath: string;
+  deliveredCommit: string;
+  revertCommit: string;
+  targetHead: string;
+}): Promise<boolean> {
+  const repo = validate(
+    absolutePathSchema,
+    input.projectRepoPath,
+    "projectRepoPath",
+  );
+  const sha = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+  if (
+    ![input.deliveredCommit, input.revertCommit, input.targetHead].every(
+      (value) => sha.test(value),
+    ) ||
+    input.deliveredCommit === input.revertCommit
+  )
+    return false;
+  const readChanges = async (commit: string, reverse: boolean) => {
+    const endpoints = reverse
+      ? [commit, `${commit}^1`]
+      : [`${commit}^1`, commit];
+    const { stdout } = await runGit(repo, [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--raw",
+      "--no-abbrev",
+      "-z",
+      ...endpoints,
+      "--",
+    ]);
+    const fields = stdout.split("\0");
+    const entries: Array<[string, string]> = [];
+
+    for (let index = 0; index < fields.length - 1; index += 2) {
+      const metadata = fields[index];
+      const pathname = fields[index + 1];
+
+      if (
+        !pathname ||
+        pathname.includes("\uFFFD") ||
+        !/^:\d{6} \d{6} [0-9a-f]+ [0-9a-f]+ [ADMT]$/.test(metadata)
+      )
+        return [];
+      entries.push([pathname, metadata]);
+    }
+
+    return entries;
+  };
+
+  try {
+    await runGit(repo, [
+      "merge-base",
+      "--is-ancestor",
+      input.deliveredCommit,
+      input.revertCommit,
+    ]);
+    await runGit(repo, [
+      "merge-base",
+      "--is-ancestor",
+      input.revertCommit,
+      input.targetHead,
+    ]);
+    const [delivered, reversed] = await Promise.all([
+      readChanges(input.deliveredCommit, false),
+      readChanges(input.revertCommit, true),
+    ]);
+
+    return (
+      delivered.length > 0 &&
+      JSON.stringify(delivered) === JSON.stringify(reversed)
+    );
+  } catch (error: unknown) {
+    log.warn(
+      {
+        code: (error as NodeJS.ErrnoException).code,
+        deliveredCommit: input.deliveredCommit,
+        revertCommit: input.revertCommit,
+      },
+      "could not verify delivered commit reversal",
+    );
+
+    return false;
+  }
+}
 
 export async function promoteLocalMerge(
   args: PromoteLocalMergeArgs,
@@ -797,19 +889,53 @@ export async function promoteLocalMerge(
 
     try {
       await runGit(repo, ["switch", "--", targetBranch]);
-      const mergeArgs = args.provenance
+      let source = sourceBranch;
+
+      if (args.expected) {
+        const [base, head] = await Promise.all([
+          runGit(repo, [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "HEAD^{commit}",
+          ]),
+          runGit(repo, [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            `refs/heads/${sourceBranch}^{commit}`,
+          ]),
+        ]).then((anchors) => anchors.map(({ stdout }) => stdout.trim()));
+
+        if (base !== args.expected.base || head !== args.expected.head)
+          throw new MaisterError(
+            "PRECONDITION",
+            "The evidence-bound promotion refs changed",
+            {
+              details: { reason: "target_drift" },
+            },
+          );
+        source = head;
+      }
+      const provenance = args.expected
+        ? {
+            ...(args.provenance ?? { runId: args.expected.runId }),
+            promotionAttempt: args.expected.attemptId,
+          }
+        : args.provenance;
+      const mergeArgs = provenance
         ? [
             "merge",
             "--no-ff",
             "-m",
             composeCommitMessage(
               `Merge branch '${sourceBranch}' into ${targetBranch}`,
-              args.provenance,
+              provenance,
             ),
             "--",
-            sourceBranch,
+            source,
           ]
-        : ["merge", "--no-ff", "--no-edit", "--", sourceBranch];
+        : ["merge", "--no-ff", "--no-edit", "--", source];
 
       await runGit(repo, mergeArgs);
 
@@ -817,6 +943,7 @@ export async function promoteLocalMerge(
 
       return stdout.trim();
     } catch (err) {
+      if (isMaisterError(err) && err.code === "PRECONDITION") throw err;
       const conflicted = await promotionHasUnmergedFiles(repo).finally(() =>
         abortMerge(repo),
       );
@@ -2930,6 +3057,66 @@ export async function deliveryCommitStats(args: {
       `could not read delivery commit ${commit}: ${
         errorText(error) || asError(error).message
       }`,
+      { cause: asError(error) },
+    );
+  }
+}
+
+export async function findEvidenceBoundMerge(args: {
+  projectRepoPath: string;
+  targetBranch: string;
+  runId: string;
+  attemptId: string;
+  base: string;
+  head: string;
+}): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const target = validate(branchNameSchema, args.targetBranch, "targetBranch");
+  const base = validate(gitCommitSchema, args.base, "baseCommit");
+  const head = validate(gitCommitSchema, args.head, "sourceCommit");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "log",
+      "--first-parent",
+      "--merges",
+      "--fixed-strings",
+      "--no-color",
+      `--grep=Maister-Promotion-Attempt: ${args.attemptId}`,
+      "--format=%H%x00%P%x00%B%x00",
+      "--end-of-options",
+      `refs/heads/${target}`,
+    ]);
+    const parts = stdout.split("\0");
+    const matches: string[] = [];
+
+    for (let index = 0; index + 2 < parts.length; index += 3) {
+      const trailers = parseMaisterTrailers(parts[index + 2]);
+
+      if (
+        parts[index + 1] === `${base} ${head}` &&
+        trailers.runId === args.runId &&
+        trailers.promotionAttempt === args.attemptId
+      )
+        matches.push(
+          validate(gitCommitSchema, parts[index].trim(), "mergeCommit"),
+        );
+    }
+
+    if (matches.length <= 1) return matches[0] ?? null;
+    throw new MaisterError(
+      "CONFLICT",
+      "Multiple evidence-bound delivery commits match the retained attempt",
+    );
+  } catch (error: unknown) {
+    if (isMaisterError(error)) throw error;
+    throw new MaisterError(
+      "CONFLICT",
+      "The evidence-bound merge could not be verified",
       { cause: asError(error) },
     );
   }

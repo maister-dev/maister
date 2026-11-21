@@ -1,6 +1,9 @@
 import type { FlowMetadata, FlowYamlV1, NodeDef } from "@/lib/config.schema";
+import type { TransitionTarget } from "@/lib/flows/graph/transition-target";
 
 import { MaisterError } from "@/lib/errors-core";
+import { semverGte } from "@/lib/flows/semver";
+import { PUBLICATION_ENGINE_MIN, WAIT_ENGINE_MIN } from "@/lib/waits/contracts";
 import {
   applyPresentation,
   readPresentation,
@@ -35,9 +38,21 @@ export function addNode(
   }
 
   const newNode = blankNode(type, id);
+  const featureFloor =
+    type === "publish"
+      ? PUBLICATION_ENGINE_MIN
+      : type === "wait"
+        ? WAIT_ENGINE_MIN
+        : null;
 
   const withNode: FlowYamlV1 = {
     ...manifest,
+    ...(featureFloor &&
+    !semverGte(manifest.compat?.engine_min ?? "", featureFloor)
+      ? {
+          compat: { ...manifest.compat, engine_min: featureFloor },
+        }
+      : {}),
     nodes: [
       ...(manifest.nodes ?? []),
       newNode as NonNullable<FlowYamlV1["nodes"]>[number],
@@ -65,7 +80,7 @@ export function removeNode(manifest: FlowYamlV1, id: string): FlowYamlV1 {
 
       // Scrub transitions pointing at `id`
       if (n.transitions) {
-        const newTransitions: Record<string, string> = {};
+        const newTransitions: Record<string, TransitionTarget> = {};
 
         for (const [outcome, target] of Object.entries(n.transitions)) {
           if (target !== id) {
@@ -306,6 +321,10 @@ export function addGate(
       return n;
     }
 
+    if (n.type === "wait" || n.type === "publish") {
+      throw new MaisterError("CONFIG", `A ${n.type} node cannot declare gates`);
+    }
+
     const existingGates = n.pre_finish?.gates ?? [];
     const dup = existingGates.find((g) => g.id === gateId);
 
@@ -340,7 +359,7 @@ export function removeGate(
   gateId: string,
 ): FlowYamlV1 {
   const updatedNodes = (manifest.nodes ?? []).map((n) => {
-    if (n.id !== nodeId) {
+    if (n.id !== nodeId || n.type === "wait" || n.type === "publish") {
       return n;
     }
 

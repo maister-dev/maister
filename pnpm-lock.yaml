@@ -362,6 +362,9 @@ importers:
       adm-zip:
         specifier: ^0.6.1
         version: 0.6.1
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       bcryptjs:
         specifier: 3.0.3
         version: 3.0.3

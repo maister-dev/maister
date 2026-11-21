@@ -34,6 +34,7 @@ import { ACTIVE_AGENT_RUN_STATUSES } from "@/lib/agents/activity-status";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { acceptedBacklogPredicate } from "@/lib/tasks/qualification-predicates";
 import { getDb } from "@/lib/db/client";
+import { getOpenWaitLabels, type OpenWaitLabel } from "@/lib/waits/attention";
 import { companyRunOwnershipReadPolicy } from "@/lib/agents/company-run-read-access";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
@@ -111,6 +112,7 @@ export const ACTIVE_RUN_STATUSES = [
   // M37 (ADR-098): a parked orchestrator (checkpointed, slot released) still
   // holds a worktree → counts as an active workspace.
   "WaitingOnChildren",
+  "Waiting",
   // ADR-181 D14: a failed run's worktree is still the operator's work (commit,
   // publish, discard, re-attach) — listed, with its worktree TTL countdown
   // (the GC collects it like a Done one, preserved first — owner, 2026-09-23)
@@ -873,6 +875,7 @@ export interface RailWorkspaceRow {
   executorLabel: string;
   launchedBy: string | null;
   statusLabel: string;
+  waitCondition?: OpenWaitLabel;
   statusTone: RailWorkspaceTone;
   // ADR-209: why this Run is in the rail (rows and counter share one rule).
   attentionReason: ActiveAttentionReason;
@@ -1094,7 +1097,13 @@ export async function getRailWorkspaceGroups(
   const nowMs = now.getTime();
   const ageDays = gcAgeDays();
   const warningDays = gcWarningDays();
-  const presence = await presenceForRows(rows);
+  const [presence, waitConditions] = await Promise.all([
+    presenceForRows(rows),
+    getOpenWaitLabels(
+      client,
+      rows.flatMap((row) => (row.status === "Waiting" ? [row.runId] : [])),
+    ),
+  ]);
 
   for (const row of rows) {
     const status = railStatus({
@@ -1124,6 +1133,7 @@ export async function getRailWorkspaceGroups(
           provider: row.runnerSnapshot.providerKind,
         }
       : null;
+    const waitCondition = waitConditions.get(row.runId);
     const workspace: RailWorkspaceRow = {
       runId: row.runId,
       runKind: row.runKind as RunKind,
@@ -1134,6 +1144,7 @@ export async function getRailWorkspaceGroups(
         creatorId ? creators.get(creatorId) : undefined,
       ),
       statusLabel: status.label,
+      ...(waitCondition ? { waitCondition } : {}),
       statusTone: status.tone,
       // Non-null by the predicate above; the classifier is its TS twin.
       attentionReason: activeAttentionReason(row.status, {

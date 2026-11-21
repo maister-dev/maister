@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Provider } from "@/lib/repo-source";
 import type { PrStateReadResult } from "@/lib/runs/pr-adapter";
+import type { Db as WaitScanDb } from "@/lib/execution-host/db";
 
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
@@ -20,6 +21,7 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { recordTaskActivity } from "@/lib/social/activity";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { scanWaitPublications } from "@/lib/waits/provider-scan";
 
 // One bounded batch per tick; the durable keyset cursor (this job's
 // `target->'cursor'`) paginates the rest through the partial candidate index.
@@ -106,6 +108,7 @@ export async function runPrStateScanJob(input: {
   now?: Date;
   db?: PrStateScanDb;
   getPrState?: GetPrStateFn;
+  fetchPage?: typeof fetch;
 }): Promise<PrStateScanSummary> {
   if (!input.projectId) {
     throw new MaisterError(
@@ -160,6 +163,16 @@ export async function runPrStateScanJob(input: {
   let lastProcessedId: string | null = null;
   let deadlineHit = false;
   const deadline = Date.now() + scanBudgetMs();
+
+  await scanWaitPublications({
+    db: db as unknown as WaitScanDb,
+    projectId,
+    provider,
+    remoteUrl,
+    readPr: getPrState,
+    fetchPage: input.fetchPage,
+    deadline,
+  });
 
   // The cursor must name the last candidate we VISITED, never the window end —
   // advancing past unvisited rows would silently skip them until the cursor
@@ -372,7 +385,7 @@ async function applyStateEdges(args: {
   // conflict). The guard is the PREVIOUS column value so a re-scan is
   // exactly-once.
   if (state.hasConflicts === true && !terminalPr) {
-    changed = await conflictsEdge({ db, projectId, candidate });
+    changed = await conflictsEdge(args);
   } else if (state.hasConflicts === false || terminalPr) {
     // Silent clear — no webhook. Guarded on the previous value like every other
     // edge, so a re-scan of an already-clear row is a no-op rather than a write.
@@ -382,7 +395,7 @@ async function applyStateEdges(args: {
     await db.execute(sql`
       UPDATE workspaces
       SET pr_has_conflicts = false
-      WHERE id = ${candidate.id}
+      WHERE ${currentPrObservation(candidate, state)}
         AND pr_has_conflicts IS DISTINCT FROM false
     `);
   }
@@ -393,19 +406,30 @@ async function applyStateEdges(args: {
     changed =
       (await mergedEdge({ db, projectId, candidate, state })) || changed;
   } else if (state.state === "closed") {
-    changed = (await closedEdge({ db, projectId, candidate })) || changed;
+    changed = (await closedEdge(args)) || changed;
   }
   // open — nothing to write; the row stays in the candidate set.
 
   return changed ? "updated" : "stamped";
 }
 
+function currentPrObservation(candidate: CandidateRow, state: PrState): SQL {
+  return sql`workspaces.id = ${candidate.id}
+    AND workspaces.pr_number = ${candidate.pr_number}
+    AND workspaces.pr_url IS NOT DISTINCT FROM ${candidate.pr_url}
+    AND COALESCE((SELECT p.source_head IS NOT DISTINCT FROM ${state.headSha ?? null}
+      FROM run_publications p
+      WHERE p.workspace_id = workspaces.id AND p.phase = 'observed' AND p.pr_number = workspaces.pr_number AND p.pr_url = workspaces.pr_url
+      ORDER BY p.generation DESC LIMIT 1), true)`;
+}
+
 async function conflictsEdge(args: {
   db: PrStateScanDb;
   projectId: string;
   candidate: CandidateRow;
+  state: PrState;
 }): Promise<boolean> {
-  const { db, projectId, candidate } = args;
+  const { db, projectId, candidate, state } = args;
 
   return db.transaction(async (tx) => {
     const fired =
@@ -413,7 +437,7 @@ async function conflictsEdge(args: {
         await tx.execute(sql`
           UPDATE workspaces
           SET pr_has_conflicts = true
-          WHERE id = ${candidate.id}
+          WHERE ${currentPrObservation(candidate, state)}
             AND (pr_has_conflicts IS NULL OR pr_has_conflicts = false)
           RETURNING id
         `),
@@ -450,7 +474,7 @@ async function mergedEdge(args: {
             pr_state = 'merged',
             pr_merged_at = ${state.mergedAt}::timestamptz,
             pr_merge_commit_sha = ${state.mergeCommitSha}
-          WHERE id = ${candidate.id}
+          WHERE ${currentPrObservation(candidate, state)}
             AND (pr_state IS NULL OR pr_state = 'open')
           RETURNING id
         `),
@@ -513,8 +537,9 @@ async function closedEdge(args: {
   db: PrStateScanDb;
   projectId: string;
   candidate: CandidateRow;
+  state: PrState;
 }): Promise<boolean> {
-  const { db, projectId, candidate } = args;
+  const { db, projectId, candidate, state } = args;
 
   return db.transaction(async (tx) => {
     const fired =
@@ -522,7 +547,7 @@ async function closedEdge(args: {
         await tx.execute(sql`
           UPDATE workspaces
           SET pr_state = 'closed'
-          WHERE id = ${candidate.id}
+          WHERE ${currentPrObservation(candidate, state)}
             AND (pr_state IS NULL OR pr_state = 'open')
           RETURNING id
         `),

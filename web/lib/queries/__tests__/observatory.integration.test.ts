@@ -477,7 +477,9 @@ describe("observatory read models", () => {
     // in observatory-overview.integration.test.ts. The helper counts `execute`
     // as well as `select` now, and the delta is exactly 3 — so nothing
     // pre-existing was hiding behind raw SQL.
-    expect(singleRun.queryCount).toBeLessThanOrEqual(24);
+    // One additional aggregate counts recorded autonomous completions and
+    // verified reversals independently of the number of runs and attempts.
+    expect(singleRun.queryCount).toBeLessThanOrEqual(25);
   });
 
   it("uses one eligible run population for correction and autonomy", async () => {
