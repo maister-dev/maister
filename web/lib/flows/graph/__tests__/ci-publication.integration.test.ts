@@ -35,6 +35,7 @@ afterAll(async () => {
 it.each([
   "green",
   "stale-review",
+  "superseded-ci",
   "merged-pr",
   "wrong-pr-head",
   "closed-pr",
@@ -303,6 +304,7 @@ it.each([
       },
     });
     let remoteHeadSha: string | null = null;
+    let newestCheckPending = false;
 
     fake.transport.workspacePublication = async (_handle, envelope) => {
       if (envelope.payload.action === "push") {
@@ -385,8 +387,8 @@ it.each([
                 id: 1,
                 name: "build",
                 head_sha: head,
-                status: "completed",
-                conclusion: "success",
+                status: newestCheckPending ? "queued" : "completed",
+                conclusion: newestCheckPending ? null : "success",
                 app: { slug: "github-actions" },
               },
             ],
@@ -410,6 +412,10 @@ it.each([
           })
         ).promotedRunId,
       ).toBe(runId);
+      if (scenario === "superseded-ci") {
+        newestCheckPending = true;
+        await scan();
+      }
       await drive();
     };
 
@@ -696,7 +702,10 @@ it.each([
         : [
             {
               phase: "refused",
-              reason: prBacked ? "missing_required_evidence" : "required_gate",
+              reason:
+                prBacked || scenario === "superseded-ci"
+                  ? "missing_required_evidence"
+                  : "required_gate",
             },
           ],
     );
