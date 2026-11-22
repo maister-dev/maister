@@ -340,9 +340,12 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     await expect(
       observer.getByText("+Permanent after review", { exact: false }),
     ).toHaveCount(0, { timeout: 45_000 });
-    await expect(observer.getByRole("alert")).toContainText(
-      "Предложение недоступно.",
-    );
+    await expect(
+      observer
+        .getByRole("main")
+        .getByRole("alert")
+        .filter({ hasText: "Предложение недоступно." }),
+    ).toBeVisible();
     await expect(
       observer.getByRole("link", {
         name: "Применённое изменение памяти",
