@@ -58,7 +58,7 @@ import { canonicalCommandJson } from "../../../runtime/command-json";
 import { objectDigest, objectEtag } from "../../../runtime/object-integrity";
 
 import { e2eSupervisorDiagnostics } from "./supervisor-diagnostics";
-import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+import { E2E_EXECUTION_HOST_SLUG, E2E_ORCHESTRATOR_SLUG } from "./fixtures";
 import { RECURSIVE_RESEARCH_RELEASE } from "./recursive-release";
 import {
   STUB_BOOT_ID,
@@ -202,6 +202,7 @@ type SessionRecord = {
   runId: string;
   runKind: "flow" | "scratch" | "agent" | "unknown";
   isResume: boolean;
+  holdWorkerPrompt: boolean;
   mcpServers: AgentMcpServer[];
   sessionName: string;
   nodeAttemptId?: string;
@@ -860,9 +861,12 @@ export async function startTestSupervisor(
       `${rec.sessionId}.release`,
     );
     const startedAt = Date.now();
+    const backstop = rec.holdWorkerPrompt
+      ? E2E_HOLD_TURN_BACKSTOP_MS
+      : STUB_RELEASE_BACKSTOP_MS;
     const timer = setInterval(() => {
       const released = existsSync(releasePath);
-      const expired = Date.now() - startedAt > STUB_RELEASE_BACKSTOP_MS;
+      const expired = Date.now() - startedAt > backstop;
 
       if (!released && !expired) return;
       clearInterval(timer);
@@ -1068,7 +1072,14 @@ export async function startTestSupervisor(
     if (
       rec.runKind === "flow" &&
       !rec.isResume &&
-      !delegatedRuns.has(rec.runId)
+      !delegatedRuns.has(rec.runId) &&
+      rec.nodeAttemptId &&
+      (
+        await opts.pool.query(
+          "SELECT 1 FROM node_attempts WHERE id = $1 AND run_id = $2 AND node_type = 'orchestrator'",
+          [rec.nodeAttemptId, rec.runId],
+        )
+      ).rowCount === 1
     ) {
       delegatedRuns.add(rec.runId);
       const { token, apiBaseUrl } = readFacade(rec.mcpServers);
@@ -2135,9 +2146,9 @@ export async function startTestSupervisor(
 
         pendingSessionCreates.set(env.command.id, runId);
         const runKind = await lookupRunKind(runId);
+        const projectSlug = await lookupProjectSlug(runId);
         const permission =
-          runKind === "flow" &&
-          (await lookupProjectSlug(runId)) === E2E_EXECUTION_HOST_SLUG;
+          runKind === "flow" && projectSlug === E2E_EXECUTION_HOST_SLUG;
 
         // stub-compat path for non-orchestrator sessions (e.g. a platform-agents
         // `agent` run); orchestrator FLOW sessions always auto-drive.
@@ -2161,6 +2172,8 @@ export async function startTestSupervisor(
           runId,
           runKind,
           isResume: typeof body.resumeSessionId === "string",
+          holdWorkerPrompt:
+            runKind === "agent" && projectSlug === E2E_ORCHESTRATOR_SLUG,
           mcpServers,
           sessionName: String(body.sessionName ?? "default"),
           nodeAttemptId:
@@ -2194,7 +2207,7 @@ export async function startTestSupervisor(
               "claude",
           ),
           runId,
-          projectSlug: (await lookupProjectSlug(runId)) ?? "test",
+          projectSlug: projectSlug ?? "test",
           stepId: String(body.stepId ?? "coordinate"),
           nodeAttemptId:
             typeof body.nodeAttemptId === "string"
@@ -2535,10 +2548,15 @@ export async function startTestSupervisor(
           // `<sessionId>.turn-release`; the session's exit backstop starts
           // after it, so a slow first page compile cannot end the session
           // under the spec.
-          if (JSON.stringify(body).includes(E2E_HOLD_TURN_MARKER)) {
+          // The coordinator spec releases its workers after inspecting the parked tree.
+          // Hold the prompt receipt itself: a completed turn can settle a one-shot agent.
+          if (
+            rec.holdWorkerPrompt ||
+            JSON.stringify(body).includes(E2E_HOLD_TURN_MARKER)
+          ) {
             const turnRelease = path.join(
               opts.stubCompat!.sessionsDir,
-              `${rec.sessionId}.turn-release`,
+              `${rec.sessionId}.${rec.holdWorkerPrompt ? "release" : "turn-release"}`,
             );
 
             if (observesContext) {
@@ -2547,18 +2565,14 @@ export async function startTestSupervisor(
                 used: 72000,
                 size: 100000,
               });
-              observe({
-                sessionUpdate: "compaction_update",
-                compactionId: "e2e-context",
-                status: "in_progress",
-              });
             }
             const heldAt = Date.now();
             let refreshedUsage = false;
+            let startedCompaction = false;
             let completedCompaction = false;
             let reportedAfterUsage = false;
             const contextSignal = (
-              signal: "refresh" | "complete" | "after",
+              signal: "refresh" | "start" | "complete" | "after",
             ): boolean =>
               existsSync(
                 path.join(
@@ -2577,6 +2591,18 @@ export async function startTestSupervisor(
                   sessionUpdate: "usage_update",
                   used: 74000,
                   size: 100000,
+                });
+              }
+              if (
+                observesContext &&
+                !startedCompaction &&
+                contextSignal("start")
+              ) {
+                startedCompaction = true;
+                observe({
+                  sessionUpdate: "compaction_update",
+                  compactionId: "e2e-context",
+                  status: "in_progress",
                 });
               }
               const released =

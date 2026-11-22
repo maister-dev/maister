@@ -343,9 +343,11 @@ export function RunPeekController({
     )
       return;
     window.history.replaceState(
-      { [visitKey]: { anchor: anchorRunId, token: current.token } },
+      {
+        ...window.history.state,
+        [visitKey]: { anchor: anchorRunId, token: current.token },
+      },
       "",
-      window.location.href,
     );
   });
 

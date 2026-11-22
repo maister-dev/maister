@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { PoolCapFence } from "@/lib/scheduler";
 import type { TasklessAgentFlowCarrierAdmission } from "@/lib/agents/carrier-launch-authority";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { AgentTriggerReservation } from "@/lib/agents/scheduled-request-store";
@@ -81,6 +82,7 @@ import {
 } from "@/lib/local-packages/versions";
 import { resolvePinnedFlowRevisionForRefId } from "@/lib/packages/pin";
 import { getDb } from "@/lib/db/client";
+import { startAllocatedRun } from "@/lib/scheduler/start-allocated-run";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -148,7 +150,6 @@ import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
-import { tryStartRun, type PoolCapFence } from "@/lib/scheduler";
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
@@ -2486,7 +2487,9 @@ async function* executeFlowLaunch(
 
   if (accepted) return { runId, status: "Pending" };
 
-  const startResult = await tryStartRun(runId, { db: _db });
+  const startResult = await startAllocatedRun(_db, runId);
+
+  if (startResult === "already_started") return { runId, status: "Running" };
 
   if (startResult.started) {
     void runFlow(runId).catch((err: unknown) =>

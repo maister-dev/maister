@@ -6,6 +6,7 @@ import authConfig from "@/auth.config";
 const { auth } = NextAuth(authConfig);
 const EXECUTION_HOST_ADMIN_PATH = "/admin/execution-host";
 const EXECUTION_HOST_DENIED_PATH = "/access-denied/execution-host";
+const PEEK_PARAMS = ["peek", "peekView", "peekNode"] as const;
 
 export default auth(async (req) => {
   const { nextUrl } = req;
@@ -46,6 +47,19 @@ export default auth(async (req) => {
         { status: 403 },
       );
     }
+  }
+
+  // Peek changes only the mounted client workbench. Keep the server's rendered
+  // query stable across selections so a parent refresh retains its route tree.
+  if (
+    /^\/runs\/[^/]+\/?$/.test(nextUrl.pathname) &&
+    PEEK_PARAMS.some((key) => nextUrl.searchParams.has(key))
+  ) {
+    const destination = nextUrl.clone();
+
+    for (const key of PEEK_PARAMS) destination.searchParams.delete(key);
+
+    return NextResponse.rewrite(destination);
   }
 
   return NextResponse.next();

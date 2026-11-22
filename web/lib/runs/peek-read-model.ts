@@ -176,8 +176,6 @@ export async function peekPath(
   anchorId: string,
   selectedId: string,
 ): Promise<string[]> {
-  await authorizePeekRun(userId, anchorId);
-  await authorizePeekRun(userId, selectedId);
   const chain = await getDb().execute<ScopeRow>(sql`
     WITH RECURSIVE chain AS (
       SELECT id, project_id, parent_run_id, 0 AS depth, ARRAY[id] AS visited, false AS cycle
@@ -191,6 +189,19 @@ export async function peekPath(
     SELECT id,project_id AS "projectId",parent_run_id AS "parentRunId",depth,cycle FROM chain ORDER BY depth`);
   const anchorIndex = chain.rows.findIndex((row) => row.id === anchorId);
 
+  const last = chain.rows.at(-1);
+
+  // The listener receives hints for every project. Reject an unrelated tree
+  // before opening disclosure transactions for each of its Runs.
+  if (
+    anchorIndex < 0 &&
+    !last?.cycle &&
+    !(last?.depth === 64 && last.parentRunId)
+  )
+    throw unavailablePeekRun();
+
+  await authorizePeekRun(userId, anchorId);
+  if (selectedId !== anchorId) await authorizePeekRun(userId, selectedId);
   const path = (
     anchorIndex < 0 ? chain.rows : chain.rows.slice(0, anchorIndex + 1)
   ).toReversed();

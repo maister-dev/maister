@@ -78,6 +78,7 @@ export function PlatformStatusPill({
       className="inline-flex min-w-0"
       data-testid="rail-platform-status-link"
       href={href}
+      prefetch={false}
     >
       {content}
     </Link>

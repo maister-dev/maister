@@ -96,7 +96,7 @@ test("merge scenario — ReviewPanel shows the diff and promotes (local_merge) t
     page.getByText(fx.mergeTargetBranch, { exact: false }).first(),
   ).toBeVisible();
   const diffView = page
-    .getByTestId("run-diff")
+    .getByTestId("review-panel")
     .filter({ visible: true })
     .getByTestId("diff-view");
 

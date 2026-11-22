@@ -33,12 +33,6 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   ).toHaveAttribute("disabled", "");
 
   await page.goto(`/projects/${board.projectSlug}`);
-  // The board card surfaces the resolved MODEL, not the runner id — the id
-  // survives in the launch popover, which renders `<id> · <model>`. Asserting
-  // "claude-code" here matched nothing on the page at all.
-  await expect(
-    page.getByRole("main").getByText("claude-sonnet-4-6").first(),
-  ).toBeVisible();
 
   const backlogCard = page
     .getByRole("main")
@@ -55,6 +49,9 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   const launchDialog = page.getByTestId("task-launch-dialog");
 
   await expect(launchDialog).toBeVisible();
+  await expect(
+    launchDialog.getByText("Pinned model: claude-sonnet-4-6", { exact: true }),
+  ).toBeVisible();
 
   const advanced = launchDialog.getByTestId("launch-advanced-options");
 

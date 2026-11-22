@@ -41,6 +41,8 @@ import {
   startAgentSession,
   launchAgentRun,
 } from "@/lib/agents/launch";
+import { openAgentPreparation } from "@/lib/agents/preparation-workspace";
+import { operationalWorkspace } from "@/lib/agents/operational-context";
 import { startAgentContinuationWorker } from "@/lib/agents/continuation-worker";
 import { createExecutionHosts } from "@/lib/execution-host/client";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
@@ -316,16 +318,22 @@ describe("the queued-message invariant (D-A6)", () => {
         { timeout: 45_000, interval: 50 },
       )
       .toBe(true);
-    const preparedRun = (
-      await database.pool.query(
-        "SELECT operational_integrity_baseline FROM runs WHERE id=$1",
-        [launched.runId],
-      )
-    ).rows[0];
+    const [preparedRun] = await db
+      .select()
+      .from(runs)
+      .where(eq(runs.id, launched.runId));
 
-    expect(
-      preparedRun.operational_integrity_baseline.generation,
-    ).toBeGreaterThan(0);
+    expect(preparedRun.operationalIntegrityBaseline?.generation).toBe(1);
+    // A recovery driver that missed create admission must recheck under physical exclusion.
+    const workspace = await operationalWorkspace(db, preparedRun);
+
+    await expect(
+      openAgentPreparation(db, {
+        runId: launched.runId,
+        assignmentId: preparedRun.executionAssignmentId!,
+        ...workspace,
+      }),
+    ).rejects.toMatchObject({ details: { reason: "assignment_fenced" } });
     const credential = (
       await database.pool.query("SELECT id FROM project_tokens WHERE name=$1", [
         `agent-run:${launched.runId}`,

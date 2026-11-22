@@ -51,6 +51,7 @@ type M22Fixture = {
   currentNode: string;
   succeededNode: string;
   oversizedFile: string;
+  reader: { email: string; password: string };
   viewerEmail: string;
   viewerPassword: string;
 };
@@ -373,7 +374,26 @@ test("theme toggle recolors the code-view without refetching the run/file route"
 }) => {
   const fx = loadM22Fixture();
 
-  await page.goto(`/runs/${fx.runId}?wb=files&file=src%2Fapp.ts`);
+  await page.context().clearCookies();
+  await loginAs(page, fx.reader.email, fx.reader.password);
+  const path = `/runs/${fx.runId}`;
+  // The workbench refreshes its server layout when its stream first connects.
+  const connectedRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    const headers = response.request().headers();
+
+    return (
+      url.pathname === path &&
+      url.searchParams.get("file") === "src/app.ts" &&
+      !url.searchParams.has("node") &&
+      !url.searchParams.has("flow") &&
+      headers.rsc === "1" &&
+      headers["next-router-prefetch"] !== "1"
+    );
+  });
+
+  await page.goto(`${path}?wb=files&file=src%2Fapp.ts`);
+  await connectedRefresh;
   const span = page
     .locator('[data-testid="code-view"] [style*="--shiki"]')
     .first();
@@ -397,30 +417,6 @@ test("theme toggle recolors the code-view without refetching the run/file route"
 
     runRequests.push({ url: req.url(), prefetch });
   });
-
-  // Let the initial navigation's OWN work drain before anything is attributed
-  // to the toggle. Next's dev router issues a lazy, non-prefetch `_rsc` fetch
-  // for the open route after hydration; when it lands after the click it is
-  // indistinguishable from a toggle-triggered refetch, and the assertion below
-  // failed on exactly that request. Wait for THIS route to go quiet — not for
-  // the whole network, since `networkidle` never settles against a dev server's
-  // HMR socket — then reset and start attributing.
-  let settledCount = -1;
-
-  await expect
-    .poll(
-      () => {
-        const stable = runRequests.length === settledCount;
-
-        settledCount = runRequests.length;
-
-        return stable;
-      },
-      { intervals: [1000], timeout: 15_000 },
-    )
-    .toBe(true);
-
-  runRequests.length = 0;
 
   const htmlClassBefore = await page.evaluate(
     () => document.documentElement.className,

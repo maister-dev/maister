@@ -8,6 +8,8 @@ import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { tasks } from "@/lib/db/schema";
+import { admitTaskToBacklog } from "@/lib/tasks/backlog-admission";
+import { getIncomingRequests } from "@/lib/queries/incoming";
 import { getBoardData } from "@/lib/queries/board";
 import { getPortfolio } from "@/lib/queries/portfolio";
 import { getWorkTable } from "@/lib/queries/work-table";
@@ -136,4 +138,90 @@ it("keeps configured missing, negative and stale assessments visible as work wit
   expect(
     await getTaskQualificationSummaries(db, [missing, negative, stale]),
   ).toEqual(before);
+});
+
+it("admits only the displayed input to backlog, independently of routing and automatic qualification", async () => {
+  const taskId = await task(null);
+  const access = {
+    taskId,
+    projectId: fixture.projectId,
+    userId: fixture.userId,
+  };
+  const request = {
+    expectedInputRevision: 1,
+    expectedQualificationRevision: null,
+  };
+  const incoming = async () =>
+    (await getIncomingRequests(fixture.projectId, 1)).items.map(
+      (item) => item.id,
+    );
+  const count = async () =>
+    (await getPortfolio(fixture.userId, "admin")).projects.find(
+      (project) => project.id === fixture.projectId,
+    )!.backlogCount;
+  const before = await count();
+
+  expect(await incoming()).toContain(taskId);
+  await expect(
+    admitTaskToBacklog(db, { ...access, userId: randomUUID() }, request),
+  ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(
+    admitTaskToBacklog(db, access, {
+      ...request,
+      expectedQualificationRevision: 2,
+    }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  await Promise.all([
+    admitTaskToBacklog(db, access, request),
+    admitTaskToBacklog(db, access, request),
+  ]);
+  expect(await incoming()).not.toContain(taskId);
+  expect(await count()).toBe(before + 1);
+  expect(
+    (await getBoardData(fixture.projectId)).columns.Backlog.backlog.map(
+      (card) => card.taskId,
+    ),
+  ).toContain(taskId);
+  expect(
+    (await getWorkTable({ id: fixture.userId, role: "admin" })).rows.map(
+      (row) => row.taskId,
+    ),
+  ).toContain(taskId);
+  expect(
+    (await getTaskQualificationSummaries(db, [taskId])).get(taskId),
+  ).toMatchObject({
+    backlogAdmission: "admitted",
+    blockedReason: "qualification_required",
+    decision: null,
+  });
+  const receipt = await database.pool.query(
+    "SELECT actor_id, payload FROM task_activity WHERE task_id=$1 AND event_kind='backlog_admitted'",
+    [taskId],
+  );
+
+  expect(receipt.rows).toEqual([
+    {
+      actor_id: fixture.userId,
+      payload: { inputRevision: 1, qualificationRevision: null },
+    },
+  ]);
+  const unchanged = await database.pool.query(
+    "SELECT flow_id,launch_mode,current_qualification_id FROM tasks WHERE id=$1",
+    [taskId],
+  );
+
+  expect(unchanged.rows[0]).toEqual({
+    flow_id: null,
+    launch_mode: null,
+    current_qualification_id: null,
+  });
+
+  await db.transaction((tx) =>
+    requireTaskRequalification(tx, fixture.projectId, taskId),
+  );
+  expect(await incoming()).toContain(taskId);
+  expect(await count()).toBe(before);
+  await expect(admitTaskToBacklog(db, access, request)).rejects.toMatchObject({
+    code: "CONFLICT",
+  });
 });

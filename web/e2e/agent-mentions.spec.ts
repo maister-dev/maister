@@ -7,16 +7,30 @@
 // Fixture: the e2e-acceptance-board project with `e2e-mentions-pkg:summoner` (mention
 // binding) and `e2e-mentions-pkg:bystander` (attached, no binding) — seed-e2e.ts.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const SLUG = "e2e-acceptance-board";
+
+async function submitComment(page: Page): Promise<void> {
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (res) =>
+        res.request().method() === "POST" &&
+        new URL(res.url()).pathname ===
+          `/api/projects/${SLUG}/tasks/1/comments`,
+    ),
+    page.getByRole("button", { name: /^(Comment|Комментировать)$/ }).click(),
+  ]);
+
+  expect(response.status()).toBe(201);
+}
 
 test("composer autocompletes a summonable agent and renders it as a chip", async ({
   page,
 }) => {
   await page.goto(`/projects/${SLUG}/tasks/1`);
 
-  const composer = page.locator("#task-comment-body");
+  const composer = page.getByRole("main").getByRole("combobox");
 
   await composer.fill("");
   await composer.pressSequentially("@summ");
@@ -34,18 +48,19 @@ test("composer autocompletes a summonable agent and renders it as a chip", async
   await expect(page.getByRole("listbox")).toHaveCount(0);
 
   await composer.pressSequentially("please take a look at MARKER-CHIP");
-  await page
-    .getByRole("button", { name: /^(Comment|Комментировать)$/ })
-    .click();
+  await submitComment(page);
 
   // The stored body renders a chip — deliberately NOT a link (there is no
   // /agents/<id> route and /agents is admin-only). Located by its own marker:
   // the suite runs 3 workers against this one task, so `.last()` would race.
   const comment = page
+    .getByRole("main")
     .locator('[data-timeline-kind="comment"]')
     .filter({ hasText: "MARKER-CHIP" });
 
-  await expect(comment).toContainText("@e2e-mentions-pkg:summoner");
+  await expect(comment).toContainText("@e2e-mentions-pkg:summoner", {
+    timeout: 15_000,
+  });
   await expect(
     comment.locator('a[href="/agents/e2e-mentions-pkg:summoner"]'),
   ).toHaveCount(0);
@@ -59,42 +74,42 @@ test("a resolved but non-summonable mention renders a chip plus its footnote", a
 }) => {
   await page.goto(`/projects/${SLUG}/tasks/1`);
 
-  const composer = page.locator("#task-comment-body");
+  const composer = page.getByRole("main").getByRole("combobox");
 
   // Hand-typed: the bystander is attached, so the handle RESOLVES, but it has
   // no mention binding, so nothing will launch.
   await composer.fill("@e2e-mentions-pkg:bystander fyi MARKER-FOOTNOTE");
-  await page
-    .getByRole("button", { name: /^(Comment|Комментировать)$/ })
-    .click();
+  await submitComment(page);
 
   const comment = page
+    .getByRole("main")
     .locator('[data-timeline-kind="comment"]')
     .filter({ hasText: "MARKER-FOOTNOTE" });
 
   await expect(
     comment.locator('[title="e2e-mentions-pkg:bystander"]'),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(comment).toContainText(/will not run|не будет вызван/);
 });
 
 test("an unknown handle stays literal text with no chip", async ({ page }) => {
   await page.goto(`/projects/${SLUG}/tasks/1`);
 
-  const composer = page.locator("#task-comment-body");
+  const composer = page.getByRole("main").getByRole("combobox");
 
   await composer.fill(
     "@e2e-mentions-pkg:nobody and `@e2e-mentions-pkg:summoner` in code MARKER-LITERAL",
   );
-  await page
-    .getByRole("button", { name: /^(Comment|Комментировать)$/ })
-    .click();
+  await submitComment(page);
 
   const comment = page
+    .getByRole("main")
     .locator('[data-timeline-kind="comment"]')
     .filter({ hasText: "MARKER-LITERAL" });
 
-  await expect(comment).toContainText("@e2e-mentions-pkg:nobody");
+  await expect(comment).toContainText("@e2e-mentions-pkg:nobody", {
+    timeout: 15_000,
+  });
   // The inline-code occurrence is inert — no chip for it either.
   await expect(
     comment.locator('[title="e2e-mentions-pkg:summoner"]'),

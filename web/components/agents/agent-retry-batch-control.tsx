@@ -102,6 +102,7 @@ export function AgentRetryBatchControl({
       cursor: string | null,
       offset: number,
       selectedRunner?: string,
+      selectionSnapshot?: ReadonlySet<string>,
     ): Promise<void> => {
       setBusy(true);
       setError(null);
@@ -132,7 +133,7 @@ export function AgentRetryBatchControl({
         }
         const next = (await response.json()) as BatchOptions;
 
-        applyPreview(next, cursor, offset);
+        applyPreview(next, cursor, offset, selectionSnapshot);
       } catch {
         setError(t("loadError"));
       } finally {
@@ -162,6 +163,15 @@ export function AgentRetryBatchControl({
     request !== null && !previewRefused && (results === null || uncertain);
   const canReplacePreview =
     request === null || previewRefused || (results !== null && !uncertain);
+
+  function refreshCurrentPreview(): void {
+    const remaining = new Set(selectedWork);
+
+    for (const item of results ?? []) {
+      if (item.state === "accepted") remaining.delete(item.runId);
+    }
+    void loadPreview(windowCursor, windowStart, runnerId, remaining);
+  }
 
   async function refreshRunnerPreview(selectedRunner: string): Promise<void> {
     if (!options?.items.length || !selectedRunner || !canReplacePreview) return;
@@ -658,9 +668,7 @@ export function AgentRetryBatchControl({
                       className={button}
                       disabled={busy || !runnerId}
                       type="button"
-                      onClick={() =>
-                        void loadPreview(windowCursor, windowStart, runnerId)
-                      }
+                      onClick={refreshCurrentPreview}
                     >
                       {t(results ? "prepareAnotherBatch" : "refresh")}
                     </button>

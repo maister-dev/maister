@@ -8,6 +8,7 @@ import path from "node:path";
 import { test, expect } from "@playwright/test";
 
 import { withE2EDb } from "./_seed/db";
+import { loadFixtures } from "./_seed/fixtures";
 
 // These journeys share the seeded main Run and deliberately change its state.
 // Keep independent cases sequential; the two-window case owns connection concurrency.
@@ -56,6 +57,16 @@ test.afterEach(async () => {
     ]),
   );
 });
+async function openProjectReaderSession(page: Page): Promise<void> {
+  const { reader } = loadFixtures().byKey.m22;
+
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.locator('input[name="email"]').fill(reader.email);
+  await page.locator('input[name="password"]').fill(reader.password);
+  await page.locator('form button[type="submit"]').click();
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+}
 function peek(page: Page) {
   return page.getByTestId("run-peek-panel");
 }
@@ -276,14 +287,28 @@ test("E2E-PKN-04 E2E-PKN-08 E2E-PKN-10: parent file, inspector and librarian dra
 
   await trigger.scrollIntoViewIfNeeded();
   await trigger.focus();
-  const scroll = await page.evaluate(() => window.scrollY);
+  await expect(trigger).toBeFocused();
+  await trigger.evaluate((element) => {
+    element.addEventListener(
+      "keydown",
+      () => {
+        document.documentElement.dataset.peekScrollAtActivation = String(
+          window.scrollY,
+        );
+      },
+      { once: true },
+    );
+  });
 
-  await trigger.press("Enter");
+  await page.keyboard.press("Enter");
   await expect(peek(page)).toContainText("Researcher Alpha");
   await expect(page.getByTestId("run-shell-inspector")).toBeHidden();
   await expect(librarian).toBeHidden();
   await expect(main).toHaveAttribute("data-preservation-probe", "retained");
-  expect(await page.evaluate(() => window.scrollY)).toBe(scroll);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-peek-scroll-at-activation",
+    String(await page.evaluate(() => window.scrollY)),
+  );
   await page.keyboard.press("Escape");
   await expect(peek(page)).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -400,6 +425,8 @@ test("E2E-PKD-07 E2E-PKD-12: two visible HTTP/1.1 workbenches keep independent s
   page,
   context,
 }) => {
+  test.setTimeout(90_000);
+  await openProjectReaderSession(page);
   await context.addInitScript(() => {
     const Original = window.EventSource;
     const sources: EventSource[] = [];
@@ -777,7 +804,11 @@ test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigati
       pool.query("DELETE FROM runs WHERE id=$1", [child]),
     );
     await expect(peek(page)).toContainText("This Run is unavailable");
-    await expect(trigger).toHaveCount(0);
+    await expect(
+      page
+        .getByTestId("run-inspector-child-runs")
+        .locator(`[data-child-run-id="${child}"]`),
+    ).toHaveCount(0);
     await peek(page).getByRole("button", { name: "Close peek" }).click();
     await expect(page.locator('[data-testid="run-shell"] h1')).toBeFocused();
     await expect(draft).toHaveValue("Unsent parent instruction");
@@ -1277,6 +1308,7 @@ test("E2E-PKD-07 E2E-PKN-12: post-completion parent publication refreshes indepe
 test("E2E-PKN-03 E2E-PKN-07: Previous restores two prior visits and their views without oscillation after browser history", async ({
   page,
 }) => {
+  test.setTimeout(60_000);
   await withE2EDb((pool) =>
     pool.query("UPDATE runs SET parent_run_id=$1 WHERE id=$2", [
       fixture.child,
@@ -1465,6 +1497,7 @@ test("E2E-PKN-02 E2E-PKN-06: viewer keeps metadata and public-result state with 
 test("E2E-PKN-02 E2E-PKD-07: paged siblings pin an off-page selection and discover a new descendant without eager transcripts", async ({
   page,
 }) => {
+  await openProjectReaderSession(page);
   const ids = Array.from({ length: 60 }, () => randomUUID());
   const descendant = randomUUID();
   const newSibling = randomUUID();

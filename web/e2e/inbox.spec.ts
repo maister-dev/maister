@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
@@ -35,14 +33,6 @@ const MOCK_INBOX_CONTEXT = {
   progress: { done: 1, total: 4 },
 };
 
-function loadReviewFixture(): { runId: string } {
-  return (
-    JSON.parse(
-      readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-    ) as { byKey: { reviewComments: { runId: string } } }
-  ).byKey.reviewComments;
-}
-
 test("AV-04 applies a webhook run's pending note through Inbox while the amber count stays fixed", async ({
   page,
 }) => {
@@ -52,6 +42,9 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   const slug = `inbox-vault-${projectId.slice(0, 8)}`;
   const agentId = `fixture:${slug}`;
   const token = generateToken();
+  const reviewerId = randomUUID();
+  const reviewerEmail = `vault-${reviewerId}@example.test`;
+  const { adminEmail, adminPassword } = loadFixtures();
 
   await withE2EDb(async (pool) => {
     await pool.query(
@@ -65,6 +58,22 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
         `/tmp/${slug}`,
         `VR${projectId.slice(0, 7).toUpperCase()}`,
       ],
+    );
+    // The reviewer's rail counts only this project while other workers create
+    // and resolve unrelated decisions in parallel.
+    await pool.query(
+      `INSERT INTO users(id,email,password_hash,role,account_status,must_change_password)
+       SELECT $1,$2,password_hash,'member','active',false FROM users WHERE email=$3`,
+      [reviewerId, reviewerEmail, adminEmail],
+    );
+    await pool.query(
+      "INSERT INTO project_members(id,project_id,user_id,role) VALUES ($1,$2,$3,'owner')",
+      [randomUUID(), projectId, reviewerId],
+    );
+    await pool.query(
+      `INSERT INTO tasks(id,project_id,number,title,prompt,status,triage_status,triage_flag_origin)
+       VALUES ($1,$2,1,'Review pending request','Inbox fixture','Backlog','flagged','explicit')`,
+      [randomUUID(), projectId],
     );
     await pool.query(
       `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
@@ -95,15 +104,22 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     );
   });
 
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.locator('input[name="email"]').fill(reviewerEmail);
+  await page.locator('input[name="password"]').fill(adminPassword);
+  await page.locator('form button[type="submit"]').click();
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+
   await page.goto(
     `/inbox?${new URLSearchParams({ kind: "vault", projectId, agentId })}`,
   );
   const rail = page.locator('nav[aria-label="Sections"]');
   const decisions = rail.getByTestId("inbox-nav-badge");
   const reviews = rail.getByTestId("reviews-nav-badge");
-  const before = await decisions.textContent();
-  const reviewBefore =
-    (await reviews.count()) === 0 ? 0 : Number(await reviews.textContent());
+
+  await expect(decisions).toHaveText("1");
+  await expect(reviews).toHaveCount(0);
   const group = page.getByRole("region", { name: "Knowledge & memory" });
   const pathname = "/memories/index.md";
   const pending = await page.request.post("/api/v1/ext/agent/memory/commands", {
@@ -128,10 +144,10 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     items: [{ id: receipt.proposalId }],
   });
 
-  await expect(reviews).toHaveText(String(reviewBefore + 1), {
+  await expect(reviews).toHaveText("1", {
     timeout: 45_000,
   });
-  await expect(decisions).toHaveText(before!);
+  await expect(decisions).toHaveText("1");
   const preview = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/api/inbox/reviews/vault/${receipt.proposalId}`),
@@ -154,11 +170,8 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   await group.getByRole("button", { name: "Accept selected" }).click();
   expect((await settled).ok()).toBe(true);
   await expect(group.getByText("Accepted", { exact: false })).toBeVisible();
-  if (reviewBefore === 0)
-    await expect(reviews).toHaveCount(0, { timeout: 45_000 });
-  else
-    await expect(reviews).toHaveText(String(reviewBefore), { timeout: 45_000 });
-  await expect(decisions).toHaveText(before!);
+  await expect(reviews).toHaveCount(0, { timeout: 45_000 });
+  await expect(decisions).toHaveText("1");
   await withE2EDb(async (pool) => {
     const evidence = await pool.query(
       `SELECT p.state, r.author->>'runId' AS author_run_id, payload.content
@@ -222,7 +235,9 @@ test.describe("Inbox card redesign", () => {
   test("a Flow review card routes to the code Review Workspace without an inline decision", async ({
     page,
   }) => {
-    const review = loadReviewFixture();
+    // This parked gate has a real Git worktree and stays open after the
+    // diff-scope scenario records its dirty-worktree decision.
+    const reviewRunId = loadFixtures().byKey.reviewDiffScopes.runId;
 
     await page.goto("/inbox");
 
@@ -231,7 +246,7 @@ test.describe("Inbox card redesign", () => {
       .filter({ visible: true })
       .filter({
         has: page.locator(
-          `a[href="/runs/${review.runId}?wb=review&scope=review"]`,
+          `a[href="/runs/${reviewRunId}?wb=review&scope=review"]`,
         ),
       });
 
@@ -242,11 +257,11 @@ test.describe("Inbox card redesign", () => {
     await card.getByRole("link", { name: "Review code" }).click();
 
     await expect(page).toHaveURL(
-      new RegExp(`/runs/${review.runId}\\?wb=review&scope=review`),
+      new RegExp(`/runs/${reviewRunId}\\?wb=review&scope=review`),
     );
     await expect(
       page.getByRole("region", { name: "Review workspace" }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
   });
 
   test("expanding a card lazily fetches and renders its decision context", async ({

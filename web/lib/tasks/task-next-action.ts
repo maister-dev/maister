@@ -4,7 +4,6 @@ import type { RunStatus, TaskStatus } from "@/lib/db/schema";
 // else lives in the "More" menu. Pure — the page renders, it never decides.
 
 export type TaskPrimaryAction =
-  | "qualify"
   | "launch"
   | "blocked"
   | "open_run"
@@ -28,7 +27,6 @@ export type TaskSecondaryAction =
 
 export type TaskNextActionInput = {
   taskStatus: TaskStatus;
-  needsQualification: boolean;
   launchable: boolean;
   latestRun: { status: RunStatus; hasPr: boolean } | null;
   completionReady: boolean;
@@ -102,9 +100,6 @@ function decide(input: TaskNextActionInput): TaskNextAction {
       break;
     case "Backlog":
       break;
-  }
-  if (input.needsQualification) {
-    return { primary: "qualify", secondary: ["queue", "run_agent"] };
   }
 
   return {

@@ -6,7 +6,26 @@
 
 ## Purpose
 
-Qualify independent incoming requests for accepted backlog and automatic delivery, with versioned evidence and human clarification. An authorized explicit manual Launch can execute the selected revision without changing its assessment; its authority is owned by the launch contract.
+A current `ready` assessment admits an incoming request to the backlog automatically.
+A project editor can also choose **Add to backlog** on the task. This takes one
+click, including for `needs_information`, `needs_review`, `not_actionable` and
+unassessed requests. The editor can leave the task in the backlog indefinitely
+or choose **Launch Flow**, select an enabled project Flow and launch it.
+
+### Manual backlog admission
+
+The interactive session submits the displayed input and assessment revisions.
+The server checks current `editTask` access and locks the task before recording
+a `backlog_admitted` activity with the user and both revisions. Repeat clicks
+for the same input produce one entry. A stale submission returns a conflict.
+The task leaves Incoming and appears in the board, work table and portfolio
+backlog count even when its Flow is unset. A new semantic input revision needs
+its own decision. Earlier admissions remain in the activity history.
+
+The original assessment, clarification history and triage flag remain visible.
+This action creates neither an automatic arm nor a Run. Launching requires a
+separate human decision and the [existing launch checks](task-launch-admission.md).
+An editor can still open the full assessment form to publish new findings.
 
 ## Domain entities
 
@@ -109,7 +128,7 @@ all newly created independent requests (UI, GitHub, MCP/API, librarian and
 ordinary agent `task_create` requests)
 start unqualified in Incoming; supplying a Flow does not bypass this. A persisted
 KEY-N intake record is not accepted backlog work. The importer records source and
-imports into Incoming; the triager qualifies once before accepting it. This meets
+imports into Incoming; the triager can qualify it or a project editor can admit it manually. This meets
 the product boundary without duplicating semantic judgments in each transport.
 
 Use a project-owned versioned `taskQualificationPolicy` (`legacy | required`),
@@ -144,7 +163,7 @@ No mandatory ceremonial template for a small clear task. The strict value includ
 All seven dimensions occur exactly once. Only `bug_evidence` may be N/A, and
 only for a non-bug request with an explicit rationale. Each check is
 `pass | fail | unknown | not_applicable` with rationale and evidence; N/A requires
-a justified request-type rule, not an escape from relevance. Decisions:
+a justified request-type rule. The table shows the automatic outcome. A project editor may manually admit any held request for its current input revision.
 
 | Decision            | Meaning / product result                                                                                                                                                                                               |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -317,8 +336,7 @@ importer pending/completion receipt comments and their existing authorization;
 this scope adds no new external message type. Clarification occurs
 in MAIster using the durable task carrier, not an unauthorized GitHub mutation.
 Board/work-table/project/portfolio use the same Incoming-vs-accepted predicates,
-including aggregate counts (current portfolio counts every Backlog row at
-`queries/portfolio.ts:404`). Incoming has URL filters/counts for unassessed/needs info/needs review/not actionable,
+for manual admissions, including the portfolio backlog count. A configured Flow can also make work visible on the board before admission. Incoming has URL filters/counts for unassessed/needs info/needs review/not actionable,
 links to source/assessment/run, specific fix actions and a separate accepted backlog
 count. Task detail shows evidence SHA, freshness and route/launch intent separately.
 EN/RU copy must distinguish “request already satisfied” from “runner failed.”
@@ -349,7 +367,7 @@ older writer to launch them. Stop incompatible old writers at the maintenance ga
 ## Expectations
 
 - **UX-10:** triager verdict, flagged no-op and human escalation complete as valid operational outcomes; authorization/partial/malformed-result failures are visible as failures; human answer resumes one run, explicit requeue remains distinct, downstream Flow runner choice remains distinct, qualification gates automatic launch under UX-D11 while manual Launch follows ADR-200, and pre-update runs keep their snapshots. Both original GitHub intake adopters remain qualified. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
-- **UX-11:** unclear/contradictory/unverified or evidence-backed non-actionable requests from both GitHub variants and ordinary creation stay Incoming and out of automatically accepted backlog and automatic delivery; the read-only operational qualifier remains allowed to examine held intake. A current, evidenced ready decision admits exactly the existing task; launch still follows explicit intent/routing. Unknown is never converted into a false rejection. Missing/malformed assessments cannot authorize automatic delivery. Explicit manual launch remains available under the separate launch contract. Changes invalidate stale qualification; source/decision history and legacy active code work remain intact. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
+- **UX-11:** unclear/contradictory/unverified or evidence-backed non-actionable requests from both GitHub variants and ordinary creation stay Incoming until assessed as ready or manually admitted. Automatic delivery still requires current accepted readiness; the read-only operational qualifier remains allowed to examine held intake. A current, evidenced ready decision admits exactly the existing task; launch still follows explicit intent/routing. Unknown is never converted into a false rejection. Missing/malformed assessments cannot authorize automatic delivery. Explicit manual launch remains available under the separate launch contract. Changes invalidate stale qualification; source/decision history and legacy active code work remain intact. Enforced by the owning services/constraints below and primary acceptance in [traceability](agent-activity-traceability.md).
 
 ## Edge cases
 

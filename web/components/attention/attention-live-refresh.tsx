@@ -3,7 +3,7 @@
 import type { RunStreamLivenessLabels } from "@/components/feedback/run-stream-liveness";
 import type { ReactElement } from "react";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { RunStreamLiveness } from "@/components/feedback/run-stream-liveness";
@@ -32,14 +32,16 @@ export function AttentionLiveRefresh({
   const router = useRouter();
   const { tick, liveness, reconnect } = useAttentionStream(since);
   const seenRef = useRef(0);
+  const [refreshing, startRefresh] = useTransition();
 
   useEffect(() => {
-    if (tick === 0 || tick === seenRef.current) return;
+    if (refreshing || tick === seenRef.current) return;
     seenRef.current = tick;
     // Every tick means something the page shows moved since the render (D7)
     // or since the last tick — including while disconnected.
-    router.refresh();
-  }, [router, tick]);
+    // Keep the latest tick pending until React commits the current server render.
+    startRefresh(() => router.refresh());
+  }, [refreshing, router, tick]);
 
   return (
     <RunStreamLiveness

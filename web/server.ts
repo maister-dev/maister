@@ -46,6 +46,8 @@ async function start(): Promise<void> {
     port > 65_535
   )
     throw new RangeError("PORT must be an integer between 1 and 65535");
+  // Next fetches Server Action redirect results from this server's private origin.
+  process.env.__NEXT_PRIVATE_ORIGIN = `http://127.0.0.1:${port}`;
   const app = next({ dev: false, hostname: "0.0.0.0", port });
 
   await Promise.all([app.prepare(), waitForApplicationLifecycle(60_000)]);

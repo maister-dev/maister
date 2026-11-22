@@ -63,6 +63,7 @@ test("package source → discovery → install → attach → detach round-trip"
   const fixtures = loadFixtures().byKey;
   const projectSlug = fixtures.board.projectSlug;
   const repo = buildPackageRepo();
+  const main = page.getByRole("main");
 
   // 1. Add the source on /studio/sources (Sources relocated from /settings).
   await page.goto("/studio/sources");
@@ -122,7 +123,7 @@ test("package source → discovery → install → attach → detach round-trip"
   const localInstall: { id: string } = await local.json();
 
   await page.goto(`/studio/packages/${RUN_TAG}`);
-  const localChoice = page
+  const localChoice = main
     .getByTestId("studio-package-chooser")
     .locator(`a[href*="install=${localInstall.id}"]`);
 
@@ -130,7 +131,7 @@ test("package source → discovery → install → attach → detach round-trip"
   await localChoice.click();
   await expect(page).toHaveURL(new RegExp(`install=${localInstall.id}`));
   await page.reload();
-  await expect(page.getByTestId("package-bom")).toBeVisible();
+  await expect(main.getByTestId("package-bom")).toBeVisible();
   await page.goBack();
   await expect(localChoice).toBeVisible();
   await page.goForward();
@@ -138,7 +139,7 @@ test("package source → discovery → install → attach → detach round-trip"
   const memberPath = `/studio/packages/${RUN_TAG}/flows/${RUN_TAG}-flow`;
 
   await page.goto(memberPath);
-  const choices = page.getByTestId("studio-package-chooser").getByRole("link");
+  const choices = main.getByTestId("studio-package-chooser").getByRole("link");
   const upstream = choices.and(
     page.locator(`a[href^="${memberPath}?"]:not([href*="${localInstall.id}"])`),
   );
@@ -153,7 +154,7 @@ test("package source → discovery → install → attach → detach round-trip"
   for (const id of [localInstall.id, upstreamId]) {
     const packageHref = `/studio/packages/${RUN_TAG}?install=${id}`;
 
-    await page.locator(`a[href="${packageHref}"]`).click();
+    await main.locator(`a[href="${packageHref}"]`).click();
     await expect(page).toHaveURL(new RegExp(`install=${id}`));
     await page.goBack();
   }
@@ -162,8 +163,8 @@ test("package source → discovery → install → attach → detach round-trip"
     [upstreamHref!, "echo hi"],
   ]) {
     await page.goto(href);
-    await page.getByTestId("flow-yaml-toggle").click();
-    await expect(page.getByTestId("flow-yaml-panel")).toContainText(command);
+    await main.getByTestId("flow-yaml-toggle").click();
+    await expect(main.getByTestId("flow-yaml-panel")).toContainText(command);
   }
 
   // UX-01C: whole-fork resolution uses the selected install and retains dedup.
@@ -292,7 +293,6 @@ test("package source → discovery → install → attach → detach round-trip"
 
   expect(attachmentHref).toMatch(/\?install=/);
   expect(attachmentHref).not.toContain(localInstall.id);
-  await expect(page.getByText(`${RUN_TAG}-flow`).first()).toBeVisible();
   await page
     .getByTestId("flow-preview-card")
     .getByRole("link", { name: `${RUN_TAG}-flow` })

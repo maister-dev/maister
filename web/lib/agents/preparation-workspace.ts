@@ -185,6 +185,7 @@ export async function openAgentPreparation(
   input: {
     runId: string;
     assignmentId: string;
+    turnId?: string;
     repoPath: string | null;
     cwd: string;
     resourceKind: string;

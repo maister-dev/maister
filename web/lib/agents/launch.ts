@@ -297,6 +297,7 @@ import {
 } from "@/lib/capabilities/adapter-home";
 import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import { getDb } from "@/lib/db/client";
+import { startAllocatedRun } from "@/lib/scheduler/start-allocated-run";
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -346,7 +347,6 @@ import {
 } from "@/lib/runs/state-transitions";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import {
-  tryStartRun,
   takeSchedulerLock,
   countLiveRuns,
   effectivePoolCap,
@@ -2583,7 +2583,7 @@ async function launchAgentRunWithAdmission(
 
   if (acceptedExecution) return { runId, status: "Pending" };
 
-  let startResult: Awaited<ReturnType<typeof tryStartRun>>;
+  let startResult: Awaited<ReturnType<typeof startAllocatedRun>>;
 
   try {
     if (workspace === "none") {
@@ -2591,7 +2591,7 @@ async function launchAgentRunWithAdmission(
         recursive: true,
       });
     }
-    startResult = await tryStartRun(runId, { db: _db });
+    startResult = await startAllocatedRun(_db, runId);
   } catch (error) {
     log.error(
       {
@@ -2609,6 +2609,8 @@ async function launchAgentRunWithAdmission(
     );
     throw error;
   }
+
+  if (startResult === "already_started") return { runId, status: "Running" };
 
   log.info(
     {
@@ -4875,6 +4877,7 @@ async function driveAgentSession(
         runId,
         assignmentId,
         ...preparationWorkspace,
+        turnId: agentTurn?.id,
       });
       run = { ...run, ...preparation.run };
       preparationCommit = preparation.operation.resolvedCommit;
@@ -5731,7 +5734,6 @@ async function driveAgentSession(
           turnId: ownedTurn.id,
         });
         handedOff = true;
-        await preparation.release();
       }
 
       return await withoutGitOwnership(async () => {
@@ -5785,24 +5787,27 @@ async function driveAgentSession(
             promptOrdinal: ownedTurn.ordinal,
           },
           async () => createPayload,
-          run.agentKind === "operational" && run.projectId
-            ? {
-                assertCommit: (tx) =>
-                  assertAgentCreateNotRefused(
-                    tx,
-                    runId,
-                    execution.client.assignment.id,
-                  ),
-              }
-            : companyContext && effective.parsed.platformMcp
+          {
+            onAdmitted: preparation?.release,
+            ...(run.agentKind === "operational" && run.projectId
               ? {
-                  bindCredentials: async (tx) =>
-                    appendFacade(
-                      (await retainCompanyAgentSessionCredential(tx, runId))
-                        .secret,
+                  assertCommit: (tx) =>
+                    assertAgentCreateNotRefused(
+                      tx,
+                      runId,
+                      execution.client.assignment.id,
                     ),
                 }
-              : undefined,
+              : companyContext && effective.parsed.platformMcp
+                ? {
+                    bindCredentials: async (tx) =>
+                      appendFacade(
+                        (await retainCompanyAgentSessionCredential(tx, runId))
+                          .secret,
+                      ),
+                  }
+                : {}),
+          },
         );
 
         operationalSpawnStage = "prompt_dispatch";
@@ -5816,6 +5821,11 @@ async function driveAgentSession(
         );
       });
     } catch (originalError) {
+      if (handedOff)
+        await releaseAgentPreparationAfterFailure(preparation, originalError, {
+          ...preparationContext,
+          stage: operationalSpawnStage,
+        });
       if (continuation && !handedOff) throw originalError;
       const err = packageCapture.current
         ? await releaseTaskAgentCaptureAfterFailure(

@@ -219,6 +219,7 @@ function RunnerChip({
         aria-label={accessibleName}
         className="group/runner inline-flex cursor-pointer"
         href="/settings"
+        prefetch={false}
         title={title}
       >
         {pill}

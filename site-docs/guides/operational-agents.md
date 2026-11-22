@@ -269,7 +269,10 @@ Read-only inspection is not a reproduced bug; missing runtime evidence needs rev
 
 An accepted **Ready** assessment moves the task to accepted backlog. **Needs
 information**, **Needs review** and **Not actionable** remain in Incoming with
-specific next actions. These can be successful operational outcomes. Runner/API
+specific next actions until a project editor chooses **Add to backlog** on the task.
+That click accepts the current task revision for planning. Choose **Launch Flow**
+when you want to run it, then select a project Flow if the task has none.
+The Triager’s assessment stays available. Runner/API
 failure is an execution problem and does not establish that a request is invalid.
 Human questions resume the same agent run; explicit requeue is a separate action.
 

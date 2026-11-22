@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+export const E2E_PREWORK_FAILURE_RUNNER = "e2e-prework-unavailable";
+
 export type E2EUserFixture = {
   id: string;
   email: string;
@@ -43,6 +45,8 @@ export type E2EPlatformAgentsFixture = E2EProjectFixture & {
 
 // M37 (ADR-098) orchestrator-loop fixture: a launchable orchestrator flow + its
 // delegate-target worker agent.
+export const E2E_ORCHESTRATOR_SLUG = "e2e-orchestrator";
+
 export type E2EOrchestratorFixture = E2EProjectFixture & {
   workerAgentId: string;
   // ADR-163: the in-repo flow ref the orchestrator delegates a FLOW child to.
@@ -240,6 +244,7 @@ export type E2EM22Fixture = {
   currentNode: string;
   succeededNode: string;
   oversizedFile: string;
+  reader: { email: string; password: string };
   viewerEmail: string;
   viewerPassword: string;
 };
@@ -310,6 +315,11 @@ export type E2EFixtures = {
     registration: E2ERegistrationFixture;
     m17: E2EM17Fixture;
     planReview: E2EPlanReviewFixture;
+    reviewDiffScopes: {
+      runId: string;
+      hitlRequestId: string;
+      worktreePath: string;
+    };
     m19: E2EM19Fixture;
     m16: E2EM16Fixture;
     m22: E2EM22Fixture;

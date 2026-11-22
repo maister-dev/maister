@@ -299,6 +299,18 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
     )
     .toBe("Running");
 
+  // Open the live tail after the initial prompt and usage have been ingested.
+  // The provider holds its next transcript-changing event until instructed.
+  await expect
+    .poll(
+      () =>
+        singleValue<string>(
+          "SELECT host_session_id AS value FROM run_context_usage WHERE run_id=$1 AND node_attempt_id IS NULL AND used_tokens=72000",
+          [runId],
+        ),
+      { timeout: 30_000 },
+    )
+    .toBeTruthy();
   let streamOpens = 0;
   let detailReads = 0;
 
@@ -331,26 +343,14 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
     "aria-valuenow",
     "72000",
   );
-  await expect(context).toContainText("Compacting context");
   expect(streamOpens).toBe(1);
-  const detailReadsBeforeReload = detailReads;
-
-  await page.reload();
-  await expect(context.getByRole("meter")).toHaveAttribute(
-    "aria-valuenow",
-    "72000",
-  );
-  await expect(context).toContainText("Compacting context");
   const hostSessionId = await singleValue<string>(
     "SELECT host_session_id AS value FROM run_sessions WHERE run_id = $1",
     [runId],
   );
 
   // The page boot and the ready catch-up both read the current detail.
-  await expect
-    .poll(() => detailReads)
-    .toBeGreaterThanOrEqual(detailReadsBeforeReload + 2);
-  const initialDetailReads = detailReads;
+  await expect.poll(() => detailReads).toBe(2);
 
   writeFileSync(
     path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-refresh`),
@@ -360,7 +360,18 @@ test("sending while the agent is busy shows a Queued row and the composer stays 
     "aria-valuenow",
     "74000",
   );
-  expect(detailReads).toBe(initialDetailReads);
+  expect(detailReads).toBe(2);
+  writeFileSync(
+    path.join(STUB_SESSIONS_DIR, `${hostSessionId}.context-start`),
+    "",
+  );
+  await expect(context).toContainText("Compacting context");
+  await page.reload();
+  await expect(context.getByRole("meter")).toHaveAttribute(
+    "aria-valuenow",
+    "74000",
+  );
+  await expect(context).toContainText("Compacting context");
   await composer.click();
   const queuedText = "e2e:context-output-limit Queued while the agent works";
 

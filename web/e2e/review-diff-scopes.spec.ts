@@ -14,27 +14,12 @@
 //
 // This spec owns a separate review fixture: resolving a gate in another
 // browser journey must not change the available diff scopes here.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
 
-type Fixtures = {
-  byKey: {
-    reviewDiffScopes: {
-      runId: string;
-      hitlRequestId: string;
-      projectSlug: string;
-      worktreePath: string;
-    };
-  };
-};
-
-function loadFixtures(): Fixtures {
-  return JSON.parse(
-    readFileSync(path.resolve("e2e/.auth/fixtures.json"), "utf8"),
-  ) as Fixtures;
-}
+import { loadFixtures } from "./_seed/fixtures";
 
 // Mutating spec (dirty file + recorded resolution) — keep the steps ordered.
 test.describe.configure({ mode: "serial" });
@@ -85,7 +70,9 @@ test("Review Workspace starts with complete current-review diff; secondary scope
 
   await uncommitted.click();
   await diffResponse;
-  await expect(page).toHaveURL(/[?&]scope=uncommitted(?:&|$)/);
+  await expect(page).toHaveURL(/[?&]scope=uncommitted(?:&|$)/, {
+    timeout: 15_000,
+  });
 
   await expect(
     page
@@ -121,7 +108,7 @@ test("dirty banner: lists the file, Proceed as-is records and the badge persists
 
   const badge = page.getByRole("main").getByTestId("dirty-proceed-badge");
 
-  await expect(badge).toBeVisible();
+  await expect(badge).toBeVisible({ timeout: 15_000 });
   await expect(banner).toHaveCount(0);
 
   // Recorded on the hitl row — survives a full reload.

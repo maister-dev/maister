@@ -18,6 +18,7 @@ import {
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import { readStubSessionRecords } from "./_seed/session-records";
 
+import { qualificationFixture } from "@/test-support/task-qualification";
 import { git } from "@/test-support/git-fixture";
 
 type Task = Readonly<{ taskId: string; number: number; title: string }>;
@@ -71,6 +72,117 @@ test.describe("Manual task admission through the real browser and controlled pro
       expect([200, 409], await response.text()).toContain(response.status());
     }
   });
+
+  for (const [decision, label] of [
+    ["needs_review", "Evidence review needed"],
+    ["needs_information", "Requester information needed"],
+  ] as const) {
+    test(`manually admits ${decision} and launches its first Flow from task detail`, async ({
+      page,
+    }) => {
+      const title = "Manually accept unresolved bug evidence";
+      const created = await page.request.post(
+        `/api/projects/${fixture.slug}/tasks`,
+        {
+          data: {
+            title,
+            prompt:
+              "Verify the reported behavior against the current implementation.",
+          },
+        },
+      );
+
+      expect(created.status()).toBe(201);
+      const task = (await created.json()) as Omit<Task, "title">;
+
+      const value = qualificationFixture();
+      const held = await page.request.post(
+        `/api/projects/${fixture.slug}/tasks/${task.taskId}/qualification`,
+        {
+          data: {
+            requestKey: randomUUID(),
+            expectedInputRevision: 1,
+            expectedQualificationRevision: null,
+            enqueue: false,
+            qualification: {
+              ...value,
+              decision,
+              checks: value.checks.map((check) =>
+                check.dimension === "acceptance"
+                  ? {
+                      ...check,
+                      state: "unknown",
+                      rationale: "Runtime evidence is missing.",
+                    }
+                  : check,
+              ),
+              reasonCodes: ["acceptance_unclear"],
+              nextActions: ["Reproduce the reported behavior."],
+            },
+          },
+        },
+      );
+
+      expect(held.status(), await held.text()).toBe(200);
+      await page.goto(
+        `/projects/${fixture.slug}/tasks/${task.number}#task-qualification`,
+      );
+      const actions = page
+        .getByTestId("task-primary-action")
+        .filter({ visible: true });
+
+      await expect(page.getByTestId("task-qualification")).toContainText(label);
+      await actions.getByRole("button", { name: "Add to backlog" }).click();
+      await expect(actions).toContainText("Added to backlog");
+      expect(await launchRows(task.taskId)).toEqual([]);
+      const assessment = await withE2EDb(
+        async (pool) =>
+          (
+            await pool.query(
+              "SELECT q.value->>'decision' AS decision,t.flow_id,t.launch_mode FROM tasks t JOIN task_qualifications q ON q.id=t.current_qualification_id WHERE t.id=$1",
+              [task.taskId],
+            )
+          ).rows,
+      );
+
+      expect(assessment).toEqual([
+        { decision, flow_id: null, launch_mode: null },
+      ]);
+      await page.reload();
+      await actions.getByRole("button", { name: "Launch Flow" }).click();
+      const dialog = page.getByTestId("task-launch-dialog");
+
+      await chooseLaunchOption(
+        page,
+        dialog,
+        /Flow/,
+        new RegExp(fixture.flowRef),
+      );
+      const accepted = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().endsWith("/api/task-launch-intents"),
+      );
+
+      await dialog.getByRole("button", { name: "Launch", exact: true }).click();
+      expect((await accepted).status()).toBe(202);
+      await expect
+        .poll(
+          async () =>
+            withE2EDb(
+              async (pool) =>
+                (
+                  await pool.query(
+                    "SELECT r.flow_id,i.basis->>'kind' AS basis FROM runs r JOIN task_launch_intents i ON i.run_id=r.id JOIN hitl_requests h ON h.run_id=r.id WHERE r.task_id=$1 AND h.step_id='review' AND h.responded_at IS NULL",
+                    [task.taskId],
+                  )
+                ).rows,
+            ),
+          { timeout: 30000 },
+        )
+        .toEqual([{ flow_id: fixture.flowId, basis: "manual" }]);
+    });
+  }
 
   test("L1 keeps one-run drafts independent of project Save and Clear", async ({
     page,

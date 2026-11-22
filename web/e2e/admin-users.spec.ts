@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { test, expect } from "@playwright/test";
 
 import { singleValue } from "./_seed/db";
@@ -93,10 +95,23 @@ test("admin creates a user with a one-time temp password", async ({ page }) => {
   expect(dbMustChange).toBe(true);
 });
 
-test("admin edits a user's name and email", async ({ page }) => {
-  const { users } = loadFixtures();
+test("admin edits a user's name and email", async ({ page, request }) => {
+  const tag = randomUUID();
+  const originalName = "E2E Rename Target";
+  const originalEmail = `e2e-rename-${tag}@maister.local`;
+  const created = await request.post("/api/admin/users", {
+    data: {
+      name: originalName,
+      email: originalEmail,
+      role: "member",
+      status: "active",
+    },
+  });
+
+  expect(created.status()).toBe(201);
+  const { id } = (await created.json()) as { id: string };
   const newName = "E2E Renamed Member";
-  const newEmail = `e2e-renamed-${Date.now()}@maister.local`;
+  const newEmail = `e2e-renamed-${tag}@maister.local`;
 
   await page.goto("/admin/users");
   await expect(
@@ -105,13 +120,11 @@ test("admin edits a user's name and email", async ({ page }) => {
 
   await page
     .getByRole("searchbox", { name: "Search by name or email…" })
-    .fill(users.member.email);
-  await expect(
-    page.getByRole("table").getByText(users.member.email),
-  ).toBeVisible();
+    .fill(originalEmail);
+  await expect(page.getByRole("table").getByText(originalEmail)).toBeVisible();
 
   await page
-    .getByRole("button", { name: `Edit · ${users.member.name}`, exact: true })
+    .getByRole("button", { name: `Edit · ${originalName}`, exact: true })
     .click();
 
   const dialog = page.getByRole("dialog");
@@ -135,11 +148,11 @@ test("admin edits a user's name and email", async ({ page }) => {
 
   const dbName = await singleValue<string>(
     "SELECT name AS value FROM users WHERE id = $1",
-    [users.member.id],
+    [id],
   );
   const dbEmail = await singleValue<string>(
     "SELECT email AS value FROM users WHERE id = $1",
-    [users.member.id],
+    [id],
   );
 
   expect(dbName).toBe(newName);

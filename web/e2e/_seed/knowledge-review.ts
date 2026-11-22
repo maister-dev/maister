@@ -22,6 +22,7 @@ export async function prepareKnowledgeReview(
   title: string,
   reason: string,
   locale: keyof typeof reviewLabels,
+  expectedAssertion?: string,
 ): Promise<Locator> {
   const labels = reviewLabels[locale];
 
@@ -29,6 +30,11 @@ export async function prepareKnowledgeReview(
   const preview = page.getByRole("dialog", { name: title, exact: true });
 
   await expect(preview).toBeVisible();
+  if (expectedAssertion !== undefined) {
+    await expect(
+      preview.getByText(expectedAssertion, { exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+  }
   await preview
     .getByRole("button", { name: labels.close, exact: true })
     .click();

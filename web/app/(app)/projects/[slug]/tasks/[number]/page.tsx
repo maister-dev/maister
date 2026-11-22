@@ -18,6 +18,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import { TaskBacklogAdmission } from "@/components/agents/task-backlog-admission";
 import { TaskQualificationControl } from "@/components/agents/task-qualification-control";
 import { getTaskQualificationSummaries } from "@/lib/tasks/qualification-queries";
 import { LaunchPopover } from "@/components/board/launch-popover";
@@ -230,6 +231,7 @@ export default async function TaskDetailPage({
   const [
     t,
     tLaunch,
+    tQualification,
     tBoard,
     tTiming,
     tRun,
@@ -240,6 +242,7 @@ export default async function TaskDetailPage({
   ] = await Promise.all([
     getTranslations("taskDetail"),
     getTranslations("launch"),
+    getTranslations("taskQualification"),
     getTranslations("board"),
     getTranslations("runTiming"),
     getTranslations("run"),
@@ -449,6 +452,7 @@ export default async function TaskDetailPage({
       clarification_cancelled: t("event.clarificationCancelled"),
       task_completed: t("event.taskCompleted"),
       delivery_completion_not_applied: t("event.deliveryCompletionNotApplied"),
+      backlog_admitted: t("event.backlogAdmitted"),
       source_detached: t("event.sourceDetached"),
     } satisfies Record<TaskActivityEventKind, string>,
   };
@@ -547,7 +551,6 @@ export default async function TaskDetailPage({
       ]
     : [];
 
-  // A current, ready assessment is the only one that may stay collapsed.
   const qualificationSettled =
     qualification?.decision === "ready" &&
     qualification.freshness === "current" &&
@@ -562,8 +565,6 @@ export default async function TaskDetailPage({
     detail.runs.find((run) => run.id === detail.resolvingRunId) ?? null;
   const nextAction = taskNextAction({
     taskStatus: detail.task.status as TaskStatus,
-    needsQualification:
-      Boolean(qualification?.required) && !qualificationSettled,
     launchable: launchDisabledReason === undefined,
     latestRun: latestRun
       ? { status: latestRun.status as RunStatus, hasPr: latestPr !== null }
@@ -595,12 +596,6 @@ export default async function TaskDetailPage({
     const linkClass = primary ? actionLink : secondaryLink;
 
     switch (action) {
-      case "qualify":
-        return (
-          <a className={linkClass} href="#task-qualification">
-            {t("action.qualify")}
-          </a>
-        );
       case "launch":
         return canAct ? (
           <LaunchPopover
@@ -739,7 +734,9 @@ export default async function TaskDetailPage({
               {detail.keyRef}
             </span>
             <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
-              {t(`status.${detail.task.status}`)}
+              {qualification?.backlogAdmission === "available"
+                ? tQualification("incomingTask")
+                : t(`status.${detail.task.status}`)}
             </span>
             {detail.task.source ? (
               <TaskSourceChip
@@ -786,7 +783,28 @@ export default async function TaskDetailPage({
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             {/* D10: one primary next action; the rest live under "More". */}
-            <div data-testid="task-primary-action">
+            <div
+              className="flex flex-wrap items-center gap-2"
+              data-testid="task-primary-action"
+              id={
+                qualification?.backlogAdmission
+                  ? "task-qualification"
+                  : undefined
+              }
+            >
+              {qualification?.backlogAdmission === "available" && canAct ? (
+                <TaskBacklogAdmission
+                  endpoint={`/api/projects/${slug}/tasks/${detail.task.id}/backlog-admission`}
+                  inputRevision={qualification.inputRevision}
+                  qualificationRevision={qualification.qualificationRevision}
+                />
+              ) : null}
+              {qualification?.backlogAdmission === "admitted" &&
+              detail.task.status === "Backlog" ? (
+                <span className="text-xs text-mute" role="status">
+                  {tQualification("backlogAdmitted")}
+                </span>
+              ) : null}
               {renderAction(nextAction.primary, true)}
             </div>
             {nextAction.secondary.length > 0 ? (
@@ -972,12 +990,17 @@ export default async function TaskDetailPage({
         <details
           className="rounded-lg border border-line-soft bg-paper p-3"
           data-testid="task-qualification-section"
-          id="task-qualification"
-          open={!qualificationSettled}
+          id={qualification.backlogAdmission ? undefined : "task-qualification"}
+          open={
+            !qualificationSettled &&
+            qualification.backlogAdmission !== "admitted"
+          }
         >
           <summary className="cursor-pointer text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
             {t("qualificationTitle")}
-            {qualification.decision ? ` · ${qualification.decision}` : ""}
+            {qualification.decision
+              ? ` · ${tQualification(`decision.${qualification.decision}`)}`
+              : ""}
           </summary>
           <div className="mt-2">
             <TaskQualificationControl

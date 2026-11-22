@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 
 type M27Fixture = {
   projectSlug: string;
@@ -17,22 +17,20 @@ function loadM27Fixture(): M27Fixture {
   return all.byKey.m27;
 }
 
-function lifecycleActions(page: Page): Locator {
-  return page
-    .locator("main")
+function lifecycleActions(scope: Locator): Locator {
+  return scope
     .getByTestId("workbench-lifecycle-actions")
-    .filter({ has: page.getByRole("button", { name: "Archive" }) })
-    .first();
+    .filter({ visible: true });
 }
 
 // ADR-181 D16: a card keeps Archive/Drop and deep-links the git actions into
 // the run's git panel; the run and scratch detail host the panel itself (Commit
 // and the handoff branch live there now — the Export dialog is gone).
 async function expectLifecycleActions(
-  page: Page,
+  scope: Locator,
   surface: "card" | "detail",
 ): Promise<void> {
-  const actions = lifecycleActions(page);
+  const actions = lifecycleActions(scope);
 
   await expect(actions).toBeVisible();
   await expect(actions.getByRole("button", { name: "Archive" })).toBeVisible();
@@ -61,27 +59,42 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await expect(
     page.getByRole("link", { name: "MAIster E2E M27 Lifecycle" }),
   ).toBeVisible();
-  await expectLifecycleActions(page, "card");
+  await expectLifecycleActions(
+    page
+      .locator("article li")
+      .filter({ has: page.locator(`a[href="/runs/${fx.flowRunId}"]`) }),
+    "card",
+  );
 
   await page.goto(`/projects/${fx.projectSlug}`);
   await expect(
     page.getByRole("heading", { name: /M27 Lifecycle/i }),
   ).toBeVisible();
-  await expectLifecycleActions(page, "card");
+  await page.getByRole("link", { name: "Runs and working copies" }).click();
+  const workspaces = page
+    .getByTestId("project-workspaces")
+    .filter({ visible: true });
+
+  await workspaces.getByRole("link", { name: /E2E M27 lifecycle/i }).click();
+  await expectLifecycleActions(workspaces, "card");
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
   await expect(page).toHaveURL(new RegExp(`/scratch-runs/${fx.scratchRunId}$`));
-  await expectLifecycleActions(page, "detail");
+  await page.getByRole("button", { name: "Open inspector" }).click();
+  await expectLifecycleActions(
+    page.getByTestId("scratch-inspector-actions"),
+    "detail",
+  );
 
   await page.goto(`/runs/${fx.flowRunId}`);
-  await expectLifecycleActions(page, "detail");
+  await expectLifecycleActions(page.getByTestId("run-shell-main"), "detail");
   await testInfo.attach("m27-run-detail-desktop", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectLifecycleActions(page, "detail");
+  await expectLifecycleActions(page.getByTestId("run-shell-main"), "detail");
   await testInfo.attach("m27-run-detail-mobile", {
     body: await page.screenshot({ fullPage: true }),
     contentType: "image/png",
@@ -89,7 +102,9 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // Commit and the handoff branch go through the run's git panel.
-  await lifecycleActions(page).getByTestId("workbench-git-open").click();
+  await lifecycleActions(page.getByTestId("run-shell-main"))
+    .getByTestId("workbench-git-open")
+    .click();
   await expect(page.getByTestId("git-panel")).toBeVisible();
   await page.getByTestId("git-panel-action-snapshotCommit").click();
   await page
@@ -120,7 +135,9 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   ]);
   await expect(handoff).toContainText("git -C");
 
-  await lifecycleActions(page).getByRole("button", { name: "Archive" }).click();
+  await lifecycleActions(page.getByTestId("run-shell-main"))
+    .getByRole("button", { name: "Archive" })
+    .click();
   let dialog = page.getByRole("dialog", { name: "Archive workbench" });
 
   await expect(dialog).toBeVisible();
@@ -134,8 +151,13 @@ test("workbench lifecycle actions render across surfaces and execute handoff flo
   ]);
 
   await page.goto(`/scratch-runs/${fx.scratchRunId}`);
-  await expectLifecycleActions(page, "detail");
-  await lifecycleActions(page).getByRole("button", { name: "Drop" }).click();
+  await page.getByRole("button", { name: "Open inspector" }).click();
+  const scratchActions = page.getByTestId("scratch-inspector-actions");
+
+  await expectLifecycleActions(scratchActions, "detail");
+  await lifecycleActions(scratchActions)
+    .getByRole("button", { name: "Drop" })
+    .click();
   dialog = page.getByRole("dialog", { name: "Drop workbench" });
   await expect(dialog).toBeVisible();
   const dropResponsePromise = page.waitForResponse(

@@ -20722,6 +20722,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/TaskLaunchError"
 
+  /api/projects/{slug}/tasks/{taskId}/backlog-admission:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: taskId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: admitTaskToBacklog
+      summary: Manually admit the displayed incoming request revision to the backlog
+      description: Same-origin session with current editTask access. Records one activity per task and semantic input revision. Keeps the assessment and execution settings.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedInputRevision, expectedQualificationRevision]
+              properties:
+                expectedInputRevision: { type: integer, minimum: 1 }
+                expectedQualificationRevision: { type: integer, nullable: true, minimum: 1 }
+      responses:
+        "204": { description: Admission recorded or already present. }
+        "400": { description: Invalid request. }
+        "401": { description: Active session required. }
+        "403": { description: Origin or current authority refused. }
+        "404": { description: Task unavailable in this project. }
+        "409": { description: "Displayed input, assessment or intake state changed." }
+
   /api/projects/{slug}/tasks/{taskId}/human-assessment:
     parameters:
       - { name: slug, in: path, required: true, schema: { type: string } }
@@ -28885,6 +28913,10 @@ components:
         - blockedReason
         - nextActions
       properties:
+        backlogAdmission:
+          type: string
+          enum: [available, admitted]
+          description: Current input can be admitted manually or already carries a manual backlog decision. Execution authority is checked independently.
         sourceFailure:
           type: object
           additionalProperties: false

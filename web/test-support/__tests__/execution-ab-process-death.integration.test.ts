@@ -891,14 +891,23 @@ it("D3: connection loss after projection claim rolls back effect and cursor; a s
   const rolledBack = await consumer();
 
   expect(rolledBack.last_run_sequence).toBe(before.last_run_sequence);
-  // `before` is read with the writer ALREADY blocked, so equality alone would
-  // also hold for a projector that had committed this cursor in an earlier
-  // transaction. Anchor it to the sealed event instead: a cursor that rolled
-  // back must still sit BELOW the sequence whose projection was torn down.
-  expect(event.sequence).toBeTruthy();
-  expect(Number(rolledBack.last_run_sequence)).toBeLessThan(
-    Number(event.sequence),
+  // The SSE id identifies a position on the host stream. The projector
+  // advances on the independently allocated canonical sequence within a run.
+  const sealedEvents = await fixture.database.pool.query<{
+    run_sequence: string;
+  }>(
+    `SELECT e.run_sequence FROM execution_events e
+     JOIN execution_event_streams s ON s.id = e.event_stream_id
+     WHERE e.run_id = $1 AND e.event_type = 'runtime_object.available'
+       AND e.payload->>'objectId' = $2 AND s.stream_id = $3 AND e.host_sequence = $4
+       AND e.run_sequence IS NOT NULL`,
+    [runId, objectId, event.streamId, event.sequence],
   );
+
+  expect(sealedEvents.rows).toHaveLength(1);
+  const sealedSequence = BigInt(sealedEvents.rows[0]!.run_sequence);
+
+  expect(BigInt(rolledBack.last_run_sequence!)).toBeLessThan(sealedSequence);
   expect(
     (
       await fixture.database.pool.query(
@@ -932,8 +941,8 @@ it("D3: connection loss after projection claim rolls back effect and cursor; a s
   expect(applied[0]!.consumer_owner).not.toBe(before.claim_owner);
   const after = await consumer();
 
-  expect(BigInt(after.last_run_sequence!)).toBeGreaterThan(
-    BigInt(before.last_run_sequence!),
+  expect(BigInt(after.last_run_sequence!)).toBeGreaterThanOrEqual(
+    sealedSequence,
   );
   const canonical = await fixture.database.pool.query<{ count: string }>(
     "SELECT count(*) FROM execution_events WHERE run_id=$1 AND event_type='runtime_object.available' AND payload->>'objectId'=$2",
@@ -941,7 +950,6 @@ it("D3: connection loss after projection claim rolls back effect and cursor; a s
   );
 
   expect(canonical.rows[0]!.count).toBe("1");
-  expect(event.sequence).toBeTruthy();
   expect(await fixture.web.logTail(4 * 1024 * 1024)).toMatch(
     /projection.*(failed|failure|unavailable)|terminated|connection.*closed/i,
   );

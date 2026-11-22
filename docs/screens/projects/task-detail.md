@@ -40,8 +40,7 @@ Run page tabs directly.
    otherwise) with "Show full statement"; acceptance criteria reachable; editing
    unchanged.
 4. **Relations** — list; create form behind "Add relation".
-5. **Qualification** — compact summary; details/revisions on demand; blocking
-   problems stay expanded.
+5. **Qualification** — compact summary; open for unassessed or held incoming work. Manual backlog admission collapses the assessment and retains access to its evidence.
 6. **Next launch settings** — collapsed, labeled as defaults for the next
    attempt.
 7. **Run history** — localized status chip; Duration and Execution (right-aligned,
@@ -61,7 +60,7 @@ State → primary / secondary actions (owned by `taskNextAction`):
 
 | Task state | Primary | Secondary ("More") |
 | --- | --- | --- |
-| Needs qualification | Qualification action or blocking reason | Queue controls, run agent |
+| Incoming, qualification missing or held | Add to backlog and Launch Flow (or its blocker reason) | Send to triage, run agent, queue controls |
 | Backlog, launchable | Launch | Send to triage, run agent, queue controls |
 | Backlog, blocked | Blocker reason + link | Send to triage, run agent, queue controls |
 | InFlight, Running / Pending | Open Run | Queue controls, run agent |

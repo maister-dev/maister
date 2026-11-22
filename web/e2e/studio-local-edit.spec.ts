@@ -201,7 +201,7 @@ async function installPackageFromRepo(
   page: Page,
   repo: string,
   tag: string,
-): Promise<void> {
+): Promise<string> {
   await page.goto("/studio/sources");
   await page.getByRole("button", { name: "Add package source" }).click();
   const dialog = page.getByRole("dialog");
@@ -232,10 +232,23 @@ async function installPackageFromRepo(
   // source kind rather than switching to the `file://` form its siblings use.
   const row = page.locator("tr", { hasText: tag });
 
+  const installed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/admin/package-installs" &&
+      response.request().method() === "POST",
+  );
+
   await row.getByRole("button", { name: /· install$/u }).click();
+  const receipt = await installed;
+
+  expect(receipt.status()).toBe(201);
+  const { id } = (await receipt.json()) as { id: string };
+
   await expect(row.getByRole("button", { name: /· installed$/u })).toBeVisible({
     timeout: 30_000,
   });
+
+  return id;
 }
 
 async function selectGraphNode(page: Page, nodeId: string): Promise<void> {
@@ -491,11 +504,11 @@ test("fork an installed package to local → land in the /studio/edit editor", a
   const repo = buildPackageRepo();
 
   // Install the package (source → discovery → install), mirroring package-management.
-  await installPackageFromRepo(page, repo, RUN_TAG);
+  const installId = await installPackageFromRepo(page, repo, RUN_TAG);
 
   // Fork-to-local from the package viewer → clone into a local package + open
   // the editor (the route changes to /studio/edit/{localPackageId}).
-  await page.goto(`/studio/packages/${RUN_TAG}`);
+  await page.goto(`/studio/packages/${RUN_TAG}?install=${installId}`);
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   expect(page.url()).toMatch(/\/studio\/edit\//);
@@ -534,9 +547,9 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   test.setTimeout(180_000);
   const repo = buildReferencePickerPackageRepo();
 
-  await installPackageFromRepo(page, repo, PICKER_RUN_TAG);
+  const installId = await installPackageFromRepo(page, repo, PICKER_RUN_TAG);
 
-  await page.goto(`/studio/packages/${PICKER_RUN_TAG}`);
+  await page.goto(`/studio/packages/${PICKER_RUN_TAG}?install=${installId}`);
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
 
@@ -608,9 +621,9 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   test.setTimeout(180_000);
   const repo = buildStructuredControlsPackageRepo();
 
-  await installPackageFromRepo(page, repo, STRUCT_RUN_TAG);
+  const installId = await installPackageFromRepo(page, repo, STRUCT_RUN_TAG);
 
-  await page.goto(`/studio/packages/${STRUCT_RUN_TAG}`);
+  await page.goto(`/studio/packages/${STRUCT_RUN_TAG}?install=${installId}`);
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
 

@@ -13,31 +13,7 @@ import { test, expect } from "@playwright/test";
 import { singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
-import {
-  readTaskLaunchReceipt,
-  waitForTaskLaunchRun,
-} from "./_seed/task-launch";
-import {
-  readStubSessionRecords,
-  type StubSessionRecord,
-} from "./_seed/session-records";
-
-async function waitForSession(
-  predicate: (record: StubSessionRecord) => boolean,
-  timeoutMs = 30_000,
-): Promise<StubSessionRecord> {
-  const deadline = Date.now() + timeoutMs;
-
-  for (;;) {
-    const match = readStubSessionRecords(STUB_SESSIONS_DIR).find(predicate);
-
-    if (match) return match;
-    if (Date.now() > deadline) {
-      throw new Error("stub supervisor session record did not appear");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
+import { launchTaskAgent } from "./_seed/task-agent-launch";
 
 test("repo_read dirt quarantines the agent, comments the task, and refuses relaunch", async ({
   page,
@@ -46,38 +22,7 @@ test("repo_read dirt quarantines the agent, comments the task, and refuses relau
   const q = fx.quarantine;
 
   await page.goto(`/projects/${q.projectSlug}/tasks/${q.taskNumber}`);
-  // D10: "Run agent" is a secondary action under "More".
-  await page
-    .getByRole("main")
-    .getByTestId("task-more-actions")
-    .locator("> summary")
-    .click();
-  await page
-    .getByRole("combobox", { name: "Agent to run" })
-    .selectOption(fx.auditorAgentId);
-
-  const launchResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/task-launch-intents" &&
-      response.request().method() === "POST",
-  );
-
-  await page.getByRole("button", { name: "Run agent" }).click();
-  await page
-    .getByRole("region", {
-      name: "Launch this agent for the task",
-      exact: true,
-    })
-    .getByRole("button", { name: "Launch", exact: true })
-    .click();
-
-  const response = await launchResponse;
-
-  const receipt = await readTaskLaunchReceipt(response);
-  const runId = await waitForTaskLaunchRun(receipt);
-  const session = await waitForSession(
-    (record) => record.request.runId === runId,
-  );
+  const session = await launchTaskAgent(page, fx.auditorAgentId);
 
   // The held stream is the injection window: dirty the parent checkout the
   // repo_read run is pointed at, then let the session exit.

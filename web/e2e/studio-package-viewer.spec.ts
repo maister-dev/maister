@@ -112,8 +112,16 @@ test("studio package viewer: tabbed groups, hidden-empty tabs, card → read-onl
     .filter({ hasText: `${RUN_TAG}-flow` });
 
   await expect(card).toBeVisible();
-  await card.getByRole("link", { name: `${RUN_TAG}-flow` }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/studio/packages/${RUN_TAG}/flows/`),
-  );
+  const flowId = `${RUN_TAG}-flow`;
+  const flowUrl = new URL(page.url());
+
+  flowUrl.pathname += `/flows/${flowId}`;
+  const link = card.getByRole("link", { name: flowId, exact: true });
+
+  await expect(link).toHaveAttribute("href", flowUrl.pathname + flowUrl.search);
+  await link.click();
+  await page.waitForURL(flowUrl.href);
+  await expect(
+    page.getByRole("heading", { level: 1, name: flowId }),
+  ).toBeVisible();
 });
