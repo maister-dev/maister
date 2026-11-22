@@ -9684,6 +9684,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "delivery_completion_not_applied",
   // ADR-206: an audited human detach of the task's external source binding.
   "source_detached",
+  "backlog_admitted",
 ] as const;
 
 export type TaskActivityEventKind = (typeof TASK_ACTIVITY_EVENT_KINDS)[number];
@@ -9726,8 +9727,11 @@ export const taskActivity = pgTable(
     ),
     eventKindCheck: check(
       "task_activity_event_kind_check",
-      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled', 'task_completed', 'delivery_completion_not_applied', 'source_detached')`,
+      sql`${t.eventKind} in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined', 'experiment_concluded', 'run_pr_merged', 'evaluation_decided', 'agent_summon_suppressed', 'statement_accepted', 'clarification_requested', 'clarification_answered', 'clarification_cancelled', 'task_completed', 'delivery_completion_not_applied', 'source_detached', 'backlog_admitted')`,
     ),
+    uniqBacklogAdmission: uniqueIndex("task_activity_backlog_admission_uq")
+      .on(t.taskId, sql`(${t.payload}->>'inputRevision')`)
+      .where(sql`${t.eventKind} = 'backlog_admitted'`),
     // ADR-151: the structural backstop for at-least-once event redelivery —
     // the consumer inserts with onConflictDoNothing instead of reading first,
     // so there is no TOCTOU window between "already noted?" and the insert.

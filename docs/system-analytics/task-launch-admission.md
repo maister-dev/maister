@@ -61,6 +61,13 @@ sequenceDiagram
   W->>W: Execute frozen input through normal Flow gates
 ```
 
+For an incoming task, **Add to backlog** records the editor’s decision for the
+current input revision. **Launch Flow** opens the existing manual launch dialog
+even when the task has no assigned Flow or the qualifier requested more information.
+The operator selects a Flow and uses the resolved settings or edits them before
+launch. A prior backlog decision is optional for manual execution. Automation
+continues to require its own current qualification and authority.
+
 ### Authority matrix
 
 | Operation                    | Admission                                                                                                       | Lifetime                                                         |

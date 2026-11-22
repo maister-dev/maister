@@ -8,7 +8,6 @@ import {
 function input(over: Partial<TaskNextActionInput> = {}): TaskNextActionInput {
   return {
     taskStatus: "Backlog",
-    needsQualification: false,
     launchable: true,
     latestRun: null,
     completionReady: false,
@@ -26,11 +25,6 @@ describe("taskNextAction (D10 state → actions)", () => {
   it.each<
     [string, Partial<TaskNextActionInput>, ReturnType<typeof taskNextAction>]
   >([
-    [
-      "needs qualification",
-      { needsQualification: true },
-      { primary: "qualify", secondary: ["queue", "run_agent"] },
-    ],
     [
       "launchable Backlog",
       {},

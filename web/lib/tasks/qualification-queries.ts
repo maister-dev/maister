@@ -12,6 +12,10 @@ import {
   loadTaskQualificationInput,
   taskQualificationReceipt,
 } from "@/lib/tasks/qualification";
+import {
+  incomingWorkPredicate,
+  manualBacklogAdmissionPredicate,
+} from "@/lib/tasks/qualification-predicates";
 import { taskQualifications } from "@/lib/db/schema";
 import {
   encodeAgentActivityCursor,
@@ -20,6 +24,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 
 export type TaskQualificationSummary = {
+  backlogAdmission?: "available" | "admitted";
   required: boolean;
   mode: "legacy" | "required" | "execution_child";
   inputRevision: number;
@@ -59,22 +64,27 @@ export async function getTaskQualificationSummaries(
     next_actions: string[] | null;
     candidate: TaskQualificationReceipt | null;
     previously_accepted: boolean;
+    backlog_admission: NonNullable<
+      TaskQualificationSummary["backlogAdmission"]
+    > | null;
     source_failure: TaskQualificationSummary["sourceFailure"] | null;
     source_input_digest: string | null;
   }>(sql`
-    SELECT t.id,t.project_id,t.qualification_mode mode,t.qualification_input_revision input_revision,
+    SELECT tasks.id,tasks.project_id,tasks.qualification_mode mode,tasks.qualification_input_revision input_revision,
+      CASE WHEN ${manualBacklogAdmissionPredicate()} THEN 'admitted'
+           WHEN ${incomingWorkPredicate()} THEN 'available' END backlog_admission,
       q.id qualification_id,q.revision qualification_revision,q.value->>'decision' decision,
       q.publication_state state,q.input_revision assessment_input_revision,q.value->'nextActions' next_actions,
-      EXISTS(SELECT 1 FROM task_qualifications prior WHERE prior.task_id=t.id AND prior.project_id=t.project_id AND prior.publication_state='accepted') previously_accepted,
+      EXISTS(SELECT 1 FROM task_qualifications prior WHERE prior.task_id=tasks.id AND prior.project_id=tasks.project_id AND prior.publication_state='accepted') previously_accepted,
       (SELECT jsonb_build_object('qualificationId',c.id,'inputRevision',c.input_revision,
         'qualificationRevision',c.revision,'publicationState',c.publication_state,
         'decision',c.value->>'decision','publicationReason',c.publication_reason)
-       FROM task_qualifications c WHERE c.task_id=t.id AND c.input_revision=t.qualification_input_revision
+       FROM task_qualifications c WHERE c.task_id=tasks.id AND c.input_revision=tasks.qualification_input_revision
          AND c.author_kind='agent_run' AND c.publication_state IN ('candidate','rejected')
        ORDER BY c.revision DESC LIMIT 1) candidate,
       CASE WHEN source.status IN ('Failed','Crashed')
         AND length(source.id) BETWEEN 1 AND 256 AND source.id ~ '^[A-Za-z0-9_-]+$'
-        AND source.qualification_snapshot->'inputRevision'=to_jsonb(t.qualification_input_revision)
+        AND source.qualification_snapshot->'inputRevision'=to_jsonb(tasks.qualification_input_revision)
         AND jsonb_typeof(source.qualification_snapshot->'inputDigest')='string'
         AND source.qualification_snapshot->>'inputDigest' ~ '^[a-f0-9]{64}$'
       THEN CASE WHEN jsonb_typeof(source.operational_terminal->'infrastructureFailure')='object'
@@ -95,14 +105,14 @@ export async function getTaskQualificationSummaries(
       ELSE jsonb_build_object('runId',source.id,'stage',null,'causeCode',null,'modelStarted',null) END
       ELSE NULL END source_failure,
       source.qualification_snapshot->>'inputDigest' source_input_digest
-    FROM tasks t LEFT JOIN task_qualifications q ON q.id=t.current_qualification_id AND q.task_id=t.id
+    FROM tasks LEFT JOIN task_qualifications q ON q.id=tasks.current_qualification_id AND q.task_id=tasks.id
     LEFT JOIN LATERAL (
       SELECT r.id,r.status,r.operational_terminal,r.task_qualification_snapshot qualification_snapshot FROM runs r
-      WHERE r.task_id=t.id AND r.project_id=t.project_id AND r.agent_kind='operational'
+      WHERE r.task_id=tasks.id AND r.project_id=tasks.project_id AND r.agent_kind='operational'
         AND r.task_qualification_snapshot->>'role'='qualifier'
       ORDER BY coalesce(r.launched_at,r.started_at) DESC,r.id DESC LIMIT 1
     ) source ON true
-    WHERE t.id IN ${[...taskIds]}`);
+    WHERE tasks.id IN ${[...taskIds]}`);
 
   const summaries = new Map<string, TaskQualificationSummary>();
 
@@ -129,6 +139,9 @@ export async function getTaskQualificationSummaries(
     }
 
     summaries.set(row.id, {
+      ...(row.backlog_admission
+        ? { backlogAdmission: row.backlog_admission }
+        : {}),
       required,
       mode: row.mode,
       inputRevision: row.input_revision,

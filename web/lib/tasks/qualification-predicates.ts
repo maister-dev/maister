@@ -22,12 +22,20 @@ export function automaticTaskQualificationAdmittedPredicate(): SQL {
       AND qualification.revision=${tasks.currentQualificationRevision}))`;
 }
 
+/** A human backlog decision applies only to the semantic input they reviewed. */
+export function manualBacklogAdmissionPredicate(): SQL {
+  return sql`EXISTS(SELECT 1 FROM task_activity admission
+    WHERE admission.task_id=${tasks.id} AND admission.event_kind='backlog_admitted'
+    AND admission.payload->>'inputRevision'=${tasks.qualificationInputRevision}::text)`;
+}
+
 export function incomingRequestPredicate(): SQL {
-  return sql`(${tasks.qualificationMode}='required' AND NOT ${taskQualificationAdmittedPredicate()})`;
+  return sql`(${tasks.qualificationMode}='required' AND NOT ${acceptedBacklogPredicate()})`;
 }
 
 export function acceptedBacklogPredicate(): SQL {
-  return sql`(${tasks.qualificationMode}<>'execution_child' AND ${taskQualificationAdmittedPredicate()})`;
+  return sql`(${tasks.qualificationMode}<>'execution_child' AND
+    (${taskQualificationAdmittedPredicate()} OR ${manualBacklogAdmissionPredicate()}))`;
 }
 
 /** Explicit none/triage-only intent cannot be replaced by an agent enqueue proposal. */

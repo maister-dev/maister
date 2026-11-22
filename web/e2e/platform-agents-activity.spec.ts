@@ -742,6 +742,12 @@ test.describe("Agent execution visibility and retained history", () => {
     await assessment
       .getByRole("button", { name: "Save reviewed assessment", exact: true })
       .click();
+    const settledSummary = page
+      .getByTestId("task-qualification-section")
+      .locator("> summary")
+      .filter({ hasText: "Ready for accepted backlog", visible: true });
+
+    await settledSummary.click();
     await expect(
       panel.getByText("Assessment saved.", { exact: true }),
     ).toBeVisible();
@@ -1130,11 +1136,12 @@ test.describe("Agent execution visibility and retained history", () => {
       { name: "NEXT_LOCALE", value: "ru", url: baseURL! },
     ]);
     await page.goto(`/projects/${slug}/tasks/${task.number}`);
-    const ruPanel = page
-      .getByTestId("task-qualification")
-      .filter({ visible: true });
-
-    await expect(ruPanel).toContainText("Допущено в бэклог");
+    await expect(
+      page
+        .getByTestId("task-qualification-section")
+        .filter({ visible: true })
+        .locator("summary"),
+    ).toHaveText("Квалификация · Допущено в бэклог");
     await withE2EDb((pool) =>
       pool.query(
         "INSERT INTO tasks(id,project_id,number,title,prompt,status,qualification_mode) SELECT gen_random_uuid()::text,$1,1000+n,'Held pagination request '||n,'Specific request awaiting its seven checks','Backlog','required' FROM generate_series(1,26) n",

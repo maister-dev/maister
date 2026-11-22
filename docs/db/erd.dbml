@@ -4340,6 +4340,7 @@ table task_activity {
     (task_id, created_at) [name: 'task_activity_task_created_idx']
     (project_id, created_at) [name: 'task_activity_project_created_idx']
 
+    (task_id, payload) [name: 'task_activity_backlog_admission_uq', unique]
     (task_id, payload) [name: 'task_activity_agent_summon_uq', unique]
     (task_id, payload) [name: 'task_activity_delivery_refusal_uq', unique]
 
