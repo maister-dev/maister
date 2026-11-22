@@ -22,6 +22,8 @@ import { requireCompanyRunCredentialOwner } from "@/lib/agents/company-run-crede
 import { lockLibrarianKnowledgeContext } from "@/lib/librarian/knowledge-authority";
 import { projectRolesForActions } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
+import { lockPersonalKnowledgeCredential } from "@/lib/tokens/personal-knowledge-credential";
+import { tokenHasExactScope } from "@/lib/tokens/scopes";
 import { parseBoundRunId } from "@/lib/tokens/verify";
 
 export type KnowledgeTransaction = SqlTransaction;
@@ -58,6 +60,7 @@ export type KnowledgePrincipalIdentity =
       actor: KnowledgeAuthorityActor;
       user: SessionUser;
       boundProjectId: string | null;
+      suppressVaultSources?: true;
     }>
   | Readonly<{
       kind: "agent";
@@ -155,6 +158,19 @@ export async function resolveKnowledgePrincipal(
 ): Promise<KnowledgePrincipalIdentity> {
   if (principal.kind === "user")
     return currentKnowledgeUser(tx, principal.userId);
+  if (principal.kind === "personal_read") {
+    if (action !== "knowledge:read")
+      throw new MaisterError(
+        "UNAUTHORIZED",
+        "Personal source-scoped knowledge access is read-only",
+      );
+    const scopes = await lockPersonalKnowledgeCredential(tx, principal, action);
+    const identity = await currentKnowledgeUser(tx, principal.userId);
+
+    return tokenHasExactScope(scopes, "agent_memory:read")
+      ? identity
+      : { ...identity, suppressVaultSources: true };
+  }
   if (principal.kind === "librarian_read") {
     if (action !== "knowledge:read")
       throw new MaisterError(

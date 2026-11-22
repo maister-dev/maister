@@ -111,6 +111,14 @@ Revoking confirmation is a separate explicit decision with a reason and
 confirmation dialog. Prior confirmation history remains tied to its original
 revision.
 
+## Review proposals across projects
+
+Open **Knowledge → Awaiting review** and select an owner and proposal type. **Needs my decision** shows work you can act on. **History** shows completed decisions you can still inspect. A proposal link opens the exact item even when it is outside the current page.
+
+Review the proposed assertion, its base version and evidence before deciding. If the decision reports a conflict, reload the reviewed version. Your reason stays in the form. On success, open the exact publication or other outcome from its receipt. Use the record's **Revision history** to return to an accessible retained assertion.
+
+A Project Brain proposal can produce a task or an unpublished catalog draft. Accepting a project change proposed from an agent vault records the decision on that proposal. Factual confirmation remains available as a separate action on a published knowledge revision.
+
 ## Use evidence in a governed research Flow
 
 For the `rah` package, use engine 3.11.1 or newer and an immutable package

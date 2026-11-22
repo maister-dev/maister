@@ -3,6 +3,7 @@ import {
   INSTALLATION_SCOPE_TOOLS,
 } from "../../runtime/installation-agent-tools";
 import { COMPANY_FLOW_TOOL_CONTRACT } from "../../runtime/company-flow-tools";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 
 // Named tool subsets a facade process may expose (`MAISTER_MCP_TOOLSET`).
 // Listing is a convenience for the model; every refusal is still enforced by
@@ -79,6 +80,12 @@ export const TOOLSETS = {
   company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
   installation: installationToolNames(Object.keys(INSTALLATION_SCOPE_TOOLS)),
+  "personal-knowledge": [
+    ...PERSONAL_KNOWLEDGE_TOOLS,
+    "knowledge_search", "knowledge_get", "knowledge_evidence", "knowledge_conflicts",
+    "knowledge_witness_get", "knowledge_propose", "knowledge_proposals_list", "knowledge_proposal_get",
+    "knowledge_decide", "knowledge_confirm",
+  ],
   vault: [
     "memory",
     "agent_memory_write",

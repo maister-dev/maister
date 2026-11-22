@@ -8,7 +8,7 @@ import type {
 
 import { sql, type SQL } from "drizzle-orm";
 
-import { listBrainSources, type BrainSourceDto } from "@/lib/brain/sources";
+import { listBrainSourcesPage, type BrainSourceDto } from "@/lib/brain/sources";
 
 export type BrainUiDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -24,28 +24,12 @@ export interface BrainMemorySearchRow {
   pointer: BrainSourceRef | null;
 }
 
-export interface BrainProposalEvidenceRow {
-  id: string;
-  title: string;
-  pointer: BrainSourceRef | null;
-}
-
-export interface BrainProposalReviewRow {
-  id: string;
-  kind: string;
-  status: string;
-  blastRadius: string;
-  autonomyDecision: string;
-  draft: Record<string, unknown>;
-  evidence: BrainProposalEvidenceRow[];
-  createdAt: Date | string;
-}
-
 export interface ProjectBrainPanelData {
   indexStatus: BrainIndexPanelStatus;
   memory: BrainMemorySearchRow[];
-  proposals: BrainProposalReviewRow[];
   sources: BrainSourceDto[];
+  hasMoreSources: boolean;
+  selectedMemory: BrainMemorySearchRow | null;
 }
 
 export interface BrainIndexPanelJobRow {
@@ -231,89 +215,6 @@ async function listMemoryRows(
   return rows.rows.map(toMemoryRow);
 }
 
-function evidenceIds(rows: Array<Record<string, unknown>>): string[] {
-  const ids = new Set<string>();
-
-  for (const row of rows) {
-    const raw = row.evidence_item_ids;
-
-    if (!Array.isArray(raw)) continue;
-    for (const id of raw) {
-      if (typeof id === "string" && id.length > 0) ids.add(id);
-    }
-  }
-
-  return [...ids];
-}
-
-async function evidenceById(
-  db: BrainUiDb,
-  projectId: string,
-  ids: string[],
-): Promise<Map<string, BrainProposalEvidenceRow>> {
-  if (ids.length === 0) return new Map();
-
-  const rows = await db.execute(sql`
-    SELECT id, title, source_ref
-    FROM brain_items
-    WHERE visibility = 'owner_grants' AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb) AND project_id = ${projectId}
-      AND id IN (${sql.join(
-        ids.map((id) => sql`${id}`),
-        sql`, `,
-      )})
-  `);
-
-  return new Map(
-    rows.rows.map((row) => [
-      String(row.id),
-      {
-        id: String(row.id),
-        title: String(row.title),
-        pointer: pointerOf(row.source_ref),
-      },
-    ]),
-  );
-}
-
-async function listProposalRows(
-  db: BrainUiDb,
-  projectId: string,
-): Promise<BrainProposalReviewRow[]> {
-  const rows = await db.execute(sql`
-    SELECT id, kind, status, blast_radius, autonomy_decision,
-           evidence_item_ids, draft, created_at
-    FROM brain_proposals
-    WHERE project_id = ${projectId}
-      AND kind NOT IN ('knowledge_add','knowledge_correct')
-      AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
-    ORDER BY
-      CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
-      created_at DESC
-    LIMIT 25
-  `);
-  const byId = await evidenceById(db, projectId, evidenceIds(rows.rows));
-
-  return rows.rows.map((row) => {
-    const rawEvidence = Array.isArray(row.evidence_item_ids)
-      ? row.evidence_item_ids
-      : [];
-    const evidence = rawEvidence
-      .map((id) => (typeof id === "string" ? byId.get(id) : undefined))
-      .filter((item): item is BrainProposalEvidenceRow => item !== undefined);
-
-    return {
-      id: String(row.id),
-      kind: String(row.kind),
-      status: String(row.status),
-      blastRadius: String(row.blast_radius),
-      autonomyDecision: String(row.autonomy_decision),
-      draft: (row.draft as Record<string, unknown>) ?? {},
-      evidence,
-      createdAt: row.created_at as Date | string,
-    };
-  });
-}
-
 async function loadIndexStatus(
   db: BrainUiDb,
   projectId: string,
@@ -420,16 +321,36 @@ export async function loadProjectBrainPanelData(
   db: BrainUiDb,
   projectId: string,
   query: string,
+  sourceQuery = "",
+  sourcePage = 1,
+  selectedMemoryId?: string,
 ): Promise<ProjectBrainPanelData> {
   const trimmedQuery = query.trim();
-  const [indexStatus, memory, proposals, sources] = await Promise.all([
+  const [indexStatus, memory, sourceResult, selected] = await Promise.all([
     loadIndexStatus(db, projectId),
     trimmedQuery.length > 0
       ? listMemoryRows(db, projectId, trimmedQuery)
       : Promise.resolve([]),
-    listProposalRows(db, projectId),
-    listBrainSources(db, projectId),
+    listBrainSourcesPage(db, projectId, sourceQuery, sourcePage),
+    selectedMemoryId
+      ? db.execute(sql`
+      SELECT id, 'owned' AS tier, kind, title, content, confidence::float8 AS confidence, source_ref AS pointer
+      FROM brain_items
+      WHERE id=${selectedMemoryId} AND project_id=${projectId}
+        AND status='active' AND visibility='owner_grants'
+        AND (source_restrictions IS NULL OR source_restrictions='[]'::jsonb)
+        AND (expires_at IS NULL OR expires_at > now())
+    `)
+      : null,
   ]);
 
-  return { indexStatus, memory, proposals, sources };
+  const row = selected?.rows[0];
+
+  return {
+    indexStatus,
+    memory,
+    sources: sourceResult.sources,
+    hasMoreSources: sourceResult.hasNext,
+    selectedMemory: row ? toMemoryRow(row) : null,
+  };
 }

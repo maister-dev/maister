@@ -166,7 +166,8 @@ export async function getOrCreateGateEvaluation(
       .select()
       .from(runs)
       .where(eq(runs.id, input.runId))
-      .for("update");
+      // Match the driver fence so concurrent evidence can confirm its run FK.
+      .for("no key update");
     const [attempt] = await tx
       .select()
       .from(nodeAttempts)

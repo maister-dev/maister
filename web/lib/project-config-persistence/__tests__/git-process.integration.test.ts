@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   executeRepositoryGit,
@@ -49,18 +49,32 @@ setTimeout(() => process.exit(2), 4000);
         { mode: 0o755 },
       );
 
-      try {
-        const operation = executeRepositoryGit(root, ["status"], {
-          timeout: 1000,
-          maxBuffer: 1024 * 1024,
-          env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
-        });
+      const deadline = new AbortController();
+      const timeout = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValueOnce(deadline.signal);
+      const operation = executeRepositoryGit(root, ["status"], {
+        timeout: 1000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
+      });
 
+      timeout.mockRestore();
+      const settled = Promise.allSettled([operation]);
+
+      try {
+        await expect
+          .poll(() => readFile(pidFile, "utf8"), { timeout: 10_000 })
+          .toMatch(/^\d+$/);
+        deadline.abort(
+          new DOMException("Git deadline reached", "TimeoutError"),
+        );
         await expect(operation).rejects.toBeInstanceOf(GitExecutionTimeout);
         await expect(operation).rejects.toMatchObject({ killed: true, signal });
         expect(await childIsGone()).toBe(true);
       } finally {
-        await expect.poll(childIsGone).toBe(true);
+        deadline.abort();
+        await settled;
       }
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -62,6 +62,9 @@ export default async function FlowDetailPage({
   const canManage = role === "owner" || role === "admin";
   const t = await getTranslations("flows");
   const detail = await getAuthoredCapabilityOrNotFound({ projectSlug, capId });
+
+  if (detail.capability.kind !== "flow") notFound();
+
   const editableRevision = detail.draft ?? detail.published;
   const packageBody = editableRevision
     ? packageBodyFromRevision(editableRevision)

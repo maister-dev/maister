@@ -2056,5 +2056,330 @@
       "recordId"
     ],
     "additionalProperties": false
+  },
+  "proposal_reviews_list": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "view": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "history"
+        ]
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "vault",
+          "brain",
+          "knowledge"
+        ]
+      },
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "companyId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "agentId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "additionalProperties": false
+  },
+  "proposal_review_get": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "vault",
+          "brain",
+          "knowledge"
+        ]
+      },
+      "proposalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      },
+      "outcomeCursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "kind",
+      "proposalId"
+    ],
+    "additionalProperties": false
+  },
+  "proposal_review_decide": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "brain",
+          "vault"
+        ]
+      },
+      "proposalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "expectedVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestKey": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_.:-]{8,128}$"
+      },
+      "decision": {
+        "type": "string",
+        "enum": [
+          "accept",
+          "reject"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      }
+    },
+    "required": [
+      "kind",
+      "proposalId",
+      "expectedVersion",
+      "requestKey",
+      "decision"
+    ],
+    "additionalProperties": false
+  },
+  "personal_vault_list": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "companyId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "agentId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "additionalProperties": false
+  },
+  "personal_vault_view": {
+    "type": "object",
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "locationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 192,
+            "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "locationId",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "locationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 192,
+            "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "noteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 192,
+            "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "locationId",
+          "noteId"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "personal_vault_revisions": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "locationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "noteId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "locationId",
+      "noteId"
+    ],
+    "additionalProperties": false
+  },
+  "personal_vault_revision_get": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "locationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "noteId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "revisionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 192,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      }
+    },
+    "required": [
+      "locationId",
+      "noteId",
+      "revisionId"
+    ],
+    "additionalProperties": false
+  },
+  "knowledge_revisions_list": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "recordId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^(?:[^\\u0000\\uD800-\\uDFFF]|[\\uD800-\\uDBFF][\\uDC00-\\uDFFF])*$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "recordId"
+    ],
+    "additionalProperties": false
   }
 }

@@ -24,6 +24,10 @@ await runWorkerLoop(controller.signal, async () => {
   iterations += 1;
   if (iterations % 1_000 === 0) {
     await yieldToEventLoop();
+    // Flight drops its async metadata in destroy callbacks after GC.
+    // Let those callbacks run before collecting and measuring the retained heap.
+    collectGarbage();
+    await yieldToEventLoop();
     collectGarbage();
     heapSamples.push(process.memoryUsage().heapUsed);
   }

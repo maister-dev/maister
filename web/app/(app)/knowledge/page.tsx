@@ -46,7 +46,15 @@ export default async function KnowledgePage({
     <>
       <KnowledgeHeader>
         {proposalOwners.length > 0 ? (
-          <Link href="/knowledge/proposals/new">{t("propose")}</Link>
+          <Link
+            href={
+              input.owner?.kind === "project"
+                ? `/knowledge/proposals/new?${new URLSearchParams({ owner: knowledgeOwnerValue(input.owner) })}`
+                : "/knowledge/proposals/new"
+            }
+          >
+            {t("propose")}
+          </Link>
         ) : null}
         {user.role === "admin" ? (
           <Link href="/settings/company-grants">{t("companyAccess")}</Link>

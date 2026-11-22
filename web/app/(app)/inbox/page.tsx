@@ -37,7 +37,7 @@ export default async function InboxPage({
   const t = await getTranslations("inbox");
   const tp = await getTranslations("portfolio");
   const tStage = await getTranslations("workStage");
-  const { proposalId, kind, projectId, companyId, agentId, cursor } =
+  const { proposalId, kind, projectId, companyId, agentId, cursor, view } =
     await searchParams;
   const { limit, ...reviewFilters } = parseReviewFilters({
     kind,
@@ -45,6 +45,7 @@ export default async function InboxPage({
     companyId,
     agentId,
     cursor,
+    view,
   });
   const initialReview =
     proposalId === undefined

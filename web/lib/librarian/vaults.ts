@@ -10,7 +10,10 @@ import { z } from "zod";
 import { lockLibrarianKnowledgeContext } from "./knowledge-authority";
 
 import { requireVaultActive } from "@/lib/agent-memory-vault/cutover";
-import { prepareHumanInstallationVault } from "@/lib/agent-memory-vault/installation-access";
+import {
+  installationVaultAvailability,
+  prepareHumanInstallationVault,
+} from "@/lib/agent-memory-vault/installation-access";
 import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
 import { unavailableMemory } from "@/lib/agent-memory-vault/store";
 import { projectRolesForActions } from "@/lib/authz";
@@ -173,7 +176,9 @@ export async function listLibrarianVaults(
       WHERE (
         (l.project_id IS NOT NULL AND (u.role='admin' OR EXISTS (SELECT 1 FROM project_members m
           WHERE m.user_id=u.id AND m.project_id=p.id AND m.role IN (${roles}) FOR SHARE)))
-        OR (reviewed.snapshot->'installationGrant'->>'memoryEnabled'='true' AND (u.role='admin' OR EXISTS (
+        OR (reviewed.snapshot->'installationGrant'->>'reach'='active_projects'
+          AND (${installationVaultAvailability(sql`b.enabled`, sql`reviewed.snapshot`)})='available'
+          AND (u.role='admin' OR EXISTS (
           SELECT 1 FROM company_grants g WHERE g.company_id=v.company_id AND g.principal_type='user'
             AND g.principal_id=u.id AND g.action='specialists:read' AND g.revoked_at IS NULL FOR SHARE)))
       ) ${after?.success ? sql`AND v.id COLLATE "C">${after.data.after}` : sql``}

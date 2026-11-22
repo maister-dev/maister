@@ -699,6 +699,7 @@ export interface BrainProposalActor {
 export interface BrainProposalResolution {
   actor: BrainProposalActor;
   reason?: string;
+  reviewedVersion?: string;
 }
 
 export type BrainGraphRef =

@@ -210,6 +210,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "captureTaskAgentPackage",
+          "lib/tasks/launch-capability-materialization.ts#assertCapturedProjectionSymlinks",
+          "wrapper",
+        ],
+        [
+          "captureTaskAgentPackage",
           "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
           "wrapper",
         ],
@@ -326,6 +331,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["readInternalDirectorySymlinks", "node:fs/promises.readdir", "list"],
         ["readInternalDirectorySymlinks", "node:fs/promises.readlink", "read"],
         ["readInternalDirectorySymlinks", "node:fs/promises.realpath", "stat"],
+        ["assertCapturedProjectionSymlinks", "node:fs/promises.lstat", "stat"],
+        [
+          "assertCapturedProjectionSymlinks",
+          "node:fs/promises.readlink",
+          "read",
+        ],
       ],
     ),
     ...classified(
@@ -1111,8 +1122,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["entryStat", "node:fs/promises.lstat", "stat"],
         ["skillEntries", "node:fs/promises.readdir", "list"],
+        ["workspacePackageSkillsPrompt", "node:fs/promises.readdir", "list"],
         ["<object>.materialize", "node:fs/promises.mkdir", "write"],
-        ["<object>.materialize", "node:fs/promises.cp", "write"],
+        ["materializeWorkspacePackageSkills", "node:fs/promises.cp", "write"],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.mkdir",
+          "write",
+        ],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.cp",
+          "write",
+        ],
         ["<object>.filter", "node:fs/promises.lstat", "stat"],
       ],
     ),
@@ -2767,6 +2789,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [
       ["captureAcceptedDirectory", true],
+      ["assertCapturedProjectionSymlinks", true],
       ["withTaskLaunchCapabilityBundles", false],
     ],
   ),
@@ -3034,6 +3057,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["runCapabilitiesCleanupSweep", false],
   ]),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
+    ["materializeCapturedWorkspacePackageSkills", false],
     ["materializeWorkspacePackageSkills", false],
     ["workspacePackageSkillsPrompt", false],
   ]),

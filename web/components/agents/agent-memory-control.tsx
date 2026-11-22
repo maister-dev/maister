@@ -8,6 +8,7 @@ import type {
   RevisionDetail,
   View,
 } from "./agent-memory-requests";
+import type { MemoryPromotionTarget } from "./agent-memory-promotion";
 
 import { Button, Input, Modal } from "@heroui/react";
 import Link from "next/link";
@@ -16,9 +17,11 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { AgentMemoryNavigation } from "./agent-memory-navigation";
+import { AgentMemoryPromotion } from "./agent-memory-promotion";
 import { AgentMemoryRedact } from "./agent-memory-redact";
 import {
   buildVaultCommand,
+  compareVaultRevision,
   displayIssue,
   memoryRoot,
   noteQuery,
@@ -31,6 +34,7 @@ import {
   markdownEditorLabels,
   TaskMarkdownEditor,
 } from "@/components/social/task-markdown-editor";
+import { MarkdownRichView } from "@/components/workbench/markdown-rich-view";
 
 type Selection = Readonly<{
   key: string;
@@ -38,18 +42,34 @@ type Selection = Readonly<{
   directory?: Directory;
   history?: History;
   revision?: RevisionDetail;
+  comparison?: Awaited<ReturnType<typeof compareVaultRevision>>;
   issue?: Issue;
 }>;
 
 function useVaultSelection(
   api: string,
   path: string,
-  params: { cursor: string; revision: string; history: string },
+  params: {
+    cursor: string;
+    revision: string;
+    history: string;
+    noteId: string;
+    compare: boolean;
+  },
   version: number,
 ) {
   const [state, setState] = useState<Selection>({ key: "" });
-  const { cursor, revision, history } = params;
-  const key = JSON.stringify([api, path, cursor, revision, history, version]);
+  const { cursor, revision, history, noteId, compare } = params;
+  const key = JSON.stringify([
+    api,
+    path,
+    cursor,
+    revision,
+    history,
+    noteId,
+    compare,
+    version,
+  ]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,36 +77,64 @@ function useVaultSelection(
 
     async function load() {
       try {
+        const selected = revision
+          ? await vaultRequest<RevisionDetail>(
+              `${api}/revisions/${encodeURIComponent(revision)}${noteId ? `?${new URLSearchParams({ noteId })}` : ""}`,
+              options,
+            )
+          : undefined;
+        const stableNoteId = noteId || selected?.revision.noteId;
         const page = await vaultRequest<View>(
-          noteQuery(api, path, cursor),
+          stableNoteId
+            ? `${api}/notes?${new URLSearchParams({ noteId: stableNoteId, ...(cursor && { cursor }) })}`
+            : noteQuery(api, path, cursor),
           options,
-        );
-        const [directory, revisions, selected] = await Promise.all([
-          page.kind === "directory"
-            ? page
-            : vaultRequest<Directory>(
-                noteQuery(api, parentPath(path)),
-                options,
-              ),
-          page.kind === "note"
-            ? vaultRequest<History>(
-                `${api}/revisions?${new URLSearchParams({ noteId: page.noteId, ...(history ? { cursor: history } : {}) })}`,
-                options,
-              )
-            : undefined,
-          revision
-            ? vaultRequest<RevisionDetail>(
-                `${api}/revisions/${encodeURIComponent(revision)}`,
-                options,
-              )
-            : undefined,
-        ]);
+        ).catch((error: unknown) => {
+          if (
+            selected &&
+            error instanceof VaultRequestError &&
+            error.issue.status === 404
+          )
+            return undefined;
+          throw error;
+        });
 
         if (
           selected &&
-          (page.kind !== "note" || selected.revision.noteId !== page.noteId)
+          ((stableNoteId && selected.revision.noteId !== stableNoteId) ||
+            (page &&
+              (page.kind !== "note" ||
+                selected.revision.noteId !== page.noteId)))
         )
           throw new VaultRequestError({ code: "PRECONDITION", status: 404 });
+
+        const historyNoteId =
+          stableNoteId ?? (page?.kind === "note" ? page.noteId : undefined);
+        const [directory, revisions, comparison] = await Promise.all([
+          page?.kind === "directory"
+            ? page
+            : page
+              ? vaultRequest<Directory>(
+                  noteQuery(api, parentPath(page.path)),
+                  options,
+                )
+              : undefined,
+          historyNoteId
+            ? vaultRequest<History>(
+                `${api}/revisions?${new URLSearchParams({ noteId: historyNoteId, ...(history ? { cursor: history } : {}) })}`,
+                options,
+              )
+            : undefined,
+          compare && page?.kind === "note" && selected?.content != null
+            ? compareVaultRevision(
+                api,
+                page,
+                selected.content,
+                selected.revision.hash,
+                controller.signal,
+              )
+            : undefined,
+        ]);
 
         if (!controller.signal.aborted)
           setState({
@@ -95,6 +143,7 @@ function useVaultSelection(
             directory,
             history: revisions,
             revision: selected,
+            comparison,
           });
       } catch (error) {
         if (!controller.signal.aborted)
@@ -104,7 +153,7 @@ function useVaultSelection(
     void load();
 
     return () => controller.abort();
-  }, [api, key, path, cursor, revision, history]);
+  }, [api, key, path, cursor, revision, history, noteId, compare]);
 
   return state.key === key ? state : null;
 }
@@ -120,11 +169,15 @@ export function AgentMemoryControl({
   canEdit,
   canRedact,
   location,
+  navigation,
+  promotionTargets = [],
 }: {
   agentId: string;
   canEdit: boolean;
   canRedact: boolean;
   location: MemoryLocation;
+  navigation?: Readonly<{ locationId: string }>;
+  promotionTargets?: readonly MemoryPromotionTarget[];
 }) {
   const t = useTranslations("agentVault");
   const tReview = useTranslations("inbox.reviews");
@@ -147,41 +200,71 @@ export function AgentMemoryControl({
     location.kind === "project"
       ? { projectId: location.projectId }
       : { companyId: location.companyId };
-  const path = search.get("memoryPath") ?? memoryRoot;
+  const requestedPath = search.get("memoryPath") ?? memoryRoot;
+  const sourceView = search.get("memoryView") === "source";
+  const compare = search.get("memoryView") === "compare";
   const [version, refresh] = useState(0);
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [error, setError] = useState<Issue | null>(null);
   const [busy, setBusy] = useState(false);
   const data = useVaultSelection(
     api,
-    path,
+    requestedPath,
     {
-      cursor: search.get("memoryCursor") ?? "",
+      cursor: compare ? "" : (search.get("memoryCursor") ?? ""),
+      compare,
       revision: search.get("memoryRevision") ?? "",
       history: search.get("memoryHistoryCursor") ?? "",
+      noteId: search.get("memoryNoteId") ?? "",
     },
     version,
   );
-  const { page, directory, history, revision } = data ?? {};
+  const { page, directory, history, revision, comparison } = data ?? {};
+  const path = page?.path ?? revision?.revision.path ?? requestedPath;
+  const noteId =
+    page?.kind === "note" ? page.noteId : revision?.revision.noteId;
+  const newest = search.has("memoryHistoryCursor")
+    ? undefined
+    : history?.items.at(0);
+  const deletedHead =
+    !page && newest?.state === "tombstone" && newest.noteId === noteId
+      ? {
+          kind: "note" as const,
+          noteId: newest.noteId,
+          revisionId: newest.id,
+          path: newest.path,
+          hash: null,
+        }
+      : undefined;
   const href = (target: string, extra: Record<string, string> = {}) =>
-    `${base}?${new URLSearchParams({ ...route, tab: "memory", memoryPath: target, ...extra })}`;
+    navigation
+      ? `/knowledge/memory?${new URLSearchParams({ locationId: navigation.locationId, memoryPath: target, ...extra })}`
+      : `${base}?${new URLSearchParams({ ...route, tab: "memory", memoryPath: target, ...extra })}`;
   const textFor = (issue: Issue) =>
     t(
-      issue.code === "CONFLICT"
-        ? "conflict"
-        : issue.status === 409
-          ? "inactive"
-          : issue.status === 404
-            ? "missing"
-            : issue.status === 403
-              ? "forbidden"
-              : issue.code === "CONFIG"
-                ? "invalid"
-                : "loadError",
+      issue.reason === "agent_memory_attachment_disabled"
+        ? "attachmentDisabled"
+        : issue.reason === "agent_memory_disabled"
+          ? "memoryDisabled"
+          : issue.reason === "agent_memory_cutover_required"
+            ? "awaitingCutover"
+            : issue.code === "CONFLICT"
+              ? "conflict"
+              : issue.status === 409
+                ? "inactive"
+                : issue.status === 404
+                  ? "missing"
+                  : issue.status === 403
+                    ? "forbidden"
+                    : issue.code === "CONFIG"
+                      ? "invalid"
+                      : "loadError",
     );
 
   async function open(action: Draft["action"], revisionId?: string) {
-    if (!page) return;
+    const selection = page ?? (action === "revert" ? deletedHead : undefined);
+
+    if (!selection) return;
     setError(null);
     setBusy(true);
     try {
@@ -203,7 +286,7 @@ export function AgentMemoryControl({
         text,
         destination,
         revisionId,
-        selection: page,
+        selection,
         requestKey: crypto.randomUUID(),
       });
     } catch (failure) {
@@ -291,6 +374,7 @@ export function AgentMemoryControl({
       ...draft.selection,
       ...conflictHead,
       hash: conflictHead.hash,
+      nextCursor: null,
     };
 
     setDraft({
@@ -309,10 +393,21 @@ export function AgentMemoryControl({
         className="flex flex-wrap items-center gap-3"
       >
         <Link href={href(memoryRoot)}>{t("root")}</Link>
-        {path !== memoryRoot ? (
-          <Link href={href(parentPath(path))}>{t("up")}</Link>
-        ) : null}
-        <span className="break-all font-mono text-xs text-mute">{path}</span>
+        {path
+          .slice(memoryRoot.length + 1)
+          .split("/")
+          .filter(Boolean)
+          .map((segment, index, segments) => (
+            <Link
+              key={index}
+              className="break-all font-mono text-xs"
+              href={href(
+                `${memoryRoot}/${segments.slice(0, index + 1).join("/")}`,
+              )}
+            >
+              {segment}
+            </Link>
+          ))}
       </nav>
       {canEdit ? (
         <Link
@@ -323,7 +418,16 @@ export function AgentMemoryControl({
         </Link>
       ) : null}
       {data === null ? <p role="status">{t("loading")}</p> : null}
-      {data?.issue ? <p role="alert">{textFor(data.issue)}</p> : null}
+      {data?.issue ? (
+        <div className="flex gap-2" role="alert">
+          {textFor(data.issue)}{" "}
+          {data.issue.status >= 500 ? (
+            <Button size="sm" onPress={() => refresh((value) => value + 1)}>
+              {t("retry")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {error && !draft ? <p role="alert">{textFor(error)}</p> : null}
       {page ? (
         <AgentMemoryNavigation
@@ -334,7 +438,7 @@ export function AgentMemoryControl({
           version={version}
         />
       ) : null}
-      {page && canEdit ? (
+      {page && canEdit && !revision ? (
         <div className="flex flex-wrap gap-2">
           {actionButton("create")}
           {page.kind === "note" ? actionButton("edit") : null}
@@ -383,21 +487,120 @@ export function AgentMemoryControl({
             ) : null}
           </nav>
         ) : null}
-        {page?.kind === "note" ? (
+        {page?.kind === "note" || revision ? (
           <div className="min-w-0 space-y-4">
-            <pre className="overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-paper p-4 text-sm">
-              {revision
-                ? (revision.content ?? t(revision.revision.state))
-                : page.content}
-            </pre>
+            <nav className="flex flex-wrap gap-3 text-sm">
+              <Link
+                href={href(path, {
+                  ...(noteId && { memoryNoteId: noteId }),
+                  ...(revision && { memoryRevision: revision.revision.id }),
+                })}
+              >
+                {t("preview")}
+              </Link>
+              <Link
+                href={href(path, {
+                  memoryView: "source",
+                  ...(noteId && { memoryNoteId: noteId }),
+                  ...(revision && { memoryRevision: revision.revision.id }),
+                })}
+              >
+                {t("source")}
+              </Link>
+              {revision?.content !== null &&
+              revision &&
+              page?.kind === "note" ? (
+                <Link
+                  href={href(path, {
+                    memoryView: "compare",
+                    memoryNoteId: page.noteId,
+                    memoryRevision: revision.revision.id,
+                  })}
+                >
+                  {t("compare")}
+                </Link>
+              ) : null}
+            </nav>
             {revision ? (
-              <Link href={href(path)}>{t("current")}</Link>
-            ) : page.nextCursor ? (
-              <Link href={href(path, { memoryCursor: page.nextCursor })}>
+              <p className="break-words text-xs text-mute">
+                {t("history")} ·{" "}
+                {format.dateTime(new Date(revision.revision.createdAt), {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}{" "}
+                · {revision.revision.id}{" "}
+                {revision.revision.author
+                  ? `· ${revision.revision.author}`
+                  : ""}
+              </p>
+            ) : null}
+            {comparison ? (
+              <div>
+                <p className="text-sm">{t(comparison.status)}</p>
+                {comparison.truncated ? (
+                  <p className="text-xs text-mute">{t("comparisonLimit")}</p>
+                ) : null}
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <pre
+                    aria-label={t("history")}
+                    className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-sm"
+                  >
+                    {comparison.previousPrefix}
+                  </pre>
+                  <pre
+                    aria-label={t("current")}
+                    className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-sm"
+                  >
+                    {comparison.currentPrefix}
+                  </pre>
+                </div>
+              </div>
+            ) : sourceView || revision?.content === null ? (
+              <pre className="overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-paper p-4 text-sm">
+                {revision
+                  ? (revision.content ?? t(revision.revision.state))
+                  : page?.kind === "note"
+                    ? page.content
+                    : ""}
+              </pre>
+            ) : (
+              <MarkdownRichView
+                images="omit"
+                path={path}
+                source={
+                  revision?.content ??
+                  (page?.kind === "note" ? page.content : "")
+                }
+              />
+            )}
+            {page?.kind === "note" && !revision && promotionTargets.length ? (
+              <AgentMemoryPromotion
+                key={page.revisionId}
+                api={api}
+                note={page}
+                targets={promotionTargets}
+              />
+            ) : null}
+            {revision ? (
+              page?.kind === "note" ? (
+                <Link href={href(path, { memoryNoteId: page.noteId })}>
+                  {t("current")}
+                </Link>
+              ) : null
+            ) : page?.nextCursor ? (
+              <Link
+                href={href(path, {
+                  memoryCursor: page.nextCursor,
+                  ...(sourceView && { memoryView: "source" }),
+                  ...(noteId && { memoryNoteId: noteId }),
+                })}
+              >
                 {t("next")}
               </Link>
             ) : null}
-            {revision?.revision.state === "available" && canEdit
+            {revision?.revision.state === "available" &&
+            (page?.kind === "note" || deletedHead) &&
+            canEdit
               ? actionButton("revert", revision.revision.id)
               : null}
             {revision?.revision.state === "available" && canRedact ? (
@@ -423,7 +626,10 @@ export function AgentMemoryControl({
                         aria-current={
                           revision?.revision.id === item.id ? "page" : undefined
                         }
-                        href={href(path, { memoryRevision: item.id })}
+                        href={href(path, {
+                          memoryNoteId: item.noteId,
+                          memoryRevision: item.id,
+                        })}
                       >
                         {format.dateTime(new Date(item.createdAt), {
                           dateStyle: "medium",
@@ -438,6 +644,7 @@ export function AgentMemoryControl({
                   <Link
                     href={href(path, {
                       memoryHistoryCursor: history.nextCursor,
+                      ...(noteId && { memoryNoteId: noteId }),
                     })}
                   >
                     {t("next")}

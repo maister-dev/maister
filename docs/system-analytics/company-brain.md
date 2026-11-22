@@ -116,6 +116,35 @@ Legacy migration creates an imported baseline revision with unknown submitting a
 
 DB changes are one transaction; the existing outbox publishes only after commit. Implemented internal storage emits `knowledge.record_changed` with owner, exact record revision, accepted change/confirmation decision identity and cause. General project pulse/attention, indexing and agent-trigger consumers do not treat this invalidation as project work. Crash before commit leaves the proposal pending; after commit returns the same content-guarded receipt. Failed projection/index refresh retries from the accepted revision; it cannot roll back the accepted fact history or bypass access. List/search failure does not mutate knowledge.
 
+## Shared human review
+
+| Input and current authority | Accepted effect | Rejection or conflict |
+| --- | --- | --- |
+| Structured add or correction. Current owner review grant, accessible sources and exact proposal revision. A correction also pins its base revision. | Publication writes the exact record revision and the resolution in the same transaction. Accepting a correction to a restricted record additionally requires a current record-level review grant. | Rejection requires owner review authority and source access. It records the reviewer and reason and leaves the record unchanged. An outdated proposal or acceptance base yields `CONFLICT`. |
+| Published revision. Independent confirmation authority and available exact `supports` witness. | Confirmation records the actor, reason and evidence on that revision. | Revocation acts on the active confirmation. A correction starts with its own confirmation state. |
+
+```mermaid
+sequenceDiagram
+    participant H as Human reviewer
+    participant Q as Review endpoint
+    participant D as Domain transaction
+    participant A as Attention stream
+    H->>Q: Decide with observed version and request key
+    Q->>D: Recheck owner, action and source rights
+    D->>D: Lock and compare, settle and record receipt
+    D-->>Q: Return committed outcome
+    D-->>A: Invalidate authorized pending projection
+    A-->>H: Review version changes
+    H->>Q: Reread current selection and scope counter
+```
+
+- **K03–K05.** The shared queue and detail must apply current source closure before exposing text, counts, actions or continuations. A successful identical replay must reuse the original receipt under current authority. Changed input on the same key and a fresh key on a settled proposal must conflict.
+- **K04–K05 replay authority.** The native decision owner and Inbox replay must verify the original reviewer from immutable settlement attribution, the same delivery key and payload, and current owner, source and exact result access. An accepted correction must recheck the current review grant on a restricted target without publishing again. Missing legacy reviewer attribution cannot authorize a replay. Inbox must conflict on a retained native decision without an original Inbox receipt.
+- **K06.** A legacy assertion with missing evidence must remain correctable. Confirmation must independently require a qualifying exact source and its own authority.
+- **K13.** Attention `reviews/reviewVersion` must invalidate the actor's pending queue. Each project count must come from its own authorized selection. History and result links must reauthorize even when the same receipt is replayed.
+
+The native proposal read owner is [knowledge-proposal-read.ts](../../web/lib/brain/knowledge-proposal-read.ts). The shared write boundary is [inbox-review-actions.ts](../../web/lib/queries/inbox-review-actions.ts). See the [session API](../api/web.openapi.yaml) and [attention contract](../api/async/attention-stream.asyncapi.yaml).
+
 ## Expectations
 
 - **CBK-01:** Company/project ownership is exclusive and repository-free for company records, while current explicit grants independently gate access, enforced by owner CHECKs and the knowledge access service (`IT-CBK-01`).

@@ -7,7 +7,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 import { createE2EDbPool } from "./_seed/db";
-import { prepareKnowledgeReview } from "./_seed/knowledge-review";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -25,6 +24,68 @@ async function enableKnowledgeProject(
 
   return z.object({ id: z.string() }).parse(result.rows[0]).id;
 }
+
+test("K07 opens authored rule and skill outcomes with their original Markdown", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const { byKey } = loadFixtures();
+  const projectSlug = byKey.m11a.projectSlug;
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
+
+  try {
+    const projectId = await enableKnowledgeProject(pool, projectSlug);
+
+    for (const kind of ["rule", "skill"] as const) {
+      const proposalId = randomUUID();
+      const title = `Reviewed ${kind} ${proposalId.slice(0, 8)}`;
+      const markdown = `Check the ${kind} against the original evidence.`;
+
+      await pool.query(
+        `INSERT INTO brain_proposals
+          (id, project_id, kind, evidence_item_ids, draft, status, blast_radius, autonomy_decision, actor)
+         VALUES ($1, $2, $3, '[]', $4::jsonb, 'pending', 'low', 'manual', $5::jsonb)`,
+        [
+          proposalId,
+          projectId,
+          kind,
+          JSON.stringify({
+            slug: `review-${proposalId}`,
+            title,
+            body: { markdown },
+          }),
+          JSON.stringify({ type: "system", id: "catalog-review-fixture" }),
+        ],
+      );
+      const query = new URLSearchParams({
+        projectId,
+        kind: "brain",
+        proposalKind: "brain",
+        proposalId,
+      });
+
+      await page.goto(`/knowledge/reviews?${query}`);
+      const selected = page.getByRole("region", { name: title });
+
+      await selected.getByRole("button", { name: "Accept proposal" }).click();
+      await selected
+        .getByRole("link", { name: "Unpublished catalog draft" })
+        .click();
+      await expect(page).toHaveURL(
+        new RegExp(
+          `/projects/${projectSlug}/brain/proposals/${proposalId}/draft$`,
+        ),
+      );
+      await expect(page.getByRole("heading", { name: title })).toBeVisible();
+      await expect(page.getByText(markdown, { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Save draft" }),
+      ).toHaveCount(0);
+    }
+  } finally {
+    await pool.end();
+  }
+});
 
 test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text", async ({
   page,
@@ -112,14 +173,75 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
       "Проверьте обязательные поля и ссылки на доказательства.",
     );
     await retained.check();
-    await page
-      .getByRole("button", { name: "Отправить предложение", exact: true })
-      .click();
+    const source = await page.request.post("/api/knowledge/sources", {
+      data: {
+        owner: { kind: "project", projectId },
+        title: "Supporting but not independent evidence",
+        content: "The maintenance log records the observed timing.",
+        idempotencyKey: randomUUID(),
+      },
+    });
+
+    expect(source.status(), await source.text()).toBe(201);
+    const {
+      id: witnessId,
+      sourceVersion,
+      sha256,
+    } = z
+      .object({ id: z.string(), sourceVersion: z.string(), sha256: z.string() })
+      .parse(await source.json());
+    const reference = page.getByRole("textbox", {
+      name: "Идентификатор точного доказательства",
+      exact: true,
+    });
+    const submit = page.getByRole("button", {
+      name: "Отправить предложение",
+      exact: true,
+    });
+
+    await reference.fill(witnessId);
+    await expect(submit).toBeDisabled();
+    const witnessRoute = `**/api/knowledge/witnesses/${witnessId}`;
+    const blockedRead = Promise.withResolvers<void>();
+
+    await page.route(witnessRoute, async (route) => {
+      await blockedRead.promise;
+      await route.abort();
+    });
+    const inspect = page.getByRole("button", {
+      name: "Просмотреть доказательство",
+      exact: true,
+    });
+
+    try {
+      await inspect.click();
+      await expect(reference).toBeDisabled();
+      await expect(submit).toBeDisabled();
+    } finally {
+      blockedRead.resolve();
+    }
+    await expect(reference).toBeEnabled();
+    await expect(submit).toBeDisabled();
+    await reference.clear();
+    await expect(submit).toBeEnabled();
+
+    await page.unroute(witnessRoute);
+    await reference.fill(witnessId);
+    const read = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/knowledge/witnesses/${witnessId}`),
+    );
+
+    await inspect.click();
+    expect((await read).ok()).toBe(true);
+    await submit.click();
     await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
     const correctionId = page.url().split("/").at(-1)!;
     const retainedDraft = z
       .object({
         draft: z.object({
+          evidence: z.array(
+            z.object({ reference: z.object({ id: z.string() }) }),
+          ),
           missingEvidence: z.array(
             z.object({ state: z.string(), reason: z.string() }),
           ),
@@ -135,9 +257,72 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
       ).draft;
 
     expect(retainedDraft).toMatchObject({
+      evidence: [{ reference: { id: witnessId } }],
       missingEvidence: [{ state: "absent", reason: missing }],
       limitations: [authored],
     });
+
+    const publication = await page.request.post(
+      `/api/knowledge/proposals/${correctionId}/decision`,
+      {
+        data: {
+          expectedRevision: 1,
+          decision: "accept",
+          reason: "Retain the inspected source for subsequent corrections.",
+          idempotencyKey: randomUUID(),
+        },
+      },
+    );
+
+    expect(publication.status(), await publication.text()).toBe(200);
+    const exactReference = {
+      kind: "witness",
+      id: witnessId,
+      version: sourceVersion,
+      sha256,
+    };
+
+    for (const relation of ["derived_from", "supports"] as const) {
+      await page.goto(`/knowledge/${recordId}`);
+      await page
+        .getByRole("link", { name: "Предложить исправление", exact: true })
+        .click();
+      await page
+        .getByLabel("Утверждение", { exact: true })
+        .fill(`${assertion}: ${relation}`);
+      await reference.fill(witnessId);
+      await inspect.click();
+      await page.getByLabel("Связь доказательства").selectOption(relation);
+      const submission = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/knowledge/proposals",
+      );
+
+      await submit.click();
+      const relations =
+        relation === "derived_from"
+          ? ["derived_from"]
+          : ["derived_from", "supports"];
+      const expectedLinks = relations.map((link) => ({
+        relation: link,
+        reference: exactReference,
+      }));
+
+      expect((await submission).postDataJSON()).toMatchObject({
+        content: { evidence: expectedLinks },
+      });
+      await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
+      const persisted = await pool.query<{ links: unknown[] }>(
+        "SELECT draft->'evidence' AS links FROM brain_proposals WHERE id=$1",
+        [page.url().split("/").at(-1)],
+      );
+
+      expect(persisted.rows[0].links).toHaveLength(expectedLinks.length);
+      expect(persisted.rows[0].links).toEqual(
+        expect.arrayContaining(expectedLinks),
+      );
+    }
   } finally {
     await pool.end();
   }
@@ -403,6 +588,10 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await surface
     .getByLabel("Captured source text", { exact: true })
     .fill(source);
+  const ownerSelection = surface.getByLabel("Ownership", { exact: true });
+
+  await ownerSelection.selectOption({ label: "Company" });
+  await expect(ownerSelection).toHaveValue(/^c:/);
   const originalProposalUrl = await submitKnowledgeProposal(
     page,
     "Submit proposal",
@@ -437,50 +626,46 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
     await expect(page).toHaveURL(/\/knowledge\/witnesses\/[^/]+$/);
     await page.goBack();
     await expect(page).toHaveURL(originalProposalUrl);
-    const reviews = await prepareKnowledgeReview(
-      page,
-      title,
-      "Inspected the exact captured runbook version",
-      "en",
-      source,
-    );
-    const competingReviews = await prepareKnowledgeReview(
-      competingReview,
-      title,
-      "A stale competing decision must preserve the accepted result.",
-      "en",
-      source,
-    );
+    await page.getByRole("link", { name: "Open reviews in Inbox" }).click();
+    await expect(page).toHaveURL(/\/knowledge\/reviews\?/);
+    const reviewUrl = page.url();
 
-    await reviews
-      .getByRole("button", { name: "Accept selected", exact: true })
+    await competingReview.goto(reviewUrl);
+    await page
+      .getByLabel("Reason (required)", { exact: true })
+      .fill("Inspected the exact captured runbook version");
+    const competingSurface = competingReview.getByRole("main");
+
+    await competingSurface
+      .getByLabel("Reason (required)", { exact: true })
+      .fill("A stale competing decision must preserve the accepted result.");
+    await page
+      .getByRole("button", { name: "Accept proposal", exact: true })
       .click();
     await expect(
-      reviews
-        .getByRole("list", { name: "Review results" })
-        .getByRole("listitem"),
-    ).toHaveText(`${title} · Accepted`);
-    await competingReviews
-      .getByRole("button", { name: "Reject selected", exact: true })
+      surface.getByRole("link", { name: "Published revision", exact: true }),
+    ).toBeVisible();
+
+    await competingSurface
+      .getByRole("button", { name: "Reject proposal", exact: true })
+      .click();
+    await expect(competingSurface.getByRole("alert")).toContainText(
+      "Changed during review",
+    );
+    await competingSurface
+      .getByRole("button", { name: "Reload reviewed version" })
       .click();
     await expect(
-      competingReviews
-        .getByRole("list", { name: "Review results" })
-        .getByRole("listitem"),
-    ).toHaveText(`${title} · Changed during review`);
-    await competingReview.goto(originalProposalUrl);
-    await expect(
-      competingReview.getByRole("link", {
-        name: "Published record",
+      competingSurface.getByRole("link", {
+        name: "Published revision",
         exact: true,
       }),
     ).toBeVisible();
   } finally {
     await competingReview.close();
   }
-  await page.goto(originalProposalUrl);
   await page
-    .getByRole("link", { name: "Published record", exact: true })
+    .getByRole("link", { name: "Published revision", exact: true })
     .click();
   await expect(surface.getByText("Unconfirmed", { exact: true })).toBeVisible();
   await surface
@@ -517,33 +702,24 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   const corrected = `${source} Preserve its original version witness.`;
 
   await surface.getByLabel("Утверждение", { exact: true }).fill(corrected);
-  const correctionUrl = await submitKnowledgeProposal(
-    page,
-    "Отправить предложение",
-  );
+  await submitKnowledgeProposal(page, "Отправить предложение");
 
   await expect(
     surface.getByText("Ожидает рассмотрения", { exact: true }),
   ).toBeVisible();
-  const correctionReviews = await prepareKnowledgeReview(
-    page,
-    title,
-    "Исправление сохраняет исходный источник и требует отдельного подтверждения.",
-    "ru",
-    corrected,
-  );
-
-  await correctionReviews
-    .getByRole("button", { name: "Принять выбранные", exact: true })
-    .click();
-  await expect(
-    correctionReviews
-      .getByRole("list", { name: "Результаты проверки" })
-      .getByRole("listitem"),
-  ).toHaveText(`${title} · Принято`);
-  await page.goto(correctionUrl);
   await surface
-    .getByRole("link", { name: "Опубликованная запись", exact: true })
+    .getByRole("link", { name: "Открыть предложения во входящих", exact: true })
+    .click();
+  await surface
+    .getByLabel("Причина (обязательно)", { exact: true })
+    .fill(
+      "Исправление сохраняет исходный источник и требует отдельного подтверждения.",
+    );
+  await surface
+    .getByRole("button", { name: "Принять предложение", exact: true })
+    .click();
+  await surface
+    .getByRole("link", { name: "Опубликованная версия", exact: true })
     .click();
   await surface
     .getByRole("link", { name: "Открыть текущую запись", exact: true })
@@ -613,24 +789,74 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
     .getByRole("button", { name: "Отозвать доступ", exact: true })
     .click();
   await expect(grantDialog).toBeHidden();
-  await page.goto(recordUrl);
+  const revokedPage = await context.newPage();
+  const revokedSurface = revokedPage.getByRole("main");
+
+  await revokedPage.goto(recordUrl);
   await expect(
-    surface.getByRole("heading", { name: "Знание недоступно", exact: true }),
-  ).toBeVisible();
-  await expect(surface.getByText(corrected, { exact: true })).toBeHidden();
-  await page.goto(`/knowledge?q=${encodeURIComponent(title)}`);
-  await expect(
-    surface.getByText("Нет доступных знаний по этим фильтрам.", {
+    revokedSurface.getByRole("heading", {
+      name: "Знание недоступно",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    surface.getByRole("link", { name: title, exact: true }),
+    revokedSurface.getByText(corrected, { exact: true }),
   ).toBeHidden();
-  await page.goto(`/knowledge/witnesses/${randomUUID()}`);
+  await revokedPage.goto(`/knowledge?q=${encodeURIComponent(title)}`);
   await expect(
-    surface.getByRole("heading", { name: "Знание недоступно", exact: true }),
+    revokedSurface.getByText("Нет доступных знаний по этим фильтрам.", {
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(
+    revokedSurface.getByRole("link", { name: title, exact: true }),
+  ).toBeHidden();
+  await revokedPage.goto(`/knowledge/witnesses/${randomUUID()}`);
+  await expect(
+    revokedSurface.getByRole("heading", {
+      name: "Знание недоступно",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await revokedPage.close();
+});
+
+test("K11 issues an account token with independently selected review and vault scopes", async ({
+  page,
+}) => {
+  await page.goto("/account");
+  await page.getByRole("button", { name: "New token", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+
+  await dialog
+    .getByLabel("Name", { exact: true })
+    .fill(`Knowledge review ${randomUUID()}`);
+  await dialog
+    .getByRole("checkbox", {
+      name: "Settle authorized knowledge and vault reviews",
+    })
+    .check();
+  await dialog
+    .getByRole("checkbox", { name: "Read accessible agent memory" })
+    .check();
+  const receipt = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/account/tokens") &&
+      response.request().method() === "POST",
+  );
+
+  await dialog
+    .getByRole("button", { name: "Create token", exact: true })
+    .click();
+  const issued = await receipt;
+
+  expect(issued.status()).toBe(201);
+  const { scopes } = await issued.json();
+
+  expect(scopes).toEqual(
+    expect.arrayContaining(["agent_memory:read", "decisions:review"]),
+  );
+  expect(scopes).not.toContain("*");
 });
 
 // Browser inspection uses retained fixtures; installable-package/live ACP acceptance remains a separate required gate.
@@ -808,11 +1034,13 @@ test("E2E-CBU-01 findings preserve exact evidence links and retained revisions i
         exact: true,
       }),
     ).toHaveAttribute("href", `/knowledge/witnesses/${witness.id}`);
-    await findings
-      .getByRole("link", { name: `witness:${witness.id}`, exact: true })
-      .click();
-    await expect(main.getByText(assertion, { exact: true })).toBeVisible();
-    await page.goto(url);
+    const witnessPage = await context.newPage();
+
+    await witnessPage.goto(`/knowledge/witnesses/${witness.id}`);
+    await expect(
+      witnessPage.getByRole("main").getByText(assertion, { exact: true }),
+    ).toBeVisible();
+    await witnessPage.close();
     await page
       .getByTestId("native-findings")
       .getByRole("link", { name: `${childRunId}@1 · health`, exact: true })

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ReviewSelector } from "@/lib/queries/knowledge-memory-reviews";
+
 /**
  * `GET /api/attention/stream` — the user-scoped attention stream (ADR-171,
  * `ATN-11`, `EDGE-ATN-04`).
@@ -26,7 +28,11 @@ import { ACTIVE_RUN_STATUSES } from "@/lib/queries/portfolio";
 import { computeDecisionsQueue } from "@/lib/queries/decisions";
 import { getDb } from "@/lib/db/client";
 import { getUpdatesCount } from "@/lib/queries/updates";
-import { readProposalReviewCounter } from "@/lib/queries/knowledge-memory-reviews";
+import {
+  parseReviewSelector,
+  readProposalReviewCounter,
+  readProposalReviewMetadata,
+} from "@/lib/queries/knowledge-memory-reviews";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { isMaisterError } from "@/lib/errors";
 import { requireActiveSession, requireActiveUserById } from "@/lib/authz";
@@ -146,6 +152,44 @@ function parseBaseline(
   return { decisions: Number(decisions), updates: Number(updates) };
 }
 
+function parseReviewWatch(params: URLSearchParams): ReviewSelector | null {
+  const kinds = params.getAll("reviewKind");
+  const ids = params.getAll("reviewId");
+
+  if (kinds.length === 0 && ids.length === 0) return null;
+
+  return parseReviewSelector({
+    kind: kinds.length === 1 ? kinds[0] : undefined,
+    id: ids.length === 1 ? ids[0] : undefined,
+  });
+}
+
+async function selectedReviewVersion(
+  userId: string,
+  selection: ReviewSelector,
+): Promise<string | null> {
+  try {
+    const item = await getDb().transaction((tx) =>
+      readProposalReviewMetadata(tx, userId, selection),
+    );
+
+    return JSON.stringify([
+      item.version,
+      item.domainState,
+      item.allowed,
+      item.outcomeAvailable,
+    ]);
+  } catch (error) {
+    if (
+      isMaisterError(error) &&
+      error.code === "PRECONDITION" &&
+      error.details?.reason === "agent_memory_unavailable"
+    )
+      return null;
+    throw error;
+  }
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -251,6 +295,15 @@ type StreamAuthority = {
   role: Parameters<typeof getUpdatesCount>[1];
 };
 
+type AttentionCounters = {
+  decisions: number;
+  updates: number;
+  reviews: number;
+  reviewVersion: string;
+  decisionSignature: string;
+  selectedReviewVersion: string | null;
+};
+
 /**
  * The reader's CURRENT authority, or `null` when the account may no longer
  * stream. Re-read per poll rather than carried from the connect-time session,
@@ -294,8 +347,20 @@ export async function GET(req: NextRequest): Promise<Response> {
   const resumeFrom = parseLastEventId(req);
   const baseline = resumeFrom === null ? null : parseBaseline(req);
   const reviewSince = resumeFrom === null ? null : reviewBaseline(req);
-  const reviewCompatible =
-    new URL(req.url).searchParams.get("reviewProtocol") === "1";
+  const params = new URL(req.url).searchParams;
+  const reviewCompatible = params.get("reviewProtocol") === "1";
+  let selectedReview: ReviewSelector | null;
+
+  try {
+    selectedReview = parseReviewWatch(params);
+  } catch (error) {
+    if (!isMaisterError(error) || error.code !== "CONFIG") throw error;
+
+    return Response.json(
+      { code: error.code, message: error.message },
+      { status: 422, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
   const encoder = new TextEncoder();
   const startedAt = Date.now();
 
@@ -309,6 +374,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       let sentDecisions = baseline?.decisions ?? -1;
       let sentUpdates = baseline?.updates ?? -1;
       let sentReview = reviewSince;
+      let sentSelectedReview: string | null | undefined;
       let sentDecisionSignature: string | null = null;
       let lastCounterCheckAt = 0;
       let lastChangeAt = Date.now();
@@ -326,20 +392,17 @@ export async function GET(req: NextRequest): Promise<Response> {
 
       req.signal.addEventListener("abort", close);
 
-      const counters = async (): Promise<{
-        decisions: number;
-        updates: number;
-        reviews: number;
-        reviewVersion: string;
-        decisionSignature: string;
-      }> => {
+      const counters = async (): Promise<AttentionCounters> => {
         // `computeDecisionsQueue`, NOT the React-cached `getDecisionsQueue`: a
         // request-scoped memo would freeze this loop's counter at the value it
         // had when the connection opened.
-        const [queue, updates, reviews] = await Promise.all([
+        const [queue, updates, reviews, selectedVersion] = await Promise.all([
           computeDecisionsQueue(user.id, user.role),
           getUpdatesCount(user.id, user.role),
           readProposalReviewCounter(getDb(), user.id),
+          selectedReview
+            ? selectedReviewVersion(user.id, selectedReview)
+            : null,
         ]);
 
         lastCounterCheckAt = Date.now();
@@ -348,6 +411,7 @@ export async function GET(req: NextRequest): Promise<Response> {
           decisions: queue.count,
           updates,
           ...reviews,
+          selectedReviewVersion: selectedVersion,
           decisionSignature: queue.items
             .map((item) =>
               item.kind === "operational" && "aggregation" in item.operational
@@ -362,13 +426,7 @@ export async function GET(req: NextRequest): Promise<Response> {
       const emitTick = (
         changed: AttentionRegion[],
         projectIds: string[],
-        current: {
-          decisions: number;
-          updates: number;
-          reviews: number;
-          reviewVersion: string;
-          decisionSignature: string;
-        },
+        current: AttentionCounters,
       ): void => {
         const frame: AttentionTickEvent = {
           type: "attention.tick",
@@ -397,26 +455,39 @@ export async function GET(req: NextRequest): Promise<Response> {
         sentDecisionSignature = current.decisionSignature;
         sentDecisions = current.decisions;
         sentUpdates = current.updates;
+        sentSelectedReview = current.selectedReviewVersion;
         sentReview = {
           reviews: current.reviews,
           reviewVersion: current.reviewVersion,
         };
       };
 
-      const reviewChanged = (current: {
-        reviews: number;
-        reviewVersion: string;
-      }) => {
+      const reviewChanged = (current: AttentionCounters): boolean => {
+        const selectedChanged =
+          sentSelectedReview !== undefined &&
+          sentSelectedReview !== current.selectedReviewVersion;
+
+        sentSelectedReview = current.selectedReviewVersion;
+        if (selectedChanged)
+          log.debug(
+            {
+              kind: selectedReview?.kind,
+              visible: sentSelectedReview !== null,
+            },
+            "selected review requires revalidation",
+          );
+
         if (sentReview === null && !reviewCompatible) {
           sentReview = {
             reviews: current.reviews,
             reviewVersion: current.reviewVersion,
           };
 
-          return false;
+          return selectedChanged;
         }
 
         return (
+          selectedChanged ||
           sentReview === null ||
           sentReview.reviews !== current.reviews ||
           sentReview.reviewVersion !== current.reviewVersion

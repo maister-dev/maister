@@ -433,6 +433,19 @@ match (UX-04A–C).
 [Company Brain records](company-brain.md) and [evidence](company-brain-evidence.md) specify repository-free company ownership, independent access grants, immutable assertion/witness revisions and separate confirmation. Existing confidence, reinforcement and mutable source anchors do not establish confirmation. Company-owned records require no repository; native reads and mutations use the shared current-authority services. Repository indexing remains project-only.
 
 
+## Human review and disposition
+
+| Pending proposal | Acceptance prerequisite in addition to current source access | Durable outcome |
+| --- | --- | --- |
+| Ordinary rule, skill or flow | `writeBrain` and `manageCatalog` | `applied` with one unpublished catalog draft ID |
+| Ordinary ADR, roadmap or state | `writeBrain` and `createTask` | `applied` with one task ID |
+| State proposed from an agent vault | Existing `writeBrain` and `createTask` review admission. The retained promotion row identifies the origin. | `accepted` with proposal ID and zero projected tasks or drafts |
+| Any ordinary or vault-originated project proposal being rejected | `writeBrain` | `rejected` with retained decision and zero new effects |
+
+The table describes project-member actions. Resolve administrator privileges through the current domain owner. Use the shared transaction and the exact `updated_at::text` version (K04, K05, K07). Link the actual retained domain outcome after authorizing its destination. The overview uses an authorized pending count and links to paged review/history and sources (K02). Sources blocked by current policy must contribute neither rows nor counts. See [conclusion](../../web/lib/brain/proposals.ts) and the [shared queue query](../../web/lib/queries/knowledge-memory-reviews.ts).
+
+The shared review transaction retains the observed version in the Brain resolution JSON. Historic resolutions without a version report it as unknown. A rule or skill outcome opens the original linked revision under current proposal and catalog read authority. A Flow outcome opens its existing editor. Flow saves and publishes require a stored Flow kind before changing the draft.
+
 ## Expectations
 
 *(E-n pin the spec §13 numbering, top-to-bottom. The B/C guarantees below are

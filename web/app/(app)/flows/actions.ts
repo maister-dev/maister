@@ -92,21 +92,10 @@ export async function updateAuthoredFlowAction(
     }),
   );
 
-  log.info(
-    {
-      projectSlug,
-      capId,
-      draftVersion: expectedDraftVersion,
-      status: packageBody.validation.status,
-      issueCount: packageBody.validation.issueCount,
-      fileCount: packageFiles.length,
-    },
-    "authored Flow package files updated",
-  );
-
   await updateAuthoredDraft({
     projectSlug,
     capId,
+    expectedKind: "flow",
     input: {
       title,
       body: packageBody,
@@ -120,6 +109,17 @@ export async function updateAuthoredFlowAction(
     },
   });
 
+  log.info(
+    {
+      projectSlug,
+      capId,
+      draftVersion: expectedDraftVersion,
+      status: packageBody.validation.status,
+      issueCount: packageBody.validation.issueCount,
+      fileCount: packageFiles.length,
+    },
+    "authored Flow package files updated",
+  );
   revalidatePath("/flows");
   revalidatePath(`/flows/${projectSlug}/${capId}`);
 }
@@ -139,6 +139,7 @@ export async function publishAuthoredFlowAction(
   await publishAuthoredCapabilityLocal({
     projectSlug,
     capId,
+    expectedKind: "flow",
     expectedDraftVersion,
     editor: {
       sessionId: optionalFormString(formData, "sessionId") ?? undefined,

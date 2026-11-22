@@ -178,3 +178,89 @@ it("uses a new command and key when the rename draft changes after uncertain del
   expect(changed.new_path).toBe("/memories/other-projects");
   expect(changed.requestKey).not.toBe(initial.requestKey);
 });
+
+it.each([
+  ["same content", "old", "old", "", "comparisonIdentical"],
+  ["changed on page two", "old", "new", "", "comparisonDifferent"],
+  [
+    "changed outside the preview",
+    "old",
+    "old",
+    "new tail",
+    "comparisonDifferentAfterPreview",
+  ],
+])(
+  "compares the same bounded prefix for long notes: %s",
+  async (_case, then, now, tail, status) => {
+    const firstPage = "A".repeat(16384);
+    const shared = "B".repeat(16381);
+    const historical = firstPage + then + shared + "old tail";
+    const current = firstPage + now + shared + (tail || "old tail");
+    const path = `${folder}/plan.md`;
+    const noteId = "note-1";
+    const currentId = "current-revision";
+    const historicalId = "historical-revision";
+    const hash = "a".repeat(64);
+    const selection = new URLSearchParams(search);
+
+    search.set("memoryRevision", historicalId);
+    search.set("memoryNoteId", noteId);
+    search.set("memoryView", "compare");
+    if (tail) search.set("memoryCursor", "next");
+    vi.stubGlobal("fetch", async (input: string) => {
+      const { pathname, searchParams } = new URL(input, "http://localhost");
+
+      if (pathname.endsWith(`/revisions/${historicalId}`))
+        return Response.json({
+          revision: {
+            id: historicalId,
+            noteId,
+            path,
+            state: "available",
+            hash,
+            createdAt: "2026-11-22T12:00:00Z",
+          },
+          content: historical,
+        });
+      if (pathname.endsWith("/notes") && searchParams.has("noteId")) {
+        const cursor = searchParams.get("cursor");
+
+        if (cursor && cursor !== "next")
+          throw new Error("Read past comparison limit");
+
+        return Response.json({
+          kind: "note",
+          noteId,
+          revisionId: currentId,
+          path,
+          hash: current === historical ? hash : "b".repeat(64),
+          content: cursor ? current.slice(16384, 32768) : firstPage,
+          nextCursor: cursor ? "tail" : "next",
+        });
+      }
+      if (pathname.endsWith("/notes")) return Response.json(folderView);
+      if (
+        ["/tags", "/backlinks", "/revisions"].some((end) =>
+          pathname.endsWith(end),
+        )
+      )
+        return Response.json({ items: [], nextCursor: null });
+      throw new Error(`Unexpected request ${pathname}`);
+    });
+
+    try {
+      await render();
+      expect(
+        container.querySelector('pre[aria-label="history"]')?.textContent,
+      ).toBe(historical.slice(0, 32768));
+      expect(
+        container.querySelector('pre[aria-label="current"]')?.textContent,
+      ).toBe(current.slice(0, 32768));
+      expect(container.textContent).toContain(status);
+      expect(container.textContent).toContain("comparisonLimit");
+    } finally {
+      for (const key of [...search.keys()]) search.delete(key);
+      for (const [key, value] of selection) search.set(key, value);
+    }
+  },
+);

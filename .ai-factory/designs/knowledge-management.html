@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAIster Knowledge — interaction prototype</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; --surface: light-dark(#fff,#15191c); --canvas: light-dark(#f4f6f8,#101315); --line: light-dark(#c6ccd4,#3e464f); --fg: light-dark(#1b232d,#edf1f5); --accent: light-dark(#134f77,#91daff); }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--fg); }
+header, main { max-width: 76rem; margin: auto; padding: 1rem; }
+header { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); gap: .5rem; flex-wrap: wrap; }
+h1 { font-size: 1.8rem; margin-bottom: .8rem; }
+h2 { font-size: 1.25rem; }
+nav, .controls { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; padding: .5rem 0; }
+a { color: var(--accent); text-underline-offset: .2em; }
+a[aria-current] { font-weight: 750; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+button, select, textarea { font: inherit; padding: .45rem .65rem; }
+label { display: grid; gap: .2rem; }
+.card { border: 1px solid var(--line); background: var(--surface); border-radius: .65rem; padding: 1rem; min-width: 0; }
+.layout { display: grid; grid-template-columns: minmax(15rem,1fr) minmax(0,2fr); gap: .85rem; align-items: start; }
+.rows { list-style: none; padding: 0; margin: 0; }
+.rows li { padding: .75rem 0; border-bottom: 1px solid var(--line); }
+small { display: block; margin-top: .35rem; }
+dl { display: grid; grid-template-columns: minmax(6rem,1fr) 2fr; gap: .4rem; }
+dd { margin: 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+textarea { width: 100%; }
+#message:empty { display: none; }
+@media (max-width: 640px) { .layout { display: block; } .layout[data-selected="true"] > :first-child { display: none; } }
+</style>
+<header><strong>MAIster</strong><div><button id="locale" type="button">Русский</button> <button id="theme" type="button">☾ / ☀</button></div></header>
+<main>
+<h1 id="heading"></h1>
+<nav id="nav" aria-label="Knowledge"></nav>
+<div class="controls" id="filters"></div>
+<p id="message" role="status"></p>
+<div id="screen"></div>
+</main>
+<script>
+const copy = {
+  records: ["Records", "Записи"], reviews: ["Awaiting review", "На рассмотрении"], memory: ["Agent memory", "Память агентов"],
+  heading: ["Knowledge", "Знания"], scope: ["Scope", "Область"], all: ["All accessible", "Все доступные"], company: ["Company", "Компания"],
+  pending: ["Needs my decision", "Требуется моё решение"], history: ["History", "История"], state: ["Example state", "Состояние примера"],
+  ready: ["Available", "Доступно"], empty: ["Empty", "Пусто"], forbidden: ["Restricted", "Ограничено"], down: ["Temporary failure", "Временная ошибка"],
+  stale: ["Version conflict", "Конфликт версий"], missing: ["Insufficient evidence", "Недостаточно подтверждений"], retry: ["Retry", "Повторить"],
+  back: ["Back to list", "К списку"], confirm: ["Confirm fact", "Подтвердить факт"], revise: ["Propose correction", "Предложить исправление"],
+  evidence: ["Evidence", "Доказательства"], base: ["Base revision", "Базовая версия"], result: ["Outcome", "Результат"], owner: ["Owner", "Владелец"],
+  accepted: ["Accepted", "Принято"], rejected: ["Rejected", "Отклонено"], publish: ["Publish revision", "Опубликовать версию"], reject: ["Reject", "Отклонить"],
+  reason: ["Reason", "Обоснование"], next: ["Next proposal", "Следующее предложение"],
+  install: ["Installation vault", "Память инсталляции"], project: ["Project vault", "Память проекта"], compare: ["Compare revisions", "Сравнить версии"],
+  preview: ["Preview", "Предпросмотр"], source: ["Markdown source", "Исходный Markdown"], restore: ["Restore as new revision", "Восстановить новой версией"],
+  promote: ["Propose as knowledge", "Предложить как знание"], promoteBrain: ["Propose a project change", "Предложить изменение проекта"],
+  send: ["Submit for review", "Отправить на рассмотрение"], task: ["Create project task", "Создать задачу проекта"],
+  note: ["Review checklist", "Чек-лист проверки"], record: ["Review requires a retained receipt", "Для проверки нужна сохранённая квитанция"],
+  promotion: ["Accept proposed project state", "Принять предложенное состояние проекта"], personal: ["Personal memory is in the Librarian dialog.", "Личная память находится в диалоге Библиотекаря."],
+  reload: ["Reload reviewed version", "Загрузить актуальную версию"], draft: ["Decision draft retained.", "Черновик решения сохранён."],
+  disabled: ["Memory disabled", "Память отключена"], legacy: ["Read legacy project memory", "Открыть прежнюю память проекта"], saved: ["Review receipt", "Квитанция решения"],
+  author: ["Author", "Автор"], reviewed: ["Reviewed version", "Версия на проверке"], reviewer: ["Reviewer", "Проверяющий"],
+  decidedAt: ["Decided at", "Время решения"], unrecorded: ["Unrecorded", "Не зафиксировано"],
+  reasonRequired: ["Give a reason for this decision.", "Укажите причину решения."],
+  catalog: ["Create an unpublished catalog draft", "Создать неопубликованный черновик каталога"],
+  vaultChange: ["Apply the memory changes", "Применить изменения памяти"],
+  correctionSource: ["Published assertion r3 · run 120", "Утверждение r3 · запуск 120"],
+  taskSource: ["Project Brain draft · docs/roadmap.md", "Черновик Project Brain · docs/roadmap.md"],
+  catalogSource: ["Project Brain rule draft", "Черновик правила Project Brain"],
+  promotionSource: ["Agent vault · /memories/project-state.md · r7", "Память агента · /memories/project-state.md · r7"],
+  vaultSource: ["Installation vault · /memories/review.md · r2", "Память инсталляции · /memories/review.md · r2"],
+  correctionPreview: ["Require the exact receipt for a completed review.", "Для завершённой проверки нужна точная квитанция."],
+  taskPreview: ["Document the rollout cases and name a maintainer.", "Опишите сценарии развёртывания и назначьте ответственного."],
+  catalogPreview: ["Check the scope of each change before publishing.", "Перед публикацией проверяйте область каждого изменения."],
+  promotionPreview: ["Atlas reached the approved rollout state.", "Atlas достиг согласованного состояния развёртывания."],
+  vaultPreview: ["− Check output · + Check output and receipt", "− Проверить результат · + Проверить результат и квитанцию"],
+};
+const reviewExamples = {
+  correction: { label: "record", effect: "publish", owner: "Atlas", author: "Marina", version: "r3", source: "correctionSource", preview: "correctionPreview" },
+  ordinary: { label: "task", effect: "task", owner: "Orion", author: "Maksim", version: "4", source: "taskSource", preview: "taskPreview" },
+  catalog: { label: "catalog", effect: "catalog", owner: "Orion", author: "Maksim", version: "2", source: "catalogSource", preview: "catalogPreview" },
+  promotion: { label: "promotion", effect: "promotion", owner: "Atlas", author: "release-agent", version: "7", source: "promotionSource", preview: "promotionPreview" },
+  vault: { label: "note", effect: "vaultChange", owner: "Company", author: "triager", version: "2", source: "vaultSource", preview: "vaultPreview" },
+};
+let language = 0, status = "ready";
+const drafts = new Map();
+const outcomes = new Map();
+const t = (key) => copy[key]?.[language] ?? key;
+const get = (id) => document.getElementById(id);
+const state = () => new URLSearchParams(location.hash.slice(1));
+function link(label, view, changes = {}) {
+  const next = state();
+  for (const [key, value] of Object.entries({ view, detail: "", panel: "", ...changes })) {
+    if (value) next.set(key, value); else next.delete(key);
+  }
+  return '<a href="#' + next + '">' + t(label) + '</a>';
+}
+function selector(label, key, values, active) {
+  return '<label>' + t(label) + '<select data-setting="' + key + '">' +
+    values.map(value => '<option value="' + value + '"' + (active === value ? ' selected' : '') + '>' + t(value) + '</option>').join("") + '</select></label>';
+}
+function list(entries) {
+  return '<ul class="rows">' + entries.map(([anchor, meta]) => '<li>' + anchor + '<small>' + meta + '</small></li>').join("") + '</ul>';
+}
+function term(label, value) {
+  return '<dt>' + t(label) + '</dt><dd>' + value + '</dd>';
+}
+function render() {
+  const selected = state(), view = selected.get("view") ?? "records", detail = selected.get("detail"), panel = selected.get("panel");
+  const scope = selected.get("scope") ?? "all", history = selected.get("history") ?? "pending";
+  document.documentElement.lang = language ? "ru" : "en";
+  get("heading").textContent = t("heading");
+  get("locale").textContent = language ? "English" : "Русский";
+  get("nav").innerHTML = ["records","reviews","memory"].map(key => link(key,key).replace("<a ", key === view ? '<a aria-current="page" ' : "<a ")).join(" ");
+  get("filters").innerHTML = selector("scope","scope",["all","company","Atlas","Orion"],scope) +
+    (view === "reviews" ? selector(history,"history",["pending","history"],history) : "") +
+    selector("state","fixture",["ready","empty","forbidden","down","stale","missing","disabled","legacy"],status);
+  const blocked = ["forbidden","down","empty","disabled","legacy"].includes(status);
+  get("message").innerHTML = ["ready","missing"].includes(status) ? "" : t(status) +
+    (status === "down" || status === "stale" ? ' <button type="button" data-action="retry">' + t(status === "down" ? "retry" : "reload") + '</button>' : "");
+  if (blocked) { get("screen").innerHTML = ""; return; }
+  const back = link("back",view);
+  let left, right = "";
+  if (view === "records") {
+    left = list([[link("record",view,{detail:"record"}),"Atlas · 3"]]);
+    right = '<h2 id="detail">' + t("record") + '</h2><p>Atlas · r3</p><p>' + t("evidence") + ' · Run / 120</p>' +
+      (status === "missing" ? '<p>' + t("missing") + '</p>' : '<button type="button">' + t("confirm") + '</button>') +
+      ' ' + link("revise","reviews",{detail:"correction"});
+  } else if (view === "reviews") {
+    const examples = Object.entries(reviewExamples);
+    left = list(examples.map(([key, sample]) => [link(sample.label,view,{detail:key}), t(sample.owner) + " · " + sample.version]));
+    const sample = reviewExamples[detail];
+    if (sample) {
+      const settled = outcomes.get(detail);
+      const index = examples.findIndex(([key]) => key === detail);
+      const next = examples[index + 1]?.[0];
+      const ready = settled || history === "history" || panel === "outcome";
+      const decision = ready
+        ? term("result", t(settled?.state ?? "accepted")) +
+          term("reviewer", settled?.reviewer ?? t("unrecorded")) +
+          term("decidedAt", settled?.at ?? t("unrecorded")) +
+          term("reason", '<span id="recorded-reason"></span>')
+        : "";
+      right = '<h2 id="detail">' + t(sample.label) + '</h2><dl>' +
+        term("owner", t(sample.owner)) + term("author", sample.author) +
+        term("reviewed", sample.version) + term("evidence", t(sample.source)) +
+        decision + '</dl><blockquote>' + t(sample.preview) + '</blockquote>' +
+        (ready
+          ? (next ? link("next",view,{detail:next}) : "")
+          : '<form id="decision"><label>' + t("reason") + '<textarea rows="3"></textarea></label><div class="controls"><button value="accepted">' + t(sample.effect) + '</button><button value="rejected">' + t("reject") + '</button></div></form>');
+    }
+  } else {
+    left = list(["Atlas","Orion","installation"].map(key => [link("note",view,{detail:key}), (key === "installation" ? t("install") : key + " · " + t("project")) + " · triager"])) +
+      '<p>' + t("personal") + '</p>';
+    right = '<p>' + link(t(detail ?? "Atlas"),view) + ' / ' + link("memories",view,{detail}) + '</p><h2 id="detail">' + t("note") + '</h2>' +
+      '<div class="controls">' + link("preview",view,{detail}) + link("source",view,{detail,panel:"source"}) + link("compare",view,{detail,panel:"compare"}) + '</div>';
+    if (panel === "compare") right += '<pre>r1  - Keep receipt\nr2  + Keep exact receipt</pre><button type="button">' + t("restore") + '</button> ' + link("preview",view,{detail});
+    else if (panel === "knowledge" || panel === "brain") right += selector("owner","destination",["Atlas","company"],selected.get("destination") ?? "Atlas") +
+      '<p>/memories/review.md · r2 · sha256:1a09…</p><blockquote>Keep exact receipt</blockquote>' + link("send","reviews",{detail:panel === "brain" ? "promotion" : "correction"});
+    else right += (panel === "source" ? '<pre># Review\nKeep exact receipt</pre>' : '<p>Keep exact receipt</p>') +
+      '<div class="controls">' + link("promote",view,{detail,panel:"knowledge"}) + link("promoteBrain",view,{detail,panel:"brain"}) + '</div>';
+  }
+  get("screen").innerHTML = '<div class="layout" data-selected="' + Boolean(detail) + '"><section class="card">' + left + '</section>' +
+    (detail ? '<section class="card">' + back + right + '</section>' : "") + '</div>';
+  const recordedReason = get("recorded-reason");
+  if (recordedReason) recordedReason.textContent = outcomes.get(detail)?.reason || t("unrecorded");
+  const input = get("screen").querySelector("textarea");
+  if (input) { input.value = drafts.get(detail) ?? ""; input.addEventListener("input", () => drafts.set(detail, input.value)); }
+  get("decision")?.addEventListener("submit", event => {
+    event.preventDefault();
+    if (status === "stale") { get("message").firstChild.textContent = t("stale") + " · " + t("draft") + " "; return; }
+    if ((event.submitter.value === "rejected" || detail === "correction") && !input.value.trim()) {
+      get("message").textContent = t("reasonRequired");
+      input.focus();
+      return;
+    }
+    outcomes.set(detail, {
+      state: event.submitter.value,
+      reviewer: "Anna",
+      at: new Intl.DateTimeFormat(language ? "ru" : "en", { dateStyle: "medium", timeStyle: "short" }).format(new Date()),
+      reason: input.value.trim(),
+    });
+    drafts.delete(detail);
+    render();
+    get("detail").tabIndex = -1;
+    get("detail").focus();
+  });
+}
+get("message").addEventListener("click", () => { status = "ready"; render(); get("screen").querySelector("textarea, a")?.focus(); });
+get("filters").addEventListener("change", event => {
+  const {setting} = event.target.dataset, value = event.target.value;
+  if (setting === "fixture") { status = value; render(); return; }
+  const updated = state();
+  updated.set(setting, value);
+  location.hash = updated;
+});
+get("locale").onclick = () => { language = 1 - language; render(); };
+get("theme").onclick = () => { document.documentElement.style.colorScheme = document.documentElement.style.colorScheme === "dark" ? "light" : "dark"; };
+window.addEventListener("hashchange", () => {
+  render();
+  const target = get("detail") ?? get("screen").querySelector("a");
+  if (target) { target.tabIndex = 0; target.focus(); }
+});
+render();
+</script>

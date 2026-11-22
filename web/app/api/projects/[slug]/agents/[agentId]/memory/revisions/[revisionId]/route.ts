@@ -9,7 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { decodeRouteParam } from "@/lib/route-params";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   route: {
     params: Promise<{ slug: string; agentId: string; revisionId: string }>;
   },
@@ -20,6 +20,7 @@ export async function GET(
         getDb(),
         decodeRouteParam((await route.params).revisionId, "revisionId"),
         prepare,
+        new URL(request.url).searchParams.get("noteId") ?? undefined,
       ),
     ),
   );

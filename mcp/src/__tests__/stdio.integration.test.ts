@@ -10,7 +10,7 @@ import {
   connectCompiledMcp,
 } from "../../test-support/compiled-client";
 
-import { TOOL_SPECS } from "@/tools";
+import { toolNamesForToolset, toolSpecForToolset } from "@/tools";
 
 type CapturedRequest = {
   method?: string;
@@ -243,7 +243,7 @@ describe("MCP stdio wire contract", () => {
     });
   });
 
-  it("publishes every tool's complete schema through tools/list", async () => {
+  it("publishes complete schemas for the default toolset", async () => {
     const { tools } = await client.listTools();
 
     expect(
@@ -254,7 +254,10 @@ describe("MCP stdio wire contract", () => {
         ...(annotations ? { annotations } : {}),
       })),
     ).toEqual(
-      Object.entries(TOOL_SPECS).map(([name, spec]) => ({ name, ...spec })),
+      toolNamesForToolset(undefined).map((name) => ({
+        name,
+        ...toolSpecForToolset(name, undefined),
+      })),
     );
   });
 

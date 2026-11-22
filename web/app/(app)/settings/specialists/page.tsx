@@ -11,7 +11,10 @@ import {
   StandInspectionScheduleForm,
 } from "@/components/specialist-assignments/stand-inspection-schedule-form";
 import { listCompanySpecialists } from "@/lib/agents/company-binding-list";
-import { getCompanySpecialistBindingRevision } from "@/lib/agents/company-bindings";
+import {
+  getCompanySpecialistBinding,
+  getCompanySpecialistBindingRevision,
+} from "@/lib/agents/company-bindings";
 import { getCompanyFlowBindingRevision } from "@/lib/agents/company-flow-bindings";
 import { requireActiveSession } from "@/lib/authz";
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
@@ -111,12 +114,23 @@ export default async function SpecialistsSettings({
           >
             {t("configuration")}
           </a>
-          {installation?.installationGrant?.memoryEnabled ? (
+          {installation?.enabled &&
+          installation.installationGrant?.memoryEnabled ? (
             <a
               className="underline"
               href={`?binding=${encodeURIComponent(installation.bindingId)}&tab=memory`}
             >
               {t("installationMemory")}
+            </a>
+          ) : null}
+          {installation ? (
+            <a
+              className="underline"
+              href={`/knowledge/memory?${new URLSearchParams({
+                locationId: `installation:${installation.bindingId}`,
+              })}`}
+            >
+              {t("memoryCatalog")}
             </a>
           ) : null}
           {installationCandidate ? (
@@ -131,6 +145,7 @@ export default async function SpecialistsSettings({
       ) : null}
       {installation &&
       query.tab === "memory" &&
+      installation.enabled &&
       installation.installationGrant?.memoryEnabled ? (
         <AgentMemoryControl
           agentId={installation.id}
@@ -282,7 +297,6 @@ async function readSettings(
   try {
     const page = await listCompanySpecialists(db, userId, { limit: 50 });
     const { binding, revision, kind } = searchParams;
-    const selected = page.items.find(({ bindingId }) => bindingId === binding);
     const [companyId, flows, canManage] = await db.transaction(async (tx) => {
       const owner = await installationCompany(tx);
 
@@ -311,6 +325,10 @@ async function readSettings(
         throw error;
       }
     });
+    const selected =
+      binding && kind !== "coordinator"
+        ? await readSelectedBinding(db, userId, companyId, binding)
+        : undefined;
     const chosen =
       kind === "coordinator" && flows.find(({ id }) => id === binding);
     const snapshot = chosen
@@ -339,6 +357,26 @@ async function readSettings(
       notFound();
     throw error;
   }
+}
+
+async function readSelectedBinding(
+  db: ReturnType<typeof getDb>,
+  userId: string,
+  companyId: string,
+  bindingId: string,
+) {
+  return db.transaction(async (tx) => {
+    await authorizeCompanyUserAction(tx, userId, companyId, "specialists:read");
+    const {
+      rows: [binding],
+    } = await tx.execute<{ agent_id: string }>(sql`
+      SELECT agent_id FROM company_specialist_bindings WHERE company_id=${companyId} AND id=${bindingId}
+    `);
+
+    if (!binding) notFound();
+
+    return getCompanySpecialistBinding(tx, userId, binding.agent_id, bindingId);
+  });
 }
 
 async function readInspectionComponents(userId: string, companyId: string) {

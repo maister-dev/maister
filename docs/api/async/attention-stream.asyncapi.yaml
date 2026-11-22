@@ -78,6 +78,20 @@ channels:
         even when count and cursor match. Missing or invalid baselines reconcile
         once. Older clients ignore the additive fields and reviews region.
 
+        The review count and version cover the authenticated actor's pending
+        queue. With a detail open the browser supplies exactly one
+        `reviewKind` (`vault`, `brain` or `knowledge`) and one `reviewId`
+        (1–192 characters) on the same stream. An incomplete or invalid
+        selector returns `422`. The server rechecks that exact selection
+        with current read authority on the existing counter cadence. A
+        selected item becoming inaccessible can mark the `reviews`
+        region changed even if the pending count and version stay fixed.
+        The same invalidation is used for History and pending previews. An
+        unavailable selection is indistinguishable from an unknown one.
+        The browser rereads the selected detail on connection and review
+        invalidation. In History it also rereads the filtered page and total.
+        The stream carries neither the selection nor its content.
+
         A quiet stream emits `attention.heartbeat`; a stream that stays quiet
         past the module-level cap is closed with `attention.stream_timeout`
         rather than held open. Poll interval, heartbeat period and quiet cap are

@@ -39,6 +39,7 @@ type UserTokenScope = Exclude<
   | JudgeTokenScope
   | LibrarianOnlyTokenScope
   | "agent_memory:read"
+  | "decisions:review"
   | "agent_memory:propose"
 >;
 
@@ -48,6 +49,7 @@ const MACHINE_ONLY_TOKEN_SCOPES: readonly TokenScope[] = [
   ...JUDGE_TOKEN_SCOPES,
   ...LIBRARIAN_ONLY_TOKEN_SCOPES,
   "agent_memory:read",
+  "decisions:review",
   "agent_memory:propose",
 ];
 

@@ -17,6 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   createAuthoredCapability,
+  getAuthoredCapability,
+  publishAuthoredCapabilityLocal,
   updateAuthoredDraft,
 } from "@/lib/catalog/authored-service";
 import { isMaisterError } from "@/lib/errors";
@@ -163,5 +165,50 @@ describe("authored flow draft hard-gate (T-A5)", () => {
 
     expect(isMaisterError(thrown)).toBe(true);
     expect((thrown as { code?: string }).code).toBe("CONFLICT");
+  });
+
+  it("refuses Flow saves and publishes for a rule without changing its Markdown", async () => {
+    const { projectSlug } = await seedFlowCap("hardgate-rule");
+    const { capability, draft } = await createAuthoredCapability({
+      projectSlug,
+      input: {
+        kind: "rule",
+        slug: "reviewed-rule",
+        title: "Reviewed Rule",
+        body: { markdown: "Review the exact proposed change." },
+      },
+      db,
+    });
+    const flowTarget = {
+      projectSlug,
+      capId: capability.id,
+      expectedKind: "flow" as const,
+      db,
+    };
+
+    await expect(
+      publishAuthoredCapabilityLocal({
+        ...flowTarget,
+        expectedDraftVersion: 1,
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await expect(
+      updateAuthoredDraft({
+        ...flowTarget,
+        input: {
+          body: { flowYaml: "name: Flow replacement" },
+          expectedDraftVersion: 1,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    const retained = await getAuthoredCapability({
+      projectSlug,
+      capId: capability.id,
+      db,
+    });
+
+    expect(retained.published).toBeNull();
+    expect(retained.revisions).toHaveLength(1);
+    expect(retained.draft).toMatchObject({ id: draft.id, body: draft.body });
   });
 });

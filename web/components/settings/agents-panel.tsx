@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 
 import { PanelSection } from "@/components/settings/panel-section";
 
@@ -58,6 +59,7 @@ async function sendJson(
 // M34 (ADR-089 D11): the platform agent catalog — view-only table, edits in
 // the modal, quarantine surfaced inline, manual launch per row.
 export function AgentsPanel({ agents, projects }: Props): ReactElement {
+  const knowledge = useTranslations("knowledge");
   const t = useTranslations("agents");
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -228,6 +230,12 @@ export function AgentsPanel({ agents, projects }: Props): ReactElement {
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex flex-wrap items-center justify-end gap-2">
+                    <Link
+                      className="underline"
+                      href={`/knowledge/memory?${new URLSearchParams({ agentId: agent.id })}`}
+                    >
+                      {knowledge("agentMemory")}
+                    </Link>
                     {launchingId === agent.id ? (
                       <span className="inline-flex items-center gap-1.5">
                         <select

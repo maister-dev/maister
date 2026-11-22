@@ -16,7 +16,10 @@ import {
   taskAgentPackageChanged,
 } from "./launch-agent-resolution";
 import { launchRefusal } from "./launch-resolution";
-import { captureAcceptedDirectory } from "./launch-capability-materialization";
+import {
+  assertCapturedProjectionSymlinks,
+  captureAcceptedDirectory,
+} from "./launch-capability-materialization";
 import { assertManagedCapturePath } from "./launch-capture-path";
 
 import { reportPreparationCleanupFailure } from "@/lib/agents/preparation-trace";
@@ -195,23 +198,10 @@ export async function captureTaskAgentPackage(
     await assertCurrentPath();
 
     for (const capability of definition.manifest?.spec?.capabilities ?? []) {
-      const relativeRoot = `${capability.path}${path.sep}`;
-
-      for (const link of links) {
-        if (!link.relativePath.startsWith(relativeRoot)) continue;
-        const sourceKind = link.relativePath
-          .slice(relativeRoot.length)
-          .split(path.sep)[0];
-        const targetKind = link.relativeTarget.startsWith(relativeRoot)
-          ? link.relativeTarget.slice(relativeRoot.length).split(path.sep)[0]
-          : null;
-
-        if (
-          ["skills", "agents"].includes(sourceKind) &&
-          targetKind !== sourceKind
-        )
-          throw launchRefusal("launch_capabilities_changed", "PRECONDITION");
-      }
+      for (const kind of ["skills", "agents"])
+        await assertCapturedProjectionSymlinks(capturedPath, links, [
+          path.join(capability.path, kind),
+        ]);
     }
     const { stem } = splitQualifiedAgentId(settings.agentId);
     const sourcePath = path.join(capturedPath, "maister-agents", `${stem}.md`);
