@@ -1,5 +1,6 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Db } from "@/lib/execution-host/db";
+import type { FakeExecutionHost } from "@/test-support/fake-execution-host";
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -21,6 +22,7 @@ import {
   forgetPersonalMemory,
   rememberPersonalMemory,
 } from "@/lib/librarian/memory";
+import * as librarianRuntime from "@/lib/librarian/runtime";
 import { librarianStreamFrames } from "@/lib/librarian/stream";
 import { updateLibrarianSettings } from "@/lib/librarian/settings";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
@@ -43,6 +45,8 @@ import {
 
 let database: StartedPostgresTestDb;
 let db: NodePgDatabase;
+let fake: FakeExecutionHost | undefined;
+const runningTurns: Promise<void>[] = [];
 let session: { id: string; role: "member" | "admin" } | null = null;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
@@ -88,7 +92,18 @@ beforeAll(async () => {
     databaseName: "librarian_routes",
   });
   db = database.db as unknown as NodePgDatabase;
-  await fakeExecutionHosts(db);
+  ({ fake } = await fakeExecutionHosts(db));
+  const startTurn = librarianRuntime.startLibrarianTurn;
+
+  vi.spyOn(librarianRuntime, "startLibrarianTurn").mockImplementation(
+    (...args) => {
+      const turn = startTurn(...args);
+
+      runningTurns.push(turn);
+
+      return turn;
+    },
+  );
   await seedLibrarianPlatform(db);
   alice = await seedActiveUser(db);
   bob = await seedActiveUser(db);
@@ -102,7 +117,27 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await database?.stop();
+  try {
+    const failures: unknown[] = [];
+
+    // Delivery can promote a queued turn, even after the originating handler returned.
+    do {
+      const results = await Promise.allSettled(runningTurns.splice(0));
+
+      for (const result of results)
+        if (result.status === "rejected") failures.push(result.reason);
+      await fake?.waitForCanonicalEvents();
+    } while (runningTurns.length > 0);
+
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        "Librarian route fixture did not settle",
+      );
+  } finally {
+    vi.restoreAllMocks();
+    await database?.stop();
+  }
 });
 
 it("B1 scopes earlier actions by owner and generation and preserves tied timestamp order", async () => {
