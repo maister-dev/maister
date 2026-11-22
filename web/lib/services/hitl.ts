@@ -298,7 +298,12 @@ function scheduleResume(runId: string): void {
     () =>
       void runFlow(runId).catch((err: unknown) =>
         log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
+          {
+            runId,
+            code: isMaisterError(err) ? err.code : undefined,
+            reason: isMaisterError(err) ? err.details?.reason : undefined,
+            err: err instanceof Error ? err.message : String(err),
+          },
           "background runFlow on resume failed",
         ),
       ),
@@ -308,6 +313,7 @@ function scheduleResume(runId: string): void {
 async function claimGraphResumeSlot(
   db: any,
   runId: string,
+  executionHosts?: ExecutionHosts,
 ): Promise<"ready" | "queued" | "noop"> {
   return db.transaction(async (tx: any) => {
     await takeSchedulerLock(tx);
@@ -337,18 +343,18 @@ async function claimGraphResumeSlot(
       return "queued";
     }
 
-    const resumed = await tx
-      .update(runs)
-      .set({
-        status: "NeedsInput",
-        resumeRequestedAt: null,
-        keepaliveUntil: null,
-        checkpointAt: null,
-      })
-      .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
-      .returning({ id: runs.id });
+    const resumed = await markResumed(runId, {
+      db: tx,
+      placement: { transport: executionHosts?.transport },
+    });
 
-    return resumed.length > 0 ? "ready" : "noop";
+    if (!resumed.ok) return "noop";
+    await tx
+      .update(runs)
+      .set({ resumeRequestedAt: null, keepaliveUntil: null })
+      .where(eq(runs.id, runId));
+
+    return "ready";
   });
 }
 
@@ -3138,7 +3144,7 @@ async function handlePlanReviewDecisionResponse(
   });
 
   if (outcome.kind === "already-delivered") {
-    const resume = await claimGraphResumeSlot(db, runId);
+    const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
     if (resume === "ready") scheduleResume(runId);
 
@@ -3203,7 +3209,7 @@ async function handlePlanReviewDecisionResponse(
     childAssignmentClaim: assignmentClaim,
     recordSuccessAudit: args.recordSuccessAudit,
   });
-  const resume = await claimGraphResumeSlot(db, runId);
+  const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
   if (resume === "ready") scheduleResume(runId);
 
@@ -3395,7 +3401,7 @@ async function handlePlanReviewParentResponse(
   });
 
   if (phaseOne.kind === "already-delivered") {
-    const resume = await claimGraphResumeSlot(db, runId);
+    const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
     if (resume === "ready") scheduleResume(runId);
 
@@ -3471,7 +3477,7 @@ async function handlePlanReviewParentResponse(
     }
   });
 
-  const resume = await claimGraphResumeSlot(db, runId);
+  const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
   if (resume === "ready") scheduleResume(runId);
 
@@ -3825,7 +3831,11 @@ async function handleFormHumanResponse(
     // crash, etc.) — re-queue the wake here so the retry is the
     // durable recovery path. Idempotent: runFlow's resume gate is a
     // no-op if the run has already advanced.
-    const needsRequeue = claim.runStatus === "NeedsInput";
+    const needsRequeue =
+      claim.runStatus === "NeedsInput" ||
+      (claim.runStatus === "NeedsInputIdle" &&
+        (await claimGraphResumeSlot(db, runId, args.executionHosts)) ===
+          "ready");
 
     if (needsRequeue) {
       scheduleResume(runId);
@@ -3921,7 +3931,12 @@ async function handleFormHumanResponse(
     }
   });
 
-  scheduleResume(runId);
+  const resume =
+    claim.runStatus === "NeedsInputIdle"
+      ? await claimGraphResumeSlot(db, runId, args.executionHosts)
+      : "ready";
+
+  if (resume === "ready") scheduleResume(runId);
 
   log.info(
     {
@@ -3930,6 +3945,7 @@ async function handleFormHumanResponse(
       kind: hitlRow.kind,
       phase: "delivered",
       supervisorAck: false,
+      resume,
       latencyMs: Date.now() - startedAt,
     },
     "form/human response delivered",
@@ -6522,7 +6538,7 @@ async function handleNodeInterruptResponse(args: {
     if (outcome.sameDecision) {
       await applyResolvedWorkspacePolicy();
 
-      const resume = await claimGraphResumeSlot(db, runId);
+      const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
       if (resume === "ready") scheduleResume(runId);
     } else {
@@ -6544,7 +6560,7 @@ async function handleNodeInterruptResponse(args: {
   // NeedsInputIdle while the operator was deciding, and runFlow only claims
   // NeedsInput. claimGraphResumeSlot is the cap-safe claim that un-idles first
   // (or defers at cap), so an answer given after the sweep still wakes the run.
-  const resume = await claimGraphResumeSlot(db, runId);
+  const resume = await claimGraphResumeSlot(db, runId, args.executionHosts);
 
   if (resume === "ready") scheduleResume(runId);
   log.info(
