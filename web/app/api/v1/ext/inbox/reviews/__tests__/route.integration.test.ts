@@ -106,9 +106,11 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
   });
 
   try {
+    const draftContent = `    ${"a".repeat(263_000)}\n`;
+
     await fixture.pool.query(
-      "UPDATE brain_proposals SET draft = draft || jsonb_build_object('content', repeat('a', 263000)) WHERE id=$1",
-      [proposalId],
+      "UPDATE brain_proposals SET draft = draft || jsonb_build_object('content', $2::text) WHERE id=$1",
+      [proposalId, draftContent],
     );
     const queue = await list(request(`${endpoint}?limit=1`, personal.secret));
 
@@ -138,9 +140,15 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
     expect(row.nextCursor).toEqual(expect.any(String));
     const previewPage = `${base}?${new URLSearchParams({ cursor: row.nextCursor })}`;
 
+    const continuation = await detail(
+      request(previewPage, personal.secret),
+      params,
+    );
+
+    expect(continuation.status).toBe(200);
     expect(
-      (await detail(request(previewPage, personal.secret), params)).status,
-    ).toBe(200);
+      row.summary + (await continuation.json()).summary === draftContent,
+    ).toBe(true);
     expect
       .soft((await detail(request(previewPage, broad.secret), params)).status)
       .toBe(422);

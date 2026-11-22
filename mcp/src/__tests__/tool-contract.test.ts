@@ -45,7 +45,6 @@ type JsonSchema = {
   maxLength?: number;
   pattern?: string;
   exclusiveMinimum?: boolean | number;
-  anyOf?: JsonSchema[];
   const?: unknown;
 };
 
