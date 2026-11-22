@@ -245,6 +245,60 @@ ERD checks, and Mintlify validation and links passed. The changed web files
 passed scoped lint. The touched MCP tool file has 12 inherited formatting
 warnings, with zero new warnings.
 
+### Last three review findings
+
+- [x] **K11 and K12.** Direct REST and installed MCP require explicit `agent_memory:read` for vault-dependent knowledge under a global personal credential. Exact references are concealed and collection members are filtered before pagination. Real bearer and MCP tests check wildcard, ordinary knowledge and explicit-scope cases.
+- [x] **K04, K10 and K13.** A real PostgreSQL barrier reproduced `40P01` between History and source redaction. The common fence lets redaction commit, after which the waiting History read conceals the withdrawn proposal. Firefox removes the path, preview and outcome from the open History view.
+- [x] **K06.** A correction retains both the existing `derived_from` link and the selected `supports` link for the same exact witness. Firefox verifies the request and stored draft. Selecting the same relation again keeps one copy.
+
+The [fix notes](../patches/2026-11-22-17.21.md) record the sibling paths and
+the observed RED → GREEN → refactor cases.
+
+### Qualification after rebasing onto local master
+
+The branch was rebased onto `b00662951`. Migration
+`0365_agent_memory_proposal_decision_reason` uses the original feature SQL.
+Its journal appends to master, and its snapshot extends
+`0364_manual_backlog_admission`. The ERD, clean install, and upgrades from
+`0360` and `0364` passed. The ADR number inventory and Brain lineage match
+local master. The adapter update appends an amendment to ADR-003.
+
+The merged Firefox fixture reproduced a `403` when the project reviewer
+attempted administrator-only redaction. The corrected test observes History
+as the project reviewer while the global administrator withdraws the exact
+source. The first rebased full integration run had two failing cases. The
+company driver assertion also failed on untouched `b00662951`. The test now
+checks that the competing driver defers during owned creation and that the
+original driver submits the single prompt. The Git retirement test delivers
+the deadline signal after the real child writes its readiness marker. Both
+files passed all 70 tests after those corrections. The next full run passed
+all 6,630 executed tests and surfaced a Librarian fixture teardown rejection.
+The fixture now joins its real background turns and canonical delivery before
+closing PostgreSQL. The two Librarian files passed all 31 tests with the fix.
+
+The adapter candidate reproduced the two Codex context-exhaustion failures
+with the upstream package alone. After porting the patch, all six wire
+scenarios passed against the installed adapter, including a v1 stdio
+declaration resolved through `PATH`. Both installed adapters negotiated
+ACP v1 on fresh local profiles.
+
+| Gate | Observed result | Local log |
+|---|---|---|
+| Full web unit | 9,286 passed across 898 files | `/tmp/maister-knowledge-final-unit-sequential-c173e1a12.log` |
+| Focused PostgreSQL at `f79af05a3` | 79 passed across 14 files covering scope, migration, redaction, review and Flow admission | `/tmp/maister-knowledge-rebase-targeted-f79af05a3.log` |
+| Rebase blocker regressions | 70 passed across the two complete files | `/tmp/maister-knowledge-rebase-residual-fixed.log` |
+| Firefox | 15 passed, including authenticated setup | `/tmp/maister-knowledge-final-firefox-c173e1a12.log` |
+| Full web integration | 6,630 passed across 730 files, 11 skipped, exit code 0 | `/tmp/maister-knowledge-final-integration-3213544e6.log` |
+| Supervisor | 533 unit and 413 integration tests passed | `/tmp/maister-knowledge-final-supervisor-c173e1a12.log` |
+| MCP | 565 unit and 20 integration tests passed. All six installed profiles passed contract checks. | `/tmp/maister-knowledge-final-mcp-c173e1a12.log`, `/tmp/maister-knowledge-final-mcp-stdio-c173e1a12.log` |
+
+The final qualification used Node 24.15.0. The application, Firefox, MCP,
+and Supervisor ran at `c173e1a12`. The full web integration command ran at
+`3213544e6` with three workers, one permitted test retry, and a local
+120-second hook timeout after the earlier teardown timeout. Web, supervisor
+and MCP typechecks, generated contracts, internal docs, ERD and scoped lint
+passed.
+
 ## Commit plan
 
 | Checkpoint | Tasks | Suggested commit |
