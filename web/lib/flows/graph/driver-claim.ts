@@ -98,7 +98,8 @@ async function currentPlacedAssignment(
         eq(executionAssignments.runId, runId),
       ),
     )
-    .for("update");
+    // The fence guards active state, while prompt evidence needs FK key-share.
+    .for("no key update");
 
   return assignment?.state === "active" ? assignment : null;
 }

@@ -26,6 +26,7 @@ import {
   renewFlowDriverClaim,
 } from "@/lib/flows/graph/driver-claim";
 import { flowDriverDatabase } from "@/lib/flows/graph/driver-db";
+import { getOrCreateGateEvaluation } from "@/lib/flows/graph/prompt-owner";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { releaseAssignmentForRun } from "@/lib/execution-host/assignments";
 import { boundedPostgresTransaction } from "@/lib/execution-host/events/projection-transaction";
@@ -71,7 +72,7 @@ async function seedClaim() {
 }
 
 describe("Flow traversal database fences", () => {
-  it("preserves non-key run locks during evidence preparation and session binding against an event FK reader", async () => {
+  it("keeps the traversal fence and gate admission compatible with evidence foreign keys", async () => {
     const seeded = await seedClaim();
     const attemptId = randomUUID();
 
@@ -90,6 +91,7 @@ describe("Flow traversal database fences", () => {
 
     if (!claim) throw new Error("Expected traversal claim");
     const reader = await database.pool.connect();
+    const fencedDb = flowDriverDatabase(db, claim);
     const generationId = `run:${attemptId}:consensus-synthesis:r1:consensus`;
     const bounded = boundConsensusText("plan", CONSENSUS_PROMPT_TEXT_CAP_BYTES);
 
@@ -99,7 +101,7 @@ describe("Flow traversal database fences", () => {
       await reader.query("SELECT id FROM runs WHERE id=$1 FOR KEY SHARE", [
         seeded.runId,
       ]);
-      await prepareConsensusInputEvidence(flowDriverDatabase(db, claim), {
+      await prepareConsensusInputEvidence(fencedDb, {
         runId: seeded.runId,
         nodeId: "work",
         nodeAttemptId: attemptId,
@@ -112,8 +114,20 @@ describe("Flow traversal database fences", () => {
         renderPrompt: (slot) => `Synthesize ${slot}`,
         textBounds: bounded.bounds,
       });
+      await expect(
+        getOrCreateGateEvaluation(fencedDb, {
+          runId: seeded.runId,
+          nodeAttemptId: attemptId,
+          gate: { id: "review", kind: "ai_judgment", mode: "blocking" },
+        }),
+      ).resolves.toMatchObject({ gateId: "review", status: "running" });
+      // Settling canonical prompt evidence can also recheck the assignment FK.
+      await reader.query(
+        "SELECT id FROM execution_assignments WHERE id=$1 FOR KEY SHARE",
+        [seeded.assignmentId],
+      );
       expect(
-        await flowDriverDatabase(db, claim).transaction((tx) =>
+        await fencedDb.transaction((tx) =>
           lockCurrentSessionAssignment(tx, seeded),
         ),
       ).toMatchObject({ id: seeded.assignmentId });

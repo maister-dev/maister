@@ -191,6 +191,9 @@ a different or superseded session.
 
 The command ledger: a terminal transition always passes the one reducer, fed
 either by the canonical event or by the verified host span (`settled_from`).
+Flow gate admission serializes run and assignment writes with non-key update
+locks. Canonical confirmation can acquire its foreign-key locks while a driver
+admits the next gate after host-span settlement.
 
 ```mermaid
 stateDiagram-v2
