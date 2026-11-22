@@ -6,6 +6,8 @@ import schemas from "../../runtime/knowledge-tool-input.schema.json";
 import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effects";
 
 export type KnowledgeToolName = keyof typeof schemas;
+const personalVaultScope =
+  " Global personal tokens need explicit agent_memory:read for vault-dependent sources.";
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   assignment_question_ask:
     "Request human clarification for your current appointed assignment using exact business/input revisions from assignment_get, a version-one MAIster FormSchema and a stable idempotencyKey. The server retains your actual Run/node and checkpoints its current prompt before Inbox activation. Never supply actor, owner, grants or source proof. Human answers become attributed input; they do not accept work or confer action authority.",
@@ -18,25 +20,32 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   assignment_context_get:
     "Read the exact authorized working context of your appointed assignment. Preserve its revision, input witness, original authors, evidence and unresolved questions. Context is working material; notes and child completion do not confirm Brain facts or accept the overall assignment.",
   knowledge_witness_get:
-    "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit.",
+    "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit." +
+    personalVaultScope,
   knowledge_propose:
     "Submit an attributable knowledge addition or revision-bound correction for review. Acceptance and factual confirmation are separate actions. Reuse the same idempotencyKey for the same delivery.",
   knowledge_proposal_get:
-    "Inspect an accessible proposal, its evidence, review state and accepted publication. A proposal is not a confirmed fact.",
+    "Inspect an accessible proposal, its evidence, review state and accepted publication. A proposal is not a confirmed fact." +
+    personalVaultScope,
   knowledge_proposals_list:
-    "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue.",
+    "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue." +
+    personalVaultScope,
   knowledge_decide:
     "Accept or reject an exact proposal revision under current review authority. Replay requires the original reviewer, delivery key and payload, plus current source and result access. An accepted restricted correction also rechecks the record review grant. Confirmation is a separate operation. Ordinary specialist tokens cannot review.",
   knowledge_confirm:
     "Confirm or revoke confirmation of an exact record revision under explicit current confirmation authority. Confirmation requires available versioned evidence; agent completion does not confer this authority.",
   knowledge_search:
-    "Search accessible structured company/project knowledge. Ownership does not grant visibility. Results separate observations, assumptions, confirmation and freshness. Use the exact returned identities and revisions for follow-up; retrieval rank never confirms a claim.",
+    "Search accessible structured company/project knowledge. Ownership does not grant visibility. Results separate observations, assumptions, confirmation and freshness. Use the exact returned identities and revisions for follow-up; retrieval rank never confirms a claim." +
+    personalVaultScope,
   knowledge_get:
-    "Inspect an accessible structured record and its exact revision, server attribution, confirmation, missing support and unresolved conflicts. Omit revision to select the current head. Missing or inaccessible references never authorize invented citations.",
+    "Inspect an accessible structured record and its exact revision, server attribution, confirmation, missing support and unresolved conflicts. Omit revision to select the current head. Missing or inaccessible references never authorize invented citations." +
+    personalVaultScope,
   knowledge_evidence:
-    "Inspect bounded captured evidence for an accessible record revision. Preserve witness identities, content hashes and source versions in findings. Follow nextCursor to inspect the remaining original proof. Capture time is not observation time.",
+    "Inspect bounded captured evidence for an accessible record revision. Preserve witness identities, content hashes and source versions in findings. Follow nextCursor to inspect the remaining original proof. Capture time is not observation time." +
+    personalVaultScope,
   knowledge_conflicts:
-    "Inspect accessible conflicting claims through bounded pages. Each edge retains the original opposing record revision. A score or a newer claim does not resolve a conflict; inaccessible claims remain withheld.",
+    "Inspect accessible conflicting claims through bounded pages. Each edge retains the original opposing record revision. A score or a newer claim does not resolve a conflict; inaccessible claims remain withheld." +
+    personalVaultScope,
   knowledge_capture_source:
     "Capture exact bounded submitted source bytes as attributable evidence, without asserting independent corroboration, historical observation time or factual confirmation. Reuse the same idempotencyKey for the same delivery. Company ownership requires no project.",
   proposal_reviews_list: "List authorized pending decisions or retained decisions by scope. Requires a global personal token and the appropriate content scopes.",

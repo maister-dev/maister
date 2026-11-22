@@ -24,11 +24,24 @@ export async function handleKnowledgeExt(
       admitInstallation: admission?.installation,
       admitLibrarian: admission?.librarian === "read" ? true : undefined,
     },
-    async ({ actor }) =>
-      work({
+    async ({ actor }) => {
+      if (
+        (request.method === "GET" || request.method === "HEAD") &&
+        actor.tokenKind === "user" &&
+        actor.projectId === null &&
+        actor.ownerUserId !== null
+      )
+        return work({
+          kind: "personal_read",
+          tokenId: actor.tokenId,
+          userId: actor.ownerUserId,
+        });
+
+      return work({
         kind: actor.tokenKind === "librarian" ? "librarian_read" : "token",
         tokenId: actor.tokenId,
-      }),
+      });
+    },
     (error) => {
       const response = knowledgeErrorResponse(error, endpoint);
 

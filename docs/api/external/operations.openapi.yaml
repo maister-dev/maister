@@ -6087,7 +6087,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens without explicit agent_memory:read omit vault-dependent results before
+        pagination. Wildcard alone does not grant this scope.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6195,7 +6196,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read when the current head or requested
+        revision depends on a vault source. Otherwise the reference is concealed.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6250,7 +6252,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read for vault-dependent records and evidence.
+        Source authority applies before returning evidence or pagination metadata.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6359,7 +6362,8 @@ paths:
       summary: List authorized native knowledge proposals
       description: Requires current knowledge read/review and source restrictions. Only native knowledge
         proposals are returned; existing improvement proposal APIs remain separate. Ownership does not grant
-        access.
+        access. Global personal tokens without explicit agent_memory:read omit vault-dependent proposals
+        before pagination.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read and knowledge:review
       responses:
@@ -7897,7 +7901,8 @@ paths:
       summary: Inspect a native proposal and its exact publication
       description: Current source/owner read is required with review authority, or proposer authority for
         the originating principal. Missing and concealed proposals share an existence-safe response. Publication
-        record identity and revision are server-recorded.
+        record identity and revision are server-recorded. Global personal tokens need explicit agent_memory:read
+        when the proposal or its exact publication depends on a vault source.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read and authorized proposal inspection
       responses:
@@ -7942,7 +7947,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read for a vault-dependent root or conflict
+        reference. Concealed conflict references are omitted before pagination.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -8005,6 +8011,7 @@ paths:
         identity, exact source version, availability and bounded captured excerpt, including before publication.
         Missing and inaccessible references share an existence-safe refusal. CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Current scope and transactional token audit apply.
+        Global personal tokens need explicit agent_memory:read when the witness depends on a vault source.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:

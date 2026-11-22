@@ -7,13 +7,21 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { NextRequest } from "next/server";
 import { expect, it, vi } from "vitest";
 
 import { GET as list } from "../route";
 import { GET as detail } from "../[kind]/[proposalId]/route";
 import { POST as decide } from "../[kind]/[proposalId]/decision/route";
 
+import { GET as searchKnowledge } from "@/app/api/v1/ext/knowledge/route";
+import { GET as readKnowledgeRecord } from "@/app/api/v1/ext/knowledge/[recordId]/route";
+import { GET as readKnowledgeConflicts } from "@/app/api/v1/ext/knowledge/[recordId]/conflicts/route";
+import { GET as readKnowledgeEvidence } from "@/app/api/v1/ext/knowledge/[recordId]/evidence/route";
 import { GET as readKnowledgeRevisions } from "@/app/api/v1/ext/knowledge/[recordId]/revisions/route";
+import { GET as listKnowledgeProposals } from "@/app/api/v1/ext/knowledge/proposals/route";
+import { GET as readKnowledgeProposal } from "@/app/api/v1/ext/knowledge/proposals/[proposalId]/route";
+import { GET as readKnowledgeWitness } from "@/app/api/v1/ext/knowledge/witnesses/[witnessId]/route";
 import { GET as listVaults } from "@/app/api/v1/ext/knowledge/vaults/route";
 import { GET as readVaultPath } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/view/route";
 import { GET as readVaultNote } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/route";
@@ -27,7 +35,10 @@ import {
 } from "@/lib/agent-memory-vault/promotion";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
-import { reviewKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
+import {
+  createKnowledgeProposal,
+  reviewKnowledgeProposal,
+} from "@/lib/brain/knowledge-proposals";
 import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
@@ -426,11 +437,12 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
       idempotencyKey: "personal-revision-publish",
     });
     const recordId = published.acceptedRecordId!;
-    const revisionPath = `/api/v1/ext/knowledge/${recordId}/revisions`;
+    const recordPath = `/api/v1/ext/knowledge/${recordId}`;
+    const revisionPath = `${recordPath}/revisions`;
     const payload = { params: Promise.resolve({ recordId }) };
     const scopeSets = [
-      ["knowledge:read"],
-      ["knowledge:read", "agent_memory:read"],
+      ["knowledge:read", "knowledge:review"],
+      ["knowledge:read", "knowledge:review", "agent_memory:read"],
     ] satisfies TokenScope[][];
     const [knowledgeOnly, withVaultScope] = await Promise.all(
       scopeSets.map((scopes) =>
@@ -447,6 +459,129 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
         }),
         payload,
       );
+    const knowledgeRequest = (path: string, token = knowledgeOnly!.secret) =>
+      new NextRequest(`http://localhost${path}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+    const ordinary = await createKnowledgeProposal(fixture.db, {
+      principal,
+      owner: { kind: "project", projectId: project.id },
+      kind: "knowledge_add",
+      idempotencyKey: "personal-ordinary-proposal",
+      draft: {
+        kind: "assertion",
+        title: "Ordinary project assertion",
+        assertion: "This assertion has no vault source.",
+        basis: "unknown",
+        evidence: [],
+        missingEvidence: [{ state: "unknown", reason: "No retained proof" }],
+        limitations: [],
+      },
+    });
+    const ordinaryPublication = await reviewKnowledgeProposal(fixture.db, {
+      proposalId: ordinary.id,
+      principal,
+      expectedRevision: ordinary.revision,
+      decision: "accept",
+      reason: "Retain an ordinary project assertion",
+      idempotencyKey: "personal-ordinary-publish",
+    });
+    const ordinaryRecordId = ordinaryPublication.acceptedRecordId!;
+    const proposalPath = `/api/v1/ext/knowledge/proposals/${promotion.proposalId}`;
+    const proposalParams = {
+      params: Promise.resolve({ proposalId: promotion.proposalId }),
+    };
+    const scopedProposal = await readKnowledgeProposal(
+      knowledgeRequest(proposalPath, withVaultScope!.secret),
+      proposalParams,
+    );
+
+    expect(scopedProposal.status).toBe(200);
+    const proposal = await scopedProposal.json();
+
+    expect(proposal).toMatchObject({
+      evidence: [
+        { witness: { id: expect.any(String), availability: "available" } },
+      ],
+    });
+    const witnessId = proposal.evidence[0].witness.id;
+    const witnessPath = `/api/v1/ext/knowledge/witnesses/${witnessId}`;
+    const witnessParams = { params: Promise.resolve({ witnessId }) };
+    const exactReads = {
+      record: (token: string) =>
+        readKnowledgeRecord(knowledgeRequest(recordPath, token), payload),
+      evidence: (token: string) =>
+        readKnowledgeEvidence(
+          knowledgeRequest(`${recordPath}/evidence`, token),
+          payload,
+        ),
+      conflicts: (token: string) =>
+        readKnowledgeConflicts(
+          knowledgeRequest(`${recordPath}/conflicts`, token),
+          payload,
+        ),
+      proposal: (token: string) =>
+        readKnowledgeProposal(
+          knowledgeRequest(proposalPath, token),
+          proposalParams,
+        ),
+      witness: (token: string) =>
+        readKnowledgeWitness(
+          knowledgeRequest(witnessPath, token),
+          witnessParams,
+        ),
+    };
+
+    for (const [surface, read] of Object.entries(exactReads)) {
+      expect
+        .soft((await read(knowledgeOnly!.secret)).status, surface)
+        .toBe(404);
+      expect.soft((await read(broad.secret)).status, surface).toBe(404);
+      expect
+        .soft((await read(withVaultScope!.secret)).status, surface)
+        .toBe(200);
+    }
+    expect(
+      await (await exactReads.witness(withVaultScope!.secret)).json(),
+    ).toMatchObject({ id: witnessId, excerpt: content });
+    const head = await readKnowledgeRecord(
+      new NextRequest(`http://localhost${recordPath}`, {
+        method: "HEAD",
+        headers: { authorization: `Bearer ${knowledgeOnly!.secret}` },
+      }),
+      payload,
+    );
+
+    expect(head.status).toBe(404);
+    const scope = new URLSearchParams({
+      ownerKind: "project",
+      ownerId: project.id,
+      limit: "1",
+    });
+    const search = await searchKnowledge(
+      knowledgeRequest(`/api/v1/ext/knowledge?${scope}`),
+    );
+    const proposals = await listKnowledgeProposals(
+      knowledgeRequest(`/api/v1/ext/knowledge/proposals?${scope}`),
+    );
+    const ordinaryProposal = await readKnowledgeProposal(
+      knowledgeRequest(`/api/v1/ext/knowledge/proposals/${ordinary.id}`),
+      { params: Promise.resolve({ proposalId: ordinary.id }) },
+    );
+
+    expect(search.status).toBe(200);
+    expect.soft(await search.json()).toMatchObject({
+      items: [{ id: ordinaryRecordId }],
+      nextCursor: null,
+    });
+    expect(proposals.status).toBe(200);
+    expect.soft(await proposals.json()).toMatchObject({
+      items: [{ id: ordinary.id }],
+      nextCursor: null,
+    });
+    expect(ordinaryProposal.status).toBe(200);
+    expect(await ordinaryProposal.json()).toMatchObject({ id: ordinary.id });
     const accessible = await readHistory(withVaultScope!.secret);
     const history = await accessible.json();
 
@@ -461,18 +596,27 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
 
     const historyServer = createServer((incoming, outgoing) => {
       const url = new URL(incoming.url ?? "/", "http://127.0.0.1");
+      const requested = [recordId, ordinaryRecordId].find((id) =>
+        [
+          `/api/v1/ext/knowledge/${id}`,
+          `/api/v1/ext/knowledge/${id}/revisions`,
+        ].includes(url.pathname),
+      );
+      const read = url.pathname.endsWith("/revisions")
+        ? readKnowledgeRevisions
+        : readKnowledgeRecord;
 
-      if (incoming.method !== "GET" || url.pathname !== revisionPath) {
+      if (incoming.method !== "GET" || !requested) {
         outgoing.writeHead(404);
         outgoing.end();
 
         return;
       }
-      void readKnowledgeRevisions(
-        new Request(url, {
+      void read(
+        new NextRequest(url, {
           headers: { authorization: incoming.headers.authorization ?? "" },
         }),
-        payload,
+        { params: Promise.resolve({ recordId: requested }) },
       )
         .then(async (response) => {
           outgoing.writeHead(
@@ -494,7 +638,7 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
 
       if (!address || typeof address === "string")
         throw new Error("Expected a local history listener");
-      const run = async (token: string) => {
+      const run = async (token: string, selected = recordId) => {
         const { stdout } = await promisify(execFile)(
           process.execPath,
           ["test/fixtures/personal-knowledge-client.mjs"],
@@ -506,7 +650,7 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
               MAISTER_MCP_TOOLSET: "personal-knowledge",
               MAISTER_API_BASE_URL: `http://127.0.0.1:${address.port}`,
               MAISTER_ACCESS_TOKEN: token,
-              MAISTER_TEST_RECORD_ID: recordId,
+              MAISTER_TEST_RECORD_ID: selected,
             },
           },
         );
@@ -516,10 +660,16 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
 
       expect
         .soft(await run(knowledgeOnly!.secret))
-        .toMatchObject({ error: true });
+        .toMatchObject({ error: true, detail: { error: true } });
       expect(await run(withVaultScope!.secret)).toMatchObject({
         error: false,
         body: history,
+        detail: { error: false, body: { id: recordId, assertion: content } },
+      });
+      expect(await run(knowledgeOnly!.secret, ordinaryRecordId)).toMatchObject({
+        error: false,
+        body: { items: [{ recordId: ordinaryRecordId }] },
+        detail: { error: false, body: { id: ordinaryRecordId } },
       });
     } finally {
       if (historyServer.listening)

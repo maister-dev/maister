@@ -113,6 +113,15 @@ export type KnowledgeProposalPage = Readonly<{
   nextCursor: string | null;
 }>;
 
+/** Prove the inspection role using the credential already locked for the source-scoped read. */
+function proposalInspectionCredential(
+  principal: KnowledgePrincipal,
+): KnowledgePrincipal {
+  return principal.kind === "personal_read"
+    ? { kind: "token", tokenId: principal.tokenId }
+    : principal;
+}
+
 async function readProposal(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
@@ -151,7 +160,12 @@ async function readProposal(
         ? "knowledge:propose"
         : "knowledge:read";
 
-  await authorizeKnowledge(tx, principal, owner, action);
+  await authorizeKnowledge(
+    tx,
+    proposalInspectionCredential(principal),
+    owner,
+    action,
+  );
   let access = await authorizeSourceRestrictions(tx, principal, [owner]);
 
   access = await authorizeSourceRestrictions(
@@ -423,7 +437,11 @@ export async function listKnowledgeProposals(
         "knowledge:read",
       );
 
-      await resolveKnowledgePrincipal(tx, principal, "knowledge:review");
+      await resolveKnowledgePrincipal(
+        tx,
+        proposalInspectionCredential(principal),
+        "knowledge:review",
+      );
       const scope = await knowledgeCursorScope(tx, principal, actor, {
         kind: "proposals",
         ...filters,

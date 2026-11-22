@@ -22,11 +22,19 @@ try {
       name: "knowledge_revisions_list",
       arguments: { recordId },
     });
+    const detail = await client.callTool({
+      name: "knowledge_get",
+      arguments: { recordId },
+    });
 
     process.stdout.write(
       JSON.stringify({
         error: Boolean(result.isError),
         body: JSON.parse(result.content[0].text),
+        detail: {
+          error: Boolean(detail.isError),
+          body: JSON.parse(detail.content[0].text),
+        },
       }),
     );
   } else {
