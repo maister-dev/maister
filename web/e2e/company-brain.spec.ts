@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 import { createE2EDbPool } from "./_seed/db";
+import { prepareKnowledgeReview } from "./_seed/knowledge-review";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -421,34 +422,42 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await expect(page).toHaveURL(/\/knowledge\/witnesses\/[^/]+$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/knowledge\/proposals\/(?!new$)[^/]+$/);
-  await page
-    .getByLabel("Decision reason", { exact: true })
-    .fill("Inspected the exact captured runbook version");
-  await page
-    .getByRole("button", { name: "Accept proposal", exact: true })
-    .click();
-  await expect(
-    surface.getByRole("link", { name: "Published record", exact: true }),
-  ).toBeVisible();
-  const competingSurface = competingReview.getByRole("main");
-
-  await competingSurface
-    .getByLabel("Decision reason", { exact: true })
-    .fill("A stale competing decision must preserve the accepted result.");
-  await competingSurface
-    .getByRole("button", { name: "Reject proposal", exact: true })
-    .click();
-  await expect(competingSurface.getByRole("alert")).toHaveText(
-    "The revision or delivery changed. Reload and review the current record before retrying.",
+  const reviews = await prepareKnowledgeReview(
+    page,
+    title,
+    "Inspected the exact captured runbook version",
+    "en",
   );
-  await competingReview.reload();
+  const competingReviews = await prepareKnowledgeReview(
+    competingReview,
+    title,
+    "A stale competing decision must preserve the accepted result.",
+    "en",
+  );
+
+  await reviews
+    .getByRole("button", { name: "Accept selected", exact: true })
+    .click();
   await expect(
-    competingSurface.getByRole("link", {
+    reviews.getByRole("list", { name: "Review results" }).getByRole("listitem"),
+  ).toHaveText(`${title} · Accepted`);
+  await competingReviews
+    .getByRole("button", { name: "Reject selected", exact: true })
+    .click();
+  await expect(
+    competingReviews
+      .getByRole("list", { name: "Review results" })
+      .getByRole("listitem"),
+  ).toHaveText(`${title} · Changed during review`);
+  await competingReview.goto(originalProposalUrl);
+  await expect(
+    competingReview.getByRole("link", {
       name: "Published record",
       exact: true,
     }),
   ).toBeVisible();
   await competingReview.close();
+  await page.goto(originalProposalUrl);
   await page
     .getByRole("link", { name: "Published record", exact: true })
     .click();
@@ -493,14 +502,23 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await expect(
     surface.getByText("Ожидает рассмотрения", { exact: true }),
   ).toBeVisible();
-  await surface
-    .getByLabel("Обоснование решения", { exact: true })
-    .fill(
-      "Исправление сохраняет исходный источник и требует отдельного подтверждения.",
-    );
-  await surface
-    .getByRole("button", { name: "Принять предложение", exact: true })
+  const correctionProposalUrl = page.url();
+  const correctionReviews = await prepareKnowledgeReview(
+    page,
+    title,
+    "Исправление сохраняет исходный источник и требует отдельного подтверждения.",
+    "ru",
+  );
+
+  await correctionReviews
+    .getByRole("button", { name: "Принять выбранные", exact: true })
     .click();
+  await expect(
+    correctionReviews
+      .getByRole("list", { name: "Результаты проверки" })
+      .getByRole("listitem"),
+  ).toHaveText(`${title} · Принято`);
+  await page.goto(correctionProposalUrl);
   await surface
     .getByRole("link", { name: "Опубликованная запись", exact: true })
     .click();

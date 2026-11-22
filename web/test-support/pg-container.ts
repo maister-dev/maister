@@ -10,7 +10,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pino from "pino";
-import { Pool, type ClientBase, type PoolConfig } from "pg";
+import { type ClientBase, type Pool } from "pg";
 import { getContainerRuntimeClient } from "testcontainers";
 
 import { probeContainerRuntimeDaemon } from "./docker-runtime-probe";
@@ -30,6 +30,12 @@ import {
   TASK_QUALIFICATION_WRITER_CAPABILITY,
 } from "@/lib/db/writer-capability";
 import * as mainSchema from "@/lib/db/schema";
+import {
+  closePostgresPool as closeTestPool,
+  createPostgresPool as createTestPool,
+} from "@/lib/db/pool-lifecycle";
+
+export { closeTestPool, createTestPool };
 
 const MAIN_MIGRATIONS_FOLDER = "./lib/db/migrations";
 // Drizzle delimits statements within a migration file with this exact marker
@@ -59,46 +65,6 @@ const dockerProbeTimeoutMs =
 const dockerClientTimeoutMs = 30_000;
 const logger = pino({ name: "test-database" });
 const DATABASE_ALLOCATION_LABEL = "maister.test.database-allocation";
-const CONNECTIONS_CLOSED = Symbol("test-pool-connections-closed");
-
-type TrackedTestPool = Pool & {
-  readonly [CONNECTIONS_CLOSED]: () => Promise<void>;
-};
-
-export function createTestPool(options: PoolConfig): TrackedTestPool {
-  const pool = new Pool(options);
-  const connections = new Set<Promise<void>>();
-
-  pool.on("connect", (client) => {
-    const closed = new Promise<void>((resolve) => client.once("end", resolve));
-
-    connections.add(closed);
-    void closed.then(() => {
-      connections.delete(closed);
-    });
-  });
-
-  return Object.assign(pool, {
-    [CONNECTIONS_CLOSED]: async (): Promise<void> => {
-      await Promise.all([...connections]);
-    },
-  });
-}
-
-function isTrackedTestPool(pool: Pool): pool is TrackedTestPool {
-  return CONNECTIONS_CLOSED in pool;
-}
-
-export async function closeTestPool(pool: Pool): Promise<void> {
-  if (!isTrackedTestPool(pool))
-    throw new Error("Test database pool has no connection-retirement owner");
-  try {
-    await pool.end();
-  } finally {
-    // pg-pool can resolve end before its client.end callbacks have run.
-    await pool[CONNECTIONS_CLOSED]();
-  }
-}
 
 export type TestDatabaseLane = "integration" | "e2e";
 

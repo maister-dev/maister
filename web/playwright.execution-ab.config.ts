@@ -65,6 +65,8 @@ export default defineConfig({
       MAISTER_WORKTREES_ROOT: worktreesRoot,
       MAISTER_SUPERVISOR_URL: EXECUTION_AB_SUPERVISOR_URL,
       MAISTER_API_BASE_URL: BASE_URL,
+      // The workspace integrity journey checks reset to this environment limit.
+      MAISTER_WORKSPACE_INTEGRITY_MAX_SIZE_MIB: "3",
       // The seeded fixtures hold more than the default cap of live runs; the
       // lane's launches must be admitted.
       MAISTER_MAX_CONCURRENT_RUNS: "64",

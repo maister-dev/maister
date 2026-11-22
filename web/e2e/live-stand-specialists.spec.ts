@@ -21,6 +21,7 @@ import {
 
 import { loadNativeCompanyBrainFixtures } from "./_seed/native-company-brain-fixtures";
 import { singleValue, withE2EDb } from "./_seed/db";
+import { prepareKnowledgeReview } from "./_seed/knowledge-review";
 
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import {
@@ -1694,6 +1695,7 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     z.object({
       id: z.literal(proposalId),
       status: z.literal("pending"),
+      content: z.object({ title: z.string() }),
       attribution: z.object({
         kind: z.literal("user"),
         id: z.literal(admin.id),
@@ -1702,14 +1704,21 @@ test("QL-CBX-04 pinned GLM-5.3 specialists diagnose, restart and verify one disp
     }),
   );
 
-  await page
-    .getByLabel("Decision reason", { exact: true })
-    .fill(
-      "Publish the verified observation from the controlled maintenance pilot.",
-    );
-  await page
-    .getByRole("button", { name: "Accept proposal", exact: true })
+  const proposalUrl = page.url();
+  const reviews = await prepareKnowledgeReview(
+    page,
+    workProposal.content.title,
+    "Publish the verified observation from the controlled maintenance pilot.",
+    "en",
+  );
+
+  await reviews
+    .getByRole("button", { name: "Accept selected", exact: true })
     .click();
+  await expect(
+    reviews.getByRole("list", { name: "Review results" }).getByRole("listitem"),
+  ).toHaveText(`${workProposal.content.title} · Accepted`);
+  await page.goto(proposalUrl);
   await page
     .getByRole("link", { name: "Published record", exact: true })
     .click();

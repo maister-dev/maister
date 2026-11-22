@@ -1,10 +1,11 @@
 import "server-only";
 
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Client, Pool } from "pg";
+import { Client } from "pg";
 import pino from "pino";
 
 import { maskDbUrl, resolvePostgresDbUrl } from "./postgres-url";
+import { closePostgresPool, createPostgresPool } from "./pool-lifecycle";
 import * as schema from "./schema";
 import { declareWriterCapability } from "./writer-capability";
 
@@ -21,7 +22,7 @@ export function buildClient(): ReturnType<typeof drizzle<typeof schema>> {
 
   log.info({ driver: "postgres", url: maskDbUrl(url) }, "db client init");
 
-  const pool = new Pool({
+  const pool = createPostgresPool({
     connectionString: url,
     max: Number(process.env.MAISTER_DB_POOL_MAX ?? 10),
     // Complete the writer declaration before lending the connection; hook
@@ -32,32 +33,39 @@ export function buildClient(): ReturnType<typeof drizzle<typeof schema>> {
   return drizzle(pool, { schema });
 }
 
-let cached: ReturnType<typeof buildClient> | null = null;
-let closing = false;
+// Next bundles instrumentation and route handlers in separate runtimes.
+const KEY = Symbol.for("maister.postgres-db-lifecycle.v1");
+
+type DbLifecycle = {
+  cached: ReturnType<typeof buildClient> | null;
+  closing: boolean;
+  shutdownCallbacks: Set<() => Promise<void>>;
+};
+const scope = globalThis as typeof globalThis & { [KEY]?: DbLifecycle };
+const lifecycle = (scope[KEY] ??= {
+  cached: null,
+  closing: false,
+  shutdownCallbacks: new Set<() => Promise<void>>(),
+});
 
 export function beginDbShutdown(): void {
-  closing = true;
+  lifecycle.closing = true;
 }
 
 export function getDb(): ReturnType<typeof buildClient> {
-  if (closing) {
+  if (lifecycle.closing) {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       "web database is shutting down",
     );
   }
-  if (cached === null) {
-    cached = buildClient();
-  }
 
-  return cached;
+  return (lifecycle.cached ??= buildClient());
 }
-
-const shutdownCallbacks = new Set<() => Promise<void>>();
 
 /** Notification clients are autocommit and never borrow a query-pool slot. */
 export function createDbNotificationClient(): Client {
-  if (closing)
+  if (lifecycle.closing)
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
       "web database is shutting down",
@@ -70,21 +78,23 @@ export function createDbNotificationClient(): Client {
 }
 
 export function registerDbShutdown(callback: () => Promise<void>): () => void {
-  shutdownCallbacks.add(callback);
+  lifecycle.shutdownCallbacks.add(callback);
 
   return () => {
-    shutdownCallbacks.delete(callback);
+    lifecycle.shutdownCallbacks.delete(callback);
   };
 }
 
 export async function closeDb(): Promise<void> {
-  await Promise.all([...shutdownCallbacks].map((callback) => callback()));
-  if (cached === null) return;
+  await Promise.all(
+    [...lifecycle.shutdownCallbacks].map((callback) => callback()),
+  );
+  if (lifecycle.cached === null) return;
 
-  const client = cached.$client;
+  const client = lifecycle.cached.$client;
 
-  cached = null;
-  await client.end();
+  lifecycle.cached = null;
+  await closePostgresPool(client);
 }
 
 export { schema };
