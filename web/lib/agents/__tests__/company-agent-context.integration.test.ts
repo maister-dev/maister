@@ -9989,11 +9989,19 @@ describe("company admission, reservation and preflight guards", () => {
         ]);
         secondDriver = startAgentSession(receipt.runId, { db, executionHosts });
         await Promise.race([
-          promptEntered.promise,
-          secondDriver.then(() => {
+          secondDriver,
+          promptEntered.promise.then(() => {
             throw new Error(
-              "The second driver did not submit the owned prompt",
+              "The competing driver submitted a prompt while creation was held",
             );
+          }),
+        ]);
+        expect(createCalls).toBe(1);
+        keepCreateOpen.resolve();
+        await Promise.race([
+          promptEntered.promise,
+          firstDriver.then(() => {
+            throw new Error("The owning driver did not submit its prompt");
           }),
         ]);
         const create = fake.callsOf("createSession")[0]?.envelope?.payload;
