@@ -49,7 +49,7 @@ export function parseKnowledgeRevisionPage(params: URLSearchParams) {
 
 export async function listKnowledgeRevisions(
   db: KnowledgeDatabase,
-  principal: KnowledgePrincipal,
+  principal: Extract<KnowledgePrincipal, { kind: "user" | "personal_read" }>,
   recordId: string,
   selection: Readonly<{ limit: number; cursor?: string }>,
 ) {

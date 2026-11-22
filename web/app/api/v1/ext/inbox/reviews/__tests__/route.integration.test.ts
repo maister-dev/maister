@@ -12,6 +12,7 @@ import { GET as list } from "../route";
 import { GET as detail } from "../[kind]/[proposalId]/route";
 import { POST as decide } from "../[kind]/[proposalId]/decision/route";
 
+import { GET as readKnowledgeRevisions } from "@/app/api/v1/ext/knowledge/[recordId]/revisions/route";
 import { GET as listVaults } from "@/app/api/v1/ext/knowledge/vaults/route";
 import { GET as readVaultPath } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/view/route";
 import { GET as readVaultNote } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/route";
@@ -19,8 +20,13 @@ import { GET as listVaultRevisions } from "@/app/api/v1/ext/knowledge/vaults/[lo
 import { GET as readVaultRevision } from "@/app/api/v1/ext/knowledge/vaults/[locationId]/notes/[noteId]/revisions/[revisionId]/route";
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
 import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
+import {
+  parseMemoryPromotion,
+  promoteMemory,
+} from "@/lib/agent-memory-vault/promotion";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
 import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
+import { reviewKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
 import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
@@ -388,6 +394,135 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
     );
 
     expect(crossOwner.status).toBe(404);
+
+    await fixture.pool.query(
+      "UPDATE projects SET brain_enabled=true WHERE id=$1",
+      [project.id],
+    );
+    const principal = { kind: "user", userId } as const;
+    const promotion = await promoteMemory(
+      fixture.db,
+      principal,
+      parseMemoryPromotion({
+        path,
+        ifRevisionId: revisionId,
+        ifHash: write.affected[0].hash,
+        requestKey: "personal-vault-promotion",
+        target: {
+          kind: "knowledge",
+          ownerKind: "project",
+          ownerId: project.id,
+        },
+      }),
+      prepare,
+    );
+    const published = await reviewKnowledgeProposal(fixture.db, {
+      proposalId: promotion.proposalId,
+      principal,
+      expectedRevision: 1,
+      decision: "accept",
+      reason: "Retain the exact vault witness",
+      idempotencyKey: "personal-revision-publish",
+    });
+    const recordId = published.acceptedRecordId!;
+    const revisionPath = `/api/v1/ext/knowledge/${recordId}/revisions`;
+    const payload = { params: Promise.resolve({ recordId }) };
+    const [knowledgeOnly, withVaultScope] = await Promise.all(
+      [["knowledge:read"], ["knowledge:read", "agent_memory:read"]].map(
+        (scopes) =>
+          issueUserAccessToken(
+            { ownerUserId: userId, name: "Knowledge history", scopes },
+            fixture.db,
+          ),
+      ),
+    );
+    const readHistory = (token: string) =>
+      readKnowledgeRevisions(
+        new Request(`http://localhost${revisionPath}`, {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+        payload,
+      );
+    const accessible = await readHistory(withVaultScope!.secret);
+    const history = await accessible.json();
+
+    expect(accessible.status).toBe(200);
+    expect(history).toMatchObject({ items: [{ recordId, revision: 1 }] });
+    for (const token of [knowledgeOnly!, broad]) {
+      const hiddenHistory = await readHistory(token.secret);
+
+      expect.soft(hiddenHistory.status).toBe(404);
+      expect.soft(await hiddenHistory.json()).not.toHaveProperty("items");
+    }
+
+    const historyServer = createServer((incoming, outgoing) => {
+      const url = new URL(incoming.url ?? "/", "http://127.0.0.1");
+
+      if (incoming.method !== "GET" || url.pathname !== revisionPath) {
+        outgoing.writeHead(404);
+        outgoing.end();
+
+        return;
+      }
+      void readKnowledgeRevisions(
+        new Request(url, {
+          headers: { authorization: incoming.headers.authorization ?? "" },
+        }),
+        payload,
+      )
+        .then(async (response) => {
+          outgoing.writeHead(
+            response.status,
+            Object.fromEntries(response.headers),
+          );
+          outgoing.end(await response.text());
+        })
+        .catch(() => {
+          outgoing.writeHead(500);
+          outgoing.end();
+        });
+    });
+
+    try {
+      historyServer.listen(0, "127.0.0.1");
+      await once(historyServer, "listening");
+      const address = historyServer.address();
+
+      if (!address || typeof address === "string")
+        throw new Error("Expected a local history listener");
+      const run = async (token: string) => {
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          ["test/fixtures/personal-knowledge-client.mjs"],
+          {
+            cwd: resolve("../mcp"),
+            timeout: 20_000,
+            env: {
+              ...process.env,
+              MAISTER_MCP_TOOLSET: "personal-knowledge",
+              MAISTER_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+              MAISTER_ACCESS_TOKEN: token,
+              MAISTER_TEST_RECORD_ID: recordId,
+            },
+          },
+        );
+
+        return JSON.parse(stdout);
+      };
+
+      expect
+        .soft(await run(knowledgeOnly!.secret))
+        .toMatchObject({ error: true });
+      expect(await run(withVaultScope!.secret)).toMatchObject({
+        error: false,
+        body: history,
+      });
+    } finally {
+      if (historyServer.listening)
+        await new Promise<void>((closed) =>
+          historyServer.close(() => closed()),
+        );
+    }
 
     for (let index = 0; index < 20; index++) {
       const added = await applyVaultMutation(

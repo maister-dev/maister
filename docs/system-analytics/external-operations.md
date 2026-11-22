@@ -736,7 +736,9 @@ no token can detach. MCP `task_update` stays title/prompt only. See
 
 A request key is scoped to the resolved human identity across the browser and bearer adapters. Token activity and decision authority are rechecked at mutation and replay. Validate a continuation against its credential, operation and selected filters before honoring it. Audit only the admitted scope, caller, safe result class and correlation reference through the existing external audit owner. Operational logs exclude source text, paths, reasons, queries and tokens. The explicit personal MCP profile advertises the new operations. Direct calls check profile and the server still authorizes each request (K11, K12). See the [external contract](../api/external/operations.openapi.yaml) and [shared review sequence](company-brain.md#shared-human-review).
 
-Proposal preview cursors bind the exact proposal snapshot and the issuing PAT. Applied vault outcomes return up to 20 revisions in operation order. Pass `revisionsNextCursor` as `outcomeCursor` on the same review GET or MCP `proposal_review_get`. The API rechecks all result sources and validates the continuation against the bound credential, proposal version, and operation. A missing or concealed knowledge record returns `404` on the revision list.
+Proposal preview cursors bind the exact proposal snapshot and the issuing PAT. Applied vault outcomes return up to 20 revisions in operation order. Pass `revisionsNextCursor` as `outcomeCursor` on the same review GET or MCP `proposal_review_get`. The API rechecks all result sources and validates the continuation against the bound credential, proposal version, and operation.
+
+The personal knowledge revision list and MCP `knowledge_revisions_list` require `knowledge:read`. An explicit `agent_memory:read` scope additionally gates vault-sourced heads and historical revisions. The scope gate applies to the complete source graph before pagination and response metadata. A missing or concealed head returns `404`. An inaccessible historical revision contributes no item or continuation.
 
 ## Expectations
 

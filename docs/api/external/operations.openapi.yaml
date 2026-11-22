@@ -6471,8 +6471,10 @@ paths:
       description: Requires current knowledge:review. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
+        compare canonical payload digest and expected revision. Replay requires the original reviewer, delivery key
+        and payload under current owner, source and result authority. An accepted restricted correction also
+        rechecks its record-level review grant. A changed reviewer, key or payload conflicts.
+        Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
         apply.
       x-implementation-status: Implemented
@@ -8867,8 +8869,10 @@ paths:
     get:
       operationId: listPersonalKnowledgeRevisions
       summary: List accessible retained record revisions
-      description: An active global personal token is required. Requires knowledge:read. Apply current head and
-        exact revision source rights before paginating.
+      description: Requires an active global personal token with knowledge:read. Vault-dependent head and
+        historical revisions also require an explicit agent_memory:read scope. Wildcard alone does not grant it.
+        Apply current head and exact revision source rights before pagination. A concealed head returns the
+        missing-resource response. Inaccessible historical revisions are omitted.
       x-implementation-status: Implemented
       security:
         - projectToken: []

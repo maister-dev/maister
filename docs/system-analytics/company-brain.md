@@ -139,6 +139,7 @@ sequenceDiagram
 ```
 
 - **K03–K05.** The shared queue and detail must apply current source closure before exposing text, counts, actions or continuations. A successful identical replay must reuse the original receipt under current authority. Changed input on the same key and a fresh key on a settled proposal must conflict.
+- **K04–K05 replay authority.** The native decision owner and Inbox replay must verify the original reviewer from immutable settlement attribution, the same delivery key and payload, and current owner, source and exact result access. An accepted correction must recheck the current review grant on a restricted target without publishing again. Missing legacy reviewer attribution cannot authorize a replay. Inbox must conflict on a retained native decision without an original Inbox receipt.
 - **K06.** A legacy assertion with missing evidence must remain correctable. Confirmation must independently require a qualifying exact source and its own authority.
 - **K13.** Attention `reviews/reviewVersion` must invalidate the actor's pending queue. Each project count must come from its own authorized selection. History and result links must reauthorize even when the same receipt is replayed.
 

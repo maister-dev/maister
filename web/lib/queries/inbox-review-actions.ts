@@ -42,10 +42,7 @@ import {
   unavailableMemory,
 } from "@/lib/agent-memory-vault/store";
 import { projectRolesForActions } from "@/lib/authz";
-import {
-  authorizeKnowledge,
-  resolveKnowledgePrincipal,
-} from "@/lib/brain/knowledge-access";
+import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { lockKnowledgeWriteConsumer } from "@/lib/brain/knowledge-disclosure";
 import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
 import { reviewKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
@@ -824,16 +821,36 @@ async function settle(
       item.id,
     );
 
-    await authorizeKnowledge(tx, principal, proposal.owner, "knowledge:review");
+    if (prior && proposal.status === "pending")
+      throw new MaisterError(
+        "CONFLICT",
+        "Review receipt does not match a settled knowledge proposal",
+      );
+  }
+
+  if (prior && prior.digest !== digest)
+    throw new MaisterError(
+      "CONFLICT",
+      "Review request key already belongs to another decision",
+    );
+  if (item.kind === "knowledge") {
+    const decision = await reviewKnowledgeProposal(sharedTx(tx), {
+      principal,
+      proposalId: item.id,
+      expectedRevision: approvalVersion(item.expectedVersion),
+      decision: item.decision,
+      reason: item.reason ?? "",
+      idempotencyKey: item.requestKey,
+    });
+
+    if (decision.duplicate && !prior)
+      throw new MaisterError(
+        "CONFLICT",
+        "Knowledge proposal already has a native decision",
+      );
   }
 
   if (prior) {
-    if (prior.digest !== digest)
-      throw new MaisterError(
-        "CONFLICT",
-        "Review request key already belongs to another decision",
-      );
-
     return {
       ...(await readDecisionDisposition(tx, audience, item, brain?.id)),
       status: state,
@@ -849,15 +866,6 @@ async function settle(
       expectedVersion: approvalVersion(item.expectedVersion),
       requestKey: item.requestKey,
       reason: item.reason,
-    });
-  if (item.kind === "knowledge")
-    await reviewKnowledgeProposal(sharedTx(tx), {
-      principal,
-      proposalId: item.id,
-      expectedRevision: approvalVersion(item.expectedVersion),
-      decision: item.decision,
-      reason: item.reason ?? "",
-      idempotencyKey: item.requestKey,
     });
   if (brain)
     await concludeBrainProposal(sharedTx(tx), {

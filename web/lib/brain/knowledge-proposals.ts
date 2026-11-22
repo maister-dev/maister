@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 
 import { sql } from "drizzle-orm";
 import pino from "pino";
+import { z } from "zod";
 
 import { authorizeKnowledge, knowledgeOwner } from "./knowledge-access";
 import {
@@ -36,6 +37,7 @@ import {
 } from "./knowledge-write-types";
 import { inspectKnowledgeWitness } from "./knowledge-witnesses";
 import { knowledgeRecordGrant } from "./knowledge-record-grant";
+import { knowledgeActorSchema } from "./knowledge-read-types";
 import { captureKnowledgeRecordReference } from "./knowledge-record-capture";
 import {
   additionalKnowledgeRestrictions,
@@ -60,6 +62,7 @@ const log = pino({
   name: "brain:knowledge",
   level: process.env.LOG_LEVEL ?? "info",
 });
+const decisionActor = z.object({ actor: knowledgeActorSchema });
 
 type StoredProposal = Record<string, unknown>;
 type WitnessLink = Readonly<{
@@ -779,20 +782,45 @@ export async function reviewKnowledgeProposal(
 
       await authorizeKnowledge(tx, input.principal, owner, "knowledge:read");
       if (proposal.status !== "pending") {
-        await authorizeSourceRestrictions(
+        const access = await authorizeSourceRestrictions(
           tx,
           input.principal,
           proposal.source_restrictions,
         );
+        const retainedActor = decisionActor.safeParse(proposal.resolution);
+
         if (
-          proposal.decision_key === input.idempotencyKey &&
-          proposal.decision_digest === digest
+          proposal.decision_key !== input.idempotencyKey ||
+          proposal.decision_digest !== digest ||
+          retainedActor.data?.actor.kind !== authority.actor.kind ||
+          retainedActor.data.actor.id !== authority.actor.id
         )
-          return replayedReceipt(proposal);
-        throw new MaisterError(
-          "CONFLICT",
-          "Knowledge proposal already has a different decision",
+          throw new MaisterError(
+            "CONFLICT",
+            "Knowledge proposal already has a different decision",
+          );
+        if (proposal.status === "accepted") {
+          if (proposal.kind === "knowledge_correct")
+            await recordAccess(
+              tx,
+              input.principal,
+              String(proposal.target_record_id),
+              "knowledge:review",
+            );
+          await authorizeKnowledgeRevisionRead(
+            tx,
+            input.principal,
+            String(proposal.published_record_id),
+            Number(proposal.published_record_revision),
+            access,
+          );
+        }
+        log.debug(
+          { proposalId: input.proposalId },
+          "knowledge decision replay authorized",
         );
+
+        return replayedReceipt(proposal);
       }
       if (Number(proposal.revision) !== input.expectedRevision)
         throw new MaisterError(

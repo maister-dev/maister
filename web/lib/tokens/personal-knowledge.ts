@@ -1,19 +1,18 @@
 import "server-only";
 
 import type { NextResponse } from "next/server";
-import type { Db } from "@/lib/execution-host/db";
+import type { PersonalKnowledgeCredential } from "./personal-knowledge-credential";
 
 import { handleOwnedExt } from "./owned-ext-handler";
 import { tokenHasScope } from "./scopes";
 
-import { lockCurrentNativeKnowledgeToken } from "@/lib/brain/knowledge-token-lock";
 import { vaultErrorResponse } from "@/lib/agent-memory-vault/http";
 import { MaisterError } from "@/lib/errors";
 
-export type PersonalKnowledgeCredential = Readonly<{
-  tokenId: string;
-  userId: string;
-}>;
+export {
+  lockPersonalKnowledgeCredential,
+  type PersonalKnowledgeCredential,
+} from "./personal-knowledge-credential";
 type ReviewKind = "brain" | "vault" | "knowledge";
 const reviewScopes = {
   brain: "memory:read",
@@ -28,27 +27,6 @@ export function visibleReviewKinds(
   return reviewKinds.filter((kind) =>
     tokenHasScope(scopes, reviewScopes[kind]),
   );
-}
-
-export async function lockPersonalKnowledgeCredential(
-  db: Db,
-  credential: PersonalKnowledgeCredential,
-  scope: string,
-) {
-  const token = await lockCurrentNativeKnowledgeToken(db, credential.tokenId);
-
-  if (
-    token.token_kind !== "user" ||
-    token.project_id !== null ||
-    token.owner_user_id !== credential.userId ||
-    !tokenHasScope(token.scopes, scope)
-  )
-    throw new MaisterError(
-      "UNAUTHORIZED",
-      "A current global personal token with the required scope is required",
-    );
-
-  return token.scopes;
 }
 
 export function handlePersonalKnowledge(

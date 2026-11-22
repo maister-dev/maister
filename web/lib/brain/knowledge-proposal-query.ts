@@ -23,7 +23,8 @@ function credentialAllows(
   principal: KnowledgePrincipal,
   action: KnowledgeAction,
 ): SQL {
-  if (principal.kind === "execution") return sql`false`;
+  if (principal.kind === "execution" || principal.kind === "personal_read")
+    return sql`false`;
 
   return principal.kind === "user"
     ? sql`true`

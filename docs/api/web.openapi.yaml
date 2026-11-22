@@ -21359,8 +21359,9 @@ paths:
       description: Requires current knowledge:review. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts.
+        compare canonical payload digest and expected revision. Replay requires the original reviewer, delivery key
+        and payload under current owner, source and result authority. An accepted restricted correction also
+        rechecks its record-level review grant. A changed reviewer, key or payload conflicts.
       x-implementation-status: Implemented
       x-required-scope: knowledge:review
       requestBody:
@@ -24792,7 +24793,9 @@ paths:
       summary: Settle an ordered batch of proposal decisions
       description: Evaluate each decision separately under current authority. Hidden and
         missing items yield unavailable. Target identity comes from current credentials and the
-        resolved route resource.
+        resolved route resource. Structured knowledge replays require the original reviewer, delivery key and
+        payload under current source and result authority. Replaying an accepted restricted correction also
+        requires the current record-level review grant. A prior native decision without an Inbox receipt conflicts.
       x-implementation-status: Implemented
       security:
         - sessionCookie: []
@@ -24841,7 +24844,10 @@ paths:
       operationId: decideSessionProposalReview
       summary: Settle one exact proposal decision
       description: An active browser session is required. Requires current review authority for the selected kind.
-        Replays use the original receipt under current authority. A changed request or stale version conflicts.
+        Replays use the original reviewer's receipt under current authority. A changed request or stale version
+        conflicts. Structured knowledge also rechecks publication evidence and result authority. Replaying an
+        accepted restricted correction requires the current record-level review grant. A prior native decision
+        without an Inbox receipt conflicts.
       x-implementation-status: Implemented
       security:
         - sessionCookie: []

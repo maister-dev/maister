@@ -98,7 +98,8 @@ export async function lockKnowledgeReadConsumer(
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
   await configureKnowledgeReadExecution(tx, principal.kind);
-  if (principal.kind === "user") return null;
+  if (principal.kind === "user" || principal.kind === "personal_read")
+    return null;
   if (principal.kind === "librarian_read") {
     const { turnId, capture } = await lockLibrarianKnowledgeContext(
       tx,
@@ -165,10 +166,14 @@ export async function lockKnowledgeWriteConsumer(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
 ): Promise<KnowledgeReadConsumer> {
-  if (principal.kind === "execution" || principal.kind === "librarian_read")
+  if (
+    principal.kind === "execution" ||
+    principal.kind === "librarian_read" ||
+    principal.kind === "personal_read"
+  )
     throw new MaisterError(
       "UNAUTHORIZED",
-      "Execution inspection cannot authorize knowledge writes",
+      "Read-only knowledge access cannot authorize knowledge writes",
     );
   const consumer = await lockKnowledgeReadConsumer(tx, principal);
 

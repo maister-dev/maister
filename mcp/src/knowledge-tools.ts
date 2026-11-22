@@ -26,7 +26,7 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   knowledge_proposals_list:
     "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue.",
   knowledge_decide:
-    "Accept or reject an exact proposal revision only under explicit current review authority. Acceptance does not confirm the published assertion. Ordinary specialist tokens cannot review.",
+    "Accept or reject an exact proposal revision under current review authority. Replay requires the original reviewer, delivery key and payload, plus current source and result access. An accepted restricted correction also rechecks the record review grant. Confirmation is a separate operation. Ordinary specialist tokens cannot review.",
   knowledge_confirm:
     "Confirm or revoke confirmation of an exact record revision under explicit current confirmation authority. Confirmation requires available versioned evidence; agent completion does not confer this authority.",
   knowledge_search:
@@ -46,7 +46,7 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   personal_vault_view: "Read the indicated vault location by directory or note path, or by stable note ID. Follow the authorized continuation for remaining content.",
   personal_vault_revisions: "Page retained revisions for one exact note in an authorized vault.",
   personal_vault_revision_get: "Read an exact authorized retained revision. A removed or concealed payload is unavailable.",
-  knowledge_revisions_list: "Page exact retained record revisions visible under current owner and source policies.",
+  knowledge_revisions_list: "Page exact retained record revisions visible under current owner and source policies. Requires a global personal token with knowledge:read. Vault-dependent heads and historical revisions additionally require explicit agent_memory:read.",
 };
 
 export const KNOWLEDGE_TOOL_SPECS = Object.fromEntries(

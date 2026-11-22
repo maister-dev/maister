@@ -17,7 +17,7 @@ export async function GET(
     request,
     "knowledge:read",
     "GET /api/v1/ext/knowledge/{recordId}/revisions",
-    async ({ tokenId }) => {
+    async ({ tokenId, userId }) => {
       const { recordId } = knowledgeRecordSelector(
         (await route.params).recordId,
         null,
@@ -26,7 +26,7 @@ export async function GET(
       return privateJson(
         await listKnowledgeRevisions(
           getDb(),
-          { kind: "token", tokenId },
+          { kind: "personal_read", tokenId, userId },
           recordId,
           parseKnowledgeRevisionPage(new URL(request.url).searchParams),
         ),
