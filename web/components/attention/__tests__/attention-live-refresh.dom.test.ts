@@ -8,6 +8,10 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
+import {
+  AttentionReviewProvider,
+  useWatchedReview,
+} from "@/components/attention/attention-review-watch";
 
 const { router } = vi.hoisted(() => ({ router: { refresh: vi.fn() } }));
 
@@ -51,6 +55,15 @@ const labels = {
   reconnecting: "Reconnecting",
 };
 
+function ActiveReview() {
+  const invalidation = useWatchedReview({
+    kind: "vault",
+    id: "settled-proposal",
+  });
+
+  return createElement("output", null, invalidation);
+}
+
 let root: Root;
 let container: HTMLDivElement;
 
@@ -74,6 +87,40 @@ afterEach(() => {
 });
 
 describe("app attention refresh", () => {
+  it("K13 revalidates the exact selected review on reconnect without a tick", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(AttentionLiveRefresh, { labels }),
+          createElement(ActiveReview),
+        ),
+      ),
+    );
+    const selected = AttentionEventSource.sources.at(-1)!;
+
+    expect(new URL(selected.url).searchParams.get("reviewId")).toBe(
+      "settled-proposal",
+    );
+    act(() => selected.onopen?.());
+    expect(container.querySelector("output")?.textContent).toBe("1");
+    act(() => selected.onerror?.());
+    act(() => vi.advanceTimersByTime(500));
+    const reconnected = AttentionEventSource.sources.at(-1)!;
+
+    expect(reconnected).not.toBe(selected);
+    expect(new URL(reconnected.url).searchParams.get("reviewKind")).toBe(
+      "vault",
+    );
+    act(() => reconnected.onopen?.());
+    expect(container.querySelector("output")?.textContent).toBe("2");
+    expect(router.refresh).not.toHaveBeenCalled();
+  });
+
   it("refreshes the initial snapshot to close the server-render subscription gap", () => {
     const source = AttentionEventSource.sources[0];
 

@@ -16,10 +16,20 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useWatchedReview } from "@/components/attention/attention-review-watch";
+import { ProposalReviewDetails } from "@/components/inbox/proposal-review-details";
+
 type Page = Awaited<ReturnType<typeof listProposalReviews>>;
 type ReviewItem = Page["items"][number];
 type ReviewDetail = Awaited<ReturnType<typeof getProposalReviewDetail>>;
 type ReviewReceipt = Awaited<ReturnType<typeof decideProposalReview>>;
+type ReviewPosition = Pick<ReviewItem, "kind" | "id" | "createdAt">;
+type ReviewNavigation = { href: string; label: "nextReview" | "next" };
+type ReviewPageRequest = {
+  invalidation: number;
+  cursors: readonly string[];
+  outcomeCursors: readonly string[];
+};
 type DetailFailure = "unavailable" | "retryable";
 type Outcome = "applied" | "rejected" | "conflict" | "unavailable" | "refused";
 type ReviewSubmission = Readonly<{
@@ -27,6 +37,14 @@ type ReviewSubmission = Readonly<{
   titles: readonly string[];
 }>;
 const kinds = ["vault", "brain", "knowledge"] as const;
+
+function followsReview(row: ReviewPosition, selected: ReviewPosition): boolean {
+  if (row.createdAt !== selected.createdAt)
+    return row.createdAt < selected.createdAt;
+  if (row.kind !== selected.kind) return row.kind < selected.kind;
+
+  return row.id < selected.id;
+}
 
 function rowKey(row: ReviewItem) {
   return JSON.stringify([row.kind, row.id, row.version]);
@@ -37,35 +55,46 @@ function ReviewPreview({
   close,
   inline = false,
   next,
-  reviewVersion,
 }: {
   source: ReviewSelector;
   close: () => void;
   inline?: boolean;
-  next?: string;
-  reviewVersion?: string;
+  next: (review: ReviewPosition) => ReviewNavigation | null;
 }) {
   const t = useTranslations("inbox.reviews");
   const common = useTranslations("common");
-  const knowledge = useTranslations("knowledge");
   const router = useRouter();
+  const invalidation = useWatchedReview(source);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [command, setCommand] = useState<string | null>(null);
+  const [showRevisions, setShowRevisions] = useState(false);
   const [failure, setFailure] = useState<
     "conflict" | "unavailable" | "retryable" | null
   >(null);
-  const [receipt, setReceipt] = useState<ReviewReceipt | null>(null);
+  const [receipt, setReceipt] = useState<{
+    data: ReviewReceipt;
+    invalidation: number;
+  } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-  const [request, setRequest] = useState<{ cursors: readonly string[] }>({
-    cursors: [],
-  });
+  const firstPage = useMemo<ReviewPageRequest>(
+    () => ({
+      invalidation,
+      cursors: [],
+      outcomeCursors: [],
+    }),
+    [invalidation],
+  );
+  const [pageRequest, setRequest] = useState(firstPage);
+  const request =
+    pageRequest.invalidation === invalidation ? pageRequest : firstPage;
   const [result, setResult] = useState<{
     request: typeof request;
     preview: ReviewDetail | DetailFailure;
   } | null>(null);
   const preview = result?.request === request ? result.preview : null;
   const cursor = request.cursors.at(-1);
+  const outcomeCursor = request.outcomeCursors.at(-1);
   const detail = typeof preview === "object" ? preview : null;
   const nextCursor = detail?.nextCursor;
   const { kind, id } = source;
@@ -77,7 +106,11 @@ function ReviewPreview({
 
   useEffect(() => {
     const controller = new AbortController();
-    const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
+    const params = new URLSearchParams({
+      ...(cursor ? { cursor } : {}),
+      ...(outcomeCursor ? { outcomeCursor } : {}),
+    });
+    const query = params.size ? `?${params}` : "";
 
     void fetch(`${path}${query}`, {
       cache: "no-store",
@@ -86,7 +119,7 @@ function ReviewPreview({
       .then(async (response) =>
         response.ok
           ? ((await response.json()) as ReviewDetail)
-          : response.status >= 500
+          : response.status === 409 || response.status >= 500
             ? ("retryable" as const)
             : ("unavailable" as const),
       )
@@ -99,12 +132,12 @@ function ReviewPreview({
       });
 
     return () => controller.abort();
-  }, [cursor, path, request, reviewVersion]);
+  }, [cursor, outcomeCursor, path, request]);
 
   function reload() {
     setFailure(null);
     setCommand(null);
-    setRequest({ cursors: [] });
+    setRequest({ ...firstPage });
   }
 
   async function send(body: string) {
@@ -134,10 +167,13 @@ function ReviewPreview({
         return;
       }
 
-      setReceipt((await response.json()) as ReviewReceipt);
+      setReceipt({
+        data: (await response.json()) as ReviewReceipt,
+        invalidation,
+      });
       setCommand(null);
       setReason("");
-      setRequest({ cursors: [] });
+      setRequest({ ...firstPage });
       router.refresh();
     } catch {
       setFailure("retryable");
@@ -162,8 +198,12 @@ function ReviewPreview({
   }
 
   const title = detail?.title ?? t("preview");
-  const outcome =
-    preview === "unavailable" ? null : (detail?.outcome ?? receipt?.outcome);
+  const authorizedReceipt =
+    preview === null && receipt?.invalidation === invalidation
+      ? receipt.data
+      : null;
+  const outcome = detail?.outcome ?? authorizedReceipt?.outcome;
+  const nextReview = detail && outcome ? next(detail) : null;
   const pending = detail?.domainState === "pending" && receipt === null;
   const actionsDisabled = submitting || command !== null || failure !== null;
   const body = (
@@ -180,42 +220,7 @@ function ReviewPreview({
           </Button>
         </div>
       ) : detail ? (
-        <>
-          <div className="flex flex-wrap gap-2 text-sm text-mute">
-            <span>
-              {detail.owner.kind === "company"
-                ? knowledge("company")
-                : detail.owner.label}
-            </span>
-            <span>{t(`kind.${detail.kind}`)}</span>
-            {detail.agentId ? <span>{detail.agentId}</span> : null}
-          </div>
-          {detail.kind === "knowledge" ? (
-            <div className="flex flex-wrap gap-3">
-              <Link className="underline" href={detail.detail.proposalHref}>
-                {t("evidence")}
-              </Link>
-              {detail.detail.sourceHref ? (
-                <Link className="underline" href={detail.detail.sourceHref}>
-                  {t("baseRevision")}
-                </Link>
-              ) : null}
-            </div>
-          ) : detail.kind === "brain" ? (
-            <p>{t(`outcomeLabel.${detail.detail.expectedEffect}`)}</p>
-          ) : null}
-          <pre
-            key={cursor}
-            className="m-0 max-h-[55vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-canvas p-3 text-sm"
-          >
-            {detail.summary}
-          </pre>
-          {detail.decision.reason ? (
-            <p className="whitespace-pre-wrap break-words">
-              {detail.decision.reason}
-            </p>
-          ) : null}
-        </>
+        <ProposalReviewDetails key={cursor} proposal={detail} />
       ) : null}
       {nextCursor || cursor ? (
         <nav
@@ -232,7 +237,10 @@ function ReviewPreview({
               size="sm"
               variant="secondary"
               onPress={() =>
-                setRequest({ cursors: request.cursors.slice(0, -1) })
+                setRequest({
+                  ...request,
+                  cursors: request.cursors.slice(0, -1),
+                })
               }
             >
               {t("previewPrevious")}
@@ -243,7 +251,10 @@ function ReviewPreview({
               size="sm"
               variant="secondary"
               onPress={() =>
-                setRequest({ cursors: [...request.cursors, nextCursor] })
+                setRequest({
+                  ...request,
+                  cursors: [...request.cursors, nextCursor],
+                })
               }
             >
               {t("previewNext")}
@@ -324,29 +335,77 @@ function ReviewPreview({
           </p>
           {outcome.type === "applied_vault_operation" &&
           outcome.revisions?.length ? (
-            <details>
+            <details
+              open={showRevisions}
+              onToggle={(event) => setShowRevisions(event.currentTarget.open)}
+            >
               <summary>
                 {t("appliedRevisions", { count: outcome.revisionCount })}
               </summary>
               <ul className="list-inside list-disc break-all text-sm">
                 {outcome.revisions.map((revision) => (
                   <li key={revision.revisionId}>
-                    <Link className="underline" href={revision.href}>
-                      {revision.path}
-                    </Link>
+                    {revision.href ? (
+                      <Link className="underline" href={revision.href}>
+                        {revision.path}
+                      </Link>
+                    ) : (
+                      revision.path
+                    )}
                   </li>
                 ))}
               </ul>
+              {outcomeCursor || outcome.revisionsNextCursor ? (
+                <nav
+                  aria-label={t("resultPages")}
+                  className="mt-2 flex flex-wrap items-center gap-2"
+                >
+                  {outcomeCursor ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onPress={() =>
+                        setRequest({
+                          ...request,
+                          outcomeCursors: request.outcomeCursors.slice(0, -1),
+                        })
+                      }
+                    >
+                      {t("resultPrevious")}
+                    </Button>
+                  ) : null}
+                  {outcome.revisionsNextCursor ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => {
+                        const nextCursor = outcome.revisionsNextCursor;
+
+                        if (nextCursor)
+                          setRequest({
+                            ...request,
+                            outcomeCursors: [
+                              ...request.outcomeCursors,
+                              nextCursor,
+                            ],
+                          });
+                      }}
+                    >
+                      {t("resultNext")}
+                    </Button>
+                  ) : null}
+                </nav>
+              ) : null}
             </details>
           ) : null}
           {receipt ? (
             <p className="break-all text-xs text-mute">
-              {t("receipt", { id: receipt.receiptId })}
+              {t("receipt", { id: receipt.data.receiptId })}
             </p>
           ) : null}
-          {next ? (
-            <Link className="underline" href={next}>
-              {t("nextReview")}
+          {nextReview ? (
+            <Link className="underline" href={nextReview.href}>
+              {t(nextReview.label)}
             </Link>
           ) : null}
         </div>
@@ -403,7 +462,6 @@ export function ProposalReviews({
   filters,
   initial,
   workspace = false,
-  reviewVersion,
 }: {
   page: Page;
   filters: {
@@ -416,7 +474,6 @@ export function ProposalReviews({
   };
   initial?: ReviewSelector;
   workspace?: boolean;
-  reviewVersion?: string;
 }) {
   const t = useTranslations("inbox.reviews");
   const common = useTranslations("common");
@@ -467,12 +524,20 @@ export function ProposalReviews({
   };
   const itemLink = (row: ReviewSelector) =>
     href({ ...selection, proposalKind: row.kind, proposalId: row.id });
-  const selectedIndex = preview
-    ? page.items.findIndex(
-        (row) => row.kind === preview.kind && row.id === preview.id,
-      )
-    : -1;
-  const next = page.items[selectedIndex + 1];
+
+  function nextReview(review: ReviewPosition): ReviewNavigation | null {
+    if (!workspace) return null;
+    const next = page.items.find((row) => followsReview(row, review));
+
+    if (next) return { href: itemLink(next), label: "nextReview" };
+    const last = page.items.at(-1);
+
+    return page.nextCursor &&
+      last?.kind === review.kind &&
+      last.id === review.id
+      ? { href: href({ ...selection, cursor: page.nextCursor }), label: "next" }
+      : null;
+  }
 
   const needsReason = chosen.some(({ kind }) => kind === "knowledge");
 
@@ -769,8 +834,7 @@ export function ProposalReviews({
               if (initial) router.replace(href(selection), { scroll: false });
             }}
             inline={workspace}
-            next={workspace && next ? itemLink(next) : undefined}
-            reviewVersion={reviewVersion}
+            next={nextReview}
             source={preview}
           />
         ) : null}

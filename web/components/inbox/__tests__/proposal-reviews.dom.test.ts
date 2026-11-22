@@ -12,7 +12,10 @@ import { ProposalReviews } from "@/components/inbox/proposal-reviews";
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
 const translate = (key: string): string => key;
 
-vi.mock("next-intl", () => ({ useTranslations: () => translate }));
+vi.mock("next-intl", () => ({
+  useTranslations: () => translate,
+  useFormatter: () => ({ dateTime: (date: Date) => date.toISOString() }),
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 const first = {
@@ -36,6 +39,7 @@ let root: Root;
 function render(
   items: ComponentProps<typeof ProposalReviews>["page"]["items"],
   initial?: ComponentProps<typeof ProposalReviews>["initial"],
+  workspace?: boolean,
 ) {
   act(() => {
     root.render(
@@ -43,6 +47,7 @@ function render(
         page: { items, nextCursor: null, total: items.length },
         filters: {},
         initial,
+        workspace,
       }),
     );
   });
@@ -139,6 +144,118 @@ it("K03 settles a deep-linked proposal outside the current page without selectin
   expect(document.body.textContent).toContain(
     "outcomeLabel.applied_vault_operation",
   );
+});
+
+it("K03 preserves the selected review boundary and shows the retained decision after the queue moves", async () => {
+  const latest = {
+    ...first,
+    id: "proposal-4",
+    createdAt: "2026-11-20T09:00:03.000000Z",
+  };
+  const reviewed = {
+    ...first,
+    id: "proposal-3",
+    title: "Reviewed proposal",
+    createdAt: "2026-11-20T09:00:02.000000Z",
+    author: "note-author",
+    domainState: "accepted",
+    allowed: [],
+    outcomeAvailable: true,
+  };
+  const reviewTime = "2026-11-20T10:00:00Z";
+  const fetcher = vi.fn().mockResolvedValue(
+    Response.json({
+      ...reviewed,
+      summary: "Exact reviewed diff",
+      sourceRevisionId: "source-revision",
+      detail: {
+        operationId: "reviewed-operation",
+        changeCount: 1,
+        vaultHref: null,
+      },
+      decision: {
+        by: "retained-reviewer",
+        at: reviewTime,
+        reason: "Checked the note",
+        reviewedVersion: "1",
+      },
+      nextCursor: null,
+      outcome: {
+        type: "applied_vault_operation",
+        operationId: "operation",
+        href: null,
+      },
+    }),
+  );
+
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () =>
+    render([latest, first], { kind: reviewed.kind, id: reviewed.id }, true),
+  );
+
+  const next = [...container.querySelectorAll("a")].find(
+    (link) => link.textContent === "nextReview",
+  );
+
+  expect
+    .soft(new URL(next!.href).searchParams.get("proposalId"))
+    .toBe(first.id);
+  expect.soft(container.textContent).toContain("note-author");
+  expect.soft(container.textContent).toContain("source-revision");
+  expect.soft(container.textContent).toContain("retained-reviewer");
+  expect(container.querySelector("time")?.dateTime).toBe(reviewTime);
+});
+
+it("K10 keeps the current proposal preview page when paging applied revisions", async () => {
+  const settled = {
+    ...first,
+    allowed: [],
+    domainState: "accepted",
+    summary: "Reviewed diff",
+    sourceRevisionId: null,
+    detail: {
+      operationId: "reviewed-operation",
+      changeCount: 21,
+      vaultHref: null,
+    },
+    decision: { by: null, at: null, reason: null, reviewedVersion: "1" },
+  };
+  const fetcher = vi.fn<
+    (url: string, options: RequestInit) => Promise<Response>
+  >(async (url) => {
+    const params = new URL(url, "http://localhost").searchParams;
+    const outcomeContinued = params.has("outcomeCursor");
+
+    return Response.json({
+      ...settled,
+      nextCursor: params.has("cursor") ? null : "preview-next",
+      outcome: {
+        type: "applied_vault_operation",
+        operationId: "applied-operation",
+        href: null,
+        revisionCount: 21,
+        revisions: [
+          {
+            path: outcomeContinued ? "/memories/last.md" : "/memories/first.md",
+            href: null,
+            revisionId: outcomeContinued ? "last" : "first",
+          },
+        ],
+        revisionsNextCursor: outcomeContinued ? null : "outcome-next",
+      },
+    });
+  });
+
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => render([], { kind: first.kind, id: first.id }, true));
+  await click("previewNext");
+  await click("resultNext");
+
+  expect(fetcher).toHaveBeenLastCalledWith(
+    "/api/inbox/reviews/vault/proposal-1?cursor=preview-next&outcomeCursor=outcome-next",
+    expect.objectContaining({ cache: "no-store" }),
+  );
+  expect(container.textContent).toContain("/memories/last.md");
 });
 
 afterEach(() => {

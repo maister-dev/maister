@@ -17,7 +17,6 @@ import {
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { getDb } from "@/lib/db/client";
 import {
-  getProposalReviewCounter,
   listProposalReviews,
   parseReviewFilters,
   parseReviewSelector,
@@ -56,16 +55,14 @@ export default async function InboxPage({
   // ADR-169 D8/ATN-05: the ONE canonical queue. Its `count` is the number the
   // rail badge shows — React-`cache`d, so this is the same computation, not a
   // second one free to disagree with it.
-  const [inboxItems, unreadInbox, queue, reviews, reviewCount] =
-    await Promise.all([
-      getInboxItems(user.id, user.role),
-      // The notifications panel's own population — unread mentions and comments,
-      // which are `updates`, not `decisions`. Keeping them separate is the point.
-      getUnreadInboxCount(user.id, user.role),
-      getDecisionsQueue(user.id, user.role),
-      listProposalReviews(getDb(), user.id, { ...reviewFilters, limit }),
-      getProposalReviewCounter(user.id),
-    ]);
+  const [inboxItems, unreadInbox, queue, reviews] = await Promise.all([
+    getInboxItems(user.id, user.role),
+    // The notifications panel's own population — unread mentions and comments,
+    // which are `updates`, not `decisions`. Keeping them separate is the point.
+    getUnreadInboxCount(user.id, user.role),
+    getDecisionsQueue(user.id, user.role),
+    listProposalReviews(getDb(), user.id, { ...reviewFilters, limit }),
+  ]);
   const decisions = queue.count;
   // ATN-01: the HITL cards come from the queue the count is the length of, not
   // from a second, wider query printing its own number beside it.
@@ -92,7 +89,6 @@ export default async function InboxPage({
           filters={reviewFilters}
           initial={initialReview}
           page={reviews}
-          reviewVersion={reviewCount.reviewVersion}
         />
       </div>
       {decisions === 0 &&

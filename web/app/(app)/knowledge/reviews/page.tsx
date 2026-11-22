@@ -18,7 +18,6 @@ import {
 } from "@/lib/brain/knowledge-ui";
 import { getDb } from "@/lib/db/client";
 import {
-  getProposalReviewCounter,
   listProposalReviews,
   parseReviewFilters,
   parseReviewSelector,
@@ -59,14 +58,13 @@ export default async function KnowledgeReviewPage({
       })
     : undefined;
   const db = getDb();
-  const [page, owners, count] = await Promise.all([
+  const [page, owners] = await Promise.all([
     listProposalReviews(db, user.id, { ...filters, limit }),
     knowledgeOwnerChoices(
       db,
       { kind: "user", userId: user.id },
       "knowledge:read",
     ),
-    getProposalReviewCounter(user.id),
   ]);
   const selectedOwner =
     owners.find(({ owner: choice }) =>
@@ -113,7 +111,6 @@ export default async function KnowledgeReviewPage({
         filters={filters}
         initial={initial}
         page={page}
-        reviewVersion={count.reviewVersion}
       />
     </>
   );

@@ -8,6 +8,7 @@ import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
 import { getActiveAgentExecutions } from "@/lib/agents/activity-queries";
 import { ActiveAgentExecutions } from "@/components/agents/active-agent-executions";
 import { AttentionLiveRefresh } from "@/components/attention/attention-live-refresh";
+import { AttentionReviewProvider } from "@/components/attention/attention-review-watch";
 import { LibrarianPanel } from "@/components/librarian/librarian-panel";
 import { LibrarianProvider } from "@/components/librarian/librarian-provider";
 import { LibrarianTrigger } from "@/components/librarian/librarian-trigger";
@@ -210,7 +211,7 @@ export default async function AppLayout({
       initialIndicator={librarianIndicator}
       ownerId={sessionUser.id}
     >
-      {shell}
+      <AttentionReviewProvider>{shell}</AttentionReviewProvider>
     </LibrarianProvider>
   ) : (
     shell

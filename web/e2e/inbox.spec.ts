@@ -182,10 +182,8 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   await selected.getByRole("button", { name: "Close proposal" }).click();
   await expect(rowLink).toBeFocused();
 
-  await page.route(
-    `**${direct}`,
-    (route) => route.fulfill({ status: 503, json: { code: "CRASH" } }),
-    { times: 1 },
+  await page.route(`**${direct}`, (route) =>
+    route.fulfill({ status: 503, json: { code: "CRASH" } }),
   );
   await page.goto(
     `/knowledge/reviews?${new URLSearchParams({ kind: "vault", projectId, proposalKind: "vault", proposalId: receipt.proposalId })}`,
@@ -193,10 +191,14 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   await expect(
     page.getByText("The proposal could not be loaded."),
   ).toBeVisible();
+  await page.unroute(`**${direct}`);
   await page.getByRole("button", { name: "Retry" }).focus();
   await page.keyboard.press("Enter");
   await expect(
     selected.getByText("+Permanent after review", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    selected.getByText("Apply the proposed memory changes.", { exact: true }),
   ).toBeVisible();
   const settled = page.waitForResponse(`**${direct}/decision`, {
     timeout: 30_000,
@@ -296,6 +298,60 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   await expect(page).toHaveURL(
     /\/knowledge\/reviews\?proposalKind=brain&proposalId=/,
   );
+
+  const history = new URLSearchParams({
+    kind: "vault",
+    projectId,
+    proposalKind: "vault",
+    proposalId: receipt.proposalId,
+    view: "history",
+  });
+  const observer = await page.context().newPage();
+
+  try {
+    const watch = observer.waitForRequest((request) => {
+      const url = new URL(request.url());
+
+      return (
+        url.pathname === "/api/attention/stream" &&
+        url.searchParams.get("reviewId") === receipt.proposalId
+      );
+    });
+
+    await observer.goto(`/knowledge/reviews?${history}`);
+    await expect(
+      observer.getByText("+Permanent after review", { exact: false }),
+    ).toBeVisible();
+    expect((await (await watch).response())?.ok()).toBe(true);
+    const revisionId = exact.get("memoryRevision");
+
+    expect(revisionId).toBeTruthy();
+    const redacted = await page.request.post(
+      `/api/agent-memory/revisions/${revisionId}/redact`,
+      {
+        data: {
+          reason: "Withdraw the reviewed source from the open history view",
+          requestKey: `inbox-review-redact-${projectId}`,
+        },
+      },
+    );
+
+    expect(redacted.ok()).toBe(true);
+    await expect(
+      observer.getByText("+Permanent after review", { exact: false }),
+    ).toHaveCount(0, { timeout: 45_000 });
+    await expect(observer.getByRole("alert")).toContainText(
+      "Предложение недоступно.",
+    );
+    await expect(
+      observer.getByRole("link", {
+        name: "Применённое изменение памяти",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    await observer.close();
+  }
 });
 
 test.describe("Inbox card redesign", () => {

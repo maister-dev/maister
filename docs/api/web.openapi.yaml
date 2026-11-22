@@ -2161,9 +2161,11 @@ paths:
         that leaves the reader's reach mid-stream stops producing frames without
         a reconnect.
 
-        Frames are TICKS, not a log: "these projects moved, and here are the two
-        canonical counters as of now". The client refetches; it never
-        accumulates frames. Three event names are emitted — `attention.tick`
+        Tick frames carry the current counters and tell the client which
+        surfaces to refetch. A client can watch one exact proposal by providing
+        the paired reviewKind and reviewId. A change in its visible state can
+        move the reviews region while the pending count stays fixed. Missing and
+        hidden selections have the same stream behavior. Three event names are emitted — `attention.tick`
         (the only one carrying an SSE `id`), `attention.heartbeat`, and
         `attention.stream_timeout`, which closes a stream that has been quiet
         for five minutes. Frame schemas live in
@@ -2202,6 +2204,14 @@ paths:
           required: false
           description: (ADR-212) Paired opaque version of the visible review set.
           schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+        - name: reviewKind
+          in: query
+          description: Optional exact proposal kind. Supply once with reviewId.
+          schema: { type: string, enum: [vault, brain, knowledge] }
+        - name: reviewId
+          in: query
+          description: Optional exact proposal identity. Supply once with reviewKind. Current session and source authority determine visibility.
+          schema: { type: string, minLength: 1, maxLength: 192 }
       responses:
         "200":
           description: SSE stream.
@@ -2230,6 +2240,11 @@ paths:
             its password first (`PASSWORD_CHANGE_REQUIRED`), the account is not
             active (`ACCOUNT_INACTIVE`), or the session is otherwise
             unauthorized (`UNAUTHORIZED`). No stream is opened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid exact review selector. Supply both selector fields once or omit both.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

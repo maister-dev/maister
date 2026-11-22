@@ -16,11 +16,13 @@ Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 | Screen | Wide layout | Narrow layout and focus |
 | --- | --- | --- |
 | Records and proposals | Owner scope and filters above a paged list; selected record or proposal beside the list | A selected detail occupies the screen. Back restores the filter, scroll position and row focus. Keyboard activation moves focus to the detail heading. |
-| Decision | Show owner, author, source, observed version, reason and verb for the actual effect | Place actions after evidence in reading order. Announce the current outcome. On conflict retain the reason and offer to load the new version. |
+| Decision | Show owner, author, source, reviewed version, reason and acceptance effect. Show the reviewer, time and disposition in history. Mark missing legacy values as unrecorded. | Place actions after evidence in reading order. Announce the current outcome. On conflict retain the reason and offer to load the new version. |
 | Vault and comparison | Owner and path navigation, safe preview/source, exact revision metadata and comparison | Navigate owner → folder → note → history as nested views. Historical detail offers comparison and restore as a new revision. Return to the current note before editing. |
 | Note promotion | Show destination, exact source version, excerpt and intended outcome before submitting | The receipt links to the pending decision. The decision links to its authorized outcome. |
 
 Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale).
+
+After a decision, **Next proposal** continues from the selected review's position in the scoped queue. The open detail is revalidated on attention reconnect and review invalidation. A withdrawn source clears the previous preview and its result links. Vault outcomes page applied revisions independently of the proposed changes.
 
 ## JTBD
 

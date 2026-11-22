@@ -56,6 +56,28 @@ const copy = {
   promotion: ["Accept proposed project state", "Принять предложенное состояние проекта"], personal: ["Personal memory is in the Librarian dialog.", "Личная память находится в диалоге Библиотекаря."],
   reload: ["Reload reviewed version", "Загрузить актуальную версию"], draft: ["Decision draft retained.", "Черновик решения сохранён."],
   disabled: ["Memory disabled", "Память отключена"], legacy: ["Read legacy project memory", "Открыть прежнюю память проекта"], saved: ["Review receipt", "Квитанция решения"],
+  author: ["Author", "Автор"], reviewed: ["Reviewed version", "Версия на проверке"], reviewer: ["Reviewer", "Проверяющий"],
+  decidedAt: ["Decided at", "Время решения"], unrecorded: ["Unrecorded", "Не зафиксировано"],
+  reasonRequired: ["Give a reason for this decision.", "Укажите причину решения."],
+  catalog: ["Create an unpublished catalog draft", "Создать неопубликованный черновик каталога"],
+  vaultChange: ["Apply the memory changes", "Применить изменения памяти"],
+  correctionSource: ["Published assertion r3 · run 120", "Утверждение r3 · запуск 120"],
+  taskSource: ["Project Brain draft · docs/roadmap.md", "Черновик Project Brain · docs/roadmap.md"],
+  catalogSource: ["Project Brain rule draft", "Черновик правила Project Brain"],
+  promotionSource: ["Agent vault · /memories/project-state.md · r7", "Память агента · /memories/project-state.md · r7"],
+  vaultSource: ["Installation vault · /memories/review.md · r2", "Память инсталляции · /memories/review.md · r2"],
+  correctionPreview: ["Require the exact receipt for a completed review.", "Для завершённой проверки нужна точная квитанция."],
+  taskPreview: ["Document the rollout cases and name a maintainer.", "Опишите сценарии развёртывания и назначьте ответственного."],
+  catalogPreview: ["Check the scope of each change before publishing.", "Перед публикацией проверяйте область каждого изменения."],
+  promotionPreview: ["Atlas reached the approved rollout state.", "Atlas достиг согласованного состояния развёртывания."],
+  vaultPreview: ["− Check output · + Check output and receipt", "− Проверить результат · + Проверить результат и квитанцию"],
+};
+const reviewExamples = {
+  correction: { label: "record", effect: "publish", owner: "Atlas", author: "Marina", version: "r3", source: "correctionSource", preview: "correctionPreview" },
+  ordinary: { label: "task", effect: "task", owner: "Orion", author: "Maksim", version: "4", source: "taskSource", preview: "taskPreview" },
+  catalog: { label: "catalog", effect: "catalog", owner: "Orion", author: "Maksim", version: "2", source: "catalogSource", preview: "catalogPreview" },
+  promotion: { label: "promotion", effect: "promotion", owner: "Atlas", author: "release-agent", version: "7", source: "promotionSource", preview: "promotionPreview" },
+  vault: { label: "note", effect: "vaultChange", owner: "Company", author: "triager", version: "2", source: "vaultSource", preview: "vaultPreview" },
 };
 let language = 0, status = "ready";
 const drafts = new Map();
@@ -77,6 +99,9 @@ function selector(label, key, values, active) {
 function list(entries) {
   return '<ul class="rows">' + entries.map(([anchor, meta]) => '<li>' + anchor + '<small>' + meta + '</small></li>').join("") + '</ul>';
 }
+function term(label, value) {
+  return '<dt>' + t(label) + '</dt><dd>' + value + '</dd>';
+}
 function render() {
   const selected = state(), view = selected.get("view") ?? "records", detail = selected.get("detail"), panel = selected.get("panel");
   const scope = selected.get("scope") ?? "all", history = selected.get("history") ?? "pending";
@@ -92,21 +117,35 @@ function render() {
     (status === "down" || status === "stale" ? ' <button type="button" data-action="retry">' + t(status === "down" ? "retry" : "reload") + '</button>' : "");
   if (blocked) { get("screen").innerHTML = ""; return; }
   const back = link("back",view);
-  let left, right;
+  let left, right = "";
   if (view === "records") {
     left = list([[link("record",view,{detail:"record"}),"Atlas · 3"]]);
     right = '<h2 id="detail">' + t("record") + '</h2><p>Atlas · r3</p><p>' + t("evidence") + ' · Run / 120</p>' +
       (status === "missing" ? '<p>' + t("missing") + '</p>' : '<button type="button">' + t("confirm") + '</button>') +
       ' ' + link("revise","reviews",{detail:"correction"});
   } else if (view === "reviews") {
-    left = list(["correction","ordinary","promotion","vault"].map((key,i) =>
-      [link(["record","task","promotion","note"][i],view,{detail:key}), ["Atlas · r3","Atlas · state","Atlas · vault → state","Installation · v1"][i]]));
-    const effect = { correction:"publish", ordinary:"task", promotion:"promotion", vault:"restore" }[detail] ?? "publish";
-    right = '<h2 id="detail">' + t(effect) + '</h2><dl><dt>' + t("owner") +
-      '</dt><dd>Atlas</dd><dt>' + t("base") + '</dt><dd>3 → 4</dd><dt>' + t("evidence") + '</dt><dd>Run / 120</dd></dl>' +
-      ((outcomes.has(detail) || history === "history" || panel === "outcome")
-        ? '<p>' + t("result") + ' · ' + t(outcomes.get(detail) ?? "accepted") + '</p><p>' + t("saved") + ' · review-42</p>' + link("next",view,{detail:detail === "ordinary" ? "vault" : "ordinary"})
-        : '<form id="decision"><label>' + t("reason") + '<textarea rows="3" required></textarea></label><div class="controls"><button value="accepted">' + t(effect) + '</button><button value="rejected">' + t("reject") + '</button></div></form>');
+    const examples = Object.entries(reviewExamples);
+    left = list(examples.map(([key, sample]) => [link(sample.label,view,{detail:key}), t(sample.owner) + " · " + sample.version]));
+    const sample = reviewExamples[detail];
+    if (sample) {
+      const settled = outcomes.get(detail);
+      const index = examples.findIndex(([key]) => key === detail);
+      const next = examples[index + 1]?.[0];
+      const ready = settled || history === "history" || panel === "outcome";
+      const decision = ready
+        ? term("result", t(settled?.state ?? "accepted")) +
+          term("reviewer", settled?.reviewer ?? t("unrecorded")) +
+          term("decidedAt", settled?.at ?? t("unrecorded")) +
+          term("reason", '<span id="recorded-reason"></span>')
+        : "";
+      right = '<h2 id="detail">' + t(sample.label) + '</h2><dl>' +
+        term("owner", t(sample.owner)) + term("author", sample.author) +
+        term("reviewed", sample.version) + term("evidence", t(sample.source)) +
+        decision + '</dl><blockquote>' + t(sample.preview) + '</blockquote>' +
+        (ready
+          ? (next ? link("next",view,{detail:next}) : "")
+          : '<form id="decision"><label>' + t("reason") + '<textarea rows="3"></textarea></label><div class="controls"><button value="accepted">' + t(sample.effect) + '</button><button value="rejected">' + t("reject") + '</button></div></form>');
+    }
   } else {
     left = list(["Atlas","Orion","installation"].map(key => [link("note",view,{detail:key}), (key === "installation" ? t("install") : key + " · " + t("project")) + " · triager"])) +
       '<p>' + t("personal") + '</p>';
@@ -120,12 +159,24 @@ function render() {
   }
   get("screen").innerHTML = '<div class="layout" data-selected="' + Boolean(detail) + '"><section class="card">' + left + '</section>' +
     (detail ? '<section class="card">' + back + right + '</section>' : "") + '</div>';
+  const recordedReason = get("recorded-reason");
+  if (recordedReason) recordedReason.textContent = outcomes.get(detail)?.reason || t("unrecorded");
   const input = get("screen").querySelector("textarea");
   if (input) { input.value = drafts.get(detail) ?? ""; input.addEventListener("input", () => drafts.set(detail, input.value)); }
   get("decision")?.addEventListener("submit", event => {
     event.preventDefault();
     if (status === "stale") { get("message").firstChild.textContent = t("stale") + " · " + t("draft") + " "; return; }
-    outcomes.set(detail, event.submitter.value);
+    if ((event.submitter.value === "rejected" || detail === "correction") && !input.value.trim()) {
+      get("message").textContent = t("reasonRequired");
+      input.focus();
+      return;
+    }
+    outcomes.set(detail, {
+      state: event.submitter.value,
+      reviewer: "Anna",
+      at: new Intl.DateTimeFormat(language ? "ru" : "en", { dateStyle: "medium", timeStyle: "short" }).format(new Date()),
+      reason: input.value.trim(),
+    });
     drafts.delete(detail);
     render();
     get("detail").tabIndex = -1;
