@@ -210,6 +210,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "captureTaskAgentPackage",
+          "lib/tasks/launch-capability-materialization.ts#assertCapturedProjectionSymlinks",
+          "wrapper",
+        ],
+        [
+          "captureTaskAgentPackage",
           "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
           "wrapper",
         ],
@@ -326,6 +331,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["readInternalDirectorySymlinks", "node:fs/promises.readdir", "list"],
         ["readInternalDirectorySymlinks", "node:fs/promises.readlink", "read"],
         ["readInternalDirectorySymlinks", "node:fs/promises.realpath", "stat"],
+        ["assertCapturedProjectionSymlinks", "node:fs/promises.lstat", "stat"],
+        [
+          "assertCapturedProjectionSymlinks",
+          "node:fs/promises.readlink",
+          "read",
+        ],
       ],
     ),
     ...classified(
@@ -2778,6 +2789,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [
       ["captureAcceptedDirectory", true],
+      ["assertCapturedProjectionSymlinks", true],
       ["withTaskLaunchCapabilityBundles", false],
     ],
   ),

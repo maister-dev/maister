@@ -463,7 +463,7 @@ it("refuses copied bundle bytes that differ from admission despite restored sour
   ).toEqual([]);
 });
 
-it.each(["outside", "uncopied"] as const)(
+it.each(["outside", "uncopied", "uncopied intermediate"] as const)(
   "refuses a bundle link into %s content without dispatch",
   async (targetKind) => {
     barrier.sourceRoot = "";
@@ -474,7 +474,9 @@ it.each(["outside", "uncopied"] as const)(
         : path.join(bundle, "docs", "not-materialized.txt");
 
     await mkdir(path.dirname(outside), { recursive: true });
-    await writeFile(outside, "PRIVATE_BUNDLE_TARGET_SENTINEL");
+    if (targetKind === "uncopied intermediate")
+      await symlink("../agents/helper.md", outside);
+    else await writeFile(outside, "PRIVATE_BUNDLE_TARGET_SENTINEL");
     const link = path.join(skillDirectory, "outside.md");
 
     await symlink(path.relative(skillDirectory, outside), link);
@@ -510,6 +512,7 @@ it.each(["outside", "uncopied"] as const)(
       ).toEqual([]);
     } finally {
       await rm(link);
+      await rm(outside);
     }
   },
 );
