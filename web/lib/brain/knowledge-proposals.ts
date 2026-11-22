@@ -35,6 +35,7 @@ import {
   knowledgeConfirmationInputSchema,
 } from "./knowledge-write-types";
 import { inspectKnowledgeWitness } from "./knowledge-witnesses";
+import { knowledgeRecordGrant } from "./knowledge-record-grant";
 import { captureKnowledgeRecordReference } from "./knowledge-record-capture";
 import {
   additionalKnowledgeRestrictions,
@@ -145,26 +146,26 @@ async function recordAccess(
   );
 
   if (row.visibility === "restricted") {
-    const grant = (
+    const [grant] = (
       await tx.execute(
-        sql`SELECT id FROM brain_record_grants WHERE record_id=${recordId} AND principal_type=${authority.actor.kind} AND principal_id=${authority.actor.id} AND action=${action} AND revoked_at IS NULL FOR SHARE`,
+        sql`SELECT ${knowledgeRecordGrant(sql`${recordId}`, authority.actor, action)} AS allowed`,
       )
-    ).rows[0];
+    ).rows;
 
     if (authority.policy.version === 2) {
-      const initiatingGrant = (
+      const [initiatingGrant] = (
         await tx.execute(
-          sql`SELECT id FROM brain_record_grants WHERE record_id=${recordId} AND principal_type='user' AND principal_id=${authority.policy.initiator.actor.id} AND action=${action} AND revoked_at IS NULL FOR SHARE`,
+          sql`SELECT ${knowledgeRecordGrant(sql`${recordId}`, authority.policy.initiator.actor, action)} AS allowed`,
         )
-      ).rows[0];
+      ).rows;
 
-      if (!initiatingGrant)
+      if (initiatingGrant?.allowed !== true)
         throw new MaisterError(
           "UNAUTHORIZED",
           "The initiating principal lacks this record action",
         );
     }
-    if (!grant)
+    if (grant?.allowed !== true)
       throw new MaisterError(
         "PRECONDITION",
         "Knowledge reference is unavailable",

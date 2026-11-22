@@ -24716,6 +24716,8 @@ paths:
         Vault and Brain reviews return bounded pages of the exact patch, draft, or promoted
         memory witness. Concatenate each summary in order without a separator to recover the
         complete preview. A null nextCursor marks the final page. Native knowledge is single-page.
+        Applied vault results have a separate continuation. Each response rechecks the operation
+        and every retained source before delivering the requested result page.
       x-implementation-status: Implemented
       security:
         - sessionCookie: []
@@ -24740,6 +24742,10 @@ paths:
             type: string
             minLength: 1
             maxLength: 2048
+        - name: outcomeCursor
+          in: query
+          description: Signed continuation for the applied vault operation, the current reviewer and the exact proposal. Independent of the preview cursor.
+          schema: { type: string, minLength: 1, maxLength: 2048 }
       responses:
         "200":
           description: Read one reviewer-visible proposal.
@@ -25320,7 +25326,10 @@ components:
               type: string
               enum: [ catalog_draft ]
             draftId: { type: string, minLength: 1, maxLength: 192 }
-            href: { type: string, nullable: true }
+            href:
+              type: string
+              nullable: true
+              description: The authorized original rule or skill draft viewer, or the Flow editor for a Flow draft.
         - type: object
           additionalProperties: false
           required: [ type, taskId, href ]
@@ -25341,7 +25350,7 @@ components:
             href: { type: string, nullable: true }
         - type: object
           additionalProperties: false
-          required: [ type, operationId, href, revisionCount, revisions ]
+          required: [ type, operationId, href, revisionCount, revisions, revisionsNextCursor ]
           properties:
             type:
               type: string
@@ -25349,9 +25358,14 @@ components:
             operationId: { type: string, minLength: 1, maxLength: 192 }
             href: { type: string, nullable: true }
             revisionCount: { type: integer, minimum: 0 }
+            revisionsNextCursor:
+              type: string
+              nullable: true
+              maxLength: 2048
+              description: Pass as outcomeCursor on the exact review GET for the next result page. Null marks the end.
             revisions:
               type: array
-              description: First 20 retained result revisions with authorized links.
+              description: Up to 20 authorized result revisions ordered by the operation's retained ordinal.
               maxItems: 20
               items:
                 type: object
@@ -25361,7 +25375,10 @@ components:
                   noteId: { type: string, minLength: 1, maxLength: 192 }
                   revisionId: { type: string, minLength: 1, maxLength: 192 }
                   path: { type: string, minLength: 1, maxLength: 512 }
-                  href: { type: string }
+                  href:
+                    type: string
+                    nullable: true
+                    description: Null when standalone vault navigation is unavailable.
         - type: object
           additionalProperties: false
           required: [ type, proposalId, href ]
@@ -25537,7 +25554,7 @@ components:
             detail:
               type: object
               additionalProperties: false
-              required: [ proposalKind, origin, expectedEffect ]
+              required: [ proposalKind, origin, expectedEffect, contentFormat, draftPath, sourceHref ]
               properties:
                 proposalKind:
                   type: string
@@ -25548,6 +25565,15 @@ components:
                 expectedEffect:
                   type: string
                   enum: [ catalog_draft, project_task, accepted_proposal ]
+                contentFormat:
+                  type: string
+                  enum: [ markdown, yaml, text ]
+                  description: Display format for summary. Legacy unstructured drafts can appear as text.
+                draftPath: { type: string, nullable: true }
+                sourceHref:
+                  type: string
+                  nullable: true
+                  description: The authorized exact witness for a vault promotion.
             decision:
               allOf:
                 - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }

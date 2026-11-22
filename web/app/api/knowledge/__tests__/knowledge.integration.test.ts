@@ -1594,6 +1594,19 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
 
   expect(personalPage.status).toBe(200);
   expect((await personalPage.json()).items).toEqual(latest.items);
+  const personalHistory = (recordId: string) =>
+    personalRevisions(
+      new Request(
+        `http://localhost/api/v1/ext/knowledge/${recordId}/revisions`,
+        {
+          headers: { authorization: `Bearer ${token.secret}` },
+        },
+      ),
+      { params: Promise.resolve({ recordId }) },
+    );
+  const missingHistory = await personalHistory("missing-review-record");
+
+  expect(missingHistory.status).toBe(404);
   const retained = await getKnowledgeEvidencePage(
     database.db,
     principal,
@@ -1626,6 +1639,10 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     "UPDATE brain_items SET visibility='restricted' WHERE id=$1",
     [reference.id],
   );
+  const concealedHistory = await personalHistory(reference.id);
+
+  expect(concealedHistory.status).toBe(404);
+  expect(await concealedHistory.json()).toEqual(await missingHistory.json());
   const hiddenProposal = await getProposal(
     new NextRequest(
       `http://localhost/api/knowledge/proposals/${proposals[0]!.id}`,

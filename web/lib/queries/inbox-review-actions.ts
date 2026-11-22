@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
+import { stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
@@ -50,6 +51,7 @@ import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
 import { reviewKnowledgeProposal } from "@/lib/brain/knowledge-proposals";
 import { getKnowledgeWitnessContent } from "@/lib/brain/knowledge-witnesses";
 import { concludeBrainProposal, getBrainProposal } from "@/lib/brain/proposals";
+import { readBrainProposalDraftContent } from "@/lib/brain/projection";
 import { inboxReviewReceipts as receipts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { parseCursorPayload, signCursorPayload } from "@/lib/keyset-cursor";
@@ -60,6 +62,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 const previewNamespace = "maister.inbox.review-preview.v1";
+const outcomeNamespace = "maister.inbox.vault-review-outcome.v1";
+const outcomePageSize = 20;
 const previewPageChars = 262_144;
 const previewCursorSchema = z.strictObject({
   scope: z.string().length(64),
@@ -69,6 +73,33 @@ const previewCursorSchema = z.strictObject({
     .max(MAX_VAULT_NOTE_COUNT - 1),
   offset: z.int().min(0),
 });
+const outcomeCursorSchema = z.strictObject({
+  scope: z.string().length(64),
+  offset: z
+    .int()
+    .min(1)
+    .max(MAX_VAULT_NOTE_COUNT - 1),
+});
+const boundedCursor = z.string().min(1).max(2048).optional();
+const reviewContinuationSchema = z.strictObject({
+  cursor: boundedCursor,
+  outcomeCursor: boundedCursor,
+});
+
+type ReviewAudience = Readonly<{ userId: string; tokenId?: string }>;
+type ReviewContinuations = z.infer<typeof reviewContinuationSchema>;
+
+export function parseReviewContinuations(
+  request: Request,
+): ReviewContinuations {
+  const params = new URL(request.url).searchParams;
+  const parsed = reviewContinuationSchema.safeParse(Object.fromEntries(params));
+
+  if (!parsed.success || params.size !== new Set(params.keys()).size)
+    throw new MaisterError("CONFIG", "Invalid review continuation");
+
+  return parsed.data;
+}
 
 const emptyDecision = {
   by: null,
@@ -115,38 +146,80 @@ function projectKnowledgeOutcome(proposal: KnowledgeProposalView) {
   };
 }
 
-function projectVaultOutcome({
-  proposal,
-  locationId,
-  applied,
-}: Awaited<ReturnType<typeof lockVaultReview>>) {
+function projectVaultOutcome(
+  {
+    proposal,
+    locationId,
+    applied,
+    enabled,
+  }: Awaited<ReturnType<typeof lockVaultReview>>,
+  audience: ReviewAudience,
+  rawCursor?: string,
+) {
+  if (rawCursor && (!locationId || !proposal.appliedOperationId))
+    throw new MaisterError(
+      "CONFIG",
+      "Review has no applied revision continuation",
+    );
   if (proposal.state === "rejected")
     return rejectedOutcome({ kind: "vault", id: proposal.id });
   if (!proposal.appliedOperationId) return null;
+  const scope = reviewCursorScope(
+    { kind: "vault", id: proposal.id },
+    audience,
+    proposal.version,
+    proposal.appliedOperationId,
+  );
+  const decoded = rawCursor
+    ? outcomeCursorSchema.safeParse(
+        parseCursorPayload(outcomeNamespace, rawCursor),
+      ).data
+    : { scope, offset: 0 };
 
+  if (
+    !decoded ||
+    decoded.scope !== scope ||
+    (rawCursor && decoded.offset >= applied.length)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Invalid vault review outcome continuation",
+    );
+
+  const end = decoded.offset + outcomePageSize;
+  const href = (noteId: string, revisionId: string) =>
+    enabled && locationId
+      ? `/knowledge/memory?${new URLSearchParams({
+          locationId,
+          memoryRevision: revisionId,
+          memoryNoteId: noteId,
+        })}`
+      : null;
   const revisions = locationId
-    ? applied.slice(0, 20).map(({ id, noteId, path }) => ({
+    ? applied.slice(decoded.offset, end).map(({ id, noteId, path }) => ({
         noteId,
         revisionId: id,
         path,
-        href: `/knowledge/memory?${new URLSearchParams({
-          locationId,
-          memoryRevision: id,
-          memoryNoteId: noteId,
-        })}`,
+        href: href(noteId, id),
       }))
     : [];
+  const first = applied.at(0);
 
   return {
     type: "applied_vault_operation" as const,
     operationId: proposal.appliedOperationId,
     href:
-      revisions[0]?.href ??
-      (locationId
-        ? `/knowledge/memory?${new URLSearchParams({ locationId })}`
-        : null),
+      enabled && locationId
+        ? first
+          ? href(first.noteId, first.id)
+          : `/knowledge/memory?${new URLSearchParams({ locationId })}`
+        : null,
     revisionCount: applied.length,
     revisions,
+    revisionsNextCursor:
+      locationId && end < applied.length
+        ? signCursorPayload(outcomeNamespace, { scope, offset: end })
+        : null,
   };
 }
 
@@ -205,20 +278,21 @@ async function renderVaultPatch(
   ].join("\n");
 }
 
-function previewScope(
+function reviewCursorScope(
   selection: ReviewSelector,
-  userId: string,
+  audience: ReviewAudience,
   revision: string | number,
   snapshot: string,
 ): string {
   return createHash("sha256")
     .update(
       canonicalCommandJson([
-        userId,
+        audience.userId,
         selection.kind,
         selection.id,
         revision,
         snapshot,
+        ...(audience.tokenId ? [audience.tokenId] : []),
       ]),
     )
     .digest("hex");
@@ -274,22 +348,22 @@ async function pageReviewText(
 async function vaultPreview(
   tx: Db,
   selection: ReviewSelector,
-  userId: string,
-  rawCursor: string | undefined,
+  audience: ReviewAudience,
+  { cursor, outcomeCursor }: ReviewContinuations,
   domainState: string,
 ) {
   const review =
     domainState === "pending"
-      ? await lockVaultReview(tx, selection.id, userId)
-      : await readVaultReviewHistory(tx, selection.id, userId);
+      ? await lockVaultReview(tx, selection.id, audience.userId)
+      : await readVaultReviewHistory(tx, selection.id, audience.userId);
 
   const { proposal, bases, locationId } = review;
 
   if (proposal.state !== domainState)
     throw new MaisterError("CONFLICT", "Review changed while opening");
-  const scope = previewScope(
+  const scope = reviewCursorScope(
     selection,
-    userId,
+    audience,
     proposal.version,
     proposal.operationId,
   );
@@ -305,7 +379,7 @@ async function vaultPreview(
         proposal.changes[index]!,
         baseById,
       )) + (index + 1 < proposal.changes.length ? "\n" : ""),
-    rawCursor,
+    cursor,
   );
 
   return {
@@ -325,7 +399,7 @@ async function vaultPreview(
       reviewedVersion:
         proposal.version > 1 ? String(proposal.version - 1) : null,
     },
-    outcome: projectVaultOutcome(review),
+    outcome: projectVaultOutcome(review, audience, outcomeCursor),
   };
 }
 
@@ -361,8 +435,8 @@ async function brainOutcome(
 
   if (proposal.authoredDraftId) {
     const [draft] = (
-      await tx.execute<{ slug: string }>(sql`
-      SELECT p.slug FROM authored_capabilities cap
+      await tx.execute<{ slug: string; kind: string }>(sql`
+      SELECT p.slug,cap.kind FROM authored_capabilities cap
       JOIN projects p ON p.id=cap.project_id AND p.archived_at IS NULL
       WHERE cap.id=${proposal.authoredDraftId} AND cap.project_id=${proposal.projectId}
         AND cap.archived_at IS NULL
@@ -373,7 +447,9 @@ async function brainOutcome(
       type: "catalog_draft" as const,
       draftId: proposal.authoredDraftId,
       href: draft
-        ? `/flows/${encodeURIComponent(draft.slug)}/${encodeURIComponent(proposal.authoredDraftId)}`
+        ? draft.kind === "flow"
+          ? `/flows/${encodeURIComponent(draft.slug)}/${encodeURIComponent(proposal.authoredDraftId)}`
+          : `/projects/${encodeURIComponent(draft.slug)}/brain/proposals/${encodeURIComponent(proposal.id)}/draft`
         : null,
     };
   }
@@ -381,13 +457,47 @@ async function brainOutcome(
   return null;
 }
 
+function brainDraftPreview(proposal: BrainProposalDto) {
+  const { draft } = proposal;
+  const draftPath = typeof draft.path === "string" ? draft.path : null;
+  const body = draft.body;
+  const flowYaml =
+    body && typeof body === "object" && "flowYaml" in body
+      ? body.flowYaml
+      : null;
+
+  if (proposal.kind === "flow") {
+    if (typeof flowYaml === "string")
+      return { content: flowYaml, contentFormat: "yaml" as const, draftPath };
+    if (draft.manifest && typeof draft.manifest === "object")
+      return {
+        content: stringifyYaml(draft.manifest),
+        contentFormat: "yaml" as const,
+        draftPath,
+      };
+  }
+  const markdown = readBrainProposalDraftContent(draft);
+
+  return markdown === null
+    ? {
+        content: JSON.stringify(draft, null, 2),
+        contentFormat: "text" as const,
+        draftPath,
+      }
+    : { content: markdown, contentFormat: "markdown" as const, draftPath };
+}
+
 export async function getProposalReviewDetail(
   db: Db,
   userId: string,
   selection: ReviewSelector,
-  cursor?: string,
-  credential?: PersonalKnowledgeCredential,
+  options: ReviewContinuations & {
+    credential?: PersonalKnowledgeCredential;
+  } = {},
 ) {
+  const { cursor, outcomeCursor, credential } = options;
+  const audience = { userId, tokenId: credential?.tokenId };
+
   return db.transaction(async (tx) => {
     const {
       projectId,
@@ -395,6 +505,12 @@ export async function getProposalReviewDetail(
       ...item
     } = await readProposalReviewMetadata(tx, userId, selection, credential);
     const principal = { kind: "user", userId } as const;
+
+    if (outcomeCursor && selection.kind !== "vault")
+      throw new MaisterError(
+        "CONFIG",
+        "Only vault reviews have result continuations",
+      );
 
     if (selection.kind === "knowledge") {
       if (cursor !== undefined)
@@ -444,8 +560,8 @@ export async function getProposalReviewDetail(
       const page = await vaultPreview(
         tx,
         selection,
-        userId,
-        cursor,
+        audience,
+        options,
         item.domainState,
       );
 
@@ -453,6 +569,7 @@ export async function getProposalReviewDetail(
         {
           kind: selection.kind,
           continued: Boolean(cursor),
+          continuedOutcome: Boolean(outcomeCursor),
           complete: page.nextCursor === null,
         },
         "proposal review detail read",
@@ -484,12 +601,26 @@ export async function getProposalReviewDetail(
       const promoted = await isVaultPromotion(tx, proposal.id);
 
       if (promoted && typeof witnessId !== "string") throw unavailableMemory();
-      const content =
+      const preview =
         promoted && typeof witnessId === "string"
-          ? await getKnowledgeWitnessContent(sharedTx(tx), principal, witnessId)
-          : JSON.stringify(proposal.draft, null, 2);
+          ? {
+              content: await getKnowledgeWitnessContent(
+                sharedTx(tx),
+                principal,
+                witnessId,
+              ),
+              contentFormat: "markdown" as const,
+              draftPath: null,
+            }
+          : brainDraftPreview(proposal);
+      const { content, contentFormat, draftPath } = preview;
       const digest = createHash("sha256").update(content).digest("hex");
-      const scope = previewScope(selection, userId, item.version, digest);
+      const scope = reviewCursorScope(
+        selection,
+        audience,
+        item.version,
+        digest,
+      );
 
       const page = {
         ...(await pageReviewText(scope, 1, () => content, cursor)),
@@ -522,12 +653,18 @@ export async function getProposalReviewDetail(
             ? ("vault_promotion" as const)
             : ("ordinary" as const),
           expectedEffect,
+          contentFormat,
+          draftPath,
+          sourceHref:
+            promoted && typeof witnessId === "string"
+              ? `/knowledge/witnesses/${encodeURIComponent(witnessId)}`
+              : null,
         },
         decision: {
           by: proposal.resolution?.actor.id ?? null,
           at: dateString(proposal.resolvedAt),
           reason: proposal.resolution?.reason ?? null,
-          reviewedVersion: null,
+          reviewedVersion: proposal.resolution?.reviewedVersion ?? null,
         },
         outcome,
       };
@@ -594,13 +731,15 @@ type DecisionDisposition = Readonly<{
 
 async function readDecisionDisposition(
   tx: Db,
-  userId: string,
+  audience: ReviewAudience,
   item: ReviewDecision,
   projectId?: string,
 ): Promise<DecisionDisposition> {
+  const { userId } = audience;
+
   if (item.kind === "vault") {
     const review = await lockVaultReview(tx, item.id, userId);
-    const outcome = projectVaultOutcome(review);
+    const outcome = projectVaultOutcome(review, audience);
 
     if (outcome) return { domainState: review.proposal.state, outcome };
   } else if (item.kind === "knowledge") {
@@ -668,6 +807,7 @@ async function settle(
       ),
     );
   const principal = { kind: "user", userId } as const;
+  const audience = { userId, tokenId: credential?.tokenId };
   const state = item.decision === "accept" ? "applied" : "rejected";
   const brain =
     item.kind === "brain"
@@ -695,7 +835,7 @@ async function settle(
       );
 
     return {
-      ...(await readDecisionDisposition(tx, userId, item, brain?.id)),
+      ...(await readDecisionDisposition(tx, audience, item, brain?.id)),
       status: state,
       receiptId: prior.id,
       replayed: true,
@@ -738,7 +878,7 @@ async function settle(
     throw new MaisterError("CRASH", "Inbox review receipt was not stored");
 
   return {
-    ...(await readDecisionDisposition(tx, userId, item, brain?.id)),
+    ...(await readDecisionDisposition(tx, audience, item, brain?.id)),
     status: state,
     receiptId: record.id,
     replayed: false,

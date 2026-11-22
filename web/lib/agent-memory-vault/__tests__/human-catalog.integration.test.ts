@@ -1,10 +1,20 @@
 import { expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
 
+import { parseAgentMemoryMutation } from "../commands";
 import {
   getHumanVaultLocation,
   listHumanVaultLocations,
 } from "../human-catalog";
+import { prepareHumanInstallationVault } from "../installation-access";
+import { agentMemoryVaultLimits } from "../limits";
+import { applyVaultMutation } from "../store";
 
+import {
+  decideProposalReview,
+  getProposalReviewDetail,
+} from "@/lib/queries/inbox-review-actions";
+import { listProposalReviews } from "@/lib/queries/knowledge-memory-reviews";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import {
   addProjectMember,
@@ -167,6 +177,98 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
     await removeProjectMember(fixture.db, { projectId: project.id, userId });
     await expect(exact("catalog-51")).rejects.toMatchObject({
       details: { reason: "agent_memory_unavailable" },
+    });
+
+    const admin = await seedActiveUser(fixture.db, { role: "admin" });
+    const agentId = "fixture:catalog-51";
+    const bindingId = "catalog-install-51";
+    const prepare = prepareHumanInstallationVault({
+      userId: admin,
+      agentId,
+      bindingId,
+      action: "read",
+    });
+    const pending = await applyVaultMutation(
+      fixture.db,
+      parseAgentMemoryMutation({
+        command: "create",
+        path: "/memories/pending.md",
+        file_text: "Pending edit",
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: "pending-disabled-binding",
+      }),
+      async (tx) => ({
+        ...(await prepare(tx)),
+        writeAdmission: "review_required",
+      }),
+      agentMemoryVaultLimits(),
+    );
+
+    if (pending.status !== "pending")
+      throw new Error("Expected an installation review proposal");
+    const selection = { kind: "vault", id: pending.proposalId } as const;
+    const detail = () => getProposalReviewDetail(fixture.db, admin, selection);
+
+    expect(await detail()).toMatchObject({ allowed: ["accept", "reject"] });
+    await fixture.db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE company_specialist_bindings
+        SET enabled=false, revision=2
+        WHERE id=${bindingId}
+      `);
+      await tx.execute(sql`
+        INSERT INTO company_specialist_binding_revisions(
+          binding_id,revision,snapshot,authority_snapshot,actor,request_actor_id,
+          operation,request_key,request_digest,snapshot_digest
+        )
+        SELECT binding_id,2,snapshot||'{"enabled":false}'::jsonb,authority_snapshot,
+          actor,request_actor_id,'updated','disable-test-binding',repeat('c',64),repeat('d',64)
+        FROM company_specialist_binding_revisions WHERE binding_id=${bindingId} AND revision=1
+      `);
+    });
+
+    expect(await installation()).toMatchObject({
+      state: "disabled_attachment",
+      allowedActions: ["settings"],
+    });
+    expect(await detail()).toMatchObject({ allowed: ["reject"] });
+    expect(
+      await listProposalReviews(fixture.db, admin, {
+        kind: "vault",
+        companyId,
+        limit: 20,
+      }),
+    ).toMatchObject({
+      items: [{ id: pending.proposalId, allowed: ["reject"] }],
+    });
+    await expect(fixture.db.transaction(prepare)).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "agent_memory_attachment_disabled" },
+    });
+    const decision = {
+      ...selection,
+      requestKey: "settle-disabled-binding",
+      expectedVersion: "1",
+      reason: "The installation binding is disabled",
+    };
+
+    await expect(
+      decideProposalReview(fixture.db, admin, {
+        ...decision,
+        decision: "accept",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      decideProposalReview(fixture.db, admin, {
+        ...decision,
+        decision: "reject",
+      }),
+    ).resolves.toMatchObject({ domainState: "rejected" });
+    expect(await detail()).toMatchObject({
+      domainState: "rejected",
+      allowed: [],
+      decision: { reason: decision.reason },
     });
   } finally {
     vi.unstubAllEnvs();

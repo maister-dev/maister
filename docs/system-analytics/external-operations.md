@@ -736,6 +736,8 @@ no token can detach. MCP `task_update` stays title/prompt only. See
 
 A request key is scoped to the resolved human identity across the browser and bearer adapters. Token activity and decision authority are rechecked at mutation and replay. Validate a continuation against its credential, operation and selected filters before honoring it. Audit only the admitted scope, caller, safe result class and correlation reference through the existing external audit owner. Operational logs exclude source text, paths, reasons, queries and tokens. The explicit personal MCP profile advertises the new operations. Direct calls check profile and the server still authorizes each request (K11, K12). See the [external contract](../api/external/operations.openapi.yaml) and [shared review sequence](company-brain.md#shared-human-review).
 
+Proposal preview cursors bind the exact proposal snapshot and the issuing PAT. Applied vault outcomes return up to 20 revisions in operation order. Pass `revisionsNextCursor` as `outcomeCursor` on the same review GET or MCP `proposal_review_get`. The API rechecks all result sources and validates the continuation against the bound credential, proposal version, and operation. A missing or concealed knowledge record returns `404` on the revision list.
+
 ## Expectations
 
 - `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never bcrypt,

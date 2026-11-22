@@ -13,12 +13,19 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import pino from "pino";
 
+import {
+  installationVaultAvailability,
+  vaultBindingAvailability,
+} from "@/lib/agent-memory-vault/availability";
 import { unavailableMemory } from "@/lib/agent-memory-vault/store";
 import { projectRolesForActions } from "@/lib/authz";
 import { isBrainSchemaApplied } from "@/lib/brain/guard";
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { projectContextReadPolicy } from "@/lib/brain/knowledge-context-policy";
-import { knowledgeProposalReadPolicyCte } from "@/lib/brain/knowledge-proposal-query";
+import {
+  knowledgeProposalReadPolicyCte,
+  knowledgeProposalReviewActions,
+} from "@/lib/brain/knowledge-proposal-query";
 import { knowledgeSourceReadPolicy } from "@/lib/brain/knowledge-query-policy";
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
@@ -249,8 +256,7 @@ async function reviewPolicy(
         WHERE NOT (${knowledgeSourceReadPolicy(actor, sql`ref`)}))
     UNION ALL
     SELECT 'knowledge', kp.id, kp.revision::text, left(kp.draft->>'title',512),
-      CASE WHEN kp.status='pending' AND kp.inspection_action='review'
-           THEN ARRAY['accept','reject'] ELSE ARRAY[]::text[] END,
+      ${knowledgeProposalReviewActions(actor, "kp")},
       kp.created_at,kp.project_id,kp.company_id,NULL::text,coalesce(p.name,'Company'),
       kp.knowledge_attribution->>'id',kp.status,kp.status='rejected' OR kp.published_record_id IS NOT NULL
     FROM knowledge_readable_proposals kp LEFT JOIN projects p ON p.id=kp.project_id
@@ -271,7 +277,8 @@ async function reviewPolicy(
   return sql`${knowledge}${ready ? sql`,` : sql``} current_reviews(kind,id,version,title,allowed,created_at,project_id,company_id,agent_id,owner_label,author,domain_state,outcome_available) AS (
     SELECT 'vault', vp.id, vp.version::text, vp.changes->0->>'path',
       CASE WHEN vp.state<>'pending' THEN ARRAY[]::text[]
-           WHEN (l.enabled AND l.memory_enabled) OR (reviewed.snapshot->'installationGrant'->>'memoryEnabled'='true')
+           WHEN (${vaultBindingAvailability(sql`l.enabled`, sql`l.memory_enabled`)})='available'
+             OR (${installationVaultAvailability(sql`b.enabled`, sql`reviewed.snapshot`)})='available'
            THEN ARRAY['accept','reject'] ELSE ARRAY['reject'] END,
       vp.created_at,v.project_id,v.company_id,v.agent_id,coalesce(p.name,'Company'),
       coalesce(vp.author->>'userId',vp.author->>'agentId'),vp.state,vp.state IN ('accepted','rejected')

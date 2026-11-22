@@ -444,6 +444,8 @@ match (UX-04A–C).
 
 The table describes project-member actions. Resolve administrator privileges through the current domain owner. Use the shared transaction and the exact `updated_at::text` version (K04, K05, K07). Link the actual retained domain outcome after authorizing its destination. The overview uses an authorized pending count and links to paged review/history and sources (K02). Sources blocked by current policy must contribute neither rows nor counts. See [conclusion](../../web/lib/brain/proposals.ts) and the [shared queue query](../../web/lib/queries/knowledge-memory-reviews.ts).
 
+The shared review transaction retains the observed version in the Brain resolution JSON. Historic resolutions without a version report it as unknown. A rule or skill outcome opens the original linked revision under current proposal and catalog read authority. A Flow outcome opens its existing editor. Flow saves and publishes require a stored Flow kind before changing the draft.
+
 ## Expectations
 
 *(E-n pin the spec §13 numbering, top-to-bottom. The B/C guarantees below are

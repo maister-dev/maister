@@ -89,6 +89,7 @@ export const knowledgeToolInputSchemas = {
     kind: humanKind,
     proposalId: humanIdentity,
     cursor: humanCursor,
+    outcomeCursor: humanCursor,
   }),
   proposal_review_decide: z.strictObject({
     kind: z.enum(["brain", "vault"]),

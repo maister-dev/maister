@@ -2,10 +2,12 @@ import "server-only";
 
 import type { InstallationRunAuthority } from "@/lib/agents/installation-authority";
 import type { Db } from "@/lib/execution-host/db";
+import type { VaultBindingAvailability } from "./availability";
 import type { PrepareVaultAccess, VaultRevision } from "./store";
 
 import { and, eq, sql } from "drizzle-orm";
 
+import { installationVaultAvailability } from "./availability";
 import { installationLinkSources } from "./installation-link-sources";
 import { requireVaultActive } from "./cutover";
 import { unavailableMemory } from "./store";
@@ -25,6 +27,8 @@ import { authorizeSourceRestrictions } from "@/lib/brain/knowledge-restrictions"
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { agentMemoryVaults as vaults } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+
+export { installationVaultAvailability } from "./availability";
 
 export async function ensureInstallationVault(
   tx: Db,
@@ -203,16 +207,28 @@ export function prepareHumanInstallationVault(
   input: InstallationVaultTarget,
 ): PrepareVaultAccess {
   return async (tx) => {
-    const { access, memoryEnabled } = await authorizeHumanInstallationVault(
+    const { access, availability } = await authorizeHumanInstallationVault(
       tx,
       input,
     );
 
-    if (!memoryEnabled)
+    if (availability !== "available") {
+      const attachmentDisabled = availability === "disabled_attachment";
+
       throw new MaisterError(
         "PRECONDITION",
-        "Installation agent memory is disabled",
+        attachmentDisabled
+          ? "Installation agent attachment is disabled"
+          : "Installation agent memory is disabled",
+        {
+          details: {
+            reason: attachmentDisabled
+              ? "agent_memory_attachment_disabled"
+              : "agent_memory_disabled",
+          },
+        },
       );
+    }
 
     return access;
   };
@@ -232,9 +248,9 @@ export async function authorizeHumanInstallationVault(
   if (actor.kind !== "user") throw unavailableMemory();
   const result = await tx.execute<{
     company_id: string;
-    memory_enabled: boolean;
+    availability: VaultBindingAvailability;
   }>(sql`
-      SELECT b.company_id, ((v.snapshot->'installationGrant'->'memoryEnabled')='true'::jsonb) AS memory_enabled
+      SELECT b.company_id, ${installationVaultAvailability(sql`b.enabled`, sql`v.snapshot`)} AS availability
       FROM company_specialist_bindings b JOIN company_specialist_binding_revisions v
         ON (v.binding_id,v.revision)=(b.id,b.revision)
       WHERE b.id=${input.bindingId} AND b.agent_id=${input.agentId} AND b.detached_at IS NULL
@@ -311,5 +327,5 @@ export async function authorizeHumanInstallationVault(
       ),
   };
 
-  return { access, memoryEnabled: binding.memory_enabled };
+  return { access, availability: binding.availability };
 }

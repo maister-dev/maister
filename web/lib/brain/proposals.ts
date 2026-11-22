@@ -127,6 +127,7 @@ export interface TransitionBrainProposalInput {
   transition: "accept" | "reject" | "apply";
   actor: BrainProposalActor;
   reason?: string;
+  reviewedVersion?: string;
   links?: {
     authoredDraftId?: string | null;
     taskId?: string | null;
@@ -285,8 +286,13 @@ export async function getBrainProposal(
 function resolution(
   actor: BrainProposalActor,
   reason?: string,
+  reviewedVersion?: string,
 ): BrainProposalResolution {
-  return reason ? { actor, reason } : { actor };
+  return {
+    actor,
+    ...(reason && { reason }),
+    ...(reviewedVersion && { reviewedVersion }),
+  };
 }
 
 function assertTransition(
@@ -464,7 +470,7 @@ async function transitionLoadedBrainProposal(
   const resolved =
     input.transition === "apply"
       ? (current.resolution ?? resolution(input.actor, input.reason))
-      : resolution(input.actor, input.reason);
+      : resolution(input.actor, input.reason, input.reviewedVersion);
   const links = input.links ?? {};
   const rows = await db.execute(sql`
       UPDATE brain_proposals
@@ -595,6 +601,7 @@ export async function concludeBrainProposal(
         transition: "reject",
         actor: input.actor,
         reason: input.reason,
+        reviewedVersion: input.expectedVersion,
       });
 
       log.info(
@@ -616,6 +623,7 @@ export async function concludeBrainProposal(
       transition: "accept",
       actor: input.actor,
       reason: input.reason,
+      reviewedVersion: input.expectedVersion,
     });
 
     const vaultEvidence = await tx.execute(

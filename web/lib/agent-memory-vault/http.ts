@@ -80,7 +80,10 @@ export function vaultErrorResponse(
           details: { reason: error.details.reason },
         }),
       },
-      error.details?.reason === "agent_memory_unavailable" ? 404 : 409,
+      error.details?.reason === "agent_memory_unavailable" ||
+        error.details?.reason === "knowledge_reference_unavailable"
+        ? 404
+        : 409,
     );
 
   return privateErrorResponse(error, route);

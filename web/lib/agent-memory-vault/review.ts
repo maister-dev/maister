@@ -78,9 +78,9 @@ async function loadVaultReview(
             agentId: owner.agent_id,
             bindingId: owner.binding_id!,
             action: access === "review" ? "edit" : "read",
-          }).then(({ access, memoryEnabled }) => ({
+          }).then(({ access, availability }) => ({
             reviewer: access,
-            enabled: memoryEnabled,
+            enabled: availability === "available",
           }));
 
     await lockVault(tx, owner.vault_id);

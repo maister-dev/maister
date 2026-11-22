@@ -11,6 +11,7 @@ import {
   agentMemoryReadPolicy,
 } from "./knowledge-context-policy";
 import { standEvidenceReadPolicy } from "./knowledge-stand-policy";
+import { knowledgeRecordGrant } from "./knowledge-record-grant";
 import {
   knowledgeOwnerActionPolicy,
   knowledgeReadPolicyCte,
@@ -46,6 +47,28 @@ function sourceAllows(identity: KnowledgePrincipalIdentity, ref: SQL): SQL {
     WHEN 'agent_memory' THEN ${agentMemoryReadPolicy(identity, sql`${ref}->>'projectId'`, sql`${ref}->>'agentId'`)}
     WHEN 'record' THEN EXISTS (${recordPolicy} SELECT 1 FROM knowledge_readable_records)
     ELSE false END`;
+}
+
+/** Rejection retains owner review authority. Acceptance of a correction also acts on its target. */
+export function knowledgeProposalReviewActions(
+  identity: KnowledgePrincipalIdentity,
+  alias: "kp" | "permitted",
+): SQL {
+  const proposal = sql.identifier(alias);
+  const targetGrant = knowledgeRecordGrant(
+    sql`target.id`,
+    identity.actor,
+    "knowledge:review",
+  );
+
+  return sql`CASE
+    WHEN ${proposal}.status<>'pending' OR ${proposal}.inspection_action<>'review' THEN ARRAY[]::text[]
+    WHEN ${proposal}.kind='knowledge_add' OR EXISTS (
+      SELECT 1 FROM brain_items target WHERE target.id=${proposal}.target_record_id
+        AND (target.visibility='owner_grants' OR (${targetGrant}))
+    ) THEN ARRAY['accept','reject']
+    ELSE ARRAY['reject']
+  END`;
 }
 
 /** Inspection is an owner/source read plus current review authority, or the originating principal's propose authority. */

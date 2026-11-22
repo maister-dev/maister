@@ -1,5 +1,12 @@
+import type { KnowledgeDraft } from "@/lib/brain/knowledge-types";
+
 import { expect, it, vi } from "vitest";
 
+import { inspectKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
+import {
+  createKnowledgeProposal,
+  reviewKnowledgeProposal,
+} from "@/lib/brain/knowledge-proposals";
 import { createBrainProposal } from "@/lib/brain/proposals";
 import {
   decideProposalReview,
@@ -15,6 +22,7 @@ import {
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import { seedProjectReviewQueue } from "@/test-support/knowledge-review-seed";
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 
 it("K02, K04 count and page the same authorized selection and permit an off-page lookup", async () => {
@@ -140,7 +148,7 @@ it("K02, K04 count and page the same authorized selection and permit an off-page
       outcome: {
         type: "catalog_draft",
         draftId: expect.any(String),
-        href: expect.stringContaining(`/flows/${project.slug}/`),
+        href: `/projects/${project.slug}/brain/proposals/${authored.id}/draft`,
       },
     });
     expect(
@@ -168,6 +176,122 @@ it("K02, K04 count and page the same authorized selection and permit an off-page
     });
   } finally {
     vi.unstubAllEnvs();
+    await fixture.stop();
+  }
+}, 180_000);
+
+it("K04 removes correction acceptance when the record review grant is revoked and preserves rejection", async () => {
+  const fixture = await startMainAndBrainPostgresTestDb({
+    databaseName: "restricted_correction_authority",
+  });
+
+  try {
+    const project = await seedProjectRow(fixture.db);
+    const userId = await seedActiveUser(fixture.db);
+    const principal = { kind: "user", userId } as const;
+    const owner = { kind: "project", projectId: project.id } as const;
+    const draft: KnowledgeDraft = {
+      title: "Original guidance",
+      kind: "decision",
+      assertion: "Use the previously approved path.",
+      basis: "inferred",
+      evidence: [],
+      missingEvidence: [{ state: "unknown", reason: "Source not retained" }],
+      limitations: [],
+    };
+
+    await fixture.pool.query(
+      "UPDATE projects SET brain_enabled=true WHERE id=$1",
+      [project.id],
+    );
+    await addProjectMember(fixture.db, {
+      projectId: project.id,
+      userId,
+      role: "admin",
+    });
+    const original = await createKnowledgeProposal(fixture.db, {
+      kind: "knowledge_add",
+      owner,
+      principal,
+      draft,
+      idempotencyKey: "restricted-correction-base",
+    });
+    const publication = await reviewKnowledgeProposal(fixture.db, {
+      proposalId: original.id,
+      principal,
+      expectedRevision: original.revision,
+      decision: "accept",
+      reason: "Publish the original record",
+      idempotencyKey: "restricted-correction-publication",
+    });
+    const recordId = publication.acceptedRecordId!;
+    const correction = await createKnowledgeProposal(fixture.db, {
+      kind: "knowledge_correct",
+      owner,
+      principal,
+      targetRecordId: recordId,
+      expectedRecordRevision: 1,
+      draft: { ...draft, assertion: "Use the newly proposed path." },
+      idempotencyKey: "restricted-correction-proposal",
+    });
+
+    await fixture.pool.query(
+      `INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by)
+       SELECT $1,'user',$2,action,jsonb_build_object('kind','user','id',$2::text,'runId',null,'attemptId',null)
+       FROM unnest(ARRAY['knowledge:read','knowledge:review']) action`,
+      [recordId, userId],
+    );
+    const selection = { kind: "knowledge", id: correction.id } as const;
+    const detail = () => getProposalReviewDetail(fixture.db, userId, selection);
+
+    expect(await detail()).toMatchObject({ allowed: ["accept", "reject"] });
+    await fixture.pool.query(
+      "UPDATE brain_record_grants SET revoked_at=now() WHERE record_id=$1 AND principal_id=$2 AND action='knowledge:review'",
+      [recordId, userId],
+    );
+
+    expect(await detail()).toMatchObject({ allowed: ["reject"] });
+    expect(
+      await inspectKnowledgeProposal(fixture.db, principal, correction.id),
+    ).toMatchObject({ canReview: true });
+    expect(
+      await listProposalReviews(fixture.db, userId, {
+        kind: "knowledge",
+        projectId: project.id,
+        limit: 20,
+      }),
+    ).toMatchObject({ items: [{ id: correction.id, allowed: ["reject"] }] });
+    const decision = {
+      ...selection,
+      expectedVersion: String(correction.revision),
+      requestKey: "restricted-correction-settlement",
+      reason: "Reject without publication authority",
+    };
+
+    await expect(
+      decideProposalReview(fixture.db, userId, {
+        ...decision,
+        decision: "accept",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "knowledge_reference_unavailable" },
+    });
+    await expect(
+      decideProposalReview(fixture.db, userId, {
+        ...decision,
+        decision: "reject",
+      }),
+    ).resolves.toMatchObject({ domainState: "rejected" });
+    expect(
+      (
+        await fixture.pool.query(
+          "SELECT current_revision FROM brain_items WHERE id=$1",
+          [recordId],
+        )
+      ).rows,
+    ).toEqual([{ current_revision: 1 }]);
+  } finally {
     await fixture.stop();
   }
 }, 180_000);

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { VaultBindingAvailability } from "./availability";
 import type { Db } from "@/lib/execution-host/db";
 import type { PersonalKnowledgeCredential } from "@/lib/tokens/personal-knowledge";
 
@@ -9,6 +10,10 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 import { z } from "zod";
 
+import {
+  installationVaultAvailability,
+  vaultBindingAvailability,
+} from "./availability";
 import { unavailableMemory } from "./store";
 
 import { projectRolesForActions } from "@/lib/authz";
@@ -55,8 +60,7 @@ type CatalogRow = Readonly<{
   agent_name: string;
   binding_id: string;
   vault_id: string | null;
-  enabled: boolean;
-  memory_enabled: boolean;
+  availability: VaultBindingAvailability;
   activated: boolean;
   editable: boolean;
   settings: boolean;
@@ -106,7 +110,7 @@ async function locationPolicy(tx: Db, userId: string) {
   locations AS (
     SELECT 'project:'||l.id AS location_id, 'project' AS kind, p.id AS owner_id, p.name AS owner_label,
       p.slug AS project_slug, a.id AS agent_id, a.name AS agent_name, l.id AS binding_id, v.id AS vault_id,
-      l.enabled, l.memory_enabled, cutover.active AS activated,
+      ${vaultBindingAvailability(sql`l.enabled`, sql`l.memory_enabled`)} AS availability, cutover.active AS activated,
       (${admin} OR m.role IN (${editRoles})) IS TRUE AS editable,
       (${admin} OR m.role IN (${editRoles})) IS TRUE AS settings,
       (v.id IS NOT NULL) AS materialized
@@ -118,8 +122,8 @@ async function locationPolicy(tx: Db, userId: string) {
     WHERE ${admin} OR m.role IN (${readRoles})
     UNION ALL
     SELECT 'installation:'||b.id, 'installation', b.company_id, 'Company', NULL::text,
-      b.agent_id, r.snapshot->>'name', b.id, v.id, b.enabled,
-      ((r.snapshot->'installationGrant'->'memoryEnabled')='true'::jsonb) IS TRUE,
+      b.agent_id, r.snapshot->>'name', b.id, v.id,
+      ${installationVaultAvailability(sql`b.enabled`, sql`r.snapshot`)},
       cutover.active, ${admin}, (${specialistRead}), (v.id IS NOT NULL)
     FROM company_specialist_bindings b JOIN company_specialist_binding_revisions r ON (r.binding_id,r.revision)=(b.id,b.revision)
     LEFT JOIN agent_memory_vaults v ON v.company_id=b.company_id AND v.agent_id=b.agent_id
@@ -130,8 +134,7 @@ async function locationPolicy(tx: Db, userId: string) {
 }
 
 function locationState(row: CatalogRow) {
-  if (!row.enabled) return "disabled_attachment";
-  if (!row.memory_enabled) return "disabled_memory";
+  if (row.availability !== "available") return row.availability;
   if (!row.activated)
     return row.kind === "project" ? "legacy" : "awaiting_cutover";
 

@@ -40,7 +40,7 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   knowledge_capture_source:
     "Capture exact bounded submitted source bytes as attributable evidence, without asserting independent corroboration, historical observation time or factual confirmation. Reuse the same idempotencyKey for the same delivery. Company ownership requires no project.",
   proposal_reviews_list: "List authorized pending decisions or retained decisions by scope. Requires a global personal token and the appropriate content scopes.",
-  proposal_review_get: "Inspect an exact authorized human review and its observed version, evidence or diff, and available decision outcome. This works independently of the current list page.",
+  proposal_review_get: "Inspect an exact authorized human review and its observed version, evidence or diff, and available decision outcome. This works independently of the current list page. Pass nextCursor as cursor for preview text and revisionsNextCursor as outcomeCursor for applied vault revisions.",
   proposal_review_decide: "Settle one inspected Brain or vault proposal with the exact version and a stable request key. Rejection needs a reason. Use knowledge_decide for structured knowledge.",
   personal_vault_list: "Page project and installation memory locations available to this human. Requires explicit agent_memory:read.",
   personal_vault_view: "Read the indicated vault location by directory or note path, or by stable note ID. Follow the authorized continuation for remaining content.",

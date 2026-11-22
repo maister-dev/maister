@@ -8972,7 +8972,8 @@ paths:
       summary: Read one authorized proposal review
       description: An active global personal token is required. Requires decisions:read and the content scope for
         each visible kind (knowledge:read, memory:read or explicit agent_memory:read). Check source and result
-        visibility from the exact proposal ID independently of its list position.
+        visibility from the exact proposal ID independently of its list position. Applied vault operations
+        paginate result revisions independently of the preview. Each continuation rechecks current authority and sources.
       x-implementation-status: Implemented
       security:
         - projectToken: []
@@ -8990,7 +8991,11 @@ paths:
         - name: cursor
           in: query
           schema: { type: string, minLength: 1, maxLength: 2048 }
-          description: Signed continuation for this credential, operation and effective selection.
+          description: Signed preview continuation for this credential and exact proposal snapshot.
+        - name: outcomeCursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for the applied vault operation, this credential and the exact proposal. Independent of the preview cursor.
       responses:
         "200":
           description: Read one authorized proposal review.
@@ -9540,7 +9545,10 @@ components:
               type: string
               enum: [ catalog_draft ]
             draftId: { type: string, minLength: 1, maxLength: 192 }
-            href: { type: string, nullable: true }
+            href:
+              type: string
+              nullable: true
+              description: The authorized original rule or skill draft viewer, or the Flow editor for a Flow draft.
         - type: object
           additionalProperties: false
           required: [ type, taskId, href ]
@@ -9561,7 +9569,7 @@ components:
             href: { type: string, nullable: true }
         - type: object
           additionalProperties: false
-          required: [ type, operationId, href, revisionCount, revisions ]
+          required: [ type, operationId, href, revisionCount, revisions, revisionsNextCursor ]
           properties:
             type:
               type: string
@@ -9569,9 +9577,14 @@ components:
             operationId: { type: string, minLength: 1, maxLength: 192 }
             href: { type: string, nullable: true }
             revisionCount: { type: integer, minimum: 0 }
+            revisionsNextCursor:
+              type: string
+              nullable: true
+              maxLength: 2048
+              description: Pass as outcomeCursor on the exact review GET for the next result page. Null marks the end.
             revisions:
               type: array
-              description: First 20 retained result revisions with authorized links.
+              description: Up to 20 authorized result revisions ordered by the operation's retained ordinal.
               maxItems: 20
               items:
                 type: object
@@ -9581,7 +9594,10 @@ components:
                   noteId: { type: string, minLength: 1, maxLength: 192 }
                   revisionId: { type: string, minLength: 1, maxLength: 192 }
                   path: { type: string, minLength: 1, maxLength: 512 }
-                  href: { type: string }
+                  href:
+                    type: string
+                    nullable: true
+                    description: Null when standalone vault navigation is unavailable.
         - type: object
           additionalProperties: false
           required: [ type, proposalId, href ]
@@ -9757,7 +9773,7 @@ components:
             detail:
               type: object
               additionalProperties: false
-              required: [ proposalKind, origin, expectedEffect ]
+              required: [ proposalKind, origin, expectedEffect, contentFormat, draftPath, sourceHref ]
               properties:
                 proposalKind:
                   type: string
@@ -9768,6 +9784,15 @@ components:
                 expectedEffect:
                   type: string
                   enum: [ catalog_draft, project_task, accepted_proposal ]
+                contentFormat:
+                  type: string
+                  enum: [ markdown, yaml, text ]
+                  description: Display format for summary. Legacy unstructured drafts can appear as text.
+                draftPath: { type: string, nullable: true }
+                sourceHref:
+                  type: string
+                  nullable: true
+                  description: The authorized exact witness for a vault promotion.
             decision:
               allOf:
                 - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }

@@ -25,6 +25,68 @@ async function enableKnowledgeProject(
   return z.object({ id: z.string() }).parse(result.rows[0]).id;
 }
 
+test("K07 opens authored rule and skill outcomes with their original Markdown", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const { byKey } = loadFixtures();
+  const projectSlug = byKey.m11a.projectSlug;
+  const pool = createE2EDbPool(resolvePostgresDbUrl());
+
+  try {
+    const projectId = await enableKnowledgeProject(pool, projectSlug);
+
+    for (const kind of ["rule", "skill"] as const) {
+      const proposalId = randomUUID();
+      const title = `Reviewed ${kind} ${proposalId.slice(0, 8)}`;
+      const markdown = `Check the ${kind} against the original evidence.`;
+
+      await pool.query(
+        `INSERT INTO brain_proposals
+          (id, project_id, kind, evidence_item_ids, draft, status, blast_radius, autonomy_decision, actor)
+         VALUES ($1, $2, $3, '[]', $4::jsonb, 'pending', 'low', 'manual', $5::jsonb)`,
+        [
+          proposalId,
+          projectId,
+          kind,
+          JSON.stringify({
+            slug: `review-${proposalId}`,
+            title,
+            body: { markdown },
+          }),
+          JSON.stringify({ type: "system", id: "catalog-review-fixture" }),
+        ],
+      );
+      const query = new URLSearchParams({
+        projectId,
+        kind: "brain",
+        proposalKind: "brain",
+        proposalId,
+      });
+
+      await page.goto(`/knowledge/reviews?${query}`);
+      const selected = page.getByRole("region", { name: title });
+
+      await selected.getByRole("button", { name: "Accept proposal" }).click();
+      await selected
+        .getByRole("link", { name: "Unpublished catalog draft" })
+        .click();
+      await expect(page).toHaveURL(
+        new RegExp(
+          `/projects/${projectSlug}/brain/proposals/${proposalId}/draft$`,
+        ),
+      );
+      await expect(page.getByRole("heading", { name: title })).toBeVisible();
+      await expect(page.getByText(markdown, { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Save draft" }),
+      ).toHaveCount(0);
+    }
+  } finally {
+    await pool.end();
+  }
+});
+
 test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and preserves authored diagnostic-like text", async ({
   page,
   context,

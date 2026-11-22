@@ -114,7 +114,8 @@ export default async function SpecialistsSettings({
           >
             {t("configuration")}
           </a>
-          {installation?.installationGrant?.memoryEnabled ? (
+          {installation?.enabled &&
+          installation.installationGrant?.memoryEnabled ? (
             <a
               className="underline"
               href={`?binding=${encodeURIComponent(installation.bindingId)}&tab=memory`}
@@ -144,6 +145,7 @@ export default async function SpecialistsSettings({
       ) : null}
       {installation &&
       query.tab === "memory" &&
+      installation.enabled &&
       installation.installationGrant?.memoryEnabled ? (
         <AgentMemoryControl
           agentId={installation.id}

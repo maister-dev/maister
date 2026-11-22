@@ -45,7 +45,9 @@ function requiredString(draft: Record<string, unknown>, field: string): string {
   return value.trim();
 }
 
-function draftContent(draft: Record<string, unknown>): string {
+export function readBrainProposalDraftContent(
+  draft: Record<string, unknown>,
+): string | null {
   const content = draft.content ?? draft.markdown;
 
   if (typeof content === "string" && content.trim().length > 0) {
@@ -65,6 +67,13 @@ function draftContent(draft: Record<string, unknown>): string {
     if (markdown.trim().length > 0) return markdown.trim();
   }
 
+  return null;
+}
+
+function draftContent(draft: Record<string, unknown>): string {
+  const content = readBrainProposalDraftContent(draft);
+
+  if (content !== null) return content;
   throw new MaisterError(
     "CONFIG",
     'Brain projection draft requires "content", "markdown", or "body.markdown"',

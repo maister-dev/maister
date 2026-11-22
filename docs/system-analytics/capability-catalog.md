@@ -139,6 +139,10 @@ stateDiagram-v2
 
 ## Process flows
 
+### Inspect a Project Brain draft outcome
+
+An applied rule or skill proposal links to `/projects/{slug}/brain/proposals/{proposalId}/draft`. The page requires current `readBrain` authority and access to the proposal's sources. It resolves the draft ID from the proposal, checks the persisted kind, and displays the original revision as read-only source. A Flow outcome opens the Flow editor. Its save and publish actions check the persisted Flow kind in the catalog transaction before writing. The generic catalog API supports all three authored kinds.
+
 ### Publish authored rule or skill
 
 ```mermaid

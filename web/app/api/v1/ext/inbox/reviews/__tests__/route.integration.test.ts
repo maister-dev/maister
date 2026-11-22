@@ -20,14 +20,12 @@ import { GET as readVaultRevision } from "@/app/api/v1/ext/knowledge/vaults/[loc
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
 import { prepareHumanProjectVault } from "@/lib/agent-memory-vault/project-access";
 import { applyVaultMutation } from "@/lib/agent-memory-vault/store";
+import { viewAgentMemory } from "@/lib/agent-memory-vault/view";
 import { issueToken, issueUserAccessToken } from "@/lib/tokens/issue";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { seedActiveUser } from "@/test-support/librarian-seed";
 import { seedProjectReviewQueue } from "@/test-support/knowledge-review-seed";
-import {
-  startMainAndBrainPostgresTestDb,
-  startMainPostgresTestDb,
-} from "@/test-support/pg-container";
+import { startMainAndBrainPostgresTestDb } from "@/test-support/pg-container";
 
 let fixture: StartedPostgresTestDb;
 
@@ -108,6 +106,10 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
   });
 
   try {
+    await fixture.pool.query(
+      "UPDATE brain_proposals SET draft = draft || jsonb_build_object('content', repeat('a', 263000)) WHERE id=$1",
+      [proposalId],
+    );
     const queue = await list(request(`${endpoint}?limit=1`, personal.secret));
 
     expect(queue.status).toBe(200);
@@ -133,6 +135,15 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
     };
 
     expect(inspected.status).toBe(200);
+    expect(row.nextCursor).toEqual(expect.any(String));
+    const previewPage = `${base}?${new URLSearchParams({ cursor: row.nextCursor })}`;
+
+    expect(
+      (await detail(request(previewPage, personal.secret), params)).status,
+    ).toBe(200);
+    expect
+      .soft((await detail(request(previewPage, broad.secret), params)).status)
+      .toBe(422);
     expect(
       (await decide(request(`${base}/decision`, broad.secret, command), params))
         .status,
@@ -187,6 +198,12 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
       receiptId: allowed.receipt.receiptId,
       replayed: true,
     });
+    expect(
+      await (await detail(request(base, personal.secret), params)).json(),
+    ).toMatchObject({
+      decision: { reviewedVersion: row.version, by: userId },
+      detail: { draftPath: "docs/review.md", contentFormat: "markdown" },
+    });
     expect((await run("personal-knowledge", other.secret)).error).toBe(true);
     for (const profile of [
       "",
@@ -222,10 +239,11 @@ it("K11 K12 binds browser-compatible review results to global PAT scopes and the
   }
 }, 180_000);
 
-it("K11 reads human vaults using an exact current scope and keeps note identities inside their owner", async () => {
-  fixture = await startMainPostgresTestDb({
+it("K10 K11 exposes exact vault revisions and pages every authorized review result", async () => {
+  fixture = await startMainAndBrainPostgresTestDb({
     databaseName: "personal_vault_routes",
   });
+  vi.stubEnv("AUTH_SECRET", "personal-vault-result-qualification");
   const endpoint = "/api/v1/ext/knowledge/vaults";
 
   try {
@@ -235,7 +253,7 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
       seedProjectRow(fixture.db),
     ]);
     const agentId = "fixture:personal-memory";
-    const path = "/memories/fixture.md";
+    const path = "/memories/source/fixture.md";
 
     await fixture.pool.query(
       "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
@@ -251,6 +269,13 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
       [project.id, other.id, agentId],
     );
     const content = "Exact revision inside its owner.";
+    const prepare = prepareHumanProjectVault({
+      userId,
+      agentId,
+      slug: project.slug,
+      action: "editSettings",
+    });
+    const limits = agentMemoryVaultLimits();
     const write = await applyVaultMutation(
       fixture.db,
       {
@@ -261,13 +286,8 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
         ifHash: null,
         ifRevisionId: null,
       },
-      prepareHumanProjectVault({
-        userId,
-        agentId,
-        slug: project.slug,
-        action: "editSettings",
-      }),
-      agentMemoryVaultLimits(),
+      prepare,
+      limits,
     );
 
     if (write.status !== "applied" || !write.affected[0])
@@ -278,7 +298,7 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
         {
           ownerUserId: userId,
           name: "Vault reader",
-          scopes: ["agent_memory:read"],
+          scopes: ["agent_memory:read", "decisions:read", "decisions:review"],
         },
         fixture.db,
       ),
@@ -313,7 +333,7 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
     );
     expect((await listVaults(request("", broad.secret))).status).toBe(403);
     const folder = await readVaultPath(
-      request(`/${locationId}/view?path=/memories`),
+      request(`/${locationId}/view?path=/memories/source`),
       locationParams,
     );
 
@@ -360,12 +380,134 @@ it("K11 reads human vaults using an exact current scope and keeps note identitie
     );
 
     expect(crossOwner.status).toBe(404);
+
+    for (let index = 0; index < 20; index++) {
+      const added = await applyVaultMutation(
+        fixture.db,
+        {
+          command: "create",
+          path: `/memories/source/note-${index}.md`,
+          file_text: `Note ${index}`,
+          requestKey: `personal-vault-note-${index}`,
+          ifHash: null,
+          ifRevisionId: null,
+        },
+        prepare,
+        limits,
+      );
+
+      if (added.status !== "applied")
+        throw new Error("Expected an applied seed");
+    }
+    const source = await viewAgentMemory(
+      fixture.db,
+      { command: "view", path: "/memories/source", limit: 100 },
+      prepare,
+    );
+
+    if (source.kind !== "directory")
+      throw new Error("Expected the source directory");
+    const pending = await applyVaultMutation(
+      fixture.db,
+      {
+        command: "rename",
+        old_path: source.path,
+        new_path: "/memories/destination",
+        ifGeneration: source.generation,
+        heads: source.entries.map((entry) => ({
+          path: entry.path,
+          ifRevisionId: entry.revisionId!,
+          ifHash: entry.hash!,
+        })),
+        requestKey: "personal-move-proposal",
+      },
+      async (tx) => ({
+        ...(await prepare(tx)),
+        writeAdmission: "review_required",
+      }),
+      limits,
+    );
+
+    if (pending.status !== "pending")
+      throw new Error("Expected review of the move");
+    const reviewPath = `/api/v1/ext/inbox/reviews/vault/${pending.proposalId}`;
+    const reviewParams = {
+      params: Promise.resolve({
+        kind: "vault",
+        proposalId: pending.proposalId,
+      }),
+    };
+    const reviewRequest = (path: string, token: string, body?: string) =>
+      new Request(`http://127.0.0.1${path}`, {
+        method: body ? "POST" : "GET",
+        body,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+      });
+    const approved = await decide(
+      reviewRequest(
+        `${reviewPath}/decision`,
+        personal.secret,
+        JSON.stringify({
+          expectedVersion: "1",
+          decision: "accept",
+          requestKey: "personal-move-accept",
+        }),
+      ),
+      reviewParams,
+    );
+    const receipt = await approved.json();
+
+    expect(approved.status, JSON.stringify(receipt)).toBe(200);
+    expect(receipt.outcome).toMatchObject({
+      type: "applied_vault_operation",
+      revisionCount: 21,
+      revisionsNextCursor: expect.any(String),
+    });
+    expect(receipt.outcome.revisions).toHaveLength(20);
+    const rest = `${reviewPath}?${new URLSearchParams({ outcomeCursor: receipt.outcome.revisionsNextCursor })}`;
+    const continued = await detail(
+      reviewRequest(rest, personal.secret),
+      reviewParams,
+    );
+    const outcome = (await continued.json()).outcome;
+
+    expect(continued.status).toBe(200);
+    expect(outcome.revisionsNextCursor).toBeNull();
+    expect(outcome.revisions).toHaveLength(1);
+    expect(
+      new Set(
+        [...receipt.outcome.revisions, ...outcome.revisions].map(
+          (revision: { revisionId: string }) => revision.revisionId,
+        ),
+      ).size,
+    ).toBe(21);
+    const alternate = await issueUserAccessToken(
+      {
+        ownerUserId: userId,
+        name: "Other vault reviewer",
+        scopes: ["agent_memory:read", "decisions:read"],
+      },
+      fixture.db,
+    );
+
+    expect(
+      (await detail(reviewRequest(reviewPath, alternate.secret), reviewParams))
+        .status,
+    ).toBe(200);
+    expect(
+      (await detail(reviewRequest(rest, alternate.secret), reviewParams))
+        .status,
+    ).toBe(422);
     await fixture.pool.query(
       "UPDATE project_tokens SET expires_at=now()-interval '1 minute' WHERE id=$1",
       [personal.tokenId],
     );
     expect((await listVaults(request())).status).toBe(401);
   } finally {
+    vi.unstubAllEnvs();
     await fixture.stop();
   }
 }, 180_000);

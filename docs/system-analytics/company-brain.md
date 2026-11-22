@@ -120,7 +120,7 @@ DB changes are one transaction; the existing outbox publishes only after commit.
 
 | Input and current authority | Accepted effect | Rejection or conflict |
 | --- | --- | --- |
-| Structured add or correction. Current owner review grant, accessible sources and exact proposal revision. A correction also pins its base revision. | Publication writes the exact record revision and the resolution in the same transaction. | Rejection records the reviewer and reason. An outdated proposal or base yields `CONFLICT`. |
+| Structured add or correction. Current owner review grant, accessible sources and exact proposal revision. A correction also pins its base revision. | Publication writes the exact record revision and the resolution in the same transaction. Accepting a correction to a restricted record additionally requires a current record-level review grant. | Rejection requires owner review authority and source access. It records the reviewer and reason and leaves the record unchanged. An outdated proposal or acceptance base yields `CONFLICT`. |
 | Published revision. Independent confirmation authority and available exact `supports` witness. | Confirmation records the actor, reason and evidence on that revision. | Revocation acts on the active confirmation. A correction starts with its own confirmation state. |
 
 ```mermaid

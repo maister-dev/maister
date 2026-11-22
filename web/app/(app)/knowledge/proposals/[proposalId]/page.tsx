@@ -14,12 +14,8 @@ import {
 } from "@/components/brain/knowledge-view";
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
-import { getKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
+import { inspectKnowledgeProposal } from "@/lib/brain/knowledge-proposal-read";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
-import {
-  knowledgeOwnerActions,
-  knowledgeRecordActions,
-} from "@/lib/brain/knowledge-ui";
 import { knowledgeReferenceView } from "@/lib/brain/knowledge-ui";
 
 export default async function KnowledgeProposalPage({
@@ -35,19 +31,15 @@ export default async function KnowledgeProposalPage({
   const db = getDb();
 
   const view = await knowledgeReferenceView(async () => {
-    const proposal = await getKnowledgeProposal(db, principal, proposalId, {
-      historyRead: true,
-    });
+    const { proposal, canReview } = await inspectKnowledgeProposal(
+      db,
+      principal,
+      proposalId,
+      {
+        historyRead: true,
+      },
+    );
     const { content } = proposal;
-    const actions =
-      content.change === "correct"
-        ? await knowledgeRecordActions(
-            db,
-            principal,
-            proposal.owner,
-            content.recordId,
-          )
-        : await knowledgeOwnerActions(db, principal, proposal.owner);
 
     const revisions =
       content.change === "correct"
@@ -64,11 +56,11 @@ export default async function KnowledgeProposalPage({
           })
         : null;
 
-    return { proposal, content, actions, revisions };
+    return { proposal, content, canReview, revisions };
   });
 
   if (view.state === "unavailable") return <KnowledgeUnavailable />;
-  const { proposal, content, actions, revisions } = view.value;
+  const { proposal, content, canReview, revisions } = view.value;
 
   return (
     <>
@@ -160,7 +152,7 @@ export default async function KnowledgeProposalPage({
           ) : null}
           {proposal.status === "pending" ? (
             <section className={knowledgePanelClass}>
-              {actions.review ? (
+              {canReview ? (
                 <Link
                   href={`/knowledge/reviews?${new URLSearchParams({ proposalKind: "knowledge", proposalId: proposal.id })}#knowledge-memory`}
                 >

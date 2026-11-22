@@ -2129,6 +2129,11 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 2048
+      },
+      "outcomeCursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
       }
     },
     "required": [
