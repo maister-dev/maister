@@ -641,7 +641,7 @@ including runtime cleanup and all uploads. It downloads the three validated
 report artifacts and rejects missing or duplicate stages, altered hashes, wrong source/run,
 non-Intel or wrong-Node evidence, failures/skips, cleanup failure, or incomplete
 case-name sets. Its `execution-isolation-combined` artifact records three separate
-preflights and the exact disjoint seven-suite/52-case union. Failed aggregation
+preflights and the exact disjoint seven-suite/53-case union. Failed aggregation
 retains a failed receipt; a green part cannot substitute for a missing part.
 The actual hosted duration and remaining headroom still require inspection of
 all three jobs and their timing diagnostics after owner push.
@@ -711,9 +711,10 @@ check or local ARM run is not hosted proof.
 S5.2 acceptance requires four complete web shard reports, both runtime and
 supervisor legs, and all three green macOS isolation parts plus their combined gate on the same
 pushed commit. Each part must supply its separate preflight and outer suite
-report; together they must contain exactly all seven suites and 52 required
-cases, including the original six suites/40 cases, ten dispatch controls and
-the R18 accepted-launch worker restart control and the Darwin helper-retirement control.
+report; together they must contain exactly all seven suites and 53 required
+cases, including the original six suites/40 cases, ten dispatch controls,
+the R18 accepted-launch worker restart, Darwin helper retirement, and W06/W08
+durable Flow wait restart controls.
 Record the run URL, source SHA, runner image/architecture, artifact identities,
 measured total duration (below 60 minutes) and remaining headroom before
 marking S5.2 complete.
@@ -868,8 +869,8 @@ The driver, immutable policy, trusted status bridge and shared production/probe
 integration are **Implemented** and Phase-1 qualified. The owning
 [C2 evidence](../../.ai-factory/plans/s53a-linux-isolation.md#c2--final-source-phase-1-qualification-2026-10-05)
 records native Ubuntu's then-current 52-case lane and the complete final-source
-Darwin regression. The extended 56-case lifecycle/refusal inventory, full
-qualification at both exact Node versions and Linux hosting remain **Designed**.
+Darwin regression. Full qualification of the current 57-case Linux inventory at
+both exact Node versions and Linux hosting remain **Designed**.
 The existing macOS hosted acceptance contract remains in force.
 
 LI-refusal now includes actual nested-mount refusal and frozen-policy
@@ -969,7 +970,7 @@ sequenceDiagram
 | LNX-07 | Parent death during startup, readiness or an active probe closes the namespace, including detached/TERM-resistant descendants, before exit-sweep containment | Outer watchdog and kernel parent/PID-reaper chain; LI-parent/LI-kill |
 | LNX-08 | Restart cannot clear or widen its frozen isolation policy; probes use that policy, explicit invocation, registered child, bounded typed output and successful app exit | RealWeb restart and owned probe seam; I3; LI-refusal/LI-parent |
 | LNX-09 | Every exit/cancellation attempts all owned reclaimers; any survivor discovered before containment fails; finalization refuses live/reused/unreadable runners or replaced authority | releaseInvocation; O1; O2-runner and Linux finalizer crash-window controls |
-| LNX-10 | Discovery, mandatory files and exact titles agree on Darwin 7/52 and Linux 8/56, with a separate preflight. Pending, skipped, duplicate and extra cases fail the report. | Platform manifest and validateLaneReport; existing report-rejection controls |
+| LNX-10 | Discovery, mandatory files and exact titles agree on Darwin 7/53 and Linux 8/57, with a separate preflight. Pending, skipped, duplicate and extra cases fail the report. | Platform manifest and validateLaneReport; existing report-rejection controls |
 | LNX-11 | Removing enforcement produces a reached private read and a failed negative assertion; restored full source passes with zero leaks | I1 falsification; complete Linux/Darwin lane reports |
 | LNX-12 | Ubuntu 24.04 amd64 at both exact Nodes qualifies locally before any prospective hosting amendment; hosted evidence is exact owner-pushed SHA and independently validated artifacts within fixed budgets | Local qualification gate, owner-push checkpoint and hosted report/timing audit |
 
@@ -1038,13 +1039,14 @@ never contain secrets, environment dumps, sentinel/SQLite/object bytes.
 
 The historical qualified baseline has seven full suites/50 cases plus one
 separately invoked preflight. The current manifest additionally requires the
-R18 accepted-launch restart control on both platforms. Darwin requires the
-native helper-retirement case. Linux adds the five controls below. The
+R18 accepted-launch restart and W06/W08 Flow wait restart controls on both
+platforms. Darwin requires the native helper-retirement case. Linux adds the
+five controls below. The
 runner uses Vitest project `integration`; no placeholder/todo cases are active.
 All five Linux controls are implemented and pass their native owning suite,
 including nested mounts, invalid restart, acquisition cancellation and process
-lifecycle cuts. The full selector requires 56 Linux cases and 52 Darwin cases,
-each with a separate preflight. Darwin CI runs parts of 20, 22 and 10 cases. Linux parts
+lifecycle cuts. The full selector requires 57 Linux cases and 53 Darwin cases,
+each with a separate preflight. Darwin CI runs parts of 20, 23 and 10 cases. Linux parts
 and unknown platforms refuse selection. The
 [final native qualification](../../.ai-factory/plans/s53a-linux-isolation.md#final-native-qualification)
 binds the corrective code to its whole-code SHA256 and exact reports. Native
@@ -1152,10 +1154,10 @@ pre-containment leak observations.
 
 | Environment | Required runtime/provisioning | Evidence meaning |
 |---|---|---|
-| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.22.3 and 26.13.1, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 56 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
+| Local qualification | Ubuntu 24.04 amd64 native/VM, ordinary nonroot harness; separate Node 24.22.3 and 26.13.1, frozen pnpm, real Docker Postgres 16, host proc inspection, authenticated pinned distro bwrap/source, GNU coreutils/Git/C compiler, permitted required namespaces/AppArmor | Current full Linux 57 plus independent I-CI, source/build/runtime identities, exact report validation, timings and zero leaks; prerequisite for hosting amendment |
 | ARM64 container development | Record image digest/host kernel/architecture/UID mapping/seccomp/capabilities/nested namespace policy; nonroot apps, no blanket privileged mode/host PID/host root bind | Development only; cannot close amd64 or hosted gates |
-| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.22.3, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 56 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
-| Darwin regression | Existing sandbox-exec and separate preflight with 52 required cases, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
+| Proposed hosted qualification | Standard ubuntu-24.04 amd64, Node 24.22.3, authenticated packages and narrowly scoped bwrap AppArmor allowance if needed; tests/apps ordinary nonroot | Exact owner-pushed candidate, current Linux 57 plus independent I-CI and all other mandatory jobs green; capability and speed measured |
+| Darwin regression | Existing sandbox-exec and separate preflight with 53 required cases, labeled architecture/Node/source | Preserves Darwin behavior; cannot qualify Linux |
 
 Validation child processes use umask `0022`, matching the existing atomic-file
 `0644` acceptance assertion. Record the inherited parent mask and apply this
@@ -1450,7 +1452,7 @@ AT-17. Browser half stays open under S5.3.
 - [Colima provisioning script](../../scripts/setup-isolation-ci-runtime.sh)
 - [feature specification](../../.ai-factory/specs/feature-unified-test-database-testcontainers.md)
 
-The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (20/22/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
+The mandatory workflow runs once per pull-request update and on master pushes, using the runtime matrix and disjoint A/B partitions specified above. Superseded runs are cancelled. Missing files, empty discovery, failed or skipped cases fail each leg. The same runner owns the serial `isolation` slice (AT-16 core, above) and the AT-12 browser lane is `pnpm --filter maister-web test:e2e:execution-ab` (`playwright.execution-ab.config.ts`: a REAL supervisor started by `e2e/execution-ab-global-setup.ts` behind the production server from `e2e/web-server.ts`; `e2e/execution-ab-content.spec.ts`). The real-supervisor fixture refuses to start without a process invocation, so the lane's wrapper `web/e2e/run.ts` mints one the way the A/B runner does and replaces any caller-supplied `MAISTER_TEST_WORKTREE_INVOCATION_ID`; the Playwright process, the web server, the supervisor and its adapters all carry the tag and are released through the same `releaseInvocation` as the A/B lanes when the lane ends. Browser and production-fixture lanes run sequentially on a host, with fixed sources for the duration of each run, because they share build artifacts and the configured resource budget. The isolation slice is wired to the mandatory three-part `execution-isolation` macOS Intel matrix (20/23/10 cases) and combined gate; each part retains the 39-minute production budget and independent preflight. Hosted qualification requires all three reports from the same source SHA. The browser lane stays with S5.3. A separate mandatory image job builds the pinned Dockerfile, exercises real binary HTTP and runs `web/scripts/smoke-production-image.ts` through the default image ENTRYPOINT/CMD with a migrated PostgreSQL container. It verifies HTTP readiness, SIGTERM completion and no remaining web PostgreSQL sessions. The browser runtime/image matrix remains part of S5.3.
 
 Admin browser specs are opt-in alternatives in `AUTHED_SPEC`; discovery is a
 contract because any omitted filename falls into the unauthenticated Chromium

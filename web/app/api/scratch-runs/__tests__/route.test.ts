@@ -387,7 +387,8 @@ vi.mock("@/lib/capabilities/resolver", () => ({
   loadSelectableCapabilities: mocks.loadSelectableCapabilities,
   resolveCapabilityProfile: mocks.resolveCapabilityProfile,
 }));
-vi.mock("@/lib/capabilities/materialize", () => ({
+vi.mock(import("@/lib/capabilities/materialize"), async (importOriginal) => ({
+  ...(await importOriginal()),
   materializeCapabilityProfile: mocks.materializeCapabilityProfile,
 }));
 vi.mock("@/lib/capabilities/adapter-home", () => ({

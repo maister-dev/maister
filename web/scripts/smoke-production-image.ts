@@ -11,8 +11,28 @@ const image = process.argv[2];
 assert(image, "usage: smoke-production-image.ts IMAGE");
 const database = await startMainAndBrainPostgresTestDb({
   databaseName: "production_shutdown",
+  poolMax: 1,
 });
 let containerId: string | undefined;
+
+type DatabaseSession = {
+  pid: number;
+  application_name: string;
+  state: string | null;
+};
+
+async function readClientSessions(): Promise<DatabaseSession[]> {
+  const { rows } = await database.pool.query<DatabaseSession>(
+    `SELECT pid, application_name, state
+       FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND backend_type = 'client backend'
+         AND pid <> pg_backend_pid()
+       ORDER BY pid`,
+  );
+
+  return rows;
+}
 
 async function docker(args: string[]): Promise<string> {
   return (
@@ -89,6 +109,10 @@ try {
     "-e",
     "const r = await fetch('http://127.0.0.1:3000/login'); if (r.status !== 200) throw new Error('login HTTP ' + r.status); await r.arrayBuffer();",
   ]);
+  assert(
+    (await readClientSessions()).length > 0,
+    "production web opened no PostgreSQL sessions",
+  );
   const startedAt = performance.now();
 
   await docker(["kill", "--signal=SIGTERM", containerId]);
@@ -99,13 +123,9 @@ try {
   assert.match(output, /projection-worker-stopped/);
   assert.match(output, /web-shutdown-done/);
   assert(performance.now() - startedAt < 25_000);
-  const connections = await database.pool.query<{ count: string }>(
-    "SELECT count(*)::text AS count FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()",
-  );
-
-  assert.equal(
-    connections.rows[0].count,
-    "0",
+  assert.deepEqual(
+    await readClientSessions(),
+    [],
     "production web left PostgreSQL sessions behind",
   );
   process.stdout.write(

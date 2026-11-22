@@ -24,7 +24,7 @@ import {
   expect,
   test,
   type APIRequestContext,
-  type Browser,
+  type BrowserContext,
   type Page,
 } from "@playwright/test";
 
@@ -215,10 +215,9 @@ async function scratchName(): Promise<string | null> {
 const EMPTY_STORAGE = { cookies: [], origins: [] };
 
 async function signIn(
-  browser: Browser,
+  context: BrowserContext,
   credentials: { email: string; password: string },
-): Promise<APIRequestContext> {
-  const context = await browser.newContext({ storageState: EMPTY_STORAGE });
+): Promise<void> {
   const page = await context.newPage();
 
   await page.goto("/login");
@@ -229,8 +228,6 @@ async function signIn(
     timeout: 30_000,
   });
   await page.close();
-
-  return context.request;
 }
 
 test.beforeAll(async ({ browser }) => {
@@ -400,36 +397,41 @@ test("C4: anonymous, non-member and foreign-run access to the object is refused"
   await anonymous.close();
 
   const fixtures = loadFixtures();
-  const outsider = await signIn(browser, fixtures.users.memberCandidate);
-  const outsiderRead = await outsider.get(contentUrl("evil.html"));
+  const outsider = await browser.newContext({ storageState: EMPTY_STORAGE });
 
-  expect(outsiderRead.status()).toBe(403);
-  expect(outsiderRead.headers()["content-disposition"]).toBeUndefined();
+  try {
+    await signIn(outsider, fixtures.users.memberCandidate);
+    const outsiderRead = await outsider.request.get(contentUrl("evil.html"));
 
-  // The payload route over the same object carries the same grant.
-  const artifactId = `at12-outsider-${randomUUID()}`;
+    expect(outsiderRead.status()).toBe(403);
+    expect(outsiderRead.headers()["content-disposition"]).toBeUndefined();
 
-  await withE2EDb((pool) =>
-    pool.query(
-      `INSERT INTO artifact_instances (id, run_id, kind, producer, locator, validity)
-       VALUES ($1, $2, 'generic_file', 'runner', $3::jsonb, 'current')`,
-      [
-        artifactId,
-        runId,
-        JSON.stringify({
-          kind: "execution-object",
-          objectId: objectIds.get("evil.html"),
-        }),
-      ],
-    ),
-  );
-  const outsiderPayload = await outsider.get(
-    `/api/runs/${runId}/artifacts/${artifactId}/payload`,
-  );
+    // The payload route over the same object carries the same grant.
+    const artifactId = `at12-outsider-${randomUUID()}`;
 
-  expect(outsiderPayload.status()).toBe(403);
-  expect(outsiderPayload.headers()["content-disposition"]).toBeUndefined();
-  await outsider.dispose();
+    await withE2EDb((pool) =>
+      pool.query(
+        `INSERT INTO artifact_instances (id, run_id, kind, producer, locator, validity)
+         VALUES ($1, $2, 'generic_file', 'runner', $3::jsonb, 'current')`,
+        [
+          artifactId,
+          runId,
+          JSON.stringify({
+            kind: "execution-object",
+            objectId: objectIds.get("evil.html"),
+          }),
+        ],
+      ),
+    );
+    const outsiderPayload = await outsider.request.get(
+      `/api/runs/${runId}/artifacts/${artifactId}/payload`,
+    );
+
+    expect(outsiderPayload.status()).toBe(403);
+    expect(outsiderPayload.headers()["content-disposition"]).toBeUndefined();
+  } finally {
+    await outsider.close();
+  }
 
   // The same object id under another run the admin CAN read is not found:
   // the catalog binds the object to its run before any authorization.

@@ -109,6 +109,9 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
     ],
   });
   const runId = await current.launchFlow(manifest);
+
+  // Start the parking deadline after the preparatory ACP prompt has settled.
+  await completedPrompt(runId);
   const readWait = async () =>
     (
       await current.database.pool.query<{
@@ -323,6 +326,8 @@ it("W06/W08 keeps a parked Flow across web and supervisor death and replays its 
   ).toEqual([{ action: "extend", reason: "Verified after restart" }]);
 
   const cancelledRunId = await current.launchFlow(manifest);
+
+  await completedPrompt(cancelledRunId);
   const readStoppedWait = async () =>
     (
       await current.database.pool.query<{

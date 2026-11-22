@@ -59,12 +59,12 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
   }
 });
 
-test("isolation CI parts retain the complete disjoint 20/22/10 whole-suite inventory", () => {
+test("isolation CI parts retain the complete disjoint whole-suite inventory", () => {
   const parts = [1, 2, 3].map((part) => parseLaneInvocation(["isolation", "--part", `${part}/3`], "darwin"));
 
   assert.deepEqual(parts.map(({ files }) => files), [laneSuites.isolation.slice(0, 2), laneSuites.isolation.slice(2, 6), laneSuites.isolation.slice(6)]);
   assert.deepEqual(parts.flatMap(({ files }) => files), laneSuites.isolation);
-  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [20, 22, 10]);
+  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [20, 23, 10]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
   for (const args of [["isolation", "--part", "0/3"], ["isolation", "--part", "4/3"],
     ["isolation", "--part", "1/2"], ["web", "--part", "1/3"], ["supervisor", "--part", "1/3"]])
@@ -218,15 +218,15 @@ const linuxTitles = [
   "LI-parent: startup ready and active-probe parent death close the namespace before exit-sweep containment",
 ];
 
-test("platform selection requires Linux56 and Darwin52", () => {
+test("platform selection requires the complete Linux and Darwin inventories", () => {
   const linux = parseLaneInvocation(["isolation"], "linux");
   const darwin = parseLaneInvocation(["isolation"], "darwin");
 
   assert.deepEqual(linux.files, [...laneSuites.isolation, linuxOwner]);
-  assert.equal(linux.files.flatMap((file) => isolationCaseTitles(file, "linux")).length, 56);
+  assert.equal(linux.files.flatMap((file) => isolationCaseTitles(file, "linux")).length, 57);
   assert.deepEqual(isolationCaseTitles(linuxOwner, "linux"), linuxTitles);
   assert.deepEqual(darwin.files, laneSuites.isolation);
-  assert.equal(darwin.files.flatMap((file) => isolationCaseTitles(file, "darwin")).length, 52);
+  assert.equal(darwin.files.flatMap((file) => isolationCaseTitles(file, "darwin")).length, 53);
 });
 
 test("the native retiring-helper case is required on macOS only", () => {

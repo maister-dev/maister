@@ -242,6 +242,7 @@ export const requiredIsolationCases = {
     "P4: delayed checkpoint ACK reaches its original handler after successor epoch without a current-owner write"
   ],
   "test-support/__tests__/execution-ab-process-death.integration.test.ts": [
+    "W06/W08 keeps a parked Flow across web and supervisor death and replays its external signal once",
     "D2a: supervisor restart before create effect reissues the original durable intent once",
     "D2b: supervisor restart after create commit folds its receipt without another create",
     "D4: web dies after durable create ACK and before first host prompt; restart sends one prompt",
