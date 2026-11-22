@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 import { parseAgentMemoryMutation } from "../commands";
 import {
@@ -12,6 +13,7 @@ import { readVaultReviewHistory } from "../review";
 import { applyVaultMutation } from "../store";
 import { viewAgentMemory } from "../view";
 
+import * as schema from "@/lib/db/schema";
 import {
   decideProposalReview,
   getProposalReviewDetail,
@@ -261,8 +263,9 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
     };
     const small = await reviewedMove("/memories/small", 1);
     const large = await reviewedMove("/memories/large", 12);
+    const measuredDb = drizzle(fixture.pool, { schema });
     const inspectHistory = (proposalId: string) =>
-      fixture.db.transaction(async (tx) => {
+      measuredDb.transaction(async (tx) => {
         const measured = withQueryCount(tx);
         const history = await readVaultReviewHistory(
           measured.db,
@@ -277,7 +280,7 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
 
     expect(wide.history.applied).toHaveLength(12);
     expect(wide.queries).toBe(narrow.queries);
-    await fixture.db.transaction(async (tx) => {
+    await measuredDb.transaction(async (tx) => {
       const { proposal } = await readVaultReviewHistory(tx, large, userId);
 
       await expect(

@@ -1,4 +1,5 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
+import type { TokenScope } from "@/types/token-scopes";
 
 import { execFile } from "node:child_process";
 import { once } from "node:events";
@@ -427,13 +428,16 @@ it("K10 K11 exposes exact vault revisions and pages every authorized review resu
     const recordId = published.acceptedRecordId!;
     const revisionPath = `/api/v1/ext/knowledge/${recordId}/revisions`;
     const payload = { params: Promise.resolve({ recordId }) };
+    const scopeSets = [
+      ["knowledge:read"],
+      ["knowledge:read", "agent_memory:read"],
+    ] satisfies TokenScope[][];
     const [knowledgeOnly, withVaultScope] = await Promise.all(
-      [["knowledge:read"], ["knowledge:read", "agent_memory:read"]].map(
-        (scopes) =>
-          issueUserAccessToken(
-            { ownerUserId: userId, name: "Knowledge history", scopes },
-            fixture.db,
-          ),
+      scopeSets.map((scopes) =>
+        issueUserAccessToken(
+          { ownerUserId: userId, name: "Knowledge history", scopes },
+          fixture.db,
+        ),
       ),
     );
     const readHistory = (token: string) =>

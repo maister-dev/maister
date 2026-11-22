@@ -46,7 +46,8 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   personal_vault_view: "Read the indicated vault location by directory or note path, or by stable note ID. Follow the authorized continuation for remaining content.",
   personal_vault_revisions: "Page retained revisions for one exact note in an authorized vault.",
   personal_vault_revision_get: "Read an exact authorized retained revision. A removed or concealed payload is unavailable.",
-  knowledge_revisions_list: "Page exact retained record revisions visible under current owner and source policies. Requires a global personal token with knowledge:read. Vault-dependent heads and historical revisions additionally require explicit agent_memory:read.",
+  knowledge_revisions_list:
+    "Page exact retained record revisions visible under current owner and source policies. Requires a global personal token with knowledge:read. Vault-dependent heads and historical revisions additionally require explicit agent_memory:read.",
 };
 
 export const KNOWLEDGE_TOOL_SPECS = Object.fromEntries(
