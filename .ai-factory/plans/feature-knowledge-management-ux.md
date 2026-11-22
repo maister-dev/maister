@@ -183,6 +183,28 @@ T04 passed at `83f239b71` on Node 24.22.3. Both full web commands exited success
 - `83f239b71` lets Flight's asynchronous destroy callbacks run before sampling retained heap. The original fixture's full-suite failure did not recur in 80 isolated runs. The updated fixture passed 80 subprocess runs and the full integration suite. A continuous async loop still failed the unchanged 16 MiB growth limit, retaining about 60 MiB across samples.
 - Web typecheck, scoped ESLint, and documentation validation passed at the code checkpoint.
 
+### Review remediation
+
+- [x] **Finding 1, K07.** PostgreSQL reproduced a Flow write against a stored rule and a Flow URL in the rule outcome. The Flow save and publish tests now refuse the wrong kind without modifying the draft. Firefox opens the original rule and skill Markdown from the accepted outcomes.
+- [x] **Finding 2, K04 and K08.** The installation fixture reproduced an offered acceptance on a disabled binding. The same fixture now checks disabled discovery and reads, refused acceptance, and authorized rejection and retained history.
+- [x] **Finding 3, K04 and K06.** The real review queue now removes acceptance after the restricted record's review grant is revoked. Detail, the write guard, and owner-authorized rejection agree.
+- [x] **Finding 4, K03 and K13.** Focused tests cover selection order after removal, reconnect with unchanged counters, and navigation during an exact reread. Firefox verifies recovery from a transient read failure, outcome navigation, and withdrawal of an open history preview after source redaction.
+- [x] **Finding 5, K11 and K12.** Real bearer requests prove credential-bound preview and result continuations, exact text across preview pages, and identical `404` responses for missing and concealed record histories. The personal MCP schema mirrors the review query parameters.
+- [x] **Finding 6, K10 and K11.** The 21-note move returns all retained revision IDs across two authorized result pages. The DOM test verifies that result paging preserves the independently selected preview page.
+- [x] **Finding 7, K03, K06, K07 and K13.** The review detail renders source, observed version, author, effect and retained reviewer metadata. The design distinguishes these fields by proposal kind. Firefox verifies English and Russian workflows at narrow and wide widths.
+- [x] **Finding 8, T04.** The added launch fixture reproduced a broken delivered companion through an omitted intermediate directory. The fixed capture refuses it before dispatch, while the direct cross-tree companion remains readable after capture cleanup.
+
+The RED failures were captured before the corresponding fixes. The final web and Firefox gates ran on `11586508d` with Node 24.15.0. Firefox and integration ran sequentially because their harnesses share the local Next.js build directory.
+
+| Gate | Observed result | Local log |
+|---|---|---|
+| Full web unit | 9,283 passed across 898 files | `/tmp/maister-review-full-web-unit-11586508d.log` |
+| Full web integration | 6,626 passed, 11 skipped, zero failures | `/tmp/maister-review-full-web-integration-11586508d.log` |
+| Firefox Knowledge and Inbox | 15 passed, including authenticated setup | `/tmp/maister-review-firefox-11586508d.log` |
+| MCP | 565 unit and 20 integration tests passed | `/tmp/maister-review-mcp-full.log` |
+
+Web, supervisor and MCP typechecks, the OpenAPI, AsyncAPI and generated MCP contract checks, internal docs, ERD and scoped lint also passed.
+
 ## Commit plan
 
 | Checkpoint | Tasks | Suggested commit |
