@@ -216,6 +216,35 @@ Web, supervisor and MCP typechecks, the OpenAPI, AsyncAPI and generated MCP cont
 
 The focused regressions ran before and after the fixes. The [fix notes](../patches/2026-11-22-14.54.md) record the sibling paths checked and the retained authority rules.
 
+### Final follow-up qualification
+
+The first full integration attempt crossed a Git revision change and hit a
+Docker port-allocation timeout. The two affected suites passed all 13 cases in
+isolation. The next full run reproduced an intermittent Flow crash after the
+scheduled action and before its AI gate. PostgreSQL identified a lock cycle in
+prompt confirmation and gate admission. Commit `71be9bc14` resolves it without
+changing the gate decision policy. The deterministic lock regression passed,
+all 19 cases in the driver, prompt-admission and ingest suites passed, and the
+original scheduled Flow scenario passed 40 consecutive executions.
+
+The final web and authenticated browser gates ran against the application at
+`71be9bc14` on Node 24.15.0. The full integration run used four workers and a
+fixed Git revision, with the browser fixtures fully shut down.
+
+| Gate | Result | Local log |
+|---|---|---|
+| Full web unit | 9,287 passed | `/tmp/maister-knowledge-review2-unit-final.log` |
+| Full web integration | 6,627 passed, 11 skipped, zero failures | `/tmp/maister-knowledge-review2-full-web-integration-71be9bc14.log` |
+| Firefox Knowledge and Inbox | 15 passed, including authenticated setup | `/tmp/maister-knowledge-review2-firefox-71be9bc14.log` |
+| Chromium Knowledge and Inbox | 15 passed, including authenticated setup | `/tmp/maister-knowledge-review2-chromium-71be9bc14.log` |
+| MCP | 565 unit and 20 integration tests passed, plus six installed tool profiles verified | `/tmp/maister-knowledge-review2-mcp.log`, `/tmp/maister-knowledge-review2-mcp-stdio.log` |
+
+Web, supervisor and MCP typechecks passed. The web compiler used an 8 GiB
+V8 heap cap for this run. Contracts, generated schemas, internal docs and
+ERD checks, and Mintlify validation and links passed. The changed web files
+passed scoped lint. The touched MCP tool file has 12 inherited formatting
+warnings, with zero new warnings.
+
 ## Commit plan
 
 | Checkpoint | Tasks | Suggested commit |
