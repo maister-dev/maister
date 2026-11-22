@@ -62,10 +62,21 @@ it.each([
         clientCapabilities: clientCapabilitiesForAdapter("codex"),
       });
 
-      expect(init.agentInfo?.version).toBe("2.2.2");
+      expect(init.agentInfo?.version).toBe("2.9.0");
+      expect(init.protocolVersion).toBe(1);
       const { sessionId } = await connection.newSession({
         cwd,
-        mcpServers: [],
+        mcpServers:
+          mode === "success"
+            ? [
+                {
+                  name: "path-mcp",
+                  command: "node",
+                  args: ["--version"],
+                  env: [],
+                },
+              ]
+            : [],
       });
       const result = connection.prompt({
         sessionId,
