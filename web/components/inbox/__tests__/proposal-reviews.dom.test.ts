@@ -14,7 +14,8 @@ import {
 import { ProposalReviews } from "@/components/inbox/proposal-reviews";
 
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
-const translate = (key: string): string => key;
+const translate = (key: string, values?: { count?: number }): string =>
+  key === "reviewCount" ? `${key}:${values?.count}` : key;
 
 vi.mock("next-intl", () => ({
   useTranslations: () => translate,
@@ -305,6 +306,123 @@ it("keeps the retry control visible when attention reconnects after a transient 
   await click("retry");
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(container.textContent).toContain("unavailable");
+});
+
+it("refreshes the scoped History rows and total after selected review withdrawal", async () => {
+  const withdrawn = {
+    ...first,
+    allowed: [],
+    domainState: "accepted",
+    outcomeAvailable: true,
+  };
+  const remaining = { ...withdrawn, id: second.id, title: second.title };
+  const details = "/api/inbox/reviews/vault/proposal-1";
+  const history = new URLSearchParams({
+    view: "history",
+    kind: "vault",
+    projectId: "fixture",
+    agentId: "reviewed-agent",
+    cursor: "retained-page",
+  });
+  let closed = false;
+  let delayPreviousPage = false;
+  let previousPageSignal: AbortSignal | null | undefined;
+  let releasePreviousPage: (response: Response) => void = () => {};
+  const previousPage = new Promise<Response>((resolve) => {
+    releasePreviousPage = resolve;
+  });
+  const followingPage = new URLSearchParams(history);
+
+  followingPage.set("cursor", "different-page");
+  const fetcher = vi.fn<
+    (url: string, options: RequestInit) => Promise<Response>
+  >(async (url, options) => {
+    if (url === details)
+      return closed
+        ? new Response(null, { status: 404 })
+        : Response.json({
+            ...withdrawn,
+            summary: "Protected prior detail",
+            detail: {
+              operationId: "reviewed-1",
+              changeCount: 1,
+              vaultHref: null,
+            },
+            decision: {
+              by: null,
+              at: null,
+              reason: null,
+              reviewedVersion: "1",
+            },
+            outcome: null,
+            nextCursor: null,
+          });
+    if (url === `/api/inbox/reviews?${followingPage}`)
+      return Response.json({ items: [], total: 0, nextCursor: null });
+    expect(url).toBe(`/api/inbox/reviews?${history}`);
+    if (delayPreviousPage) {
+      previousPageSignal = options.signal;
+
+      return previousPage;
+    }
+
+    return Response.json({
+      items: [remaining],
+      total: 6,
+      nextCursor: "next-authorized-page",
+    });
+  });
+
+  const renderHistory = (cursor: string) =>
+    root.render(
+      createElement(
+        AttentionReviewProvider,
+        null,
+        createElement(ProposalReviews, {
+          page: { items: [withdrawn], nextCursor: "stale-next-page", total: 7 },
+          filters: {
+            view: "history",
+            kind: "vault",
+            projectId: "fixture",
+            agentId: "reviewed-agent",
+            cursor,
+          },
+          initial: { kind: withdrawn.kind, id: withdrawn.id },
+          workspace: true,
+        }),
+        createElement(InvalidateReview),
+      ),
+    );
+
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => renderHistory("retained-page"));
+  expect(container.querySelector("li")?.textContent).toContain(withdrawn.title);
+  expect(container.textContent).toContain("reviewCount:7");
+
+  closed = true;
+  await click("invalidate");
+
+  expect(container.textContent).toContain("unavailable");
+  expect(container.textContent).not.toContain("Protected prior detail");
+  expect(container.textContent).not.toContain(withdrawn.title);
+  expect(container.querySelector("li")?.textContent).toContain(remaining.title);
+  expect(container.textContent).toContain("reviewCount:6");
+  expect(
+    container.querySelector('a[href*="next-authorized-page"]'),
+  ).not.toBeNull();
+  expect(refresh).not.toHaveBeenCalled();
+
+  delayPreviousPage = true;
+  await click("invalidate");
+  await act(async () => renderHistory("different-page"));
+  await act(async () =>
+    releasePreviousPage(
+      Response.json({ items: [remaining], total: 6, nextCursor: null }),
+    ),
+  );
+  expect(previousPageSignal?.aborted).toBe(true);
+  expect(container.textContent).not.toContain(remaining.title);
+  expect(container.textContent).toContain("reviewCount:0");
 });
 
 afterEach(() => {

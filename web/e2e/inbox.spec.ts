@@ -319,6 +319,17 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     });
 
     await observer.goto(`/knowledge/reviews?${history}`);
+    const historyList = observer.getByRole("region", {
+      name: "Знания и память",
+      exact: true,
+    });
+
+    await expect(
+      historyList.getByRole("listitem").filter({ hasText: pathname }),
+    ).toHaveCount(1);
+    await expect(
+      historyList.getByText("Предложений: 1", { exact: true }),
+    ).toBeVisible();
     await expect(
       observer.getByText("+Permanent after review", { exact: false }),
     ).toBeVisible();
@@ -352,6 +363,12 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
         exact: true,
       }),
     ).toHaveCount(0);
+    await expect(
+      historyList.getByRole("listitem").filter({ hasText: pathname }),
+    ).toHaveCount(0);
+    await expect(
+      historyList.getByText("Предложений: 0", { exact: true }),
+    ).toBeVisible();
   } finally {
     await observer.close();
   }

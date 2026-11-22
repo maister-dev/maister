@@ -21,6 +21,7 @@ import { AgentMemoryPromotion } from "./agent-memory-promotion";
 import { AgentMemoryRedact } from "./agent-memory-redact";
 import {
   buildVaultCommand,
+  compareVaultRevision,
   displayIssue,
   memoryRoot,
   noteQuery,
@@ -41,17 +42,24 @@ type Selection = Readonly<{
   directory?: Directory;
   history?: History;
   revision?: RevisionDetail;
+  comparison?: Awaited<ReturnType<typeof compareVaultRevision>>;
   issue?: Issue;
 }>;
 
 function useVaultSelection(
   api: string,
   path: string,
-  params: { cursor: string; revision: string; history: string; noteId: string },
+  params: {
+    cursor: string;
+    revision: string;
+    history: string;
+    noteId: string;
+    compare: boolean;
+  },
   version: number,
 ) {
   const [state, setState] = useState<Selection>({ key: "" });
-  const { cursor, revision, history, noteId } = params;
+  const { cursor, revision, history, noteId, compare } = params;
   const key = JSON.stringify([
     api,
     path,
@@ -59,6 +67,7 @@ function useVaultSelection(
     revision,
     history,
     noteId,
+    compare,
     version,
   ]);
 
@@ -89,9 +98,19 @@ function useVaultSelection(
             return undefined;
           throw error;
         });
+
+        if (
+          selected &&
+          ((stableNoteId && selected.revision.noteId !== stableNoteId) ||
+            (page &&
+              (page.kind !== "note" ||
+                selected.revision.noteId !== page.noteId)))
+        )
+          throw new VaultRequestError({ code: "PRECONDITION", status: 404 });
+
         const historyNoteId =
           stableNoteId ?? (page?.kind === "note" ? page.noteId : undefined);
-        const [directory, revisions] = await Promise.all([
+        const [directory, revisions, comparison] = await Promise.all([
           page?.kind === "directory"
             ? page
             : page
@@ -106,16 +125,16 @@ function useVaultSelection(
                 options,
               )
             : undefined,
+          compare && page?.kind === "note" && selected?.content != null
+            ? compareVaultRevision(
+                api,
+                page,
+                selected.content,
+                selected.revision.hash,
+                controller.signal,
+              )
+            : undefined,
         ]);
-
-        if (
-          selected &&
-          ((stableNoteId && selected.revision.noteId !== stableNoteId) ||
-            (page &&
-              (page.kind !== "note" ||
-                selected.revision.noteId !== page.noteId)))
-        )
-          throw new VaultRequestError({ code: "PRECONDITION", status: 404 });
 
         if (!controller.signal.aborted)
           setState({
@@ -124,6 +143,7 @@ function useVaultSelection(
             directory,
             history: revisions,
             revision: selected,
+            comparison,
           });
       } catch (error) {
         if (!controller.signal.aborted)
@@ -133,7 +153,7 @@ function useVaultSelection(
     void load();
 
     return () => controller.abort();
-  }, [api, key, path, cursor, revision, history, noteId]);
+  }, [api, key, path, cursor, revision, history, noteId, compare]);
 
   return state.key === key ? state : null;
 }
@@ -191,14 +211,15 @@ export function AgentMemoryControl({
     api,
     requestedPath,
     {
-      cursor: search.get("memoryCursor") ?? "",
+      cursor: compare ? "" : (search.get("memoryCursor") ?? ""),
+      compare,
       revision: search.get("memoryRevision") ?? "",
       history: search.get("memoryHistoryCursor") ?? "",
       noteId: search.get("memoryNoteId") ?? "",
     },
     version,
   );
-  const { page, directory, history, revision } = data ?? {};
+  const { page, directory, history, revision, comparison } = data ?? {};
   const path = page?.path ?? revision?.revision.path ?? requestedPath;
   const noteId =
     page?.kind === "note" ? page.noteId : revision?.revision.noteId;
@@ -513,21 +534,24 @@ export function AgentMemoryControl({
                   : ""}
               </p>
             ) : null}
-            {compare && revision && page?.kind === "note" ? (
+            {comparison ? (
               <div>
-                <p className="text-xs text-mute">{t("comparisonLimit")}</p>
+                <p className="text-sm">{t(comparison.status)}</p>
+                {comparison.truncated ? (
+                  <p className="text-xs text-mute">{t("comparisonLimit")}</p>
+                ) : null}
                 <div className="grid gap-3 lg:grid-cols-2">
                   <pre
                     aria-label={t("history")}
                     className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-sm"
                   >
-                    {revision.content?.slice(0, 32768)}
+                    {comparison.previousPrefix}
                   </pre>
                   <pre
                     aria-label={t("current")}
                     className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-sm"
                   >
-                    {page.content.slice(0, 32768)}
+                    {comparison.currentPrefix}
                   </pre>
                 </div>
               </div>

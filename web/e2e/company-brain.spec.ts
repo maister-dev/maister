@@ -173,14 +173,71 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
       "Проверьте обязательные поля и ссылки на доказательства.",
     );
     await retained.check();
-    await page
-      .getByRole("button", { name: "Отправить предложение", exact: true })
-      .click();
+    const source = await page.request.post("/api/knowledge/sources", {
+      data: {
+        owner: { kind: "project", projectId },
+        title: "Supporting but not independent evidence",
+        content: "The maintenance log records the observed timing.",
+        idempotencyKey: randomUUID(),
+      },
+    });
+
+    expect(source.status(), await source.text()).toBe(201);
+    const { id: witnessId } = z
+      .object({ id: z.string() })
+      .parse(await source.json());
+    const reference = page.getByRole("textbox", {
+      name: "Идентификатор точного доказательства",
+      exact: true,
+    });
+    const submit = page.getByRole("button", {
+      name: "Отправить предложение",
+      exact: true,
+    });
+
+    await reference.fill(witnessId);
+    await expect(submit).toBeDisabled();
+    const witnessRoute = `**/api/knowledge/witnesses/${witnessId}`;
+    const blockedRead = Promise.withResolvers<void>();
+
+    await page.route(witnessRoute, async (route) => {
+      await blockedRead.promise;
+      await route.abort();
+    });
+    const inspect = page.getByRole("button", {
+      name: "Просмотреть доказательство",
+      exact: true,
+    });
+
+    try {
+      await inspect.click();
+      await expect(reference).toBeDisabled();
+      await expect(submit).toBeDisabled();
+    } finally {
+      blockedRead.resolve();
+    }
+    await expect(reference).toBeEnabled();
+    await expect(submit).toBeDisabled();
+    await reference.clear();
+    await expect(submit).toBeEnabled();
+
+    await page.unroute(witnessRoute);
+    await reference.fill(witnessId);
+    const read = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/knowledge/witnesses/${witnessId}`),
+    );
+
+    await inspect.click();
+    expect((await read).ok()).toBe(true);
+    await submit.click();
     await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
     const correctionId = page.url().split("/").at(-1)!;
     const retainedDraft = z
       .object({
         draft: z.object({
+          evidence: z.array(
+            z.object({ reference: z.object({ id: z.string() }) }),
+          ),
           missingEvidence: z.array(
             z.object({ state: z.string(), reason: z.string() }),
           ),
@@ -196,6 +253,7 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
       ).draft;
 
     expect(retainedDraft).toMatchObject({
+      evidence: [{ reference: { id: witnessId } }],
       missingEvidence: [{ state: "absent", reason: missing }],
       limitations: [authored],
     });

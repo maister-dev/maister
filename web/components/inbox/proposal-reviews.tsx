@@ -6,7 +6,7 @@ import type {
 } from "@/lib/queries/inbox-review-actions";
 import type {
   listProposalReviews,
-  ReviewKind,
+  ReviewFilter,
   ReviewSelector,
 } from "@/lib/queries/knowledge-memory-reviews";
 
@@ -16,10 +16,14 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-import { useWatchedReview } from "@/components/attention/attention-review-watch";
+import {
+  useAttentionReviewWatch,
+  useWatchedReview,
+} from "@/components/attention/attention-review-watch";
 import { ProposalReviewDetails } from "@/components/inbox/proposal-review-details";
 
 type Page = Awaited<ReturnType<typeof listProposalReviews>>;
+type VisibleFilters = Omit<ReviewFilter, "limit">;
 type ReviewItem = Page["items"][number];
 type ReviewDetail = Awaited<ReturnType<typeof getProposalReviewDetail>>;
 type ReviewReceipt = Awaited<ReturnType<typeof decideProposalReview>>;
@@ -31,12 +35,72 @@ type ReviewPageRequest = {
   outcomeCursors: readonly string[];
 };
 type DetailFailure = "unavailable" | "retryable";
+type HistoryRead = { kind: "ready"; page: Page } | { kind: DetailFailure };
 type Outcome = "applied" | "rejected" | "conflict" | "unavailable" | "refused";
 type ReviewSubmission = Readonly<{
   body: string;
   titles: readonly string[];
 }>;
 const kinds = ["vault", "brain", "knowledge"] as const;
+const emptyPage: Page = { items: [], nextCursor: null, total: 0 };
+
+function historyReadPath(filters: VisibleFilters): string | null {
+  if (filters.view !== "history") return null;
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined) query.set(key, value);
+  }
+
+  return `/api/inbox/reviews?${query}`;
+}
+
+function useRefreshedHistory(renderedPage: Page, filters: VisibleFilters) {
+  const path = historyReadPath(filters);
+  const invalidation = useAttentionReviewWatch()?.invalidation ?? 0;
+  const [retry, setRetry] = useState(0);
+  const [result, setResult] = useState<{
+    path: string;
+    renderedPage: Page;
+    read: HistoryRead;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!path || invalidation === 0) return;
+    const controller = new AbortController();
+    const store = (read: HistoryRead) => {
+      if (!controller.signal.aborted) setResult({ path, renderedPage, read });
+    };
+
+    void fetch(path, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (response.ok) {
+          store({ kind: "ready", page: (await response.json()) as Page });
+        } else {
+          store({
+            kind:
+              response.status === 401 || response.status === 403
+                ? "unavailable"
+                : "retryable",
+          });
+        }
+      })
+      .catch(() => store({ kind: "retryable" }));
+
+    return () => controller.abort();
+  }, [invalidation, path, renderedPage, retry]);
+
+  const read =
+    result?.path === path && result.renderedPage === renderedPage
+      ? result.read
+      : null;
+
+  return {
+    page: read ? (read.kind === "ready" ? read.page : emptyPage) : renderedPage,
+    problem: read?.kind === "ready" ? null : (read?.kind ?? null),
+    retry: () => setRetry((previous) => previous + 1),
+  };
+}
 
 function followsReview(row: ReviewPosition, selected: ReviewPosition): boolean {
   if (row.createdAt !== selected.createdAt)
@@ -458,20 +522,13 @@ function ReviewPreview({
 }
 
 export function ProposalReviews({
-  page,
+  page: renderedPage,
   filters,
   initial,
   workspace = false,
 }: {
   page: Page;
-  filters: {
-    kind?: ReviewKind;
-    projectId?: string;
-    companyId?: string;
-    agentId?: string;
-    view?: "pending" | "history";
-    cursor?: string;
-  };
+  filters: VisibleFilters;
   initial?: ReviewSelector;
   workspace?: boolean;
 }) {
@@ -479,6 +536,11 @@ export function ProposalReviews({
   const common = useTranslations("common");
   const router = useRouter();
   const knowledge = useTranslations("knowledge");
+  const {
+    page,
+    problem: historyProblem,
+    retry: retryHistory,
+  } = useRefreshedHistory(renderedPage, filters);
   const [selected, setSelected] = useState<string[]>([]);
   const [modalSelection, setModalSelection] = useState<ReviewSelector | null>(
     initial ?? null,
@@ -645,9 +707,11 @@ export function ProposalReviews({
         >
           {t("history")}
         </Link>
-        <span className="text-mute">
-          {t("reviewCount", { count: page.total })}
-        </span>
+        {historyProblem ? null : (
+          <span aria-live="polite" className="text-mute">
+            {t("reviewCount", { count: page.total })}
+          </span>
+        )}
       </nav>
       <nav aria-label={t("filter")} className="flex flex-wrap gap-3 text-sm">
         <Link
@@ -669,6 +733,20 @@ export function ProposalReviews({
           <Link href={href({})}>{t("clear")}</Link>
         ) : null}
       </nav>
+      {historyProblem ? (
+        <div className="flex flex-wrap items-center gap-2" role="alert">
+          {t(
+            historyProblem === "retryable"
+              ? "historyReadFailed"
+              : "historyUnavailable",
+          )}
+          {historyProblem === "retryable" ? (
+            <Button size="sm" variant="secondary" onPress={retryHistory}>
+              {common("retry")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <div
         className={
           workspace && preview
@@ -792,11 +870,11 @@ export function ProposalReviews({
                 </Link>
               ) : null}
             </>
-          ) : (
+          ) : !historyProblem ? (
             <p className="text-sm text-mute" role="status">
               {t(filters.view === "history" ? "emptyHistory" : "empty")}
             </p>
-          )}
+          ) : null}
           {failure ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="alert">{t("refused")}</p>

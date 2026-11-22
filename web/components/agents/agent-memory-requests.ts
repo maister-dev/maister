@@ -5,6 +5,8 @@ import type {
   vaultRevisionDetail,
 } from "@/lib/agent-memory-vault/history";
 
+import { truncateUtf16 } from "@/lib/utf16";
+
 export const memoryRoot = "/memories";
 export type View = Awaited<ReturnType<typeof viewAgentMemory>>;
 export type Directory = Extract<View, { kind: "directory" }>;
@@ -68,6 +70,53 @@ export async function vaultRequest<T>(
   }
 
   return body as T;
+}
+
+const comparisonUnits = 32_768;
+
+export async function compareVaultRevision(
+  api: string,
+  first: Extract<View, { kind: "note" }>,
+  historicalContent: string,
+  historicalHash: string | null,
+  signal: AbortSignal,
+) {
+  let current = first.content;
+  let cursor = first.nextCursor;
+
+  while (cursor && current.length < comparisonUnits) {
+    const params = new URLSearchParams({ noteId: first.noteId, cursor });
+    const page = await vaultRequest<View>(`${api}/notes?${params}`, { signal });
+
+    if (
+      page.kind !== "note" ||
+      page.noteId !== first.noteId ||
+      page.revisionId !== first.revisionId ||
+      page.hash !== first.hash
+    )
+      throw new VaultRequestError({ code: "CONFLICT", status: 409 });
+    current += page.content;
+    cursor = page.nextCursor;
+  }
+
+  const previousPrefix = truncateUtf16(historicalContent, comparisonUnits);
+  const currentPrefix = truncateUtf16(current, comparisonUnits);
+  const status =
+    historicalHash === first.hash
+      ? "comparisonIdentical"
+      : previousPrefix === currentPrefix
+        ? "comparisonDifferentAfterPreview"
+        : "comparisonDifferent";
+
+  return {
+    previousPrefix,
+    currentPrefix,
+    status,
+    truncated:
+      cursor !== null ||
+      currentPrefix.length < current.length ||
+      previousPrefix.length < historicalContent.length,
+  } as const;
 }
 
 export function noteQuery(base: string, path: string, cursor?: string): string {

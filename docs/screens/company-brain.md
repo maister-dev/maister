@@ -22,7 +22,9 @@ Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 
 Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale).
 
-After a decision, **Next proposal** continues from the selected review's position in the scoped queue. The open detail is revalidated on attention reconnect and review invalidation. A withdrawn source clears the previous preview and its result links. Vault outcomes page applied revisions independently of the proposed changes.
+Revision comparison starts at the beginning of both note versions. Each column shows up to 32,768 UTF-16 code units and preserves complete characters. The content hashes indicate whether the entire note texts match, including any omitted suffix. Reading a continuation of the current note requires the same revision and current access.
+
+After a decision, **Next proposal** continues from the selected review's position in the scoped queue. The open detail is revalidated on attention reconnect and review invalidation. In History, the same signal reloads the current filtered page and total. A withdrawn source clears the row, preview and result links. Vault outcomes page applied revisions independently of the proposed changes.
 
 ## JTBD
 
@@ -84,7 +86,8 @@ confirmation panel selects available supporting witnesses and requires a
 reason. Source inspection shows exact identity/version/digest, original source
 group, availability and a bounded excerpt. The correction form retains original
 witness references and allows explicit retention/removal of recorded limitations
-and missing-evidence declarations.
+and missing-evidence declarations. A newly entered witness ID blocks submission
+until inspection succeeds or the reviewer clears the field.
 
 Company authority history is view-only. New grants use a dedicated form with
 searchable current recipients and explicit actions/classes. Revocation opens the

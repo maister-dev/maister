@@ -57,6 +57,7 @@ export function KnowledgeProposalForm({
   const [witnessStatus, setWitnessStatus] = useState<
     "idle" | "loading" | "unavailable"
   >("idle");
+  const needsWitnessInspection = witnessId.trim() !== "" && witness === null;
 
   async function inspectWitness() {
     if (!witnessId.trim() || witnessStatus === "loading") return;
@@ -87,7 +88,7 @@ export function KnowledgeProposalForm({
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (busy) return;
+    if (busy || needsWitnessInspection) return;
     const form = new FormData(event.currentTarget);
 
     setBusy(true);
@@ -356,6 +357,11 @@ export function KnowledgeProposalForm({
           {witnessStatus === "unavailable" ? (
             <p role="alert">{t("unavailable")}</p>
           ) : null}
+          {needsWitnessInspection ? (
+            <p className="text-sm text-mute" role="status">
+              {t("inspectWitnessBeforeSubmit")}
+            </p>
+          ) : null}
           {witness ? (
             <div className="space-y-2 text-sm">
               <Link
@@ -452,7 +458,9 @@ export function KnowledgeProposalForm({
       ) : null}
       <div className="flex items-center gap-4">
         <Button
-          isDisabled={busy || (!record && owners.length === 0)}
+          isDisabled={
+            busy || needsWitnessInspection || (!record && owners.length === 0)
+          }
           type="submit"
         >
           {t(busy ? "busy" : "submitProposal")}
