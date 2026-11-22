@@ -85,8 +85,10 @@ Proposal detail keeps publication state and its evidence together. The separate
 confirmation panel selects available supporting witnesses and requires a
 reason. Source inspection shows exact identity/version/digest, original source
 group, availability and a bounded excerpt. The correction form retains original
-witness references and allows explicit retention/removal of recorded limitations
-and missing-evidence declarations. A newly entered witness ID blocks submission
+witness references, including their versions and digests. Selecting another
+relation for the same witness keeps both links. Selecting an existing relation
+keeps one copy. Authors can retain or remove recorded limitations and
+missing-evidence declarations. A newly entered witness ID blocks submission
 until inspection succeeds or the reviewer clears the field.
 
 Company authority history is view-only. New grants use a dedicated form with

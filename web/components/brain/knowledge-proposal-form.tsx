@@ -2,6 +2,7 @@
 
 import type { FormEvent, ReactElement } from "react";
 import type { KnowledgeOwnerChoice } from "@/lib/brain/knowledge-owner-selection";
+import type { KnowledgeDraft } from "@/lib/brain/knowledge-types";
 import type {
   KnowledgeRecordDto,
   KnowledgeWitnessDto,
@@ -33,6 +34,40 @@ import { useIsClient } from "@/lib/use-is-client";
 
 const fieldClass =
   "block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink";
+
+type WitnessLink = Extract<
+  KnowledgeRecordDto["evidence"][number],
+  { witness: KnowledgeWitnessDto }
+>;
+
+function proposalEvidence(
+  links: readonly WitnessLink[],
+): KnowledgeDraft["evidence"] {
+  const evidence: KnowledgeDraft["evidence"] = [];
+
+  for (const { witness, relation } of links) {
+    if (
+      evidence.some(
+        (link) =>
+          link.reference.id === witness.id && link.relation === relation,
+      )
+    )
+      continue;
+    evidence.push({
+      relation,
+      reference: {
+        kind: "witness",
+        id: witness.id,
+        ...(witness.sourceVersion === null
+          ? {}
+          : { version: witness.sourceVersion }),
+        ...(witness.sha256 === null ? {} : { sha256: witness.sha256 }),
+      },
+    });
+  }
+
+  return evidence;
+}
 
 export function KnowledgeProposalForm({
   owners,
@@ -105,42 +140,16 @@ export function KnowledgeProposalForm({
         throw new MaisterError("CONFIG", "Select the knowledge owner");
       const sourceText = String(form.get("sourceText") ?? "");
       const sourceTitle = String(form.get("sourceTitle") ?? "");
-      const evidence =
-        record?.evidence.flatMap((entry) =>
-          "witness" in entry
-            ? [
-                {
-                  relation: entry.relation,
-                  reference: {
-                    kind: "witness" as const,
-                    id: entry.witness.id,
-                    ...(entry.witness.sourceVersion === null
-                      ? {}
-                      : { version: entry.witness.sourceVersion }),
-                    ...(entry.witness.sha256 === null
-                      ? {}
-                      : { sha256: entry.witness.sha256 }),
-                  },
-                },
-              ]
-            : [],
-        ) ?? [];
+      const links =
+        record?.evidence.filter((entry) => "witness" in entry) ?? [];
 
-      if (
-        witness &&
-        !evidence.some((entry) => entry.reference.id === witness.id)
-      ) {
-        evidence.push({
+      if (witness) {
+        links.push({
           relation:
             form.get("witnessRelation") === "supports"
               ? "supports"
               : "derived_from",
-          reference: {
-            kind: "witness",
-            id: witness.id,
-            ...(witness.sourceVersion && { version: witness.sourceVersion }),
-            ...(witness.sha256 && { sha256: witness.sha256 }),
-          },
+          witness,
         });
       }
 
@@ -161,18 +170,9 @@ export function KnowledgeProposalForm({
           knowledgeWitnessSchema,
         );
 
-        evidence.push({
-          relation: "supports",
-          reference: {
-            kind: "witness",
-            id: witness.id,
-            ...(witness.sourceVersion === null
-              ? {}
-              : { version: witness.sourceVersion }),
-            ...(witness.sha256 === null ? {} : { sha256: witness.sha256 }),
-          },
-        });
+        links.push({ relation: "supports", witness });
       }
+      const evidence = proposalEvidence(links);
       const missing = String(form.get("missingReason") ?? "").trim();
       const missingEvidence = [
         ...(record?.missingEvidence.filter((_entry, index) =>

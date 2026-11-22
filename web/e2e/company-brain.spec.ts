@@ -183,8 +183,12 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
     });
 
     expect(source.status(), await source.text()).toBe(201);
-    const { id: witnessId } = z
-      .object({ id: z.string() })
+    const {
+      id: witnessId,
+      sourceVersion,
+      sha256,
+    } = z
+      .object({ id: z.string(), sourceVersion: z.string(), sha256: z.string() })
       .parse(await source.json());
     const reference = page.getByRole("textbox", {
       name: "Идентификатор точного доказательства",
@@ -257,6 +261,68 @@ test("E2E-CBU-01 correction retains an explicit missing-evidence declaration and
       missingEvidence: [{ state: "absent", reason: missing }],
       limitations: [authored],
     });
+
+    const publication = await page.request.post(
+      `/api/knowledge/proposals/${correctionId}/decision`,
+      {
+        data: {
+          expectedRevision: 1,
+          decision: "accept",
+          reason: "Retain the inspected source for subsequent corrections.",
+          idempotencyKey: randomUUID(),
+        },
+      },
+    );
+
+    expect(publication.status(), await publication.text()).toBe(200);
+    const exactReference = {
+      kind: "witness",
+      id: witnessId,
+      version: sourceVersion,
+      sha256,
+    };
+
+    for (const relation of ["derived_from", "supports"] as const) {
+      await page.goto(`/knowledge/${recordId}`);
+      await page
+        .getByRole("link", { name: "Предложить исправление", exact: true })
+        .click();
+      await page
+        .getByLabel("Утверждение", { exact: true })
+        .fill(`${assertion}: ${relation}`);
+      await reference.fill(witnessId);
+      await inspect.click();
+      await page.getByLabel("Связь доказательства").selectOption(relation);
+      const submission = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/knowledge/proposals",
+      );
+
+      await submit.click();
+      const relations =
+        relation === "derived_from"
+          ? ["derived_from"]
+          : ["derived_from", "supports"];
+      const expectedLinks = relations.map((link) => ({
+        relation: link,
+        reference: exactReference,
+      }));
+
+      expect((await submission).postDataJSON()).toMatchObject({
+        content: { evidence: expectedLinks },
+      });
+      await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
+      const persisted = await pool.query<{ links: unknown[] }>(
+        "SELECT draft->'evidence' AS links FROM brain_proposals WHERE id=$1",
+        [page.url().split("/").at(-1)],
+      );
+
+      expect(persisted.rows[0].links).toHaveLength(expectedLinks.length);
+      expect(persisted.rows[0].links).toEqual(
+        expect.arrayContaining(expectedLinks),
+      );
+    }
   } finally {
     await pool.end();
   }
