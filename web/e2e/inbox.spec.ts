@@ -34,6 +34,7 @@ const MOCK_INBOX_CONTEXT = {
 };
 
 test("AV-04 applies a webhook run's pending note through Inbox while the amber count stays fixed", async ({
+  browser,
   page,
 }) => {
   test.setTimeout(150_000);
@@ -45,6 +46,7 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
   const reviewerId = randomUUID();
   const reviewerEmail = `vault-${reviewerId}@example.test`;
   const { adminEmail, adminPassword } = loadFixtures();
+  const administratorState = await page.context().storageState();
 
   await withE2EDb(async (pool) => {
     await pool.query(
@@ -337,17 +339,27 @@ test("AV-04 applies a webhook run's pending note through Inbox while the amber c
     const revisionId = exact.get("memoryRevision");
 
     expect(revisionId).toBeTruthy();
-    const redacted = await page.request.post(
-      `/api/agent-memory/revisions/${revisionId}/redact`,
-      {
+    const administrator = await browser.newContext({
+      storageState: administratorState,
+    });
+
+    try {
+      const redactionUrl = new URL(
+        `/api/agent-memory/revisions/${revisionId}/redact`,
+        page.url(),
+      );
+      const redacted = await administrator.request.post(redactionUrl.href, {
         data: {
           reason: "Withdraw the reviewed source from the open history view",
           requestKey: `inbox-review-redact-${projectId}`,
         },
-      },
-    );
+      });
 
-    expect(redacted.ok()).toBe(true);
+      expect(redacted.status(), await redacted.text()).toBe(200);
+    } finally {
+      await administrator.close();
+    }
+
     await expect(
       observer.getByText("+Permanent after review", { exact: false }),
     ).toHaveCount(0, { timeout: 45_000 });

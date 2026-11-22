@@ -702,10 +702,7 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   const corrected = `${source} Preserve its original version witness.`;
 
   await surface.getByLabel("Утверждение", { exact: true }).fill(corrected);
-  await submitKnowledgeProposal(
-    page,
-    "Отправить предложение",
-  );
+  await submitKnowledgeProposal(page, "Отправить предложение");
 
   await expect(
     surface.getByText("Ожидает рассмотрения", { exact: true }),
