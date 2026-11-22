@@ -3193,7 +3193,15 @@ export async function buildAgentPrompt(
   if (taskBlock) sections.push(taskBlock);
   if (run.taskQualificationSnapshot?.role === "qualifier")
     sections.push(
-      `## Qualification evidence\nTask: ${run.taskQualificationSnapshot.taskId}\nTarget: ${run.taskQualificationSnapshot.target}\nPinned repository SHA: ${run.taskQualificationSnapshot.sha}\nInspect this read-only checkout. Read current task_get revisions and confirmed clarifications before submitting a qualification candidate. Reference its qualificationId in the final operational result; a candidate is not accepted work.`,
+      [
+        "## Qualification evidence",
+        `Task: ${run.taskQualificationSnapshot.taskId}`,
+        `Target: ${run.taskQualificationSnapshot.target}`,
+        `Pinned repository SHA: ${run.taskQualificationSnapshot.sha}`,
+        "Inspect this read-only checkout. Read current task_get revisions and confirmed clarifications before submitting a qualification candidate.",
+        "Use `flow_list` and `runner_list` with the bound project slug for delivery routing. These are the routing catalogs available to this Run credential.",
+        "Reference its qualificationId in the final operational result; a candidate is not accepted work.",
+      ].join("\n"),
     );
   if (
     run.taskQualificationSnapshot?.role === "qualifier" &&
@@ -4056,6 +4064,7 @@ export async function resolveAgentProfileMcpServers(args: {
 // not runnable in this deployment — the caller decides whether that is fatal.
 export function agentFacadeMcpServer(
   tokenSecret: string,
+  toolset: "project-run" | "company" | "vault" | undefined,
 ): AgentMcpServer | null {
   const launch = resolveFacadeLaunch();
 
@@ -4071,6 +4080,7 @@ export function agentFacadeMcpServer(
       MAISTER_API_BASE_URL:
         process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000",
       MAISTER_PROJECT_TOKEN: tokenSecret,
+      ...(toolset === undefined ? {} : { MAISTER_MCP_TOOLSET: toolset }),
     },
   };
 }
@@ -5609,7 +5619,10 @@ async function driveAgentSession(
       // burns tokens and a concurrency slot only to give up (the stand bug).
       const appendFacade = (secret: string): AgentMcpServer[] => {
         if (!effective.parsed.platformMcp) return [];
-        const facadeServer = agentFacadeMcpServer(secret);
+        const facadeServer = agentFacadeMcpServer(
+          secret,
+          companyContext ? undefined : "project-run",
+        );
 
         if (!facadeServer)
           throw new MaisterError(

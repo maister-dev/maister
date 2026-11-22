@@ -1671,7 +1671,7 @@ async function runNewSession(
           nodeAttemptId: ctx.nodeAttemptId,
           db: ctx.db,
         });
-        const facade = agentFacadeMcpServer(credential.secret);
+        const facade = agentFacadeMcpServer(credential.secret, "vault");
 
         if (!facade)
           throw new MaisterError(
@@ -1680,7 +1680,7 @@ async function runNewSession(
           );
         sessionCapabilities.mcpServers = [
           ...(sessionCapabilities.mcpServers ?? []),
-          { ...facade, env: { ...facade.env, MAISTER_MCP_TOOLSET: "vault" } },
+          facade,
         ];
       }
 

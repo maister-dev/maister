@@ -77,6 +77,16 @@ export const LIBRARIAN_TOOLSET = [
 ] as const;
 
 export const TOOLSETS = {
+  // Project Run tokens use the flow and runner catalogs for routing. The
+  // project directory and membership tools require projects:read.
+  "project-run": {
+    exclude: [
+      "project_list",
+      "project_get",
+      "project_members_list",
+      ...PERSONAL_KNOWLEDGE_TOOLS,
+    ],
+  },
   company: COMPANY_FLOW_TOOL_CONTRACT.map((tool) => tool.name),
   librarian: LIBRARIAN_TOOLSET,
   installation: installationToolNames(Object.keys(INSTALLATION_SCOPE_TOOLS)),
@@ -93,7 +103,10 @@ export const TOOLSETS = {
     "memory_backlinks",
     "memory_tags",
   ],
-} as const satisfies Record<string, readonly string[]>;
+} as const satisfies Record<
+  string,
+  readonly string[] | { exclude: readonly string[] }
+>;
 
 export type ToolsetName = keyof typeof TOOLSETS;
 
