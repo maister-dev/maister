@@ -28,7 +28,10 @@ class AttentionEventSource extends EventTarget {
     AttentionEventSource.sources.push(this);
   }
 
-  tick(changed: AttentionTickFrame["changed"]): void {
+  tick(
+    changed: AttentionTickFrame["changed"],
+    review?: Pick<AttentionTickFrame, "reviews" | "reviewVersion">,
+  ): void {
     const frame: AttentionTickFrame = {
       type: "attention.tick",
       id: "1789387200000",
@@ -37,6 +40,7 @@ class AttentionEventSource extends EventTarget {
       updates: 0,
       changed,
       projectIds: ["project-1"],
+      ...review,
     };
 
     this.dispatchEvent(
@@ -87,6 +91,43 @@ afterEach(() => {
 });
 
 describe("app attention refresh", () => {
+  it("rechecks a watched detail without refreshing the shell when the pending queue is unchanged", () => {
+    act(() => root.unmount());
+    AttentionEventSource.sources = [];
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        createElement(
+          AttentionReviewProvider,
+          null,
+          createElement(AttentionLiveRefresh, {
+            labels,
+            since: {
+              cursor: "1789387100000",
+              decisions: 1,
+              updates: 0,
+              reviews: 1,
+              reviewVersion: "queue-v1",
+            },
+          }),
+          createElement(ActiveReview),
+        ),
+      ),
+    );
+    const selected = AttentionEventSource.sources.at(-1)!;
+
+    act(() => selected.onopen?.());
+    act(() =>
+      selected.tick(["reviews"], { reviews: 1, reviewVersion: "queue-v1" }),
+    );
+    expect(container.querySelector("output")?.textContent).toBe("2");
+    expect(router.refresh).not.toHaveBeenCalled();
+    act(() =>
+      selected.tick(["reviews"], { reviews: 0, reviewVersion: "queue-v2" }),
+    );
+    expect(router.refresh).toHaveBeenCalledOnce();
+  });
+
   it("K13 revalidates the exact selected review on reconnect without a tick", () => {
     act(() => root.unmount());
     AttentionEventSource.sources = [];

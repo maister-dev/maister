@@ -14,7 +14,7 @@ import { Button, Modal, Input } from "@heroui/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { useWatchedReview } from "@/components/attention/attention-review-watch";
 import { ProposalReviewDetails } from "@/components/inbox/proposal-review-details";
@@ -67,15 +67,13 @@ function ReviewPreview({
   const invalidation = useWatchedReview(source);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [refreshingQueue, refreshQueue] = useTransition();
   const [command, setCommand] = useState<string | null>(null);
   const [showRevisions, setShowRevisions] = useState(false);
   const [failure, setFailure] = useState<
     "conflict" | "unavailable" | "retryable" | null
   >(null);
-  const [receipt, setReceipt] = useState<{
-    data: ReviewReceipt;
-    invalidation: number;
-  } | null>(null);
+  const [receiptId, setReceiptId] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const firstPage = useMemo<ReviewPageRequest>(
     () => ({
@@ -86,12 +84,18 @@ function ReviewPreview({
     [invalidation],
   );
   const [pageRequest, setRequest] = useState(firstPage);
-  const request =
-    pageRequest.invalidation === invalidation ? pageRequest : firstPage;
   const [result, setResult] = useState<{
-    request: typeof request;
+    request: ReviewPageRequest;
+    navigation: ReviewPageRequest;
     preview: ReviewDetail | DetailFailure;
   } | null>(null);
+  const retryPending =
+    result?.navigation === pageRequest && result.preview === "retryable";
+  const request = retryPending
+    ? result.request
+    : pageRequest.invalidation === invalidation
+      ? pageRequest
+      : firstPage;
   const preview = result?.request === request ? result.preview : null;
   const cursor = request.cursors.at(-1);
   const outcomeCursor = request.outcomeCursors.at(-1);
@@ -124,15 +128,16 @@ function ReviewPreview({
             : ("unavailable" as const),
       )
       .then((data) => {
-        if (!controller.signal.aborted) setResult({ request, preview: data });
+        if (!controller.signal.aborted)
+          setResult({ request, navigation: pageRequest, preview: data });
       })
       .catch(() => {
         if (!controller.signal.aborted)
-          setResult({ request, preview: "retryable" });
+          setResult({ request, navigation: pageRequest, preview: "retryable" });
       });
 
     return () => controller.abort();
-  }, [cursor, outcomeCursor, path, request]);
+  }, [cursor, outcomeCursor, pageRequest, path, request]);
 
   function reload() {
     setFailure(null);
@@ -167,14 +172,13 @@ function ReviewPreview({
         return;
       }
 
-      setReceipt({
-        data: (await response.json()) as ReviewReceipt,
-        invalidation,
-      });
+      const receipt = (await response.json()) as ReviewReceipt;
+
+      setReceiptId(receipt.receiptId);
       setCommand(null);
       setReason("");
       setRequest({ ...firstPage });
-      router.refresh();
+      refreshQueue(() => router.refresh());
     } catch {
       setFailure("retryable");
     } finally {
@@ -198,13 +202,9 @@ function ReviewPreview({
   }
 
   const title = detail?.title ?? t("preview");
-  const authorizedReceipt =
-    preview === null && receipt?.invalidation === invalidation
-      ? receipt.data
-      : null;
-  const outcome = detail?.outcome ?? authorizedReceipt?.outcome;
+  const outcome = refreshingQueue ? null : detail?.outcome;
   const nextReview = detail && outcome ? next(detail) : null;
-  const pending = detail?.domainState === "pending" && receipt === null;
+  const pending = detail?.domainState === "pending" && receiptId === null;
   const actionsDisabled = submitting || command !== null || failure !== null;
   const body = (
     <div className="space-y-3">
@@ -398,9 +398,9 @@ function ReviewPreview({
               ) : null}
             </details>
           ) : null}
-          {receipt ? (
+          {receiptId ? (
             <p className="break-all text-xs text-mute">
-              {t("receipt", { id: receipt.data.receiptId })}
+              {t("receipt", { id: receiptId })}
             </p>
           ) : null}
           {nextReview ? (

@@ -50,6 +50,8 @@ export interface AttentionTickFrame {
 export interface UseAttentionStreamResult {
   /** Monotonic count of frames received — the value a consumer effects on. */
   tick: number;
+  /** Frames that invalidate a server-rendered region, excluding detail-only changes. */
+  shellTick: number;
   /**
    * Regions the latest frame says moved. EMPTY on the connect-time snapshot;
    * consumers still refetch on that tick to catch changes since server render
@@ -118,12 +120,16 @@ export function useAttentionStream(
   review?: ReviewSelector | null,
 ): UseAttentionStreamResult {
   const [tick, setTick] = useState(0);
+  const [shellTick, setShellTick] = useState(0);
   const [changed, setChanged] = useState<AttentionTickFrame["changed"]>([]);
   const [liveness, setLiveness] =
     useState<RunStreamLifecycleKind>("connecting");
   const [reviewResync, setReviewResync] = useState(0);
   const reviewKind = review?.kind;
   const reviewId = review?.id;
+  const renderedReviews = since?.reviews;
+  const renderedReviewVersion = since?.reviewVersion;
+  const reviewRender = useRef<Pick<Counters, "reviews" | "reviewVersion">>({});
   const sourceRef = useRef<EventSource | null>(null);
   // Read once, at mount: later renders move the page, not this subscription —
   // a reconnect resumes from the last tick instead.
@@ -143,6 +149,21 @@ export function useAttentionStream(
   const lifecycleRef = useRef(initialRunStreamLifecycle);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reconnectKey, setReconnectKey] = useState(0);
+
+  useEffect(() => {
+    reviewRender.current = {
+      reviews: renderedReviews,
+      reviewVersion: renderedReviewVersion,
+    };
+    // Only the pending review pair is refreshed here. The replay cursor and
+    // other counters still advance exclusively with the tail.
+    if (
+      countersRef.current &&
+      renderedReviews !== undefined &&
+      renderedReviewVersion !== undefined
+    )
+      countersRef.current = { ...countersRef.current, ...reviewRender.current };
+  }, [renderedReviews, renderedReviewVersion]);
 
   const reconnect = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -192,6 +213,7 @@ export function useAttentionStream(
       if (reviewId !== undefined) setReviewResync((current) => current + 1);
     };
     source.addEventListener("attention.tick", (event) => {
+      if (sourceRef.current !== source) return;
       try {
         const frame = JSON.parse(
           (event as MessageEvent<string>).data,
@@ -199,6 +221,15 @@ export function useAttentionStream(
 
         setChanged(frame.changed);
         setTick((current) => current + 1);
+        const matchesRenderedReviewQueue =
+          frame.changed.length === 1 &&
+          frame.changed[0] === "reviews" &&
+          frame.reviews !== undefined &&
+          frame.reviewVersion !== undefined &&
+          frame.reviews === reviewRender.current.reviews &&
+          frame.reviewVersion === reviewRender.current.reviewVersion;
+
+        if (!matchesRenderedReviewQueue) setShellTick((current) => current + 1);
         if (reviewId !== undefined && frame.changed.includes("reviews"))
           setReviewResync((current) => current + 1);
 
@@ -268,5 +299,5 @@ export function useAttentionStream(
     };
   }, [reconnectKey, reviewKind, reviewId]);
 
-  return { tick, changed, liveness, reviewResync, reconnect };
+  return { tick, shellTick, changed, liveness, reviewResync, reconnect };
 }

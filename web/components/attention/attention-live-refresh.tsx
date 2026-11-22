@@ -33,7 +33,7 @@ export function AttentionLiveRefresh({
   const router = useRouter();
   const watch = useAttentionReviewWatch();
   const invalidateReview = watch?.invalidate;
-  const { tick, liveness, reconnect, reviewResync } = useAttentionStream(
+  const { shellTick, liveness, reconnect, reviewResync } = useAttentionStream(
     since,
     watch?.selection,
   );
@@ -48,13 +48,13 @@ export function AttentionLiveRefresh({
   }, [invalidateReview, reviewResync]);
 
   useEffect(() => {
-    if (refreshing || tick === seenRef.current) return;
-    seenRef.current = tick;
+    if (refreshing || shellTick === 0 || shellTick === seenRef.current) return;
+    seenRef.current = shellTick;
     // Every tick means something the page shows moved since the render (D7)
     // or since the last tick — including while disconnected.
     // Keep the latest tick pending until React commits the current server render.
     startRefresh(() => router.refresh());
-  }, [refreshing, router, tick]);
+  }, [refreshing, router, shellTick]);
 
   return (
     <RunStreamLiveness

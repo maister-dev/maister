@@ -7,6 +7,10 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import {
+  AttentionReviewProvider,
+  useAttentionReviewWatch,
+} from "@/components/attention/attention-review-watch";
 import { ProposalReviews } from "@/components/inbox/proposal-reviews";
 
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -102,8 +106,26 @@ it("K03 settles a deep-linked proposal outside the current page without selectin
         outcome: null,
       }),
     )
-    .mockResolvedValueOnce(Response.json(decision))
-    .mockResolvedValueOnce(
+    .mockResolvedValueOnce(Response.json(decision));
+  let resolveDetail: (response: Response) => void = () => {};
+  const readSettled = new Promise<Response>((resolve) => {
+    resolveDetail = resolve;
+  });
+
+  fetcher.mockImplementationOnce(() => readSettled);
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () => render([first], { kind: second.kind, id: second.id }));
+  const accept = [
+    ...document.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((button) => button.textContent === "acceptReviewed");
+
+  expect(accept?.disabled).toBe(false);
+  await act(async () => accept?.click());
+  expect(document.body.textContent).not.toContain(
+    "outcomeLabel.applied_vault_operation",
+  );
+  await act(async () =>
+    resolveDetail(
       Response.json({
         ...second,
         summary: "Exact off-page diff",
@@ -123,16 +145,8 @@ it("K03 settles a deep-linked proposal outside the current page without selectin
         nextCursor: null,
         outcome: decision.outcome,
       }),
-    );
-
-  vi.stubGlobal("fetch", fetcher);
-  await act(async () => render([first], { kind: second.kind, id: second.id }));
-  const accept = [
-    ...document.querySelectorAll<HTMLButtonElement>("button"),
-  ].find((button) => button.textContent === "acceptReviewed");
-
-  expect(accept?.disabled).toBe(false);
-  await act(async () => accept?.click());
+    ),
+  );
   const [url, options] = fetcher.mock.calls[1]!;
 
   expect(url).toBe("/api/inbox/reviews/vault/proposal-2/decision");
@@ -256,6 +270,41 @@ it("K10 keeps the current proposal preview page when paging applied revisions", 
     expect.objectContaining({ cache: "no-store" }),
   );
   expect(container.textContent).toContain("/memories/last.md");
+});
+
+function InvalidateReview() {
+  const invalidate = useAttentionReviewWatch()?.invalidate;
+
+  return createElement("button", { onClick: invalidate }, "invalidate");
+}
+
+it("keeps the retry control visible when attention reconnects after a transient read failure", async () => {
+  const fetcher = vi
+    .fn<(url: string, options: RequestInit) => Promise<Response>>()
+    .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValueOnce(new Response(null, { status: 404 }));
+
+  vi.stubGlobal("fetch", fetcher);
+  await act(async () =>
+    root.render(
+      createElement(
+        AttentionReviewProvider,
+        null,
+        createElement(ProposalReviews, {
+          page: { items: [first], nextCursor: null, total: 1 },
+          filters: {},
+          initial: { kind: first.kind, id: first.id },
+          workspace: true,
+        }),
+        createElement(InvalidateReview),
+      ),
+    ),
+  );
+  await click("invalidate");
+  expect(fetcher).toHaveBeenCalledOnce();
+  await click("retry");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(container.textContent).toContain("unavailable");
 });
 
 afterEach(() => {

@@ -24953,7 +24953,7 @@ paths:
         - name: recordId
           in: path
           required: true
-          schema: { type: string, minLength: 1, maxLength: 192 }
+          schema: { type: string, minLength: 1, maxLength: 128 }
         - name: cursor
           in: query
           schema: { type: string, minLength: 1, maxLength: 2048 }
