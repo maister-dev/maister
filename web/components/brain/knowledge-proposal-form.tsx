@@ -35,10 +35,10 @@ import { useIsClient } from "@/lib/use-is-client";
 const fieldClass =
   "block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink";
 
-type WitnessLink = Extract<
-  KnowledgeRecordDto["evidence"][number],
-  { witness: KnowledgeWitnessDto }
->;
+type WitnessLink = Readonly<{
+  relation: KnowledgeDraft["evidence"][number]["relation"];
+  witness: Pick<KnowledgeWitnessDto, "id" | "sourceVersion" | "sha256">;
+}>;
 
 function proposalEvidence(
   links: readonly WitnessLink[],
