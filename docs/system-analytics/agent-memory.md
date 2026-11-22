@@ -394,6 +394,12 @@ the exact complete set of member revisions for atomic revalidation.
 | Settled review or outcome continuation | Authorize the complete base and result set before returning any page or count. Check distinct source projects and inherited restrictions together. Shared locks retain the proposal and protected payloads for the read. Settlement continues to take the vault write lock. |
 | Redacted revision | Recheck operation bases, applied revisions and inherited restrictions at every read. Erase stored dependent free-text reason alongside dependent proposal content while retaining authorized decision identity. |
 
+Vault review detail and settlement take the shared source-redaction fence
+before reading source metadata or locking a proposal, vault, or payload row.
+Redaction takes the exclusive fence before its first vault lock. A review that
+waits for redaction rechecks authority after the redaction commits and
+conceals the withdrawn source and its dependent review content.
+
 The catalog, historical identity and decision-rationale contracts are implemented. K04, K05 and K08–K10 define their acceptance checks. A conflict on a version, generation or selected head leaves the change atomic and the browser draft recoverable. The [vault review owner](../../web/lib/agent-memory-vault/review.ts) checks current source authority. The [redaction owner](../../web/lib/agent-memory-vault/redaction.ts) invalidates dependent content. For pending promotion see [Project Brain disposition](project-brain.md#human-review-and-disposition) or the [knowledge publication lifecycle](company-brain.md).
 
 ## Expectations

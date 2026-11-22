@@ -10,6 +10,7 @@ import pino from "pino";
 
 import { canonicalCommandJson } from "../../../runtime/command-json";
 
+import { lockVaultSources } from "./source-redaction-fence";
 import { parseAgentMemoryMutation } from "./commands";
 import { authorizeHumanInstallationVault } from "./installation-access";
 import { agentMemoryVaultLimits } from "./limits";
@@ -255,7 +256,11 @@ export type VaultReviewDecision = Readonly<{
 }>;
 
 export async function decideVaultProposal(db: Db, input: VaultReviewDecision) {
-  return db.transaction((tx) => decideVaultProposalInTransaction(tx, input));
+  return db.transaction(async (tx) => {
+    await lockVaultSources(tx);
+
+    return decideVaultProposalInTransaction(tx, input);
+  });
 }
 
 export async function decideVaultProposalInTransaction(

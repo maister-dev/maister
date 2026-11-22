@@ -26,6 +26,7 @@ import {
   readProposalReviewMetadata,
 } from "./knowledge-memory-reviews";
 
+import { lockVaultSources } from "@/lib/agent-memory-vault/source-redaction-fence";
 import {
   insertMemoryText,
   replaceMemoryText,
@@ -496,6 +497,7 @@ export async function getProposalReviewDetail(
   const audience = { userId, tokenId: credential?.tokenId };
 
   return db.transaction(async (tx) => {
+    if (selection.kind === "vault") await lockVaultSources(tx);
     const {
       projectId,
       createdAt: _createdAt,
@@ -779,6 +781,7 @@ async function settle(
   item: ReviewDecision,
   credential?: PersonalKnowledgeCredential,
 ): Promise<ReviewReceipt> {
+  if (item.kind === "vault") await lockVaultSources(tx);
   if (credential)
     await readProposalReviewMetadata(
       tx,

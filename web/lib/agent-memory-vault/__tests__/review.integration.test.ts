@@ -4,14 +4,26 @@ import { expect, it } from "vitest";
 
 import { parseAgentMemoryMutation } from "../commands";
 import { agentMemoryVaultLimits } from "../limits";
+import { prepareHumanProjectVault } from "../project-access";
 import { redactMemoryRevision } from "../redaction";
 import { decideVaultProposal } from "../review";
 import { applyVaultMutation } from "../store";
 
-import { seedProject } from "@/test-support/execution-host-seed";
+import { poll } from "@/test-support/durable-workers-ledger";
+import {
+  seedProject,
+  seedProjectRow,
+} from "@/test-support/execution-host-seed";
+import { holdDatabaseWrite } from "@/test-support/fault-barriers";
 import { seedActiveUser } from "@/test-support/librarian-seed";
-import { startMainPostgresTestDb } from "@/test-support/pg-container";
-import { decideProposalReviewBatch } from "@/lib/queries/inbox-review-actions";
+import {
+  startMainAndBrainPostgresTestDb,
+  startMainPostgresTestDb,
+} from "@/test-support/pg-container";
+import {
+  decideProposalReviewBatch,
+  getProposalReviewDetail,
+} from "@/lib/queries/inbox-review-actions";
 
 it("AV-04 holds external input as one pending proposal across retries and a later policy change", async () => {
   const fixture = await startMainPostgresTestDb({
@@ -366,6 +378,156 @@ it("AV-04 holds external input as one pending proposal across retries and a late
     ).rejects.toMatchObject({
       details: { reason: "agent_memory_unavailable" },
     });
+  } finally {
+    await fixture.stop();
+  }
+}, 180_000);
+
+it("K04 K10 conceals settled history when source redaction wins the concurrent read", async () => {
+  const fixture = await startMainAndBrainPostgresTestDb({
+    databaseName: "vault_history_redaction",
+  });
+
+  try {
+    const project = await seedProjectRow(fixture.db);
+    const admin = await seedActiveUser(fixture.db, { role: "admin" });
+    const agentId = "fixture:review-redaction";
+    const limits = agentMemoryVaultLimits();
+
+    await fixture.pool.query(
+      "INSERT INTO agent_memory_cutover(generation) VALUES (1)",
+    );
+    await fixture.pool.query(
+      `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
+       VALUES ($1,'fixture','v1','git','Reviewer','Fixture','none','session','[]','read_only','/unused/reviewer.md')`,
+      [agentId],
+    );
+    await fixture.pool.query(
+      `INSERT INTO agent_project_links(id,project_id,agent_id,memory_enabled)
+       VALUES (gen_random_uuid()::text,$1,$2,true)`,
+      [project.id, agentId],
+    );
+    const prepare = prepareHumanProjectVault({
+      userId: admin,
+      slug: project.slug,
+      agentId,
+      action: "editSettings",
+    });
+    const source = await applyVaultMutation(
+      fixture.db,
+      {
+        command: "create",
+        path: "/memories/source.md",
+        file_text: "Withdrawn source",
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: "redaction-source",
+      },
+      prepare,
+      limits,
+    );
+
+    if (source.status !== "applied" || !source.affected[0]?.hash)
+      throw new Error("Expected a retained source revision");
+    const { revisionId, noteId, hash } = source.affected[0];
+    const pending = await applyVaultMutation(
+      fixture.db,
+      {
+        command: "create",
+        path: "/memories/proposed.md",
+        file_text: "Derived proposal",
+        ifRevisionId: null,
+        ifHash: null,
+        requestKey: "redaction-dependent",
+      },
+      async (tx) => {
+        const access = await prepare(tx);
+
+        return {
+          ...access,
+          writeAdmission: "review_required",
+          sourceRestrictions: [
+            {
+              kind: "agent_vault_revision_v1",
+              vaultId: access.vaultId,
+              noteId,
+              revisionId,
+              contentSha256: hash,
+            },
+          ],
+        };
+      },
+      limits,
+    );
+
+    if (pending.status !== "pending")
+      throw new Error("Expected a pending review");
+    await decideVaultProposal(fixture.db, {
+      userId: admin,
+      proposalId: pending.proposalId,
+      decision: "reject",
+      expectedVersion: 1,
+      requestKey: "redaction-retained-review",
+      reason: "Retained rationale based on the source",
+    });
+    const readHistory = () =>
+      getProposalReviewDetail(fixture.db, admin, {
+        kind: "vault",
+        id: pending.proposalId,
+      });
+
+    await expect(readHistory()).resolves.toMatchObject({
+      domainState: "rejected",
+      decision: { reason: "Retained rationale based on the source" },
+    });
+    const barrier = await holdDatabaseWrite({
+      pool: fixture.pool,
+      caseId: "vault-history-redaction",
+      table: "agent_memory_proposals",
+      matches: { id: pending.proposalId },
+    });
+    const redaction = Promise.allSettled([
+      redactMemoryRevision(fixture.db, admin, revisionId, {
+        reason: "Withdraw concurrent history source",
+        requestKey: "redaction-concurrent-review",
+      }),
+    ]);
+
+    try {
+      const writerPid = await barrier.awaitReached();
+      const history = Promise.allSettled([readHistory()]);
+
+      await poll(
+        async () => {
+          const { rows } = await fixture.pool.query<{ pid: number }>(
+            "SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1::integer=ANY(pg_blocking_pids(pid))",
+            [writerPid],
+          );
+
+          return rows[0]?.pid;
+        },
+        10_000,
+        "history transaction waiting for redaction",
+        25,
+      );
+      await barrier.release();
+
+      const [[withdrawn], [read]] = await Promise.all([redaction, history]);
+
+      expect(withdrawn).toMatchObject({
+        status: "fulfilled",
+        value: { revisionId },
+      });
+      expect(read).toMatchObject({
+        status: "rejected",
+        reason: { details: { reason: "agent_memory_unavailable" } },
+      });
+      await expect(readHistory()).rejects.toMatchObject({
+        details: { reason: "agent_memory_unavailable" },
+      });
+    } finally {
+      await barrier.close();
+    }
   } finally {
     await fixture.stop();
   }
