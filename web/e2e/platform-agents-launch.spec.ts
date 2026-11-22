@@ -5,7 +5,7 @@
 // project workspace panel, and after the spec releases the held prompt
 // the run finalizes Done at the terminal choke point.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect } from "@playwright/test";
@@ -13,31 +13,7 @@ import { test, expect } from "@playwright/test";
 import { withE2EDb, singleValue } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
-import {
-  readTaskLaunchReceipt,
-  waitForTaskLaunchRun,
-} from "./_seed/task-launch";
-import {
-  readStubSessionRecords,
-  type StubSessionRecord,
-} from "./_seed/session-records";
-
-async function waitForSession(
-  predicate: (record: StubSessionRecord) => boolean,
-  timeoutMs = 30_000,
-): Promise<StubSessionRecord> {
-  const deadline = Date.now() + timeoutMs;
-
-  for (;;) {
-    const match = readStubSessionRecords(STUB_SESSIONS_DIR).find(predicate);
-
-    if (match) return match;
-    if (Date.now() > deadline) {
-      throw new Error("stub supervisor session record did not appear");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
+import { launchTaskAgent, waitForSession } from "./_seed/task-agent-launch";
 
 function releaseSession(sessionId: string): void {
   writeFileSync(
@@ -53,44 +29,8 @@ test("manual agent launch: run visible with the agent chip, then finalizes Done"
   const fx = loadFixtures().byKey.platformAgents;
 
   await page.goto(`/projects/${fx.projectSlug}/tasks/${fx.manualTaskNumber}`);
-  // D10: "Run agent" is a secondary action under "More".
-  await page
-    .getByRole("main")
-    .getByTestId("task-more-actions")
-    .locator("> summary")
-    .click();
-  await expect(
-    page.getByRole("combobox", { name: "Agent to run" }),
-  ).toBeVisible();
-  await page
-    .getByRole("combobox", { name: "Agent to run" })
-    .selectOption(fx.helperAgentId);
-
-  const launchResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/task-launch-intents" &&
-      response.request().method() === "POST",
-  );
-
-  await page.getByRole("button", { name: "Run agent" }).click();
-  await page
-    .getByRole("region", {
-      name: "Launch this agent for the task",
-      exact: true,
-    })
-    .getByRole("button", { name: "Launch", exact: true })
-    .click();
-
-  const response = await launchResponse;
-
-  const receipt = await readTaskLaunchReceipt(response);
-  const runId = await waitForTaskLaunchRun(receipt);
-
-  // The stub recorded the spawn: a read-only session (workspace=none ⇒ L1)
-  // whose prompt carries the agent.md body marker.
-  const session = await waitForSession(
-    (record) => record.request.runId === runId && record.prompts.length > 0,
-  );
+  const session = await launchTaskAgent(page, fx.helperAgentId);
+  const runId = session.request.runId;
 
   try {
     expect(session.request.readOnlySession).toBe(true);
@@ -134,24 +74,6 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
   const fx = loadFixtures().byKey.platformAgents;
   const endpoint = `/api/projects/${fx.projectSlug}/agents/${fx.helperAgentId}`;
   const detailUrl = `/projects/${fx.projectSlug}/agents/${encodeURIComponent(fx.helperAgentId)}`;
-  const sourcePath = await singleValue<string>(
-    "SELECT source_path AS value FROM agents WHERE id=$1",
-    [fx.helperAgentId],
-  );
-
-  if (!sourcePath) throw new Error("Missing pinned agent definition fixture");
-  const definition = readFileSync(sourcePath, "utf8");
-
-  writeFileSync(
-    sourcePath,
-    definition.replace("  - manual", "  - manual\n  - cron"),
-  );
-  await withE2EDb((pool) =>
-    pool.query(
-      'UPDATE agents SET triggers=\'["manual","flow","cron"]\'::jsonb WHERE id=$1',
-      [fx.helperAgentId],
-    ),
-  );
   const requestPrefix =
     "Scheduled browser request A\nПроверить {{ literal }} 😀\n";
   const requestA = requestPrefix + "x".repeat(8000 - [...requestPrefix].length);
@@ -413,15 +335,10 @@ test("E2E-SR-01 create, edit, clear and execute independent scheduled requests (
       );
     }
   } finally {
-    writeFileSync(sourcePath, definition);
-    await withE2EDb(async (pool) => {
-      await pool.query("DELETE FROM agent_schedules WHERE agent_id=$1", [
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM agent_schedules WHERE agent_id=$1", [
         fx.helperAgentId,
-      ]);
-      await pool.query(
-        'UPDATE agents SET triggers=\'["manual","flow"]\'::jsonb WHERE id=$1',
-        [fx.helperAgentId],
-      );
-    });
+      ]),
+    );
   }
 });

@@ -94,8 +94,14 @@ test.describe("Budget breach fork HITL surface", () => {
     const response = await responsePromise;
 
     expect(response.status()).toBe(202);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      state: "resume-in-progress",
+    });
+    // The receipt precedes the worker opening the next human review.
     await expect(
-      page.getByTestId("budget-breach-card").filter({ visible: true }),
-    ).toHaveCount(0);
+      page.getByRole("region", { name: "Review workspace" }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(panel).toHaveCount(0);
   });
 });

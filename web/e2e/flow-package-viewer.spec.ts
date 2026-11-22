@@ -125,6 +125,9 @@ test("UX-01D Run and explicit viewer links retain the old Flow revision after en
   page,
 }) => {
   const fx = loadFixture();
+  const flow = randomUUID();
+  const flowRef = `history-${flow}`;
+  const oldRevision = randomUUID();
   const newRevision = randomUUID();
   const run = randomUUID();
   const manifest = {
@@ -139,28 +142,51 @@ test("UX-01D Run and explicit viewer links retain the old Flow revision after en
       },
     ],
   };
-  const path = `/projects/${fx.projectSlug}/packages/${fx.flowRefId}`;
+  const path = `/projects/${fx.projectSlug}/packages/${flowRef}`;
 
-  await withE2EDb(async (pool) => {
-    await pool.query(
-      "INSERT INTO flow_revisions(id,flow_ref_id,source,version_label,resolved_revision,manifest_digest,manifest,schema_version,installed_path,setup_status,package_status) SELECT $1,flow_ref_id,source,'v2-fixture',$2,$2,$3,1,installed_path,setup_status,'Installed' FROM flow_revisions WHERE id=$4",
-      [newRevision, newRevision.replaceAll("-", ""), manifest, fx.revisionId],
-    );
-    await pool.query(
-      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,flow_revision_id) SELECT $1,project_id,id,'flow','Done',version,enabled_revision_id FROM flows WHERE enabled_revision_id=$2",
-      [run, fx.revisionId],
-    );
-    await pool.query(
-      "UPDATE flows SET enabled_revision_id=$1, manifest=$2 WHERE enabled_revision_id=$3",
-      [newRevision, manifest, fx.revisionId],
-    );
-  });
   try {
+    // Only the immutable bundle is shared with the concurrent fork/editor journey.
+    await withE2EDb(async (pool) => {
+      await pool.query(
+        `INSERT INTO flow_revisions (id, flow_ref_id, source, version_label, resolved_revision,
+           manifest_digest, manifest, schema_version, installed_path, setup_status, package_status)
+         SELECT $1, $2, source, version_label, resolved_revision, manifest_digest,
+           manifest, schema_version, installed_path, setup_status, package_status
+         FROM flow_revisions WHERE id=$3`,
+        [oldRevision, flowRef, fx.revisionId],
+      );
+      await pool.query(
+        `INSERT INTO flows (id, project_id, flow_ref_id, source, version, revision,
+           installed_path, manifest, schema_version, enabled_revision_id, enablement_state, trust_status)
+         SELECT $1, project_id, $2, source, version, revision, installed_path,
+           manifest, schema_version, $3, enablement_state, trust_status
+         FROM flows WHERE project_id=(SELECT id FROM projects WHERE slug=$4) AND flow_ref_id=$5`,
+        [flow, flowRef, oldRevision, fx.projectSlug, fx.flowRefId],
+      );
+      const pinnedRun = await pool.query(
+        `INSERT INTO runs (id, project_id, flow_id, run_kind, status, flow_version, flow_revision_id)
+         SELECT $1, project_id, id, 'flow', 'Done', version, enabled_revision_id FROM flows WHERE id=$2`,
+        [run, flow],
+      );
+
+      expect(pinnedRun.rowCount).toBe(1);
+      await pool.query(
+        `INSERT INTO flow_revisions (id, flow_ref_id, source, version_label, resolved_revision,
+           manifest_digest, manifest, schema_version, installed_path, setup_status, package_status)
+         SELECT $1, flow_ref_id, source, 'v2-fixture', $1, $1, $2, 1, installed_path, setup_status, 'Installed'
+         FROM flow_revisions WHERE id=$3`,
+        [newRevision, manifest, oldRevision],
+      );
+      await pool.query(
+        `UPDATE flows SET enabled_revision_id=$1, manifest=$2, version='v2-fixture', revision=$1 WHERE id=$3`,
+        [newRevision, manifest, flow],
+      );
+    });
     await page.goto(path);
     await expect(
       page.locator('.react-flow__node[data-id="replacement"]'),
     ).toBeVisible();
-    await page.goto(`${path}?rev=${fx.revisionId}`);
+    await page.goto(`${path}?rev=${oldRevision}`);
     await expect(
       page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
     ).toBeVisible();
@@ -184,11 +210,11 @@ test("UX-01D Run and explicit viewer links retain the old Flow revision after en
   } finally {
     await withE2EDb(async (pool) => {
       await pool.query("DELETE FROM runs WHERE id=$1", [run]);
-      await pool.query(
-        "UPDATE flows SET enabled_revision_id=$1, manifest=(SELECT manifest FROM flow_revisions WHERE id=$1) WHERE enabled_revision_id=$2",
-        [fx.revisionId, newRevision],
-      );
-      await pool.query("DELETE FROM flow_revisions WHERE id=$1", [newRevision]);
+      await pool.query("DELETE FROM flows WHERE id=$1", [flow]);
+      await pool.query("DELETE FROM flow_revisions WHERE id IN ($1,$2)", [
+        oldRevision,
+        newRevision,
+      ]);
     });
   }
 });

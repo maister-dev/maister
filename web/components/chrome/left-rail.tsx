@@ -295,6 +295,7 @@ export async function LeftRail({
             <Link
               className="inline-flex items-center justify-between rounded-lg border border-line bg-ivory px-2.5 py-1.5 font-mono text-[10px] font-semibold text-mute transition-colors hover:border-mute hover:text-ink"
               href="/runs"
+              prefetch={false}
             >
               <span>{tPortfolio("seeAll")}</span>
               <span className="rounded-full bg-paper px-1.5 py-px text-[9.5px] text-ink-2">
@@ -348,6 +349,7 @@ export async function LeftRail({
                         ws.current ? "bg-amber-soft" : "hover:bg-ivory",
                       )}
                       href={ws.href ?? "#"}
+                      prefetch={false}
                       title={`Open ${ws.name} · ${ws.meta}`}
                     >
                       {ws.current ? (
@@ -439,6 +441,7 @@ export async function LeftRail({
             className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-line bg-paper"
             data-testid="rail-platform-status-collapsed"
             href="/admin/execution-host"
+            prefetch={false}
           >
             <PlatformStatusDot status={platformStatus} />
           </Link>
@@ -486,6 +489,7 @@ export async function LeftRail({
           <Link
             className="inline-flex cursor-pointer items-center gap-1 font-mono text-[9.5px] normal-case tracking-[0.06em] text-mute hover:text-amber"
             href="/runs"
+            prefetch={false}
           >
             {tPortfolio("seeAll")}{" "}
             <span className="rounded-full bg-ivory px-1.5 py-px text-[9.5px] tracking-normal text-ink-2">
@@ -535,6 +539,7 @@ export async function LeftRail({
                     ws.current ? "bg-amber-soft" : "hover:bg-ivory",
                   )}
                   href={ws.href ?? "#"}
+                  prefetch={false}
                   title={`Open ${ws.name} · ${ws.meta}`}
                 >
                   {ws.current ? (

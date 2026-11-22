@@ -190,6 +190,8 @@ export type ProductionFaultSuite = {
 export async function startProductionFaultSuite(): Promise<ProductionFaultSuite> {
   const template = await startMainAndBrainPostgresTestDbTemplate({
     databaseName: "s52_faults",
+    // Successive full-schema clones and their WAL share the suite container.
+    storage: "volume",
   });
 
   return {

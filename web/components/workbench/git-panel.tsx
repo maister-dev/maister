@@ -9,7 +9,13 @@ import type {
 import type { ReactElement } from "react";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -244,6 +250,7 @@ export function WorkbenchGitPanel({
   const mutate: GitMutate = async (id, path, body, onOk, before) => {
     setBusy(id);
     setError(null);
+    let refreshRun = false;
 
     try {
       if (before) {
@@ -283,7 +290,7 @@ export function WorkbenchGitPanel({
         });
       }
       await load();
-      router.refresh();
+      refreshRun = true;
 
       return null;
     } catch {
@@ -291,7 +298,15 @@ export function WorkbenchGitPanel({
 
       return { code: "EXECUTOR_UNAVAILABLE" };
     } finally {
-      setBusy(null);
+      if (refreshRun) {
+        // Keep the controls busy until the updated server layout commits.
+        startTransition(() => {
+          router.refresh();
+          setBusy(null);
+        });
+      } else {
+        setBusy(null);
+      }
     }
   };
 

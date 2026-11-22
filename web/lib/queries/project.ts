@@ -32,6 +32,8 @@ import {
   activeSessionCapabilityAgent,
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
+import { deriveTtlInfo, type TtlInfo } from "@/lib/gc/ttl";
+import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import {
   ACTIVE_RUN_STATUSES,
@@ -132,6 +134,7 @@ export type ProjectWorkspace = PortfolioWorkspace &
     attemptNumber: number | null;
     archived: boolean;
     onDisk: boolean;
+    ttlState: TtlInfo["ttlState"];
     runStatus: string;
   }>;
 
@@ -381,6 +384,8 @@ export async function getProjectPageData(
         worktreePath: workspaces.worktreePath,
         archivedBranch: workspaces.archivedBranch,
         removedAt: workspaces.removedAt,
+        scheduledRemovalAt: workspaces.scheduledRemovalAt,
+        endedAt: runs.endedAt,
         publishedBranch: workspaces.publishedBranch,
         prUrl: workspaces.prUrl,
         promotionState: workspaces.promotionState,
@@ -529,6 +534,11 @@ export async function getProjectPageData(
     activeRunRows.map((row) => row.runId),
   );
   const presence = await presenceForRows(activeRunRows);
+  const ttlWindow = {
+    nowMs: now.getTime(),
+    ageDays: gcAgeDays(),
+    warningDays: gcWarningDays(),
+  };
   const activeWorkspaces: ProjectWorkspace[] = activeRunRows.map((row) => ({
     runId: row.runId,
     task:
@@ -548,6 +558,7 @@ export async function getProjectPageData(
       row.runId,
     attemptNumber: row.attemptNumber,
     archived: row.archivedBranch !== null,
+    ttlState: deriveTtlInfo({ ...row, ...ttlWindow }).ttlState,
     onDisk: row.worktreePath ? presence.get(row.worktreePath) === true : false,
     runStatus: row.status,
     runKind: row.runKind as RunKind,

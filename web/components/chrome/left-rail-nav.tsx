@@ -196,6 +196,7 @@ function LeftRailNavBody({
               )}
               data-testid={`rail-nav-${section.id}`}
               href={section.href}
+              prefetch={false}
               title={section.label}
             >
               <RailSectionIcon active={isActive} id={section.id} />
@@ -225,6 +226,7 @@ function LeftRailNavBody({
             )}
             data-testid={`rail-nav-${section.id}`}
             href={section.href}
+            prefetch={false}
           >
             <RailSectionIcon active={isActive} id={section.id} />
             <span>{section.label}</span>

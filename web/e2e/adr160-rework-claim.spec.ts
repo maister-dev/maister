@@ -110,12 +110,9 @@ test("rework claim loop: Review → claim → commit → return → staled gate 
   await expect(
     page.getByRole("button", { name: "Release", exact: true }),
   ).toBeVisible();
-  // The status pill appears in more than one surface on run-detail; the
-  // owner-gated Return/Release pair above is the load-bearing proof of the
-  // claim, so scope this to the first occurrence rather than over-constraining.
   await expect(
-    page.getByText("HumanWorking", { exact: true }).first(),
-  ).toBeVisible();
+    page.getByTestId("run-header-status").filter({ visible: true }),
+  ).toHaveText("Run: HumanWorking");
 
   // (c) The human edits locally and commits — this is the work the return must
   // capture and the flow's own gates must re-validate.

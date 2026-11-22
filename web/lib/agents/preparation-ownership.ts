@@ -11,7 +11,8 @@ import pino from "pino";
 
 import { agentPreparationResourceId } from "./preparation-resource";
 
-import { agentPreparationOperations, runs } from "@/lib/db/schema";
+import { latestOwnedCreate } from "@/lib/execution-host/create-intent";
+import { agentPreparationOperations, agentTurns, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 
@@ -135,6 +136,7 @@ export async function claimAgentPreparation(
   input: {
     runId: string;
     assignmentId: string;
+    turnId?: string;
     cwd: string;
     repoPath: string | null;
   },
@@ -186,6 +188,38 @@ export async function claimAgentPreparation(
       .orderBy(sql`${agentPreparationOperations.createdAt} DESC`)
       .limit(1)
       .for("update");
+
+    // A driver can read the turn before the first create commits, then acquire
+    // the workspace after handoff. Only a missing create still needs preparation.
+    if (
+      previous?.phase === "handed_off" &&
+      previous.runId === run.id &&
+      previous.assignmentId === assignment.id &&
+      previous.turnId &&
+      (!input.turnId || input.turnId === previous.turnId)
+    ) {
+      const [turn] = await tx
+        .select()
+        .from(agentTurns)
+        .where(eq(agentTurns.id, previous.turnId));
+
+      if (
+        turn &&
+        (input.turnId ||
+          turn.variant === "initial" ||
+          turn.variant === "consensus_draft") &&
+        (await latestOwnedCreate(tx, {
+          runId: run.id,
+          assignmentId: assignment.id,
+          owner: {
+            variant: "agent",
+            turnId: turn.id,
+            promptOrdinal: turn.ordinal,
+          },
+        }))
+      )
+        throw preparationFenced(run.id);
+    }
 
     // Physical retirement, not lease age, permits fencing an abandoned publisher.
     await tx

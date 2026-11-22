@@ -63,7 +63,7 @@ export async function TopNav({
             />
           ) : null}
           {/* The logo means HOME and keeps targeting `/` (ADR-172 D3). */}
-          <Link className="shrink-0 cursor-pointer" href="/">
+          <Link className="shrink-0 cursor-pointer" href="/" prefetch={false}>
             {/* ADR-191 D1: below `md` the wordmark is visual-only room the
                 librarian entry needs to keep the header inside 390px
                 (`E2E-NAV-07`); it stays the link's accessible name. */}

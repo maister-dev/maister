@@ -130,6 +130,7 @@ export function ActiveWorkspaceRowView({
         <Link
           className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink hover:text-amber"
           href={runHref}
+          prefetch={false}
         >
           {name}
         </Link>
@@ -179,6 +180,7 @@ export function ActiveWorkspaceRowView({
             className={clsx(chipClass, "hover:border-mute hover:text-ink-2")}
             data-testid="issue-chip"
             href={issueHref}
+            prefetch={false}
           >
             {labels.issueLabel}
           </Link>

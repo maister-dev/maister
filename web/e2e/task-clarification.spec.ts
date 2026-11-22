@@ -65,10 +65,9 @@ test("E2E-CLR-03: an addressed request appears in the recipient inbox and the re
 
   try {
     await recipientPage.goto("/inbox");
-    const decision = recipientPage.locator(
-      '[data-decision-kind="clarification"]',
-      { hasText: question },
-    );
+    const decision = recipientPage
+      .getByRole("region", { name: /Needs your answer/ })
+      .locator('[data-decision-kind="clarification"]', { hasText: question });
 
     await expect(decision).toBeVisible();
     await decision.getByRole("link").click();
@@ -91,11 +90,7 @@ test("E2E-CLR-03: an addressed request appears in the recipient inbox and the re
     ).toBeVisible();
 
     await recipientPage.goto("/inbox");
-    await expect(
-      recipientPage.locator('[data-decision-kind="clarification"]', {
-        hasText: question,
-      }),
-    ).toHaveCount(0);
+    await expect(decision).toHaveCount(0);
     const answer = await withE2EDb(async (pool) => {
       const result = await pool.query<{ status: string; answer: string }>(
         "SELECT status, answer FROM task_clarifications WHERE id = $1",

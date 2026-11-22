@@ -36,6 +36,9 @@ import { createE2EDbPool } from "./_seed/db";
 
 import { resolvePostgresDbUrl } from "@/lib/db/postgres-url";
 
+// These cases inspect and temporarily mutate the same run’s evidence.
+test.describe.configure({ mode: "default" });
+
 type M12Fixture = {
   runId: string;
   hitlRequestId: string;
@@ -159,12 +162,20 @@ test("E2 renders typed evidence and keeps unknown payloads generic", async ({
 
     await expect(preview.getByRole("listitem")).toHaveText("Prohibited path");
     await expect(preview.locator("pre")).toHaveCount(0);
-    await page.goto(`/runs/${runId}?wb=evidence&evidenceItem=art:${genericId}`);
+    const results = page.getByRole("region", { name: "Results and checks" });
+
+    await results.locator(`a[href*="evidenceItem=art%3A${genericId}"]`).click();
     await expect(preview.locator("pre")).toContainText("<em>literal</em>");
     await expect(preview.locator("em")).toHaveCount(0);
-    await page.goto(
-      `/runs/${runId}?wb=evidence&evidenceItem=art:${markdownId}`,
+    const href = `/api/runs/${runId}/artifacts/${markdownId}/payload`;
+    const markdownPreview = page.waitForResponse((response) =>
+      response.url().endsWith(`${href}?view=preview`),
     );
+
+    await results
+      .locator(`a[href*="evidenceItem=art%3A${markdownId}"]`)
+      .click();
+    expect((await markdownPreview).status()).toBe(200);
     await expect(
       preview.getByRole("heading", { name: "Evidence notes" }),
     ).toBeVisible();
@@ -175,7 +186,6 @@ test("E2 renders typed evidence and keeps unknown payloads generic", async ({
       preview.getByRole("heading", { name: "Evidence notes" }),
     ).toHaveCount(0);
     const download = preview.getByRole("link", { name: "Download original" });
-    const href = `/api/runs/${runId}/artifacts/${markdownId}/payload`;
 
     await expect(download).toHaveAttribute("href", href);
     expect(await (await page.request.get(href)).text()).toBe(oversized);
@@ -315,12 +325,16 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
   try {
     // The first stream-ready refresh belongs to this same filtered route.
     const runPath = `/runs/${fx.runId}`;
-    const staleUrl = `${runPath}?wb=evidence&kind=artifact&state=stale`;
+    const graphUrl = `${runPath}?wb=evidence&evidenceView=graph`;
+    const staleUrl = `${graphUrl}&kind=artifact&state=stale`;
     const connectedRefresh = page.waitForResponse((response) => {
       const url = new URL(response.url());
 
       return (
-        url.pathname === runPath && response.request().headers().rsc === "1"
+        url.pathname === runPath &&
+        url.searchParams.get("state") === "stale" &&
+        response.request().headers().rsc === "1" &&
+        response.request().headers()["next-router-prefetch"] !== "1"
       );
     });
 
@@ -353,21 +367,22 @@ test("UX-03C/D evidence filters fit artifacts and the board readiness badge trac
     // Keep the same mounted URL while live data removes and restores its
     // only matching artifact.
     await liveUpdate("current", "Running");
-    await expect(page.getByTestId("run-header-status").visible()).toContainText(
-      "Running",
-    );
+    const runStatus = page.getByTestId("run-header-status").visible();
+
+    await expect(runStatus).toContainText("Running", { timeout: 15_000 });
     await expect(page.getByTestId("evidence-empty")).toBeVisible();
     await expect(page).toHaveURL(staleUrl);
     await expect.soft(state).toHaveValue("stale");
 
     await liveUpdate("stale", "NeedsInput");
+    await expect(runStatus).toContainText("NeedsInput", { timeout: 15_000 });
     await expect(implDiff).toBeVisible();
     await expect.soft(viewport).toHaveAttribute("style", staleCamera!);
     const clear = evidencePane.getByRole("button", { name: "Clear filters" });
 
     await expect(clear).toBeVisible();
     await clear.click();
-    await expect(page).toHaveURL(`${runPath}?wb=evidence`);
+    await expect(page).toHaveURL(graphUrl);
     await page.goBack();
     await expect(page).toHaveURL(staleUrl);
     await expect(state).toHaveValue("stale");

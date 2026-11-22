@@ -155,6 +155,17 @@ it("IT-PKD-08 IT-PKD-09 IT-PKD-10: one framed stream isolates selected ticks, di
       selectedRunId: child,
       selectionState: "ready",
     });
+    for (const runId of [root, child]) {
+      await database.pool.query(
+        "INSERT INTO run_messages(id,run_id,sequence,role,content) VALUES($1,$2,1,'assistant','Live message')",
+        [randomUUID(), runId],
+      );
+      expect(await frame(reader)).toEqual({
+        type: "run.changed",
+        runId,
+        kind: "transcript",
+      });
+    }
     await database.pool.query("UPDATE runs SET status='Done' WHERE id=$1", [
       child,
     ]);

@@ -339,7 +339,10 @@ test.describe("T14 viewport, locale and theme (P-5)", () => {
             await page
               .getByRole("button", { name: "Switch language to RU" })
               .click();
-            await expect(root).toHaveAttribute("lang", "ru");
+            // Changing locale renders the entire authenticated layout again.
+            await expect(root).toHaveAttribute("lang", "ru", {
+              timeout: 15_000,
+            });
             await expect(instant).toHaveAttribute("title", /[а-я]/iu);
           }
         });

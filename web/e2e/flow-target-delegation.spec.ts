@@ -199,7 +199,7 @@ test("flow-target delegation: launch → flow children in Review → the parked 
   ).toBe("2");
 
   // ---- The inspector renders the flow children in the run-tree. ------------
-  await page.goto(`/runs/${runId}`);
+  await page.goto(`/runs/${runId}?inspector=open`);
   const subtree = page.locator(
     '[data-testid="run-inspector-child-runs"]:visible',
   );

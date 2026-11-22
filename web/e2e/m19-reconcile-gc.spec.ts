@@ -7,7 +7,7 @@
 //     whose run-detail must still expose Discard but hide Recover (F1 guard);
 //   • two terminal Abandoned runs whose workspaces have a staggered
 //     scheduled_removal_at — one inside the 2-day warning window, one already
-//     due — for the left-rail TTL badge.
+//     due — for the retained workspace TTL label.
 //
 // Asserted, deterministic, supervisor-INDEPENDENT outcomes:
 //   (a) the Crashed run-detail page shows `run-crashed-section` with Recover +
@@ -15,7 +15,7 @@
 //       WARNS that recovery re-runs the current node;
 //   (b) the board surfaces the Crashed run in its dedicated Crashed column
 //       (data-stage="crashed");
-//   (c) the left-rail removal labels reflect warning vs due windows;
+//   (c) the retained workspace removal labels reflect warning vs due windows;
 //   (d) the cron GC route auth-gate: wrong token → 401, valid token → the
 //       scheduler tick summary (200|202|207).
 //
@@ -194,7 +194,7 @@ test.describe("M19 reconcile + GC UI", () => {
     ).toBeVisible();
   });
 
-  test("(c) the left rail shows warning and due removal states for the two Abandoned runs", async ({
+  test("(c) the retained workspaces show warning and due removal states for the two Abandoned runs", async ({
     page,
   }) => {
     const fx = loadM19();
@@ -202,7 +202,7 @@ test.describe("M19 reconcile + GC UI", () => {
     // The two TTL workspaces are consumables: ANY global `system_sweep` in the
     // parallel authed lane (another spec ticking the scheduler — e.g. the
     // execution-host contract spec's keep-alive step) collects the past-
-    // deadline "due" row before this assertion reads the rail. The GC only
+    // deadline "due" row before the project page reads it. The GC only
     // tombstones the row (`removed_at` + the drop record), so re-arm the seeded
     // shape right before reading.
     await withE2EDb((pool) =>
@@ -217,21 +217,23 @@ test.describe("M19 reconcile + GC UI", () => {
 
     await page.goto(`/projects/${fx.projectSlug}`);
 
-    // The left-rail lists active/terminal workspaces; the GC TTL badge tags each
-    // terminal workspace's removal window. Scope each assertion to its specific
-    // seeded run's rail row — the rail is a GLOBAL view, so a parallel test that
-    // abandons a run in another project would otherwise perturb a global count.
-    const warningRow = page
-      .locator("aside li")
-      .filter({ has: page.locator(`a[href$="/runs/${fx.warningRunId}"]`) });
+    await page.getByRole("link", { name: "Runs and working copies" }).click();
+    const panel = page
+      .getByTestId("project-workspaces")
+      .filter({ visible: true });
 
-    await expect(warningRow).toContainText("Removing soon");
+    for (const [taskTitle, runId, label] of [
+      ["E2E ttl due", fx.dueRunId, "Removal due"],
+      ["E2E ttl warning", fx.warningRunId, "Removing soon"],
+    ]) {
+      await panel.getByRole("link", { name: new RegExp(taskTitle) }).click();
+      const run = panel.locator(`a[href="/runs/${runId}"]`);
 
-    const dueRow = page
-      .locator("aside li")
-      .filter({ has: page.locator(`a[href$="/runs/${fx.dueRunId}"]`) });
-
-    await expect(dueRow).toContainText("Removal due");
+      await expect(run.locator("..")).toContainText(label);
+      await expect(page.locator(`aside a[href="/runs/${runId}"]`)).toHaveCount(
+        0,
+      );
+    }
   });
 });
 

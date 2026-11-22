@@ -62,6 +62,7 @@ export function HomeSwitch({
           )}
           data-testid={`home-switch-${option.id}`}
           href={option.href}
+          prefetch={false}
         >
           {option.label}
         </Link>

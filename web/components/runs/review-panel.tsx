@@ -17,6 +17,7 @@ import {
   type RunDiffFile,
 } from "@/components/workbench/diff-view";
 import { resolveUiErrorMessageKey } from "@/lib/ui-error-message";
+import { buildRunHref } from "@/lib/runs/run-query-state";
 import { isPhaseReady } from "@/lib/flows/graph/readiness-core";
 import {
   buildPromotionRequestBody,
@@ -268,6 +269,21 @@ export function ReviewPanel({
     return () => window.clearTimeout(timer);
   }, [busy]);
 
+  function openUpdateSection(event: { preventDefault(): void }): void {
+    if (!updateHref) return;
+    const { pathname, search, hash, origin } = window.location;
+    const target = new URL(updateHref, origin);
+
+    if (target.origin !== origin || target.pathname !== pathname) return;
+
+    event.preventDefault();
+    window.history.pushState(
+      null,
+      "",
+      buildRunHref(pathname, search, { git: "update" }) + hash,
+    );
+  }
+
   async function promote(allowTargetDrift: boolean): Promise<void> {
     const body = buildPromotionRequestBody(promotionInput, allowTargetDrift);
 
@@ -461,6 +477,7 @@ export function ReviewPanel({
               data-testid="review-sync-open"
               href={updateHref}
               scroll={false}
+              onNavigate={openUpdateSection}
             >
               <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
               {labels.syncBranch}
@@ -587,6 +604,7 @@ export function ReviewPanel({
               data-testid="review-conflict-resolve-agent"
               href={updateHref}
               scroll={false}
+              onNavigate={openUpdateSection}
             >
               {labels.resolveWithAgent}
             </Link>
@@ -742,6 +760,7 @@ export function ReviewPanel({
                     data-testid="review-drift-sync"
                     href={updateHref}
                     scroll={false}
+                    onNavigate={openUpdateSection}
                   >
                     {labels.syncBranch}
                   </Link>
@@ -826,6 +845,7 @@ export function ReviewPanel({
                   data-testid="review-publication-diverged-update"
                   href={updateHref}
                   scroll={false}
+                  onNavigate={openUpdateSection}
                 >
                   <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
                   {labels.syncBranch}

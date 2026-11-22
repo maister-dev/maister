@@ -214,7 +214,7 @@ data. Retry is explicit after remediation; no historical diagnosis is invented.
 
 Preparation, task-launch dispatch and cleanup, Pull and promotion, and project
 configuration publication and recovery share the common Git-directory fence.
-The preparation owner releases it after the handoff or a durable failure record.
+The preparation owner holds the physical fence until the turn’s session-create command is durable. A competing driver rechecks the retained create under the fence and leaves that turn to command replay. If the owner dies before the create commits, recovery can prepare the turn again.
 Retained child-process and orphan checks determine when a dead owner can be
 recovered. A continuation in settlement or attention has no preparation claim.
 

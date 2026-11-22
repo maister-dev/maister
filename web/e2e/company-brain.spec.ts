@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 import { createE2EDbPool } from "./_seed/db";
@@ -215,7 +215,7 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
 }, testInfo) => {
   test.setTimeout(120000);
   const { byKey } = loadFixtures();
-  const runId = byKey.m11a.runId!;
+  const runId = randomUUID();
   const pool = createE2EDbPool(resolvePostgresDbUrl());
   const parentId = randomUUID();
   const row = z
@@ -223,16 +223,13 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
       project_id: z.string(),
       task_id: z.string(),
       flow_id: z.string(),
-      source_agent_id: z.string().nullable(),
-      parent_run_id: z.string().nullable(),
-      knowledge_access: z.unknown(),
-      delegation_snapshot: z.unknown(),
+      flow_version: z.string(),
     })
     .parse(
       (
         await pool.query(
-          "SELECT project_id,task_id,flow_id,source_agent_id,parent_run_id,knowledge_access,delegation_snapshot FROM runs WHERE id=$1",
-          [runId],
+          "SELECT project_id,task_id,flow_id,flow_version FROM runs WHERE id=$1",
+          [byKey.m11a.runId],
         )
       ).rows[0],
     );
@@ -249,9 +246,7 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
     sourceRestrictions: [
       { kind: "project_context", projectId: row.project_id },
     ],
-    target: row.source_agent_id
-      ? { kind: "agent", id: row.source_agent_id }
-      : { kind: "flow", id: row.flow_id },
+    target: { kind: "flow", id: row.flow_id },
     title: `Retained private objective ${randomUUID()}`,
     prompt:
       "Inspect the original bounded diagnostic request without republishing it to a task card.",
@@ -264,7 +259,8 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
       [parentId, row.project_id],
     );
     await pool.query(
-      "UPDATE runs SET parent_run_id=$2,knowledge_access=$3::jsonb,delegation_snapshot=$4::jsonb WHERE id=$1",
+      `INSERT INTO runs (id,parent_run_id,knowledge_access,delegation_snapshot,project_id,task_id,flow_id,flow_version,run_kind,status)
+       VALUES ($1,$2,$3::jsonb,$4::jsonb,$5,$6,$7,$8,'flow','Done')`,
       [
         runId,
         parentId,
@@ -280,6 +276,10 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
           flowId: row.flow_id,
           nativeInput: { ...input, inputDigest: digest },
         }),
+        row.project_id,
+        row.task_id,
+        row.flow_id,
+        row.flow_version,
       ],
     );
     await page.goto(`/runs/${runId}`);
@@ -290,10 +290,9 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
       await context.addCookies([
         { name: "NEXT_LOCALE", value: locale, url: new URL(page.url()).origin },
       ]);
-      await page.goto(`/runs/${runId}`);
+      await page.goto(`/runs/${runId}?inspector=open`);
       const shell = page.getByTestId("run-shell").filter({ visible: true });
 
-      await shell.getByTestId("run-header-inspector-toggle").click();
       const inspector = shell.getByTestId("run-shell-inspector");
 
       await expect(inspector).toBeVisible();
@@ -326,28 +325,40 @@ test("E2E-CBU-01 original delegated input is inspectable in English and Russian 
     await expect(page.getByTestId("native-input-inspection")).toHaveCount(0);
     expect(await page.content()).not.toContain(input.prompt);
   } finally {
-    await pool.query(
-      "UPDATE runs SET parent_run_id=$2,knowledge_access=$3::jsonb,delegation_snapshot=$4::jsonb WHERE id=$1",
-      [
-        runId,
-        row.parent_run_id,
-        row.knowledge_access == null
-          ? null
-          : JSON.stringify(row.knowledge_access),
-        row.delegation_snapshot == null
-          ? null
-          : JSON.stringify(row.delegation_snapshot),
-      ],
-    );
-    await pool.query("DELETE FROM runs WHERE id=$1", [parentId]);
+    await pool.query("DELETE FROM runs WHERE id IN ($1,$2)", [runId, parentId]);
     await pool.end();
   }
 });
+
+async function submitKnowledgeProposal(
+  page: Page,
+  buttonName: string,
+): Promise<string> {
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/knowledge/proposals" &&
+      response.request().method() === "POST",
+  );
+
+  await page.getByRole("button", { name: buttonName, exact: true }).click();
+  const receipt = await created;
+
+  expect(receipt.status(), await receipt.text()).toBe(201);
+  const { id } = z
+    .object({ id: z.string().uuid() })
+    .parse(await receipt.json());
+  const proposalUrl = new URL(`/knowledge/proposals/${id}`, page.url()).href;
+
+  await expect(page).toHaveURL(proposalUrl, { timeout: 30_000 });
+
+  return proposalUrl;
+}
 
 // This is the native browser/session path. Live installed-package qualification has a separate lane.
 test("E2E-CBU-01 an administrator explicitly enables company knowledge and reviews a captured assertion without implicitly confirming it", async ({
   page,
   context,
+  browser,
 }, testInfo) => {
   test.setTimeout(120000);
   const { users } = loadFixtures();
@@ -392,71 +403,81 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   await surface
     .getByLabel("Captured source text", { exact: true })
     .fill(source);
-  await page
-    .getByRole("button", { name: "Submit proposal", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/knowledge\/proposals\/[^/]+$/);
+  const originalProposalUrl = await submitKnowledgeProposal(
+    page,
+    "Submit proposal",
+  );
+
   await expect(
     surface.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
-  const originalProposalUrl = page.url();
-  const competingReview = await context.newPage();
+  // Model two independent reviewers so each has its own HTTP/1.1 connection pool.
+  const competingReview = await browser.newPage({
+    storageState: await context.storageState(),
+  });
 
-  await competingReview.goto(originalProposalUrl);
-  await expect(
-    competingReview
-      .getByRole("main")
-      .getByText("Pending review", { exact: true }),
-  ).toBeVisible();
-  await page.goto("/knowledge/proposals");
-  await surface.getByRole("link", { name: title, exact: true }).click();
-  await expect(page).toHaveURL(originalProposalUrl);
+  try {
+    await competingReview.goto(originalProposalUrl);
+    await expect(
+      competingReview
+        .getByRole("main")
+        .getByText("Pending review", { exact: true }),
+    ).toBeVisible();
+    await page.goto("/knowledge/proposals");
+    await surface.getByRole("link", { name: title, exact: true }).click();
+    await expect(page).toHaveURL(originalProposalUrl);
 
-  await expect(
-    surface.getByText("Pending review", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("link", { name: "Inspect evidence", exact: true })
-    .click();
-  await expect(surface.getByText(source, { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/\/knowledge\/witnesses\/[^/]+$/);
-  await page.goBack();
-  await expect(page).toHaveURL(/\/knowledge\/proposals\/(?!new$)[^/]+$/);
-  const reviews = await prepareKnowledgeReview(
-    page,
-    title,
-    "Inspected the exact captured runbook version",
-    "en",
-  );
-  const competingReviews = await prepareKnowledgeReview(
-    competingReview,
-    title,
-    "A stale competing decision must preserve the accepted result.",
-    "en",
-  );
+    await expect(
+      surface.getByText("Pending review", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("link", { name: "Inspect evidence", exact: true })
+      .click();
+    await expect(surface.getByText(source, { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/knowledge\/witnesses\/[^/]+$/);
+    await page.goBack();
+    await expect(page).toHaveURL(originalProposalUrl);
+    const reviews = await prepareKnowledgeReview(
+      page,
+      title,
+      "Inspected the exact captured runbook version",
+      "en",
+      source,
+    );
+    const competingReviews = await prepareKnowledgeReview(
+      competingReview,
+      title,
+      "A stale competing decision must preserve the accepted result.",
+      "en",
+      source,
+    );
 
-  await reviews
-    .getByRole("button", { name: "Accept selected", exact: true })
-    .click();
-  await expect(
-    reviews.getByRole("list", { name: "Review results" }).getByRole("listitem"),
-  ).toHaveText(`${title} · Accepted`);
-  await competingReviews
-    .getByRole("button", { name: "Reject selected", exact: true })
-    .click();
-  await expect(
-    competingReviews
-      .getByRole("list", { name: "Review results" })
-      .getByRole("listitem"),
-  ).toHaveText(`${title} · Changed during review`);
-  await competingReview.goto(originalProposalUrl);
-  await expect(
-    competingReview.getByRole("link", {
-      name: "Published record",
-      exact: true,
-    }),
-  ).toBeVisible();
-  await competingReview.close();
+    await reviews
+      .getByRole("button", { name: "Accept selected", exact: true })
+      .click();
+    await expect(
+      reviews
+        .getByRole("list", { name: "Review results" })
+        .getByRole("listitem"),
+    ).toHaveText(`${title} · Accepted`);
+    await competingReviews
+      .getByRole("button", { name: "Reject selected", exact: true })
+      .click();
+    await expect(
+      competingReviews
+        .getByRole("list", { name: "Review results" })
+        .getByRole("listitem"),
+    ).toHaveText(`${title} · Changed during review`);
+    await competingReview.goto(originalProposalUrl);
+    await expect(
+      competingReview.getByRole("link", {
+        name: "Published record",
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    await competingReview.close();
+  }
   await page.goto(originalProposalUrl);
   await page
     .getByRole("link", { name: "Published record", exact: true })
@@ -496,18 +517,20 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
   const corrected = `${source} Preserve its original version witness.`;
 
   await surface.getByLabel("Утверждение", { exact: true }).fill(corrected);
-  await surface
-    .getByRole("button", { name: "Отправить предложение", exact: true })
-    .click();
+  const correctionUrl = await submitKnowledgeProposal(
+    page,
+    "Отправить предложение",
+  );
+
   await expect(
     surface.getByText("Ожидает рассмотрения", { exact: true }),
   ).toBeVisible();
-  const correctionProposalUrl = page.url();
   const correctionReviews = await prepareKnowledgeReview(
     page,
     title,
     "Исправление сохраняет исходный источник и требует отдельного подтверждения.",
     "ru",
+    corrected,
   );
 
   await correctionReviews
@@ -518,7 +541,7 @@ test("E2E-CBU-01 an administrator explicitly enables company knowledge and revie
       .getByRole("list", { name: "Результаты проверки" })
       .getByRole("listitem"),
   ).toHaveText(`${title} · Принято`);
-  await page.goto(correctionProposalUrl);
+  await page.goto(correctionUrl);
   await surface
     .getByRole("link", { name: "Опубликованная запись", exact: true })
     .click();

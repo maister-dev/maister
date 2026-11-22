@@ -89,23 +89,37 @@ export async function GET(
           const [key, hint] = pending.entries().next().value!;
 
           pending.delete(key);
-          await authorizePeekRun(user.id, anchor);
-          if (selected && !(await belongs(user.id, anchor, selected))) {
-            selected = null;
-            send({ type: "peek.selection_unavailable" });
+          // A valid selected path already authorizes the anchor. Recheck the
+          // anchor separately when there is no current authorized selection.
+          if (!selected || !(await belongs(user.id, anchor, selected))) {
+            await authorizePeekRun(user.id, anchor);
+            if (selected) {
+              selected = null;
+              send({ type: "peek.selection_unavailable" });
+            }
           }
+          // Messages affect only the conversation that owns them. Neither the
+          // hierarchy nor titles, status, workspace or results depend on them.
+          if (hint.topic === "transcript") {
+            if (hint.runId === anchor || hint.runId === selected)
+              send({ type: "run.changed", runId: hint.runId, kind: hint.topic });
+            continue;
+          }
+          const shared =
+            hint.source === "workspaces" &&
+            hint.rootRunId !== null &&
+            hint.rootRunId === (anchorAccess.run.rootRunId ?? anchor);
           const related =
+            shared ||
+            hint.runId === anchor ||
+            hint.runId === selected ||
             (await belongs(user.id, anchor, hint.runId)) ||
             (!!hint.parentRunId &&
               (await belongs(user.id, anchor, hint.parentRunId))) ||
             (!!hint.previousParentRunId &&
               (await belongs(user.id, anchor, hint.previousParentRunId)));
-          const shared =
-            hint.source === "workspaces" &&
-            hint.rootRunId !== null &&
-            hint.rootRunId === (anchorAccess.run.rootRunId ?? anchor);
 
-          if (!related && !shared) continue;
+          if (!related) continue;
           if (hint.runId === anchor || shared)
             send({ type: "run.changed", runId: anchor, kind: hint.topic });
           if (selected && (hint.runId === selected || shared))

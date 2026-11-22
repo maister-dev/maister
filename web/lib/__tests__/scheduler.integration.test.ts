@@ -36,6 +36,7 @@ import {
   releaseSlotOnIdle,
   tryStartRun,
 } from "@/lib/scheduler";
+import { startAllocatedRun } from "@/lib/scheduler/start-allocated-run";
 import { UPGRADE_MAINTENANCE_ENV } from "@/lib/maintenance/upgrade-fence";
 import {
   startMainPostgresTestDb,
@@ -231,6 +232,30 @@ describe("scheduler — M8 cap semantics", () => {
 
     expect(after[0].status).toBe("Pending");
   }, 60_000);
+
+  it("returns the committed start when queue promotion beats the allocating caller", async () => {
+    const runId = await seedRun("Pending");
+    const runFlow = vi.fn(async () => {});
+
+    await promoteNextPending({ db, runFlow });
+    expect(await startAllocatedRun(testDatabase.db, runId)).toBe(
+      "already_started",
+    );
+    expect(runFlow).toHaveBeenCalledTimes(1);
+
+    const stopped = await seedRun("Failed");
+    await expect(
+      startAllocatedRun(testDatabase.db, stopped),
+    ).rejects.toMatchObject({
+      details: { reason: "run_state_changed", runId: stopped },
+    });
+    await seedRun("Running");
+    await seedRun("Running");
+    expect(await startAllocatedRun(testDatabase.db, runId)).toBe(
+      "already_started",
+    );
+    expect(runFlow).toHaveBeenCalledTimes(1);
+  });
 
   it("promoteNextPending skips NeedsInputIdle in its cap recount and promotes a Pending row", async () => {
     await seedRun("Running");

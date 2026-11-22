@@ -131,7 +131,9 @@ export async function appendManagerRunStreamEvent(
       .select({ id: runs.id, nextSequence: runs.nextExecutionEventSequence })
       .from(runs)
       .where(eq(runs.id, input.runId))
-      .for("update")
+      // Match host ingest: serialize sequence writers while allowing the
+      // foreign-key checks made by concurrent transcript projections.
+      .for("no key update")
       .limit(1);
     const lockedRun = lockedRuns[0];
 

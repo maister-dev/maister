@@ -253,6 +253,9 @@ it("offers a newly configured runner for the batch, explicitly qualifies legacy 
   });
   expect(document.body.textContent).toContain("status.Pending");
   expect(document.body.textContent).toContain("refusal.taskBusy");
+  await click("prepareAnotherBatch");
+  await click("confirmBatchRetry");
+  expect(bodies[1]).toMatchObject({ items: [{ runId: "b" }] });
 });
 
 it("only offers failed work after successfully saving a changed enabled agent runner", async () => {

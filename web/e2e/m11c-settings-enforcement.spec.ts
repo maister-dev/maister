@@ -58,11 +58,7 @@ test("scenario A — node settings are visible on the run-detail panel", async (
 
   await page.goto(`/runs/${fx.runId}`);
 
-  // T-C1 relocated the node-settings block out of the run-detail center into the
-  // run-inspector "Flow" tab, where it renders as a collapsed <details>. The
-  // inspector is open by default (RunShell defaultInspectorOpen); select the Flow
-  // tab and expand the disclosure so the panel — and its <h2> title heading
-  // (i18n run.settingsTitle) — enter the accessibility tree.
+  await page.getByRole("button", { name: "Open inspector" }).click();
   const inspector = page.getByTestId("run-inspector");
 
   await inspector.getByRole("tab", { name: "Flow", exact: true }).click();

@@ -129,16 +129,10 @@ async function findInstall(
   return hit!;
 }
 
-// Fork the installed package from the viewer; a prior fork of the same
-// install surfaces the dedup dialog — take "Fork a new copy".
+// This scenario installs a new upstream revision before opening its viewer.
 async function forkFromViewer(page: Page): Promise<string> {
-  await page.goto(`/studio/packages/${RUN_TAG}`);
-  await page.getByTestId("package-fork").click();
-  const newCopy = page.getByRole("button", { name: "Fork a new copy" });
-
-  if (await newCopy.isVisible().catch(() => false)) {
-    await newCopy.click();
-  }
+  await page.goto(`/studio/packages/${RUN_TAG}?install=${upstreamInstallId}`);
+  await page.getByRole("button", { name: "Rework", exact: true }).click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
 
   return new URL(page.url()).pathname.split("/")[3]!;
@@ -282,11 +276,11 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
 
   await page.goto(`/studio/edit/${fork1Id}/flows/e2e-flow/flow.yaml`);
   await lockReacquired;
-  await page.getByTestId("flow-tab-yaml").click();
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
   const yaml = page
     .getByTestId("flow-yaml-editor")
-    .locator(".cm-content")
-    .first();
+    .locator('.cm-content[contenteditable="true"]')
+    .filter({ visible: true });
 
   await yaml.click();
   await page.keyboard.press("ControlOrMeta+a");
@@ -314,7 +308,7 @@ test("install → fork → edit → cut → evaluation batch shows fork-vs-upstr
   ).id;
 
   await page.goto(`/studio/packages/${RUN_TAG}`);
-  const chooser = page.getByTestId("studio-package-chooser");
+  const chooser = page.getByRole("main").getByTestId("studio-package-chooser");
 
   await expect(
     chooser.locator(`a[href$="install=${upstreamInstallId}"]`),
@@ -517,8 +511,12 @@ test("attach the fork beside its upstream: rename explainer → rename + re-cut 
   ).toBeEnabled();
   await page.getByRole("button", { name: "Attach", exact: true }).click();
   await expect(
-    page.getByRole("link", { name: `${RUN_TAG}fork`, exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
+    page.getByRole("link", { name: `fpl1-${RUN_TAG}`, exact: true }),
+  ).toHaveAttribute(
+    "href",
+    `/studio/packages/${RUN_TAG}fork?install=${renamedCut.id}`,
+    { timeout: 30_000 },
+  );
   await expect(
     page.getByRole("link", { name: RUN_TAG, exact: true }),
   ).toBeVisible();

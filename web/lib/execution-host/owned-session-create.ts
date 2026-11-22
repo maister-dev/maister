@@ -59,6 +59,8 @@ import { pgErrorOf } from "@/lib/db/pg-error";
 
 export type OwnedSessionOptions = Readonly<{
   assertCommit?: (tx: Db) => Promise<void>;
+  /** Release preparation ownership once the original create is durable and replayable. */
+  onAdmitted?: () => Promise<void>;
   prepareContinuation?: () => Promise<OwnedCreateContinuation>;
   bindCredentials?: (
     tx: Db,
@@ -570,6 +572,7 @@ async function createOwnedSessionFromIntent(
       recordKnownCreate(original.id);
       replacement = undefined;
     }
+    await input.options?.onAdmitted?.();
     const current = original;
     const { envelope, intent } = readCreateIntent(current, client.host.hostKey);
     const apply = (tx: Db, result: CreateSessionResult) =>

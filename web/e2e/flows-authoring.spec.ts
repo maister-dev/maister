@@ -52,8 +52,10 @@ function loadFixture(): FlowsAuthoringFixture {
 // Replace the whole editor buffer with `text`. CodeMirror owns the DOM, so we
 // drive it through the real contenteditable: focus, select-all, type.
 async function replaceEditorContent(page: Page, text: string): Promise<void> {
-  const content = page.locator(".cm-content").first();
+  const content = page.locator('[data-testid="code-editor"] .cm-content');
 
+  // The editor becomes writable after its server-side edit lock is acquired.
+  await expect(content).toBeEditable();
   await content.click();
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("Delete");

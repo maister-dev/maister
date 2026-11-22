@@ -51,6 +51,7 @@ import { CANONICAL_PROJECTION_CONSUMERS } from "@/lib/execution-host/events/proj
 import { isFencedError } from "@/lib/execution-host/deliverer";
 import { isUnsettledPromptQuarantine } from "@/lib/execution-host/prompt-evidence";
 import { MaisterError } from "@/lib/errors";
+import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
 
 const log = pino({
   name: "scratch-prompt-owner",
@@ -307,6 +308,14 @@ export async function prepareScratchPrompt(input: {
         ref.runId,
         promptContextFailureReason(outcome),
       );
+
+      // The host terminal event precedes this transaction. Live conversations
+      // must refresh again once the dialog status and output limit are visible.
+      await appendManagerRunStreamEvent(tx, {
+        runId: ref.runId,
+        sourceKey: `scratch:prompt-applied:${command.id}`,
+        event: { type: "scratch.prompt_applied" },
+      });
 
       log.info(
         {

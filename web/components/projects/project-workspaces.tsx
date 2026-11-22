@@ -66,6 +66,7 @@ export async function ProjectWorkspaces({
   canAct: boolean;
 }): Promise<ReactElement> {
   const t = await getTranslations("board.workspaces");
+  const gc = await getTranslations("gc.ttl");
   const status = await getTranslations("run.runStatus");
   const groups = open ? groupWorkspaces(retained) : [];
   const visibleGroups = groups.slice(0, groupLimit * pageSize);
@@ -173,6 +174,11 @@ export async function ProjectWorkspaces({
                                       : "notOnDisk",
                                 )}
                               </span>
+                              {workspace.ttlState !== "active" ? (
+                                <span className="text-amber">
+                                  {gc(workspace.ttlState)}
+                                </span>
+                              ) : null}
                             </div>
                             {canAct && workspace.lifecycleActions.length ? (
                               <WorkbenchLifecycleActions

@@ -34,7 +34,11 @@ import { Pool } from "pg";
 import { createE2EDbPool } from "./db";
 import { DELEGATED_FLOW_RELEASE } from "./delegated-release";
 import { resetFakeGhState } from "./fake-gh";
-import { E2E_EXECUTION_HOST_SLUG } from "./fixtures";
+import {
+  E2E_EXECUTION_HOST_SLUG,
+  E2E_ORCHESTRATOR_SLUG,
+  E2E_PREWORK_FAILURE_RUNNER,
+} from "./fixtures";
 import { E2E_HOLD_TURN_MARKER } from "./stub-supervisor";
 
 import { resolveTestWorktreesRoot } from "@/test-support/worktree-test-root";
@@ -563,7 +567,6 @@ const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
 // session and spawns 2 children through the REAL ext delegate HTTP route, the
 // orchestrator parks on WaitingOnChildren, and the run-tree subtree renders the
 // 2 children on the orchestrator's workbench.
-const ORCHESTRATOR_SLUG = "e2e-orchestrator";
 // ADR-163: a SECOND orchestrator project whose coordinator delegates to a FLOW.
 // Separate from the agent-delegation project on purpose — the test supervisor
 // picks the delegation target by looking for this project's delegated flow, so
@@ -1391,6 +1394,7 @@ const M27_MANIFEST = {
 const M22_SLUG = "e2e-m22";
 const M22_BRANCH = "maister/e2e-m22-workbench";
 const M22_CURRENT_NODE = "implement";
+const M22_READER_EMAIL = "e2e-m22-reader@maister.local";
 const M22_VIEWER_EMAIL = "e2e-m22-viewer@maister.local";
 const M22_VIEWER_PASSWORD = "E2eM22Viewer!pass1";
 // > 524288 (DEFAULT_WORKBENCH_MAX_FILE_BYTES) so readBlob reports too-large.
@@ -1719,7 +1723,14 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
   );
   await pool.query(
     `DELETE FROM platform_acp_runners WHERE id = ANY($1::text[])`,
-    [[PLATFORM_DEFAULT_RUNNER_ID, CODEX_RUNNER_ID, NOT_READY_RUNNER_ID]],
+    [
+      [
+        PLATFORM_DEFAULT_RUNNER_ID,
+        CODEX_RUNNER_ID,
+        NOT_READY_RUNNER_ID,
+        E2E_PREWORK_FAILURE_RUNNER,
+      ],
+    ],
   );
   // ADR-094: the readiness seeded here equals what reconcilePlatformRunners
   // derives from the stub diagnostics (claude + codex binaries available,
@@ -1738,7 +1749,9 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
        ($3, 'codex', 'codex', 'gpt-5-codex', $4::jsonb, 'default',
         'Ready', '[]'::jsonb, true),
        ($5, 'codex', 'codex', 'glm-5.1', $6::jsonb, 'default',
-        'NotReady', $7::jsonb, true)`,
+        'NotReady', $7::jsonb, true),
+       ($8, 'claude', 'claude', $8, $2::jsonb, 'default',
+        'Ready', '[]'::jsonb, true)`,
     [
       PLATFORM_DEFAULT_RUNNER_ID,
       JSON.stringify({ kind: "anthropic" }),
@@ -1754,6 +1767,7 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
       JSON.stringify([
         "Codex OpenAI-compatible provider materialization is not verified",
       ]),
+      E2E_PREWORK_FAILURE_RUNNER,
     ],
   );
   await pool.query(
@@ -5668,13 +5682,13 @@ async function seedM18Fixture(
       [s.implId, s.runId],
     );
     await pool.query(
-      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
-       VALUES ($1, $2, $3, 'human', 1, 'NeedsInput', now())`,
+      `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at, ended_at)
+       VALUES ($1, $2, $3, 'human', 1, 'Succeeded', now(), now())`,
       [s.reviewId, s.runId, M18_REVIEW_NODE],
     );
     await pool.query(
-      `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
-       VALUES ($1, $2, $3, 'human', $4, $5)`,
+      `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt, decision, response, responded_at)
+       VALUES ($1, $2, $3, 'human', $4, $5, 'approve', '{"decision":"approve"}'::jsonb, now())`,
       [
         s.hitlId,
         s.runId,
@@ -5894,6 +5908,7 @@ type M22FixtureRecord = {
   currentNode: string;
   succeededNode: string;
   oversizedFile: string;
+  reader: UserFixture;
   viewerEmail: string;
   viewerPassword: string;
 };
@@ -5983,6 +5998,7 @@ async function seedM22Fixture(
   pool: Pool,
   userId: string,
   viewer: UserFixture,
+  reader: UserFixture,
 ): Promise<M22FixtureRecord> {
   const ids = {
     project: randomUUID(),
@@ -6110,7 +6126,14 @@ async function seedM22Fixture(
     [ids.viewerMember, ids.project, viewer.id],
   );
 
+  // A project-only reader receives attention events for this fixture alone.
+  await pool.query(
+    "INSERT INTO project_members (id, project_id, user_id, role) VALUES ($1, $2, $3, 'member')",
+    [randomUUID(), ids.project, reader.id],
+  );
+
   return {
+    reader,
     projectSlug: M22_SLUG,
     repoPath,
     runId: ids.run,
@@ -7381,7 +7404,7 @@ async function seedPlatformAgentsFixture(
     agentsRoot,
     id: E2E_HELPER_AGENT,
     workspace: "none",
-    triggers: ["manual", "flow"],
+    triggers: ["manual", "flow", "cron"],
     body: `${AGENT_BODY_MARKER}\nYou are the e2e helper agent. Reply tersely.`,
   });
   const auditorPath = writeAgentDefinition({
@@ -7401,7 +7424,7 @@ async function seedPlatformAgentsFixture(
         mode, triggers, risk_tier, source_path)
      VALUES
        ($1, 'e2e-agents-pkg', 'v1.0.0', 'git', $1, 'e2e fixture agent', 'none',
-        'session', '["manual","flow"]'::jsonb, 'read_only', $2),
+        'session', '["manual","flow","cron"]'::jsonb, 'read_only', $2),
        ($3, 'e2e-agents-pkg', 'v1.0.0', 'git', $3, 'e2e fixture agent',
         'repo_read', 'session', '["manual"]'::jsonb, 'read_only', $4)`,
     [E2E_HELPER_AGENT, helperPath, E2E_AUDITOR_AGENT, auditorPath],
@@ -7596,7 +7619,7 @@ async function seedOrchestratorE2EFixture(
     reuseAgentPackage?: boolean;
   } = {},
 ): Promise<OrchestratorFixture> {
-  const slug = opts.slug ?? ORCHESTRATOR_SLUG;
+  const slug = opts.slug ?? E2E_ORCHESTRATOR_SLUG;
   const base = await seedLaunchableProjectFixture(pool, {
     slug,
     projectName: opts.projectName ?? "E2E Orchestrator",
@@ -8536,6 +8559,7 @@ async function main(): Promise<void> {
         MEMBER_EMAIL,
         EDIT_TARGET_EMAIL,
         M22_VIEWER_EMAIL,
+        M22_READER_EMAIL,
         DELETABLE_EMAIL,
         MEMBER_CANDIDATE_EMAIL,
       ],
@@ -8688,7 +8712,15 @@ async function main(): Promise<void> {
     const budgetFork = await seedBudgetForkFixture(pool, admin.id);
     const m18 = await seedM18Fixture(pool, admin.id);
     const m27 = await seedM27Fixture(pool, admin.id);
-    const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
+    const m22Reader = await insertUser(pool, {
+      email: M22_READER_EMAIL,
+      password: randomUUID(),
+      name: "E2E M22 Reader",
+      role: "member",
+      accountStatus: "active",
+      mustChangePassword: false,
+    });
+    const m22 = await seedM22Fixture(pool, admin.id, m22Viewer, m22Reader);
     const m43Cutover = await seedM43CutoverFixture(pool, m22);
     const scratchDetail = await seedScratchDetailFixture(pool, admin.id);
     const m23 = await seedM23Fixture(pool, admin.id);

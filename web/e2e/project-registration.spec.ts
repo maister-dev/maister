@@ -89,11 +89,6 @@ test("non-admin users cannot register projects", async ({
   const page = await context.newPage();
 
   try {
-    // users.memberCandidate, NOT users.member: admin-users.spec renames
-    // member's email in the DB mid-suite, which kills member's fixture
-    // credentials whenever that spec wins the parallel race. memberCandidate's
-    // user row is never mutated (project-members.spec only touches its
-    // project_members rows).
     await loginAs(page, users.memberCandidate);
     await page.goto("/projects/new");
     // `.first()`: the refusal is rendered twice — once in the page body and

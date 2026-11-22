@@ -92,14 +92,25 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
   await expect(page.getByText(RUN_TAG, { exact: true })).toBeVisible({
     timeout: 30_000,
   });
+  const installed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/admin/package-installs" &&
+      response.request().method() === "POST",
+  );
+
   await page
     .getByRole("button", { name: `${RUN_TAG}/v1.0.0 · install` })
     .click();
+  const receipt = await installed;
+
+  expect(receipt.status(), await receipt.text()).toBe(201);
+  const { id } = (await receipt.json()) as { id: string };
+
   await expect(
     page.getByRole("button", { name: `${RUN_TAG}/v1.0.0 · installed` }),
   ).toBeVisible({ timeout: 30_000 });
 
-  await page.goto(`/studio/packages/${RUN_TAG}`);
+  await page.goto(`/studio/packages/${RUN_TAG}?install=${id}`);
   // The working-dir edit-lock acquires when the editor mounts (after fork). Wait
   // for that round-trip before launching — the launch is lock-asserted
   // server-side and the editor renders optimistically editable, so launching
@@ -111,7 +122,7 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
       (await responseHasOwnLock(r)),
   );
 
-  await page.getByTestId("package-fork").click();
+  await page.getByRole("main").getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   await lockAcquired;
 

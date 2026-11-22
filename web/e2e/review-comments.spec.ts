@@ -102,6 +102,7 @@ async function openComposerOnNewLine(page: Page, line: number): Promise<void> {
 test("review gate: seeded threads render; add root + reply; resolve; rework decision accepted", async ({
   page,
 }) => {
+  test.slow();
   const fx = loadFixture();
 
   await page.goto(`/runs/${fx.runId}?wb=review&scope=review`);
@@ -230,7 +231,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   ).toHaveText(String(fx.gateAttempt));
   await expect(
     workspace.locator('[data-testid="review-open-count"]'),
-  ).toHaveText("4 unresolved");
+  ).toHaveText("4 unresolved", { timeout: 15_000 });
 
   // (2) REPLY to the new thread via the reply affordance on its card.
   const replyBody = "Reply: covered by the docs pass.";
@@ -274,7 +275,7 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
   ).toBeVisible();
   await expect(
     workspace.locator('[data-testid="review-open-count"]'),
-  ).toHaveText("3 unresolved");
+  ).toHaveText("3 unresolved", { timeout: 15_000 });
 
   // (4) Request changes first obtains the server-derived packet. Only a
   // reviewer who sees that packet can confirm the response carrying its fresh

@@ -151,6 +151,9 @@ export default defineConfig({
       // and platform-agents-binding.spec.ts already tolerates `Running` as well
       // as `Pending` for its launched run.
       MAISTER_MAX_CONCURRENT_RUNS: "64",
+      // Agent activity scenarios retain active Runs for inspection while
+      // other workers dispatch real children through the same scheduler.
+      MAISTER_MAX_CONCURRENT_AGENTS: "64",
       // push-notifications.spec.ts (ADR-173). Throwaway keys; see above.
       MAISTER_VAPID_PUBLIC_KEY,
       MAISTER_VAPID_PRIVATE_KEY,

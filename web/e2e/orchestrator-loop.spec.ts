@@ -31,23 +31,16 @@ import { readStubSessionRecords } from "./_seed/session-records";
 const CRON_HEADER = "X-Maister-Cron-Token";
 const CRON_TOKEN = process.env.MAISTER_CRON_TOKEN ?? "e2e-cron-token-change-me";
 
-// The test supervisor writes a `<sessionId>.json` per non-orchestrator (child)
-// session and holds its stream until a `<sessionId>.release` marker — release
-// every pending child so the workspace=none children finalize Done.
-function releaseAllChildSessions(seenRunIds: Set<string>): string[] {
-  const released: string[] = [];
-
+// Each worker keeps its first prompt in flight until the spec has seen the
+// parked coordinator and both child cards. A later-created session is released
+// on the next pass using its own session ID.
+function releaseChildSessions(childRunIds: ReadonlySet<string>): void {
   for (const rec of readStubSessionRecords(STUB_SESSIONS_DIR)) {
-    if (!seenRunIds.has(rec.request.runId)) continue;
+    if (!childRunIds.has(rec.request.runId)) continue;
     const marker = path.join(STUB_SESSIONS_DIR, `${rec.sessionId}.release`);
 
-    if (!existsSync(marker)) {
-      writeFileSync(marker, "go", "utf8");
-      released.push(rec.sessionId);
-    }
+    if (!existsSync(marker)) writeFileSync(marker, "go", "utf8");
   }
-
-  return released;
 }
 
 // ~19 s on a quiet host; in a loaded lane (load 40-72, --workers=2,
@@ -167,7 +160,7 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   expect(childIds).toHaveLength(2);
 
   // ---- The inspector renders the dynamic run-tree children. -------
-  await page.goto(`/runs/${runId}`);
+  await page.goto(`/runs/${runId}?inspector=open`);
   const subtree = page.locator(
     '[data-testid="run-inspector-child-runs"]:visible',
   );
@@ -184,12 +177,12 @@ test("orchestrator loop: launch → park with child subtree → resume to termin
   // released as its session file appears (a child session is created only once
   // startAgentSession runs). Keep releasing until BOTH children finalize Done
   // (workspace=none → run.done with the parent linkage).
-  const seen = new Set(childIds);
+  const childRunIdsToRelease = new Set(childIds);
 
   await expect
     .poll(
       async () => {
-        releaseAllChildSessions(seen);
+        releaseChildSessions(childRunIdsToRelease);
 
         return singleValue<string>(
           `SELECT count(*)::text AS value FROM runs WHERE parent_run_id = $1 AND status = 'Done'`,

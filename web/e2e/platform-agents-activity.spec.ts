@@ -1,17 +1,27 @@
+import type { AgentRetryBatchResult } from "@/lib/agents/retry-batch-types";
+
 import { rm, mkdir, writeFile, cp } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Response,
+} from "@playwright/test";
 
 import { STUB_SESSIONS_DIR } from "./_seed/stub-supervisor";
 import { readStubSessionRecords } from "./_seed/session-records";
 import { withE2EDb } from "./_seed/db";
+import { E2E_PREWORK_FAILURE_RUNNER, loadFixtures } from "./_seed/fixtures";
 
 import { git, initRepo } from "@/test-support/git-fixture";
 
 // Projection scenarios cover retained history; the retry journey drives the real
 // API and controlled supervisor. PG/Git suites own adversarial lifecycle checks.
 const projectId = randomUUID();
+const viewerEmail = `activity-${projectId}@example.test`;
 const slug = `agent-activity-${projectId.slice(0, 8)}`;
 const agentId = `fixture:triager-${projectId.slice(0, 8)}`;
 const activeStatuses = [
@@ -25,6 +35,21 @@ const activeStatuses = [
 const activeIds = activeStatuses.map(() => randomUUID());
 let addedHistoryRuns = 0;
 const failedIds = Array.from({ length: 20 }, () => randomUUID());
+
+async function confirmRetry(button: Locator, path: string): Promise<Response> {
+  const [response] = await Promise.all([
+    button
+      .page()
+      .waitForResponse(
+        (res) =>
+          res.request().method() === "POST" &&
+          new URL(res.url()).pathname === path,
+      ),
+    button.click(),
+  ]);
+
+  return response;
+}
 
 test.describe("Agent execution visibility and retained history", () => {
   test.describe.configure({ mode: "serial" });
@@ -48,6 +73,17 @@ test.describe("Agent execution visibility and retained history", () => {
           `AA${projectId.replaceAll("-", "").slice(0, 7).toUpperCase()}`,
         ],
       );
+      const viewerId = randomUUID();
+
+      await pool.query(
+        `INSERT INTO users(id,email,password_hash,role,account_status,must_change_password)
+         SELECT $1,$2,password_hash,'member','active',false FROM users WHERE email=$3`,
+        [viewerId, viewerEmail, loadFixtures().adminEmail],
+      );
+      await pool.query(
+        "INSERT INTO project_members(id,project_id,user_id,role) VALUES ($1,$2,$3,'viewer')",
+        [randomUUID(), projectId, viewerId],
+      );
       await pool.query(
         "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path) VALUES ($1,'fixture','v1','git','Intake triager','Activity fixture','none','session','[\"manual\"]','read_only','/unused/triager.md')",
         [agentId],
@@ -56,9 +92,15 @@ test.describe("Agent execution visibility and retained history", () => {
         "INSERT INTO agent_project_links(id,project_id,agent_id) VALUES ($1,$2,$3)",
         [randomUUID(), projectId, agentId],
       );
-      for (const [index, id] of [...activeIds, ...failedIds].entries()) {
+      // Insert the waiting parent, then the active writer, before its queued
+      // sibling. The scheduler must keep that second shared writer Pending.
+      const rows = Array.from([...activeIds, ...failedIds].entries()).reverse();
+
+      for (const [index, id] of rows) {
         const state =
           index < activeIds.length ? activeStatuses[index] : "Failed";
+        const sharedRoot =
+          state === "Running" || state === "Pending" ? activeIds[5] : null;
         const snapshot = {
           version: 1,
           agentId,
@@ -71,8 +113,16 @@ test.describe("Agent execution visibility and retained history", () => {
         };
 
         await pool.query(
-          "INSERT INTO runs(id,project_id,run_kind,agent_id,agent_workspace,status,flow_version,source_agent_id,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance,ended_at) VALUES ($1,$2,'agent',$3,'none',$4,'agent',$3,$5,now()-($6::int*interval '1 second'),now()-($6::int*interval '1 second'),'launch',CASE WHEN $4='Failed' THEN now() ELSE NULL END)",
-          [id, projectId, agentId, state, JSON.stringify(snapshot), index],
+          "INSERT INTO runs(id,project_id,run_kind,agent_id,agent_workspace,status,flow_version,source_agent_id,agent_activity_snapshot,launched_at,activity_sort_at,activity_timestamp_provenance,ended_at,parent_run_id,root_run_id,workspace_mode) VALUES ($1,$2,'agent',$3,CASE WHEN $7::text IS NULL THEN 'none' ELSE 'worktree' END,$4,'agent',$3,$5,now()-($6::int*interval '1 second'),now()-($6::int*interval '1 second'),'launch',CASE WHEN $4='Failed' THEN now() ELSE NULL END,$7,$7,CASE WHEN $7::text IS NOT NULL THEN 'shared' END)",
+          [
+            id,
+            projectId,
+            agentId,
+            state,
+            JSON.stringify(snapshot),
+            index,
+            sharedRoot,
+          ],
         );
       }
     }),
@@ -119,6 +169,14 @@ test.describe("Agent execution visibility and retained history", () => {
       context,
       baseURL,
     }) => {
+      await context.clearCookies();
+      await page.goto("/login");
+      await page.locator('input[name="email"]').fill(viewerEmail);
+      await page
+        .locator('input[name="password"]')
+        .fill(loadFixtures().adminPassword);
+      await page.locator('form button[type="submit"]').click();
+      await page.waitForURL((url) => !url.pathname.startsWith("/login"));
       await context.addCookies([
         { name: "NEXT_LOCALE", value: locale, url: baseURL! },
       ]);
@@ -129,6 +187,7 @@ test.describe("Agent execution visibility and retained history", () => {
         ),
       );
       await page.goto(`/projects/${slug}`);
+      await expect(page.locator("html")).toHaveAttribute("lang", locale);
       const rail = page.getByTestId("left-rail");
       const ownedActiveRows = activeIds
         .map((id) => `[data-agent-run-id="${id}"]`)
@@ -330,8 +389,8 @@ test.describe("Agent execution visibility and retained history", () => {
     ]);
     const packageId = randomUUID();
     const operationId = `fixture-retry-${projectId.slice(0, 8)}:operation`;
-    const bad = randomUUID();
-    const good = randomUUID();
+    const bad = E2E_PREWORK_FAILURE_RUNNER;
+    const good = "claude-code";
     const pkg = `fixture-retry-${projectId.slice(0, 8)}`;
     const root = `/tmp/${slug}/package`;
 
@@ -376,14 +435,6 @@ test.describe("Agent execution visibility and retained history", () => {
         "INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path,kind,completion_contract) VALUES($1,$2,'v1','git','Retry operation','Controlled retry','none','session','[\"manual\"]','read_only',$3,'operational','{\"contract\":\"operational_v1\"}')",
         [operationId, pkg, `${root}/maister-agents/operation.md`],
       );
-      for (const [id, model] of [
-        [bad, "e2e-prework-unavailable"],
-        [good, "claude-sonnet-4-6"],
-      ])
-        await pool.query(
-          "INSERT INTO platform_acp_runners(id,adapter,capability_agent,model,provider,permission_policy,readiness_status,readiness_reasons,enabled) VALUES($1,'claude','claude',$2,'{\"kind\":\"anthropic\"}','default','Ready','[]',true)",
-          [id, model],
-        );
       await pool.query(
         "INSERT INTO agent_project_links(id,project_id,agent_id,runner_override_id) VALUES($1,$2,$3,$4)",
         [randomUUID(), projectId, operationId, bad],
@@ -459,9 +510,30 @@ test.describe("Agent execution visibility and retained history", () => {
       await dialog
         .getByLabel("Runner for this attempt", { exact: true })
         .selectOption(good);
-      await dialog
-        .getByRole("button", { name: "Accept new attempt", exact: true })
-        .click();
+      const accept = dialog.getByRole("button", {
+        name: "Accept new attempt",
+        exact: true,
+      });
+      const retryPath = `/api/runs/${source.runId}/retry`;
+      let accepted = await confirmRetry(accept, retryPath);
+
+      for (
+        let refresh = 0;
+        accepted.status() === 409 && refresh < 2;
+        refresh++
+      ) {
+        expect(await accepted.json()).toMatchObject({
+          reason: "retry_preview_stale",
+        });
+        await dialog
+          .getByRole("button", { name: "Refresh current data", exact: true })
+          .click();
+        await expect(
+          dialog.getByLabel("Runner for this attempt", { exact: true }),
+        ).toHaveValue(good);
+        accepted = await confirmRetry(accept, retryPath);
+      }
+      expect(accepted.status()).toBe(202);
       await expect(dialog.getByTestId("agent-retry-receipt")).toBeVisible();
       await expect
         .poll(
@@ -572,9 +644,43 @@ test.describe("Agent execution visibility and retained history", () => {
             ).rows[0].amount,
         ),
       ).toBe(0);
-      await batch
-        .getByRole("button", { name: "Start eligible work (2)", exact: true })
-        .click();
+      let pendingIds = [...pendingSources];
+      let lastAcceptedCount = 0;
+
+      // Other workers can change the platform runner catalogue after a preview.
+      // Reconfirm only a stale preview. Every other outcome must be accepted.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const response = await confirmRetry(
+          batch.getByRole("button", {
+            name: `Start eligible work (${pendingIds.length})`,
+            exact: true,
+          }),
+          `/api/projects/${slug}/agents/${encodeURIComponent(operationId)}/retry`,
+        );
+        const { items } = (await response.json()) as AgentRetryBatchResult;
+
+        expect(response.status()).toBe(
+          items.some((item) => item.state === "accepted") ? 202 : 200,
+        );
+        expect(items.map((item) => item.runId).sort()).toEqual(
+          [...pendingIds].sort(),
+        );
+        const stale = items.filter(
+          (item) => item.reason === "retry_preview_stale",
+        );
+
+        for (const item of items) {
+          if (stale.includes(item)) expect(item.state).toBe("refused");
+          else expect(item.state, JSON.stringify(item)).toBe("accepted");
+        }
+        lastAcceptedCount = items.length - stale.length;
+        pendingIds = stale.map((item) => item.runId);
+        if (pendingIds.length === 0) break;
+        await batch
+          .getByRole("button", { name: "Refresh this batch preview" })
+          .click();
+      }
+      expect(pendingIds).toEqual([]);
       await expect
         .poll(
           () =>
@@ -595,7 +701,7 @@ test.describe("Agent execution visibility and retained history", () => {
         .click();
       await expect(
         batch.getByText("New attempt status: Done", { exact: true }),
-      ).toHaveCount(2);
+      ).toHaveCount(lastAcceptedCount);
       expect(
         await withE2EDb(
           async (pool) =>
@@ -616,10 +722,6 @@ test.describe("Agent execution visibility and retained history", () => {
         await pool.query("UPDATE agents SET enabled=false WHERE id=$1", [
           operationId,
         ]);
-        await pool.query(
-          "UPDATE platform_acp_runners SET enabled=false WHERE id=ANY($1::text[])",
-          [[bad, good]],
-        );
       });
     }
   });
