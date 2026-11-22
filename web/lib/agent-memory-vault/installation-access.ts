@@ -273,6 +273,21 @@ export async function authorizeHumanInstallationVault(
     binding.company_id,
     input.agentId,
   );
+  const canReadSourceProjects = async (
+    db: Db,
+    projectIds: readonly string[],
+  ): Promise<boolean> => {
+    if (actor.user.role === "admin" || projectIds.length === 0) return true;
+    const ids = [...new Set(projectIds)].sort();
+    const { rows } = await db.execute(sql`
+      SELECT p.id FROM projects p JOIN project_members m ON m.project_id=p.id
+      WHERE m.user_id=${input.userId} AND p.id=ANY(${sql.param(ids)}::text[])
+        AND p.archived_at IS NULL
+      ORDER BY p.id FOR SHARE OF p,m
+    `);
+
+    return rows.length === ids.length;
+  };
 
   const access: Awaited<ReturnType<PrepareVaultAccess>> = {
     vaultId,
@@ -284,18 +299,8 @@ export async function authorizeHumanInstallationVault(
     visibleGeneration: true,
     async canRead(db, revision) {
       if (actor.user.role === "admin") return true;
-      if (revision.sourceProjectIds.length) {
-        const sources =
-          await db.execute(sql`SELECT p.id FROM projects p JOIN project_members m ON m.project_id=p.id
-            AND m.user_id=${input.userId} WHERE p.id IN (${sql.join(
-              revision.sourceProjectIds.map((id) => sql`${id}`),
-              sql`, `,
-            )}) AND p.archived_at IS NULL
-            FOR SHARE OF p,m`);
-
-        if (sources.rows.length !== new Set(revision.sourceProjectIds).size)
-          return false;
-      }
+      if (!(await canReadSourceProjects(db, revision.sourceProjectIds)))
+        return false;
       try {
         await authorizeSourceRestrictions(
           db,
@@ -327,5 +332,5 @@ export async function authorizeHumanInstallationVault(
       ),
   };
 
-  return { access, availability: binding.availability };
+  return { access, availability: binding.availability, canReadSourceProjects };
 }

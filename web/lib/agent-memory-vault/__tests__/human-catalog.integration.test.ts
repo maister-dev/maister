@@ -8,7 +8,9 @@ import {
 } from "../human-catalog";
 import { prepareHumanInstallationVault } from "../installation-access";
 import { agentMemoryVaultLimits } from "../limits";
+import { readVaultReviewHistory } from "../review";
 import { applyVaultMutation } from "../store";
+import { viewAgentMemory } from "../view";
 
 import {
   decideProposalReview,
@@ -22,6 +24,7 @@ import {
   seedActiveUser,
 } from "@/test-support/librarian-seed";
 import { startMainPostgresTestDb } from "@/test-support/pg-container";
+import { withQueryCount } from "@/test-support/query-count";
 
 it("K08 pages authorized attachments, resolves the 51st directly and leaves unmaterialized vaults untouched", async () => {
   const fixture = await startMainPostgresTestDb({
@@ -187,6 +190,109 @@ it("K08 pages authorized attachments, resolves the 51st directly and leaves unma
       agentId,
       bindingId,
       action: "read",
+    });
+    const limits = agentMemoryVaultLimits();
+    const prepareWithSource = async (tx: Parameters<typeof prepare>[0]) => ({
+      ...(await prepare(tx)),
+      sourceProjectIds: [otherProject.id],
+      sourceRestrictions: [
+        { kind: "project_context" as const, projectId: otherProject.id },
+      ],
+    });
+    const reviewedMove = async (directory: string, noteCount: number) => {
+      const key = directory.slice("/memories/".length);
+
+      for (let index = 0; index < noteCount; index++) {
+        const path = `${directory}/note-${index}.md`;
+
+        await applyVaultMutation(
+          fixture.db,
+          {
+            command: "create",
+            path,
+            file_text: "Retained source note",
+            ifRevisionId: null,
+            ifHash: null,
+            requestKey: `create-${key}-${index}`,
+          },
+          prepareWithSource,
+          limits,
+        );
+      }
+      const source = await viewAgentMemory(
+        fixture.db,
+        { command: "view", path: directory, limit: 20 },
+        prepare,
+      );
+
+      if (source.kind !== "directory") throw new Error("Expected a directory");
+      const move = await applyVaultMutation(
+        fixture.db,
+        {
+          command: "rename",
+          old_path: directory,
+          new_path: `${directory}-moved`,
+          ifGeneration: source.generation,
+          heads: source.entries.map(({ path, revisionId, hash }) => ({
+            path,
+            ifRevisionId: revisionId!,
+            ifHash: hash!,
+          })),
+          requestKey: `move-${key}`,
+        },
+        async (tx) => ({
+          ...(await prepareWithSource(tx)),
+          writeAdmission: "review_required",
+        }),
+        limits,
+      );
+
+      if (move.status !== "pending")
+        throw new Error("Expected a retained proposal");
+      await decideProposalReview(fixture.db, admin, {
+        kind: "vault",
+        id: move.proposalId,
+        expectedVersion: "1",
+        decision: "accept",
+        requestKey: `accept-${key}`,
+      });
+
+      return move.proposalId;
+    };
+    const small = await reviewedMove("/memories/small", 1);
+    const large = await reviewedMove("/memories/large", 12);
+    const inspectHistory = (proposalId: string) =>
+      fixture.db.transaction(async (tx) => {
+        const measured = withQueryCount(tx);
+        const history = await readVaultReviewHistory(
+          measured.db,
+          proposalId,
+          userId,
+        );
+
+        return { history, queries: measured.count() };
+      });
+    const narrow = await inspectHistory(small);
+    const wide = await inspectHistory(large);
+
+    expect(wide.history.applied).toHaveLength(12);
+    expect(wide.queries).toBe(narrow.queries);
+    await fixture.db.transaction(async (tx) => {
+      const { proposal } = await readVaultReviewHistory(tx, large, userId);
+
+      await expect(
+        fixture.pool.query(
+          "SELECT id FROM agent_memory_vaults WHERE id=$1 FOR UPDATE NOWAIT",
+          [proposal.vaultId],
+        ),
+      ).resolves.toMatchObject({ rowCount: 1 });
+    });
+    await removeProjectMember(fixture.db, {
+      projectId: otherProject.id,
+      userId,
+    });
+    await expect(inspectHistory(large)).rejects.toMatchObject({
+      details: { reason: "agent_memory_unavailable" },
     });
     const pending = await applyVaultMutation(
       fixture.db,

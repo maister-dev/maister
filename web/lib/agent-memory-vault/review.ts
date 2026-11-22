@@ -1,10 +1,14 @@
 import "server-only";
 
 import type { PendingVaultProposal } from "./proposals";
+import type { AgentMemoryRestriction } from "./types";
 import type { VaultAccess, VaultRevision } from "./store";
 import type { Db } from "@/lib/execution-host/db";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
+import pino from "pino";
+
+import { canonicalCommandJson } from "../../../runtime/command-json";
 
 import { parseAgentMemoryMutation } from "./commands";
 import { authorizeHumanInstallationVault } from "./installation-access";
@@ -24,6 +28,32 @@ import {
   agentMemoryRevisionPayloads as revisionPayloads,
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+
+const log = pino({
+  name: "agent-memory-review",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function reviewSourceRestrictions(
+  proposal: PendingVaultProposal,
+  revisions: readonly VaultRevision[],
+) {
+  const byIdentity = new Map<string, AgentMemoryRestriction>();
+
+  for (const source of [
+    ...proposal.sourceRestrictions,
+    ...revisions.flatMap((revision) => revision.sourceRestrictions),
+  ]) {
+    const restriction =
+      source.kind === "legacy_project_private"
+        ? { kind: "project_context" as const, projectId: source.projectId }
+        : source;
+
+    byIdentity.set(canonicalCommandJson(restriction), restriction);
+  }
+
+  return [...byIdentity.values()];
+}
 
 async function loadVaultReview(
   tx: Db,
@@ -61,7 +91,7 @@ async function loadVaultReview(
   if (!owner) throw unavailableMemory();
 
   try {
-    const { reviewer, enabled } =
+    const { reviewer, enabled, canReadSourceProjects } =
       owner.slug !== null
         ? await authorizeRetainedProjectVault(
             tx,
@@ -72,18 +102,27 @@ async function loadVaultReview(
               action: access === "review" ? "editSettings" : "readRepoFiles",
             },
             owner.vault_id,
-          )
+          ).then(({ reviewer, enabled }) => ({
+            reviewer,
+            enabled,
+            canReadSourceProjects: async (
+              _tx: Db,
+              projectIds: readonly string[],
+            ) =>
+              projectIds.every((id) => reviewer.sourceProjectIds.includes(id)),
+          }))
         : await authorizeHumanInstallationVault(tx, {
             userId,
             agentId: owner.agent_id,
             bindingId: owner.binding_id!,
             action: access === "review" ? "edit" : "read",
-          }).then(({ access, availability }) => ({
+          }).then(({ access, availability, canReadSourceProjects }) => ({
             reviewer: access,
             enabled: availability === "available",
+            canReadSourceProjects,
           }));
 
-    await lockVault(tx, owner.vault_id);
+    if (access === "review") await lockVault(tx, owner.vault_id);
     const [proposal] = await tx
       .select()
       .from(proposals)
@@ -93,28 +132,15 @@ async function loadVaultReview(
           eq(proposals.vaultId, owner.vault_id),
         ),
       )
-      .for("update");
+      .for(access === "review" ? "update" : "share");
 
     if (
       !proposal ||
       proposal.state === "redacted" ||
-      (access === "history" && proposal.state === "pending") ||
-      (owner.slug !== null &&
-        !proposal.sourceProjectIds.every((id) =>
-          reviewer.sourceProjectIds.includes(id),
-        ))
+      (access === "history" && proposal.state === "pending")
     )
       throw unavailableMemory();
 
-    await authorizeSourceRestrictions(
-      tx,
-      { kind: "user", userId },
-      proposal.sourceRestrictions.map((source) =>
-        source.kind === "legacy_project_private"
-          ? { kind: "project_context", projectId: source.projectId }
-          : source,
-      ),
-    );
     const bases = await vaultProposalBases(
       tx,
       owner.vault_id,
@@ -131,9 +157,19 @@ async function loadVaultReview(
       : [];
     const protectedRevisions = [...bases, ...applied];
 
-    for (const revision of protectedRevisions) {
-      if (!(await reviewer.canRead(tx, revision))) throw unavailableMemory();
-    }
+    const sourceProjects = [
+      ...(owner.slug !== null ? proposal.sourceProjectIds : []),
+      ...protectedRevisions.flatMap((revision) => revision.sourceProjectIds),
+    ];
+
+    if (!(await canReadSourceProjects(tx, sourceProjects)))
+      throw unavailableMemory();
+    await authorizeSourceRestrictions(
+      tx,
+      { kind: "user", userId },
+      reviewSourceRestrictions(proposal, protectedRevisions),
+    );
+
     const contentIds = protectedRevisions
       .filter(({ contentSha256 }) => contentSha256 !== null)
       .map(({ id }) => id);
@@ -147,11 +183,18 @@ async function loadVaultReview(
             eq(revisionPayloads.vaultId, owner.vault_id),
             inArray(revisionPayloads.revisionId, contentIds),
           ),
-        );
+        )
+        .orderBy(revisionPayloads.revisionId)
+        .for("share");
 
       if (content.length !== new Set(contentIds).size)
         throw unavailableMemory();
     }
+
+    log.debug(
+      { proposalId, access, bases: bases.length, results: applied.length },
+      "authorized retained memory review",
+    );
 
     return {
       reviewer,
