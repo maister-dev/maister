@@ -36,6 +36,7 @@ export const PLACEMENT_REASONS = [
   "legacy_backfill",
   // ADR-185: each librarian turn claims the conversation run anew.
   "librarian_turn",
+  "node_restart",
 ] as const;
 export type PlacementReason = (typeof PLACEMENT_REASONS)[number];
 

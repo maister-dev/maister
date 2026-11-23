@@ -279,6 +279,25 @@ flowchart TD
 
 ### Operator Recover — hybrid resume / re-dispatch (Implemented)
 
+The Flow continuation worker also re-admits an interrupted project Flow after
+a confirmed supervisor restart. It matches the lost prompt, closed attempt,
+released assignment and session crash across two supervisor boot IDs. The
+existing recovery claim reserves capacity and resumes the retained node. This
+automatic path covers root project Flow coding and judgment turns with a
+resumable session. Failed claims back off and leave the run eligible for
+operator recovery.
+
+For a `Failed` project Flow with a retained workspace, **Restart this node**
+submits the latest eligible attempt ID. The server checks that the attempt
+still owns the failure, the supervisor has no live session for that run, and
+the original task reservation can be reacquired. The next visit starts from
+that node in the existing worktree. An agent visit starts a new ACP session.
+The operator can keep the current files or confirm a preview of restoring the
+checkpoint captured before the attempt. The Flow driver records a Git rescue
+snapshot before changing the worktree. A changed Git state invalidates the
+confirmation and keeps the attempt from dispatching. A successful restore
+marks artifacts from the replaced attempt stale.
+
 Operator-driven Recover (`POST /api/runs/{runId}/recover`, and its
 token-authority twin `POST /api/v1/ext/runs/{runId}/recover` under scope
 `runs:recover` — ADR-034 amendment) classifies the

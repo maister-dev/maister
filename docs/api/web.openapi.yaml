@@ -11618,12 +11618,80 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/runs/{runId}/recover:
+    get:
+      tags: [reconciliation-gc]
+      summary: Preview the worktree restore for a failed node restart
+      description: |
+        Examines the checkpoint recorded before the requested attempt and the
+        current worktree. Requires project permission to recover the Run and
+        read repository files. The preview token binds the attempt, checkpoint,
+        current branch tip, index and worktree files.
+      operationId: previewFailedNodeRestartCheckpoint
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: restartAttempt
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Preview token and a bounded list of affected paths.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, files, fileCount, rewindsCommits]
+                properties:
+                  token: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  fileCount: { type: integer, minimum: 0 }
+                  rewindsCommits: { type: boolean }
+                  files:
+                    type: array
+                    maxItems: 12
+                    items:
+                      type: object
+                      required: [path, removed]
+                      properties:
+                        path: { type: string }
+                        removed: { type: boolean }
+        "400":
+          description: Missing or invalid attempt ID.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The project Flow could not be resolved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: The attempt or its checkpoint is unavailable for restore.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     post:
       tags: [reconciliation-gc]
-      summary: (M19) Recover a Crashed run
+      summary: Recover a Crashed run or restart its failed Flow node
       description: |
         (Implemented, M19 — ADR-034.)
         Requires canonical same-origin session authorization before creating recovery authority or dispatch effects.
+        With `restartAttempt`, a project Flow in `Failed` can restart its latest
+        failed attempt or close and restart an attempt left open by a terminal
+        failure. The claim verifies the attempt ID, a retained worktree and an
+        idle execution host for this run. It keeps the run and worktree and
+        starts a new attempt from that node through the scheduler. Agent nodes
+        start a new ACP session for that attempt.
+        With `restartCheckpoint`, submit the token from the checkpoint preview
+        as well. Before dispatch the driver rechecks the reviewed worktree,
+        writes a rescue snapshot and restores the selected attempt's checkpoint.
+        A changed or unavailable checkpoint requires a new preview.
         For a company-owned coordinator, requires current assignment read and recover authority
         and current access to the exact retained input and its sources. The recovery claim requires
         the current assignment appointment and available budget. A restart that has left
@@ -11733,6 +11801,8 @@ paths:
         | `userId` | Auth.js session | `auth-context` |
         | `projectId` | DB join from the run row | `server-state` |
         | `acpSessionId` (resolved from the recover-target NODE's own attempt / logical session, never the newest `run_sessions` row), recover target node (`resume_target_step_id`) | DB row / pinned manifest | `server-state` |
+        | `restartAttempt` | optional query parameter verified against the latest eligible attempt | `url-param` |
+        | `restartCheckpoint` | optional preview token verified against the Git state and the attempt checkpoint | `url-param` |
       operationId: recoverRun
       parameters:
         - name: runId
@@ -11741,10 +11811,22 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: restartAttempt
+          in: query
+          required: false
+          description: Latest eligible node attempt ID for restarting a failed project Flow.
+          schema:
+            type: string
+            format: uuid
+        - name: restartCheckpoint
+          in: query
+          required: false
+          description: Confirmed preview token for restoring the selected attempt's worktree checkpoint.
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
       responses:
         "200":
           description: |
-            Run resumed now. A slot was free, so the run flipped
+            Run resumed or a node restart was admitted. For crash recovery a slot was free, so the run flipped
             `Crashed→Running` and the graph was re-entered at the recover
             target. (ADR-175) `runStatus` reports the run's COMMITTED status,
             not a constant derived from the outcome: a crashed orchestrator
@@ -11769,13 +11851,18 @@ paths:
                       existing wait gate.
         "202":
           description: |
-            Cap full at admission. The run flipped `Crashed→Pending` and kept
+            Cap full at admission. The run flipped to `Pending` and kept
             its recovery intent. The scheduler re-enters the same recovery
             plan when a slot frees (gate-only recovery has no parent ACP
             handle). No supervisor session was created.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecoverQueuedResponse" }
+        "400":
+          description: The restart attempt ID was malformed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -11790,6 +11877,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
+            A requested node restart requires a Failed project Flow and its current eligible attempt.
             Run is not in `Crashed`, or a concurrent Recover won the Phase-1 CAS
             first (run is now `Running`/`Pending`) — a duplicate dispatch is
             impossible — or `classifyRecover` resolved to `discard-only` (an

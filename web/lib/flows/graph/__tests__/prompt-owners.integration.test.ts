@@ -8,7 +8,7 @@ import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { TestRunnerAgent } from "@/lib/__tests__/runner-fixtures";
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { fork, spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
@@ -20,6 +20,7 @@ import {
   executionEvents,
   domainEvents,
   executionAssignments,
+  flowNodeRestartCheckpoints,
   gateResults,
   hitlRequests,
   nodeAttempts,
@@ -41,7 +42,12 @@ import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-work
 import { startPromptOwnerWorker } from "@/lib/execution-host/prompt-owner-recovery";
 import { runFlow } from "@/lib/flows/runner";
 import { runReconcileSweep } from "@/lib/reconcile";
-import { resumeCrashedRun } from "@/lib/runs/recover";
+import {
+  restartFailedFlowNode,
+  restartFailedFlowNodeFromCheckpoint,
+  resumeCrashedRun,
+} from "@/lib/runs/recover";
+import { loadNodeRestartCheckpointPreview } from "@/lib/runs/node-restart-checkpoint";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { runResumedSession } from "@/lib/runs/resume-driver";
@@ -68,7 +74,7 @@ import { resetRegistrarStateForTests } from "@/lib/execution-host/registrar";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import { seedGraphRun } from "@/test-support/graph-run-seed";
 import { captureOwnedAdapterProcess } from "@/test-support/capture-supervisor-process-groups";
-import { addWorktree, initRepo } from "@/test-support/git-fixture";
+import { addWorktree, git, initRepo } from "@/test-support/git-fixture";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -2564,8 +2570,9 @@ describe("Flow prompt owners through the production graph driver", () => {
     "before_apply",
     "after_apply",
     "after_failure",
+    "projection_deadline",
   ] as const)(
-    "owner-flow-node: SIGKILL %s recovers the complete graph without another accepted prompt",
+    "owner-flow-node: %s interruption recovers the complete graph without another accepted prompt",
     async (window) => {
       const seeded = await seedOwnerFlow([
         {
@@ -2664,16 +2671,27 @@ describe("Flow prompt owners through the production graph driver", () => {
         if (!original) throw new Error("original owned node prompt missing");
 
         expect(original.applicationState).toBe(
-          window === "after_apply" || window === "after_failure"
+          window === "after_apply" ||
+            window === "after_failure" ||
+            window === "projection_deadline"
             ? "applied"
             : window === "before_apply"
               ? "applying"
               : "pending",
         );
-        driver.child.kill("SIGKILL");
+        if (window !== "projection_deadline") driver.child.kill("SIGKILL");
         await driver.exited;
+        if (window === "projection_deadline") {
+          const [run] = await database.db
+            .select({ status: runs.status })
+            .from(runs)
+            .where(eq(runs.id, seeded.runId));
+
+          expect(driver.child.exitCode).toBe(0);
+          expect(run.status).toBe("Running");
+        }
         await lock.query("SELECT pg_advisory_unlock(260907, $1)", [lockKey]);
-        if (window !== "before_terminal") {
+        if (window !== "before_terminal" && window !== "projection_deadline") {
           // A terminal command still owns its continuation, including the
           // interval after application and before the graph cursor commits.
           const beforeResume = await database.db
@@ -2833,6 +2851,270 @@ describe("Flow prompt owners through the production graph driver", () => {
     },
     110_000,
   );
+  it("restarts a failed agent node in a fresh session and keeps previous work", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "prepare",
+        type: "cli",
+        action: { command: "printf 'prepared\\n' >> restart-work.txt" },
+        transitions: { success: "implement" },
+      },
+      {
+        id: "implement",
+        type: "ai_coding",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"failMessage":"intentional restart fixture failure"}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const db = database.db as unknown as Db;
+    const executionHosts = createExecutionHosts({ db });
+    const options = { db, executionHosts, runtimeRoot: supervisor.runtimeRoot };
+
+    await runFlow(seeded.runId, options);
+    const [first] = await db
+      .select()
+      .from(nodeAttempts)
+      .where(
+        and(
+          eq(nodeAttempts.runId, seeded.runId),
+          eq(nodeAttempts.nodeId, "implement"),
+        ),
+      );
+
+    expect(first.status).toBe("Failed");
+    await expect(
+      restartFailedFlowNode(seeded.runId, first.id, options),
+    ).resolves.toEqual({ state: "resumed" });
+    const continuation = startFlowContinuationWorker(options);
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("Failed");
+      const attempts = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId))
+        .orderBy(nodeAttempts.startedAt);
+
+      expect(attempts).toMatchObject([
+        { nodeId: "prepare", attempt: 1, status: "Succeeded" },
+        { id: first.id, nodeId: "implement", attempt: 1, status: "Failed" },
+        {
+          nodeId: "implement",
+          attempt: 2,
+          status: "Failed",
+          sessionPolicy: "new_session",
+        },
+      ]);
+      expect(attempts[2].acpSessionId).toBeTruthy();
+      expect(attempts[2].acpSessionId).not.toBe(first.acpSessionId);
+      await expect(
+        readFile(path.join(seeded.worktreePath, "restart-work.txt"), "utf8"),
+      ).resolves.toBe("prepared\n");
+    } finally {
+      await continuation.stop();
+    }
+  }, 60_000);
+
+  it("restores a failed node from the reviewed checkpoint and preserves a rescue snapshot", async () => {
+    const seeded = await seedOwnerFlow([
+      {
+        id: "prepare",
+        type: "cli",
+        action: { command: "printf 'prepared\\n' >> prior-work.txt" },
+        transitions: { success: "implement" },
+      },
+      {
+        id: "implement",
+        type: "ai_coding",
+        action: {
+          prompt:
+            'fixture-output:{"bytes":0,"failMessage":"checkpoint restart fixture failure"}',
+        },
+        transitions: { success: "done" },
+      },
+    ]);
+    const db = database.db as unknown as Db;
+    const executionHosts = createExecutionHosts({ db });
+    const options = { db, executionHosts, runtimeRoot: supervisor.runtimeRoot };
+    const worktree = seeded.worktreePath;
+    const priorWork = path.join(worktree, "prior-work.txt");
+    const extraFile = path.join(worktree, "failed-attempt.txt");
+    const ignored = path.join(worktree, "keep-cache.tmp");
+
+    await writeFile(path.join(worktree, ".gitignore"), "keep-cache.tmp\n");
+    await runFlow(seeded.runId, options);
+    const [first] = await db
+      .select()
+      .from(nodeAttempts)
+      .where(
+        and(
+          eq(nodeAttempts.runId, seeded.runId),
+          eq(nodeAttempts.nodeId, "implement"),
+        ),
+      );
+
+    expect(first).toMatchObject({
+      status: "Failed",
+      checkpointRef: expect.any(String),
+    });
+    await writeFile(priorWork, "staged partial result\n");
+    await git(worktree, "add", "prior-work.txt");
+    await writeFile(priorWork, "unstaged partial result\n");
+    await writeFile(extraFile, "work from failed attempt\n");
+    await writeFile(ignored, "ignored cache\n");
+
+    const { preview } = await loadNodeRestartCheckpointPreview(
+      db,
+      seeded.runId,
+      first.id,
+    );
+
+    expect(preview.files).toEqual([
+      { path: "failed-attempt.txt", removed: true },
+      { path: "prior-work.txt", removed: false },
+    ]);
+    await writeFile(extraFile, "edited since preview\n");
+    await expect(
+      restartFailedFlowNodeFromCheckpoint(
+        seeded.runId,
+        first.id,
+        preview.token,
+        options,
+      ),
+    ).rejects.toMatchObject({
+      details: { reason: "restart_checkpoint_workspace_changed" },
+    });
+    await expect(readFile(extraFile, "utf8")).resolves.toBe(
+      "edited since preview\n",
+    );
+
+    const waitUntilFailed = () =>
+      expect
+        .poll(
+          async () => {
+            const [run] = await db
+              .select({ status: runs.status })
+              .from(runs)
+              .where(eq(runs.id, seeded.runId));
+
+            return run.status;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("Failed");
+    const delayed = await loadNodeRestartCheckpointPreview(
+      db,
+      seeded.runId,
+      first.id,
+    );
+
+    await expect(
+      restartFailedFlowNodeFromCheckpoint(
+        seeded.runId,
+        first.id,
+        delayed.preview.token,
+        options,
+      ),
+    ).resolves.toEqual({ state: "resumed" });
+    await writeFile(extraFile, "edited after confirmation\n");
+    const firstWorker = startFlowContinuationWorker(options);
+
+    try {
+      await waitUntilFailed();
+      await expect(readFile(extraFile, "utf8")).resolves.toBe(
+        "edited after confirmation\n",
+      );
+      expect(
+        await db
+          .select()
+          .from(nodeAttempts)
+          .where(
+            and(
+              eq(nodeAttempts.runId, seeded.runId),
+              eq(nodeAttempts.nodeId, "implement"),
+            ),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      await firstWorker.stop();
+    }
+    const reviewed = await loadNodeRestartCheckpointPreview(
+      db,
+      seeded.runId,
+      first.id,
+    );
+
+    await expect(
+      restartFailedFlowNodeFromCheckpoint(
+        seeded.runId,
+        first.id,
+        reviewed.preview.token,
+        options,
+      ),
+    ).resolves.toEqual({ state: "resumed" });
+    const continuation = startFlowContinuationWorker(options);
+
+    try {
+      await waitUntilFailed();
+      const [receipt] = await db
+        .select()
+        .from(flowNodeRestartCheckpoints)
+        .where(
+          and(
+            eq(flowNodeRestartCheckpoints.attemptId, first.id),
+            isNotNull(flowNodeRestartCheckpoints.rescueRef),
+          ),
+        );
+      const attempts = await db
+        .select()
+        .from(nodeAttempts)
+        .where(eq(nodeAttempts.runId, seeded.runId))
+        .orderBy(nodeAttempts.startedAt);
+
+      expect(attempts).toMatchObject([
+        { nodeId: "prepare", attempt: 1, status: "Succeeded" },
+        { id: first.id, nodeId: "implement", attempt: 1, status: "Failed" },
+        {
+          nodeId: "implement",
+          attempt: 2,
+          status: "Failed",
+          sessionPolicy: "new_session",
+        },
+      ]);
+      expect(receipt.rescueRef).toMatch(/^refs\/maister\/rescue\//);
+      await expect(readFile(priorWork, "utf8")).resolves.toBe("prepared\n");
+      await expect(readFile(ignored, "utf8")).resolves.toBe("ignored cache\n");
+      await expect(readFile(extraFile, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(
+        git(worktree, "show", `${receipt.rescueRef}:failed-attempt.txt`),
+      ).resolves.toBe("edited after confirmation");
+      await expect(
+        git(worktree, "show", `${receipt.rescueRef}^2:prior-work.txt`),
+      ).resolves.toBe("staged partial result");
+      await expect(
+        git(worktree, "show", `${receipt.rescueRef}:prior-work.txt`),
+      ).resolves.toBe("unstaged partial result");
+    } finally {
+      await continuation.stop();
+    }
+  }, 90_000);
   it("owner-flow-node: validates original tail output at its assistant message boundary", async () => {
     const payload = { verdict: "pass", score: 0.95 };
     const prompt = `fixture-output:${JSON.stringify({

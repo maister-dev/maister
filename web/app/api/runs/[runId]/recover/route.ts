@@ -13,8 +13,13 @@ import {
   taskLaunchErrorResponse,
 } from "@/lib/tasks/launch-http";
 import { getDb } from "@/lib/db/client";
-import { isMaisterError } from "@/lib/errors";
-import { resumeCrashedRun } from "@/lib/runs/recover";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  restartFailedFlowNode,
+  restartFailedFlowNodeFromCheckpoint,
+  resumeCrashedRun,
+} from "@/lib/runs/recover";
+import { loadNodeRestartCheckpointPreview } from "@/lib/runs/node-restart-checkpoint";
 import { recoverHttpResponse } from "@/lib/runs/recover-http";
 import * as schemaModule from "@/lib/db/schema";
 
@@ -39,6 +44,7 @@ function httpStatusForCode(code: string): number {
       return 403;
     case "PRECONDITION":
     case "CONFLICT":
+    case "CHECKPOINT":
       return 409;
     default:
       return 500;
@@ -63,7 +69,14 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
     );
 
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        ...(typeof err.details?.reason === "string" &&
+        err.details.reason.startsWith("restart_checkpoint_")
+          ? { details: { reason: err.details.reason } }
+          : {}),
+      },
       { status },
     );
   }
@@ -78,6 +91,48 @@ function errorResponse(err: unknown, ctx: { runId: string }): NextResponse {
 }
 
 type RouteParams = { params: Promise<{ runId: string }> };
+const attemptIdPattern = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
+
+export async function GET(
+  request: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { runId } = await params;
+
+  try {
+    await interactiveTaskLaunchPrincipal();
+    const attemptId = request.nextUrl.searchParams.get("restartAttempt");
+
+    if (!attemptId || !attemptIdPattern.test(attemptId))
+      return NextResponse.json(
+        { code: "PRECONDITION", message: "Invalid restart attempt ID" },
+        { status: 400 },
+      );
+    const db = getDb();
+    const [run] = await db
+      .select({ projectId: runs.projectId, runKind: runs.runKind })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    if (!run?.projectId || run.runKind !== "flow")
+      throw new MaisterError("PRECONDITION", "Project Flow not found", {
+        details: { reason: "run_unavailable" },
+      });
+    await requireProjectAction(run.projectId, "recoverRun");
+    await requireProjectAction(run.projectId, "readRepoFiles");
+    const { preview } = await loadNodeRestartCheckpointPreview(
+      db,
+      runId,
+      attemptId,
+    );
+
+    return NextResponse.json(preview, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return errorResponse(error, { runId });
+  }
+}
 
 export async function POST(
   request: NextRequest,
@@ -89,6 +144,20 @@ export async function POST(
     const principal = await interactiveTaskLaunchPrincipal();
 
     assertInteractiveLaunchOrigin(request);
+    const restartAttemptId = request.nextUrl.searchParams.get("restartAttempt");
+    const checkpointToken =
+      request.nextUrl.searchParams.get("restartCheckpoint");
+
+    if (
+      (restartAttemptId !== null && !attemptIdPattern.test(restartAttemptId)) ||
+      (checkpointToken !== null &&
+        (!restartAttemptId || !/^[a-f0-9]{64}$/.test(checkpointToken)))
+    )
+      return NextResponse.json(
+        { code: "PRECONDITION", message: "Invalid restart attempt ID" },
+        { status: 400 },
+      );
+
     const db = getDb() as Db;
     const rows = await db
       .select({
@@ -127,14 +196,32 @@ export async function POST(
         );
     } else await requireProjectAction(run.projectId, "recoverRun");
 
-    const r = await resumeCrashedRun(runId, {
+    if (restartAttemptId && (run.companyId !== null || run.runKind !== "flow"))
+      return NextResponse.json(
+        { code: "CONFLICT", message: "Node restart requires a project Flow" },
+        { status: 409 },
+      );
+
+    const opts = {
       ...(run.companyId !== null
         ? { companyRecoveryPrincipal: principal }
         : {
             recoveryAuthority:
               interactiveTaskLaunchRecoveryAuthority(principal),
           }),
-    });
+    };
+    if (checkpointToken)
+      await requireProjectAction(run.projectId, "readRepoFiles");
+    const r = !restartAttemptId
+      ? await resumeCrashedRun(runId, opts)
+      : checkpointToken
+        ? await restartFailedFlowNodeFromCheckpoint(
+            runId,
+            restartAttemptId,
+            checkpointToken,
+            opts,
+          )
+        : await restartFailedFlowNode(runId, restartAttemptId, opts);
 
     log.info({ runId, state: r.state }, "recover handled");
 

@@ -88,3 +88,92 @@ describe("RunRecoverActions — a refused recover", () => {
     expect(text).toBe("run.recoverConflict");
   });
 });
+
+it("restarts the selected failed attempt with its exact identity", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ runStatus: "Running" }));
+  act(() =>
+    root.render(
+      createElement(RunRecoverActions, {
+        runId: "run-1",
+        canRecover: true,
+        canDiscard: false,
+        restartAttemptId: "attempt-2",
+      }),
+    ),
+  );
+  const button = container.querySelector<HTMLButtonElement>(
+    '[data-testid="recover-button"]',
+  );
+
+  expect(button?.textContent).toBe("run.restartFailedNode");
+  expect(container.querySelector('[data-testid="discard-button"]')).toBeNull();
+  act(() => button?.click());
+  await act(async () => {
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="recover-confirm-submit"]',
+      )
+      ?.click();
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/runs/run-1/recover?restartAttempt=attempt-2",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
+
+it("loads the checkpoint preview and confirms the reviewed workspace", async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      Response.json({
+        token: "reviewed-token",
+        files: [{ path: "partial.txt", removed: true }],
+        fileCount: 1,
+        rewindsCommits: false,
+      }),
+    )
+    .mockResolvedValueOnce(Response.json({ runStatus: "Running" }));
+  act(() =>
+    root.render(
+      createElement(RunRecoverActions, {
+        runId: "run-1",
+        canRecover: true,
+        canDiscard: false,
+        restartAttemptId: "attempt-2",
+        checkpointAvailable: true,
+      }),
+    ),
+  );
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="recover-button"]')
+      ?.click(),
+  );
+  await act(async () => {
+    document
+      .querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]
+      ?.click();
+  });
+
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "partial.txt",
+  );
+  await act(async () => {
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="recover-confirm-submit"]',
+      )
+      ?.click();
+  });
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "/api/runs/run-1/recover?restartAttempt=attempt-2",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "/api/runs/run-1/recover?restartAttempt=attempt-2&restartCheckpoint=reviewed-token",
+    expect.objectContaining({ method: "POST" }),
+  );
+});

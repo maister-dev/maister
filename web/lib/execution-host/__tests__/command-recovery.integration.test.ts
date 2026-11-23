@@ -44,6 +44,9 @@ import {
   readRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { testRunnerSnapshot } from "@/lib/__tests__/runner-fixtures";
+import { startFlowContinuationWorker } from "@/lib/flows/graph/continuation-worker";
+import { findHostRestartRecovery } from "@/lib/runs/host-restart-recovery";
 import { defaultTransport } from "@/lib/execution-host/default-transport";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { MaisterError } from "@/lib/errors";
@@ -796,6 +799,81 @@ async function adr177Rows(runId: string) {
 
   return { run, attempt, prompts };
 }
+
+it("automatically continues the same Flow after a real supervisor restart", async () => {
+  const runId = await seedFlowGraphRun("flow-host-restart-auto");
+  const taskId = randomUUID();
+
+  await db.insert(fullSchema.tasks).values({
+    id: taskId,
+    number: 1001,
+    projectId: project.id,
+    title: "Resume after host restart",
+    prompt: "Finish the work",
+    status: "InFlight",
+  });
+  await db
+    .update(fullSchema.runs)
+    .set({ taskId })
+    .where(eq(fullSchema.runs.id, runId));
+  const assignment = await mint(runId);
+  const client = await hosts.forAssignment(assignment);
+  const created = await client.createSession(CREATE_PAYLOAD);
+
+  await db
+    .update(fullSchema.runSessions)
+    .set({
+      runnerSnapshot: testRunnerSnapshot(randomUUID()),
+      capabilityAgent: "claude",
+    })
+    .where(eq(fullSchema.runSessions.runId, runId));
+  const handle = await client.prompt(
+    created.hostSessionId,
+    { stepId: "s1", prompt: "hang" },
+    {
+      admitOwner: await seedNodePromptOwner(db, client, created.hostSessionId),
+    },
+  );
+
+  await untilState(handle.commandId, ["accepted"]);
+  sup = await sup.restart({ fixtureArgs: [] });
+  await recoverExecutionCommands({ db, graceMs: 0 });
+  await runReconcileSweep({ db });
+  await expect
+    .poll(() => findHostRestartRecovery(db, { runId }), { timeout: 30_000 })
+    .toMatchObject({ runId, assignmentId: assignment.id });
+
+  const previousCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+
+  // Earlier transport fixtures deliberately leave unowned Running rows.
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "50";
+  const worker = startFlowContinuationWorker({
+    db,
+    executionHosts: hosts,
+    runtimeRoot: sup.runtimeRoot,
+  });
+
+  try {
+    await expect
+      .poll(async () => (await adr177Rows(runId)).run.status, {
+        timeout: 45_000,
+      })
+      .toBe("Review");
+    const { prompts } = await adr177Rows(runId);
+
+    expect(prompts).toHaveLength(2);
+    expect(
+      prompts.filter(
+        (command) => command.executionAssignmentId === assignment.id,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await worker.stop();
+    if (previousCap === undefined) delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+    else process.env.MAISTER_MAX_CONCURRENT_RUNS = previousCap;
+    sup = await sup.restart({ fixtureArgs: ["--hang-prompt"] });
+  }
+}, 180_000);
 
 describe("evidence-first crash classification after a real supervisor restart (ADR-177)", () => {
   // `preSettle` = the BOOT order (recovery before reconcile, which is what V3

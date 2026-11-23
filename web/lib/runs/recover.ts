@@ -21,8 +21,22 @@ import {
 } from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { pgErrorOf } from "@/lib/db/pg-error";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { prepareTaskLaunchRecovery } from "@/lib/tasks/launch-continuation";
+import {
+  executionAssignments,
+  flowNodeRestartCheckpoints,
+  nodeAttempts,
+} from "@/lib/db/schema";
+import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
+import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
+import { loadFailedNodeRestartTarget } from "@/lib/runs/failed-node-restart";
+import { loadNodeRestartCheckpointPreview } from "@/lib/runs/node-restart-checkpoint";
+import {
+  hostRestartTaskLaunchRecoveryAuthority,
+  prepareTaskLaunchRecovery,
+} from "@/lib/tasks/launch-continuation";
+import { findHostRestartRecovery } from "@/lib/runs/host-restart-recovery";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import {
   authorizeGateCrashRecovery,
@@ -110,7 +124,7 @@ export type RecoverResult =
 // assignment travel with it — without `db`/`executionHosts` the runner binds a
 // fresh local host over `getDb()` instead of the caller's.
 export type RunFlowResumeOpts = {
-  crashResume?: { targetStepId: string };
+  crashResume?: { targetStepId: string; freshSession?: true };
   orchestratorResume?: { targetStepId: string };
   db?: Db;
   executionHosts?: ExecutionHosts;
@@ -142,10 +156,80 @@ export async function resumeCrashedRun(
   runId: string,
   opts: ResumeCrashedRunOptions = {},
 ): Promise<RecoverResult> {
+  return admitFlowRecovery(runId, opts);
+}
+
+export async function restartFailedFlowNode(
+  runId: string,
+  attemptId: string,
+  opts: ResumeCrashedRunOptions,
+): Promise<RecoverResult> {
+  return admitFlowRecovery(runId, opts, { kind: "restart", attemptId });
+}
+
+export async function restartFailedFlowNodeFromCheckpoint(
+  runId: string,
+  attemptId: string,
+  previewToken: string,
+  opts: ResumeCrashedRunOptions,
+): Promise<RecoverResult> {
+  const { checkpointSha, preview } = await loadNodeRestartCheckpointPreview(
+    opts.db ?? getDb(),
+    runId,
+    attemptId,
+  );
+
+  if (preview.token !== previewToken)
+    throw new MaisterError(
+      "CHECKPOINT",
+      "The checkpoint preview is stale. Review the current changes before restarting.",
+      {
+        details: { reason: "restart_checkpoint_workspace_changed" },
+      },
+    );
+
+  return admitFlowRecovery(runId, opts, {
+    kind: "restart",
+    attemptId,
+    checkpoint: { checkpointSha, previewToken },
+  });
+}
+
+export async function resumeFlowAfterHostRestart(
+  runId: string,
+  assignmentId: string,
+  opts: ResumeCrashedRunOptions,
+): Promise<RecoverResult> {
+  return admitFlowRecovery(
+    runId,
+    {
+      ...opts,
+      recoveryAuthority: hostRestartTaskLaunchRecoveryAuthority(
+        runId,
+        assignmentId,
+      ),
+    },
+    { kind: "host-restart", assignmentId },
+  );
+}
+
+async function admitFlowRecovery(
+  runId: string,
+  opts: ResumeCrashedRunOptions,
+  source?:
+    | {
+        kind: "restart";
+        attemptId: string;
+        checkpoint?: { checkpointSha: string; previewToken: string };
+      }
+    | { kind: "host-restart"; assignmentId: string },
+): Promise<RecoverResult> {
   const db = opts.db ?? getDb();
   const now = opts.now ?? (() => new Date());
   const cap = maxConcurrentRunsCap();
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
+  const restart = source?.kind === "restart" ? source : undefined;
+  const fromStatus = restart ? "Failed" : "Crashed";
   const [companyFlow] = opts.companyRecoveryPrincipal
     ? await db
         .select({
@@ -174,6 +258,14 @@ export async function resumeCrashedRun(
 
   try {
     placementHost = await localHost({ db, transport: hosts.transport });
+    if (source) {
+      if (
+        (await hosts.local().listSessionsForRun(runId)).some(
+          (record) => record.status === "live",
+        )
+      )
+        return { state: "transient" };
+    }
     if (companyFlow?.dispatched)
       await assertAgentExecutionQuiescent(db, companyFlow, undefined, hosts);
   } catch (err) {
@@ -197,6 +289,7 @@ export async function resumeCrashedRun(
       tx,
       runId,
       opts.recoveryAuthority,
+      fromStatus,
     );
 
     if (reservation?.kind === "conflict") {
@@ -216,6 +309,7 @@ export async function resumeCrashedRun(
         runKind: runs.runKind,
         executionAssignmentId: runs.executionAssignmentId,
         status: runs.status,
+        endedAt: runs.endedAt,
         currentStepId: runs.currentStepId,
         resumeTargetStepId: runs.resumeTargetStepId,
         flowId: runs.flowId,
@@ -229,13 +323,29 @@ export async function resumeCrashedRun(
 
     // Not found OR not Crashed → conflict (no side-effect). Covers the
     // concurrent-2nd-recover loser (CAS lost) and the not-Crashed guard.
-    if (!run || run.status !== "Crashed") {
+    if (!run || run.status !== fromStatus) {
       log.warn(
         { runId, status: run?.status ?? "missing" },
-        "resumeCrashedRun: not Crashed — conflict",
+        "Flow recovery source status changed",
       );
 
       return { state: "conflict" };
+    }
+    const restartTarget = restart
+      ? await loadFailedNodeRestartTarget(tx, runId)
+      : null;
+
+    if (restart && restartTarget?.id !== restart.attemptId)
+      return { state: "conflict" };
+    if (restart?.checkpoint && !restartTarget?.checkpointRef)
+      return { state: "conflict" };
+    if (source?.kind === "host-restart") {
+      const witness = await findHostRestartRecovery(tx, {
+        runId,
+        assignmentId: source.assignmentId,
+      });
+
+      if (witness?.hostId !== placementHost.id) return { state: "conflict" };
     }
 
     const [appointment]: readonly { disposition: unknown }[] = (
@@ -312,7 +422,7 @@ export async function resumeCrashedRun(
       .limit(1);
     const workspace = workspaceRows[0];
 
-    if (workspace?.removedAt != null) {
+    if (workspace?.removedAt != null || (source && !workspace)) {
       log.info({ runId }, "resumeCrashedRun: workspace was removed");
 
       return { state: "workspace-removed" };
@@ -338,7 +448,8 @@ export async function resumeCrashedRun(
     // The recover target is the node id retained at crash time
     // (resume_target_step_id; current_step_id is nulled on a clean crash),
     // falling back to current_step_id for live/hand-seeded rows.
-    const resumeTarget = run.resumeTargetStepId ?? run.currentStepId;
+    const resumeTarget =
+      restartTarget?.nodeId ?? run.resumeTargetStepId ?? run.currentStepId;
     const { nodeKind, retrySafe, sessionName } = await resolveNodeRecoverInfo(
       tx,
       {
@@ -347,40 +458,42 @@ export async function resumeCrashedRun(
         stepId: resumeTarget,
       },
     );
-    // ADR-175: NODE-scoped, not `loadActiveRunSession`. For a crashed run every
-    // incarnation is terminal, so that ranking's liveness key ties false and a
-    // finished substep session wins on `updated_at`.
-    const acpSessionId = await resolveNodeResumeSessionId(tx, {
-      runId,
-      nodeId: resumeTarget,
-      sessionName,
-    });
-    const consensusEvidence =
-      nodeKind === "consensus"
-        ? await loadConsensusRecoveryEvidence(tx, {
-            runId,
-            nodeId: resumeTarget,
-          })
-        : null;
-    const gateCrashWitness = await loadGateCrashRecoveryWitness(tx, {
-      runId,
-      nodeId: resumeTarget,
-    });
-    const plan = classifyRecover(
-      { acpSessionId },
-      nodeKind,
-      retrySafe,
-      consensusEvidence,
-      gateCrashWitness !== null,
-    );
-
-    if (plan === "discard-only") {
-      log.info(
-        { runId, nodeKind, retrySafe },
-        "resumeCrashedRun: no resumable target (agent w/o session, or session-less not retry_safe) — discard-only",
+    if (restartTarget) {
+      if (nodeKind !== restartTarget.nodeType) return { state: "conflict" };
+    } else {
+      // A finished gate's incarnation must not supply the node's ACP handle.
+      const acpSessionId = await resolveNodeResumeSessionId(tx, {
+        runId,
+        nodeId: resumeTarget,
+        sessionName,
+      });
+      const consensusEvidence =
+        nodeKind === "consensus"
+          ? await loadConsensusRecoveryEvidence(tx, {
+              runId,
+              nodeId: resumeTarget,
+            })
+          : null;
+      const gateCrashWitness = await loadGateCrashRecoveryWitness(tx, {
+        runId,
+        nodeId: resumeTarget,
+      });
+      const plan = classifyRecover(
+        { acpSessionId },
+        nodeKind,
+        retrySafe,
+        consensusEvidence,
+        gateCrashWitness !== null,
       );
 
-      return { state: "discard-only" };
+      if (plan === "discard-only") {
+        log.info(
+          { runId, nodeKind, retrySafe },
+          "Flow has no resumable crash target",
+        );
+
+        return { state: "discard-only" };
+      }
     }
 
     const liveRows: Array<{ count: number }> = await tx
@@ -401,58 +514,47 @@ export async function resumeCrashedRun(
     const liveCount = Number(liveRows[0]?.count ?? 0);
     const at = now();
 
-    if (liveCount >= cap) {
-      // Cap full → re-admit into the Pending queue, KEEPING acpSessionId so
-      // promoteNextPending resumes (not re-runs) it. NO createSession here.
-      if (reservation?.kind === "prepared") await reservation.apply();
-      const updated = await tx
-        .update(runs)
-        .set({
-          status: "Pending",
-          resumeStartedAt: at,
-          currentStepId: resumeTarget,
-          // ADR-176 D4: the budget is INTENT-scoped and is reset in the same
-          // transaction that stamps the marker. Resetting here rather than at
-          // the five release sites is what makes a fresh intent always start
-          // from zero — two of those sites are reparks, which would otherwise
-          // strand a count into an unrelated future intent.
-          ...CRASH_RECOVER_BUDGET_RESET,
-        })
-        .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
-        .returning({ id: runs.id });
-
-      if (updated.length === 0)
-        throw new MaisterError(
-          "CONFLICT",
-          "Recovery status changed before commit",
-          { details: { reason: "recover_cas_lost" } },
+    if (restartTarget) {
+      await tx
+        .update(nodeAttempts)
+        .set({ status: "Failed", endedAt: run.endedAt ?? at })
+        .where(
+          and(
+            eq(nodeAttempts.id, restartTarget.id),
+            eq(nodeAttempts.status, "Running"),
+            isNull(nodeAttempts.endedAt),
+          ),
         );
-
-      await mintPlacement(tx, {
-        runId,
-        reason: "recover",
-        host: placementHost,
-      });
-      log.info(
-        { runId, liveCount, cap },
-        "resumeCrashedRun: cap full → queued",
-      );
-
-      return { state: "queued" };
     }
+    const restartAssignment = restartTarget
+      ? await mintPlacement(tx, {
+          runId,
+          reason: "node_restart",
+          host: placementHost,
+        })
+      : null;
 
-    // Slot free → durable flip Crashed→Running BEFORE the side-effect.
+    if (restartAssignment && restart?.checkpoint)
+      await tx.insert(flowNodeRestartCheckpoints).values({
+        assignmentId: restartAssignment.id,
+        attemptId: restart.attemptId,
+        ...restart.checkpoint,
+      });
+
+    const status = liveCount >= cap ? "Pending" : "Running";
+
     if (reservation?.kind === "prepared") await reservation.apply();
     const updated = await tx
       .update(runs)
       .set({
-        status: "Running",
+        status,
         resumeStartedAt: at,
         currentStepId: resumeTarget,
-        // ADR-176 D4: see the queued arm above — reset at the WRITE site.
+        ...(source ? { endedAt: null } : {}),
+        ...(restart ? { resumeTargetStepId: null } : {}),
         ...CRASH_RECOVER_BUDGET_RESET,
       })
-      .where(and(eq(runs.id, runId), eq(runs.status, "Crashed")))
+      .where(and(eq(runs.id, runId), eq(runs.status, fromStatus)))
       .returning({ id: runs.id });
 
     if (updated.length === 0)
@@ -462,20 +564,29 @@ export async function resumeCrashedRun(
         { details: { reason: "recover_cas_lost" } },
       );
 
-    const assignment = await mintPlacement(tx, {
-      runId,
-      reason: "recover",
-      host: placementHost,
-    });
+    const assignment =
+      restartAssignment ??
+      (await mintPlacement(tx, {
+        runId,
+        reason: "recover",
+        host: placementHost,
+      }));
 
     log.info(
-      { runId, liveCount, cap },
-      "resumeCrashedRun: slot free → Running",
+      { runId, status, fromStatus, targetStepId: resumeTarget, liveCount, cap },
+      "Flow recovery admitted",
     );
 
-    return { state: "drive", assignment };
+    return status === "Pending"
+      ? { state: "queued" }
+      : { state: "drive", assignment };
   });
   const phase1: Phase1 = await claim.catch((error: unknown): RecoverResult => {
+    if (
+      source &&
+      pgErrorOf(error)?.constraint === "task_launch_shared_reservation"
+    )
+      return { state: "launch-conflict" };
     if (
       isMaisterError(error) &&
       error.code === "CONFLICT" &&
@@ -488,6 +599,12 @@ export async function resumeCrashedRun(
   // Terminal Phase-1 outcomes (no side-effect required).
   if (phase1.state !== "drive") {
     return phase1;
+  }
+
+  if (restart) {
+    runEventWakeBus.wake(runId);
+
+    return { state: "resumed" };
   }
 
   // Slot-free path: drive the Phase-2 side-effect against the already-Running run.
@@ -537,8 +654,13 @@ export async function driveResume(
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       executionAssignmentId: runs.executionAssignmentId,
+      placementReason: executionAssignments.placementReason,
     })
     .from(runs)
+    .leftJoin(
+      executionAssignments,
+      eq(executionAssignments.id, runs.executionAssignmentId),
+    )
     .where(eq(runs.id, runId));
   const run = rows[0];
 
@@ -580,6 +702,36 @@ export async function driveResume(
   // Phase-1 set current_step_id to the recover target; fall back to the retained
   // marker if driveResume is entered standalone.
   const resumeTarget = run.currentStepId ?? run.resumeTargetStepId;
+
+  if (
+    run.placementReason === "node_restart" &&
+    run.resumeStartedAt &&
+    resumeTarget
+  ) {
+    try {
+      await runFlowFn(runId, {
+        db,
+        executionHosts: hosts,
+        crashResume: { targetStepId: resumeTarget, freshSession: true },
+      });
+
+      const [pending] = await db
+        .select({ id: runs.id })
+        .from(runs)
+        .where(
+          and(
+            eq(runs.id, runId),
+            eq(runs.status, "Running"),
+            eq(runs.executionAssignmentId, run.executionAssignmentId),
+            eq(runs.resumeStartedAt, run.resumeStartedAt),
+          ),
+        );
+
+      return { state: pending ? "transient" : "resumed" };
+    } catch (error) {
+      return handleRecoverDispatchError(db, runId, error);
+    }
+  }
   const { nodeKind, retrySafe, sessionName } = await resolveNodeRecoverInfo(
     db,
     {
@@ -821,9 +973,12 @@ async function handleRecoverDispatchError(
     return { state: "transient" };
   }
   // Transient supervisor failure leaves the committed intent for retry.
-  if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+  if (
+    isProjectionTransactionUnavailable(err) ||
+    (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE")
+  ) {
     log.warn(
-      { runId, err: err.message },
+      { runId, err: err instanceof Error ? err.message : String(err) },
       "driveResume: transient supervisor failure — leaving Running",
     );
 

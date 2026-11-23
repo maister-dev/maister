@@ -36,7 +36,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext, buildCompanyContext } from "../context";
@@ -148,6 +148,8 @@ import {
 } from "@/lib/auto-promotion/gate-evidence";
 import { finalizeClassifiedFlowFailure } from "@/lib/auto-promotion/classified-failure";
 import { redactQueryError } from "@/lib/db/pg-error";
+import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
+import { applyNodeRestartCheckpoint } from "@/lib/runs/node-restart-checkpoint";
 import { taskLaunchClarificationsForRun } from "@/lib/tasks/launch-execution-input";
 import { resolveNodeResumeSessionId } from "@/lib/runs/node-resume-session";
 import { createHitlRequest } from "@/lib/runs/hitl-create";
@@ -311,7 +313,8 @@ import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal"
 import { assertTaskAdmissionForDispatch } from "@/lib/tasks/qualification-admission";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, hitlRequests } = schemaModule as unknown as Record<string, any>;
+const { runs, hitlRequests, artifactInstances } =
+  schemaModule as unknown as Record<string, any>;
 
 // B6: a refusal's own reason token, for the terminal event's cause.
 function refusalReason(err: MaisterError): string | undefined {
@@ -2490,6 +2493,7 @@ export async function runGraph(
     !isNeedsInputResume &&
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null;
+  const isFailedNodeRestart = isCrashResume && opts.crashResume?.freshSession;
 
   // M37 (ADR-098) T5.2: a parked orchestrator woken by a child-terminal event.
   // The consumer ALREADY won the single-winner CAS (markResumedFromWait flipped
@@ -2626,7 +2630,7 @@ export async function runGraph(
     }
 
     loaded.run.status = "Running";
-  } else if (isCrashResume) {
+  } else if (isCrashResume && !isFailedNodeRestart) {
     // M19 crash-recover claim: the run is already Running (driveResume flipped
     // it). Single-winner guard = CAS-clear resume_started_at (set by recover /
     // scheduler-promote). The winner clears it and traverses from resumeNodeId
@@ -2906,7 +2910,10 @@ export async function runGraph(
           policy: restoredFinish.sessionPolicy,
         }
       : isCrashResume && resumeNodeId
-        ? { nodeId: resumeNodeId, policy: "resume" }
+        ? {
+            nodeId: resumeNodeId,
+            policy: isFailedNodeRestart ? "new_session" : "resume",
+          }
         : null;
 
   // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt:
@@ -3095,12 +3102,45 @@ export async function runGraph(
   // post-loop rewrite so run.json does not silently drop `brain` at run end
   // (manual takeover / paused-run readers see what the agent saw).
   let lastBrain: BrainAmbientEntry[] | undefined;
+  let currentAttemptId: string | null = null;
 
   try {
     if (isCompanyFlowRun(loaded)) await prepareCompanyFlowWorkspace(db, runId);
     if (!isCompanyFlowRun(loaded))
       await assertTaskAdmissionForDispatch(rootDb, runId);
+    if (
+      isFailedNodeRestart &&
+      opts.crashResume?.checkpoint &&
+      opts.driver &&
+      resumeNodeId
+    ) {
+      const { checkpoint } = opts.crashResume;
+
+      try {
+        await applyNodeRestartCheckpoint({
+          db,
+          claim: opts.driver.claim,
+          nodeId: resumeNodeId,
+          worktree: requireProjectFlowRun(loaded).workspace,
+          intent: checkpoint,
+        });
+      } catch (error) {
+        if (
+          isMaisterError(error) &&
+          error.details?.reason === "operation_busy"
+        ) {
+          log2.warn(
+            { nodeId: resumeNodeId, attemptId: checkpoint.attemptId },
+            "node checkpoint restore deferred for repository mutation",
+          );
+
+          return;
+        }
+        throw error;
+      }
+    }
     while (currentNodeId !== null) {
+      currentAttemptId = null;
       // P7 (ADR-103): rewrite run.json from the ledger before processing this
       // node, so an agent node reads the latest run-context (every prior terminal
       // transition). Best-effort — run correctness never depends on it; skipped
@@ -3265,6 +3305,7 @@ export async function runGraph(
       if (
         node.rework &&
         !reusesCurrentAttempt &&
+        !(isFailedNodeRestart && pendingSessionPolicy?.nodeId === node.id) &&
         effectiveAttempts(
           nodeAttemptCount,
           nodeReworkBaseline,
@@ -3327,6 +3368,7 @@ export async function runGraph(
         nodeAttemptNumber = lastForNode.attempt;
         pendingAutoRetryNodeId = null;
         pendingSessionPolicy = null;
+        startsFresh ||= lastForNode.sessionPolicy === "new_session";
         attemptCheckpointRef = lastForNode.checkpointRef;
         // M37 (ADR-098) T5.2: on an orchestrator wake, restore the coordinator's
         // context — thread the retained acp_session_id as the resume handle so
@@ -3359,6 +3401,9 @@ export async function runGraph(
           ? "new_session"
           : undefined;
         let exhaustedSessionFallback = false;
+
+        const claimsFailedNodeRestart =
+          isFailedNodeRestart && pendingSessionPolicy?.nodeId === node.id;
 
         if (pendingSessionPolicy && pendingSessionPolicy.nodeId === node.id) {
           appendSessionPolicy = pendingSessionPolicy.policy;
@@ -3402,6 +3447,20 @@ export async function runGraph(
         }
 
         const appended = await db.transaction(async (tx: Db) => {
+          if (claimsFailedNodeRestart && opts.crashResume?.checkpoint)
+            await tx
+              .update(artifactInstances)
+              .set({ validity: "stale" })
+              .where(
+                and(
+                  eq(artifactInstances.runId, runId),
+                  eq(
+                    artifactInstances.nodeAttemptId,
+                    opts.crashResume.checkpoint.attemptId,
+                  ),
+                  eq(artifactInstances.validity, "current"),
+                ),
+              );
           const row = await appendNodeAttempt({
             runId,
             nodeId: node.id,
@@ -3410,9 +3469,12 @@ export async function runGraph(
             autoRetry: pendingAutoRetryNodeId === node.id,
             sessionPolicy: appendSessionPolicy,
             executionAssignmentId:
-              opts.driver || isAgentNodeType(node.nodeType)
-                ? (execution?.client.assignment.id ?? null)
-                : null,
+              claimsFailedNodeRestart &&
+              opts.driver?.claim.scope === "assignment"
+                ? opts.driver.claim.assignmentId
+                : opts.driver || isAgentNodeType(node.nodeType)
+                  ? (execution?.client.assignment.id ?? null)
+                  : null,
             db: tx,
           });
 
@@ -3422,10 +3484,15 @@ export async function runGraph(
           )
             await setSessionFallback(row.id, tx);
 
+          // Keep the restart intent until its new attempt is durable.
           if (opts.driver)
             await tx
               .update(runs)
-              .set({ currentStepId: node.id, failedChildWakeAt: null })
+              .set({
+                currentStepId: node.id,
+                failedChildWakeAt: null,
+                ...(claimsFailedNodeRestart ? { resumeStartedAt: null } : {}),
+              })
               .where(eq(runs.id, runId));
 
           if (
@@ -3446,6 +3513,7 @@ export async function runGraph(
         if (pendingAutoRetryNodeId === node.id) pendingAutoRetryNodeId = null;
 
         nodeAttemptId = appended.id;
+        currentAttemptId = nodeAttemptId;
         nodeAttemptNumber = appended.attempt;
 
         // M30 (ADR-079): capture the pre-attempt workspace checkpoint for
@@ -3498,6 +3566,8 @@ export async function runGraph(
         } catch {
           // no real git repo at node start — cumulative fallback at gate time
         }
+
+      currentAttemptId = nodeAttemptId;
 
       // M42 (ADR-114): a node joining a NAMED session resumes that session's
       // continuous acp_session_id (one conversation across the session's nodes in
@@ -3706,6 +3776,7 @@ export async function runGraph(
           },
         );
       } catch (err) {
+        if (isProjectionTransactionUnavailable(err)) throw err;
         const e = isMaisterError(err)
           ? err
           : new MaisterError("CRASH", asError(err).message, {
@@ -3936,6 +4007,7 @@ export async function runGraph(
             };
           }
         } catch (err) {
+          if (isProjectionTransactionUnavailable(err)) throw err;
           const e = isMaisterError(err)
             ? err
             : new MaisterError("CRASH", asError(err).message, {
@@ -4076,6 +4148,7 @@ export async function runGraph(
           if (
             err instanceof FlowPromptContinuationPending ||
             err instanceof ConsensusGenerationPending ||
+            isProjectionTransactionUnavailable(err) ||
             isFlowDriverClaimLost(err)
           )
             throw err;
@@ -4826,6 +4899,7 @@ export async function runGraph(
             "plan-review output artifacts captured",
           );
         } catch (err) {
+          if (isProjectionTransactionUnavailable(err)) throw err;
           const error = isMaisterError(err)
             ? err
             : new MaisterError("CRASH", asError(err).message, {
@@ -6021,6 +6095,14 @@ export async function runGraph(
       );
     }
   } catch (err) {
+    if (isProjectionTransactionUnavailable(err)) {
+      log2.warn(
+        { nodeId: currentNodeId },
+        "driver-yielded after projection transaction unavailable",
+      );
+
+      return;
+    }
     if (
       err instanceof FlowPromptContinuationPending ||
       err instanceof ConsensusGenerationPending ||
@@ -6187,10 +6269,16 @@ export async function runGraph(
     });
     log2.error({ runErrorCode }, "runGraph ended Crashed");
   } else if (failed) {
+    const failedAttemptId = currentAttemptId;
     const didFail = await db.transaction(async (tx: Db): Promise<boolean> => {
       const rows = await tx
         .update(runs)
-        .set({ status: "Failed", endedAt, currentStepId: null })
+        .set({
+          status: "Failed",
+          endedAt,
+          currentStepId: null,
+          resumeStartedAt: null,
+        })
         .where(and(eq(runs.id, runId), failureStatus))
         .returning({
           projectId: runs.projectId,
@@ -6201,6 +6289,22 @@ export async function runGraph(
         });
 
       if (rows.length > 0) {
+        if (failedAttemptId)
+          await tx
+            .update(nodeAttempts)
+            .set({ status: "Failed", endedAt, errorCode: runErrorCode })
+            .where(
+              and(
+                eq(nodeAttempts.id, failedAttemptId),
+                eq(nodeAttempts.runId, runId),
+                inArray(nodeAttempts.status, [
+                  "Pending",
+                  "Running",
+                  "NeedsInput",
+                ]),
+                isNull(nodeAttempts.endedAt),
+              ),
+            );
         await releaseAssignmentForRun(tx, runId, "run_terminal");
         await emitProjectFlowWebhook({
           db: tx,

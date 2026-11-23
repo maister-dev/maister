@@ -2929,6 +2929,28 @@ export const operationalRunAcknowledgements = pgTable(
   }),
 );
 
+export const flowNodeRestartCheckpoints = pgTable(
+  "flow_node_restart_checkpoints",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references((): AnyPgColumn => executionAssignments.id, {
+        onDelete: "cascade",
+      }),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references((): AnyPgColumn => nodeAttempts.id),
+    checkpointSha: text("checkpoint_sha").notNull(),
+    previewToken: text("preview_token").notNull(),
+    rescueRef: text("rescue_ref"),
+  },
+  (t) => ({
+    byAttempt: index("flow_node_restart_checkpoints_attempt_idx").on(
+      t.attemptId,
+    ),
+  }),
+);
+
 // --- Execution hosts (ADR-166, migration 0130) ------------------------------
 // Postgres is the SSOT for hosts, assignments, and commands; the supervisor
 // keeps its own private state (identity, fences, handles, receipts) in a

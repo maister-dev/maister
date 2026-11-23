@@ -1,4 +1,3 @@
-import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
 import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ResultStatus } from "@/lib/run-results/types";
@@ -10,6 +9,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
+import { loadTaskLaunchIntegrityLimit } from "@/lib/tasks/launch-events";
 import { RunFindingsPanel } from "@/components/runs/run-findings-panel";
 import { NativeInputInspectionPanel } from "@/components/runs/native-input-inspection";
 import { loadNativeInputForUser } from "@/lib/orchestrator/native-input-read";
@@ -56,6 +56,7 @@ import {
   type TimelineLabels,
 } from "@/components/board/run-timeline";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
+import { loadFailedNodeRestartTarget } from "@/lib/runs/failed-node-restart";
 import {
   TerminalCauseNotice,
   type TerminalCauseLabels,
@@ -1499,6 +1500,16 @@ export default async function RunDetailLayout({
       </>
     ) : null;
 
+  const restartTarget =
+    canAct &&
+    detail.status === "Failed" &&
+    flowGraphData &&
+    !isOperational &&
+    !isCutoverHistory &&
+    !detail.pruned &&
+    !detail.archived
+      ? await loadFailedNodeRestartTarget(getDb(), runId)
+      : null;
   const primaryResult =
     flowGraphData || showAgentCenter ? (
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
@@ -1525,6 +1536,13 @@ export default async function RunDetailLayout({
             }
             labels={flowRunCenterLabels}
             locale={locale}
+            restartTarget={
+              restartTarget && {
+                id: restartTarget.id,
+                nodeId: restartTarget.nodeId,
+                checkpointAvailable: Boolean(restartTarget.checkpointRef),
+              }
+            }
             result={flowResultDto}
           />
         ) : (

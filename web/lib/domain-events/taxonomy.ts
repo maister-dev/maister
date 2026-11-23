@@ -286,6 +286,10 @@ export const TERMINAL_CAUSE_REASONS = [
   "operator",
   "result_missing",
   "result_invalid",
+  "restart_checkpoint_unavailable",
+  "restart_checkpoint_workspace_changed",
+  "restart_checkpoint_ignored_files",
+  "restart_checkpoint_restore_incomplete",
   // abandons
   "user",
   "orphan",

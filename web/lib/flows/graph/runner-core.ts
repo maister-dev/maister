@@ -14,6 +14,7 @@ import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
 import type { AgentExecution } from "../runner-agent";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { CompanyFlowSessionContext } from "@/lib/agents/company-flow-session-context";
+import type { NodeRestartCheckpoint } from "@/lib/runs/node-restart-types";
 
 import { eq } from "drizzle-orm";
 
@@ -66,7 +67,11 @@ export type RunFlowOptions = {
   // crashed `retry_safe` session-less node. The runner resumes FROM
   // `targetStepId` (re-runs that node once) under a single-winner claim that
   // CAS-clears `resume_started_at`, instead of no-op'ing.
-  crashResume?: { targetStepId: string };
+  crashResume?: {
+    targetStepId: string;
+    freshSession?: true;
+    checkpoint?: NodeRestartCheckpoint;
+  };
   // M37 (ADR-098) T5.2: set by the orchestrator-resume domain-event consumer
   // after it wins the WaitingOnChildren → Running CAS (markResumedFromWait —
   // that IS the single-winner claim). The runner re-enters the parked

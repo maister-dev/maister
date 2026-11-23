@@ -1969,6 +1969,18 @@ table flow_assistant_actions {
   }
 }
 
+table flow_node_restart_checkpoints {
+  assignment_id text [pk, not null]
+  attempt_id text [not null]
+  checkpoint_sha text [not null]
+  preview_token text [not null]
+  rescue_ref text
+
+  indexes {
+    attempt_id [name: 'flow_node_restart_checkpoints_attempt_idx']
+  }
+}
+
 table flow_revisions {
   id text [pk, not null]
   flow_ref_id text [not null]
@@ -5630,6 +5642,10 @@ ref flow_assistant_actions_run_id_runs_id_fk: flow_assistant_actions.run_id > ru
 ref flow_assistant_actions_local_package_id_local_packages_id_fk: flow_assistant_actions.local_package_id > local_packages.id [delete: cascade, update: no action]
 
 ref flow_assistant_actions_message_id_run_messages_id_fk: flow_assistant_actions.message_id > run_messages.id [delete: restrict, update: no action]
+
+ref flow_node_restart_checkpoints_assignment_id_execution_assignments_id_fk: flow_node_restart_checkpoints.assignment_id > execution_assignments.id [delete: cascade, update: no action]
+
+ref flow_node_restart_checkpoints_attempt_id_node_attempts_id_fk: flow_node_restart_checkpoints.attempt_id > node_attempts.id [delete: no action, update: no action]
 
 ref flow_revisions_default_runner_id_platform_acp_runners_id_fk: flow_revisions.default_runner_id > platform_acp_runners.id [delete: set null, update: no action]
 

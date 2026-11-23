@@ -21,6 +21,7 @@ import clsx from "clsx";
 
 import { ContextLimitMessage } from "@/components/runs/context-limit-message";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
+import { RunRecoverActions } from "@/components/runs/run-recover-actions";
 import {
   NodeTranscriptPanel,
   type NodeTranscriptPanelLabels,
@@ -410,11 +411,17 @@ export function FlowRunCenter({
   labels,
   locale,
   graphView,
+  restartTarget,
 }: {
   result: FlowRunResultDto;
   labels: FlowRunCenterLabels;
   locale: string;
   graphView?: ReactNode;
+  restartTarget?: {
+    id: string;
+    nodeId: string;
+    checkpointAvailable: boolean;
+  } | null;
 }): ReactElement {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -528,6 +535,15 @@ export function FlowRunCenter({
                   <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-amber">
                     {labels.currentNode}
                   </span>
+                ) : null}
+                {restartTarget?.nodeId === selected.id ? (
+                  <RunRecoverActions
+                    canRecover
+                    canDiscard={false}
+                    checkpointAvailable={restartTarget.checkpointAvailable}
+                    restartAttemptId={restartTarget.id}
+                    runId={result.run.runId}
+                  />
                 ) : null}
               </div>
 

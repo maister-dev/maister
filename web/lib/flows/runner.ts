@@ -1,6 +1,7 @@
 import { readWorkspaceIntegrityLimit } from "@/lib/agents/operational-diagnostics";
 import "server-only";
 
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -25,6 +26,11 @@ import { withFlowDriver } from "./graph/driver-lifetime";
 import { wakeParkedCoordinator } from "./graph/coordinator-wake";
 
 import { getDb } from "@/lib/db/client";
+import {
+  executionAssignments,
+  flowNodeRestartCheckpoints,
+} from "@/lib/db/schema";
+import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
 import { promoteNextPending } from "@/lib/scheduler";
 import { finalizeCompanyFlowRun } from "@/lib/run-results/company-flow-terminal";
 import {
@@ -151,9 +157,41 @@ export async function runFlow(
       async (signal) => {
         const scoped = flowDriverDatabase(db, claim, signal);
         const current = await loadRun(scoped, runId);
+        const [placement] =
+          current.run.resumeStartedAt &&
+          current.run.currentStepId &&
+          claim.scope === "assignment"
+            ? await scoped
+                .select({
+                  reason: executionAssignments.placementReason,
+                  checkpoint: flowNodeRestartCheckpoints,
+                })
+                .from(executionAssignments)
+                .leftJoin(
+                  flowNodeRestartCheckpoints,
+                  eq(
+                    flowNodeRestartCheckpoints.assignmentId,
+                    executionAssignments.id,
+                  ),
+                )
+                .where(eq(executionAssignments.id, claim.assignmentId))
+            : [];
+        const crashResume =
+          placement?.reason === "node_restart" && current.run.currentStepId
+            ? {
+                targetStepId: current.run.currentStepId,
+                freshSession: true as const,
+                ...(placement.checkpoint
+                  ? { checkpoint: placement.checkpoint }
+                  : {}),
+              }
+            : opts.crashResume?.freshSession
+              ? undefined
+              : opts.crashResume;
 
         await runGraph(current, {
           ...opts,
+          crashResume,
           db: scoped,
           runtimeRoot,
           executionHosts: hosts,
@@ -164,7 +202,12 @@ export async function runFlow(
       opts.signal,
     );
   } catch (error) {
-    if (!isFlowDriverClaimLost(error) && !isFencedError(error)) throw error;
+    if (
+      !isFlowDriverClaimLost(error) &&
+      !isFencedError(error) &&
+      !isProjectionTransactionUnavailable(error)
+    )
+      throw error;
     logger.warn({ assignmentId: claim.assignmentId }, "flow-driver-yielded");
   }
   await wakeParkedCoordinator({

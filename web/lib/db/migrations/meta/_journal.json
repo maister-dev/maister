@@ -2535,6 +2535,20 @@
       "when": 1795372117411,
       "tag": "0365_agent_memory_proposal_decision_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 366,
+      "version": "7",
+      "when": 1795417792536,
+      "tag": "0366_failed_flow_node_restart",
+      "breakpoints": true
+    },
+    {
+      "idx": 367,
+      "version": "7",
+      "when": 1795420292880,
+      "tag": "0367_flow_node_restart_checkpoint",
+      "breakpoints": true
     }
   ]
 }
