@@ -336,6 +336,7 @@ function receiptAdmission(
       };
     case "session.prompt":
     case "workspace.adopt":
+    case "workspace.prepare":
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":

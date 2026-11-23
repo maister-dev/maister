@@ -41,6 +41,18 @@ function countOf(value: unknown): number {
 }
 
 const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
+  // The preparation protocol carries IDs and a digest. Keeping exactly these
+  // fields allows recovery without persisting locations, inputs or credentials.
+  "workspace.prepare": (payload) =>
+    pickScalars(payload, [
+      "mode",
+      "repositoryId",
+      "commit",
+      "parentHandle",
+      "parentGeneration",
+      "directoryProfileId",
+      "inputDigest",
+    ]),
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),
     ...(asObject(p.owner).kind === "company"

@@ -234,7 +234,20 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   capability, receipt and identity suites passed 51. Both typechecks,
   contracts and documentation validation passed. T05H negotiates the
   separate workspace protocol when its addressed command is available.
-- [ ] **T05 · Web / reservation before effects (after T04).** Convert Flow, agent and scratch creation in `web/lib/services/runs.ts`, `web/lib/agents/launch.ts`, `web/lib/scratch-runs/service.ts` and `web/lib/execution-host/adoption.ts` using the reservation sequence above. Reuse preparation-resource, ownership and workspace claims. Stop the worker after commit and before delivery. The same durable command remains recoverable, no ACP session is eligible, and a retried intent finds exactly one admitted Run. Exercise a transaction rollback and verify no host request.
+- [x] **T05 · Web / reservation before effects (after T04).** Convert Flow, agent and scratch creation in `web/lib/services/runs.ts`, `web/lib/agents/launch.ts`, `web/lib/scratch-runs/service.ts` and `web/lib/execution-host/adoption.ts` using the reservation sequence above. Reuse preparation-resource, ownership and workspace claims. Stop the worker after commit and before delivery. The same durable command remains recoverable, no ACP session is eligible, and a retried intent finds exactly one admitted Run. Exercise a transaction rollback and verify no host request.
+
+  **C-05 evidence.** RED on `2f2d4f286` exercised the existing launch entry
+  points. Flow and Agent committed legacy worktree paths and Scratch
+  reached Running. The addressed capability fixture accepts a pathless
+  reservation and leaves the command queued. Two PostgreSQL workers race
+  one accepted Flow intent, re-read the same Run and exact command, and
+  verify the scheduler leaves it Pending. A trigger abort after command
+  insert rolls the Flow reservation back. Agent and Scratch cover their
+  separate transactional entry points. Scratch observes zero adoption
+  or model children. Ran the three launch-path, agent-worktree-modes and
+  scratch-placement integration suites on Darwin arm64, Node 24.15.0
+  with PostgreSQL and disposable Git repos. All 48 cases passed. The
+  checkout consumer and recovery across the HTTP boundary are T05H.
 - [ ] **T05H · Supervisor / checkout and recovery (after T05).** Implement fetch-at-SHA, preparation and Web result application against the reserved owner. Verify Git origin, SHA, canonical root and workspace mode. Serialize cache writes and workspace writers, and guard the apply with owner/epoch/generation CAS. Drop the reply after real Git preparation, restart Web and prove one incarnation and one applied result. A moved ref, unavailable SHA, failed DB apply, alias or child affinity conflict cannot overwrite the first Run’s dirty work. Exercise plain, shared, read-only and empty modes through their actual entry points.
 - [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.

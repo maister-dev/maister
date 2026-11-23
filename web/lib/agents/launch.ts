@@ -365,6 +365,11 @@ import {
   type SupervisorEvent,
 } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import {
+  reserveHostWorkspace,
+  usesHostWorkspacePreparation,
+} from "@/lib/execution-host/workspace-preparation";
 import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { haltRuleFromEvent } from "@/lib/runs/hook-trip-rule";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -1871,8 +1876,12 @@ async function launchAgentRunWithAdmission(
   // ADR-166 D1: the registered local execution host is the readiness gate —
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
-  const placementHost = await localHost({ db: _db as unknown as ExecutionDb });
+  const placementHost = await localHost({
+    db: _db as unknown as ExecutionDb,
+    force: configuredSelectedExecutionEndpoint() !== null,
+  });
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
+  const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
 
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
   // Hold the shared worktree directory's mutex through provenance, row commit
@@ -1898,7 +1907,30 @@ async function launchAgentRunWithAdmission(
     // claimed (a crashed prior launch's work).
     let allocatedWorktree = false;
 
-    if (workspace === "worktree") {
+    if (hostPreparesWorkspace) {
+      resolvedBranchBase =
+        acceptedExecution?.settings.baseBranch ??
+        replacement?.worktree?.baseBranch ??
+        ctx.link.branchBase ??
+        ctx.effective.parsed.recommended?.branch_base ??
+        ctx.project.mainBranch;
+      if (workspace !== "none" && !isShared) {
+        baseCommit =
+          acceptedExecution?.settings.baseCommit ??
+          replacement?.worktree?.baseCommit ??
+          await resolveBaseCommit({
+            projectRepoPath: ctx.project.repoPath,
+            baseRef: resolvedBranchBase,
+          });
+      }
+      branch = workspace === "worktree"
+        ? acceptedExecution?.claim.identity.branch ?? agentWorktreeBranchName({
+            prefix: ctx.project.branchPrefix ?? "maister/",
+            agentId: input.agentId,
+            runId,
+          })
+        : resolvedBranchBase;
+    } else if (workspace === "worktree") {
       // ADR-106: resolve the worktree base — instance link override → agent
       // recommended → project main — and validate a DECLARED (non-fallback) base
       // against the project's branches BEFORE any git side-effect, so an unknown
@@ -2444,7 +2476,75 @@ async function launchAgentRunWithAdmission(
         // worktree_path so two concurrent allocators/claimers don't 23505 — one
         // inserts, the other no-ops (its run still launches; the tree keeps exactly
         // one row).
-        if (
+        if (hostPreparesWorkspace && branch) {
+          const inputDigest = acceptedExecution?.intent.inputDigest ??
+            contentDigest({
+              runId,
+              workspace,
+              agentConfig,
+              baseCommit,
+              runnerId: resolution.runnerId,
+            });
+          const metadata = {
+            projectId: input.projectId,
+            branch,
+            baseBranch: resolvedBranchBase,
+            baseCommit,
+            targetBranch:
+              acceptedExecution?.settings.targetBranch ?? resolvedBranchBase,
+            promotionMode: acceptedExecution?.settings.promotionMode,
+          };
+          const owner = { host: placementHost, assignment: placement };
+
+          if (isShared) {
+            const [root] = await (tx as ExecutionDb)
+              .select()
+              .from(workspaces)
+              .where(and(
+                eq(workspaces.runId, input.rootRunId!),
+                eq(workspaces.projectId, input.projectId),
+                eq(workspaces.executionHostId, placementHost.id),
+                eq(workspaces.ownershipKind, "host_owned"),
+                isNull(workspaces.removedAt),
+              ))
+              .for("share");
+            if (!root?.executionWorkspaceId || !root.workspaceGeneration)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Shared work requires a ready workspace on its original supervisor",
+                { details: { reason: "shared_root_host_unavailable" } },
+              );
+            await reserveHostWorkspace(tx as ExecutionDb, owner, {
+              ...metadata,
+              branch: root.branch,
+              baseCommit: root.baseCommit,
+              rootWorkspaceId: root.id,
+            }, {
+              mode: "sharedWorktree",
+              parentHandle: root.executionWorkspaceId,
+              parentGeneration: root.workspaceGeneration,
+              inputDigest,
+            });
+          } else if (workspace === "none") {
+            await reserveHostWorkspace(tx as ExecutionDb, owner, metadata, {
+              mode: "emptyDirectory",
+              inputDigest,
+            });
+          } else {
+            if (!baseCommit)
+              throw new MaisterError(
+                "PRECONDITION",
+                "Selected supervisor preparation requires a frozen source revision",
+                { details: { reason: "source_revision_required" } },
+              );
+            await reserveHostWorkspace(tx as ExecutionDb, owner, metadata, {
+              mode: workspace === "repo_read" ? "readOnlyCheckout" : "ownWorktree",
+              repositoryId: input.projectId,
+              commit: baseCommit,
+              inputDigest,
+            });
+          }
+        } else if (
           workspace === "worktree" &&
           worktreePath &&
           branch &&
@@ -2552,7 +2652,7 @@ async function launchAgentRunWithAdmission(
   };
   let inserted: boolean;
 
-  if (workspace === "worktree" && isShared) {
+  if (!hostPreparesWorkspace && workspace === "worktree" && isShared) {
     const allocationDirectory = sharedAgentWorktreesDirectory(ctx.project.slug);
 
     await mkdir(allocationDirectory, { recursive: true });
@@ -2560,7 +2660,7 @@ async function launchAgentRunWithAdmission(
       allocationDirectory,
       allocateAndPersist,
     );
-  } else if (input.retryClaim) {
+  } else if (!hostPreparesWorkspace && input.retryClaim) {
     const allocationDirectory = path.dirname(
       agentWorkdirPath(ctx.project.slug, runId),
     );
@@ -2581,7 +2681,8 @@ async function launchAgentRunWithAdmission(
     };
   }
 
-  if (acceptedExecution) return { runId, status: "Pending" };
+  if (acceptedExecution || hostPreparesWorkspace)
+    return { runId, status: "Pending" };
 
   let startResult: Awaited<ReturnType<typeof startAllocatedRun>>;
 

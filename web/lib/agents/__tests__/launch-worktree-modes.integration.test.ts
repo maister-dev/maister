@@ -25,7 +25,9 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError } from "@/lib/errors";
-import { fakeExecutionHosts } from "@/test-support/fake-execution-host";
+import { fakeExecutionHosts, type FakeExecutionHost } from "@/test-support/fake-execution-host";
+import { readyExecutionHostCapabilities } from "@/test-support/supervisor-health-fixture";
+import { resetResolverForTests } from "@/lib/execution-host/resolver";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -48,6 +50,7 @@ let db: NodePgDatabase;
 let cacheRoot: string;
 let worktreesTmp: string;
 let originalWorktreesRoot: string | undefined;
+let fake: FakeExecutionHost;
 
 let launchAgentRun: typeof import("@/lib/agents/launch").launchAgentRun;
 let sharedAgentWorktreePath: typeof import("@/lib/agents/launch").sharedAgentWorktreePath;
@@ -62,7 +65,7 @@ beforeAll(async () => {
   pool = testDatabase.pool;
   db = testDatabase.db;
   // ADR-166: every launch places the run on the local execution host.
-  await fakeExecutionHosts(db);
+  ({ fake } = await fakeExecutionHosts(db));
 
   ({ launchAgentRun, sharedAgentWorktreePath } =
     await import("@/lib/agents/launch"));
@@ -873,5 +876,54 @@ describe("M39 (ADR-106) — branch_base resolution drives the agent worktree", (
     ]);
 
     expect(stdout).toBe("");
+  });
+});
+
+describe("Addressed agent preparation", () => {
+  it("C-05 agent: a project launch reserves its Git preparation before creating a worktree", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const discovery = vi.spyOn(fake.transport, "capabilities").mockResolvedValue({
+      ...readyExecutionHostCapabilities(),
+      workspaceProtocol: [1],
+    });
+    vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", fake.identity.hostKey);
+    vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
+    resetResolverForTests();
+
+    try {
+      const result = await launchAgentRun({
+        agentId: ids.worker,
+        projectId,
+        launchMode: "manual",
+        trigger: { source: "manual" },
+        db,
+      });
+      if ("deduped" in result) throw new Error("unexpected dedup");
+      const ownership = await pool.query(
+        `SELECT workspace.ownership_kind, workspace.worktree_path, command.state,
+                command.execution_assignment_id, workspace.preparation_assignment_id
+         FROM workspaces workspace
+         LEFT JOIN execution_commands command ON command.target_session_id = workspace.id
+           AND command.kind = 'workspace.prepare'
+         WHERE workspace.run_id = $1`,
+        [result.runId],
+      );
+      expect(result.status).toBe("Pending");
+      expect(ownership.rows).toEqual([expect.objectContaining({
+        ownership_kind: "host_owned",
+        worktree_path: null,
+        state: "queued",
+        execution_assignment_id: expect.any(String),
+        preparation_assignment_id: ownership.rows[0]?.execution_assignment_id,
+      })]);
+      expect(await exec("git", ["-C", repoPath, "worktree", "list", "--porcelain"]))
+        .not.toHaveProperty("stdout", expect.stringContaining(result.runId));
+    } finally {
+      discovery.mockRestore();
+      vi.unstubAllEnvs();
+      resetResolverForTests();
+    }
   });
 });

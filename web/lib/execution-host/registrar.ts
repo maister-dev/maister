@@ -242,6 +242,9 @@ export async function ensureLocalExecutionHost(
       protocolVersion: health.identity.protocolVersion,
       supervisorVersion: health.version,
       adapters: [],
+      ...(selected && dataPlane?.workspaceProtocol
+        ? { workspaceProtocol: dataPlane.workspaceProtocol }
+        : {}),
       dataPlane: dataPlane
         ? {
             version: dataPlane.dataPlaneVersion,

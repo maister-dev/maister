@@ -284,6 +284,14 @@ generation and operation number. An exclusive owner discriminator prevents
 accepting a workspace operation under a session-only command kind. Use
 restrictive owner references and apply result CAS before releasing the claim.
 
+Migration `0371_stage_c_prepare_command` adds the pending
+`workspace.prepare` command to the existing execution ledger. Its target is
+the logical workspace ID. A database guard requires the matching pending Run,
+active assignment and epoch, host and input digest. The request fields
+remain immutable during delivery and recovery. Session create and prompt
+admission require a prepared handle on a host-owned workspace. Scratch
+capabilities retain their selection before a host materializes it.
+
 SQLite schema 19 upgrades a v18 store in one transaction. A private
 `workspace_execution_state` row tracks generation, input and materialization
 digests, and the operation claim and fence. The migration seeds the initial

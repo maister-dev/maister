@@ -152,6 +152,11 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence";
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import {
+  reserveHostWorkspace,
+  usesHostWorkspacePreparation,
+} from "@/lib/execution-host/workspace-preparation";
 import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
@@ -967,8 +972,10 @@ async function* executeFlowLaunch(
   // the launch tx places the run on.
   const placementHost = await localHost({
     db: _db as unknown as ExecutionDb,
+    force: configuredSelectedExecutionEndpoint() !== null,
   });
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
+  const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
 
   // ADR-132 §a: validate the ephemeral per-run package pin as a cheap
   // deterministic precondition, hoisted BEFORE applyPackageVersionChoices so a
@@ -1195,7 +1202,8 @@ async function* executeFlowLaunch(
     // exists — a missing binary fails clean as PRECONDITION here, not late
     // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
     // each requirement's `hint` carries the remediation. No-op when none declared.
-    await checkFlowRequirements(manifest.requirements, project.repoPath);
+    if (!hostPreparesWorkspace)
+      await checkFlowRequirements(manifest.requirements, project.repoPath);
 
     const compiled = compileManifest(manifest);
 
@@ -1709,62 +1717,73 @@ async function* executeFlowLaunch(
       }),
     );
 
-    // Refresh origin (read-only: updates remote-tracking refs, never the working
-    // tree) so the branch allow-list and the base commit reflect the freshest
-    // remote state. Best-effort — offline / no origin is advisory, the launch
-    // continues from whatever refs exist locally.
-    try {
-      const remotes = await listProjectRemotes(project.repoPath);
-
-      if (remotes.some((r) => r.name === "origin")) {
-        await fetchProjectRemote({
-          project: { id: project.id, repoPath: project.repoPath },
-          name: "origin",
-        });
-      }
-    } catch (err) {
-      log.warn(
-        { taskId: task.id, err: (err as Error).message },
-        "pre-launch origin fetch failed (advisory)",
-      );
-    }
-
-    const knownBranches = new Set(
-      await listBranches(project.repoPath, { includeRemotes: true }),
-    );
-
-    if (!knownBranches.has(base)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `base branch "${base}" does not exist in ${project.slug}`,
-      );
-    }
-    if (!knownBranches.has(target)) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `target branch "${target}" does not exist in ${project.slug}`,
-      );
-    }
-
     const requestedBaseCommit =
       input.baseCommit ?? taskAdmission.baseCommit ?? undefined;
-    const baseCommit =
-      requestedBaseCommit === undefined
-        ? await resolveBaseCommit({
-            projectRepoPath: project.repoPath,
-            baseRef: base,
-            // Fork from origin/<base> when present (just fetched) so runs start from
-            // the freshest remote state, not a stale local checkout; falls back to the
-            // local <base>.
-            preferRemote: "origin",
-          })
-        : await assertPinnedBaseCommitReachable({
-            projectId: project.id,
-            taskId: task.id,
-            projectRepoPath: project.repoPath,
-            baseRef: base,
-            baseCommit: requestedBaseCommit,
+    if (hostPreparesWorkspace && !requestedBaseCommit)
+      throw new MaisterError(
+        "PRECONDITION",
+        "Selected supervisor preparation requires a frozen source revision",
+        { details: { reason: "source_revision_required" } },
+      );
+    let baseCommit: string;
+    if (hostPreparesWorkspace && requestedBaseCommit) {
+      baseCommit = requestedBaseCommit;
+    } else {
+      // Refresh origin (read-only: updates remote-tracking refs, never the working
+      // tree) so the branch allow-list and the base commit reflect the freshest
+      // remote state. Best-effort — offline / no origin is advisory, the launch
+      // continues from whatever refs exist locally.
+      try {
+        const remotes = await listProjectRemotes(project.repoPath);
+
+        if (remotes.some((r) => r.name === "origin")) {
+          await fetchProjectRemote({
+            project: { id: project.id, repoPath: project.repoPath },
+            name: "origin",
           });
+        }
+      } catch (err) {
+        log.warn(
+          { taskId: task.id, err: (err as Error).message },
+          "pre-launch origin fetch failed (advisory)",
+        );
+      }
+
+      const knownBranches = new Set(
+        await listBranches(project.repoPath, { includeRemotes: true }),
+      );
+
+      if (!knownBranches.has(base)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `base branch "${base}" does not exist in ${project.slug}`,
+        );
+      }
+      if (!knownBranches.has(target)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `target branch "${target}" does not exist in ${project.slug}`,
+        );
+      }
+
+      baseCommit =
+        requestedBaseCommit === undefined
+          ? await resolveBaseCommit({
+              projectRepoPath: project.repoPath,
+              baseRef: base,
+              // Fork from origin/<base> when present (just fetched) so runs start from
+              // the freshest remote state, not a stale local checkout; falls back to the
+              // local <base>.
+              preferRemote: "origin",
+            })
+          : await assertPinnedBaseCommitReachable({
+              projectId: project.id,
+              taskId: task.id,
+              projectRepoPath: project.repoPath,
+              baseRef: base,
+              baseCommit: requestedBaseCommit,
+            });
+    }
     const promotionMode: PromotionMode = legacyPromotionModeFromStrategy(
       deliveryPolicy.strategy,
     );
@@ -1872,10 +1891,12 @@ async function* executeFlowLaunch(
       });
     };
 
-    if (accepted) await accepted.prepareWorkspace(createWorkspace);
-    else await createWorkspace();
-    yield launchProgress("worktree_created");
-    createdWorktreePath = worktreePath;
+    if (!hostPreparesWorkspace) {
+      if (accepted) await accepted.prepareWorkspace(createWorkspace);
+      else await createWorkspace();
+      yield launchProgress("worktree_created");
+      createdWorktreePath = worktreePath;
+    }
 
     // The worktree now exists; this nested try compensates it (removeWorktree) on any
     // failure through the run-insert. The pin is compensated by the outer catch.
@@ -1931,7 +1952,8 @@ async function* executeFlowLaunch(
 
       // Cancel here (pre-commit) compensates the worktree via the inner catch.
       opts.signal?.throwIfAborted();
-      yield launchProgress("materializing", capabilityAgent);
+      if (!hostPreparesWorkspace)
+        yield launchProgress("materializing", capabilityAgent);
       // Deliver AIF capability bundles into the fresh worktree's .claude/ and
       // write the per-run .ai-factory/config.yaml git-ownership override. Gated
       // on >=1 Installed import so non-AIF projects never get a stray config.
@@ -1969,7 +1991,7 @@ async function* executeFlowLaunch(
         }
       };
 
-      if (accepted)
+      if (!hostPreparesWorkspace && accepted)
         await accepted.materialize((bundles) =>
           materializeWorkspace(() =>
             materializeCapabilityBundlesIntoWorktree({
@@ -1980,7 +2002,7 @@ async function* executeFlowLaunch(
             }),
           ),
         );
-      else
+      else if (!hostPreparesWorkspace)
         await materializeWorkspace(() =>
           materializeProjectBundlesIntoWorktree({
             runId,
@@ -2308,7 +2330,7 @@ async function* executeFlowLaunch(
         // ADR-166 D3: epoch 1 of the run's driver ownership, in the SAME tx as
         // the run (no run ⇒ no assignment). Insert branch only — the ADR-150
         // adopted-run branch returned above without inserting anything.
-        await mintPlacement(tx as unknown as ExecutionDb, {
+        const placement = await mintPlacement(tx as unknown as ExecutionDb, {
           runId,
           reason: "launch",
           host: placementHost,
@@ -2325,18 +2347,37 @@ async function* executeFlowLaunch(
           });
         }
 
-        await tx.insert(workspaces).values({
-          id: randomUUID(),
-          runId,
+        const workspaceIdentity = {
           projectId: project.id,
           branch,
-          worktreePath,
-          parentRepoPath: project.repoPath,
           baseBranch: base,
           baseCommit,
           targetBranch: target,
           promotionMode,
-        });
+        };
+        if (hostPreparesWorkspace) {
+          await reserveHostWorkspace(
+            tx as ExecutionDb,
+            { host: placementHost, assignment: placement },
+            workspaceIdentity,
+            {
+              mode: "ownWorktree",
+              repositoryId: project.id,
+              commit: baseCommit,
+              inputDigest: accepted?.intent.inputDigest ?? contentDigest({
+                runId, baseCommit, resolvedCapabilitySet,
+              }),
+            },
+          );
+        } else {
+          await tx.insert(workspaces).values({
+            ...workspaceIdentity,
+            id: randomUUID(),
+            runId,
+            worktreePath,
+            parentRepoPath: project.repoPath,
+          });
+        }
         // ADR-119: attempt_number is allocated atomically up-front (sole writer);
         // the main tx only flips the one-way status latch. For a concurrent
         // relaunch the task is already InFlight, so this set is an idempotent
@@ -2401,7 +2442,7 @@ async function* executeFlowLaunch(
         await ctx.recordSuccessAudit?.(tx, runId);
       });
     } catch (err) {
-      if (accepted) throw redactQueryError(err);
+      if (accepted || hostPreparesWorkspace) throw redactQueryError(err);
       // Inner: a failure after the worktree was created. Remove the orphan worktree
       // so the next launch can recreate the same branch+path without a PRECONDITION
       // "already exists". The pin is re-pinned by the outer catch on rethrow.
@@ -2485,7 +2526,7 @@ async function* executeFlowLaunch(
     );
   }
 
-  if (accepted) return { runId, status: "Pending" };
+  if (accepted || hostPreparesWorkspace) return { runId, status: "Pending" };
 
   const startResult = await startAllocatedRun(_db, runId);
 

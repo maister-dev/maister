@@ -2570,6 +2570,13 @@
       "when": 1795471631098,
       "tag": "0370_stage_c_workspace_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 371,
+      "version": "7",
+      "when": 1795472604780,
+      "tag": "0371_stage_c_prepare_command",
+      "breakpoints": true
     }
   ]
 }

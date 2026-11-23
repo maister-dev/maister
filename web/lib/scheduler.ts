@@ -41,6 +41,7 @@ import {
 } from "@/lib/runs/state-transitions";
 import { getLatestAssignment } from "@/lib/execution-host/assignments";
 import { getHostById } from "@/lib/execution-host/hosts";
+import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import {
   HOST_PRESSURED_REASON,
   localHostPressuredSince,
@@ -374,6 +375,7 @@ function queuedRunHasAvailableSlots(): SQL<boolean> {
 function pendingContinuationAvailable(pool: SchedulerPool) {
   return and(
     eq(runs.status, "Pending"),
+    workspacePreparationReadySql(sql`runs.id`),
     sql`(${runs.taskLaunchIntentId} IS NULL OR EXISTS (SELECT 1 FROM task_launch_intents continuation WHERE continuation.id=${runs.taskLaunchIntentId} AND continuation.dispatch_committed_at IS NOT NULL))`,
     inArray(runs.runKind, POOL_RUN_KINDS[pool]),
     queuedRunHasAvailableSlots(),
@@ -543,6 +545,7 @@ export async function tryStartRun(
       rootRunId: string | null;
       parentRunId: string | null;
       assignmentBudgetAvailable: boolean;
+      workspacePreparationReady: boolean;
       projectId: string | null;
       waitId: string | null;
       waitQueuedAt: Date | null;
@@ -559,6 +562,7 @@ export async function tryStartRun(
         assignmentBudgetAvailable: assignmentBudgetAllowsDispatchSql(
           sql`runs.id`,
         ),
+        workspacePreparationReady: workspacePreparationReadySql(sql`runs.id`),
       })
       .from(runs)
       .where(eq(runs.id, runId));
@@ -670,6 +674,7 @@ export async function tryStartRun(
       !sharedBlocked &&
       !activeChildrenBlocked &&
       !assignmentBudgetBlocked &&
+      targetRows[0]?.workspacePreparationReady !== false &&
       liveCount - (acceptedDispatch?.ownsCapacity ? 1 : 0) < cap
     ) {
       if (pendingWait) {
@@ -695,6 +700,7 @@ export async function tryStartRun(
             and(
               eq(runs.id, runId),
               eq(runs.status, "Pending"),
+              workspacePreparationReadySql(sql`runs.id`),
               assignmentBudgetAllowsDispatchSql(sql`runs.id`),
             ),
           )

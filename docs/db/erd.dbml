@@ -3762,7 +3762,7 @@ table scratch_capability_profiles {
   id text [pk, not null]
   run_id text [not null, unique]
   profile_digest text [not null]
-  materialized_path text [not null]
+  materialized_path text
   selected_mcp_ids jsonb [not null, default: `[]`]
   selected_skill_ids jsonb [not null, default: `[]`]
   selected_rule_ids jsonb [not null, default: `[]`]

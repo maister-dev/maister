@@ -21,6 +21,7 @@ import { launchRefusal } from "./launch-resolution";
 import { emitTaskLaunchChanged } from "./launch-events";
 
 import { takeSchedulerLock } from "@/lib/scheduler";
+import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import { retryDigest } from "@/lib/agents/retry-guards";
 import { agentPreparationResourceId } from "@/lib/agents/preparation-resource";
 import {
@@ -47,7 +48,10 @@ export async function prepareTaskLaunchFirstDispatch(
   db: Db,
   runId: string,
 ): Promise<PreparedTaskLaunchDispatch | null> {
-  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  const [run] = await db
+    .select()
+    .from(runs)
+    .where(and(eq(runs.id, runId), workspacePreparationReadySql(sql`runs.id`)));
 
   if (!run?.taskLaunchIntentId) return null;
   const [intent] = await db

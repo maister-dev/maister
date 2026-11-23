@@ -168,6 +168,14 @@ session. A repeated claimant finds the durable owner. Only a successful
 application under its assignment epoch and preparation generation advances
 the Run to execution.
 
+Flow, Agent and Scratch reserve preparation under the same PostgreSQL
+transaction as placement when the selected supervisor advertises workspace
+protocol 1. Web records the host-owned workspace and queued
+`workspace.prepare` command without filesystem paths. A missing handle
+keeps the Run Pending. Session create and prompt admission enforce this
+boundary in the command ledger. HTTP delivery and owner application are the
+subsequent T05H boundary.
+
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies
 the captured digests, stages the inputs in a private directory and publishes

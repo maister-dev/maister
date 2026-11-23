@@ -6790,7 +6790,7 @@ export const scratchCapabilityProfiles = pgTable(
       .unique()
       .references(() => scratchRuns.runId, { onDelete: "cascade" }),
     profileDigest: text("profile_digest").notNull(),
-    materializedPath: text("materialized_path").notNull(),
+    materializedPath: text("materialized_path"),
     selectedMcpIds: jsonb("selected_mcp_ids")
       .$type<string[]>()
       .notNull()

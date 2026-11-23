@@ -58,6 +58,7 @@ export type HostCapabilities = {
   protocolVersion: number;
   supervisorVersion: string;
   adapters: string[];
+  workspaceProtocol?: [1];
   dataPlane?: {
     version: "execution-host-data-plane.v1";
     eventStream: boolean;

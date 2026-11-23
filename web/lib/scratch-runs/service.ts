@@ -40,6 +40,12 @@ import {
 
 import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import {
+  reserveHostWorkspace,
+  usesHostWorkspacePreparation,
+} from "@/lib/execution-host/workspace-preparation";
+import { contentDigest } from "@/lib/evaluations/digest";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
 import { PromptIncarnationPending } from "@/lib/execution-host/prompt-incarnation";
 import {
@@ -963,7 +969,12 @@ export async function* launchScratchRunStaged(
   // ADR-166: the launch places the run on the local execution host; an
   // unavailable host refuses the launch before any row or worktree exists.
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
-  const placementHost = await localHost({ db, transport: hosts.transport });
+  const placementHost = await localHost({
+    db,
+    transport: hosts.transport,
+    force: configuredSelectedExecutionEndpoint() !== null,
+  });
+  const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
 
   await assertScratchCapacityAvailable({ db });
@@ -975,7 +986,7 @@ export async function* launchScratchRunStaged(
     baseRef: args.body.baseBranch,
   });
 
-  if (await branchExists({ projectRepoPath: project.repoPath, branch })) {
+  if (!hostPreparesWorkspace && await branchExists({ projectRepoPath: project.repoPath, branch })) {
     throw new MaisterError(
       "PRECONDITION",
       `scratch branch already exists: ${branch}`,
@@ -1013,6 +1024,164 @@ export async function* launchScratchRunStaged(
   // Every precondition has passed; the route turns this first yield into the
   // signal to start streaming (a throw above here is still a JSON error).
   yield launchProgress("precondition");
+
+  const persistScratchRun = (
+    localMaterialization: Pick<
+      typeof scratchCapabilityProfiles.$inferInsert,
+      "materializedPath" | "adapterLaunch"
+    > | null,
+  ): Promise<string> => db.transaction(async (tx: Db) => {
+    await assertScratchCapacityAvailableInTransaction(tx);
+
+    await tx.insert(runs).values({
+      id: runId,
+      runKind: "scratch",
+      executionDataPlaneMode,
+      taskId: null,
+      projectId: project.id,
+      flowId: null,
+      // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
+      status: localMaterialization ? "Running" : "Pending",
+      currentStepId: scratchStepId(),
+      flowVersion: "scratch",
+      flowRevision: "manual",
+      flowRevisionId: null,
+      createdByUserId: args.userId,
+      startedAt: now,
+      resumeStartedAt: localMaterialization ? now : null,
+    });
+    // M42 (ADR-114): a scratch run is a single-`default`-session run.
+    await tx.insert(runSessions).values({
+      id: randomUUID(),
+      ...defaultRunSessionValues(runId, runnerResolution),
+    });
+    await tx.insert(scratchRuns).values({
+      runId,
+      projectId: project.id,
+      name,
+      initialPrompt: args.body.prompt,
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
+      planMode: policy.planMode,
+      linkedTaskId: args.body.linkedTaskId ?? null,
+      linkedIssueUrl: args.body.linkedIssueUrl ?? null,
+      baseBranch: args.body.baseBranch,
+      baseCommit,
+      targetBranch: args.body.baseBranch,
+      dialogStatus: "Starting",
+      createdByUserId: args.userId,
+      lastUserMessageAt: hasInitialPrompt ? now : null,
+      updatedAt: now,
+    });
+    const placement = await mintPlacement(tx, {
+      runId,
+      reason: "launch",
+      host: placementHost,
+    });
+    if (localMaterialization) {
+      await tx.insert(workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project.id,
+        branch,
+        worktreePath,
+        parentRepoPath: project.repoPath,
+      });
+    } else {
+      await reserveHostWorkspace(
+        tx,
+        { host: placementHost, assignment: placement },
+        {
+          projectId: project.id,
+          branch,
+          baseBranch: args.body.baseBranch,
+          baseCommit,
+          targetBranch: args.body.baseBranch,
+        },
+        {
+          mode: "ownWorktree",
+          repositoryId: project.id,
+          commit: baseCommit,
+          inputDigest: contentDigest({
+            runId,
+            baseCommit,
+            profileDigest: profile.profileDigest,
+            prompt: rawPrompt,
+            runnerId: runnerResolution.runnerId,
+          }),
+        },
+      );
+    }
+
+    if (initialMessage && messageId) {
+      await appendScratchMessage(tx, {
+        id: messageId,
+        runId,
+        role: "user",
+        content: initialMessage.content,
+      });
+    }
+    const metadataAttachments = validatedAttachments.map(
+      metadataAttachmentRow,
+    );
+    const storedAttachments = storedAttachmentValues({
+      metadataAttachments,
+      uploadedAttachments,
+      runId,
+      messageId,
+    });
+
+    if (storedAttachments.length > 0) {
+      await assertRuntimeObjectsReferenceable(
+        tx as Db,
+        uploadedObjectIds(storedAttachments),
+      );
+      await tx.insert(scratchAttachments).values(storedAttachments);
+    }
+    await tx.insert(scratchCapabilityProfiles).values({
+      id: randomUUID(),
+      runId,
+      profileDigest: profile.profileDigest,
+      materializedPath: localMaterialization?.materializedPath ?? null,
+      selectedMcpIds: profile.selectedMcpIds,
+      selectedSkillIds: profile.selectedSkillIds,
+      selectedRuleIds: profile.selectedRuleIds,
+      restrictions: {
+        selectedRestrictionIds: profile.selectedRestrictionIds,
+        selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
+      },
+      adapterLaunch: localMaterialization?.adapterLaunch ?? {},
+      downgradeNotes: downgradeNotes(profile),
+    });
+
+    return placement.id;
+  });
+
+  if (hostPreparesWorkspace) {
+    if (uploadedFiles.length > 0 || validatedAttachments.some(({ kind }) => kind === "file_path"))
+      throw new MaisterError(
+        "PRECONDITION",
+        "Selected supervisor preparation requires staged workspace attachments",
+        { details: { reason: "workspace_protocol_unsupported" } },
+      );
+    opts.signal?.throwIfAborted();
+    await persistScratchRun(null);
+
+    return launchResponse({
+      runId,
+      projectId: project.id,
+      name,
+      runStatus: "Pending",
+      dialogStatus: "Starting",
+      branchName: branch,
+      baseBranch: args.body.baseBranch,
+      baseCommit,
+      targetBranch: args.body.baseBranch,
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
+      planMode: policy.planMode,
+    });
+  }
 
   await addWorktree({
     projectRepoPath: project.repoPath,
@@ -1081,105 +1250,9 @@ export async function* launchScratchRunStaged(
       ...materialized.adapterLaunch,
       env: { ...materialized.adapterLaunch.env, ...adapterHome.env },
     };
-    launchAssignmentId = await db.transaction(async (tx: Db) => {
-      await assertScratchCapacityAvailableInTransaction(tx);
-
-      await tx.insert(runs).values({
-        id: runId,
-        runKind: "scratch",
-        executionDataPlaneMode,
-        taskId: null,
-        projectId: project.id,
-        flowId: null,
-        // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
-        status: "Running",
-        currentStepId: scratchStepId(),
-        flowVersion: "scratch",
-        flowRevision: "manual",
-        flowRevisionId: null,
-        createdByUserId: args.userId,
-        startedAt: now,
-        resumeStartedAt: now,
-      });
-      // M42 (ADR-114): a scratch run is a single-`default`-session run.
-      await tx.insert(runSessions).values({
-        id: randomUUID(),
-        ...defaultRunSessionValues(runId, runnerResolution),
-      });
-      await tx.insert(workspaces).values({
-        id: randomUUID(),
-        runId,
-        projectId: project.id,
-        branch,
-        worktreePath,
-        parentRepoPath: project.repoPath,
-      });
-      await tx.insert(scratchRuns).values({
-        runId,
-        projectId: project.id,
-        name,
-        initialPrompt: args.body.prompt,
-        workMode: policy.workMode,
-        reasoningEffort: policy.reasoningEffort,
-        planMode: policy.planMode,
-        linkedTaskId: args.body.linkedTaskId ?? null,
-        linkedIssueUrl: args.body.linkedIssueUrl ?? null,
-        baseBranch: args.body.baseBranch,
-        baseCommit,
-        targetBranch: args.body.baseBranch,
-        dialogStatus: "Starting",
-        createdByUserId: args.userId,
-        lastUserMessageAt: hasInitialPrompt ? now : null,
-        updatedAt: now,
-      });
-      const placement = await mintPlacement(tx, {
-        runId,
-        reason: "launch",
-        host: placementHost,
-      });
-
-      if (initialMessage && messageId) {
-        await appendScratchMessage(tx, {
-          id: messageId,
-          runId,
-          role: "user",
-          content: initialMessage.content,
-        });
-      }
-      const metadataAttachments = validatedAttachments.map(
-        metadataAttachmentRow,
-      );
-      const storedAttachments = storedAttachmentValues({
-        metadataAttachments,
-        uploadedAttachments,
-        runId,
-        messageId,
-      });
-
-      if (storedAttachments.length > 0) {
-        await assertRuntimeObjectsReferenceable(
-          tx as Db,
-          uploadedObjectIds(storedAttachments),
-        );
-        await tx.insert(scratchAttachments).values(storedAttachments);
-      }
-      await tx.insert(scratchCapabilityProfiles).values({
-        id: randomUUID(),
-        runId,
-        profileDigest: profile.profileDigest,
-        materializedPath: materialized.rootPath,
-        selectedMcpIds: profile.selectedMcpIds,
-        selectedSkillIds: profile.selectedSkillIds,
-        selectedRuleIds: profile.selectedRuleIds,
-        restrictions: {
-          selectedRestrictionIds: profile.selectedRestrictionIds,
-          selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
-        },
-        adapterLaunch,
-        downgradeNotes: downgradeNotes(profile),
-      });
-
-      return placement.id;
+    launchAssignmentId = await persistScratchRun({
+      materializedPath: materialized.rootPath,
+      adapterLaunch,
     });
   } catch (err) {
     log.warn(
