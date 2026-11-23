@@ -5,10 +5,12 @@ import pino from "pino";
 import { ZodError } from "zod";
 
 import { CatalogError } from "./catalog-client";
+import { withWorkingDirLock } from "./lock";
 import { getLocalPackage } from "./service";
 
 import { errorResponse } from "@/lib/api/project-route-helpers";
 import { requireGlobalRole, requireProjectAction } from "@/lib/authz";
+import { isMaisterError } from "@/lib/errors";
 
 const log = pino({
   name: "studio-catalog-http",
@@ -52,4 +54,28 @@ export function catalogResponse(error: unknown): NextResponse {
     );
 
   return errorResponse(error, log, "studio-catalog");
+}
+
+// A live writer owns all mutations. Readers can observe its atomically published
+// receipt, while an idle lease still reconciles interrupted applies before use.
+export async function withCatalogReceipt<T>(
+  id: string,
+  underLease: () => Promise<T>,
+  whileBusy: () => Promise<T | null>,
+): Promise<T> {
+  try {
+    return await withWorkingDirLock(id, underLease);
+  } catch (error) {
+    if (
+      !isMaisterError(error) ||
+      error.code !== "CONFLICT" ||
+      error.details?.reason !== "operation_in_progress"
+    )
+      throw error;
+    const receipt = await whileBusy();
+
+    if (receipt === null) throw error;
+
+    return receipt;
+  }
 }

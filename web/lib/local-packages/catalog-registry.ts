@@ -53,6 +53,38 @@ const descriptor = identity.extend({
     .default([]),
 });
 
+const slotName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/);
+const namedSlot = z.object({ name: slotName });
+const maxVisibleSlots = 8;
+
+function declaredSlotNames(entries: readonly unknown[] = []): string[] {
+  return entries.flatMap((entry) => {
+    const parsed = namedSlot.safeParse(entry);
+
+    return parsed.success ? [parsed.data.name] : [];
+  });
+}
+
+/** Only identifiers cross the review boundary. Registry descriptions, defaults and literal endpoints may carry credentials. */
+function requirementSummary(
+  label: string,
+  names: readonly string[],
+  key: (name: string) => string,
+): string {
+  const visible = new Map<string, string>();
+
+  for (const name of names) {
+    if (!slotName.safeParse(name).success || visible.has(key(name))) continue;
+    if (visible.size === maxVisibleSlots)
+      return ` ${label} include ${[...visible.values()].join(", ")} and more.`;
+    visible.set(key(name), name);
+  }
+
+  return visible.size
+    ? ` ${label} include ${[...visible.values()].join(", ")}.`
+    : "";
+}
+
 export async function fetchRegistryPage(
   q: string,
   cursor: string | undefined,
@@ -67,7 +99,15 @@ export async function fetchRegistryPage(
   const data = z
     .object({
       servers: z.array(z.object({ server: identity })).max(30),
-      metadata: z.object({ nextCursor: z.string().max(1400).optional() }),
+      metadata: z.object({
+        nextCursor: z
+          .string()
+          .refine(
+            (token) => Buffer.byteLength(token, "utf8") <= 1400,
+            "Registry cursor exceeds the encoded query budget",
+          )
+          .optional(),
+      }),
     })
     .parse(await read(url));
 
@@ -163,7 +203,23 @@ export async function reviewMcp(
     )
       throw new CatalogError(
         422,
-        "Only concrete Streamable HTTP endpoints without required credentials are supported",
+        "Only concrete Streamable HTTP endpoints without required credentials are supported." +
+          requirementSummary(
+            "Header names",
+            declaredSlotNames(remote.headers),
+            (name) => name.toLowerCase(),
+          ) +
+          requirementSummary(
+            "URL variables",
+            [
+              ...Object.keys(remote.variables ?? {}),
+              ...Array.from(
+                remote.url.matchAll(/\{([A-Za-z_][A-Za-z0-9_.-]{0,63})\}/g),
+                (match) => match[1]!,
+              ),
+            ],
+            (name) => name,
+          ),
       );
     if (!URL.canParse(remote.url))
       throw new CatalogError(422, "Invalid MCP endpoint");
@@ -211,7 +267,12 @@ export async function reviewMcp(
   )
     throw new CatalogError(
       422,
-      "This distribution requires unsupported installation or configuration",
+      "This distribution requires unsupported installation or configuration." +
+        requirementSummary(
+          "Environment variables",
+          declaredSlotNames(pkg.environmentVariables),
+          (name) => name,
+        ),
     );
   const metadata = z
     .object({

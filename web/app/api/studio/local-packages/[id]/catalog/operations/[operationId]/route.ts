@@ -5,9 +5,9 @@ import { NextResponse } from "next/server";
 import {
   catalogOwner,
   catalogResponse,
+  withCatalogReceipt,
 } from "@/lib/local-packages/catalog-http";
 import { readCatalogOperation } from "@/lib/local-packages/catalog-operation";
-import { withWorkingDirLock } from "@/lib/local-packages/lock";
 
 export async function GET(
   _req: Request,
@@ -17,10 +17,13 @@ export async function GET(
     const { id, operationId } = await params;
     const owner = await catalogOwner(id);
 
+    const read = () => readCatalogOperation(owner, operationId);
+    const receipt = await read();
+
     return NextResponse.json(
-      await withWorkingDirLock(id, () =>
-        readCatalogOperation(owner, operationId),
-      ),
+      receipt.state === "pending"
+        ? await withCatalogReceipt(id, read, read)
+        : receipt,
     );
   } catch (error) {
     return catalogResponse(error);

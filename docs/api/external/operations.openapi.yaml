@@ -165,6 +165,7 @@ paths:
           description: Replayed question
           content:
             application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "open"}
               schema:
                 type: object
                 additionalProperties: false
@@ -179,7 +180,6 @@ paths:
                   state:
                     type: string
                     enum:
-                      - checkpoint_pending
                       - open
                       - accepted
                       - delivered
@@ -188,6 +188,7 @@ paths:
           description: Checkpoint pending
           content:
             application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "checkpoint_pending"}
               schema:
                 type: object
                 additionalProperties: false
@@ -202,20 +203,14 @@ paths:
                   state:
                     type: string
                     enum: [checkpoint_pending]
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExtErrorBody"
         "401":
-          description: Authentication required
+          description: Missing, invalid, expired or revoked bearer token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "403":
-          description: Action denied
+          description: The token lacks the required scope or does not identify this current execution
           content:
             application/json:
               schema:
@@ -232,16 +227,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
-        "410":
-          description: Expired or closed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExtErrorBody"
         "413":
           description: The request exceeds 64 KiB of UTF-8 JSON.
         "422":
-          description: Invalid content or answer
+          description: Invalid UTF-8 JSON, unexpected fields or an invalid form
           content:
             application/json:
               schema:
@@ -272,7 +261,12 @@ paths:
   /api/v1/ext/flow-node/human-asks:
     post:
       operationId: createFlowAttemptQuestion
-      summary: (Designed) Open a question for the credential-owned execution
+      summary: Request human input for the current appointed Flow node
+      description: >-
+        Requires hitl:request on the current Flow attempt credential. The server derives the project, Run, attempt, prompt ordinal, assigned host and epoch from the current credential
+        and accepted prompt. The 64 KiB JSON body carries a stable request key, a question and its form. Exact retries while
+        checkpointing reuse the pending receipt. Once the checkpoint is proved the credential is revoked and the question
+        appears in the project Inbox and Run detail.
       security:
         - projectToken: []
       parameters: []
@@ -281,6 +275,7 @@ paths:
           description: Replayed question
           content:
             application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "open"}
               schema:
                 type: object
                 additionalProperties: false
@@ -295,31 +290,6 @@ paths:
                   state:
                     type: string
                     enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
-        "201":
-          description: Durably open
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - questionId
-                  - state
-                properties:
-                  questionId:
-                    type: string
-                    minLength: 1
-                    maxLength: 256
-                  state:
-                    type: string
-                    enum:
-                      - checkpoint_pending
                       - open
                       - accepted
                       - delivered
@@ -329,6 +299,7 @@ paths:
           description: Checkpoint pending
           content:
             application/json:
+              example: {"questionId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "state": "checkpoint_pending"}
               schema:
                 type: object
                 additionalProperties: false
@@ -342,27 +313,15 @@ paths:
                     maxLength: 256
                   state:
                     type: string
-                    enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExtErrorBody"
+                    enum: [checkpoint_pending]
         "401":
-          description: Authentication required
+          description: Missing, invalid, expired or revoked bearer token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
         "403":
-          description: Action denied
+          description: The token lacks the required scope or does not identify this current execution
           content:
             application/json:
               schema:
@@ -379,14 +338,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
-        "410":
-          description: Expired or closed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExtErrorBody"
+        "413":
+          description: Request exceeds 64 KiB
         "422":
-          description: Invalid content or answer
+          description: Invalid UTF-8 JSON, unexpected fields or an invalid form
           content:
             application/json:
               schema:

@@ -27,7 +27,7 @@ info:
     an *execution host* with a durable identity (`GET /health` → `host`).
     Every host-bound mutating route (`POST /sessions`, every
     `/sessions/{id}/*` mutation, `DELETE /sessions/{id}`,
-    `POST /workspaces/adopt`, `DELETE /workspaces/{id}`) takes a
+    `POST /workspaces/adopt`, `DELETE /workspaces/{id}`, `POST /mcp/prepare`) takes a
     `CommandEnvelope` — a unique `command.id`, a `fence`
     (`hostKey`, `assignmentId`, `assignmentEpoch`, `runId`), and the
     kind-specific `payload`. The host persists a per-run epoch high-water and
@@ -52,11 +52,11 @@ info:
     the high-water and session inventory, and writes no target command receipt.
     Retrying the same command and epoch repeats this gate; it may execute once
     retirement is confirmed. Terminal receipt replay remains unchanged.
-    The supported deployment is single-host and loopback. Repository/worktree
-    material stays local until Stage C, but Stage B removes web access to the
-    supervisor runtime-data filesystem. Remote enrollment/authentication is
-    intentionally not part of this unauthenticated local contract. See
-    [`../system-analytics/execution-hosts.md`](../system-analytics/execution-hosts.md).
+    A local supervisor uses loopback. For a remote assignment, the manager verifies the
+    registered host key and calls its operator-configured HTTPS endpoint with mutual TLS or its
+    loopback endpoint through an authenticated tunnel. The supervisor listener stays private.
+    Workspace access and the MCP artifact cache belong to the assigned host. See
+    [execution-host configuration](../configuration.md) and [host identity and fencing](../system-analytics/execution-hosts.md).
 
     **Stage B data plane (Implemented — ADR-167, 0.9.0).** `GET /capabilities`
     is additive and read-only. `GET /runtime-events` and
@@ -125,6 +125,7 @@ paths:
           description: Prepared receipt
           content:
             application/json:
+              example: {"hostId": "design-host", "commandId": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "assignmentEpoch": 1, "artifactDigest": "1111111111111111111111111111111111111111111111111111111111111111", "runtime": "v24.15.0", "cacheHit": false}
               schema:
                 type: object
                 additionalProperties: false
@@ -170,6 +171,7 @@ paths:
         required: true
         content:
           application/json:
+            example: {"command": {"id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c", "kind": "mcp.prepare", "issuedAt": "2026-11-24T12:00:00Z"}, "fence": {"hostKey": "design-host", "assignmentId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "assignmentEpoch": 1, "runId": "design-run"}, "payload": {"registryName": "io.example/design", "packageName": "@example/design-mcp", "version": "1.2.3", "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==", "executable": "design-mcp", "artifactDigest": "1111111111111111111111111111111111111111111111111111111111111111", "runtime": "node", "refId": "design"}}
             schema:
               type: object
               additionalProperties: false
@@ -204,9 +206,9 @@ paths:
                       type: string
                       minLength: 1
                       maxLength: 256
-                    packageName: {type: string, minLength: 1, maxLength: 214}
+                    packageName: {type: string, minLength: 1, maxLength: 214, pattern: '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$'}
                     registryName: { type: string, maxLength: 255, pattern: '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' }
-                    version: { type: string, minLength: 1, maxLength: 128, description: Exact npm version }
+                    version: { type: string, minLength: 1, maxLength: 128, pattern: '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$' }
                     integrity: { type: string, pattern: '^sha512-[A-Za-z0-9+/]{86}==$' }
                     artifactDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
                     executable: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' }
@@ -3988,11 +3990,11 @@ components:
       additionalProperties: false
       required: [registryName, packageName, version, integrity, executable, artifactDigest, runtime]
       properties:
-        registryName: {type: string, minLength: 1, maxLength: 255}
-        packageName: {type: string, minLength: 1, maxLength: 214}
-        version: {type: string, description: Exact npm version}
+        registryName: {type: string, maxLength: 255, pattern: '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'}
+        packageName: {type: string, minLength: 1, maxLength: 214, pattern: '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$'}
+        version: {type: string, maxLength: 128, pattern: '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'}
         integrity: {type: string, pattern: '^sha512-[A-Za-z0-9+/]{86}==$'}
-        executable: {type: string, minLength: 1, maxLength: 128}
+        executable: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'}
         artifactDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
         runtime: {type: string, enum: [node]}
     McpServerFields:

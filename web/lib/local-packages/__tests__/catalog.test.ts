@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
+import { fetchRegistryPage } from "@/lib/local-packages/catalog-registry";
 import {
   searchCatalog,
   resolveCatalogSource,
@@ -423,4 +424,85 @@ it("IT-CAT-01 reviews immutable npm metadata and rejects lifecycle hooks, missin
       ),
     ).rejects.toMatchObject({ status: 422 });
   }
+});
+
+it("names bounded source-declared configuration on refused MCP imports without exposing values", async () => {
+  const name = "org.example/needs-config",
+    version = "1.0.0";
+  const rejected = async (descriptor: Record<string, unknown>) => {
+    const error = await resolveCatalogSource(
+      { sourceId: "mcp-registry", kind: "mcp", selector: name + "@" + version },
+      async () => ({ server: { name, version, ...descriptor } }),
+    ).then(
+      () => null,
+      (cause: unknown) => cause,
+    );
+
+    expect(error).toMatchObject({ status: 422 });
+
+    return (error as Error).message;
+  };
+  const remote = await rejected({
+    remotes: [
+      {
+        type: "streamable-http",
+        url: "https://example.com/{tenant}/secret-link-token?x=hidden",
+        headers: [
+          { name: "Authorization", value: "top-secret" },
+          { name: "authorization", description: "secret description" },
+          { name: "invalid\nsecret-in-key", value: "header-value" },
+        ],
+        variables: {
+          tenant: { default: "private-tenant" },
+          region: { choices: ["hidden-region"] },
+        },
+      },
+    ],
+  });
+
+  expect(remote).toContain("Authorization");
+  expect(remote.toLowerCase().match(/authorization/g)).toHaveLength(1);
+  expect(remote).toContain("tenant");
+  expect(remote).toContain("region");
+  expect(remote).not.toMatch(
+    /secret|hidden|example\.com|private-tenant|header-value/,
+  );
+  const npm = await rejected({
+    packages: [
+      {
+        registryType: "npm",
+        identifier: "example-mcp",
+        version,
+        transport: { type: "stdio" },
+        environmentVariables: [
+          { name: "API_KEY", default: "secret-key" },
+          ...Array.from({ length: 30 }, (_, i) => ({
+            name: "OPTION_" + i,
+            value: "private",
+          })),
+        ],
+      },
+    ],
+  });
+
+  expect(npm).toContain("API_KEY");
+  expect(npm).not.toMatch(/secret-key|private|OPTION_29/);
+  expect(npm.length).toBeLessThan(640);
+});
+
+it("returns reusable Registry cursors within the public query budget even for multibyte source tokens", async () => {
+  const read = (token: string) => async () => ({
+    servers: [],
+    metadata: { nextCursor: token },
+  });
+  const valid = "Я".repeat(700);
+  const page = await fetchRegistryPage("test", undefined, read(valid));
+
+  expect(
+    Buffer.from("a".repeat(20) + "|" + page.cursor).toString("base64url")
+      .length,
+  ).toBeLessThanOrEqual(2048);
+  await expect(
+    fetchRegistryPage("test", undefined, read("界".repeat(700))),
+  ).rejects.toThrow();
 });

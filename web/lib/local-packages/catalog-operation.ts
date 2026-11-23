@@ -540,59 +540,86 @@ export async function reconcileCatalogApply(draft: Draft): Promise<void> {
   );
 }
 
+type StoredOperation = Pick<Journal, "actorId" | "requestDigest" | "receipt">;
+
+async function findOwnedOperation(
+  owner: Owner,
+  id: string,
+): Promise<StoredOperation | null> {
+  if (!safeId.safeParse(id).success) return null;
+  // Read the journal first: a writer publishes its final receipt before removing it.
+  const pending = await optionalText(internal(owner, "pending.json"));
+  const applied = await optionalText(operationFile(owner, id));
+
+  for (const bytes of [applied, pending]) {
+    if (bytes === null) continue;
+    const data = JSON.parse(bytes) as StoredOperation;
+
+    if (data.actorId === owner.actorId && data.receipt.operationId === id)
+      return data;
+  }
+
+  return null;
+}
+
 export async function readCatalogOperation(
   owner: Owner,
   id: string,
 ): Promise<CatalogReceipt> {
-  if (!safeId.safeParse(id).success)
-    throw new CatalogError(404, "Operation unavailable");
-  const candidates = [
-    operationFile(owner, id),
-    internal(owner, "pending.json"),
-  ];
+  const saved = await findOwnedOperation(owner, id);
 
-  for (const file of candidates) {
-    const bytes = await optionalText(file);
+  if (!saved) throw new CatalogError(404, "Operation unavailable");
 
-    if (bytes === null) continue;
-    const data = JSON.parse(bytes) as Journal;
+  return saved.receipt;
+}
 
-    if (data.actorId === owner.actorId && data.receipt.operationId === id)
-      return data.receipt;
-  }
-  throw new CatalogError(404, "Operation unavailable");
+function requestIdentity(owner: Owner, request: Request) {
+  return {
+    operationId: sum(JSON.stringify([owner.actorId, request.requestKey])),
+    requestDigest: sum(
+      JSON.stringify([
+        request.previewId,
+        request.expectedDraftBase,
+        (request.resolutions ?? []).map((r) => [r.path, r.use]).sort(),
+      ]),
+    ),
+  };
+}
+
+async function previousReceipt(
+  owner: Owner,
+  identity: ReturnType<typeof requestIdentity>,
+): Promise<CatalogReceipt | null> {
+  const saved = await findOwnedOperation(owner, identity.operationId);
+
+  if (!saved) return null;
+  if (saved.requestDigest !== identity.requestDigest)
+    throw new CatalogError(
+      409,
+      "Request key already used with a different preview or conflict resolution",
+    );
+
+  return saved.receipt;
+}
+
+export async function readCatalogRequestReceipt(
+  owner: Owner,
+  request: Request,
+): Promise<CatalogReceipt | null> {
+  return previousReceipt(owner, requestIdentity(owner, request));
 }
 
 export async function applyCatalogPreview(
   owner: Owner,
   request: Request,
 ): Promise<CatalogReceipt> {
-  const operationId = sum(JSON.stringify([owner.actorId, request.requestKey]));
-  const requestDigest = sum(
-    JSON.stringify([
-      request.previewId,
-      request.expectedDraftBase,
-      (request.resolutions ?? []).map((r) => [r.path, r.use]).sort(),
-    ]),
-  );
+  const identity = requestIdentity(owner, request);
+  const { operationId, requestDigest } = identity;
 
   await reconcileCatalogApply(owner);
-  const recorded = await optionalText(operationFile(owner, operationId));
+  const previous = await previousReceipt(owner, identity);
 
-  if (recorded !== null) {
-    const previous = JSON.parse(recorded) as Journal;
-
-    if (
-      previous.actorId !== owner.actorId ||
-      previous.requestDigest !== requestDigest
-    )
-      throw new CatalogError(
-        409,
-        "Request key already used with a different preview or conflict resolution",
-      );
-
-    return previous.receipt;
-  }
+  if (previous) return previous;
   if (!z.string().uuid().safeParse(request.previewId).success)
     throw new CatalogError(404, "Preview unavailable");
   const raw = await optionalText(
