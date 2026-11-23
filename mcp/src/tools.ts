@@ -2881,24 +2881,33 @@ function resolveRouting(
   }
 }
 
-// The default preserves the existing surface. New personal tools require opt-in.
+// The default preserves the existing surface. Personal tools require opt-in.
 export function toolNamesForToolset(
   toolset: string | undefined,
   scopes: readonly string[] = [],
 ): string[] {
+  const names = Object.keys(TOOL_SPECS);
+
   if (!isToolsetName(toolset)) {
     const personal = new Set<string>(PERSONAL_KNOWLEDGE_TOOLS);
 
-    return Object.keys(TOOL_SPECS).filter((name) => !personal.has(name));
+    return names.filter((name) => !personal.has(name));
   }
 
-  const allowed = new Set<string>(
+  const selection =
     toolset === "installation"
       ? installationToolNames(scopes)
-      : TOOLSETS[toolset],
-  );
+      : TOOLSETS[toolset];
 
-  return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+  if ("exclude" in selection) {
+    const excluded = new Set<string>(selection.exclude);
+
+    return names.filter((name) => !excluded.has(name));
+  }
+
+  const allowed = new Set<string>(selection);
+
+  return names.filter((name) => allowed.has(name));
 }
 
 export function toolSpecForToolset(

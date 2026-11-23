@@ -325,6 +325,13 @@ export async function runStageAbLane({ slice, files = slice === "isolation" ? is
   const invocation = owningInvocation ?? await createInvocation(directory);
   const reportPath = join(directory, "vitest.json");
   const env = { ...process.env, ...await fixtureProcessEnvironment(invocation), MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000" };
+
+  // The outer lane owns the cold build budget. Real-Web suites must not
+  // spend an individual case or hook timeout compiling the shared artifact.
+  delete env.MAISTER_ISOLATION_WEB_BUILD_LOG;
+  if (slice === "isolation" && files.some((file) => laneSuites.isolation.includes(file))) {
+    env.MAISTER_ISOLATION_WEB_BUILD_LOG = join(directory, "next-build.log");
+  }
   const args = ["--import", FIXTURE_WATCHDOG, ...vitestArgs({ files, reportPath, concurrency })];
 
   if (workspace) args.push("--config", workspace);

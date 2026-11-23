@@ -3904,14 +3904,10 @@ export async function runGraph(
                     nodeAttemptId,
                     db,
                   });
-              const facade = agentFacadeMcpServer(issued.secret);
-              const facadeServer =
-                facade && company
-                  ? {
-                      ...facade,
-                      env: { ...facade.env, MAISTER_MCP_TOOLSET: "company" },
-                    }
-                  : facade;
+              const facadeServer = agentFacadeMcpServer(
+                issued.secret,
+                company ? "company" : "project-run",
+              );
 
               if (!facadeServer && usesStructuredKnowledgeContext(loaded.run))
                 throw new MaisterError(
