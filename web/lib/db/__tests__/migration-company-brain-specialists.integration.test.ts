@@ -571,6 +571,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
   expect(after.agent_memory_hash_format).toBeNull();
   expect(after.flow_publication_grant).toBeNull();
   expect(after.autonomous_completion_grant).toBeNull();
+  expect(after.project_agent_profile).toBeNull();
   expect(
     (
       await database.pool.query(
@@ -610,6 +611,7 @@ it("IT-CBX-01 company migration preserves existing project data and identity acr
       "agent_memory_hash_format",
       "flow_publication_grant",
       "autonomous_completion_grant",
+      "project_agent_profile",
     ].sort(),
   );
   expect(
