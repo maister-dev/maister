@@ -5,7 +5,6 @@ import type { ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import clsx from "clsx";
 
 import { deriveRepoNameSafe } from "@/lib/repo-name";
@@ -35,11 +34,6 @@ const REASON_KEY: Record<string, string> = {
 
 type GitStatus = "remote" | "no-remote" | "initialized";
 type Mode = "clone" | "existing" | "new";
-
-interface Success {
-  slug: string;
-  gitStatus: GitStatus;
-}
 
 const fieldLabel =
   "font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute";
@@ -164,7 +158,6 @@ export function NewProjectForm(): ReactElement {
   const [serverMessage, setServerMessage] = useState<string | undefined>(
     undefined,
   );
-  const [success, setSuccess] = useState<Success | undefined>(undefined);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -194,16 +187,12 @@ export function NewProjectForm(): ReactElement {
           gitStatus: GitStatus;
         } | null;
 
-        if (payload?.gitStatus === "remote") {
-          // The PORTFOLIO, not the Desk (ADR-172 D3): a user who just connected
-          // a repo is looking for the project they created.
-          router.push("/projects");
-
-          return;
-        }
-
-        if (payload) {
-          setSuccess({ slug: payload.slug, gitStatus: payload.gitStatus });
+        if (payload?.slug) {
+          router.push(
+            `/projects/${encodeURIComponent(payload.slug)}?registered=${encodeURIComponent(payload.gitStatus)}`,
+          );
+        } else {
+          setErrorCode("CONFIG");
         }
 
         return;
@@ -227,44 +216,6 @@ export function NewProjectForm(): ReactElement {
       setPending(false);
     }
   };
-
-  if (success) {
-    return (
-      <div className="flex flex-col gap-2 rounded-lg border border-amber-line bg-amber-soft px-3 py-2 text-amber">
-        <p className="text-[13px] font-semibold leading-[1.4]">
-          {t("successTitle")}
-        </p>
-        <p className="text-[11.5px] leading-[1.5]">
-          {success.gitStatus === "initialized"
-            ? t("warnInitialized")
-            : t("warnNotGit")}
-        </p>
-        <Link
-          className="text-[11.5px] font-semibold leading-[1.5] underline"
-          href={`/projects/${success.slug}`}
-        >
-          {t("goToProject")}
-        </Link>
-        <button
-          className="text-left text-[11.5px] font-semibold leading-[1.5] text-mute underline"
-          type="button"
-          onClick={() => {
-            setSuccess(undefined);
-            setMode("clone");
-            setRepoUrl("");
-            setName("");
-            setTarget("");
-            setToken("");
-            setTaskKey("");
-            setNameDirty(false);
-            setTaskKeyDirty(false);
-          }}
-        >
-          {t("registerAnother")}
-        </button>
-      </div>
-    );
-  }
 
   const canSubmit =
     mode === "clone" ? repoUrl.trim() !== "" : target.trim() !== "";

@@ -4,12 +4,15 @@ import type {
   AvailablePackageInstallView,
   ProjectPackageAttachmentView,
 } from "@/lib/queries/packages";
+import type { ProjectDependencyView } from "@/lib/project-dependencies/view";
 import type { ReactElement } from "react";
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+
+import { DependencyDeclarations } from "./dependency-declarations";
 
 import {
   studioPackagePath,
@@ -19,6 +22,7 @@ import { readApiErrorBody } from "@/lib/api-error";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
 
 type Props = {
+  declarations?: ProjectDependencyView[];
   slug: string;
   isAdmin: boolean;
   // Trust fans out to every project attached to the install — global admin
@@ -62,6 +66,7 @@ async function call(
 // panel on the packages tab.
 export function ProjectPackagesSection({
   slug,
+  declarations = [],
   isAdmin,
   canTrust,
   attachments,
@@ -185,6 +190,9 @@ export function ProjectPackagesSection({
 
   return (
     <section className="mb-6 rounded-[16px] border border-line bg-paper p-6">
+      {declarations.length > 0 ? (
+        <DependencyDeclarations declarations={declarations} slug={slug} />
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
           {t("attachmentsTitle")}

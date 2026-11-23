@@ -22,15 +22,15 @@ export const CONFIG_PUSH_STATES = [
 export type ConfigPersistState = (typeof CONFIG_PERSIST_STATES)[number];
 export type ConfigPushState = (typeof CONFIG_PUSH_STATES)[number];
 
-export type ExportPackage = {
+type ExportPackage<Revision extends string | null> = {
   id: string;
   source: string;
   version: string;
   path?: string;
-  resolvedRevision: string;
+  resolvedRevision: Revision;
 };
 
-export type ExportProjection = {
+export type ExportProjection<Revision extends string | null = string | null> = {
   name: string;
   mainBranch: string;
   branchPrefix: string;
@@ -38,7 +38,7 @@ export type ExportProjection = {
   taskQualificationOverride?: "legacy" | "required" | null;
   defaultRunnerId: string | null;
   promotionMode: string | null;
-  packages: ExportPackage[];
+  packages: ExportPackage<Revision>[];
 };
 
 export type ConfigRepositorySnapshot = {
@@ -58,13 +58,20 @@ export type ConfigRepositorySnapshot = {
   signingRequired?: boolean;
 };
 
-export type ConfigPersistSnapshot = {
-  version: 1;
+export type LocalPackageWitness = { id: string; digest: string };
+
+export type ConfigPersistSnapshot = (
+  | { version: 1; projection: ExportProjection<string> }
+  | {
+      version: 2;
+      projection: ExportProjection;
+      localWitnesses: LocalPackageWitness[];
+    }
+) & {
   projectId: string;
   actorUserId: string;
   exportRevision: string;
   registeredRepoPath: string;
-  projection: ExportProjection;
   repository: ConfigRepositorySnapshot;
   proposedDigest: string;
   diffDigest: string;

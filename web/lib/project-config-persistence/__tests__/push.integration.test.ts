@@ -22,7 +22,16 @@ import {
   previewProjectConfiguration,
 } from "../service";
 
-import { projects, users } from "@/lib/db/schema";
+import {
+  editDependency,
+  resubmitDependency,
+} from "@/lib/project-dependencies/commands";
+import {
+  projectDependencyDeclarations,
+  projectDependencyAttempts,
+  projects,
+  users,
+} from "@/lib/db/schema";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -58,7 +67,7 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-async function seed() {
+async function seedRepository() {
   const projectId = randomUUID();
   const repo = join(root, projectId);
   const remote = join(root, `${projectId}.git`);
@@ -82,6 +91,14 @@ async function seed() {
     repoPath: repo,
     taskKey: `PS${projectId.slice(0, 8).toUpperCase()}`,
   });
+
+  return { repo, remote, projectId, legacySha };
+}
+
+async function saveConfiguration(
+  seed: Awaited<ReturnType<typeof seedRepository>>,
+) {
+  const { repo, remote, projectId, legacySha } = seed;
   const preview = await previewProjectConfiguration(
     database.db,
     projectId,
@@ -99,10 +116,120 @@ async function seed() {
   return { repo, remote, identity, receipt, legacySha };
 }
 
-it("IT-CPC-05: separate push includes the reviewed outgoing range and excludes a later local commit", async () => {
+async function seed() {
+  return saveConfiguration(await seedRepository());
+}
+
+it("AC09/IT-CPC-05: saving a corrected unresolved declaration and separate push includes the reviewed outgoing range and excludes a later local commit", async () => {
   const { previewConfigurationPush, confirmConfigurationPush } =
     await import("../push");
-  const { repo, remote, identity, receipt, legacySha } = await seed();
+  const fixture = await seedRepository();
+  const { projectId, repo, remote, legacySha } = fixture;
+  const head = (await git(repo, ["rev-parse", "HEAD"])).trim();
+  const beforeIndex = await readFile(join(repo, ".git", "index"));
+  const readme = await readFile(join(repo, "README.md"));
+  const local = join(root, `invalid-source-${projectId}`);
+
+  await mkdir(join(local, "old", "path"), { recursive: true });
+  await writeFile(
+    join(local, "old", "path", "maister-package.yaml"),
+    "invalid: [",
+  );
+  const desired = { source: local, version: "old", path: "old/path" };
+  const [declaration] = await database.db
+    .insert(projectDependencyDeclarations)
+    .values({
+      projectId,
+      logicalId: "remote-alias",
+      ordinal: 0,
+      kind: "package",
+      desired,
+    })
+    .returning();
+  const target = { projectId, declarationId: declaration!.id, actorUserId };
+
+  await database.db.insert(projectDependencyAttempts).values({
+    ...target,
+    generation: 1,
+    attemptNo: 1,
+    desired,
+  });
+  const { serviceDependency } =
+    await import("@/lib/project-dependencies/worker");
+
+  await serviceDependency(database.db, new AbortController().signal);
+  const stale = await previewProjectConfiguration(
+    database.db,
+    projectId,
+    actorUserId,
+  );
+
+  if (stale.kind !== "ready") throw new Error("Expected pre-edit review");
+  expect(
+    await resubmitDependency(database.db, target, {
+      expectedGeneration: 1,
+      expectedAttempt: 1,
+    }),
+  ).toMatchObject({ attempt: 2 });
+  await serviceDependency(database.db, new AbortController().signal);
+  expect(
+    await previewProjectConfiguration(database.db, projectId, actorUserId),
+  ).toMatchObject({
+    kind: "ready",
+    exportRevision: stale.exportRevision,
+    diff: stale.diff,
+  });
+  const edited = await editDependency(database.db, target, {
+    expectedGeneration: 1,
+    source: "https://unreachable.invalid/corrected",
+    version: "v2",
+  });
+
+  expect(edited).toMatchObject({
+    generation: 2,
+    path: null,
+    effectiveAttachmentId: null,
+  });
+  await expect(
+    confirmProjectConfiguration(
+      database.db,
+      { projectId, actorUserId, id: stale.previewId },
+      authorized,
+    ),
+  ).rejects.toMatchObject({ details: { reason: "stale_preview" } });
+  expect(await git(repo, ["rev-parse", "HEAD"])).toBe(head + "\n");
+  expect(await readFile(join(repo, ".git", "index"))).toEqual(beforeIndex);
+  expect(await readFile(join(repo, "README.md"))).toEqual(readme);
+  expect(await git(repo, ["status", "--porcelain=v1"])).toBe("");
+  expect(
+    (await gitResult(remote, ["rev-parse", "--verify", "--quiet", "main"]))
+      .code,
+  ).toBe(1);
+
+  const { identity, receipt } = await saveConfiguration(fixture);
+
+  expect(
+    await git(repo, [
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-r",
+      "HEAD",
+    ]),
+  ).toBe("maister.yaml\n");
+  const published = await readFile(join(repo, "maister.yaml"), "utf8");
+
+  expect(published).toContain("remote-alias");
+  expect(published).toContain("https://unreachable.invalid/corrected");
+  expect(published).not.toContain("old/path");
+  expect(
+    (await previewProjectConfiguration(database.db, projectId, actorUserId))
+      .kind,
+  ).toBe("noop");
+  expect(
+    (await gitResult(remote, ["rev-parse", "--verify", "--quiet", "main"]))
+      .code,
+  ).toBe(1);
   const review = await previewConfigurationPush(
     database.db,
     identity,

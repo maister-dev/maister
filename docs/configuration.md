@@ -421,13 +421,14 @@ cover it. `.maister` stays host-only (ADR-023) — no compose change.
 #### `capability_imports[]` (Implemented)
 
 The optional `capability_imports[]` block declares git-pinned capability
-packages for the project. Each entry is fetched, trust-evaluated, and
-(conditionally) set up during project registration.
+packages for the project. Registration records each requested import. A worker
+fetches it after the project is registered, evaluates trust and runs eligible
+setup. The Packages tab shows the outcome of each import.
 
 ```yaml
 capability_imports:
   - id: aif-skills # SAFE_PATH_SEGMENT: /^[A-Za-z0-9._-]+$/
-    source: github.com/org/aif-skills
+    source: https://github.com/org/aif-skills
     version: v1.0.0 # tag-pinned (lock semantics); SAFE_PATH_SEGMENT
     trust:
       explicit # optional; forces trust-confirm UI even for

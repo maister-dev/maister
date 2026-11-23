@@ -40,5 +40,13 @@ Flow, or runner.
 
 ## Result
 
-The new project appears in the portfolio and project list. Open its board to
-create the first task or launch a scratch session.
+After registration the browser opens the new project. If the repository has no
+remote or needs an initial commit, the board shows the next Git step. Choose
+**Declared dependencies** to inspect packages, standalone Flows and capability
+imports. Their installations continue independently after registration. An
+unreachable dependency stays in the list with its requested version and failure
+stage. The project remains available and other dependencies can finish.
+
+A platform administrator can retry the failed item or edit a package's source,
+version and optional subdirectory. Saving the pin queues a fresh installation.
+Use **Register another** to connect the next repository.

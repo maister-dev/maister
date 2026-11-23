@@ -19,12 +19,7 @@ async function registerNewEmpty(page: Page, location: string): Promise<string> {
     .getByRole("textbox", { name: "Local path or clone folder", exact: true })
     .fill(location);
   await page.getByRole("button", { name: "Register project" }).click();
-  const href = await page
-    .getByRole("link", { name: /Open project/ })
-    .getAttribute("href");
-
-  expect(href).toBe(`/projects/${slug}`);
-  await page.goto(href!);
+  await expect(page).toHaveURL((url) => url.pathname === `/projects/${slug}`);
 
   return slug;
 }
@@ -83,11 +78,10 @@ test("registers a new empty project without writing maister.yaml", async ({
   await page.getByRole("button", { name: "Register project" }).click();
   expect((await registerResponse).status()).toBe(201);
 
-  // gitStatus "initialized" → success state (not the remote redirect).
-  await expect(page.getByText("Project registered")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Open project/ }),
-  ).toHaveAttribute("href", `/projects/${expectedSlug}`);
+  await expect(page).toHaveURL(
+    (url) => url.pathname === `/projects/${expectedSlug}`,
+  );
+  await expect(page.getByText(/make an initial commit/i)).toBeVisible();
 
   await expect(
     readFile(path.join(location, "maister.yaml"), "utf8"),

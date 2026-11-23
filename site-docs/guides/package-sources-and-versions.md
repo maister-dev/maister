@@ -198,10 +198,14 @@ you control.
    a task.
 
 The pin belongs to one project. Other projects keep their own pins on the same
-or another version, and one installed revision serves all of them. When a
-repository is registered with `packages[]` already in its `maister.yaml`,
-MAIster installs and attaches those versions during registration, so a project
-can be recreated on another installation from git alone.
+or another version, and one installed revision serves all of them. Registration records the pins in `packages[]` and opens the project. In
+**Packages → Declared dependencies**, compare a requested pin with its effective
+revision. A failed replacement can leave the previously installed revision
+available. Choose **Retry installation** to try the same input again, or
+**Edit package pin** to change its source, version or subdirectory. An uncertain
+setup has a separate recovery confirmation identifying the exact member and
+revision. **Review configuration in Git settings** opens the existing save
+workflow.
 
 Attaching, upgrading, rolling back and detaching leave repository files
 unchanged. Review and commit the resulting pins when you want to save them

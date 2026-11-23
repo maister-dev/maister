@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import * as schema from "@/lib/db/schema";
+import { confirmProjectConfiguration } from "@/lib/project-config-persistence/service";
 import { readExportSnapshot } from "@/lib/project-config-persistence/projection";
 import {
   findConfigOperation,
@@ -105,8 +106,8 @@ it("CT-CPC-12: upgrading the pre-feature lineage preserves null and existing man
 });
 
 it("CT-CPC-12: immutable reviews, active uniqueness, owner fencing and terminal receipts are enforced", async () => {
-  const projectId = randomUUID();
-  const actorUserId = randomUUID();
+  const projectId = "aa120000-0000-4000-8000-000000000001";
+  const actorUserId = "aa120000-0000-4000-8000-000000000002";
   const repo = `/tmp/config-review-${projectId}`;
 
   await database.pool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
@@ -136,7 +137,14 @@ it("CT-CPC-12: immutable reviews, active uniqueness, owner fencing and terminal 
       publicBranchTemplate: "feature/{task_key}-{slug}",
       defaultRunnerId: null,
       promotionMode: null,
-      packages: [],
+      packages: [
+        {
+          id: "legacy",
+          source: "https://example.invalid/legacy",
+          version: "v1",
+          resolvedRevision: "b".repeat(40),
+        },
+      ],
     },
     repository: {
       repoPath: repo,
@@ -159,7 +167,16 @@ it("CT-CPC-12: immutable reviews, active uniqueness, owner fencing and terminal 
   const firstIdentity = { id: randomUUID(), projectId, actorUserId };
   const secondIdentity = { id: randomUUID(), projectId, actorUserId };
 
-  await insertConfigReview(database.db, firstIdentity, snapshot);
+  const initialReview = await insertConfigReview(
+    database.db,
+    firstIdentity,
+    snapshot,
+  );
+
+  // Frozen v1 digest of the historical review shape, including its installed revision.
+  expect(initialReview.snapshotDigest).toBe(
+    "d7b5e1b690bf0982435a07879d458b85d9d18427d2cd9d217f6d84f7df56b56d",
+  );
   await insertConfigReview(database.db, secondIdentity, snapshot);
 
   expect(
@@ -246,6 +263,18 @@ it("CT-CPC-12: immutable reviews, active uniqueness, owner fencing and terminal 
       cleanup_reason: "unexpected_private_content",
     },
   ]);
+  const replay = await confirmProjectConfiguration(
+    database.db,
+    firstIdentity,
+    async () => {},
+  );
+
+  expect(replay).toMatchObject({
+    state: "failed",
+    snapshotDigest: initialReview.snapshotDigest,
+    snapshot,
+  });
+  expect(replay.snapshot).toEqual(initialReview.snapshot);
   const pushSnapshot = JSON.stringify({
     version: 1,
     operationId: firstIdentity.id,
@@ -368,385 +397,74 @@ it("CT-CPC-12: export revisions follow semantic project changes and transaction 
   );
 
   expect(unchanged.rows).toEqual([{ revision: "1", name: "After" }]);
-
-  const installIds = [randomUUID(), randomUUID()];
-
-  for (const [index, installId] of installIds.entries()) {
-    await database.pool.query(
-      `INSERT INTO package_installs (id, source_url, name, version_label, resolved_revision,
-       manifest, manifest_digest, installed_path) VALUES ($1,'https://example.invalid/pkg','pkg',$2,$2,'{}','digest','/tmp/pkg')`,
-      [installId, String(index)],
-    );
-  }
-  const attachmentId = randomUUID();
-
-  await database.pool.query(
-    "INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'pkg')",
-    [attachmentId, id, installIds[0]],
-  );
-  await database.pool.query(
-    "UPDATE project_package_attachments SET package_install_id=$1 WHERE id=$2",
-    [installIds[1], attachmentId],
-  );
-  await database.pool.query(
-    "UPDATE project_package_attachments SET package_install_id=$1 WHERE id=$2",
-    [installIds[0], attachmentId],
-  );
-  await database.pool.query(
-    "UPDATE project_package_attachments SET attached_at=now() WHERE id=$1",
-    [attachmentId],
-  );
-  await database.pool.query(
-    "DELETE FROM project_package_attachments WHERE id=$1",
-    [attachmentId],
-  );
-  const attachmentRevision = await database.pool.query<{ revision: string }>(
-    "SELECT config_export_revision::text AS revision FROM projects WHERE id=$1",
-    [id],
-  );
-
-  expect(attachmentRevision.rows[0]?.revision).toBe("5");
-  const triggers = await database.pool.query<{ trigger_name: string }>(
-    "SELECT trigger_name FROM information_schema.triggers WHERE trigger_name LIKE 'project_config_%'",
-  );
-
-  expect(new Set(triggers.rows.map((row) => row.trigger_name)).size).toBe(7);
 });
 
-it("CT-CPC-12: shared install retries invalidate every attached export and respect accepted publication", async () => {
-  const projectIds = [randomUUID(), randomUUID()];
-  const actorUserId = randomUUID();
-  const installId = randomUUID();
-
-  await database.pool.query("INSERT INTO users (id,email) VALUES ($1,$2)", [
-    actorUserId,
-    `${actorUserId}@example.invalid`,
-  ]);
-  await database.pool.query(
-    `INSERT INTO package_installs (id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status) VALUES ($1,'https://example.invalid/pkg','shared','v1',$2,'{}','digest','/tmp/shared','Installed')`,
-    [installId, "a".repeat(40)],
-  );
-  for (const projectId of projectIds) {
-    await database.pool.query(
-      "INSERT INTO projects (id,slug,name,repo_path,task_key) VALUES ($1,$2,'Shared',$3,$4)",
-      [
-        projectId,
-        `shared-${projectId}`,
-        `/tmp/shared-${projectId}`,
-        `SH${projectId.slice(0, 8).toUpperCase()}`,
-      ],
-    );
-    await database.pool.query(
-      "INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'shared')",
-      [randomUUID(), projectId, installId],
-    );
-  }
-  const revisions = async (): Promise<string[]> => {
-    const rows = await database.pool.query<{ revision: string }>(
-      "SELECT config_export_revision::text AS revision FROM projects WHERE id=ANY($1::text[]) ORDER BY id",
-      [projectIds],
-    );
-
-    return rows.rows.map((row) => row.revision);
-  };
-
-  await database.pool.query(
-    "UPDATE package_installs SET trust_status='trusted',updated_at=now() WHERE id=$1",
-    [installId],
-  );
-  expect(await revisions()).toEqual(["1", "1"]);
-  await database.pool.query(
-    `UPDATE package_installs SET manifest='{"sourceSubpath":"source"}'::jsonb WHERE id=$1`,
-    [installId],
-  );
-  expect(await revisions()).toEqual(["2", "2"]);
-  await database.pool.query(
-    "UPDATE package_installs SET package_status='Installing' WHERE id=$1",
-    [installId],
-  );
-  expect(await revisions()).toEqual(["3", "3"]);
-  await database.pool.query(
-    "UPDATE package_installs SET package_status='Installed' WHERE id=$1",
-    [installId],
-  );
-  expect(await revisions()).toEqual(["4", "4"]);
-  const projectId = projectIds.toSorted().at(-1)!;
-  const exported = await readExportSnapshot(database.db, projectId);
-  const snapshot: ConfigPersistSnapshot = {
-    version: 1,
-    projectId,
-    actorUserId,
-    exportRevision: exported.exportRevision,
-    registeredRepoPath: exported.project.repoPath,
-    projection: exported.projection,
-    repository: {
-      repoPath: exported.project.repoPath,
-      commonDirectory: `${exported.project.repoPath}/.git`,
-      branch: "main",
-      head: null,
-      manifestDigest: null,
-      manifestMode: null,
-      indexEntries: "",
-      status: "",
-      authorName: "Test",
-      authorEmail: "test@example.invalid",
-      usedDefaultAuthor: false,
-    },
-    proposedDigest: "a".repeat(64),
-    diffDigest: "b".repeat(64),
-    contentDirectory: "/tmp/private-review",
-    message: "chore(maister): persist project config",
-  };
-  const identity = { id: randomUUID(), projectId, actorUserId };
-
-  await insertConfigReview(database.db, identity, snapshot);
-  await transitionConfigOperation(
-    database.db,
-    identity,
-    { state: "previewed", ownerToken: null },
-    {
-      state: "preparing",
-      acceptedAt: new Date(),
-      ownerToken: randomUUID(),
-      ownerProcessId: process.pid,
-    },
-  );
-  await expect(
-    database.pool.query(
-      "UPDATE package_installs SET version_label='v2' WHERE id=$1",
-      [installId],
-    ),
-  ).rejects.toMatchObject({ code: "55P03" });
-  expect(await revisions()).toEqual(["4", "4"]);
-  const install = await database.pool.query<{ version_label: string }>(
-    "SELECT version_label FROM package_installs WHERE id=$1",
-    [installId],
-  );
-
-  expect(install.rows[0]?.version_label).toBe("v1");
-  await database.pool.query(
-    "UPDATE package_installs SET trust_status='untrusted',updated_at=now() WHERE id=$1",
-    [installId],
-  );
-  expect(await revisions()).toEqual(["4", "4"]);
-});
-
-async function seedBindingRace(): Promise<{
-  projectId: string;
-  actorUserId: string;
-  installIds: [string, string];
-  attachmentId: string;
-}> {
+it("CT-CPC-12/AC08: accepted publication fences a queued semantic edit and permits effective progress", async () => {
   const projectId = randomUUID();
   const actorUserId = randomUUID();
-  const installIds: [string, string] = [randomUUID(), randomUUID()];
+  const identity = { id: randomUUID(), projectId, actorUserId };
+  const repo = `/tmp/config-race-${projectId}`;
+  const declarationId = randomUUID();
 
-  await database.pool.query("INSERT INTO users (id,email) VALUES ($1,$2)", [
-    actorUserId,
-    `${actorUserId}@example.invalid`,
-  ]);
-  await database.pool.query(
-    "INSERT INTO projects (id,slug,name,repo_path,task_key) VALUES ($1,$1,'Binding',$2,$3)",
-    [
+  await database.db
+    .insert(schema.users)
+    .values({ id: actorUserId, email: `${actorUserId}@example.invalid` });
+  await database.db.insert(schema.projects).values({
+    id: projectId,
+    slug: projectId,
+    name: "Race",
+    repoPath: repo,
+    taskKey: `CF${projectId.slice(0, 8).toUpperCase()}`,
+  });
+  await database.db.insert(schema.projectDependencyDeclarations).values({
+    id: declarationId,
+    projectId,
+    kind: "package",
+    logicalId: "alias",
+    ordinal: 0,
+    desired: { source: "https://example.invalid/alias", version: "v1" },
+  });
+  const publisher = await database.pool.connect();
+  const editor = await database.pool.connect();
+  const publicationDb = drizzle(publisher, { schema });
+  let edit: Promise<unknown> | undefined;
+
+  try {
+    await publisher.query("BEGIN");
+    await publisher.query("SELECT id FROM projects WHERE id=$1 FOR UPDATE", [
       projectId,
-      `/tmp/binding-${projectId}`,
-      `BR${projectId.slice(0, 8).toUpperCase()}`,
-    ],
-  );
-  for (const [index, id] of installIds.entries()) {
-    await database.pool.query(
-      `INSERT INTO package_installs (id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path,package_status)
-       VALUES ($1,$4,'binding',$2,$3,'{}','digest','/tmp/binding','Installed')`,
-      [
-        id,
-        `v${index + 1}`,
-        String(index + 1).repeat(40),
-        `https://example.invalid/binding/${projectId}`,
-      ],
-    );
-  }
-
-  return { projectId, actorUserId, installIds, attachmentId: randomUUID() };
-}
-
-it("CT-CPC-12: an install update refuses overlapping attachment creation, pin switching and removal without partial revisions", async () => {
-  const { projectId, installIds, attachmentId } = await seedBindingRace();
-  const install = await database.pool.connect();
-  const attach = (): Promise<unknown> =>
-    database.pool.query(
-      "INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'binding')",
-      [attachmentId, projectId, installIds[0]],
-    );
-
-  try {
-    await install.query("BEGIN");
-    await install.query(
-      "UPDATE package_installs SET manifest='{}'::jsonb || jsonb_build_object('sourceSubpath','changed') WHERE id=$1",
-      [installIds[0]],
-    );
-    await expect(attach()).rejects.toMatchObject({ code: "55P03" });
-    await install.query("ROLLBACK");
-    await attach();
-    expect(
-      (await readExportSnapshot(database.db, projectId)).exportRevision,
-    ).toBe("1");
-
-    // Guard both the incoming and outgoing side of a pin switch.
-    for (const installId of installIds) {
-      await install.query("BEGIN");
-      await install.query(
-        "UPDATE package_installs SET version_label='changed' WHERE id=$1",
-        [installId],
-      );
-      await expect(
-        database.pool.query(
-          "UPDATE project_package_attachments SET package_install_id=$1 WHERE id=$2",
-          [installIds[1], attachmentId],
-        ),
-      ).rejects.toMatchObject({ code: "55P03" });
-      if (installId === installIds[0]) {
-        await expect(
-          database.pool.query(
-            "DELETE FROM project_package_attachments WHERE id=$1",
-            [attachmentId],
-          ),
-        ).rejects.toMatchObject({ code: "55P03" });
-        // Runtime-only attachment metadata does not take the binding lock.
-        await database.pool.query(
-          "UPDATE project_package_attachments SET attached_at=now() WHERE id=$1",
-          [attachmentId],
-        );
-      }
-      await install.query("ROLLBACK");
-      expect(
-        (await readExportSnapshot(database.db, projectId)).exportRevision,
-      ).toBe("1");
-    }
-    await database.pool.query(
-      "UPDATE project_package_attachments SET package_install_id=$1 WHERE id=$2",
-      [installIds[1], attachmentId],
-    );
-    const exported = await readExportSnapshot(database.db, projectId);
-
-    expect(exported.exportRevision).toBe("2");
-    expect(exported.projection.packages[0]?.resolvedRevision).toBe(
-      "2".repeat(40),
-    );
-  } finally {
-    await install.query("ROLLBACK");
-    install.release();
-  }
-});
-
-it("CT-CPC-12: an install update waiting on a new binding reads its committed attachment and invalidates its export", async () => {
-  const { projectId, installIds, attachmentId } = await seedBindingRace();
-  const binding = await database.pool.connect();
-  const install = await database.pool.connect();
-  let update: Promise<unknown> | undefined;
-
-  try {
-    await binding.query("BEGIN");
-    await install.query("BEGIN");
-    const bindingPid = (
-      await binding.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+    ]);
+    const exported = await readExportSnapshot(publicationDb, projectId);
+    const editorPid = (
+      await editor.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
     ).rows[0]!.pid;
-    const installPid = (
-      await install.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+    const publisherPid = (
+      await publisher.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
     ).rows[0]!.pid;
 
-    await binding.query(
-      "INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'binding')",
-      [attachmentId, projectId, installIds[0]],
-    );
-    update = install.query(
-      "UPDATE package_installs SET manifest=jsonb_build_object('sourceSubpath','changed') WHERE id=$1",
-      [installIds[0]],
-    );
-    await expect
-      .poll(
-        async () =>
-          (
-            await database.pool.query<{ blockers: number[] }>(
-              "SELECT pg_blocking_pids($1) AS blockers",
-              [installPid],
-            )
-          ).rows[0]!.blockers,
+    edit = editor
+      .query(
+        "UPDATE project_dependency_declarations SET desired=desired || jsonb_build_object('version','new'), generation=generation+1 WHERE id=$1",
+        [declarationId],
       )
-      .toContain(bindingPid);
-    await binding.query("COMMIT");
-    await update;
-    await install.query("COMMIT");
-    const exported = await readExportSnapshot(database.db, projectId);
-
-    expect(exported.exportRevision).toBe("2");
-    expect(exported.projection.packages[0]?.path).toBe("changed");
-  } finally {
-    await binding.query("ROLLBACK");
-    await update?.catch(() => undefined);
-    await install.query("ROLLBACK");
-    binding.release();
-    install.release();
-  }
-});
-
-it("CT-CPC-12: an install writer queued before attachment commit cannot pass a subsequently accepted publication", async () => {
-  const { projectId, actorUserId, installIds, attachmentId } =
-    await seedBindingRace();
-  const binding = await database.pool.connect();
-  const install = await database.pool.connect();
-  const publication = await database.pool.connect();
-  const publicationDb = drizzle(publication, { schema });
-  let update: Promise<unknown> | undefined;
-  let claim: Promise<unknown> | undefined;
-
-  try {
-    await binding.query("BEGIN");
-    await install.query("BEGIN");
-    await publication.query("BEGIN");
-    const bindingPid = (
-      await binding.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
-    ).rows[0]!.pid;
-    const installPid = (
-      await install.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
-    ).rows[0]!.pid;
-    const publicationPid = (
-      await publication.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
-    ).rows[0]!.pid;
-    const blockers = async (pid: number): Promise<number[]> =>
-      (
-        await database.pool.query<{ blockers: number[] }>(
-          "SELECT pg_blocking_pids($1) AS blockers",
-          [pid],
-        )
-      ).rows[0]!.blockers;
-
-    await binding.query(
-      "INSERT INTO project_package_attachments (id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'binding')",
-      [attachmentId, projectId, installIds[0]],
-    );
-    // Capture rejection immediately so an assertion failure cannot leak an unhandled promise.
-    update = install
-      .query("UPDATE package_installs SET version_label='v2' WHERE id=$1", [
-        installIds[0],
-      ])
       .then(
         () => null,
         (error: unknown) => error,
       );
-    await expect.poll(() => blockers(installPid)).toContain(bindingPid);
-    claim = publication.query(
-      "SELECT id FROM projects WHERE id=$1 FOR UPDATE",
-      [projectId],
-    );
-    await expect.poll(() => blockers(publicationPid)).toContain(bindingPid);
-    await binding.query("COMMIT");
-    await claim;
-    await expect.poll(() => blockers(installPid)).toContain(publicationPid);
-    const exported = await readExportSnapshot(publicationDb, projectId);
-    const repo = exported.project.repoPath;
-    const identity = { id: randomUUID(), projectId, actorUserId };
-    const snapshot: ConfigPersistSnapshot = {
-      version: 1,
+    await expect
+      .poll(
+        async () =>
+          (
+            await database.pool.query<{ ids: number[] }>(
+              "SELECT pg_blocking_pids($1) AS ids",
+              [editorPid],
+            )
+          ).rows[0]!.ids,
+      )
+      .toContain(publisherPid);
+    await insertConfigReview(publicationDb, identity, {
+      version: 2,
+      localWitnesses: [],
       projectId,
       actorUserId,
       exportRevision: exported.exportRevision,
@@ -768,10 +486,8 @@ it("CT-CPC-12: an install writer queued before attachment commit cannot pass a s
       proposedDigest: "a".repeat(64),
       diffDigest: "b".repeat(64),
       contentDirectory: `${repo}/private-review`,
-      message: "chore(maister): persist project config",
-    };
-
-    await insertConfigReview(publicationDb, identity, snapshot);
+      message: "review",
+    });
     await transitionConfigOperation(
       publicationDb,
       identity,
@@ -783,21 +499,28 @@ it("CT-CPC-12: an install writer queued before attachment commit cannot pass a s
         ownerProcessId: process.pid,
       },
     );
-    await publication.query("COMMIT");
-    expect(await update).toMatchObject({ code: "55P03" });
-    await install.query("ROLLBACK");
-    expect(await readExportSnapshot(database.db, projectId)).toEqual(exported);
-    expect((await findConfigOperation(database.db, identity))?.state).toBe(
-      "preparing",
+    await publisher.query("COMMIT");
+    expect(await edit).toMatchObject({ code: "55P03" });
+    // Worker receipts and runtime observations may advance during the accepted publication.
+    await database.pool.query(
+      "UPDATE project_dependency_declarations SET effective_generation=1,effective_revision=$1 WHERE id=$2",
+      ["a".repeat(40), declarationId],
     );
+    const after = await readExportSnapshot(database.db, projectId);
+
+    expect(after.exportRevision).toBe(exported.exportRevision);
+    expect(after.projection.packages).toEqual([
+      {
+        id: "alias",
+        source: "https://example.invalid/alias",
+        version: "v1",
+        resolvedRevision: "a".repeat(40),
+      },
+    ]);
   } finally {
-    await binding.query("ROLLBACK");
-    await claim?.catch(() => undefined);
-    await publication.query("ROLLBACK");
-    await update;
-    await install.query("ROLLBACK");
-    binding.release();
-    install.release();
-    publication.release();
+    await publisher.query("ROLLBACK");
+    await edit;
+    publisher.release();
+    editor.release();
   }
 });

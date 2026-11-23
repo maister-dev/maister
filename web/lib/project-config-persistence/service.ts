@@ -20,7 +20,7 @@ import {
   insertConfigReview,
   transitionConfigOperation,
 } from "./store";
-import { assertExportablePackages, readExportSnapshot } from "./projection";
+import { reviewPackageSources, readExportSnapshot } from "./projection";
 import {
   exportProjectionDigest,
   manifestMatches,
@@ -28,7 +28,7 @@ import {
 } from "./manifest";
 import {
   assertRepositoryReady,
-  currentConfigStatus,
+  statusForObservation,
   inspectRepository,
 } from "./status";
 import { writeConfigReviewFiles, configReviewRoot } from "./review-files";
@@ -106,7 +106,9 @@ async function assertReviewedConfiguration(
     throw stale();
 }
 
-async function verifyPrivateBytes(operation: ConfigOperation): Promise<void> {
+async function verifyPrivateBytes(
+  operation: ConfigOperation,
+): Promise<string | null> {
   const snapshot = operation.snapshot;
   const expected = join(
     await configReviewRoot(snapshot.repository.repoPath),
@@ -151,12 +153,34 @@ async function verifyPrivateBytes(operation: ConfigOperation): Promise<void> {
     snapshot.proposedDigest
   )
     throw stale();
+  if (snapshot.repository.manifestDigest === null) return null;
+  const before = await readFile(join(expected, "before"), "utf8");
+
+  if (sha256(before) !== snapshot.repository.manifestDigest) throw stale();
+
+  return before;
+}
+
+async function verifyReviewedPackages(
+  snapshot: ConfigPersistSnapshot,
+  reviewedSource: string | null,
+): Promise<void> {
+  const witnesses = await reviewPackageSources(
+    snapshot.projection,
+    snapshot.version === 1 ? null : reviewedSource,
+  );
+
   if (
-    snapshot.repository.manifestDigest !== null &&
-    sha256(await readFile(join(expected, "before"), "utf8")) !==
-      snapshot.repository.manifestDigest
+    snapshot.version === 2 &&
+    contentDigest(witnesses) !== contentDigest(snapshot.localWitnesses)
   )
-    throw stale();
+    throw new MaisterError(
+      "CONFIG",
+      "Local package contents changed after preview. Review the current contents before saving.",
+      {
+        details: { reason: "package_revision_mismatch" },
+      },
+    );
 }
 
 async function assertRegisteredRepository(
@@ -201,7 +225,10 @@ export async function previewProjectConfiguration(
 ): Promise<ConfigPreview> {
   const current = await readExportSnapshot(db, projectId);
   const observed = await inspectRepository(current.project);
-  const status = await currentConfigStatus(db, projectId);
+  const { status, localWitnesses } = await statusForObservation(
+    current,
+    observed,
+  );
 
   if (observed.blocker || status.reason)
     return {
@@ -213,7 +240,6 @@ export async function previewProjectConfiguration(
         .filter(Boolean)
         .map((entry) => entry.slice(3)),
     };
-  await assertExportablePackages(current.projection);
   const proposed = patchProjectManifest(observed.source, current.projection);
 
   try {
@@ -243,7 +269,8 @@ export async function previewProjectConfiguration(
         manifestMode: observed.repository.manifestMode,
       });
   const snapshot: ConfigPersistSnapshot = {
-    version: 1,
+    version: 2,
+    localWitnesses,
     projectId,
     actorUserId,
     exportRevision: current.exportRevision,
@@ -408,9 +435,10 @@ export async function confirmProjectConfiguration(
         return finalizeConfigOperation(db, operation);
       }
       await authorize();
-      await verifyPrivateBytes(operation);
+      const reviewedSource = await verifyPrivateBytes(operation);
+
       await assertReviewedConfiguration(db, snapshot);
-      await assertExportablePackages(snapshot.projection);
+      await verifyReviewedPackages(snapshot, reviewedSource);
       if (operation.state === "previewed") {
         if (operation.expiresAt.getTime() <= Date.now()) {
           operation = await transitionConfigOperation(
@@ -509,7 +537,7 @@ export async function confirmProjectConfiguration(
         await authorize();
         await assertReviewedConfiguration(db, snapshot);
         await assertRegisteredRepository(snapshot);
-        await assertExportablePackages(snapshot.projection);
+        await verifyReviewedPackages(snapshot, reviewedSource);
       };
 
       await publishConfigCommit(

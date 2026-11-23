@@ -79,12 +79,21 @@ export function normalizedManifest(
   };
 }
 
+function manifestPackagePin({
+  id,
+  source,
+  version,
+  path,
+}: PackagePin): PackagePin {
+  return { id, source, version, ...(path === undefined ? {} : { path }) };
+}
+
 export function exportProjectionDigest(projection: ExportProjection): string {
   return contentDigest({
     ...projection,
     taskQualificationOverride: projection.taskQualificationOverride ?? null,
     packages: projection.packages
-      .map(({ resolvedRevision: _revision, ...pin }) => pin)
+      .map(manifestPackagePin)
       .sort((a, b) => a.id.localeCompare(b.id)),
   });
 }
@@ -371,7 +380,7 @@ export function patchProjectManifest(
   }
   result = patchPackageEntries(
     result,
-    projection.packages.map(({ resolvedRevision: _revision, ...pin }) => pin),
+    projection.packages.map(manifestPackagePin),
   );
   if (!manifestMatches(result, projection)) invalid();
 

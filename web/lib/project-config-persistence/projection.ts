@@ -1,27 +1,21 @@
 import "server-only";
 
-import type { ExportProjection } from "./types";
+import type { ExportProjection, LocalPackageWitness } from "./types";
 import type { PersistenceDb } from "./store";
 
 import { stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { eq } from "drizzle-orm";
-import { z } from "zod";
+import { and, eq } from "drizzle-orm";
 
-import {
-  projects,
-  packageInstalls,
-  projectPackageAttachments,
-} from "@/lib/db/schema";
+import { normalizedManifest } from "./manifest";
+
+import { projects, projectDependencyDeclarations } from "@/lib/db/schema";
+import { packageEntrySchema } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { localDirectoryContentDigest } from "@/lib/flows";
-import { validateUrl } from "@/lib/repo-source";
-
-const metadataSchema = z
-  .object({ sourceSubpath: z.string().optional() })
-  .passthrough();
+import { assertDependencySource } from "@/lib/project-dependencies/source";
 
 export type ExportSnapshot = {
   project: typeof projects.$inferSelect;
@@ -29,7 +23,7 @@ export type ExportSnapshot = {
   exportRevision: string;
 };
 
-/** One SQL snapshot keeps the project revision and all attached coordinates coherent. */
+/** One SQL snapshot keeps the project revision and all desired coordinates coherent. */
 export async function readExportSnapshot(
   db: PersistenceDb,
   projectId: string,
@@ -37,17 +31,15 @@ export async function readExportSnapshot(
   const rows = await db
     .select({
       project: projects,
-      attachment: projectPackageAttachments,
-      install: packageInstalls,
+      declaration: projectDependencyDeclarations,
     })
     .from(projects)
     .leftJoin(
-      projectPackageAttachments,
-      eq(projectPackageAttachments.projectId, projects.id),
-    )
-    .leftJoin(
-      packageInstalls,
-      eq(packageInstalls.id, projectPackageAttachments.packageInstallId),
+      projectDependencyDeclarations,
+      and(
+        eq(projectDependencyDeclarations.projectId, projects.id),
+        eq(projectDependencyDeclarations.kind, "package"),
+      ),
     )
     .where(eq(projects.id, projectId));
   const project = rows[0]?.project;
@@ -58,35 +50,31 @@ export async function readExportSnapshot(
     });
   const packages: ExportProjection["packages"] = [];
 
-  for (const { attachment, install } of rows) {
-    if (!attachment) continue;
-    if (
-      !install ||
-      install.packageStatus !== "Installed" ||
-      install.name !== attachment.packageName
-    ) {
+  for (const { declaration } of rows) {
+    if (!declaration) continue;
+    const { desired, logicalId, effectiveGeneration, effectiveRevision } =
+      declaration;
+    const pin = packageEntrySchema.safeParse({
+      id: logicalId,
+      source: desired.source,
+      version: desired.version,
+      path: desired.path,
+    });
+
+    if (!pin.success)
       throw new MaisterError(
         "CONFIG",
-        "An attached package has no matching installed revision. Repair the attachment before saving.",
-        { details: { reason: "missing_package_install" } },
+        "The declared package coordinates are invalid.",
+        {
+          details: { reason: "package_source_unexportable" },
+        },
       );
-    }
-    const metadata = metadataSchema.safeParse(install.manifest);
-
-    if (!metadata.success)
-      throw new MaisterError(
-        "CONFIG",
-        "Attached package coordinates are invalid.",
-        { details: { reason: "package_source_unexportable" } },
-      );
-    const path = metadata.data.sourceSubpath;
-
     packages.push({
-      id: install.name,
-      source: install.sourceUrl,
-      version: install.versionLabel,
-      ...(path === undefined ? {} : { path }),
-      resolvedRevision: install.resolvedRevision,
+      ...pin.data,
+      resolvedRevision:
+        effectiveGeneration === declaration.generation
+          ? effectiveRevision
+          : null,
     });
   }
 
@@ -106,35 +94,29 @@ export async function readExportSnapshot(
   };
 }
 
-/** Local labels do not enforce content pins on reload; verify the actual source. */
-export async function assertExportablePackages(
+/** Bind local bytes unless the exact reviewed blob already contains the unresolved pin. */
+export async function reviewPackageSources(
   projection: ExportProjection,
-): Promise<void> {
+  source: string | null = null,
+): Promise<LocalPackageWitness[]> {
+  const original = new Map(
+    (source === null ? [] : normalizedManifest(source).packages).map((pin) => [
+      pin.id,
+      pin,
+    ]),
+  );
+  const witnesses: LocalPackageWitness[] = [];
+
   for (const pin of projection.packages) {
     let local: string | null;
 
     try {
-      if (pin.source.includes("://")) {
-        const url = new URL(pin.source);
-
-        if (
-          url.password ||
-          url.search ||
-          url.hash ||
-          ((url.protocol === "http:" || url.protocol === "https:") &&
-            url.username)
-        )
-          throw new MaisterError(
-            "CONFIG",
-            "Credential-bearing package URLs cannot be exported.",
-          );
-      }
+      assertDependencySource(pin.source);
       local = pin.source.startsWith("file://")
         ? fileURLToPath(pin.source)
         : isAbsolute(pin.source)
           ? pin.source
           : null;
-      if (local === null) validateUrl(pin.source);
     } catch (cause) {
       throw new MaisterError(
         "CONFIG",
@@ -146,11 +128,23 @@ export async function assertExportablePackages(
       );
     }
     if (local === null) continue;
+    const entry = original.get(pin.id);
+
+    if (
+      pin.resolvedRevision === null &&
+      entry?.source === pin.source &&
+      entry.version === pin.version &&
+      entry.path === pin.path
+    )
+      continue;
     const directory = pin.path ? join(local, pin.path) : local;
+
+    let digest: string;
 
     try {
       if (!(await stat(directory)).isDirectory())
         throw new MaisterError("CONFIG", "Package source is not a directory.");
+      digest = await localDirectoryContentDigest(directory);
     } catch (cause) {
       throw new MaisterError(
         "CONFIG",
@@ -162,8 +156,8 @@ export async function assertExportablePackages(
       );
     }
     if (
-      (await localDirectoryContentDigest(directory)).slice(0, 40) !==
-      pin.resolvedRevision
+      pin.resolvedRevision !== null &&
+      digest.slice(0, 40) !== pin.resolvedRevision
     ) {
       throw new MaisterError(
         "CONFIG",
@@ -171,5 +165,8 @@ export async function assertExportablePackages(
         { details: { reason: "package_revision_mismatch" } },
       );
     }
+    witnesses.push({ id: pin.id, digest });
   }
+
+  return witnesses;
 }

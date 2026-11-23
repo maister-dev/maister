@@ -273,7 +273,10 @@ export function ProjectGitSettingsControl(
         ) : null}
       </div>
 
-      <div className="mb-5 rounded-xl border border-line bg-paper p-[18px]">
+      <div
+        className="mb-5 rounded-xl border border-line bg-paper p-[18px]"
+        id="project-git"
+      >
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
           <div>
             <h3 className="m-0 text-[13px] font-semibold tracking-[-0.005em] text-ink">

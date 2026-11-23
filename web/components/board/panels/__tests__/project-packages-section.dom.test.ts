@@ -6,15 +6,17 @@
 // fork's Studio editor and keeps Attach disabled until a non-colliding
 // option is picked.
 
+import type { ProjectDependencyView } from "@/lib/project-dependencies/view";
+
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
-  useTranslations:
-    (namespace: string) =>
-    (key: string): string =>
-      `${namespace}.${key}`,
+  useTranslations: (namespace: string) =>
+    Object.assign((key: string): string => `${namespace}.${key}`, {
+      has: () => true,
+    }),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -74,7 +76,30 @@ const installs = [
   },
 ];
 
-function render(attachmentView = attachment): HTMLElement {
+const failedPin = {
+  id: "decl-1",
+  kind: "package" as const,
+  ref: "beauty-tools",
+  generation: 2,
+  source: "https://example.org/beauty",
+  version: "v2",
+  path: null,
+  attempt: 3,
+  state: "failed" as const,
+  stage: "resolve",
+  reason: "fetch_failed",
+  effectiveRevision: null,
+  effectiveAttachmentId: null,
+  resolvedRevision: null,
+  memberRef: null,
+  readiness: "unresolved" as const,
+  actions: { edit: true, retry: true, recoverSetup: false },
+};
+
+function render(
+  attachmentView = attachment,
+  declarations: ProjectDependencyView[] = [],
+): HTMLElement {
   const host = document.createElement("div");
 
   document.body.appendChild(host);
@@ -88,6 +113,7 @@ function render(attachmentView = attachment): HTMLElement {
         isAdmin: true,
         canTrust: true,
         attachments: [attachmentView],
+        declarations,
         availableInstalls: installs,
       }),
     );
@@ -203,5 +229,85 @@ describe("ProjectPackagesSection name-collision pre-flight", () => {
         '[data-testid="package-trust-confirm-submit"]',
       ),
     ).not.toHaveProperty("disabled", true);
+  });
+});
+
+it("submits retry for the exact failed declaration displayed by the server", async () => {
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock
+    .mockClear()
+    .mockResolvedValueOnce(new Response("{}", { status: 202 }));
+  const host = render(attachment, [failedPin]);
+  const row = host.querySelector("#dependency-decl-1");
+
+  expect(row?.textContent).toContain("beauty-tools");
+  await click(row!.querySelector('[data-action="retry"]')!);
+  const [url, options] = fetchMock.mock.calls[0]!;
+
+  expect(url).toBe("/api/projects/demo/dependency-declarations/decl-1/retry");
+  expect(JSON.parse(options.body)).toEqual({
+    expectedGeneration: 2,
+    expectedAttempt: 3,
+  });
+});
+
+it("submits the reviewed setup witness when server refreshes the row during confirmation", async () => {
+  vi.stubGlobal("fetch", fetchMock);
+  fetchMock
+    .mockClear()
+    .mockResolvedValueOnce(new Response("{}", { status: 202 }));
+  const uncertain: ProjectDependencyView = {
+    ...failedPin,
+    state: "recovery_required",
+    reason: "setup_uncertain",
+    stage: "setup",
+    memberRef: "capability:beauty",
+    resolvedRevision: "abc123",
+    actions: { edit: true, retry: false, recoverSetup: true },
+  };
+  const host = render(attachment, [uncertain]);
+
+  await click(
+    [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === "dependencies.recover",
+    )!,
+  );
+  expect(fetchMock).not.toHaveBeenCalled();
+  act(() =>
+    roots.at(-1)!.render(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: true,
+        attachments: [attachment],
+        availableInstalls: installs,
+        declarations: [
+          {
+            ...uncertain,
+            generation: 3,
+            attempt: 1,
+            memberRef: "capability:other",
+            resolvedRevision: "def456",
+          },
+        ],
+      }),
+    ),
+  );
+  const confirmation = [
+    ...document.body.querySelectorAll('[role="dialog"] button'),
+  ].find((b) => b.textContent === "dependencies.confirmRecovery");
+
+  await click(confirmation!);
+  const [url, options] = fetchMock.mock.calls[0]!;
+
+  expect(url).toBe(
+    "/api/projects/demo/dependency-declarations/decl-1/recover-setup",
+  );
+  expect(JSON.parse(options.body)).toEqual({
+    expectedGeneration: 2,
+    expectedAttempt: 3,
+    memberRef: "capability:beauty",
+    resolvedRevision: "abc123",
+    action: "rerun_setup",
   });
 });

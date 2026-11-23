@@ -21,6 +21,7 @@ import {
   previewProjectConfiguration,
   confirmProjectConfiguration,
 } from "../service";
+import { currentConfigStatus } from "../status";
 import { cleanupConfigOperation, pruneConfigReviews } from "../cleanup";
 import { recoverProjectConfigurations } from "../reconcile";
 import {
@@ -842,4 +843,75 @@ it("IT-CPC-04/07: a non-UTF-8 manifest is refused instead of silently changing u
   expect(await readFile(join(repo, "maister.yaml"))).toEqual(source);
   expect((await git(repo, ["rev-parse", "HEAD"])).trim()).toBe(before);
   expect(await git(repo, ["status", "--porcelain=v1"])).toBe("");
+});
+
+it("AC08: a missing unchanged local declaration survives a reviewed edit and changed local content invalidates confirmation", async () => {
+  const { projectId, repo } = await seed();
+  const directory = join(root, `local-${projectId}`);
+  const localEntry = `  - id: alias # keep this comment\n    source: '${directory}'\n    version: old\n`;
+  const source = `schemaVersion: 2\nproject:\n  name: Before\nflows: []\ncapability_imports: [] # preserved\npackages:\n${localEntry}`;
+
+  await writeFile(join(repo, "maister.yaml"), source);
+  await git(repo, ["add", "maister.yaml"]);
+  await git(repo, ["commit", "-m", "unresolved local declaration"]);
+
+  const declarationId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO project_dependency_declarations (id,project_id,kind,logical_id,ordinal,desired) VALUES ($1,$2,'package','alias',0,$3)",
+    [declarationId, projectId, { source: directory, version: "old" }],
+  );
+  expect(await currentConfigStatus(database.db, projectId)).toMatchObject({
+    exportState: "pending",
+    repositoryState: "ready",
+  });
+  const identity = { id: await ready(projectId), projectId, actorUserId };
+  const saved = await confirmProjectConfiguration(
+    database.db,
+    identity,
+    authorized,
+  );
+
+  expect(saved.state).toBe("committed");
+  expect(await readFile(join(repo, "maister.yaml"), "utf8")).toBe(
+    source.replace("Before", "Runtime"),
+  );
+
+  await database.pool.query(
+    "UPDATE project_dependency_declarations SET desired=desired || jsonb_build_object('version','new'), generation=generation+1 WHERE id=$1",
+    [declarationId],
+  );
+  const blocked = await previewProjectConfiguration(
+    database.db,
+    projectId,
+    actorUserId,
+  );
+
+  expect(blocked).toMatchObject({
+    kind: "blocked",
+    reason: "package_source_unexportable",
+  });
+  await mkdir(directory);
+  await writeFile(join(directory, "bytes"), "reviewed");
+  const next = { ...identity, id: await ready(projectId) };
+
+  await writeFile(join(directory, "bytes"), "different");
+  await expect(
+    confirmProjectConfiguration(database.db, next, authorized),
+  ).rejects.toMatchObject({
+    details: { reason: "package_revision_mismatch" },
+  });
+  expect((await git(repo, ["rev-parse", "HEAD"])).trim()).toBe(
+    saved.committedSha,
+  );
+  expect((await findConfigOperation(database.db, next))?.state).toBe("stale");
+  const refreshed = { ...identity, id: await ready(projectId) };
+
+  expect(
+    (await confirmProjectConfiguration(database.db, refreshed, authorized))
+      .state,
+  ).toBe("committed");
+  expect(await readFile(join(repo, "maister.yaml"), "utf8")).toBe(
+    source.replace("Before", "Runtime").replace("version: old", "version: new"),
+  );
 });

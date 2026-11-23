@@ -46,6 +46,7 @@ import { getBoardData } from "@/lib/queries/board";
 import { getProjectPackageContents } from "@/lib/queries/project-package-contents";
 import {
   getAvailablePackageInstalls,
+  getProjectDependencyDeclarations,
   getProjectPackageAttachments,
 } from "@/lib/queries/packages";
 import { getProjectLocalPackages } from "@/lib/queries/project-local-packages";
@@ -105,6 +106,7 @@ interface PageProps {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{
     tab?: string | string[];
+    registered?: string;
     file?: string | string[];
     ref?: string | string[];
     actor_type?: string | string[];
@@ -208,6 +210,16 @@ export default async function ProjectBoardPage({
     role === "owner" || role === "admin" || role === "member";
 
   const t = await getTranslations("board");
+  const tProject = await getTranslations("projects");
+  const tDependencies = await getTranslations("dependencies");
+  const registrationStatus = search.registered;
+  const showRegistration =
+    isAdmin &&
+    ["remote", "no-remote", "initialized"].includes(registrationStatus ?? "");
+  const declarations =
+    isAdmin && (tab === "packages" || tab === "settings")
+      ? await getProjectDependencyDeclarations(project.id, canTrustPackages)
+      : [];
   const tNewTask = await getTranslations("newtask");
   const tCommon = await getTranslations("common");
   const tScratch = await getTranslations("scratch");
@@ -374,6 +386,28 @@ export default async function ProjectBoardPage({
 
   return (
     <>
+      {showRegistration ? (
+        <aside className="mb-4 rounded-lg border border-line bg-paper p-3">
+          <p className="font-semibold">{tProject("successTitle")}</p>
+          {registrationStatus !== "remote" && !project.repoUrl ? (
+            <p>
+              {tProject(
+                registrationStatus === "initialized"
+                  ? "warnInitialized"
+                  : "warnNotGit",
+              )}
+            </p>
+          ) : null}
+          <div className="flex gap-4">
+            <Link className="underline" href={`/projects/${slug}?tab=packages`}>
+              {tDependencies("heading")}
+            </Link>
+            <Link className="underline" href="/projects/new">
+              {tProject("registerAnother")}
+            </Link>
+          </div>
+        </aside>
+      ) : null}
       <header
         className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3"
         data-testid="project-board-header"
@@ -747,6 +781,7 @@ export default async function ProjectBoardPage({
             })}
             availableInstalls={await getAvailablePackageInstalls()}
             canTrust={canTrustPackages}
+            declarations={declarations}
             isAdmin={isAdmin}
             slug={slug}
           />
@@ -914,6 +949,30 @@ export default async function ProjectBoardPage({
       ) : null}
       {tab === "webhooks" ? (
         <WebhooksPanel canWrite={canAct} slug={slug} />
+      ) : null}
+      {tab === "settings" &&
+      declarations.some(
+        (d) => d.state === "failed" || d.state === "recovery_required",
+      ) ? (
+        <section className="mb-4">
+          <h3 className="font-bold">{tDependencies("needsAttention")}</h3>
+          <ul>
+            {declarations
+              .filter(
+                (d) => d.state === "failed" || d.state === "recovery_required",
+              )
+              .map((d) => (
+                <li key={d.id}>
+                  <Link
+                    className="underline"
+                    href={`/projects/${slug}?tab=packages#dependency-${d.id}`}
+                  >
+                    {d.ref} · {tDependencies(`kinds.${d.kind}`)}
+                  </Link>
+                </li>
+              ))}
+          </ul>
+        </section>
       ) : null}
       {tab === "settings" ? (
         <SettingsPanel

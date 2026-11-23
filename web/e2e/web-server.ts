@@ -30,6 +30,9 @@ let web = await startRealWeb({
   worktreesRoot,
   supervisorUrl,
   authSecret: process.env.AUTH_SECRET,
+  // Repo clones and immutable package, Flow and capability caches live under
+  // the fixture home. The E2E wrapper removes the owned root on exit.
+  env: { HOME: path.join(worktreesRoot, ".fixture-home") },
   logFile: path.join(invocation.directory, "e2e-web.log"),
 });
 let requestShutdown: () => void = () => {};
