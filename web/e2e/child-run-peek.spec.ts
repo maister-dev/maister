@@ -752,7 +752,7 @@ test("E2E-PKN-12: transport failure and explicit reconnect retain selection and 
   await expect(peek(page)).toHaveAttribute("data-selected-run", fixture.child);
 });
 
-test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscreen keep one anchored panel", async ({
+test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscreen keep one anchored panel @flow-controls", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });

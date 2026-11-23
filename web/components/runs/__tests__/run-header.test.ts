@@ -120,18 +120,6 @@ describe("RunHeader — task-first header", () => {
     expect(html).not.toContain('data-testid="run-header-task"');
   });
 
-  it("shows the supplied policy and run action beside the run metadata", () => {
-    const html = render({
-      policyBadge: "Unattended",
-      stopControl: "Stop run",
-      branch: "feature/example",
-    });
-
-    expect(html).toContain("Unattended");
-    expect(html).toContain("Stop run");
-    expect(html).toMatch(/<summary[^>]*data-testid="run-header-branch"/);
-  });
-
   it("still renders the branch line and change summary", () => {
     const html = render({
       branch: "maister/task-1/attempt-2",

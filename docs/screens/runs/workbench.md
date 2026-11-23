@@ -85,7 +85,8 @@ contract:
 **Fullscreen interaction (Implemented).** The graph canvas expands with its
 container. Direct links, reload and browser history restore the mode. Close
 or Escape returns to this Run with the selected node, query state and inline
-scroll position retained. Focus returns to the entry control. A child sheet
+scroll position retained. Focus returns to the entry control. An empty
+`peek=` leaves the graph in control of focus and Escape. A child sheet
 receives the first Escape while it covers the graph. See
 [child Run navigation](../../system-analytics/run-peek-navigation.md).
 

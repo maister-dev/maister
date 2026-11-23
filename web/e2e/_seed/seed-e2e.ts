@@ -6093,6 +6093,13 @@ async function seedM22Fixture(
     ],
   );
 
+  await pool.query(
+    `INSERT INTO run_sync_attempts
+       (id, run_id, workspace_id, attempt, strategy, mode, phase, target_ref)
+     VALUES ($1, $2, $3, 1, 'rebase', 'agent', 'verifying', 'main')`,
+    [randomUUID(), ids.run, ids.workspace],
+  );
+
   // Ledger: plan Succeeded → implement Running (the current node) → review
   // Pending. The `checks` Succeeded attempt carries a PASSED blocking gate so a
   // gate rollup is present on the graph.

@@ -9,15 +9,20 @@ if (!authed)
     "Flow browser qualification requires the authenticated Run fixture",
   );
 
+const flowControls = {
+  ...authed,
+  testMatch: /(?:m22-workbench|m15-readiness|child-run-peek)\.spec\.ts$/,
+  grep: /@flow-controls\b/,
+};
+
 export default defineConfig({
   ...base,
   projects: [
     ...(base.projects ?? []),
+    { ...flowControls, name: "flow-chromium" },
     {
-      ...authed,
+      ...flowControls,
       name: "flow-firefox",
-      testMatch: /(?:m22-workbench|child-run-peek)\.spec\.ts$/,
-      grep: /expands the live canvas|parent fullscreen/,
       use: { ...authed.use, ...devices["Desktop Firefox"] },
     },
   ],

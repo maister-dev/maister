@@ -712,6 +712,26 @@ test("a live cursor change moves interrupt eligibility while the selected node s
   }
 });
 
+test("Git sync progress stays reachable when Stop run is the only lifecycle action @flow-controls", async ({
+  page,
+}) => {
+  const fx = loadM22Fixture();
+  await page.goto(`/runs/${fx.runId}?inspector=closed`);
+  const shell = page.getByTestId("run-shell").filter({ visible: true });
+  const stop = { name: "Stop run", exact: true };
+
+  await expect(shell.getByRole("button", stop)).toHaveCount(1);
+  await expect(
+    shell.getByTestId("run-header").getByRole("button", stop),
+  ).toBeVisible();
+  await shell.getByTestId("workbench-git-open").click();
+  await expect(
+    shell.getByTestId("git-panel").getByRole("status").filter({
+      hasText: "Branch sync #1 · Checking the result",
+    }),
+  ).toContainText("main");
+});
+
 test.describe("touch and compact layout", () => {
   test.use({ hasTouch: true });
   for (const [locale, policy, stop, step] of [
@@ -808,7 +828,7 @@ test.describe("touch and compact layout", () => {
   }
 });
 
-test("expands the live canvas and preserves history and focus", async ({
+test("expands the live canvas and preserves history and focus @flow-controls", async ({
   page,
   browserName: engine,
 }, testInfo) => {

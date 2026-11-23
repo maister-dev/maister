@@ -20,6 +20,7 @@
     "test:qualification": "sh ../scripts/heavy-check.sh vitest run --project qualification",
     "test:watch": "vitest --project unit",
     "test:e2e": "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts",
+    "test:e2e:flow": "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts --config playwright.flow.config.ts --project=flow-chromium --project=flow-firefox",
     "test:e2e:live": "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts --config playwright.live.config.ts",
     "test:e2e:execution-ab": "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts --config playwright.execution-ab.config.ts",
     "test:e2e:librarian": "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts --config playwright.librarian.config.ts",

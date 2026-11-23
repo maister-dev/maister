@@ -121,17 +121,15 @@ flowchart TD
 
 ## Layout & regions
 
-The page uses a full-width two-column run shell on desktop, with a minimum
-1000px work surface and a 380px right inspector. Narrow/mobile presentation is
-still a later responsive pass.
+The desktop Run shell can show a 380px inspector beside the main content.
+Below 1280px the open inspector overlays the main content.
 
 1. **Run header** - the **task title** as the H1, a `KEY-N` chip beside the run
-   status, an eyebrow reading `Flow › current node`, the worktree branch on its
-   own line, the executor, compact `+/-` change size, and a collapsible **Task**
+   status, an eyebrow reading `Flow › current node`, the worktree branch in the
+   status row, the executor, compact `+/-` change size, and a collapsible **Task**
    block rendering the task prompt (Markdown). This replaces the prior
    `"<KEY-N> <branch>"` heading so the page answers "what is this run about".
-   When branch sync and PR lifecycle tracking ship (Implemented, ADR-140/141), the
-   header also carries a **behind/ahead chip** summarizing the run branch's drift
+   The header also carries a **behind/ahead chip** summarizing the run branch's drift
    against its target and a **PR-state chip** (`open` / `merged` / `closed`); a
    conflicted PR renders a distinct conflicts affordance linking to Reopen. Both
    render from the `run` namespace in `web/components/runs/run-header.tsx`; see

@@ -409,7 +409,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
   }
 });
 
-test("legacy Flow without a graph keeps its step control and verified request checks reachable", async ({
+test("legacy Flow without a graph keeps its step control and verified request checks reachable @flow-controls", async ({
   page,
 }) => {
   const { failedRunId } = loadM15Fixture();
