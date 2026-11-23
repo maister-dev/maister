@@ -30,9 +30,17 @@ import { Writable } from "node:stream";
 import { parse, stringify } from "yaml";
 import pino from "pino";
 import Ajv from "ajv";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { z } from "zod";
 
 import {
@@ -62,6 +70,7 @@ import {
   revokeAgentRunTokensForRun,
 } from "../tokens";
 import { buildOperationalContract } from "../launch-contract";
+import { operationalTerminalDecision } from "../operational-completion";
 import {
   operationalWorkspace,
   operationalReferenceEvidence,
@@ -2925,7 +2934,59 @@ describe("company and project intake through the real supervisor and ACP", () =>
       setDefaultTransportForTests(null);
       resetResolverForTests();
       resetRegistrarStateForTests();
-      try {
+      // Vitest runs these in reverse order and reports each teardown failure alongside the test failure.
+      onTestFinished(() => {
+        restoreUrl();
+        browserSession.user = null;
+        resetResolverForTests();
+        resetRegistrarStateForTests();
+        setDefaultTransportForTests(null);
+      });
+      onTestFinished(stopRuntimeEventConsumers);
+      onTestFinished(() => worker.stop());
+      onTestFinished(async () => {
+        await driver;
+      });
+      onTestFinished(() => supervisor.stop());
+      onTestFinished(() => abort.abort());
+      onTestFinished(async () => {
+        if (ownedAnswerGrant)
+          await revokeCompanyGrant(db, administratorId, ownedAnswerGrant.id, {
+            expectedRevision: ownedAnswerGrant.revision,
+            reason:
+              "Release this clarification fixture's exact temporary authority",
+            idempotencyKey: randomUUID(),
+          });
+      });
+      onTestFinished(async () => {
+        await continuation?.stop();
+      });
+      onTestFinished(async () => {
+        browserSession.user = await requireActiveUserById(userId);
+        if (runId) {
+          const retainedRunId = runId;
+
+          await expect
+            .poll(
+              async () =>
+                (
+                  await stopRunPost(
+                    new Request(
+                      `http://localhost/api/runs/${retainedRunId}/stop`,
+                      { method: "POST" },
+                    ),
+                    { params: Promise.resolve({ runId: retainedRunId }) },
+                  )
+                ).status,
+              { timeout: 10000, interval: 25 },
+            )
+            .toBe(200);
+        }
+      });
+
+      await exerciseClarification();
+
+      async function exerciseClarification(): Promise<void> {
         const roleIds = {
           normal: "rah:question-observer",
           "activation-recovery": "rah:question-recovery-observer",
@@ -4114,45 +4175,6 @@ describe("company and project intake through the real supervisor and ACP", () =>
             ).rows,
           ).toEqual([{ response: null, specialist_answer: null }]);
         }
-      } finally {
-        browserSession.user = await requireActiveUserById(userId);
-        if (runId) {
-          const retainedRunId = runId;
-
-          await expect
-            .poll(
-              async () =>
-                (
-                  await stopRunPost(
-                    new Request(
-                      `http://localhost/api/runs/${retainedRunId}/stop`,
-                      { method: "POST" },
-                    ),
-                    { params: Promise.resolve({ runId: retainedRunId }) },
-                  )
-                ).status,
-              { timeout: 10000, interval: 25 },
-            )
-            .toBe(200);
-        }
-        await continuation?.stop();
-        if (ownedAnswerGrant)
-          await revokeCompanyGrant(db, administratorId, ownedAnswerGrant.id, {
-            expectedRevision: ownedAnswerGrant.revision,
-            reason:
-              "Release this clarification fixture's exact temporary authority",
-            idempotencyKey: randomUUID(),
-          });
-        abort.abort();
-        await supervisor.stop();
-        await driver;
-        await worker.stop();
-        await stopRuntimeEventConsumers();
-        restoreUrl();
-        browserSession.user = null;
-        resetResolverForTests();
-        resetRegistrarStateForTests();
-        setDefaultTransportForTests(null);
       }
     },
     // All 32 real checkpoint/answer/resume cycles must fit, including bounded owner recovery.
@@ -11186,6 +11208,8 @@ describe("company run ownership, credentials and assignment input authority", ()
   it("rotates exact company run credentials with current grants, scope limits and transactional refusal recovery", async () => {
     const { runId } = await reserveCompanyFixtureRun();
 
+    retireSimulatedRunAfterTest(runId);
+
     await expect(
       issueCompanyAgentRunToken({ db: database.db, runId }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
@@ -11402,6 +11426,35 @@ describe("company run ownership, credentials and assignment input authority", ()
   });
 });
 
+function retireSimulatedRunAfterTest(runId: string): void {
+  onTestFinished(async () => {
+    const terminal = operationalTerminalDecision({
+      requested: "Abandoned",
+      result: { kind: "none" },
+      integrity: { verdict: "unchecked", reasonCodes: ["fixture_finished"] },
+    });
+
+    await database.db
+      .update(runs)
+      .set({
+        status: "Abandoned",
+        endedAt: new Date(),
+        operationalTerminal: {
+          ...terminal,
+          baselineGeneration: null,
+          resultRevision: null,
+          evidenceIds: [],
+        },
+      })
+      .where(
+        and(
+          eq(runs.id, runId),
+          inArray(runs.status, ["Running", "NeedsInput"]),
+        ),
+      );
+  });
+}
+
 async function reserveContextFixture(
   roleId: string,
   actions: readonly CompanyAction[],
@@ -11514,6 +11567,8 @@ describe("observation guards, source-bound replacement and execution handoff", (
       ["assignments:read"],
       [{ kind: "health", required: true, referenceId: null }],
     );
+
+    retireSimulatedRunAfterTest(appointment.runId);
     const [run] = await database.db
       .select({ contract: runs.resultContract })
       .from(runs)
@@ -12586,6 +12641,8 @@ describe("observation guards, source-bound replacement and execution handoff", (
           : "rah:observer-adoption-waiting",
         ["assignments:read"],
       );
+
+      retireSimulatedRunAfterTest(appointment.runId);
       const { hostId, hosts, fake } = await fakeExecutionHosts(db);
       const placement = await db.transaction((tx) =>
         mintAssignment(tx, {
@@ -12697,6 +12754,8 @@ describe("observation guards, source-bound replacement and execution handoff", (
       "assignments:read",
       "assignments:update",
     ]);
+
+    retireSimulatedRunAfterTest(appointment.runId);
     const grants = await createCompanyGrants(db, administratorId, {
       principalKind: "agent",
       principalId: roleId,
@@ -14728,6 +14787,7 @@ async function qualifyCompanyCooperation(
            ORDER BY event.id`,
           [[pendingNestedRunId, parkedGraphRunId, pendingGraphRunId]],
         );
+
       await runReconcileSweep({ db, executionHosts: hosts });
       const { rows: events } = await terminalEvents();
       const [queuedOrphan] = await db
