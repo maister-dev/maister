@@ -117,6 +117,7 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
     const selected = page
       .getByTestId("selected-result")
       .filter({ visible: true });
+
     await expect(selected).toBeFocused();
     await expect(page).toHaveURL(/node=review/);
     await expect(selected).toContainText(fx.gateId);
@@ -130,6 +131,7 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
     await expect(graph.getByTestId("evidence-node")).toHaveCount(1);
     await expect(graph.getByTestId("evidence-node")).toContainText(fx.gateId);
     const graphQuery = new URL(page.url()).searchParams;
+
     expect(Object.fromEntries(graphQuery)).toEqual({
       inspector: "closed",
       wb: "evidence",
@@ -433,6 +435,7 @@ test("legacy Flow without a graph keeps its step control and verified request ch
       commandId: "command",
     },
   };
+
   await withE2EDb(async (pool) => {
     await pool.query(
       "INSERT INTO runs(id,project_id,run_kind,status,flow_version,current_step_id) SELECT $1,project_id,'flow','Running','legacy','work' FROM runs WHERE id=$2",
@@ -450,6 +453,7 @@ test("legacy Flow without a graph keeps its step control and verified request ch
   try {
     await page.goto(`/runs/${runId}?flow=fullscreen&inspector=closed`);
     const shell = page.getByTestId("run-shell").filter({ visible: true });
+
     await expect(shell.getByTestId("flow-run-graph-view")).toHaveCount(0);
     await expect(
       shell
@@ -485,6 +489,7 @@ test("legacy Flow without a graph keeps its step control and verified request ch
     });
     await page.goto(`/runs/${runId}?inspector=closed`);
     const cards = shell.getByTestId("pending-input-card");
+
     await expect(
       cards
         .filter({ hasText: "Generic permission" })

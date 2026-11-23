@@ -680,6 +680,7 @@ test("a live cursor change moves interrupt eligibility while the selected node s
 }) => {
   const fx = loadM22Fixture();
   const runId = randomUUID();
+
   await withE2EDb((pool) =>
     pool.query(
       "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,current_step_id) SELECT $1,project_id,flow_id,'flow','Running',flow_version,$3 FROM runs WHERE id=$2",
@@ -692,6 +693,7 @@ test("a live cursor change moves interrupt eligibility while the selected node s
     const action = shell
       .getByTestId("flow-run-selected-node")
       .getByRole("button", { name: "Stop current step" });
+
     await expect(action).toBeVisible();
     await withE2EDb((pool) =>
       pool.query("UPDATE runs SET current_step_id=$2 WHERE id=$1", [
@@ -716,6 +718,7 @@ test("Git sync progress stays reachable when Stop run is the only lifecycle acti
   page,
 }) => {
   const fx = loadM22Fixture();
+
   await page.goto(`/runs/${fx.runId}?inspector=closed`);
   const shell = page.getByTestId("run-shell").filter({ visible: true });
   const stop = { name: "Stop run", exact: true };
@@ -761,17 +764,17 @@ test.describe("touch and compact layout", () => {
       await expect
         .poll(() =>
           header.evaluate((el) => {
-            const badge = el
-              .querySelector('[data-testid="execution-policy-badge"]')!
-              .getBoundingClientRect();
-            const button = el
-              .querySelector(
-                '[data-testid="workbench-lifecycle-actions"] button',
-              )!
-              .getBoundingClientRect();
-            return Math.abs(
-              badge.y + badge.height / 2 - button.y - button.height / 2,
-            );
+            const centers = [
+              '[data-testid="run-header-status"]',
+              '[data-testid="execution-policy-badge"]',
+              '[data-testid="workbench-lifecycle-actions"] button',
+            ].map((selector) => {
+              const rect = el.querySelector(selector)!.getBoundingClientRect();
+
+              return rect.y + rect.height / 2;
+            });
+
+            return Math.max(...centers) - Math.min(...centers);
           }),
         )
         .toBeLessThan(3);
@@ -813,6 +816,7 @@ test.describe("touch and compact layout", () => {
             ? "About stopping the current step"
             : "Об остановке текущего шага",
       });
+
       await help.tap();
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.keyboard.press("Escape");
@@ -844,6 +848,7 @@ test("expands the live canvas and preserves history and focus @flow-controls", a
   await expect(canvas).toBeVisible();
   const inline = await canvas.boundingBox();
   const originalCanvas = await canvas.elementHandle();
+
   await enter.scrollIntoViewIfNeeded();
   const initialScroll = await page.evaluate(() => window.scrollY);
 
@@ -865,6 +870,7 @@ test("expands the live canvas and preserves history and focus @flow-controls", a
     await canvas.evaluate((el, original) => el === original, originalCanvas),
   ).toBe(true);
   const closeControl = graph.getByRole("button", { name: "Close fullscreen" });
+
   await expect(closeControl).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect
@@ -872,6 +878,7 @@ test("expands the live canvas and preserves history and focus @flow-controls", a
     .toBe(true);
   const area = await canvas.boundingBox();
   const controls = await closeControl.boundingBox();
+
   expect(area!.height).toBeGreaterThan(1000 - controls!.height - 30);
   await testInfo.attach("graph-bounds", {
     body: JSON.stringify({
