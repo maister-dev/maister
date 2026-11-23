@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { removeWorkspaceExecutionSchema } from "./_fixtures/legacy-host-state";
 import {
   HostKeyConflictError,
   HostStateUnwritableError,
@@ -328,73 +329,77 @@ describe("execution-host identity", () => {
     migrated.close();
   });
 
-  it.each([15,16])("CBS-02 upgrades populated v%s workspaces without inventing company ownership and retains new company owners", async (version) => {
-    const root = await tempRoot();
-    const stateDir = join(root, "s");
-    const initial = openHostState({ stateDir });
-    const legacy = {
-      id: "ws_legacy",
-      runId: "legacy-run",
-      projectSlug: "demo",
-      kind: "directory",
-      path: "/tmp/legacy",
-      realPath: "/tmp/legacy",
-      repoPath: null,
-      runDir: "/tmp/runtime/demo",
-      contextMounts: null,
-      adoptedAt: "2026-11-06T00:00:00.000Z",
-      releasedAt: null,
-    };
-
-    initial.insertWorkspace(legacy);
-    initial.close();
-    const prior = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
-
-    prior.exec("ALTER TABLE workspaces DROP COLUMN company_id");
-    if (version === 15) prior.exec("DROP TABLE session_process_obligations");
-    prior.exec(`PRAGMA user_version = ${version}`);
-    prior.close();
-    const migrated = openHostState({ stateDir });
-
-    expect(migrated.getWorkspace(legacy.id)).toEqual(legacy);
-    const company = {
-      ...legacy,
-      id: "ws_company",
-      runId: "company-run",
-      projectSlug: "_company",
-      companyId: "company-1",
-    };
-
-    migrated.insertWorkspace(company);
-    expect(() =>
-      migrated.insertWorkspace({
-        ...company,
-        id: "ws_wrong_namespace",
+  it.each([15, 16])(
+    "CBS-02 upgrades populated v%s workspaces without inventing company ownership and retains new company owners",
+    async (version) => {
+      const root = await tempRoot();
+      const stateDir = join(root, "s");
+      const initial = openHostState({ stateDir });
+      const legacy = {
+        id: "ws_legacy",
+        runId: "legacy-run",
         projectSlug: "demo",
-      }),
-    ).toThrow(/CHECK constraint/);
-    expect(() =>
-      migrated.insertWorkspace({
-        ...company,
-        id: "ws_wrong_kind",
-        kind: "repo_checkout",
-        repoPath: "/tmp/repository",
-      }),
-    ).toThrow(/CHECK constraint/);
-    expect(() =>
-      migrated.insertWorkspace({
-        ...company,
-        id: "ws_missing_owner",
-        companyId: null,
-      }),
-    ).toThrow(/CHECK constraint/);
-    migrated.close();
-    const reopened = openHostState({ stateDir });
+        kind: "directory",
+        path: "/tmp/legacy",
+        realPath: "/tmp/legacy",
+        repoPath: null,
+        runDir: "/tmp/runtime/demo",
+        contextMounts: null,
+        adoptedAt: "2026-11-06T00:00:00.000Z",
+        releasedAt: null,
+      };
 
-    expect(reopened.getWorkspace(legacy.id)).toEqual(legacy);
-    expect(reopened.getWorkspace(company.id)).toEqual(company);
-    reopened.close();
-  });
+      initial.insertWorkspace(legacy);
+      initial.close();
+      const prior = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+      removeWorkspaceExecutionSchema(prior);
+      prior.exec("ALTER TABLE workspaces DROP COLUMN company_id");
+      if (version === 15) prior.exec("DROP TABLE session_process_obligations");
+      prior.exec(`PRAGMA user_version = ${version}`);
+      prior.close();
+      const migrated = openHostState({ stateDir });
+
+      expect(migrated.getWorkspace(legacy.id)).toEqual(legacy);
+      const company = {
+        ...legacy,
+        id: "ws_company",
+        runId: "company-run",
+        projectSlug: "_company",
+        companyId: "company-1",
+      };
+
+      migrated.insertWorkspace(company);
+      expect(() =>
+        migrated.insertWorkspace({
+          ...company,
+          id: "ws_wrong_namespace",
+          projectSlug: "demo",
+        }),
+      ).toThrow(/CHECK constraint/);
+      expect(() =>
+        migrated.insertWorkspace({
+          ...company,
+          id: "ws_wrong_kind",
+          kind: "repo_checkout",
+          repoPath: "/tmp/repository",
+        }),
+      ).toThrow(/CHECK constraint/);
+      expect(() =>
+        migrated.insertWorkspace({
+          ...company,
+          id: "ws_missing_owner",
+          companyId: null,
+        }),
+      ).toThrow(/CHECK constraint/);
+      migrated.close();
+      const reopened = openHostState({ stateDir });
+
+      expect(reopened.getWorkspace(legacy.id)).toEqual(legacy);
+      expect(reopened.getWorkspace(company.id)).toEqual(company);
+      reopened.close();
+    },
+  );
 
   it("H9: a fresh store starts at the current user_version and reopens without migrating", async () => {
     const root = await tempRoot();
@@ -413,6 +418,132 @@ describe("execution-host identity", () => {
 
     expect(reopened.hostKey).toBe(state.hostKey);
     reopened.close();
+  });
+
+  it("C-03 rolls back an interrupted v18 expansion and reopens the same host, workspace, cursor and accepted receipt", async () => {
+    const stateDir = join(await tempRoot(), "state");
+    const original = openHostState({ stateDir });
+    const receipt = processReceipt();
+    const workspaceId = "ws_" + randomUUID().replace(/-/g, "");
+    const workspace = {
+      companyId: null,
+      id: workspaceId,
+      runId: receipt.runId,
+      projectSlug: "stage-c",
+      kind: "directory",
+      path: "/tmp/workspace",
+      realPath: "/tmp/workspace",
+      repoPath: null,
+      runDir: "/tmp/run",
+      contextMounts: null,
+      adoptedAt: receipt.receivedAt,
+      releasedAt: null,
+    };
+
+    original.setFence(receipt.runId, receipt.assignmentId!, receipt.epoch);
+    original.insertWorkspace(workspace);
+    original.putReceipt(receipt, { kind: "new_work" });
+    const stream = original.nextRuntimeEventPosition();
+    const hostKey = original.hostKey;
+    const fence = original.getFence(receipt.runId);
+    const saved = original.getReceipt(receipt.commandId);
+    const savedWorkspace = original.getWorkspace(workspaceId);
+    const executionState = {
+      generation: 1,
+      inputDigest: null,
+      materializationGeneration: 0,
+      materializationDigest: null,
+      operationFence: 0,
+      operationClaimId: null,
+    };
+
+    expect(original.getWorkspaceExecutionState(workspaceId)).toEqual(
+      executionState,
+    );
+    original.close();
+    const file = join(stateDir, HOST_STATE_FILE);
+    const legacy = new DatabaseSync(file);
+
+    removeWorkspaceExecutionSchema(legacy);
+    legacy.exec(`
+      PRAGMA user_version = 18;
+      CREATE TRIGGER seed_workspace_execution_state AFTER INSERT ON workspaces
+        BEGIN SELECT 1; END;
+    `);
+    legacy.close();
+
+    expect(() => openHostState({ stateDir }).close()).toThrow(
+      HostStateUnwritableError,
+    );
+    const interrupted = new DatabaseSync(file);
+
+    expect(interrupted.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: 18,
+    });
+    expect(
+      interrupted
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name='workspace_execution_state'",
+        )
+        .get(),
+    ).toBeUndefined();
+    interrupted.exec("DROP TRIGGER seed_workspace_execution_state");
+    interrupted.close();
+
+    for (let opening = 0; opening < 2; opening++) {
+      const upgraded = openHostState({ stateDir });
+      try {
+        expect(upgraded.hostKey).toBe(hostKey);
+        expect(upgraded.getFence(receipt.runId)).toEqual(fence);
+        expect(upgraded.getWorkspace(workspaceId)).toEqual(savedWorkspace);
+        expect(upgraded.nextRuntimeEventPosition()).toEqual(stream);
+        expect(upgraded.getReceipt(receipt.commandId)).toEqual(saved);
+        expect(upgraded.getWorkspaceExecutionState(workspaceId)).toEqual(
+          executionState,
+        );
+      } finally {
+        upgraded.close();
+      }
+    }
+    const upgradedFile = new DatabaseSync(file);
+    expect(upgradedFile.prepare("PRAGMA user_version").get()).toEqual({
+      user_version: 19,
+    });
+    upgradedFile.close();
+  });
+
+  it("C-03 refuses a newer unsupported store before enabling WAL or creating tables", async () => {
+    const stateDir = await tempRoot();
+    const file = join(stateDir, HOST_STATE_FILE);
+    const newer = new DatabaseSync(file);
+
+    newer.exec(
+      "CREATE TABLE newer_schema (data TEXT); INSERT INTO newer_schema VALUES ('retained'); PRAGMA user_version=65535;",
+    );
+    newer.close();
+    expect(() => openHostState({ stateDir }).close()).toThrow(
+      HostStateUnwritableError,
+    );
+
+    const inspected = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect(inspected.prepare("PRAGMA user_version").get()).toEqual({
+        user_version: 65535,
+      });
+      expect(inspected.prepare("PRAGMA journal_mode").get()).toEqual({
+        journal_mode: "delete",
+      });
+      expect(inspected.prepare("SELECT data FROM newer_schema").get()).toEqual({
+        data: "retained",
+      });
+      expect(
+        inspected
+          .prepare("SELECT name FROM sqlite_master WHERE name='host_identity'")
+          .get(),
+      ).toBeUndefined();
+    } finally {
+      inspected.close();
+    }
   });
 });
 
@@ -526,6 +657,8 @@ describe("durable session process obligations", () => {
           "SELECT * FROM runtime_event_outbox ORDER BY sequence_sort_key",
         )
         .all();
+
+      removeWorkspaceExecutionSchema(legacy);
 
       legacy.exec(
         "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; PRAGMA user_version=15;",
@@ -720,6 +853,8 @@ describe("durable session process obligations", () => {
     state.close();
     const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
 
+    removeWorkspaceExecutionSchema(legacy);
+
     legacy.exec(
       "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; DELETE FROM command_receipts; PRAGMA user_version=15;",
     );
@@ -891,6 +1026,8 @@ describe("durable session process obligations", () => {
     state.closeProducerWallet(contradicted.commandId);
     state.close();
     const legacy = new DatabaseSync(join(stateDir, HOST_STATE_FILE));
+
+    removeWorkspaceExecutionSchema(legacy);
 
     legacy.exec(
       "ALTER TABLE workspaces DROP COLUMN company_id; DROP TABLE session_process_obligations; PRAGMA user_version=15;",

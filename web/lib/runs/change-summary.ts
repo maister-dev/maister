@@ -9,6 +9,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
 import { MaisterError } from "@/lib/errors";
 import {
   isRunDiffScope,
@@ -208,7 +209,7 @@ async function loadWorkspaceProject(
     throw new MaisterError("PRECONDITION", `project not found: ${run.id}`);
   }
 
-  return { workspace, project };
+  return { workspace: requireLegacyWorkspacePaths(workspace), project };
 }
 
 async function loadScratch(

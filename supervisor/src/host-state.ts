@@ -124,7 +124,7 @@ export type ReceiptRetirementOutcome =
     };
 export const EXECUTION_HOST_PROTOCOL_VERSION = 1;
 // `PRAGMA user_version` of the state file; bumped with every migration below.
-export const HOST_STATE_SCHEMA_VERSION = 18;
+export const HOST_STATE_SCHEMA_VERSION = 19;
 
 /** Native retirement survives registry loss. Released identities share the receipt tombstone's permanent retention and cannot reactivate. */
 export type SessionProcessObligation = Readonly<{
@@ -258,6 +258,15 @@ export type WorkspaceWaitWitness = {
   generation: number;
   headSha: string;
 };
+
+export type WorkspaceExecutionState = Readonly<{
+  generation: number;
+  inputDigest: string | null;
+  materializationGeneration: number;
+  materializationDigest: string | null;
+  operationFence: number;
+  operationClaimId: string | null;
+}>;
 
 // This row is deliberately supervisor-private. `privatePath` is never put in
 // an event, response, or manager-owned record; callers use only `id`.
@@ -479,6 +488,7 @@ export type HostState = {
   ): ReceiptRetirementOutcome;
   findWorkspaceByRealPath(runId: string, realPath: string): WorkspaceRow | null;
   getWorkspace(id: string): WorkspaceRow | null;
+  getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -655,6 +665,26 @@ const WORKSPACE_WAIT_SCHEMA = `CREATE TABLE IF NOT EXISTS workspace_wait_witness
   head_sha TEXT NOT NULL
 );`;
 
+const WORKSPACE_EXECUTION_SCHEMA = `
+CREATE TABLE workspace_execution_state (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  generation INTEGER NOT NULL DEFAULT 1 CHECK (typeof(generation) = 'integer' AND generation > 0),
+  input_digest TEXT CHECK (input_digest IS NULL OR
+    (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*')),
+  materialization_generation INTEGER NOT NULL DEFAULT 0 CHECK (typeof(materialization_generation) = 'integer' AND materialization_generation >= 0),
+  materialization_digest TEXT,
+  operation_fence INTEGER NOT NULL DEFAULT 0 CHECK (typeof(operation_fence) = 'integer' AND operation_fence >= 0),
+  operation_claim_id TEXT,
+  CHECK ((materialization_generation = 0 AND materialization_digest IS NULL)
+    OR (materialization_generation > 0 AND materialization_digest IS NOT NULL
+      AND length(materialization_digest) = 64 AND materialization_digest NOT GLOB '*[^0-9a-f]*')),
+  CHECK (operation_claim_id IS NULL OR (operation_fence > 0 AND length(operation_claim_id) = 36))
+);
+INSERT INTO workspace_execution_state(workspace_id) SELECT id FROM workspaces;
+CREATE TRIGGER seed_workspace_execution_state AFTER INSERT ON workspaces
+  BEGIN INSERT INTO workspace_execution_state(workspace_id) VALUES (NEW.id); END;
+`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_identity (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -670,6 +700,7 @@ CREATE TABLE IF NOT EXISTS run_fences (
 CREATE TABLE IF NOT EXISTS workspaces (${WORKSPACES_COLUMNS},company_id TEXT CHECK ((company_id IS NULL AND project_slug <> '_company') OR (company_id IS NOT NULL AND length(company_id) BETWEEN 1 AND 128 AND project_slug='_company' AND kind='directory' AND repo_path IS NULL AND context_mounts IS NULL)));
 ${WORKSPACES_ACTIVE_INDEX};
 ${WORKSPACE_WAIT_SCHEMA}
+${WORKSPACE_EXECUTION_SCHEMA}
 CREATE TABLE IF NOT EXISTS command_receipts (
   command_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -1038,6 +1069,7 @@ COMMIT;
 
 function applySchema(
   db: DatabaseSync,
+  userVersion: number,
   context: HostProcessContext,
   observedAt: string,
 ): void {
@@ -1049,43 +1081,39 @@ function applySchema(
       .get() === undefined;
 
   if (fresh) {
-    db.exec(SCHEMA);
-    db.exec(`PRAGMA user_version = ${HOST_STATE_SCHEMA_VERSION}`);
+    db.exec(
+      `BEGIN IMMEDIATE; ${SCHEMA} PRAGMA user_version = ${HOST_STATE_SCHEMA_VERSION}; COMMIT;`,
+    );
 
     return;
   }
 
-  const { user_version } = db.prepare("PRAGMA user_version").get() as {
-    user_version: number;
-  };
-
-  if (Number(user_version) > HOST_STATE_SCHEMA_VERSION) {
-    throw new HostRuntimeEventError(
-      "stream_corrupt",
-      "host state schema is newer than this supervisor",
-    );
-  }
-  if (Number(user_version) < 1) db.exec(MIGRATE_V0_TO_V1);
-  if (Number(user_version) < 2) db.exec(MIGRATE_V1_TO_V2);
-  if (Number(user_version) < 3) db.exec(MIGRATE_V2_TO_V3);
-  if (Number(user_version) < 4) db.exec(MIGRATE_V3_TO_V4);
-  if (Number(user_version) < 5) db.exec(MIGRATE_V4_TO_V5);
-  if (Number(user_version) < 6) db.exec(MIGRATE_V5_TO_V6);
-  if (Number(user_version) < 7) db.exec(MIGRATE_V6_TO_V7);
-  if (Number(user_version) < 8) db.exec(MIGRATE_V7_TO_V8);
-  if (Number(user_version) < 9) db.exec(MIGRATE_V8_TO_V9);
-  if (Number(user_version) < 10) db.exec(MIGRATE_V9_TO_V10);
-  if (Number(user_version) < 11) db.exec(MIGRATE_V10_TO_V11);
-  if (Number(user_version) < 12) db.exec(MIGRATE_V11_TO_V12);
-  if (Number(user_version) < 13) db.exec(MIGRATE_V12_TO_V13);
-  if (Number(user_version) < 14) migrateV13ToV14(db);
-  if (Number(user_version) < 15) db.exec(MIGRATE_V14_TO_V15);
-  if (Number(user_version) < 16) migrateV15ToV16(db, context, observedAt);
-  if (Number(user_version) < 17) db.exec(MIGRATE_V16_TO_V17);
-  if (Number(user_version) < 18)
+  if (userVersion < 1) db.exec(MIGRATE_V0_TO_V1);
+  if (userVersion < 2) db.exec(MIGRATE_V1_TO_V2);
+  if (userVersion < 3) db.exec(MIGRATE_V2_TO_V3);
+  if (userVersion < 4) db.exec(MIGRATE_V3_TO_V4);
+  if (userVersion < 5) db.exec(MIGRATE_V4_TO_V5);
+  if (userVersion < 6) db.exec(MIGRATE_V5_TO_V6);
+  if (userVersion < 7) db.exec(MIGRATE_V6_TO_V7);
+  if (userVersion < 8) db.exec(MIGRATE_V7_TO_V8);
+  if (userVersion < 9) db.exec(MIGRATE_V8_TO_V9);
+  if (userVersion < 10) db.exec(MIGRATE_V9_TO_V10);
+  if (userVersion < 11) db.exec(MIGRATE_V10_TO_V11);
+  if (userVersion < 12) db.exec(MIGRATE_V11_TO_V12);
+  if (userVersion < 13) db.exec(MIGRATE_V12_TO_V13);
+  if (userVersion < 14) migrateV13ToV14(db);
+  if (userVersion < 15) db.exec(MIGRATE_V14_TO_V15);
+  if (userVersion < 16) migrateV15ToV16(db, context, observedAt);
+  if (userVersion < 17) db.exec(MIGRATE_V16_TO_V17);
+  if (userVersion < 18)
     db.exec(
       `BEGIN IMMEDIATE; ${WORKSPACE_WAIT_SCHEMA} PRAGMA user_version = 18; COMMIT;`,
     );
+  if (userVersion < 19) {
+    db.exec(
+      `BEGIN IMMEDIATE; ${WORKSPACE_EXECUTION_SCHEMA} PRAGMA user_version = 19; COMMIT;`,
+    );
+  }
 }
 
 export function openHostState(opts: OpenHostStateOptions = {}): HostState {
@@ -1115,6 +1143,18 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       stateDir ? path.join(stateDir, HOST_STATE_FILE) : ":memory:",
     );
     openedDatabase = db;
+    const { user_version: userVersion } = db
+      .prepare("PRAGMA user_version")
+      .get() as {
+      user_version: number;
+    };
+
+    if (userVersion > HOST_STATE_SCHEMA_VERSION) {
+      throw new HostRuntimeEventError(
+        "stream_corrupt",
+        "host state schema is newer than this supervisor",
+      );
+    }
     if (stateDir) {
       db.exec("PRAGMA journal_mode = WAL");
       // A command receipt and its durable event are a recovery boundary; NORMAL
@@ -1122,7 +1162,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       // a power loss. Stage B chooses correctness over the local write latency.
       db.exec("PRAGMA synchronous = FULL");
     }
-    applySchema(db, processContext, now().toISOString());
+    applySchema(db, userVersion, processContext, now().toISOString());
+    if (userVersion > 0 && userVersion < HOST_STATE_SCHEMA_VERSION) {
+      log?.info(
+        { from: userVersion, to: HOST_STATE_SCHEMA_VERSION },
+        "host state schema upgraded",
+      );
+    }
     db.exec("BEGIN IMMEDIATE");
     try {
       seedMissingSessionProcesses(db, processContext, now().toISOString());
@@ -2238,6 +2284,19 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
       const row = db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
 
       return row ? toWorkspaceRow(row) : null;
+    },
+    getWorkspaceExecutionState(id) {
+      const row = db
+        .prepare(
+          `SELECT generation, input_digest AS inputDigest,
+          materialization_generation AS materializationGeneration,
+          materialization_digest AS materializationDigest,
+          operation_fence AS operationFence, operation_claim_id AS operationClaimId
+         FROM workspace_execution_state WHERE workspace_id = ?`,
+        )
+        .get(id) as WorkspaceExecutionState | undefined;
+
+      return row ?? null;
     },
     getWorkspaceWait(waitId) {
       return (

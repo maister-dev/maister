@@ -262,17 +262,19 @@ permitted; guarded forward corrections and a real run-delete race enforce this.
 
 ## Stage C workspace ownership migration (Designed, ADR-218)
 
-The G1 PostgreSQL expand migration adds nullable host ownership to
-`workspaces` and permits absent legacy path columns on addressed rows.
-The existing `id` remains the logical workspace identity. The persisted
-form has the following constraints.
+PostgreSQL migration `0370_stage_c_workspace_ownership` adds host ownership
+to `workspaces` and permits absent path columns on addressed rows. The
+existing `id` remains the logical identity. The migration preserves legacy
+rows without guessing their host or adopting them. Legacy filesystem
+operations require their actual local paths. An addressed row cannot enter
+those operations with a substituted path.
 
 | Form | Required fields and constraints |
 |---|---|
 | Legacy | Existing path and owner columns retain their original bytes and associations. Legacy path uniqueness remains over non-null values. Retirement does not remove associations. |
-| Addressed preparing | Stable host FK with restrictive deletion, logical workspace ID, preparation owner, pinned input digest and generation. Handle remains absent until the matching receipt applies. No new live path value. |
-| Addressed ready or retained | Same owner and generation plus supervisor handle. Unique live pair `(execution_host_id, execution_workspace_id)`. Shared children reference the root workspace row and its host, with no independent claim on the handle. |
-| Ambiguous legacy | Keep the original row and a reconciliation finding. Adoption, publication and disposal stay gated until ownership is independently verified. |
+| Addressed preparing | The `host_owned` form has a restricted host FK, a positive generation and a pinned input digest. A composite FK ties its preparation assignment to the same Run and host. At most one addressed workspace per Run is live. Both path columns and the unassigned handle are null. |
+| Addressed ready or retained | Same owner and generation plus supervisor handle. Unique live pair `(execution_host_id, execution_workspace_id)`. Shared children reference a root on the same host and hold no independent handle. |
+| Ambiguous legacy | The migration preserves the original row and sets `legacy_host_adoption_issue=owner_unverified` when the current assignment has no exact handle or other host evidence conflicts. This diagnostic does not establish physical ownership. Addressed adoption, publication and disposal require an independently verified owner. |
 
 Keep the existing unique active assignment per Run. An active execution
 command carries the current assignment and epoch. A terminal lifecycle
@@ -282,13 +284,18 @@ generation and operation number. An exclusive owner discriminator prevents
 accepting a workspace operation under a session-only command kind. Use
 restrictive owner references and apply result CAS before releasing the claim.
 
-The v18 SQLite store upgrades inside one transaction. Extend its workspace
-and command state to retain generation and operation claim high-water marks.
-Persist the accepted request digest before physical effects and seal the
-terminal receipt with its outbox event in one SQLite transaction. Preserve
-the original key, live handles, sequence, accepted/uncertain receipt states
-and retirement tombstones. Reopening an upgraded store resolves the
-same identities. A newer unsupported schema refuses on startup.
+SQLite schema 19 upgrades a v18 store in one transaction. A private
+`workspace_execution_state` row tracks generation, input and materialization
+digests, and the operation claim and fence. The migration seeds the initial
+metadata for existing workspace handles without asserting a verified input.
+New workspaces receive the same initial state. The migration preserves the
+host key, run fences, handles, stream position, receipts and tombstones. A
+newer unsupported schema refuses before changing SQLite journal mode.
+
+The addressed command writer will persist the accepted request digest before
+physical effects and seal its terminal receipt with the corresponding outbox
+event in one SQLite transaction. The legacy receipt and event formats continue
+to use their existing journal.
 
 G2 replaces the singleton active-host index after manager writers support
 addressed routing. Host key uniqueness remains global. The active default

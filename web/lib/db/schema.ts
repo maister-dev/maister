@@ -456,6 +456,18 @@ export const projects = pgTable(
     // maister.yaml on disk; the manifest is optional at manual registration).
     maisterYamlPath: text("maister_yaml_path"),
     defaultRunnerId: text("default_runner_id"),
+    defaultExecutionHostId: text("default_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionHostPreferenceRevision: bigint(
+      "execution_host_preference_revision",
+      {
+        mode: "number",
+      },
+    )
+      .notNull()
+      .default(1),
     // ADR-141 (migration 0106): branch-sync defaults. `sync_strategy_default` is
     // the project's default rebase|merge strategy; `sync_runner_id` is the resolver
     // runner (nullable FK, SET NULL on runner delete — mirrors
@@ -512,6 +524,10 @@ export const projects = pgTable(
     check(
       "projects_config_export_revision_check",
       sql`${t.configExportRevision} >= 0`,
+    ),
+    check(
+      "projects_execution_host_preference_revision_check",
+      sql`${t.executionHostPreferenceRevision} BETWEEN 1 AND 9007199254740991`,
     ),
   ],
 );
@@ -3072,6 +3088,11 @@ export const executionAssignments = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
   },
   (t) => ({
+    workspaceOwner: unique("execution_assignments_workspace_owner_uq").on(
+      t.id,
+      t.runId,
+      t.executionHostId,
+    ),
     // E-EH-02: a mint never reuses an epoch (race backstop, 23505 → CONFLICT).
     uniqRunEpoch: unique("execution_assignments_run_epoch_uq").on(
       t.runId,
@@ -3530,6 +3551,20 @@ export const taskLaunchIntents = pgTable(
     settingsSnapshot: jsonb("settings_snapshot")
       .$type<TaskLaunchSettingsSnapshot>()
       .notNull(),
+    requestedExecutionHostId: text("requested_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    effectiveExecutionHostId: text("effective_execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionHostProvenance: text("execution_host_provenance", {
+      enum: ["explicit", "projectDefault", "instanceDefault", "sharedRoot"],
+    }),
+    executionHostEligibilityRevision: text(
+      "execution_host_eligibility_revision",
+    ),
     basis: jsonb("basis").$type<TaskLaunchBasis>().notNull(),
     reservationLane: text("reservation_lane", {
       enum: ["ordinary", "concurrent"],
@@ -3586,6 +3621,20 @@ export const taskLaunchIntents = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    hostSelectionShape: check(
+      "task_launch_intents_host_selection_shape_check",
+      sql`(
+        (${t.requestedExecutionHostId} IS NULL AND ${t.effectiveExecutionHostId} IS NULL
+          AND ${t.executionHostProvenance} IS NULL AND ${t.executionHostEligibilityRevision} IS NULL)
+        OR
+        (${t.effectiveExecutionHostId} IS NOT NULL
+          AND ${t.executionHostEligibilityRevision} ~ '^[0-9a-f]{64}$'
+          AND ((${t.executionHostProvenance} = 'explicit'
+              AND ${t.requestedExecutionHostId} = ${t.effectiveExecutionHostId})
+            OR (${t.executionHostProvenance} IN ('projectDefault', 'instanceDefault', 'sharedRoot')
+              AND ${t.requestedExecutionHostId} IS NULL)))
+      ) IS TRUE`,
+    ),
     requestKeyUnique: unique("task_launch_intents_request_key_uq").on(
       t.principalKind,
       t.principalId,
@@ -5953,8 +6002,25 @@ export const workspaces = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     branch: text("branch").notNull(),
-    worktreePath: text("worktree_path").notNull().unique(),
-    parentRepoPath: text("parent_repo_path").notNull(),
+    worktreePath: text("worktree_path").unique(),
+    parentRepoPath: text("parent_repo_path"),
+    ownershipKind: text("ownership_kind", {
+      enum: ["legacy_path", "host_owned"],
+    })
+      .notNull()
+      .default("legacy_path"),
+    executionHostId: text("execution_host_id").references(
+      () => executionHosts.id,
+      { onDelete: "restrict" },
+    ),
+    executionWorkspaceId: text("execution_workspace_id"),
+    preparationAssignmentId: text("preparation_assignment_id"),
+    workspaceGeneration: integer("workspace_generation"),
+    workspaceInputDigest: text("workspace_input_digest"),
+    rootWorkspaceId: text("root_workspace_id"),
+    legacyHostAdoptionIssue: text("legacy_host_adoption_issue", {
+      enum: ["owner_unverified"],
+    }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -6037,6 +6103,52 @@ export const workspaces = pgTable(
     }>(),
   },
   (t) => ({
+    hostScopedIdentity: unique("workspaces_host_scoped_identity_uq").on(
+      t.id,
+      t.executionHostId,
+    ),
+    activeHostHandle: uniqueIndex("workspaces_active_host_handle_uq")
+      .on(t.executionHostId, t.executionWorkspaceId)
+      .where(
+        sql`${t.removedAt} IS NULL AND ${t.executionWorkspaceId} IS NOT NULL`,
+      ),
+    activeHostRun: uniqueIndex("workspaces_active_host_run_uq")
+      .on(t.runId)
+      .where(sql`${t.removedAt} IS NULL AND ${t.ownershipKind} = 'host_owned'`),
+    preparationAssignment: foreignKey({
+      name: "workspaces_preparation_assignment_fk",
+      columns: [t.preparationAssignmentId, t.runId, t.executionHostId],
+      foreignColumns: [
+        executionAssignments.id,
+        executionAssignments.runId,
+        executionAssignments.executionHostId,
+      ],
+    }),
+    rootWorkspace: foreignKey({
+      name: "workspaces_root_host_fk",
+      columns: [t.rootWorkspaceId, t.executionHostId],
+      foreignColumns: [t.id, t.executionHostId],
+    }),
+    hostOwnershipShape: check(
+      "workspaces_host_ownership_shape_check",
+      sql`(
+        (${t.ownershipKind} = 'legacy_path'
+          AND ${t.worktreePath} IS NOT NULL AND ${t.parentRepoPath} IS NOT NULL
+          AND ${t.executionHostId} IS NULL AND ${t.executionWorkspaceId} IS NULL
+          AND ${t.preparationAssignmentId} IS NULL AND ${t.workspaceGeneration} IS NULL
+          AND ${t.workspaceInputDigest} IS NULL AND ${t.rootWorkspaceId} IS NULL
+          AND (${t.legacyHostAdoptionIssue} IS NULL OR ${t.legacyHostAdoptionIssue} = 'owner_unverified'))
+        OR
+        (${t.ownershipKind} = 'host_owned'
+          AND ${t.worktreePath} IS NULL AND ${t.parentRepoPath} IS NULL
+          AND ${t.executionHostId} IS NOT NULL AND ${t.preparationAssignmentId} IS NOT NULL
+          AND ${t.legacyHostAdoptionIssue} IS NULL
+          AND ${t.workspaceGeneration} > 0 AND ${t.workspaceInputDigest} ~ '^[0-9a-f]{64}$'
+          AND (${t.executionWorkspaceId} IS NULL OR ${t.executionWorkspaceId} ~ '^ws_[0-9a-f]{32}$')
+          AND (${t.rootWorkspaceId} IS NULL
+            OR (${t.rootWorkspaceId} <> ${t.id} AND ${t.executionWorkspaceId} IS NULL)))
+      ) IS TRUE`,
+    ),
     publicationOwner: unique("workspaces_publication_owner_uq").on(
       t.projectId,
       t.runId,

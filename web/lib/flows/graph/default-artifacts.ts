@@ -27,7 +27,9 @@ const log = pino({
 // where the worktree path is a temp dir with no git).
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-async function safeBaseCommit(workspace: WorkspaceRow): Promise<string> {
+async function safeBaseCommit(
+  workspace: Pick<WorkspaceRow, "branch"> & { worktreePath: string },
+): Promise<string> {
   try {
     return await resolveBaseRef({
       worktreePath: workspace.worktreePath,
@@ -43,7 +45,9 @@ async function safeBaseCommit(workspace: WorkspaceRow): Promise<string> {
 // headRef never drifts when the branch advances (PR2/F3). Falls back to the
 // mutable branch name when git is unavailable (e.g. integration test
 // containers), and WARNs so the degraded-git record is traceable.
-async function safeHeadRef(workspace: WorkspaceRow): Promise<string> {
+async function safeHeadRef(
+  workspace: Pick<WorkspaceRow, "branch"> & { worktreePath: string },
+): Promise<string> {
   try {
     return await resolveRefSha(workspace.worktreePath, workspace.branch);
   } catch (err) {
@@ -134,12 +138,13 @@ export async function recordDefaultArtifacts(
   }
 
   // Company work has no repository diff; its HITL evidence above remains real.
-  if (workspace === null) return;
+  if (!workspace?.worktreePath) return;
+  const gitWorkspace = { worktreePath: workspace.worktreePath, branch: workspace.branch };
 
   // 2. Diff artifact (always for repository work)
   try {
-    const baseCommit = await safeBaseCommit(workspace);
-    const headRef = await safeHeadRef(workspace);
+    const baseCommit = await safeBaseCommit(gitWorkspace);
+    const headRef = await safeHeadRef(gitWorkspace);
 
     await recordArtifact(
       {

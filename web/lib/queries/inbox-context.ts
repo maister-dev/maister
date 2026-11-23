@@ -269,7 +269,7 @@ async function loadDiffSummary(
       .where(eq(workspaces.runId, run.id));
     const workspace = wsRows[0];
 
-    if (!workspace || workspace.removedAt) return null;
+    if (!workspace?.worktreePath || workspace.removedAt) return null;
 
     const projRows = await client
       .select({ mainBranch: projects.mainBranch })

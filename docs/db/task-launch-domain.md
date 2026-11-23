@@ -119,8 +119,10 @@ host is a retained FK. A changed selection under the same request key
 conflicts before new effects. Save actual placement against the separate
 assignment row and epoch when Web commits the preparing Run.
 
-The project preference stores a nullable restricted host reference and a
-positive, monotonic preference revision. A settings PATCH compares it under
+PostgreSQL migration `0370_stage_c_workspace_ownership` adds the project
+preference's nullable restricted host reference and positive revision. It
+adds the immutable host choice to accepted launch intents. The prior intent
+format retains null host fields. A settings PATCH compares the revision under
 the project row lock and checks the operator eligibility revision before
 writing. The eligibility revision is derived from the canonical validated
 instance configuration for the project and is shared by all Web replicas.

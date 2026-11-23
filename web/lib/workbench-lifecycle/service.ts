@@ -31,6 +31,7 @@ import {
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
 import { MaisterError } from "@/lib/errors";
 import { emitDelegatedReviewIfChild } from "@/lib/runs/delegated-review-emit";
 import { requireReworkClaimOwner } from "@/lib/runs/rework-claim";
@@ -2400,7 +2401,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     );
   }
 
-  const workspace = workspaceRows[0] ?? null;
+  const workspace = workspaceRows[0]
+    ? requireLegacyWorkspacePaths(workspaceRows[0])
+    : null;
   // ADR-181 D1a: the ONE fact loader — the ADR-160 claim owner, a live shared
   // sibling, the lifecycle slot, presence, and re-attach sources.
   const facts = await loadWorkbenchGitFacts({

@@ -158,7 +158,7 @@ export async function taskAgentPreparationWorkspace(
     );
 
   if (
-    !workspace ||
+    !workspace?.parentRepoPath ||
     workspace.removedAt ||
     workspace.worktreePath !== identity.worktreePath ||
     (settings.agentSnapshot.sharedRoot &&

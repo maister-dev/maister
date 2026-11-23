@@ -15,6 +15,10 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { projects, runs, workspaces } from "@/lib/db/schema";
 import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
+import {
+  requireLegacyWorkspacePaths,
+  type LegacyWorkspacePaths,
+} from "@/lib/execution-host/legacy-workspace";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
@@ -51,7 +55,7 @@ type WorkspaceRow = typeof workspaces.$inferSelect;
 type ProjectRow = typeof projects.$inferSelect;
 
 interface ReviewDiffRows {
-  workspace: WorkspaceRow;
+  workspace: WorkspaceRow & LegacyWorkspacePaths;
   project: ProjectRow;
 }
 
@@ -157,7 +161,7 @@ async function loadReviewDiffRows(
     throw new MaisterError("PRECONDITION", `project not found: ${run.id}`);
   }
 
-  return { workspace, project };
+  return { workspace: requireLegacyWorkspacePaths(workspace), project };
 }
 
 // The same diff source the review view renders (diffRunWorkspace +

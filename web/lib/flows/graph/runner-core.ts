@@ -20,6 +20,10 @@ import { eq } from "drizzle-orm";
 
 import { taskLaunchFlowAssetsPathForRun } from "@/lib/tasks/launch-flow-assets";
 import { taskLaunchInputForRun } from "@/lib/tasks/launch-execution-input";
+import {
+  requireLegacyWorkspacePaths,
+  type LegacyWorkspacePaths,
+} from "@/lib/execution-host/legacy-workspace";
 import { MaisterError, isMaisterError } from "@/lib/errors";
 import {
   loadProjectAssignmentExecutionInput,
@@ -110,7 +114,7 @@ export type LoadedProjectRun = {
   // M42 (ADR-114): the run's session set keyed by session name; the per-node
   // dispatch resolves the node's session runner + resume handle from here.
   sessions: Map<string, LoadedRunSession>;
-  workspace: WorkspaceRow;
+  workspace: WorkspaceRow & LegacyWorkspacePaths;
   projectSlug: string;
   flowInstallPath: string;
   // M27/T-C8b: exec-trust of the pinned flow revision; gates stdio-MCP spawn.
@@ -411,14 +415,15 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     .select()
     .from(workspaces)
     .where(eq(workspaces.runId, runId));
-  const workspace = workspaceRows[0];
+  const workspaceRow = workspaceRows[0];
 
-  if (!workspace) {
+  if (!workspaceRow) {
     throw new MaisterError(
       "PRECONDITION",
       `workspace not found for run ${runId}`,
     );
   }
+  const workspace = requireLegacyWorkspacePaths(workspaceRow);
   if (workspace.removedAt) {
     throw new MaisterError(
       "PRECONDITION",

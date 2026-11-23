@@ -4096,6 +4096,7 @@ describe("Agent owned prompts through the production launcher", () => {
       .select()
       .from(workspaces)
       .where(eq(workspaces.runId, runId));
+    if (!workspace?.worktreePath) throw new Error("Expected a local fixture worktree");
     const gitPointer = await readFile(
       path.join(workspace.worktreePath, ".git"),
       "utf8",

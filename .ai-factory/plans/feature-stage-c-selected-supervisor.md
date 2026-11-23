@@ -200,8 +200,24 @@ Log structured IDs, generation, outcome, measured size/duration and typed refusa
 
 - [x] **T01 · Platform / prerequisites.** Reconcile R01–R17 and the two remaining stabilization gates above against current release evidence. Establish baseline for local launch, resume, cancellation and review. Produce a per-function ownership inventory of the paths named in the planning request, including scripts, route/actions, scheduler, package discovery and human takeover. For each record authority, caller, effect, desired owner and compatibility read path. Build the distinct-user fixture. Prove the OS denies a direct private-root read by Web and permits the supervisor. Capture the current board-to-build failure under that fixture for the later G1 test. Record bounded denial reasons.
 - [x] **T02 · Architecture / contracts (after T01 inventory).** Deliver the C0 specification baseline above. In the owning analytics document for each requirement, record preconditions, transition, authority, persisted effects, refusal and repair for each reachable mode. Cross-link its API operation/event, DB invariant and primary test. Close open decisions on endpoint names, ownership tags, version negotiation and bounds. Check examples against current routes and consumers. Assign ADR and migration numbers against the merge tip. Exit C0 when every row is specified and its failing behavior can be exercised.
-- [ ] **T03 · Web storage / PostgreSQL (after T02).** Implement the G1 PostgreSQL expansion and compatibility cutover specified above. Use a populated pre-upgrade fixture containing a running task, retired host, retained Review, ambiguous legacy owner and queued intent. Check constraints, recoverability, actionable refusals and preservation of immutable bytes. T12 owns the second-host constraint replacement.
-- [ ] **T03S · Host storage / SQLite (after T02).** Implement and exercise the SQLite upgrade contract against real files, including interrupted migration and a newer unsupported store. Confirm fresh and upgraded stores accept the same protocol and recover the same command outcome. **Checkpoint 1** requires T03 and T03S plus the C0 specifications and independent topology fixture.
+- [x] **T03 · Web storage / PostgreSQL (after T02).** Implement the G1 PostgreSQL expansion and compatibility cutover specified above. Use a populated pre-upgrade fixture containing a running task, retired host, retained Review, ambiguous legacy owner and queued intent. Check constraints, recoverability, actionable refusals and preservation of immutable bytes. T12 owns the second-host constraint replacement.
+- [x] **T03S · Host storage / SQLite (after T02).** Implement and exercise the SQLite upgrade contract against real files, including interrupted migration and a newer unsupported store. Confirm fresh and upgraded stores accept the same protocol and recover the same command outcome. **Checkpoint 1** requires T03 and T03S plus the C0 specifications and independent topology fixture.
+
+#### Storage checkpoint evidence
+
+Ran on Darwin arm64 with Node 24.15.0. The RED candidate was
+`4584befdc`. The GREEN candidate is the commit containing this checkpoint.
+
+| Requirement | RED | GREEN and regression checks |
+|---|---|---|
+| C-02 | Populated `0369` rejects the pathless reservation because the ownership columns do not exist. | `pnpm --filter maister-web exec vitest run --project integration lib/db/__tests__/stage-c-workspace-ownership.integration.test.ts lib/db/__tests__/migration-task-launch-admission.integration.test.ts lib/execution-host/__tests__/adoption.integration.test.ts` passed 16 cases on PostgreSQL. Covers preservation, ambiguous-owner repair finding, exact assignment and host constraints, competing reservations, and idempotent real legacy adoption. |
+| C-03 | The old store accepts an interrupted-upgrade fixture and a newer schema without rejecting them. | `pnpm --filter @maister/supervisor exec vitest run --project integration` with the host identity, command receipts, runtime event outbox, runtime objects, runtime storage, and inventory suites passed 110 cases. The v18 test rolls back a partial upgrade, retries it, reopens twice, and compares retained identity, handle, fence, receipt and cursor. The newer-version test compares SQLite state before and after refused startup. |
+
+Both package typechecks, `pnpm validate:contracts`, and
+`pnpm validate:docs:all` passed with regenerated ERD. Legacy readers now
+require actual paths before entering filesystem operations. The checkpoint
+qualifies the storage shapes and compatibility readers. The addressed writer
+and its real HTTP command outcomes are qualified in T04–T05H.
 
 ### C1–C2 — host owns the work
 

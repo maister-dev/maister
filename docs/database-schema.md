@@ -2729,7 +2729,7 @@ execution_assignments {
                  | 'scratch_recover' | 'node_interrupt' | 'legacy_backfill',
   executionWorkspaceId?,          // host-scoped opaque "ws_<uuid>" handle,
   workspaceAdoptedAt?,            //   copied forward on every same-host mint
-  leaseExpiresAt?,                // reserved for Stage C; always NULL in Stage A
+  leaseExpiresAt?,                // reserved for future execution leases; unused through G2
   supersededById?,                // self-FK SET NULL — the later mint
   releasedReason?,
   createdAt, updatedAt, endedAt?

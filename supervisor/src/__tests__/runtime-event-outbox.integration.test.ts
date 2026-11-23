@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { removeWorkspaceExecutionSchema } from "./_fixtures/legacy-host-state";
 import pino from "pino";
 
 import { HostRuntimeEventError } from "../host-runtime-errors";
@@ -598,6 +599,7 @@ describe("Stage B durable host event outbox", () => {
       // Reconstruct the exact pre-budget schema with real persisted event bytes.
       const db = new DatabaseSync(join(stateDir, "state.sqlite"));
 
+      removeWorkspaceExecutionSchema(db);
       db.exec(`UPDATE runtime_event_outbox SET acknowledged_at = (
           SELECT a.acknowledged_at FROM runtime_event_ack_ranges a WHERE a.stream_id = runtime_event_outbox.stream_id
             AND a.first_sort_key <= runtime_event_outbox.sequence_sort_key AND a.through_sort_key >= runtime_event_outbox.sequence_sort_key);

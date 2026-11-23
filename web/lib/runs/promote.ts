@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import pino from "pino";
 
+import { requireLegacyWorkspacePaths } from "@/lib/execution-host/legacy-workspace";
 import { assertCodeDeliveryAllowed } from "@/lib/agents/operational-guard";
 import { assertNativeProjectPublication } from "@/lib/brain/knowledge-project-publication";
 import {
@@ -780,7 +781,9 @@ async function promoteWorkspaceRun(
     // the shared TREE workspace by `(root_run_id, workspace_mode='shared')`, not its
     // own (absent) row. `own` / scratch keep the run-id lookup.
     const run = await loadRun(tx, runId);
-    const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
+    const workspace = requireLegacyWorkspacePaths(
+      await loadPromotionWorkspaceForUpdate(tx, run),
+    );
 
     // A terminal follow-up stays PRECONDITION. A contender that read Review
     // must instead observe the winner's ownership before its changed status/tip.
@@ -1773,7 +1776,7 @@ async function branchDeliveryTarget(
   db: Db,
   claim: FlowClaim,
 ): Promise<PublishedTarget> {
-  const workspace: Workspace = claim.workspace;
+  const workspace = requireLegacyWorkspacePaths<Workspace>(claim.workspace);
   const pinned = workspace.branchDelivery?.target;
 
   const project = await loadProject(db, claim.run.projectId);
@@ -1815,7 +1818,7 @@ async function publishWorkspaceDelivery(args: {
   claim: FlowClaim;
 }): Promise<WorkspaceDelivery> {
   const { db, claim, runId } = args;
-  const workspace: Workspace = claim.workspace;
+  const workspace = requireLegacyWorkspacePaths<Workspace>(claim.workspace);
   let target = workspace.branchDelivery?.target ?? null;
 
   try {
@@ -2560,7 +2563,9 @@ export async function finalizeParkedPullRequest(args: {
 
   const claim: FlowClaim = await db.transaction(async (tx: Db) => {
     const run = await loadRun(tx, runId);
-    const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
+    const workspace = requireLegacyWorkspacePaths(
+      await loadPromotionWorkspaceForUpdate(tx, run),
+    );
 
     await ctx.authorize(run.projectId);
     await assertNativeProjectPublication(() => tx, run);
