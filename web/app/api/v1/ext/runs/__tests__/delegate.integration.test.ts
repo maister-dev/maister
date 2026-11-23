@@ -33,15 +33,13 @@ let pool: Pool;
 let db: NodePgDatabase;
 let agentsRoot: string;
 
-// getDb() → the testcontainer everywhere (routes, services, the workbench stop
-// dispatcher's module-level db()). Keep allocated runs queued so the
-// agent-session spawn microtask never fires — the run row stays a stable
-// Pending with every delegation column set at INSERT.
+// Direct handlers share the test database and have no Next request lifetime.
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
   after: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+// Collect and cancel inspect allocated children before their first dispatch.
 vi.mock("@/lib/scheduler/start-allocated-run", () => ({
   startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
 }));

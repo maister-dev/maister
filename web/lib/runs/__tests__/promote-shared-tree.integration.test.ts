@@ -31,6 +31,11 @@ import {
   vi,
 } from "vitest";
 
+import {
+  fetchRemote,
+  inspectDeliveryBase,
+  resolveBaseRef,
+} from "@/lib/worktree";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
@@ -55,6 +60,19 @@ vi.mock("@/lib/worktree", async (importOriginal) => {
   return {
     ...actual,
     resolveBaseCommit: vi.fn(async () => "targettip000000"),
+    fetchRemote: vi.fn(async () => undefined),
+    currentBranchName: vi.fn(async (worktreePath: string) => {
+      const result = await pool.query<{ branch: string }>(
+        "SELECT branch FROM workspaces WHERE worktree_path=$1",
+        [worktreePath],
+      );
+      return result.rows[0]?.branch ?? null;
+    }),
+    inspectDeliveryBase: vi.fn(async () => ({
+      base: "base000",
+      alreadyInTarget: false,
+    })),
+    resolveBaseRef: vi.fn(async () => "base000"),
     branchExists: vi.fn(async () => true),
     deliveryHistoryStats: vi.fn(async () => ({
       files: 1,
@@ -479,6 +497,21 @@ describe("ADR-134 — shared pull-request promotion owns one tree root", () => {
       prNumber: 7,
     });
     expect(pushBranchSpy).toHaveBeenCalledTimes(1);
+    const allocatorWorktree = `/tmp/shared-wt-${root}`;
+    expect(fetchRemote).toHaveBeenCalledWith({
+      projectRepoPath: `/repos/${projectId}`,
+      name: "origin",
+    });
+    expect(inspectDeliveryBase).toHaveBeenCalledWith({
+      worktreePath: allocatorWorktree,
+      head: "shared-source-head",
+      target: "targettip000000",
+    });
+    expect(resolveBaseRef).toHaveBeenCalledWith({
+      worktreePath: allocatorWorktree,
+      branch: "shared-source-head",
+      mainBranch: "targettip000000",
+    });
 
     // ADR-181 D4/D11: the tree's branch is published under its PUBLIC name —
     // the one pushed, recorded on the allocator's workspace, and the PR head.

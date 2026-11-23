@@ -118,18 +118,18 @@ vi.mock("@/lib/runs/node-interrupt", async (importOriginal) => {
 
 const PROMPT = "Remember ALBATROSS-42 and implement it";
 
-const FLOW = {
+const flowForPrompt = (prompt: string) => ({
   schemaVersion: 1,
   name: "adr183",
   nodes: [
     {
       id: "implement",
       type: "ai_coding",
-      action: { prompt: PROMPT },
+      action: { prompt },
       transitions: { success: "done" },
     },
   ],
-};
+});
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -216,14 +216,14 @@ async function hostHealth(): Promise<{
   ).json()) as { stream?: { pressured: boolean; unacknowledgedCount: number } };
 }
 
-async function seedFlowRun(name: string) {
+async function seedFlowRun(name: string, prompt = PROMPT) {
   const repoPath = await initRepo(`${sup.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
     repoPath,
     `${sup.runtimeRoot}/wt-${name}`,
     `maister/${name}`,
   );
-  const seeded = await seedGraphRun(testDatabase.db, FLOW, {
+  const seeded = await seedGraphRun(testDatabase.db, flowForPrompt(prompt), {
     repoPath,
     workspace: { worktreePath, parentRepoPath: repoPath },
   });
@@ -265,6 +265,7 @@ beforeAll(async () => {
       MOCK_ACP_REMEMBER: "1",
       MOCK_ACP_FLOOD_FRAMES: "30",
       MOCK_ACP_FLOOD_BYTES: "1024",
+      MOCK_ACP_FLOOD_PROMPT: "ALBATROSS-42",
       MOCK_ACP_HOLD_AFTER_FLOOD: "1",
     },
   });
@@ -303,7 +304,9 @@ describe("ADR-183 D3-flow — host-pressure park and auto-resume", () => {
   it("parks a flooding node and a node refused at start; the sweep resumes the first WITH its context and the second fresh, both on attempt 1", async () => {
     const runtimeRoot = process.env.MAISTER_RUNTIME_ROOT as string;
     const a = await seedFlowRun("flood");
-    const b = await seedFlowRun("refused");
+    // B only witnesses admission. Its first prompt after recovery must not trigger a second pressure incident.
+    const freshPrompt = "Complete the deferred task";
+    const b = await seedFlowRun("refused", freshPrompt);
     const held = proxy.arm(
       {
         caseId: "adr183-behind",
@@ -491,11 +494,8 @@ describe("ADR-183 D3-flow — host-pressure park and auto-resume", () => {
 
     // B resumes on attempt 1 with a FRESH session (no handle was recorded).
     await waitFor(
-      async () =>
-        (await commandsOf(b.runId, "session.create")).some(
-          (command) => command.state === "succeeded",
-        ),
-      "B's fresh session after the resume",
+      async () => (await runRow(b.runId)).status === "Review",
+      "B's fresh session to finish after the resume",
       90_000,
     );
     const answeredB = await interruptOf(b.runId);
@@ -511,11 +511,13 @@ describe("ADR-183 D3-flow — host-pressure park and auto-resume", () => {
     const attemptsB = await attemptsOf(b.runId);
 
     expect(attemptsB).toHaveLength(1);
-    expect(attemptsB[0].status).toBe("Running");
+    expect(attemptsB[0]).toMatchObject({ attempt: 1, status: "Succeeded" });
+    expect(attemptsB[0].stdout).toContain(freshPrompt);
     const createdB = (await commandsOf(b.runId, "session.create")).find(
       (command) => command.state === "succeeded",
     );
 
+    expect(createdB).toBeDefined();
     expect(
       JSON.stringify(createdB?.payload ?? {}).includes("resumeSessionId"),
     ).toBe(false);
@@ -587,7 +589,7 @@ describe("ADR-183 D3-flow — host-pressure park and auto-resume", () => {
   }, 180_000);
 
   it("W6: an interrupt already answered is never auto-resumed", async () => {
-    const seeded = await seedGraphRun(testDatabase.db, FLOW);
+    const seeded = await seedGraphRun(testDatabase.db, flowForPrompt(PROMPT));
     const hitlRequestId = randomUUID();
 
     await db.transaction((tx) =>
@@ -622,7 +624,7 @@ describe("ADR-183 D3-flow — host-pressure park and auto-resume", () => {
   });
 
   it("D3-authz: a machine actor still cannot answer a host-paused interrupt", async () => {
-    const seeded = await seedGraphRun(testDatabase.db, FLOW);
+    const seeded = await seedGraphRun(testDatabase.db, flowForPrompt(PROMPT));
     const hitlRequestId = randomUUID();
 
     await db

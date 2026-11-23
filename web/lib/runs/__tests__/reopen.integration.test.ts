@@ -33,28 +33,17 @@ let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
-// Keep the worktree revival helpers REAL (addWorktreeForBranch / localBranchHead
-// / fetchRemote / remoteTrackingBranchHead / createLocalBranchAt run against the
-// per-test git fixtures); stub only the promote/auto-promote git side-effects so
-// the re-promote + auto-promote-prefilter assertions never touch a real gh CLI or
-// push a real branch.
+// Revision and publication checks run against each fixture's local bare remote.
 vi.mock("@/lib/worktree", async (orig) => {
   const actual = await orig<typeof import("@/lib/worktree")>();
 
   return {
     ...actual,
+    // The auto-promotion prefilter tests use DB-only workspace fixtures.
+    diffChangeStats: vi.fn(async () => []),
     // Real, but wrapped: it is the git side effect that runs BEFORE the state
     // transaction, so it is the seam for injecting the tx-fails-after-attach race.
     addWorktreeForBranch: vi.fn(actual.addWorktreeForBranch),
-    pushBranch: vi.fn(async () => undefined),
-    // ADR-181 D4: the PR push resolves its PUBLIC name from the branch
-    // upstream (none in this fake repo) and leases on the remote head.
-    branchUpstream: vi.fn(async () => null),
-    remoteBranchHead: vi.fn(async () => null),
-    headCommit: vi.fn(async () => "source-head-000"),
-    resolveBaseCommit: vi.fn(async () => "tip00000"),
-    squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
-    diffChangeStats: vi.fn(async () => []),
   };
 });
 
@@ -467,14 +456,21 @@ describe("deriveStage — reopened run", () => {
 
 describe("reopenRun — round-trip", () => {
   it("flips Done→Review, sets promotion_state=reopened, clears removal, stamps review_entered_at, emits run.review; re-promote REUSES the same PR", async () => {
-    const { projectId, flowId } = await seedGraph("/repos/demo");
+    const { parent, remote } = await initRepoWithRemote();
+    const { projectId, flowId } = await seedGraph(parent);
     const branch = "maister/task-1/attempt-1";
+    const worktreePath = await addRunWorktree(parent, branch);
+    await git(worktreePath, ["push", "-u", "origin", branch]);
+    const targetCommit = (
+      await git(parent, ["rev-parse", "origin/main"])
+    ).stdout.trim();
+
     const { runId, taskId, workspaceId } = await seedRun({
       projectId,
       flowId,
       branch,
-      worktreePath: "/wt/reopen-1",
-      parentRepoPath: "/repos/demo",
+      worktreePath,
+      parentRepoPath: parent,
       status: "Done",
       taskStatus: "Done",
       prState: "open",
@@ -527,9 +523,17 @@ describe("reopenRun — round-trip", () => {
       .insert(fullSchema.users)
       .values({ id: "user-1", email: "reopen-user-1@test.test" })
       .onConflictDoNothing();
+    await writeFile(
+      join(worktreePath, "feature.txt"),
+      "Revised after review.\n",
+    );
+    await git(worktreePath, ["commit", "-am", "Address review"]);
+    const reviewedHead = (
+      await git(worktreePath, ["rev-parse", "HEAD"])
+    ).stdout.trim();
     const promoted = (await promoteRun(
       runId,
-      { mode: "pull_request", reviewedTargetCommit: "tip00000" },
+      { mode: "pull_request", reviewedTargetCommit: targetCommit },
       {
         sessionUser: { id: "user-1", name: "U", email: "u@test.test" },
         authorize: async () => undefined,
@@ -538,6 +542,9 @@ describe("reopenRun — round-trip", () => {
 
     expect(promoted.ok).toBe(true);
     expect(promoted.prNumber).toBe(42);
+    expect(
+      (await git(remote, ["rev-parse", `refs/heads/${branch}`])).stdout.trim(),
+    ).toBe(reviewedHead);
     expect(createOrUpdatePr).toHaveBeenCalledTimes(1);
     expect(createOrUpdatePr).toHaveBeenCalledWith(
       expect.objectContaining({ sourceBranch: branch, targetBranch: "main" }),

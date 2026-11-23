@@ -39,6 +39,7 @@
 //                             non-resumed prompt emits this many text chunks of
 //                             this many bytes, enough to fill the stdout pipe
 //                             under a tiny outbox budget.
+//   MOCK_ACP_FLOOD_PROMPT    when set, only prompts containing this text flood.
 //   MOCK_ACP_HOLD_AFTER_FLOOD "1" → after the flood, keep the turn open until
 //                             teardown.
 //   MOCK_ACP_PERMISSION_THEN_FLOOD "1" → request a permission, flood while it
@@ -79,6 +80,7 @@ const PERMISSION_MALFORMED = process.env.MOCK_ACP_PERMISSION_MALFORMED === "1";
 const STATE_DIR = process.env.MOCK_ACP_STATE_DIR ?? null;
 const FLOOD_FRAMES = Number(process.env.MOCK_ACP_FLOOD_FRAMES ?? "0");
 const FLOOD_BYTES = Number(process.env.MOCK_ACP_FLOOD_BYTES ?? "0");
+const FLOOD_PROMPT = process.env.MOCK_ACP_FLOOD_PROMPT ?? "";
 const HOLD_AFTER_FLOOD = process.env.MOCK_ACP_HOLD_AFTER_FLOOD === "1";
 const PERMISSION_THEN_FLOOD =
   process.env.MOCK_ACP_PERMISSION_THEN_FLOOD === "1";
@@ -332,7 +334,7 @@ class MockAgent {
         rememberedText: text,
       });
     }
-    if (FLOOD_FRAMES > 0 && !session?.resumed) {
+    if (FLOOD_FRAMES > 0 && !session?.resumed && text.includes(FLOOD_PROMPT)) {
       if (PERMISSION_THEN_FLOOD) {
         const pending = this.connection.requestPermission({
           sessionId: params.sessionId,
