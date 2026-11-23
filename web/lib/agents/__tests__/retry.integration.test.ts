@@ -41,9 +41,8 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-vi.mock("@/lib/scheduler", async (original) => ({
-  ...(await original<typeof import("@/lib/scheduler")>()),
-  tryStartRun: async () => ({ started: false, queuePosition: 1 }),
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
 }));
 let database: StartedPostgresTestDb;
 let sessionUserId: string | null = null;

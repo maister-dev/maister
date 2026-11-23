@@ -87,6 +87,10 @@ import {
   type RunInspectorFlowSummary,
   type RunInspectorLabels,
 } from "@/components/runs/run-inspector";
+import {
+  FlowChecksLink,
+  InspectorFlowChecks,
+} from "@/components/runs/flow-checks-link";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 import {
   ResolvedCapabilitySetPanel,
@@ -524,7 +528,6 @@ export default async function RunDetailLayout({
   const tReadiness = await getTranslations("readiness");
   const tWorkbench = await getTranslations("workbench");
   const tLifecycle = await getTranslations("workbenchLifecycle");
-  const tNodeInterrupt = await getTranslations("nodeInterrupt");
 
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
@@ -990,6 +993,7 @@ export default async function RunDetailLayout({
     failure: t.raw("failure"),
     title: t("flowCenterTitle"),
     fullscreen: t("flowCenterFullscreen"),
+    closeFullscreen: t("flowCenterCloseFullscreen"),
     reviewChanges: t("flowCenterReviewChanges"),
     nodes: t("flowCenterNodes"),
     selectedNode: t("flowCenterSelectedNode"),
@@ -1521,13 +1525,138 @@ export default async function RunDetailLayout({
     !detail.archived
       ? await loadFailedNodeRestartTarget(getDb(), runId)
       : null;
+  const interruptControl = canInterruptNode ? (
+    <NodeInterruptTrigger canAct={canAct} runId={runId} />
+  ) : null;
+  const currentStepHasHeader =
+    !!flowGraphData &&
+    !isOperational &&
+    flowResultDto.graph.kind === "ready" &&
+    flowResultDto.graph.nodes.some((node) => node.id === detail.currentStepId);
+  const projectFlow = detail.runKind === "flow";
+  const policyBadge = (
+    <ExecutionPolicyBadge
+      labels={{
+        supervised: t("execPolicySupervised"),
+        assisted: t("execPolicyAssisted"),
+        unattended: t("execPolicyUnattended"),
+        custom: t("execPolicyCustom"),
+      }}
+      policy={detail.executionPolicy}
+    />
+  );
+  const detailActions = projectFlow
+    ? viewerLifecycleActions.filter((action) => action !== "stop")
+    : viewerLifecycleActions;
+  const headerStop =
+    projectFlow &&
+    viewerLifecycleActions.includes("stop") &&
+    projectRolesForActions(["recoverRun"]).includes(role) ? (
+      <WorkbenchLifecycleActions
+        actions={["stop"]}
+        runId={runId}
+        runKind="flow"
+        stopLabel={t("headerStopRun")}
+        variant="detail"
+      />
+    ) : null;
+  const gateRows = new Set(
+    [
+      ...(evidence?.results.checks ?? []),
+      ...(evidence?.results.previous ?? []),
+    ].map((row) => row.id),
+  );
+  const checksSummary = verification ? (
+    <ReadinessSummary
+      labels={{
+        state: {
+          ready: tReadiness("recordedClear"),
+          none: tReadiness("noChecks"),
+          excluded: tReadiness("policyExcluded"),
+          unevaluated: tReadiness("unevaluated"),
+          unknown: tReadiness("verificationUnknown"),
+          blocked: tReadiness("blocked"),
+          stale: tReadiness("stale"),
+          failed: tReadiness("failed"),
+          waiting: tReadiness("waiting"),
+          overridden: tReadiness("overridden"),
+        },
+        summary: tReadiness("flowVerification"),
+        reasons: tReadiness("reasons"),
+      }}
+      reasons={verification.reasons.map((reason) => {
+        if (reason.kind === "artifact")
+          return {
+            id: `artifact:${reason.id}`,
+            explanation: tReadiness("missingEvidence", {
+              id: reason.id,
+            }),
+            nextAction: tReadiness("produceEvidence"),
+          };
+
+        const { status } = reason;
+
+        return {
+          id: `gate:${reason.rowId}`,
+          explanation: tReadiness(`gateDetails.${status}.reason`, {
+            id: reason.id,
+          }),
+          nextAction: tReadiness(`gateDetails.${status}.nextAction`),
+          evidence:
+            hasWorkbench &&
+            status !== "pending" &&
+            status !== "running" &&
+            gateRows.has(`gate:${reason.rowId}`) ? (
+              <FlowChecksLink
+                workbench
+                label={tReadiness("viewGateEvidence", { id: reason.id })}
+                rowId={reason.rowId}
+              />
+            ) : null,
+        };
+      })}
+      state={verification.state}
+    />
+  ) : null;
+  const reviewOwnsChecks = !!(showReview && reviewData && reviewReadiness);
+  const hasFlowHeading =
+    !!flowGraphData && !isOperational && flowResultDto.graph.kind === "ready";
+  const attention =
+    verification &&
+    (verification.state === "failed" ||
+      verification.state === "stale" ||
+      verification.state === "blocked") ? (
+      <FlowChecksLink
+        label={`${tReadiness("flowVerification")} · ${tReadiness(verification.state)}`}
+        workbench={hasWorkbench}
+      />
+    ) : null;
+
+  function requestCheck(rowId?: string): ReactNode {
+    if (!rowId) return null;
+    const reachable = hasWorkbench
+      ? gateRows.has(`gate:${rowId}`)
+      : verification?.reasons.some(
+          (r) => r.kind === "gate" && r.rowId === rowId,
+        );
+
+    return reachable ? (
+      <FlowChecksLink
+        label={tReadiness("requestCheck")}
+        rowId={rowId}
+        workbench={hasWorkbench}
+      />
+    ) : null;
+  }
   const primaryResult =
     flowGraphData || showAgentCenter ? (
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
         {flowGraphData && !isOperational ? (
           <FlowRunCenter
+            checksLink={reviewOwnsChecks ? null : attention}
             graphView={
               <FlowGraphViewSection
+                heightClassName="h-[var(--flow-canvas-height,420px)]"
                 labels={flowGraphData.labels}
                 layout={flowGraphData.layout}
                 nodeTooltips={flowGraphData.nodeTooltips}
@@ -1545,6 +1674,7 @@ export default async function RunDetailLayout({
                 topology={flowGraphData.topology}
               />
             }
+            interruptControl={interruptControl}
             labels={flowRunCenterLabels}
             locale={locale}
             restartTarget={
@@ -1586,8 +1716,8 @@ export default async function RunDetailLayout({
               <section id="operation-result" tabIndex={-1}>
                 {operational && hasOperationalResult ? (
                   <OperationalRunResult
-                    isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
                     canAct={canAct}
+                    isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
                     outcome={operational}
                     runId={detail.runId}
                   />
@@ -1719,9 +1849,13 @@ export default async function RunDetailLayout({
           hasWorkbench && !isOperational ? inspectorChangeScope : undefined
         }
         changeSummary={isOperational ? null : changeSummary}
+        hasFullscreenGraph={hasFlowHeading}
         hideChangeSummary={isOperational}
         inspector={
           <>
+            {!hasWorkbench && checksSummary ? (
+              <InspectorFlowChecks>{checksSummary}</InspectorFlowChecks>
+            ) : null}
             {waitId ? (
               <RunWaitCard key={waitId} runId={detail.runId} waitId={waitId} />
             ) : null}
@@ -1801,8 +1935,12 @@ export default async function RunDetailLayout({
             next={nextAction}
             noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
             summary={outcomeSummary}
-          />
+          >
+            {!hasFlowHeading && !reviewOwnsChecks ? attention : null}
+            {currentStepHasHeader ? null : interruptControl}
+          </RunOutcome>
         }
+        policyBadge={projectFlow ? policyBadge : null}
         prHasConflicts={detail.prHasConflicts}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
@@ -1815,6 +1953,7 @@ export default async function RunDetailLayout({
         }
         runId={detail.runId}
         status={detail.status}
+        stopControl={headerStop}
         subtitle={shellSubtitle}
         targetBranch={isOperational ? null : detail.targetBranch}
         taskHref={
@@ -1852,17 +1991,7 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <ExecutionPolicyBadge
-              labels={{
-                supervised: t("execPolicySupervised"),
-                assisted: t("execPolicyAssisted"),
-                unattended: t("execPolicyUnattended"),
-                custom: t("execPolicyCustom"),
-              }}
-              policy={detail.executionPolicy}
-            />
-          </div>
+          {projectFlow ? null : policyBadge}
 
           {detail.cutoverFailure ? (
             <CutoverFailureBanner
@@ -1879,9 +2008,9 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {viewerLifecycleActions.length > 0 || (canAct && syncAttempt) ? (
+          {detailActions.length > 0 || (canAct && syncAttempt) ? (
             <WorkbenchLifecycleActions
-              actions={viewerLifecycleActions}
+              actions={detailActions}
               runId={detail.runId}
               runKind={detail.runKind}
               syncAttempt={
@@ -1899,61 +2028,6 @@ export default async function RunDetailLayout({
               workspaceAvailable={
                 Boolean(detail.worktreePath) && !detail.pruned
               }
-            />
-          ) : null}
-
-          {verification ? (
-            <ReadinessSummary
-              labels={{
-                state: {
-                  ready: tReadiness("recordedClear"),
-                  none: tReadiness("noChecks"),
-                  excluded: tReadiness("policyExcluded"),
-                  unevaluated: tReadiness("unevaluated"),
-                  unknown: tReadiness("verificationUnknown"),
-                  blocked: tReadiness("blocked"),
-                  stale: tReadiness("stale"),
-                  failed: tReadiness("failed"),
-                  waiting: tReadiness("waiting"),
-                  overridden: tReadiness("overridden"),
-                },
-                summary: tReadiness("flowVerification"),
-                reasons: tReadiness("reasons"),
-              }}
-              reasons={verification.reasons.map((reason) => {
-                if (reason.kind === "artifact")
-                  return {
-                    id: `artifact:${reason.id}`,
-                    explanation: tReadiness("missingEvidence", {
-                      id: reason.id,
-                    }),
-                    nextAction: tReadiness("produceEvidence"),
-                  };
-
-                const { status } = reason;
-                const evidenceQuery = new URLSearchParams({
-                  wb: "evidence",
-                  evidenceItem: `gate:${reason.rowId}`,
-                });
-
-                return {
-                  id: `gate:${reason.rowId}`,
-                  explanation: tReadiness(`gateDetails.${status}.reason`, {
-                    id: reason.id,
-                  }),
-                  nextAction: tReadiness(`gateDetails.${status}.nextAction`),
-                  evidence:
-                    status === "pending" || status === "running"
-                      ? undefined
-                      : {
-                          href: `/runs/${runId}?${evidenceQuery}`,
-                          label: tReadiness("viewGateEvidence", {
-                            id: reason.id,
-                          }),
-                        },
-                };
-              })}
-              state={verification.state}
             />
           ) : null}
 
@@ -1991,9 +2065,9 @@ export default async function RunDetailLayout({
 
           {runIntegrityLimit ? (
             <WorkspaceIntegrityNotice
+              isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
               limit={runIntegrityLimit}
               runId={runId}
-              isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
             />
           ) : null}
 
@@ -2079,6 +2153,7 @@ export default async function RunDetailLayout({
                   <p className="mb-4 text-[14px] leading-[1.4] text-ink">
                     {detail.pendingHitl.prompt}
                   </p>
+                  {requestCheck(detail.pendingHitl.verificationGateRowId)}
                   <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
                     {detail.pendingHitl.assignmentActionKind ? (
                       <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
@@ -2276,6 +2351,7 @@ export default async function RunDetailLayout({
               <p className="mb-3 text-[14px] leading-[1.4] text-ink">
                 {pendingHitl.prompt}
               </p>
+              {requestCheck(pendingHitl.verificationGateRowId)}
               <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
                 {pendingHitl.assignmentActionKind ? (
                   <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
@@ -2328,15 +2404,6 @@ export default async function RunDetailLayout({
               stays for a takeover claim — they are told apart by
               `continuation.claim`, which is non-null only for the ADR-160
               provenance. */}
-          {canInterruptNode ? (
-            <section className="mt-6 rounded-[14px] border border-line bg-ivory p-5">
-              <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
-                {tNodeInterrupt("interruptControlTitle")}
-              </h2>
-              <NodeInterruptTrigger canAct={canAct} runId={detail.runId} />
-            </section>
-          ) : null}
-
           {isHumanWorking && detail.continuation.claim === null ? (
             <section
               className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5"
@@ -2398,19 +2465,22 @@ export default async function RunDetailLayout({
                   />
                 }
                 evidence={
-                  evidence ? (
-                    <RunResultsAndChecksView
-                      graph={evidence.graph}
-                      graphLabels={evidenceLabels}
-                      outcome={outcomeSummary}
-                      results={evidence.results}
-                      runId={detail.runId}
-                    />
-                  ) : (
-                    <p className="p-3 text-sm text-mute" role="status">
-                      {tEvidence("results.unavailable")}
-                    </p>
-                  )
+                  <>
+                    {checksSummary}
+                    {evidence ? (
+                      <RunResultsAndChecksView
+                        graph={evidence.graph}
+                        graphLabels={evidenceLabels}
+                        outcome={outcomeSummary}
+                        results={evidence.results}
+                        runId={detail.runId}
+                      />
+                    ) : (
+                      <p className="p-3 text-sm text-mute" role="status">
+                        {tEvidence("results.unavailable")}
+                      </p>
+                    )}
+                  </>
                 }
                 filesPane={children}
                 filesTree={
@@ -2447,6 +2517,7 @@ export default async function RunDetailLayout({
               branchDeliveryAttempted={detail.branchDelivery?.attempted}
               branchDeliveryError={detail.branchDelivery?.error}
               canPromote={canAct}
+              checksLink={reviewOwnsChecks ? attention : null}
               deliveryPolicy={reviewData.deliveryPolicy}
               diff={reviewData.diff}
               displayParentRepoPath={displayParentRepoPath}

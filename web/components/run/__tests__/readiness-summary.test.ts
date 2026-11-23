@@ -126,10 +126,11 @@ describe("ReadinessSummary — readiness state display (M15)", () => {
       'blocking gate "merge-safety" is skipped',
     ]);
 
-    reasons[0].evidence = {
-      href: "/runs/run-id?wb=evidence&kind=gate&state=failed",
-      label: "View gate evidence for linter",
-    };
+    reasons[0].evidence = createElement(
+      "a",
+      { href: "/runs/run-id?wb=evidence&kind=gate&state=failed" },
+      "View gate evidence for linter",
+    );
     const html = render({
       state: "failed",
       reasons,

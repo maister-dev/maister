@@ -15,10 +15,12 @@ import type {
   FlowNodeReviewResult,
 } from "@/lib/runs/flow-node-result";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
+import { useInertSiblings, useModalA11y } from "@/components/use-modal-a11y";
 import { ContextLimitMessage } from "@/components/runs/context-limit-message";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
@@ -29,7 +31,11 @@ import {
 } from "@/components/runs/node-transcript-panel";
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
-import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
+import {
+  buildRunHref,
+  parseRunQueryState,
+  readRunPeekQuery,
+} from "@/lib/runs/run-query-state";
 import {
   AttemptFailure,
   type AttemptFailureLabels,
@@ -39,6 +45,7 @@ export interface FlowRunCenterLabels {
   failure: AttemptFailureLabels;
   title: string;
   fullscreen: string;
+  closeFullscreen: string;
   reviewChanges: string;
   nodes: string;
   selectedNode: string;
@@ -411,12 +418,16 @@ export function FlowRunCenter({
   labels,
   locale,
   graphView,
+  checksLink,
+  interruptControl,
   restartTarget,
 }: {
   result: FlowRunResultDto;
   labels: FlowRunCenterLabels;
   locale: string;
   graphView?: ReactNode;
+  checksLink?: ReactNode;
+  interruptControl?: ReactNode;
   restartTarget?: {
     id: string;
     nodeId: string;
@@ -431,6 +442,38 @@ export function FlowRunCenter({
   const selectedResult =
     selected !== null ? buildFlowNodeResult(result, selected) : null;
 
+  const surface = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLAnchorElement>(null);
+  const position = useRef<{ x: number; y: number } | null>(null);
+  const expanded =
+    !!graphView && result.graph.kind === "ready" && state.flow === "fullscreen";
+  const active = expanded && readRunPeekQuery(searchParams).selected === null;
+  const close = (): void => {
+    window.history.pushState(
+      null,
+      "",
+      buildRunHref(pathname, window.location.search, { flow: null }) +
+        window.location.hash,
+    );
+  };
+
+  useModalA11y(surface, close, active);
+  useInertSiblings(surface, active);
+  useEffect(() => {
+    if (!surface.current?.getClientRects().length) return;
+    if (expanded) {
+      position.current ??= { x: window.scrollX, y: window.scrollY };
+
+      return;
+    }
+    const previous = position.current;
+
+    if (previous) {
+      opener.current?.focus({ preventScroll: true });
+      window.scrollTo(previous.x, previous.y);
+      position.current = null;
+    }
+  }, [expanded]);
   if (result.graph.kind !== "ready") {
     return (
       <section
@@ -451,14 +494,35 @@ export function FlowRunCenter({
         <h2 className="m-0 font-sans text-[18px] font-bold tracking-[-0.01em] text-ink">
           {labels.title}
         </h2>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
-            data-testid="flow-run-fullscreen"
-            href={buildRunHref(pathname, query, { flow: "fullscreen" })}
-          >
-            {labels.fullscreen}
-          </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {checksLink}
+          {graphView ? (
+            <a
+              ref={opener}
+              className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
+              data-testid="flow-run-fullscreen"
+              href={buildRunHref(pathname, query, { flow: "fullscreen" })}
+              onClick={(event) => {
+                if (
+                  event.button ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                position.current = { x: window.scrollX, y: window.scrollY };
+                window.history.pushState(
+                  null,
+                  "",
+                  event.currentTarget.href + window.location.hash,
+                );
+              }}
+            >
+              {labels.fullscreen}
+            </a>
+          ) : null}
           {result.run.status === "Review" || result.review !== null ? (
             <Link
               className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
@@ -472,11 +536,36 @@ export function FlowRunCenter({
       </div>
 
       {graphView ? (
-        <div
-          className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-ivory"
-          data-testid="flow-run-graph-view"
-        >
-          {graphView}
+        <div className="h-[420px]">
+          <div
+            ref={surface}
+            aria-label={expanded ? labels.title : undefined}
+            aria-modal={active || undefined}
+            className={clsx(
+              "min-w-0 max-w-full overflow-hidden border border-line bg-paper",
+              expanded
+                ? "fixed inset-0 z-[80] flex flex-col [--flow-canvas-height:100%]"
+                : "rounded-[10px]",
+            )}
+            data-testid="flow-run-graph-view"
+            role={expanded ? "dialog" : undefined}
+          >
+            {expanded ? (
+              <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
+                <span className="font-semibold">{labels.title}</span>
+                <button
+                  className="rounded-md border border-line px-3 py-1.5 text-sm"
+                  type="button"
+                  onClick={close}
+                >
+                  {labels.closeFullscreen}
+                </button>
+              </div>
+            ) : null}
+            <div className={expanded ? "min-h-0 flex-1" : undefined}>
+              {graphView}
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -531,11 +620,16 @@ export function FlowRunCenter({
                     {selected.displayLabel}
                   </h3>
                 </div>
-                {selected.current ? (
-                  <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-amber">
-                    {labels.currentNode}
-                  </span>
-                ) : null}
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                  {selected.current ? (
+                    <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-amber">
+                      {labels.currentNode}
+                    </span>
+                  ) : null}
+                  {selected.id === result.run.currentStepId
+                    ? interruptControl
+                    : null}
+                </div>
                 {restartTarget?.nodeId === selected.id ? (
                   <RunRecoverActions
                     canRecover

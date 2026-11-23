@@ -752,7 +752,7 @@ test("E2E-PKN-12: transport failure and explicit reconnect retain selection and 
   await expect(peek(page)).toHaveAttribute("data-selected-run", fixture.child);
 });
 
-test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscreen keep one anchored panel", async ({
+test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscreen keep one anchored panel @flow-controls", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
@@ -764,8 +764,33 @@ test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscree
   );
   await expect(peek(page)).toHaveAttribute("aria-modal", "true");
   await expect(peek(page)).toContainText("Conversation of Researcher Alpha");
-  await peek(page).getByRole("button", { name: "Close peek" }).click();
+  await page.keyboard.press("Escape");
+  await expect(peek(page)).toHaveCount(0);
   await expect(page).toHaveURL(/flow=fullscreen/);
+  await expect(
+    page.getByRole("button", { name: "Close fullscreen" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/flow=fullscreen/);
+  await expect(
+    page.getByTestId("flow-run-fullscreen").filter({ visible: true }),
+  ).toBeFocused();
+
+  await page.goto(`/runs/${fixture.anchor}?flow=fullscreen&peek=`);
+  const graph = page
+    .getByTestId("flow-run-graph-view")
+    .filter({ visible: true });
+
+  await expect(
+    graph.getByRole("button", { name: "Close fullscreen" }),
+  ).toBeFocused();
+  await expect(peek(page)).toHaveCount(0);
+  await expect(graph).toHaveAttribute("aria-modal", "true");
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/flow=fullscreen/);
+  await expect(
+    page.getByTestId("flow-run-fullscreen").filter({ visible: true }),
+  ).toBeFocused();
 });
 
 test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigation and missing-trigger closure", async ({

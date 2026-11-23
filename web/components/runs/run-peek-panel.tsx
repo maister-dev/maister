@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { RunPeekContent } from "@/components/runs/run-peek-content";
-import { useModalA11y } from "@/components/use-modal-a11y";
+import { useInertSiblings, useModalA11y } from "@/components/use-modal-a11y";
 import { RunPeekLink, useRunPeek } from "@/components/runs/run-peek-controller";
 import {
   RunChildPageList,
@@ -204,33 +204,7 @@ export function RunPeekPanel(): ReactNode {
 
     return () => document.removeEventListener("keydown", escape);
   }, [modal, peek.close]);
-  useEffect(() => {
-    if (!modal || !panel.current) return;
-    const retained: { element: HTMLElement; inert: boolean }[] = [];
-    let branch: HTMLElement = panel.current;
-
-    while (branch.parentElement) {
-      for (const sibling of branch.parentElement.children) {
-        if (
-          sibling === branch ||
-          !(sibling instanceof HTMLElement) ||
-          sibling.hasAttribute("data-peek-backdrop")
-        )
-          continue;
-        retained.push({ element: sibling, inert: sibling.inert });
-        sibling.setAttribute("inert", "");
-      }
-      if (branch.parentElement === document.body) break;
-      branch = branch.parentElement;
-    }
-
-    return () => {
-      for (const item of retained) {
-        if (item.inert) item.element.setAttribute("inert", "");
-        else item.element.removeAttribute("inert");
-      }
-    };
-  }, [modal]);
+  useInertSiblings(panel, modal);
   const snapshot = resource.snapshot;
   const t = peek.t;
   const hierarchyError =

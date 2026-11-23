@@ -63,6 +63,7 @@ export interface RunQueryPatch {
   scope?: RunDiffScope | null;
   node?: string | null;
   inspector?: RunInspectorState | null;
+  inspectorCheck?: string | null;
   flow?: RunFlowState | null;
   evidenceView?: "list" | "graph" | null;
   evidenceItem?: string | null;
@@ -174,6 +175,7 @@ export function buildRunSearchParams(
   setOptionalParam(params, "scope", patch.scope);
   setOptionalParam(params, "node", patch.node);
   setOptionalParam(params, "inspector", patch.inspector);
+  setOptionalParam(params, "inspectorCheck", patch.inspectorCheck);
   setOptionalParam(params, "flow", patch.flow);
   setOptionalParam(params, "evidenceView", patch.evidenceView);
   setOptionalParam(params, "evidenceItem", patch.evidenceItem);
@@ -247,7 +249,7 @@ export function readRunPeekQuery(input: RunSearchParamsInput): {
   const params = toRunSearchParams(input);
 
   return {
-    selected: params.get("peek"),
+    selected: params.get("peek") || null,
     view: enumOrNull(params.get("peekView"), [
       "conversation",
       "execution",

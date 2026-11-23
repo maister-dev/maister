@@ -74,6 +74,7 @@ pnpm lint               # eslint --fix
 pnpm typecheck          # tsc --noEmit
 pnpm test               # unit + integration (vitest)
 pnpm test:e2e           # playwright
+pnpm test:e2e:flow      # authenticated Flow controls in Chromium and Firefox
 pnpm db:generate        # drizzle-kit generate
 pnpm db:migrate         # apply migrations
 pnpm db:seed            # seed admin user

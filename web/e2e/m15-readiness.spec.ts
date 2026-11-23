@@ -73,7 +73,9 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   // (2) Open the failed run. The readiness badge sits in the card's actions
   // block OUTSIDE the run link (by design — actions need a non-link surface),
   // so navigate via the card's run-detail link instead of the badge.
-  const verification = page.getByTestId("flow-verification");
+  const verification = page
+    .getByTestId("flow-verification")
+    .filter({ visible: true });
   const disclosure = verification.locator("summary");
   const decoyId = randomUUID();
   const decoyLabel = "another-failed-check";
@@ -95,9 +97,13 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   try {
     await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
     await page.waitForURL(`/runs/${fx.failedRunId}*`);
-    await expect(disclosure).toContainText("Flow verification");
-    await disclosure.focus();
-    await disclosure.press("Enter");
+    await page.goto(
+      `/runs/${fx.failedRunId}?kind=artifact&state=stale&node=review&evidenceItem=gate%3A${decoyId}&inspector=closed`,
+    );
+    await expect(verification).toHaveCount(0);
+    await page.getByRole("link", { name: /Flow checks.*Failed/i }).click();
+    await expect(disclosure).toContainText("Flow checks");
+    await expect(disclosure).toBeFocused();
     const failedReason = verification
       .getByRole("listitem")
       .filter({ hasText: fx.gateId });
@@ -108,22 +114,35 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
     await failedReason
       .getByRole("link", { name: "View gate evidence" })
       .click();
-    await expect(page.getByTestId("selected-result")).toContainText(fx.gateId);
+    const selected = page
+      .getByTestId("selected-result")
+      .filter({ visible: true });
+
+    await expect(selected).toBeFocused();
+    await expect(page).toHaveURL(/node=review/);
+    await expect(selected).toContainText(fx.gateId);
+    await expect(selected).toHaveAttribute(
+      "data-result-id",
+      `gate:${failedRowId}`,
+    );
     await page.getByRole("link", { name: "Provenance graph" }).click();
     const graph = page.getByTestId("evidence-graph");
 
     await expect(graph.getByTestId("evidence-node")).toHaveCount(1);
     await expect(graph.getByTestId("evidence-node")).toContainText(fx.gateId);
-    await expect(page).toHaveURL(
-      `/runs/${fx.failedRunId}?wb=evidence&evidenceItem=gate%3A${failedRowId}&evidenceView=graph`,
-    );
+    const graphQuery = new URL(page.url()).searchParams;
+
+    expect(Object.fromEntries(graphQuery)).toEqual({
+      inspector: "closed",
+      wb: "evidence",
+      evidenceItem: `gate:${failedRowId}`,
+      evidenceView: "graph",
+    });
     await expect(
       page.getByText(`Evidence item · ${fx.gateId}`, { exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Clear filters" }).click();
-    await expect(page).toHaveURL(
-      `/runs/${fx.failedRunId}?wb=evidence&evidenceView=graph`,
-    );
+    await expect(page).not.toHaveURL(/evidenceItem=/);
     await expect(
       graph.getByTestId("evidence-node").filter({ hasText: decoyLabel }),
     ).toBeVisible();
@@ -145,6 +164,10 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.overriddenRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.overriddenRunId}*`);
 
+  await expect(verification).toHaveCount(0);
+  await page
+    .getByRole("tab", { name: "Results and checks", exact: true })
+    .click();
   await expect(disclosure).toContainText("Overridden");
   await disclosure.press("Enter");
   const overrideReason = verification
@@ -258,7 +281,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
       ).toBeVisible();
       await expect(page.getByTestId("flow-verification")).toHaveCount(0);
     }
-    await page.goto(`/runs/${flow}`);
+    await page.goto(`/runs/${flow}?wb=evidence`);
     await expect(verification).toContainText("Recorded checks clear");
     await expect(
       page.getByTestId("run-header-status").filter({ visible: true }),
@@ -348,7 +371,33 @@ test("UX-07 Running operational work and historical executor failure stay separa
       "Produce or refresh the required evidence before continuing.",
     );
 
-    await page.goto(`/runs/${noChecksRun}`);
+    // A historical result outside the evidence projection's SQL integer range
+    // exercises its real optional-read failure without changing the gate rollup.
+    await withE2EDb((pool) =>
+      pool.query("UPDATE node_attempts SET action_completion=$2 WHERE id=$1", [
+        attempt,
+        {
+          version: 1,
+          promptOrdinal: 0,
+          result: { ok: false, exitCode: 2147483648 },
+          originalOutput: {},
+        },
+      ]),
+    );
+    await page.reload();
+    await expect(
+      page.getByText(
+        "Results and checks could not be loaded. Reload this run to retry.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await verification.locator("summary").press("Enter");
+    await expect(verification).toContainText(
+      "Produce or refresh the required evidence",
+    );
+    await expect(verification.getByRole("link")).toHaveCount(0);
+
+    await page.goto(`/runs/${noChecksRun}?wb=evidence&inspector=open`);
     await expect(verification).toContainText("No blocking checks configured");
   } finally {
     await withE2EDb(async (pool) => {
@@ -359,5 +408,125 @@ test("UX-07 Running operational work and historical executor failure stay separa
         noChecksRevision,
       ]);
     });
+  }
+});
+
+test("legacy Flow without a graph keeps its step control and verified request checks reachable @flow-controls", async ({
+  page,
+}) => {
+  const { failedRunId } = loadM15Fixture();
+  const runId = randomUUID(),
+    attempt = randomUUID(),
+    evaluation = randomUUID(),
+    secondEvaluation = randomUUID();
+  const envelope = {
+    requestId: "request",
+    supervisorSessionId: "session",
+    options: [{ optionId: "allow" }],
+    flowPrompt: {
+      version: 1,
+      variant: "gate_ai",
+      gateId: "approval",
+      evaluationId: evaluation,
+      nodeAttemptId: attempt,
+      promptOrdinal: 0,
+      assignmentId: "assignment",
+      incarnationId: "incarnation",
+      commandId: "command",
+    },
+  };
+
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      "INSERT INTO runs(id,project_id,run_kind,status,flow_version,current_step_id) SELECT $1,project_id,'flow','Running','legacy','work' FROM runs WHERE id=$2",
+      [runId, failedRunId],
+    );
+    await pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES ($1,$2,'work','ai_coding',1,'Running')",
+      [attempt, runId],
+    );
+    await pool.query(
+      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES ($1,$2,$3,'approval','ai_judgment','blocking','failed'), ($4,$2,$3,'handover','ai_judgment','blocking','failed')",
+      [evaluation, runId, attempt, secondEvaluation],
+    );
+  });
+  try {
+    await page.goto(`/runs/${runId}?flow=fullscreen&inspector=closed`);
+    const shell = page.getByTestId("run-shell").filter({ visible: true });
+
+    await expect(shell.getByTestId("flow-run-graph-view")).toHaveCount(0);
+    await expect(
+      shell
+        .getByTestId("run-outcome")
+        .getByRole("button", { name: "Stop current step" }),
+    ).toBeVisible();
+    await shell.getByRole("link", { name: /Flow checks.*Failed/ }).click();
+    await expect(
+      shell.getByTestId("flow-verification").locator("summary"),
+    ).toBeFocused();
+    await withE2EDb(async (pool) => {
+      await pool.query("UPDATE runs SET status='NeedsInput' WHERE id=$1", [
+        runId,
+      ]);
+      await pool.query(
+        "INSERT INTO hitl_requests(id,run_id,step_id,kind,schema,prompt) VALUES ($1,$3,'approval','permission',$4,'Approval permission'), ($2,$3,'approval','permission','{}','Generic permission'), ($5,$3,'handover','permission',$6,'Handover permission')",
+        [
+          randomUUID(),
+          randomUUID(),
+          runId,
+          envelope,
+          randomUUID(),
+          {
+            ...envelope,
+            flowPrompt: {
+              ...envelope.flowPrompt,
+              gateId: "handover",
+              evaluationId: secondEvaluation,
+            },
+          },
+        ],
+      );
+    });
+    await page.goto(`/runs/${runId}?inspector=closed`);
+    const cards = shell.getByTestId("pending-input-card");
+
+    await expect(
+      cards
+        .filter({ hasText: "Generic permission" })
+        .getByRole("link", { name: "View related Flow check" }),
+    ).toHaveCount(0);
+    const checkLink = (prompt: string) =>
+      cards
+        .filter({ hasText: prompt })
+        .getByRole("link", { name: "View related Flow check" });
+    const approval = shell.locator(`[data-check-row="gate:${evaluation}"]`);
+    const handover = shell.locator(
+      `[data-check-row="gate:${secondEvaluation}"]`,
+    );
+    const handoverHref = await checkLink("Handover permission").getAttribute(
+      "href",
+    );
+
+    expect(handoverHref).toBeTruthy();
+    await checkLink("Approval permission").click();
+    await expect(approval).toBeFocused();
+    await checkLink("Handover permission").click();
+    await expect(handover).toBeFocused();
+    await page.goBack();
+    await expect(approval).toBeFocused();
+    await page.goForward();
+    await expect(handover).toBeFocused();
+    await page.goto("about:blank");
+    await page.goto(handoverHref!);
+    await expect(handover).toBeFocused();
+    await page.reload();
+    await expect(handover).toBeFocused();
+    await expect(
+      shell.getByRole("button", { name: "Stop current step" }),
+    ).toHaveCount(0);
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM runs WHERE id=$1", [runId]),
+    );
   }
 });

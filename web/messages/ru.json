@@ -2927,6 +2927,8 @@
     "agentCenterReviewChanges": "Ревью изменений",
     "agentCenterOpenDiff": "Открыть диф",
     "flowCenterTitle": "Результат Flow",
+    "headerStopRun": "Остановить запуск",
+    "flowCenterCloseFullscreen": "Выйти из полноэкранного режима",
     "flowCenterFullscreen": "На весь экран",
     "flowCenterReviewChanges": "Ревью изменений",
     "flowCenterNodes": "Шаги",
@@ -3667,7 +3669,7 @@
     "targetLabel": "Целевой шаг",
     "targetRecommended": "{node} (рекомендуется)",
     "default": "по умолчанию",
-    "interruptControlTitle": "Управление текущим шагом",
+    "interruptHelpLabel": "Об остановке текущего шага",
     "interruptNode": "Остановить текущий шаг",
     "interruptNodeHelp": "Остановит только текущий шаг Flow. Запуск и рабочая копия сохранятся — затем можно выбрать, как продолжить."
   },
@@ -3766,7 +3768,8 @@
     "artifactKindPlan": "План"
   },
   "readiness": {
-    "flowVerification": "Проверка процесса",
+    "requestCheck": "Открыть связанную проверку Flow",
+    "flowVerification": "Проверки Flow",
     "recordedClear": "Записанные проверки пройдены",
     "noChecks": "Блокирующие проверки не настроены",
     "policyExcluded": "Проверки исключены политикой",

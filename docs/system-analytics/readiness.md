@@ -259,6 +259,22 @@ use their own lifecycle and result state. Agent code-delivery Review consumes
 the enforcement rollup for promotion controls. A historical execution error
 describes that attempt (UX-07A–C).
 
+### Run detail placement (Implemented)
+
+Results and checks owns the complete Flow verification summary. A Run without
+that workbench exposes it in the inspector. Ready, waiting, overridden, no
+checks, policy-excluded, unknown and unevaluated states stay there during
+ordinary execution. Failed, stale and blocked add a compact entry in the Flow
+heading, or Run summary if the heading is unavailable. Final delivery review
+owns this link when it already displays the rollup. Missing evidence retains
+its explanation and next action even when row details are unavailable.
+A question can point to its own check only when the server verifies the
+request's Run, attempt, gate and evaluation against available evidence.
+General links clear stale result selection. A gate link identifies the exact
+evaluation in the URL. In the inspector, opening that URL directly, reloading
+it or traversing browser history expands the disclosure and focuses the
+matching authorized reason. Permission envelopes stay server-side.
+
 ## Expectations
 
 - A blocking gate (`mode: "blocking"`) on the live `node_attempts` row MUST clear a phase

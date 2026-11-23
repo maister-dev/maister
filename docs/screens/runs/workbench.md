@@ -78,8 +78,17 @@ contract:
 | `diffFiles=shown\|hidden` | Diff | Changed-file tree visibility. The tree is rooted at project-relative paths and includes an in-place file-name filter. The default is `shown`; hiding the tree keeps the selected file body visible. |
 | `scope=run\|review\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. `review` is the current Flow-review source and is selected by `wb=review`. |
 | `node=<node-id>` | Flow result | Selected Flow node for non-scratch Flow runs. Ignored by standalone agent runs. |
-| `inspector=<state>` | Run shell | Inspector open/collapsed or selected inspector tab, depending on implementation detail. |
-| `flow=fullscreen` | Flow result | Opens the fullscreen Flow graph view. |
+| `inspector=open\|closed` | Run shell | Opens or closes the inspector. |
+| `inspectorCheck=summary\|gate:<evaluation-id>` | Inspector-only Flow checks | With the inspector open, reveals the summary or the matching recorded reason. |
+| `flow=fullscreen` | Flow result | Opens the live graph across the browser viewport. |
+
+**Fullscreen interaction (Implemented).** The graph canvas expands with its
+container. Direct links, reload and browser history restore the mode. Close
+or Escape returns to this Run with the selected node, query state and inline
+scroll position retained. Focus returns to the entry control. An empty
+`peek=` leaves the graph in control of focus and Escape. A child sheet
+receives the first Escape while it covers the graph. See
+[child Run navigation](../../system-analytics/run-peek-navigation.md).
 
 `file` and `diffFile` are intentionally separate. A user with run-diff access
 may not have source browsing access; the Diff tab must not route through

@@ -91,3 +91,36 @@ export function useModalA11y(
     };
   }, [dialogRef, active]);
 }
+
+export function useInertSiblings(
+  panel: RefObject<HTMLElement | null>,
+  active: boolean,
+): void {
+  useEffect(() => {
+    if (!active || !panel.current?.getClientRects().length) return;
+    const retained: { element: HTMLElement; inert: boolean }[] = [];
+    let branch: HTMLElement = panel.current;
+
+    while (branch.parentElement) {
+      for (const sibling of branch.parentElement.children) {
+        if (
+          sibling === branch ||
+          !(sibling instanceof HTMLElement) ||
+          sibling.hasAttribute("data-peek-backdrop")
+        )
+          continue;
+        retained.push({ element: sibling, inert: sibling.inert });
+        sibling.setAttribute("inert", "");
+      }
+      if (branch.parentElement === document.body) break;
+      branch = branch.parentElement;
+    }
+
+    return () => {
+      for (const item of retained) {
+        if (item.inert) item.element.setAttribute("inert", "");
+        else item.element.removeAttribute("inert");
+      }
+    };
+  }, [active, panel]);
+}

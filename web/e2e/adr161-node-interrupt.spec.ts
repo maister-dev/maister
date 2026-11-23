@@ -59,7 +59,9 @@ test("node interrupt: parked card → four options → restart with a correction
     page.getByRole("button", { name: "Resume as-is", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Stop run", exact: true }),
+    page
+      .getByTestId("pending-input-card")
+      .getByRole("button", { name: "Stop run", exact: true }),
   ).toBeVisible();
 
   // (b) The rarer jump-back sits behind progressive disclosure, so it does not

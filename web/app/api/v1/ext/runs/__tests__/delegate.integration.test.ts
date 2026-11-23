@@ -34,7 +34,7 @@ let db: NodePgDatabase;
 let agentsRoot: string;
 
 // getDb() → the testcontainer everywhere (routes, services, the workbench stop
-// dispatcher's module-level db()). tryStartRun is forced to NOT promote so the
+// dispatcher's module-level db()). Keep allocated runs queued so the
 // agent-session spawn microtask never fires — the run row stays a stable
 // Pending with every delegation column set at INSERT.
 vi.mock("next/server", async (original) => ({
@@ -42,6 +42,9 @@ vi.mock("next/server", async (original) => ({
   after: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
+}));
 vi.mock("@/lib/supervisor-client", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/supervisor-client")>();
@@ -57,7 +60,6 @@ vi.mock("@/lib/scheduler", async (importOriginal) => {
 
   return {
     ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
     promoteNextPending: vi.fn(async () => null),
   };
 });

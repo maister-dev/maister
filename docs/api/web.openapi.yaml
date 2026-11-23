@@ -11484,7 +11484,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          description: Run not found, or not visible to the caller's projects.
+          description: Run lookup yielded no project. Insufficient project access returns 403.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

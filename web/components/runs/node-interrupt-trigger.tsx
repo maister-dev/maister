@@ -2,11 +2,15 @@
 
 import type { ReactElement } from "react";
 
-import { PauseCircleIcon } from "@heroicons/react/24/outline";
+import {
+  InformationCircleIcon,
+  PauseCircleIcon,
+} from "@heroicons/react/24/outline";
+import { Button, Popover } from "@heroui/react";
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 
 import { readApiError } from "@/lib/api-error";
 
@@ -30,7 +34,7 @@ export function NodeInterruptTrigger({
   const [error, setError] = useState<string | null>(null);
 
   const disabled = busy || pending || !canAct;
-  const helpId = `node-interrupt-help-${runId}`;
+  const helpId = useId();
 
   async function interrupt(): Promise<void> {
     setBusy(true);
@@ -58,7 +62,7 @@ export function NodeInterruptTrigger({
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex max-w-full flex-wrap items-center gap-1">
       <button
         aria-describedby={helpId}
         aria-label={t("interruptNode")}
@@ -73,14 +77,34 @@ export function NodeInterruptTrigger({
         <PauseCircleIcon aria-hidden className="size-4" />
         {t("interruptNode")}
       </button>
-      <p
-        className="max-w-[62ch] font-mono text-[11px] leading-relaxed text-mute"
-        id={helpId}
-      >
+      <p className="sr-only" id={helpId}>
         {t("interruptNodeHelp")}
       </p>
+      <Popover>
+        <Button
+          isIconOnly
+          aria-label={t("interruptHelpLabel")}
+          size="sm"
+          variant="ghost"
+        >
+          <InformationCircleIcon aria-hidden className="size-4" />
+        </Button>
+        <Popover.Content>
+          <Popover.Dialog
+            aria-label={t("interruptHelpLabel")}
+            className="max-w-xs p-3 text-sm"
+          >
+            {t("interruptNodeHelp")}
+          </Popover.Dialog>
+        </Popover.Content>
+      </Popover>
       {error ? (
-        <p className="font-mono text-[12px] text-[#d9534f]">{error}</p>
+        <p
+          className="basis-full font-mono text-[12px] text-[#d9534f]"
+          role="alert"
+        >
+          {error}
+        </p>
       ) : null}
     </div>
   );

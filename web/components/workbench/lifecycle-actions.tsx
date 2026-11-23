@@ -43,6 +43,7 @@ export interface WorkbenchLifecycleActionsProps {
   runId: string;
   runKind: RunKind;
   actions: WorkbenchLifecycleActionId[];
+  stopLabel?: string;
   className?: string;
   variant?: "compact" | "detail" | "menu";
   compactHiddenGitActions?: readonly WorkbenchLifecycleActionId[];
@@ -501,6 +502,7 @@ export function WorkbenchLifecycleActions({
   runId,
   runKind,
   actions,
+  stopLabel,
   className,
   variant = "compact",
   compactHiddenGitActions,
@@ -732,7 +734,8 @@ export function WorkbenchLifecycleActions({
         </button>
       ) : null}
       {displayActions.map((action) => {
-        const label = t(`action.${action}`);
+        const label =
+          action === "stop" && stopLabel ? stopLabel : t(`action.${action}`);
 
         return (
           <button
@@ -786,7 +789,7 @@ export function WorkbenchLifecycleActions({
             ) : null;
           })
         : null}
-      {error ? (
+      {error && !dialogAction ? (
         <span
           aria-live="assertive"
           className="font-mono text-[9.5px] font-semibold text-amber"
@@ -975,7 +978,10 @@ export function WorkbenchLifecycleActions({
               </>
             ) : null}
             {error ? (
-              <div className="flex flex-col gap-1 font-mono text-[10px] font-semibold text-amber">
+              <div
+                role="alert"
+                className="flex flex-col gap-1 font-mono text-[10px] font-semibold text-amber"
+              >
                 <p>{error}</p>
               </div>
             ) : null}

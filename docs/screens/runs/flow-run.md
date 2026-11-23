@@ -121,17 +121,15 @@ flowchart TD
 
 ## Layout & regions
 
-The page uses a full-width two-column run shell on desktop, with a minimum
-1000px work surface and a 380px right inspector. Narrow/mobile presentation is
-still a later responsive pass.
+The desktop Run shell can show a 380px inspector beside the main content.
+Below 1280px the open inspector overlays the main content.
 
 1. **Run header** - the **task title** as the H1, a `KEY-N` chip beside the run
-   status, an eyebrow reading `Flow › current node`, the worktree branch on its
-   own line, the executor, compact `+/-` change size, and a collapsible **Task**
+   status, an eyebrow reading `Flow › current node`, the worktree branch in the
+   status row, the executor, compact `+/-` change size, and a collapsible **Task**
    block rendering the task prompt (Markdown). This replaces the prior
    `"<KEY-N> <branch>"` heading so the page answers "what is this run about".
-   When branch sync and PR lifecycle tracking ship (Implemented, ADR-140/141), the
-   header also carries a **behind/ahead chip** summarizing the run branch's drift
+   The header also carries a **behind/ahead chip** summarizing the run branch's drift
    against its target and a **PR-state chip** (`open` / `merged` / `closed`); a
    conflicted PR renders a distinct conflicts affordance linking to Reopen. Both
    render from the `run` namespace in `web/components/runs/run-header.tsx`; see
@@ -447,6 +445,16 @@ uses; the field renders the abbreviated path while the copy button puts the real
 one on the clipboard. A non-fast-forward _Return_ renders the server's structured
 remediation — the exact command, the local/remote SHAs, and how far the branch
 has diverged — as copyable text rather than a generic error.
+
+**Project Flow detail controls (Implemented).** The Run status row includes the
+execution-policy badge and the authorized **Stop run** action. A long branch
+pair uses the remaining width and exposes its full value on demand. The row
+wraps on small screens. The selected-step header includes **Stop current
+step** beside the current badge only when the selection matches the live Run
+cursor. A separate keyboard- and touch-accessible info button explains the
+effect. When the cursor itself has no renderable card, the Run summary hosts
+the step action. Request failures stay visible. Operation semantics are in
+[Run continuation](../../system-analytics/run-continuation.md).
 
 **Node-interrupt controls.** A live agent node (`ai_coding | judge |
 orchestrator`) carries an interrupt trigger; `cli` and `check` nodes refuse with

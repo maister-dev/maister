@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
 
@@ -13,7 +13,9 @@ export function RunOutcome({
   summary,
   next,
   noAction,
+  children,
 }: {
+  children?: ReactNode;
   heading: string;
   summary: string;
   next?: RunNextAction;
@@ -44,6 +46,7 @@ export function RunOutcome({
       ) : (
         <p className="text-xs text-mute">{noAction}</p>
       )}
+      {children}
     </section>
   );
 }

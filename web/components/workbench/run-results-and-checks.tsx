@@ -132,6 +132,13 @@ export function RunResultsAndChecksView({
           className="text-sm underline"
           href={href({
             evidenceView: evidenceView === "graph" ? "list" : "graph",
+            ...(evidenceView === "list" &&
+            selectedGraphItem &&
+            node &&
+            selectedGraphItem.meta.nodeId !== node &&
+            selectedGraphItem.id !== node
+              ? { node: null }
+              : {}),
             ...(selectedGraphItem || !selected ? {} : { evidenceItem: null }),
           })}
           scroll={false}
@@ -156,6 +163,7 @@ export function RunResultsAndChecksView({
             <section
               ref={detail}
               className="grid gap-2 rounded-md border border-line p-3"
+              data-result-id={selected.id}
               data-testid="selected-result"
               tabIndex={-1}
             >
