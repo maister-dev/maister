@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -59,6 +60,8 @@ export async function trustExecutable(args: {
     );
   }
 
+  await requireParentPackageTrust(db, flow.packageInstallId);
+
   // Load the enabled revision.
   const revRows = await db
     .select()
@@ -87,7 +90,7 @@ export async function trustExecutable(args: {
   // Run pending setup.sh if needed.
   let setupStatus: string = rev.setupStatus;
 
-  if (rev.setupStatus === "pending") {
+  if (rev.setupStatus === "pending" || rev.setupStatus === "failed") {
     setupStatus = await runRevisionSetup({
       db,
       revisionId: rev.id,

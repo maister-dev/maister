@@ -27,7 +27,8 @@ import { buildFlowFixture } from "@/lib/__tests__/_fixtures/build-flow-plugin";
 import * as schemaModule from "@/lib/db/schema";
 import { installFlowPlugin } from "@/lib/flows";
 import { trustExecutable } from "@/lib/flows/exec-trust";
-import { enableRevision } from "@/lib/flows/lifecycle";
+import { MaisterError } from "@/lib/errors";
+import { enableRevision, rollbackFlow } from "@/lib/flows/lifecycle";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -213,12 +214,21 @@ describe("exec_trust two-axis gate (T-B3)", () => {
       .set({ packageStatus: "Installed" })
       .where(eq(schema.flowRevisions.id, install.revisionId));
 
-    await enableRevision({
+    const selection = {
       projectId,
       flowRefId: "setup-ok-enable-flip",
       revisionId: install.revisionId,
       db,
-    });
+    };
+    const projectOnly = async () => {
+      throw new MaisterError("UNAUTHORIZED", "Global role required");
+    };
+    await expect(
+      rollbackFlow({ ...selection, authorizeExecution: projectOnly }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await enableRevision(selection);
+    // A project administrator may select an already trusted and ready revision.
+    await rollbackFlow({ ...selection, authorizeExecution: projectOnly });
 
     const [afterRow] = await db
       .select()

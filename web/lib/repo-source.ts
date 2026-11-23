@@ -136,14 +136,18 @@ export function classifyGitError(stderr: string): CloneFailureReason {
     s.includes("could not read password") ||
     s.includes("terminal prompts disabled") ||
     s.includes("invalid username or password") ||
-    s.includes("403")
+    /(?:returned error:\s*|http(?:\/[\d.]+)?\s+)403\b|\b403\s+forbidden\b/.test(
+      s,
+    )
   ) {
     return "HTTPS_AUTH";
   }
   if (
     s.includes("repository not found") ||
     s.includes("does not exist") ||
-    s.includes("404")
+    /(?:returned error:\s*|http(?:\/[\d.]+)?\s+)404\b|\b404\s+not found\b/.test(
+      s,
+    )
   ) {
     return "NOT_FOUND";
   }

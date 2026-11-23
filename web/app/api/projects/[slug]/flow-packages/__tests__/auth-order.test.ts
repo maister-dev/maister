@@ -20,6 +20,9 @@ vi.mock("@/app/api/projects/[slug]/flow-packages/_lib", () => ({
   errorResponse: mocks.errorResponse,
   parseAuthorizedJson: mocks.parseAuthorizedJson,
 }));
+vi.mock("@/lib/authz", () => ({
+  requireGlobalRole: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/flows", () => ({ installFlowPlugin: mocks.installFlowPlugin }));
 vi.mock("@/lib/flows/lifecycle", () => ({
   enableRevision: mocks.enableRevision,

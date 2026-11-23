@@ -640,6 +640,7 @@ describe("scheduler system sweeps", () => {
             reason: "EXECUTOR_UNAVAILABLE",
           },
           agentContinuation: { state: "stopped", reason: null },
+          projectDependency: { state: "stopped", reason: null },
           taskLaunch: { state: "stopped", reason: null },
         },
       });

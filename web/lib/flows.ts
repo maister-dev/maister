@@ -3,11 +3,11 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 import type { TrustStatus } from "@/lib/flows/trust";
+import type { DependencyTransaction } from "@/lib/project-dependencies/package-writes";
 
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
-  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -18,7 +18,6 @@ import {
   rm,
   stat,
   symlink,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -26,9 +25,10 @@ import path, { dirname, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { publishMaterial } from "@/lib/project-dependencies/material";
 import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
 import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
 export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
@@ -124,6 +124,11 @@ export type InstallFlowPluginArgs = {
   projectSlug: string;
   flowId: string;
   preparedRevision?: InstalledRevision;
+  projectLink?: (link: {
+    workspaceRoot: string;
+    linkPath: string;
+    target: string;
+  }) => Promise<void>;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
   // Project capability registry (block + capability_imports), built by the
@@ -199,7 +204,19 @@ function wrapInstallStage(opts: {
   return new MaisterError(
     "FLOW_INSTALL",
     `flow install failed [stage=${opts.stage}] ${opts.source}@${opts.version}: ${opts.message}`,
-    opts.cause ? { cause: asError(opts.cause) } : undefined,
+    {
+      cause: opts.cause,
+      details: {
+        reason:
+          opts.stage === "clone"
+            ? dependencyCloneFailure(opts.cause)
+            : opts.stage === "validate-manifest"
+              ? "invalid_manifest"
+              : opts.stage === "finalize"
+                ? "finalize_failed"
+                : "install_failed",
+      },
+    },
   );
 }
 
@@ -559,8 +576,14 @@ export async function ensureSymlink(opts: {
     { target, linkPath, previousTarget: currentTarget },
     "symlink: repointing",
   );
-  await unlink(linkPath);
-  await symlink(target, linkPath);
+  const stage = join(dirname(linkPath), ".maister-link-" + randomUUID());
+
+  await symlink(target, stage);
+  try {
+    await rename(stage, linkPath);
+  } finally {
+    await rm(stage, { force: true });
+  }
 }
 
 export async function gitRevParseHead(opts: {
@@ -858,17 +881,60 @@ export async function installRevision(opts: {
     "installing flow revision",
   );
 
-  const { revisionId, skipFinalize } = await ensureRevisionIntentRow({
-    db,
-    flowId,
-    source,
-    version,
-    resolvedRevision,
-    installedPath: target,
-    schemaVersionGuess: manifestForIntent.schemaVersion,
-    manifestForIntent,
-  });
+  const sourceDir = sourceKind.kind === "local" ? sourceKind.absPath : tmpDir!;
+  const hashMaterial = (dir: string) =>
+    localDirectoryContentDigest(dir, new Set([".git"]));
+  // Lock the physical destination (whose name contains a shortened SHA)
+  // before publishing any bytes or changing an existing revision's state.
+  let revisionId: string;
+  let skipFinalize: boolean;
 
+  try {
+    const witness = await hashMaterial(sourceDir);
+
+    ({ revisionId, skipFinalize } = await db.transaction(
+      async (tx: DependencyTransaction) => {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${target},0))`,
+        );
+        await publishMaterial({
+          source: sourceDir,
+          target,
+          revision: resolvedRevision,
+          digest: witness,
+          hash: hashMaterial,
+          hasHistoricalOwner: async () => {
+            const [prior] = await tx
+              .select({ id: flowRevisions.id })
+              .from(flowRevisions)
+              .where(
+                and(
+                  eq(flowRevisions.installedPath, target),
+                  eq(flowRevisions.resolvedRevision, resolvedRevision),
+                  eq(flowRevisions.source, source),
+                  eq(flowRevisions.packageStatus, "Installed"),
+                ),
+              );
+
+            return Boolean(prior);
+          },
+        });
+
+        return ensureRevisionIntentRow({
+          db: tx,
+          flowId,
+          source,
+          version,
+          resolvedRevision,
+          installedPath: target,
+          schemaVersionGuess: manifestForIntent.schemaVersion,
+          manifestForIntent,
+        });
+      },
+    ));
+  } finally {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  }
   try {
     if (skipFinalize) {
       if (tmpDir)
@@ -903,30 +969,6 @@ export async function installRevision(opts: {
         manifest,
         setupStatus: setupRow[0]?.setupStatus ?? "not_required",
       };
-    }
-
-    const cachePopulated =
-      (await pathExists(target)) &&
-      (await pathExists(join(target, "flow.yaml")));
-
-    if (!cachePopulated) {
-      await mkdir(dirname(target), { recursive: true });
-
-      if (sourceKind.kind === "local") {
-        await cp(sourceKind.absPath, target, {
-          recursive: true,
-          errorOnExist: false,
-          force: false,
-        });
-        log.info({ target }, "local-copy-done");
-      } else if (tmpDir) {
-        await rename(tmpDir, target);
-        tmpDir = null;
-        log.info({ target, resolvedRevision }, "renamed clone to cache");
-      }
-    } else if (tmpDir) {
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      tmpDir = null;
     }
 
     const manifest = await loadManifestOrThrow(
@@ -1030,7 +1072,7 @@ export async function runRevisionSetup(opts: {
 }): Promise<"not_required" | "done" | "failed"> {
   const db = opts.db ?? getDb();
   const setupStatus = await runMaterialSetup({
-    kind:"flow",
+    kind: "flow",
     db,
     revision: opts.revisionId,
     target: opts.installedPath,
@@ -1204,9 +1246,16 @@ async function installFlowPluginImpl(
   // Package attachment materializes the project-level `.maister/` flow link
   // before any run exists. Prime the same repo-local excludes used by run
   // materialization so attaching a package never dirties the consumer repo.
-  await ensureWorktreeGitExclude(workspaceRoot);
-  await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
-  log.info({ symlinkPath }, "symlink ready");
+  if (args.projectLink) {
+    await args.projectLink({
+      workspaceRoot,
+      linkPath: symlinkPath,
+      target: rev.installedPath,
+    });
+  } else {
+    await ensureWorktreeGitExclude(workspaceRoot);
+    await ensureSymlink({ target: rev.installedPath, linkPath: symlinkPath });
+  }
 
   const flowRowId = await upsertFlowEnablementRow({
     db,
@@ -1257,6 +1306,7 @@ export async function installFlowPlugin(
 
   // Only identical calls may share file, trust, cancellation and transaction ownership.
   const existing = inFlightInstalls.get(args);
+
   if (existing && existing.trust === trustStatusOverride)
     return existing.promise;
   const promise = installFlowPluginImpl(args, trustStatusOverride).finally(
@@ -1265,7 +1315,9 @@ export async function installFlowPlugin(
         inFlightInstalls.delete(args);
     },
   );
+
   inFlightInstalls.set(args, { trust: trustStatusOverride, promise });
+
   return promise;
 }
 

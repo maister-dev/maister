@@ -4,11 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  authorizeManagePackages,
+  authorizePackageTrust,
+  parseAuthorizedJson,
   errorResponse,
 } from "@/app/api/projects/[slug]/flow-packages/_lib";
 import { confirmCapabilityTrust } from "@/lib/capabilities/import";
-import { MaisterError } from "@/lib/errors";
 
 const postBodySchema = z.object({ confirm: z.literal(true) });
 
@@ -30,19 +30,8 @@ export async function POST(
   const { slug, capabilityRefId } = await params;
 
   try {
-    postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      slug,
-    );
-  }
-
-  try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db } = await authorizePackageTrust(slug);
+    await parseAuthorizedJson({ req, schema: postBodySchema, method: "POST" });
 
     const result = await confirmCapabilityTrust({
       projectId: project.id,

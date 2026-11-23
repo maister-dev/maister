@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CapabilityRefIdsInput } from "@/lib/config";
+import type { Db } from "@/lib/execution-host/db";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -20,6 +20,9 @@ import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
   installCapabilityRevision,
+  prepareCapabilityRevision,
+  bindPreparedCapability,
+  type PreparedCapability,
   runCapabilityRevisionSetup,
 } from "@/lib/capabilities/import";
 import { getDb } from "@/lib/db/client";
@@ -32,6 +35,7 @@ import {
   repairPackageRootSchemaCache,
   runRevisionSetup,
   type InstallResult,
+  type InstalledRevision,
 } from "@/lib/flows";
 import { loadFlowManifest } from "@/lib/config";
 import { isOperationalEvidenceContract } from "@/lib/run-results/contract";
@@ -45,7 +49,6 @@ import { redactUrl } from "@/lib/repo-source";
 import { assertAttachedQualificationAgentsPolicy } from "@/lib/agents/qualification-policy";
 import { readPackageAgentSources } from "@/lib/agents/package-contract";
 import { lockPackageRunBlockers } from "@/lib/packages/run-pins";
-
 import {
   assertPackageMemberOwnership,
   lockDependencyProject,
@@ -53,7 +56,14 @@ import {
   removePackageDeclaration,
   type DependencyTransaction,
 } from "@/lib/project-dependencies/package-writes";
-import { assertCapabilityMemberOwnership, reconcileDependencyCatalog } from "@/lib/project-dependencies/catalog";
+import {
+  assertCapabilityMemberOwnership,
+  reconcileDependencyCatalog,
+} from "@/lib/project-dependencies/catalog";
+import {
+  reconcileProjectFlowLinks,
+  validateProjectFlowLink,
+} from "@/lib/project-dependencies/flow-links";
 import { withSetupDatabase } from "@/lib/project-dependencies/setup";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
@@ -83,7 +93,7 @@ export type PackageInstallManifest = {
   // default it to `[]`.
   inventory: { skills: string[]; agents: string[]; platformAgents: string[] };
   // Install coordinate (packages[] `path` subdir) — needed by the
-  // maister.yaml write-back to reproduce the pin.
+  // reviewed Git export to reproduce the pin.
   sourceSubpath?: string;
   contentWitness?: string;
 };
@@ -170,6 +180,62 @@ export type InstallPackageRevisionResult = {
   manifest: PackageInstallManifest;
 };
 
+async function projectInstalledMembers(
+  id: string,
+  name: string,
+  db: Db,
+): Promise<void> {
+  // ADR-106: platform agents ship at the package ROOT (`maister-agents/`) —
+  // register them AFTER the member flow installs, keyed by package name.
+  // Best-effort: a broken agent file is reported in the summary, never fails
+  // the surrounding install (a later resync re-projects the catalog anyway).
+  try {
+    const { registerPackageAgents, resyncAgents } =
+      await import("@/lib/agents/registry");
+    const agentSummary = await registerPackageAgents(id, db);
+
+    if (agentSummary.invalid.length > 0) {
+      log.warn(
+        { id, name, invalid: agentSummary.invalid },
+        "package shipped invalid agent definitions",
+      );
+    }
+
+    // ADR-106: registerPackageAgents wrote THIS install's rows, which may be an
+    // OLDER revision than another already-Installed revision of the same package
+    // name. Re-assert newest-per-name so a re-install of an older revision can't
+    // regress the catalog projection until the next boot/admin resync.
+    await resyncAgents(db);
+  } catch (err) {
+    log.warn(
+      { id, name, err: err instanceof Error ? err.message : String(err) },
+      "agent registration after package install failed",
+    );
+  }
+
+  // ADR-143 D6/D7: project every `evaluationMethods[]` entry into
+  // `evaluation_method_revisions` (INERT parse/hash, activation stays
+  // disabled). Best-effort: an invalid method is projected report-only, never
+  // fails the surrounding install.
+  try {
+    const { registerPackageMethods } =
+      await import("@/lib/evaluations/methods-registry");
+    const methodSummary = await registerPackageMethods(id, db);
+
+    if (methodSummary.invalid.length > 0) {
+      log.warn(
+        { id, name, invalid: methodSummary.invalid },
+        "package shipped invalid evaluation methods",
+      );
+    }
+  } catch (err) {
+    log.warn(
+      { id, name, err: err instanceof Error ? err.message : String(err) },
+      "evaluation method projection after package install failed",
+    );
+  }
+}
+
 // Platform-scope package install (ADR-088): resolve ONCE, copy the package
 // bytes into the content-addressed platform cache, record the immutable
 // `package_installs` row two-phase (Installing → Installed), and pre-install
@@ -199,6 +265,8 @@ export async function installPackageRevision(opts: {
 
   try {
     const name = resolved.manifest.name;
+
+    await opts.onResolve?.(resolved.resolvedRevision);
 
     for (const flow of resolved.manifest.flows) {
       const manifest = await loadFlowManifest(
@@ -231,12 +299,11 @@ export async function installPackageRevision(opts: {
       }
     }
 
-    await opts.onResolve?.(resolved.resolvedRevision);
     const hashMaterial = (dir: string) =>
       localDirectoryContentDigest(dir, new Set([".git"]));
     const witness = await hashMaterial(resolved.pkgRoot);
     const cachePath = packageCachePath(name, resolved.resolvedRevision);
-    return await database.transaction(async (db: any) => {
+    const installed = await database.transaction(async (db: any) => {
       await db.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${cachePath}, 0))`,
       );
@@ -244,8 +311,10 @@ export async function installPackageRevision(opts: {
         .select()
         .from(packageInstalls)
         .where(eq(packageInstalls.installedPath, cachePath));
+
       for (const owner of physicalOwners) {
         const prior = manifestOf(owner);
+
         if (
           owner.resolvedRevision !== resolved.resolvedRevision ||
           (prior.contentWitness && prior.contentWitness !== witness)
@@ -363,7 +432,7 @@ export async function installPackageRevision(opts: {
       }
 
       await publishMaterial({
-        revision:resolved.resolvedRevision,
+        revision: resolved.resolvedRevision,
         source: resolved.pkgRoot,
         target: cachePath,
         digest: witness,
@@ -396,56 +465,6 @@ export async function installPackageRevision(opts: {
         })
         .where(eq(packageInstalls.id, id));
 
-      // ADR-106: platform agents ship at the package ROOT (`maister-agents/`) —
-      // register them AFTER the member flow installs, keyed by package name.
-      // Best-effort: a broken agent file is reported in the summary, never fails
-      // the surrounding install (a later resync re-projects the catalog anyway).
-      try {
-        const { registerPackageAgents, resyncAgents } =
-          await import("@/lib/agents/registry");
-        const agentSummary = await registerPackageAgents(id, db);
-
-        if (agentSummary.invalid.length > 0) {
-          log.warn(
-            { id, name, invalid: agentSummary.invalid },
-            "package shipped invalid agent definitions",
-          );
-        }
-
-        // ADR-106: registerPackageAgents wrote THIS install's rows, which may be an
-        // OLDER revision than another already-Installed revision of the same package
-        // name. Re-assert newest-per-name so a re-install of an older revision can't
-        // regress the catalog projection until the next boot/admin resync.
-        await resyncAgents(db);
-      } catch (err) {
-        log.warn(
-          { id, name, err: err instanceof Error ? err.message : String(err) },
-          "agent registration after package install failed",
-        );
-      }
-
-      // ADR-143 D6/D7: project every `evaluationMethods[]` entry into
-      // `evaluation_method_revisions` (INERT parse/hash, activation stays
-      // disabled). Best-effort: an invalid method is projected report-only, never
-      // fails the surrounding install.
-      try {
-        const { registerPackageMethods } =
-          await import("@/lib/evaluations/methods-registry");
-        const methodSummary = await registerPackageMethods(id, db);
-
-        if (methodSummary.invalid.length > 0) {
-          log.warn(
-            { id, name, invalid: methodSummary.invalid },
-            "package shipped invalid evaluation methods",
-          );
-        }
-      } catch (err) {
-        log.warn(
-          { id, name, err: err instanceof Error ? err.message : String(err) },
-          "evaluation method projection after package install failed",
-        );
-      }
-
       log.info(
         {
           id,
@@ -470,6 +489,11 @@ export async function installPackageRevision(opts: {
         manifest: manifestJson,
       };
     });
+
+    if (!installed.reused)
+      await projectInstalledMembers(installed.id, name, database);
+
+    return installed;
   } catch (err) {
     log.warn(
       { source: redactUrl(opts.source), err: (err as Error).message },
@@ -764,6 +788,62 @@ async function deleteIngestionRecords(
   );
 }
 
+type PackageMaterial = typeof schemaModule.packageInstalls.$inferSelect;
+type PreparedMembers = {
+  flows: ReadonlyMap<string, InstalledRevision>;
+  capabilities: ReadonlyMap<string, PreparedCapability>;
+};
+
+function memberCoordinate(install: PackageMaterial, memberPath: string) {
+  return {
+    source: pathToFileURL(join(install.installedPath, memberPath)).href,
+    version: install.versionLabel.replaceAll("/", "-"),
+    resolvedRevisionOverride: install.resolvedRevision,
+  };
+}
+
+/** Stage immutable members before taking the project's effective-state lock. */
+export async function preparePackageMembers(
+  db: Db,
+  projectId: string,
+  install: PackageMaterial,
+  roleRefs: readonly string[] | undefined,
+  signal: AbortSignal,
+): Promise<PreparedMembers> {
+  const spec = manifestOf(install).spec;
+  const flows = new Map<string, InstalledRevision>();
+  const capabilities = new Map<string, PreparedCapability>();
+
+  for (const flow of spec.flows) {
+    flows.set(
+      flow.id,
+      await installRevision({
+        ...memberCoordinate(install, flow.path),
+        flowId: flow.id,
+        roleRefs,
+        sharedSchemaDir: join(install.installedPath, "schemas"),
+        resultProfiles: spec.result_profiles,
+        db,
+        signal,
+      }),
+    );
+  }
+  for (const cap of spec.capabilities) {
+    capabilities.set(
+      cap.id,
+      await prepareCapabilityRevision({
+        ...memberCoordinate(install, cap.path),
+        capabilityRefId: cap.id,
+        projectId,
+        db,
+        signal,
+      }),
+    );
+  }
+
+  return { flows, capabilities };
+}
+
 // Installs the member flows + capability bundles into the PROJECT inside the
 // caller's transaction and returns the member row ids (shared by attach and
 // upgrade).
@@ -774,9 +854,9 @@ async function wireMembers(
     projectSlug: string;
     workspaceRoot?: string;
     roleRefs?: readonly string[];
-    capabilityRefIds?: CapabilityRefIdsInput;
     install: any;
     readinessByRef?: ReadinessByRef;
+    preparedMembers?: PreparedMembers;
     signal?: AbortSignal;
   },
 ): Promise<{ memberFlows: InstallResult[]; capImportRowIds: string[] }> {
@@ -784,18 +864,20 @@ async function wireMembers(
   const memberFlows: InstallResult[] = [];
   const capImportRowIds: string[] = [];
 
+  // Package members can consume capabilities contributed by this or another
+  // package. Their complete registry exists only at launch, after projection.
   for (const flow of manifest.spec.flows) {
     const result = await installFlowPlugin(
       {
-        source: pathToFileURL(join(opts.install.installedPath, flow.path)).href,
-        version: opts.install.versionLabel.replaceAll("/", "-"),
+        ...memberCoordinate(opts.install, flow.path),
+        preparedRevision: opts.preparedMembers?.flows.get(flow.id),
         projectId: opts.projectId,
         projectSlug: opts.projectSlug,
         flowId: flow.id,
         workspaceRoot: opts.workspaceRoot,
+        projectLink: validateProjectFlowLink,
         roleRefs: opts.roleRefs,
-        capabilityRefIds: opts.capabilityRefIds,
-        resolvedRevisionOverride: opts.install.resolvedRevision,
+
         sharedSchemaDir: join(opts.install.installedPath, "schemas"),
         resultProfiles: manifest.spec.result_profiles,
         db: tx,
@@ -808,16 +890,18 @@ async function wireMembers(
   }
 
   for (const cap of manifest.spec.capabilities) {
-    const installed = await installCapabilityRevision({
-      source: pathToFileURL(join(opts.install.installedPath, cap.path)).href,
-      version: opts.install.versionLabel.replaceAll("/", "-"),
+    const args = {
+      ...memberCoordinate(opts.install, cap.path),
       capabilityRefId: cap.id,
       trustStatusOverride: opts.install.trustStatus,
       projectId: opts.projectId,
-      resolvedRevisionOverride: opts.install.resolvedRevision,
       db: tx,
       signal: opts.signal,
-    });
+    };
+    const prepared = opts.preparedMembers?.capabilities.get(cap.id);
+    const installed = prepared
+      ? await bindPreparedCapability(args, prepared)
+      : await installCapabilityRevision(args);
 
     capImportRowIds.push(installed.importRowId);
   }
@@ -869,6 +953,7 @@ async function runPendingCapabilitySetups(
         db,
         signal,
       });
+
       if (outcome.setupStatus === "failed")
         throw new MaisterError(
           "FLOW_INSTALL",
@@ -888,16 +973,15 @@ export type AttachResult = {
 
 // One transaction writes the WHOLE group: member flows rows + capability
 // imports + MCP/restriction ingestion + the attachment + group FK links.
-// Crash windows: install-done/attach-uncommitted → orphan install (GC);
-// committed/yaml-not-written → caller's write-back heals on the next
-// mutation (see yaml-writeback.ts).
+// The project link is reconciled from committed state. Reviewed Git export
+// reads the declaration independently of the effective attachment.
 type AttachPackageOptions = {
+  preparedMembers?: PreparedMembers;
   projectId: string;
   projectSlug: string;
   packageInstallId: string;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
-  capabilityRefIds?: CapabilityRefIdsInput;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -911,22 +995,28 @@ type RecordAttachment = (
 
 async function applyManualPackageMutation<T>(
   db: ReturnType<typeof getDb>,
-  projectId: string,
+  target: { projectId: string; workspaceRoot?: string },
   mutate: (tx: DependencyTransaction) => Promise<T>,
 ): Promise<T> {
-  return withSetupDatabase(db, () =>
+  const result = await withSetupDatabase(db, () =>
     db.transaction(async (tx) => {
       const result = await mutate(tx);
-      if (result) await reconcileDependencyCatalog(tx, projectId);
+
+      if (result) await reconcileDependencyCatalog(tx, target.projectId);
+
       return result;
     }),
   );
+
+  if (result) await reconcileProjectFlowLinks(db, target);
+
+  return result;
 }
 
 export function attachPackage(
   opts: AttachPackageOptions,
 ): Promise<AttachResult | null> {
-  return applyManualPackageMutation(opts.db ?? getDb(), opts.projectId, (tx) =>
+  return applyManualPackageMutation(opts.db ?? getDb(), opts, (tx) =>
     workerAttachPackage({ ...opts, db: tx }, (tx, attachmentId, install) =>
       recordManualPackage(tx, opts.projectId, attachmentId, install),
     ),
@@ -958,7 +1048,7 @@ export async function workerAttachPackage(
   const readinessByRef = await packageReadinessByRef(install);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
-    await lockDependencyProject(tx, opts.projectId);
+    const repoPath = await lockDependencyProject(tx, opts.projectId);
     // Name pre-guard (ADR-132 §c): a fork's cut shares its upstream's
     // package name, so (projectId, packageName) would collide — and a whole-
     // package fork also collides on flow ids, so the flow guard below would
@@ -990,7 +1080,11 @@ export async function workerAttachPackage(
     }
 
     await assertPackageMemberOwnership(tx, opts.projectId, flowIds);
-    await assertCapabilityMemberOwnership(tx, opts.projectId, manifest.spec.capabilities.map(member => member.id));
+    await assertCapabilityMemberOwnership(
+      tx,
+      opts.projectId,
+      manifest.spec.capabilities.map((member) => member.id),
+    );
 
     const inserted = await tx
       .insert(projectPackageAttachments)
@@ -1014,11 +1108,11 @@ export async function workerAttachPackage(
     const wired = await wireMembers(tx, {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
-      workspaceRoot: opts.workspaceRoot,
+      workspaceRoot: opts.workspaceRoot ?? repoPath,
       roleRefs: opts.roleRefs,
-      capabilityRefIds: opts.capabilityRefIds,
       install,
       readinessByRef,
+      preparedMembers: opts.preparedMembers,
       signal: opts.signal,
     });
 
@@ -1214,6 +1308,7 @@ export async function detachPackage(opts: {
     await reconcileDependencyCatalog(tx, opts.projectId);
   });
 
+  await reconcileProjectFlowLinks(db, opts);
   log.info(
     {
       projectId: opts.projectId,
@@ -1230,8 +1325,8 @@ export async function detachPackage(opts: {
 // name in one transaction. In-flight runs keep their pinned revisions; flows
 // removed from the new manifest lose their enablement rows.
 type UpgradeAttachmentOptions = {
+  preparedMembers?: PreparedMembers;
   roleRefs?: readonly string[];
-  capabilityRefIds?: CapabilityRefIdsInput;
   projectId: string;
   projectSlug: string;
   attachmentId: string;
@@ -1245,7 +1340,7 @@ type UpgradeAttachmentOptions = {
 export function upgradeAttachment(
   opts: UpgradeAttachmentOptions,
 ): Promise<{ upgraded: boolean } | null> {
-  return applyManualPackageMutation(opts.db ?? getDb(), opts.projectId, (tx) =>
+  return applyManualPackageMutation(opts.db ?? getDb(), opts, (tx) =>
     workerUpgradeAttachment({ ...opts, db: tx }, (tx, attachmentId, install) =>
       recordManualPackage(tx, opts.projectId, attachmentId, install),
     ),
@@ -1303,7 +1398,8 @@ export async function workerUpgradeAttachment(
     );
 
   await db.transaction(async (tx: any) => {
-    await lockDependencyProject(tx, opts.projectId);
+    const repoPath = await lockDependencyProject(tx, opts.projectId);
+
     await lockAttachment(tx, att.id, att.packageInstallId);
     await assertPackageMemberOwnership(
       tx,
@@ -1311,7 +1407,12 @@ export async function workerUpgradeAttachment(
       manifestOf(next).spec.flows.map((flow) => flow.id),
       att.packageInstallId,
     );
-    await assertCapabilityMemberOwnership(tx, opts.projectId, manifestOf(next).spec.capabilities.map(member => member.id), att.packageInstallId);
+    await assertCapabilityMemberOwnership(
+      tx,
+      opts.projectId,
+      manifestOf(next).spec.capabilities.map((member) => member.id),
+      att.packageInstallId,
+    );
     await recordActual(tx, att.id, next);
     await assertAttachedQualificationAgentsPolicy(
       tx,
@@ -1334,11 +1435,11 @@ export async function workerUpgradeAttachment(
     const { memberFlows } = await wireMembers(tx, {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
-      workspaceRoot: opts.workspaceRoot,
+      workspaceRoot: opts.workspaceRoot ?? repoPath,
       roleRefs: opts.roleRefs,
-      capabilityRefIds: opts.capabilityRefIds,
       install: next,
       readinessByRef,
+      preparedMembers: opts.preparedMembers,
       signal: opts.signal,
     });
     const flowRowIds = memberFlows.map((m) => m.flowRowId);
@@ -1459,6 +1560,7 @@ export async function trustPackageRevision(opts: {
         db,
         signal: opts.signal,
       });
+
       if (outcome.setupStatus === "failed") {
         throw new MaisterError(
           "FLOW_INSTALL",
@@ -1474,6 +1576,7 @@ export async function trustPackageRevision(opts: {
   const affectedProjects = new Set<string>(
     capRows.map((row: { projectId: string }) => row.projectId),
   );
+
   for (const projectId of affectedProjects) {
     await db.transaction((tx: DependencyTransaction) =>
       reconcileDependencyCatalog(tx, projectId),

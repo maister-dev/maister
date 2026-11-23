@@ -7,6 +7,7 @@ import type { ProjectCoordinatorFlowSnapshot } from "./types";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import {
   resolveFlowRef,
   formatFlowRefError,
@@ -110,6 +111,7 @@ export async function loadProjectCoordinatorProvider(
         details: flowManifestIncompatibilityDetails(stored.reason),
       },
     );
+  await assertProjectFlowCapabilities(tx, projectId, stored.manifest);
   const resultContract = await resolveFlowExportContract({
     flowRefId: flow.flowRefId,
     manifest: stored.manifest,

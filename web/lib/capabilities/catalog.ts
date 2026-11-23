@@ -253,6 +253,7 @@ export async function upsertCapabilitiesFromConfig(
     return await (db as { transaction: any }).transaction(async (tx: any) => {
       const capabilityIdByRef: Record<string, string> = {};
 
+      const configOwned = sql`coalesce(${capabilityRecords.material}->>'origin','') NOT IN ('authored','package-attachment','dependency-import')`;
       for (const record of desired) {
         await assertConfigDoesNotOverwriteAuthoredRecord(
           tx,
@@ -299,14 +300,15 @@ export async function upsertCapabilitiesFromConfig(
               disabledAt: null,
               updatedAt: new Date(),
             },
-            setWhere: sql`coalesce(${capabilityRecords.material}->>'origin','') NOT IN ('authored','package-attachment','dependency-import')`,
+            setWhere: configOwned,
           })
           .returning({ id: capabilityRecords.id });
 
         const rowId = rows[0]?.id;
 
         if (!rowId) {
-          throw new MaisterError("CONFLICT",
+          throw new MaisterError(
+            "CONFLICT",
             `Another catalog owner claimed ${record.kind}/${record.capabilityRefId} during configuration update.`,
           );
         }
@@ -343,13 +345,13 @@ export async function upsertCapabilitiesFromConfig(
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
                   notInArray(capabilityRecords.capabilityRefId, refs),
-                  sql`coalesce(${capabilityRecords.material}->>'origin', '') not in ('authored', 'package-attachment', 'dependency-import')`,
+                  configOwned,
                 )
               : and(
                   eq(capabilityRecords.projectId, args.projectId),
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
-                  sql`coalesce(${capabilityRecords.material}->>'origin', '') not in ('authored', 'package-attachment', 'dependency-import')`,
+                  configOwned,
                 );
 
           await tx
@@ -409,7 +411,12 @@ async function assertConfigDoesNotOverwriteAuthoredRecord(
   const existing = rows[0] as
     { id: string; material: Record<string, unknown> } | undefined;
 
-  if (existing && ["authored","package-attachment","dependency-import"].includes(String(existing.material.origin))) {
+  if (
+    existing &&
+    ["authored", "package-attachment", "dependency-import"].includes(
+      String(existing.material.origin),
+    )
+  ) {
     throw new MaisterError(
       "CONFLICT",
       `config capability ${record.source}/${record.kind}/${record.capabilityRefId} would overwrite authored capability projection ${existing.id}`,

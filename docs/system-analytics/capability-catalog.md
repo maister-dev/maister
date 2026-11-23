@@ -528,4 +528,4 @@ state renders through message keys. Raw enum strings are not user-facing copy.
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.
 
-Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).
+Registration dependency processing follows the [dependency lifecycle](project-dependency-installation.md).

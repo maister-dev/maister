@@ -13,9 +13,14 @@ import {
   settleManualDependency,
 } from "./package-writes";
 import { reconcileDependencyCatalog } from "./catalog";
+import {
+  reconcileProjectFlowLinks,
+  validateProjectFlowLink,
+} from "./flow-links";
 import { prepareDependencyFlow } from "./prepare-flow";
 import { assertDependencySource } from "./source";
 import { withSetupDatabase } from "./setup";
+
 import {
   flows,
   projectDependencyDeclarations as declarations,
@@ -49,7 +54,7 @@ export async function installOperatorPackage(
     db,
     trustStatus: resolveTrust(coordinates.source),
   });
-  return withSetupDatabase(db, () =>
+  const result = await withSetupDatabase(db, () =>
     db.transaction(async (tx) => {
       await lockDependencyProject(tx, projectId);
       const [prior] = await tx
@@ -73,6 +78,7 @@ export async function installOperatorPackage(
               : eq(declarations.logicalId, installed.name),
           ),
         );
+
       assertOperatorPin(head?.desired, coordinates);
       const opts = { ...target, db: tx, packageInstallId: installed.id };
       const record: Parameters<typeof workerAttachPackage>[1] = (
@@ -87,6 +93,7 @@ export async function installOperatorPackage(
           install,
           coordinates,
         );
+
       if (prior) {
         if (
           prior.packageInstallId !== installed.id ||
@@ -98,6 +105,7 @@ export async function installOperatorPackage(
           );
       } else {
         const linked = await workerAttachPackage(opts, record);
+
         if (!linked)
           throw new MaisterError(
             "PRECONDITION",
@@ -114,6 +122,7 @@ export async function installOperatorPackage(
             eq(flows.packageInstallId, installed.id),
           ),
         );
+
       return {
         package: installed.name,
         versionLabel: installed.versionLabel,
@@ -125,6 +134,10 @@ export async function installOperatorPackage(
       };
     }),
   );
+
+  await reconcileProjectFlowLinks(db, target);
+
+  return result;
 }
 
 /** A standalone operator install may never replace a package-owned enablement or a newer requested Flow. */
@@ -133,6 +146,7 @@ export async function installOperatorFlow(
   pin: PackageCoordinates & { flowId: string },
 ) {
   const { db, projectId } = target;
+
   assertDependencySource(pin.source);
   const scope = and(
     eq(declarations.projectId, projectId),
@@ -140,6 +154,7 @@ export async function installOperatorFlow(
     eq(declarations.logicalId, pin.flowId),
   );
   const [requested] = await db.select().from(declarations).where(scope);
+
   assertOperatorPin(requested?.desired, pin);
   const opts = {
     ...target,
@@ -148,11 +163,12 @@ export async function installOperatorFlow(
     capabilityRefIds: requested?.desired.capabilityRefIds,
   };
   const revision = await installRevision(opts);
-  return withSetupDatabase(db, () =>
+  const result = await withSetupDatabase(db, () =>
     db.transaction(async (tx) => {
       await lockDependencyProject(tx, projectId);
       await assertStandaloneFlowOwnership(tx, projectId, pin.flowId);
       const [current] = await tx.select().from(declarations).where(scope);
+
       if (
         requested?.id !== current?.id ||
         requested?.generation !== current?.generation
@@ -166,7 +182,9 @@ export async function installOperatorFlow(
         ...opts,
         db: tx,
         preparedRevision: revision,
+        projectLink: validateProjectFlowLink,
       });
+
       await prepareDependencyFlow(
         tx,
         projectId,
@@ -177,7 +195,12 @@ export async function installOperatorFlow(
         await settleManualDependency(tx, current, current.desired, {
           effectiveRevision: installed.revision,
         });
+
       return installed;
     }),
   );
+
+  await reconcileProjectFlowLinks(db, target);
+
+  return result;
 }

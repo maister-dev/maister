@@ -6,6 +6,7 @@ import type { DelegationSnapshot } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -182,7 +183,7 @@ export async function resolveDelegatableFlow(
   const stored = classifyStoredFlowManifest(revision.manifest);
 
   if (!stored.compatible) {
-    refuse(
+    return refuse(
       "CONFIG",
       `flow "${flow.flowRefId}" stored manifest cannot be executed by this engine: ${stored.reason.message}`,
       "manifest_incompatible",
@@ -190,6 +191,7 @@ export async function resolveDelegatableFlow(
     );
   }
 
+  await assertProjectFlowCapabilities(_db, projectId, stored.manifest);
   // ADR-165: pre-flight the public-result export. This is NOT the decisive
   // resolve — `launchRunStaged` does that from the same pinned revision and its
   // result is what lands on the run — but failing here means a flow with a

@@ -90,7 +90,7 @@ export async function resolvePackageSource(opts: {
       throw new MaisterError(
         "FLOW_INSTALL",
         `package install failed [stage=resolve] ${opts.source}@${opts.version}: ${asError(err).message}`,
-        { cause: asError(err) },
+        { cause: asError(err), details: { reason: "source_not_found" } },
       );
     }
 

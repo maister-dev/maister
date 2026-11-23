@@ -1,5 +1,6 @@
 import "server-only";
 
+import { requireGlobalRole } from "@/lib/authz";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -34,6 +35,7 @@ export async function POST(
       projectId: project.id,
       flowRefId,
       revisionId: body.revisionId,
+      authorizeExecution: () => requireGlobalRole("admin"),
       db,
     });
 

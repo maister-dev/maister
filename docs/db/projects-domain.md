@@ -390,7 +390,7 @@ or malformed policy is off.
 
 See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).
 
-## Durable project dependency requests (Designed)
+## Durable project dependency requests (Implemented)
 
 Migrations 0369–0371 introduce project-owned declaration heads and generation-bound processing attempts. A unique project/kind/ref key preserves separate Flow and capability namespaces. Project-scoped serialization also enforces the package-versus-standalone collision rule. An attempt can be claimed only once at a time. Due and expired leases are indexed. Current generation and claim predicates fence project effects. A same-project foreign key prevents interpreting another project's attachment as the effective installation.
 

@@ -241,7 +241,7 @@ nodes:
         ...baseArgs,
         source: pluginDir,
         db: {
-          insert: () => {
+          transaction: () => {
             throw new Error("db reached after manifest validation");
           },
         },

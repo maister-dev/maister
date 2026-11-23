@@ -15,7 +15,11 @@ import "server-only";
 // constraint for the lifecycle callbacks.
 
 export type DurableWorkerName =
-  "promptOwner" | "flowContinuation" | "agentContinuation" | "taskLaunch";
+  | "promptOwner"
+  | "flowContinuation"
+  | "agentContinuation"
+  | "taskLaunch"
+  | "projectDependency";
 
 export type DurableWorkerState = Readonly<{
   state: "running" | "degraded" | "stopped";
@@ -38,6 +42,7 @@ export const DURABLE_WORKER_SLOT_KEYS: Readonly<
   promptOwner: Symbol.for("maister.durable-workers.promptOwner.v1"),
   flowContinuation: Symbol.for("maister.durable-workers.flowContinuation.v1"),
   agentContinuation: Symbol.for("maister.durable-workers.agentContinuation.v1"),
+  projectDependency: Symbol.for("maister.durable-workers.projectDependency.v1"),
   taskLaunch: Symbol.for("maister.durable-workers.taskLaunch.v1"),
 };
 
@@ -85,6 +90,7 @@ export function durableWorkersHealth(): Readonly<
     promptOwner: read("promptOwner"),
     flowContinuation: read("flowContinuation"),
     agentContinuation: read("agentContinuation"),
+    projectDependency: read("projectDependency"),
     taskLaunch: read("taskLaunch"),
   };
 }

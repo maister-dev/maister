@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -59,7 +59,7 @@ function errorResponse(err: unknown, slug: string): NextResponse {
 
 // Flip exec_trust='trusted' for the enabled revision of a flow in this project
 // and run any pending setup.sh. Idempotent.
-// RBAC: requires managePackages (admin) on the project.
+// Executable trust is granted by an active platform administrator.
 export async function POST(
   _req: NextRequest,
   { params }: RouteParams,
@@ -67,7 +67,7 @@ export async function POST(
   const { slug, flowId } = await params;
 
   try {
-    await requireActiveSession();
+    await requireGlobalRole("admin");
 
     const db = getDb() as any;
 
@@ -80,8 +80,6 @@ export async function POST(
     if (!project || project.archivedAt) {
       throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
     }
-
-    await requireProjectAction(project.id, "managePackages");
 
     log.debug({ projectId: project.id, flowId }, "trust-executable POST");
 

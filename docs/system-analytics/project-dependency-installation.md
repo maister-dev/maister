@@ -1,6 +1,6 @@
 # Project dependency installation
 
-**Status:** Designed (ADR-218).
+**Status:** Implemented (ADR-218).
 
 ## Purpose
 
@@ -56,7 +56,7 @@ sequenceDiagram
 
 ## Expectations
 
-The following acceptance criteria govern the designed cutover.
+These acceptance criteria cover registration, dependency realization, recovery and reviewed publication.
 
 | ID | Observable acceptance | Primary owner |
 | --- | --- | --- |

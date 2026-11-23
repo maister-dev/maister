@@ -20,6 +20,7 @@ import {
   resolveAgentTaskLaunchSettings,
 } from "./launch-agent-resolution";
 
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import {
   flows,
   flowRevisions,
@@ -377,6 +378,8 @@ async function resolveFlowLaunchSettingsForSource(
     flowRefId: flow.flowRefId,
     revision: revision.resolvedRevision,
   });
+
+  await assertProjectFlowCapabilities(db, project.id, manifest);
   const [runtime] = await db
     .select()
     .from(platformRuntimeSettings)

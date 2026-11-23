@@ -202,10 +202,11 @@ export const requiredIsolationCases = {
     "applies the agent_turn owner after the production web restarts",
     "applies the scratch_message owner after the production web restarts",
     "R18: a deferred accepted launch survives web death and binds once through the restarted production worker without another request",
+    "AC03: the restarted production worker reclaims a pre-effect dependency lease and realizes its pending sibling without another request",
     "R1: a registry missing a schema kind refuses to compose with CONFIG and starts nothing",
     "R2: composing the agent registry beside the consensus-draft one is a CONFIG failure by design",
     "R4: stopping with nothing started resolves",
-    "R5: a double start returns the same four handles",
+    "R5: a double start returns the same worker handles",
     "R3: start refuses while the application is stopping"
   ],
   "test-support/__tests__/capability-finalize.integration.test.ts": [

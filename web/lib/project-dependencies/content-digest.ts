@@ -1,7 +1,7 @@
 import "server-only";
-import {createHash} from "node:crypto";
-import {readdir,readlink,readFile} from "node:fs/promises";
-import path,{join,resolve as resolvePath} from "node:path";
+import { createHash } from "node:crypto";
+import { readdir, readlink, readFile } from "node:fs/promises";
+import path, { join, resolve as resolvePath } from "node:path";
 
 export async function localDirectoryContentDigest(
   sourceDir: string,
@@ -75,3 +75,24 @@ async function listLocalDirectoryDigestEntries(
   return entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
+/** Verified source files may coexist with historical platform-added schemas
+ * or setup outputs. Only the recorded physical owner can adopt such a cache. */
+export async function containsSourceMaterial(
+  source: string,
+  target: string,
+): Promise<boolean> {
+  const ignored = new Set([".git"]);
+  const wanted = await listLocalDirectoryDigestEntries(source, ignored);
+  const present = new Map(
+    (await listLocalDirectoryDigestEntries(target, ignored)).map((entry) => [
+      entry.relativePath,
+      entry,
+    ]),
+  );
+
+  return wanted.every((entry) => {
+    const existing = present.get(entry.relativePath);
+
+    return existing?.kind === entry.kind && existing.content === entry.content;
+  });
+}

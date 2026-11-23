@@ -2,7 +2,7 @@
  * Route integration test for POST /api/projects/[slug]/flows/[flowId]/trust-executable.
  *
  * Mirrors the version-binding route test structure.
- * Covers: 200 (admin, project-admin), 403 (member lacking managePackages),
+ * Covers: 200 (platform admin), 403 (project-only roles),
  * 404/409 (no such project or flow).
  */
 
@@ -191,19 +191,25 @@ describe("POST /api/projects/[slug]/flows/[flowId]/trust-executable (integration
     expect(body.execTrust).toBe("trusted");
   });
 
-  it("200 — project admin (managePackages) can trust-executable; setup.sh runs for pending revision", async () => {
+  it("403 — project administration alone cannot run pending executable setup", async () => {
     sessionRef.value = { user: { id: "u-te-pkg-admin", role: "member" } };
-
     const res = await POST(
       makeRequest(PROJECT_SLUG, flowIdWithSetup),
       params(PROJECT_SLUG, flowIdWithSetup),
     );
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.execTrust).toBe("trusted");
-    expect(body.setupStatus).toBe("done");
+    expect(res.status).toBe(403);
+    const [flow] = await db
+      .select()
+      .from(schema.flows)
+      .where(eq(schema.flows.id, flowIdWithSetup));
+    const [revision] = await db
+      .select()
+      .from(schema.flowRevisions)
+      .where(eq(schema.flowRevisions.id, flow.enabledRevisionId));
+    expect(revision).toMatchObject({
+      execTrust: "untrusted",
+      setupStatus: "pending",
+    });
   });
 
   it("403 — project member (not admin) cannot trust-executable", async () => {

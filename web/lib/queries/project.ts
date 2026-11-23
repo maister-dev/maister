@@ -26,6 +26,7 @@ import { hasReadyPlatformRunner } from "@/lib/acp-runners/ready-runner";
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import {
   activeSessionAcpSessionId,
@@ -225,7 +226,7 @@ export async function listLaunchableFlowSummaries(
   projectId: string,
   client: NodePgDatabase<typeof schema> = db(),
 ): Promise<ExtFlowSummary[]> {
-  const [rows, hasReadyRunner] = await Promise.all([
+  const [rows, hasReadyRunner, capabilityRefs] = await Promise.all([
     client
       .select({
         id: flows.id,
@@ -246,6 +247,7 @@ export async function listLaunchableFlowSummaries(
       .where(eq(flows.projectId, projectId))
       .orderBy(asc(flows.createdAt)),
     hasReadyPlatformRunner(client),
+    readProjectCapabilityRefs(client, [projectId]),
   ]);
 
   return rows
@@ -254,6 +256,7 @@ export async function listLaunchableFlowSummaries(
         enabledRevisionId: row.enabledRevisionId,
         enablementState: row.enablementState,
         hasReadyRunner,
+        capabilityRefs: capabilityRefs.get(projectId),
         revision: row.enabledRevisionId
           ? {
               engineMax: row.engineMax,
@@ -469,6 +472,7 @@ export async function getProjectPageData(
       ]),
   );
 
+  const capabilityRefs = await readProjectCapabilityRefs(client, [project.id]);
   const projectFlows: ProjectFlow[] = flowRows.map((f) => ({
     id: f.id,
     enabled: f.enabledRevisionId !== null,
@@ -476,6 +480,7 @@ export async function getProjectPageData(
       enabledRevisionId: f.enabledRevisionId,
       enablementState: f.enablementState,
       hasReadyRunner,
+      capabilityRefs: capabilityRefs.get(project.id),
       revision: f.enabledRevisionId
         ? (revisionById.get(f.enabledRevisionId) ?? null)
         : null,

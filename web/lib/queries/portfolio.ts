@@ -39,6 +39,7 @@ import { companyRunOwnershipReadPolicy } from "@/lib/agents/company-run-read-acc
 import { authorizeCompanyUserAction } from "@/lib/company/authority";
 import { MaisterError } from "@/lib/errors";
 import { getVisibleProjectIds } from "@/lib/queries/visible-projects";
+import { readProjectCapabilityRefs } from "@/lib/flows/project-capability-refs";
 import { isProjectFlowLaunchable } from "@/lib/flows/project-flow-launchability";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import {
@@ -555,29 +556,33 @@ export async function getPortfolio(
       id: platformAcpRunners.id,
     })
     .from(platformAcpRunners);
-  const [onboardingFlowRows, hasReadyRunner] = await Promise.all([
-    client
-      .select({
-        enabledRevisionId: flows.enabledRevisionId,
-        enablementState: flows.enablementState,
-        trustStatus: flows.trustStatus,
-        engineMax: flowRevisions.engineMax,
-        engineMin: flowRevisions.engineMin,
-        manifest: flowRevisions.manifest,
-        packageStatus: flowRevisions.packageStatus,
-        schemaVersion: flowRevisions.schemaVersion,
-        setupStatus: flowRevisions.setupStatus,
-      })
-      .from(flows)
-      .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
-      .where(inArray(flows.projectId, projectIds)),
-    hasReadyPlatformRunner(client),
-  ]);
+  const [onboardingFlowRows, hasReadyRunner, capabilityRefs] =
+    await Promise.all([
+      client
+        .select({
+          projectId: flows.projectId,
+          enabledRevisionId: flows.enabledRevisionId,
+          enablementState: flows.enablementState,
+          trustStatus: flows.trustStatus,
+          engineMax: flowRevisions.engineMax,
+          engineMin: flowRevisions.engineMin,
+          manifest: flowRevisions.manifest,
+          packageStatus: flowRevisions.packageStatus,
+          schemaVersion: flowRevisions.schemaVersion,
+          setupStatus: flowRevisions.setupStatus,
+        })
+        .from(flows)
+        .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
+        .where(inArray(flows.projectId, projectIds)),
+      hasReadyPlatformRunner(client),
+      readProjectCapabilityRefs(client, projectIds),
+    ]);
   const launchableFlowCount = onboardingFlowRows.filter((flow) =>
     isProjectFlowLaunchable({
       enabledRevisionId: flow.enabledRevisionId,
       enablementState: flow.enablementState,
       hasReadyRunner,
+      capabilityRefs: capabilityRefs.get(flow.projectId),
       revision: flow.enabledRevisionId
         ? {
             engineMax: flow.engineMax,

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { requireGlobalRole } from "@/lib/authz";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -28,6 +29,7 @@ export async function POST(
 
   try {
     const { project, db } = await authorizeManagePackages(slug);
+    await requireGlobalRole("admin");
     const body = await parseAuthorizedJson({
       req,
       schema: postBodySchema,

@@ -8,22 +8,40 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
+
 import { and, eq, sql } from "drizzle-orm";
+
+import { localDirectoryContentDigest } from "./content-digest";
 
 import {
   projectDependencyAttempts as attempts,
   projectDependencySetupReceipts as receipts,
 } from "@/lib/db/schema";
-import { localDirectoryContentDigest } from "./content-digest";
 import { MaisterError } from "@/lib/errors";
 
 type SetupContext = {
   db: Db;
   before?: (key: string, member: string) => Promise<void>;
   recoveryOf?: string | null;
+  authorize?: (tx: Db) => Promise<void>;
 };
 const context = new AsyncLocalStorage<SetupContext>();
 
+const settled = new AsyncLocalStorage<boolean>();
+
+/** Native finalization may consume a completed setup receipt, never start a
+ * new physical operation while the project write transaction is held. */
+export function withSettledSetups<T>(work: () => Promise<T>): Promise<T> {
+  return settled.run(true, work);
+}
+
+export function withSetupAuthority<T>(
+  db: Db,
+  authorize: (tx: Db) => Promise<void>,
+  work: () => Promise<T>,
+): Promise<T> {
+  return context.run({ ...context.getStore(), db, authorize }, work);
+}
 export function withDependencySetupContext<T>(
   input: SetupContext,
   work: () => Promise<T>,
@@ -42,6 +60,7 @@ type Receipt = typeof receipts.$inferSelect;
 function groupExists(pid: number): boolean {
   try {
     process.kill(-pid, 0);
+
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
@@ -71,6 +90,7 @@ export async function authorizeDependencySetupRecovery(
     .from(attempts)
     .where(eq(attempts.id, attemptId));
   const key = attempt?.checkpoint.setupMaterialKey;
+
   if (!key || attempt.status !== "recovery_required")
     conflict("setup_evidence_missing");
   const [receipt] = await db
@@ -78,15 +98,54 @@ export async function authorizeDependencySetupRecovery(
     .from(receipts)
     .where(eq(receipts.materialKey, key))
     .for("update");
+
   if (!receipt) conflict("setup_evidence_missing");
   if (receipt.status === "succeeded") return "completed";
   if (receipt.status === "running" && ownerMayRun(receipt))
     conflict("setup_owner_live");
   // The unique retry-of FK identifies exactly one accepted recovery attempt.
   // Reserve its replay in the same transaction that enqueues it.
-  await db.update(receipts).set({claimToken:"recovery:"+attemptId,ownerHost:null,ownerPid:null,updatedAt:new Date()})
-    .where(and(eq(receipts.materialKey,key),eq(receipts.claimToken,receipt.claimToken)));
+  await db
+    .update(receipts)
+    .set({
+      claimToken: "recovery:" + attemptId,
+      ownerHost: null,
+      ownerPid: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(receipts.materialKey, key),
+        eq(receipts.claimToken, receipt.claimToken),
+      ),
+    );
+
   return "rerun";
+}
+
+/** Transfer the accepted but unconsumed setup replay when its actor lost
+ * authority. A different declaration, target or dispatched replay cannot match. */
+export async function inheritSetupRecovery(
+  db: Db,
+  failed: typeof attempts.$inferSelect,
+): Promise<boolean> {
+  const key = failed.checkpoint.setupMaterialKey;
+
+  if (!key || !failed.retryOfAttemptId || failed.status !== "failed")
+    return false;
+  const [reserved] = await db
+    .update(receipts)
+    .set({ claimToken: "recovery:" + failed.id, updatedAt: new Date() })
+    .where(
+      and(
+        eq(receipts.materialKey, key),
+        eq(receipts.status, "running"),
+        eq(receipts.claimToken, "recovery:" + failed.retryOfAttemptId),
+      ),
+    )
+    .returning({ key: receipts.materialKey });
+
+  return Boolean(reserved);
 }
 
 /** Start the child behind a closed stdin gate. Only the process whose group
@@ -94,28 +153,66 @@ export async function authorizeDependencySetupRecovery(
 export async function runMaterialSetup(input: {
   db: Db;
   target: string;
-  kind:"flow"|"capability";
+  kind: "flow" | "capability";
   revision: string;
   contentWitness?: string;
   signal?: AbortSignal;
 }): Promise<"done" | "failed" | "not_required"> {
   const target = await realpath(input.target);
   let script: Buffer;
+
   try {
     script = await readFile(join(target, "setup.sh"));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (settled.getStore()) conflict("setup_material_changed");
+
       return "not_required";
+    }
     throw error;
   }
   input.signal?.throwIfAborted();
   const key = createHash("sha256")
-    .update(JSON.stringify([target, input.revision, input.contentWitness ?? input.revision, basename(target)]))
+    .update(
+      JSON.stringify([
+        target,
+        input.revision,
+        input.contentWitness ?? input.revision,
+        basename(target),
+      ]),
+    )
     .update(script)
     .digest("hex");
   const ctx = context.getStore();
   const db = ctx?.db ?? input.db;
-  await ctx?.before?.(key, input.kind+":"+basename(target).split("@")[0]);
+
+  if (settled.getStore()) {
+    const [receipt] = await db
+      .select({ status: receipts.status })
+      .from(receipts)
+      .where(eq(receipts.materialKey, key));
+
+    if (receipt?.status !== "succeeded") conflict("setup_material_changed");
+
+    return "done";
+  }
+  // Verify a first dispatch's sealed capability bytes before taking the
+  // project lock. Existing receipts own the material including setup output.
+  let initialDigest: string | undefined;
+
+  if (input.contentWitness) {
+    const [prior] = await db
+      .select({ key: receipts.materialKey })
+      .from(receipts)
+      .where(eq(receipts.materialKey, key));
+
+    if (!prior)
+      initialDigest = await localDirectoryContentDigest(
+        target,
+        new Set([".git"]),
+      );
+  }
+  await ctx?.before?.(key, input.kind + ":" + basename(target).split("@")[0]);
   const claimToken = randomUUID();
   // The gate exits on EOF if this process dies before sending a newline.
   const child = spawn(
@@ -127,6 +224,7 @@ export async function runMaterialSetup(input: {
     child.once("exit", resolve);
     child.once("error", reject);
   });
+
   child.stdin.on("error", () => {
     /* The child's exit supplies the result. */
   });
@@ -142,6 +240,7 @@ export async function runMaterialSetup(input: {
     AbortSignal.timeout(60_000),
     ...(input.signal ? [input.signal] : []),
   ]);
+
   signal.addEventListener("abort", killGroup, { once: true });
   try {
     if (!child.pid) {
@@ -152,6 +251,7 @@ export async function runMaterialSetup(input: {
       );
     }
     const ownership = await db.transaction(async (tx) => {
+      await ctx?.authorize?.(tx);
       // A conflict on the physical key serializes new receipts across projects
       // and the explicit trust APIs. A pre-existing dispatched owner is never
       // reset by an ordinary retry.
@@ -163,11 +263,20 @@ export async function runMaterialSetup(input: {
         .from(receipts)
         .where(eq(receipts.materialKey, key))
         .for("update");
+
       if (receipt?.status === "succeeded") return false;
-      if (!receipt && input.contentWitness && await localDirectoryContentDigest(target,new Set([".git"]))!==input.contentWitness)
+      if (
+        !receipt &&
+        input.contentWitness &&
+        initialDigest !== input.contentWitness
+      )
         conflict("revision_mismatch");
       if (receipt?.claimToken.startsWith("recovery:")) {
-        if (!ctx?.recoveryOf || receipt.claimToken!=="recovery:"+ctx.recoveryOf) conflict("setup_owner_live");
+        if (
+          !ctx?.recoveryOf ||
+          receipt.claimToken !== "recovery:" + ctx.recoveryOf
+        )
+          conflict("setup_owner_live");
       } else if (receipt?.status === "running") {
         conflict(ownerMayRun(receipt) ? "setup_owner_live" : "setup_uncertain");
       }
@@ -190,14 +299,19 @@ export async function runMaterialSetup(input: {
             updatedAt: new Date(),
           },
         });
+
       return true;
     });
+
     if (!ownership) return "done";
     signal.throwIfAborted();
     child.stdin.end("\n");
     const code = await exited;
-    if (groupExists(child.pid)) conflict("setup_uncertain");
+
+    if (code === null || signal.aborted || groupExists(child.pid))
+      conflict("setup_uncertain");
     const status = code === 0 ? "succeeded" : "failed";
+
     await db
       .update(receipts)
       .set({ status, updatedAt: new Date() })
@@ -207,9 +321,11 @@ export async function runMaterialSetup(input: {
     if (status === "succeeded") {
       const marker = join(target, ".maister-setup-done");
       const temp = marker + "." + claimToken;
+
       await writeFile(temp, new Date().toISOString(), { flag: "wx" });
       await rename(temp, marker);
     }
+
     return status === "succeeded" ? "done" : "failed";
   } finally {
     signal.removeEventListener("abort", killGroup);

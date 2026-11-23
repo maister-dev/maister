@@ -5,6 +5,7 @@ import type { FlowGraph } from "@/lib/flows/graph/compile";
 
 import { eq } from "drizzle-orm";
 
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
 import { flows, flowRevisions } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { compileManifest, resolveTransition } from "@/lib/flows/graph/compile";
@@ -94,6 +95,7 @@ export async function resolveScheduledRequestFlowRevision(
     revision: revision!.resolvedRevision,
   });
 
+  await assertProjectFlowCapabilities(db, flow.projectId, manifest);
   assertScheduledRequestConsumer(compileManifest(manifest));
 
   return revision!.id;

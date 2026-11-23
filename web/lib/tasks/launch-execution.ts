@@ -48,6 +48,8 @@ import {
 import { isManualTriageHold } from "./manual-launch-hold";
 import { withTaskLaunchCapabilityBundles } from "./launch-capability-materialization";
 
+import { assertProjectFlowCapabilities } from "@/lib/flows/project-capability-refs";
+import { parseExecutableStoredFlowManifest } from "@/lib/flows/manifest-parser";
 import { recordTaskAgentTriggerRunBound } from "@/lib/agents/task-trigger-reservation";
 import {
   projects,
@@ -208,6 +210,15 @@ export async function assertFrozenTaskLaunchCurrent(
   if (!flow || !revision || revision.flowRefId !== settings.flowRefId)
     throw launchRefusal("flow_unavailable", "PRECONDITION");
   assertFlowLaunchable(settings.flowRefId, flow, revision);
+  const manifest = parseExecutableStoredFlowManifest(revision.manifest, {
+    code: "CONFIG",
+    surface: "launch-service",
+    manifestLabel: `flow revision ${revision.id}`,
+    flowRefId: flow.flowRefId,
+    revision: revision.resolvedRevision,
+  });
+
+  await assertProjectFlowCapabilities(db, intent.projectId, manifest);
   const catalog = await loadRunnerCatalog(db);
 
   for (const slot of settings.sessions) {

@@ -1,11 +1,13 @@
 import "server-only";
 
+import type { Db } from "@/lib/execution-host/db";
 import type { getDb } from "@/lib/db/client";
 import type { ProjectDependencyPin } from "./types";
 
 import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 
 import { assertDependencySource } from "./source";
+
 import {
   flows,
   projects,
@@ -32,21 +34,24 @@ type InstalledPackage = {
 export async function lockDependencyProject(
   tx: DependencyTransaction,
   projectId: string,
-): Promise<void> {
+): Promise<string> {
   const [project] = await tx
-    .select({ archivedAt: projects.archivedAt })
+    .select({ archivedAt: projects.archivedAt, repoPath: projects.repoPath })
     .from(projects)
     .where(eq(projects.id, projectId))
     .for("update");
+
   if (!project || project.archivedAt)
     throw new MaisterError(
       "PRECONDITION",
       "The project is missing or archived.",
     );
+
+  return project.repoPath;
 }
 
 export async function assertPackageMemberOwnership(
-  tx: DependencyTransaction,
+  tx: Db,
   projectId: string,
   flowIds: string[],
   priorInstallId?: string,
@@ -77,6 +82,7 @@ export async function assertPackageMemberOwnership(
     )
     .limit(1);
   const ref = reserved?.ref ?? effective?.ref;
+
   if (ref)
     throw new MaisterError(
       "CONFLICT",
@@ -133,6 +139,7 @@ export async function recordManualPackage(
           ),
         )
         .for("update");
+
   if (
     packages.length > 1 ||
     packages.some(
@@ -151,6 +158,7 @@ export async function recordManualPackage(
     effectiveAttachmentId: attachmentId,
     effectiveRevision: install.resolvedRevision,
   };
+
   if (!head) {
     const [conflict] = await tx
       .select({ kind: declarations.kind })
@@ -163,6 +171,7 @@ export async function recordManualPackage(
         ),
       )
       .limit(1);
+
     if (conflict)
       throw new MaisterError(
         "CONFLICT",
@@ -179,6 +188,7 @@ export async function recordManualPackage(
           eq(declarations.kind, "package"),
         ),
       );
+
     await tx.insert(declarations).values({
       projectId,
       kind: "package",
@@ -188,6 +198,7 @@ export async function recordManualPackage(
       effectiveGeneration: 1,
       ...effective,
     });
+
     return;
   }
   await settleManualDependency(
@@ -223,6 +234,7 @@ export async function settleManualDependency(
     )
     .limit(1);
   const generation = head.generation + (changed || priorAttempt ? 1 : 0);
+
   await tx
     .update(declarations)
     .set({
@@ -253,7 +265,7 @@ export async function settleManualDependency(
 }
 
 export async function assertStandaloneFlowOwnership(
-  tx: DependencyTransaction,
+  tx: Db,
   projectId: string,
   flowId: string,
 ): Promise<void> {
@@ -271,6 +283,7 @@ export async function assertStandaloneFlowOwnership(
         eq(declarations.logicalId, flowId),
       ),
     );
+
   if (member?.install || reserved)
     throw new MaisterError(
       "CONFLICT",

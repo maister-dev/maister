@@ -160,9 +160,9 @@ sequenceDiagram
 Status: **Implemented** — `web/lib/repo-source.ts:resolveProjectSource`,
 called by `web/app/api/projects/route.ts` before `loadProjectConfig`.
 `resolveProjectSource` never mutates an existing local dir; for a non-git dir
-it returns `gitStatus:"initialized"`. In the designed cutover the route completes required initialization after validation and before acceptance.
+it returns `gitStatus:"initialized"`. The route completes required initialization after validation and before acceptance.
 
-### Register a project (Designed cutover)
+### Register a project (Implemented)
 
 The [registration sequence](project-dependency-installation.md#process-flows) binds project creation and queued dependency requests in one transaction.
 
@@ -266,7 +266,7 @@ flowchart TD
   [ADR-019 Project slug + repo_path uniqueness](../decisions.md#adr-019-project-slug--repo_path-uniqueness-soft-archival),
   [ADR-025 Project repo onboarding](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots).
 - ERD: [`../db/projects-domain.md`](../db/projects-domain.md).
-- API: registration Route Handler (Designed) — see
+- API: registration Route Handler (Implemented) — see
   [`../architecture.md`](../architecture.md) §Component map.
 - Config reference: [`../configuration.md`](../configuration.md).
 - Related domains: [`instance-config.md`](instance-config.md) (roots),

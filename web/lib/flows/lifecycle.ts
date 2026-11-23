@@ -13,6 +13,7 @@ import {
   parseAgentDefinition,
   type ParsedAgentDefinition,
 } from "@/lib/agents/definition";
+import { requireParentPackageTrust } from "@/lib/project-dependencies/member-trust";
 import { getDb } from "@/lib/db/client";
 import { hasCompanyCoordinatorFlowReference } from "@/lib/agents/company-binding-references";
 import * as schemaModule from "@/lib/db/schema";
@@ -53,6 +54,7 @@ type FlowEnablementRow = {
   flowRefId: string;
   source: string;
   enabledRevisionId: string | null;
+  packageInstallId: string | null;
   enablementState: string;
   trustStatus: string;
 };
@@ -70,6 +72,7 @@ type RevisionRow = {
   engineMax: string | null;
   setupStatus: string;
   packageStatus: string;
+  execTrust: string;
 };
 
 /** Package preinstallation retains absolute paths; attachment uses the equivalent file URL. */
@@ -253,6 +256,8 @@ export async function enableRevision(args: {
   flowRefId: string;
   revisionId: string;
   db?: Db;
+  /** HTTP callers authorize executable trust or deferred setup at this revision. */
+  authorizeExecution?: () => Promise<unknown>;
 }): Promise<void> {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
@@ -264,6 +269,10 @@ export async function enableRevision(args: {
   );
 
   const manifest = assertEnableable(flow, rev);
+  await requireParentPackageTrust(db, flow.packageInstallId);
+  if (rev.execTrust !== "trusted" || rev.setupStatus === "pending") {
+    await args.authorizeExecution?.();
+  }
 
   // Trust is now confirmed (flow.trustStatus != untrusted via assertEnableable).
   // Run the deferred setup.sh for an untrusted-then-trusted revision before
@@ -345,6 +354,8 @@ export async function rollbackFlow(args: {
   flowRefId: string;
   revisionId: string;
   db?: Db;
+  /** HTTP callers authorize executable trust or deferred setup at this revision. */
+  authorizeExecution?: () => Promise<unknown>;
 }): Promise<void> {
   log.info(
     {
@@ -439,6 +450,7 @@ export async function setTrust(args: {
 }): Promise<void> {
   const db = args.db ?? getDb();
   const flow = await loadFlow(db, args.projectId, args.flowRefId);
+  if (args.trusted) await requireParentPackageTrust(db, flow.packageInstallId);
   const next = args.trusted ? "trusted" : "untrusted";
 
   if (flow.trustStatus === "trusted_by_policy" && !args.trusted) {
