@@ -113,7 +113,12 @@ async function assertQuiescent(
     .where(
       and(
         eq(librarianTurns.conversationId, conversation.id),
-        inArray(librarianTurns.status, ["queued", "admitted", "running"]),
+        inArray(librarianTurns.status, [
+          "queued",
+          "admitted",
+          "running",
+          "awaiting_answer",
+        ]),
       ),
     )
     .limit(1);

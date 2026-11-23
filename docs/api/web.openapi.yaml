@@ -842,7 +842,7 @@ paths:
   /api/librarian/cards/{cardId}/answer:
     post:
       operationId: answerLibrarianQuestion
-      summary: (Designed) Answer a private question in its active conversation
+      summary: Submit or replay an answer in the owner’s active conversation
       security:
         - sessionCookie: []
       parameters:
@@ -871,13 +871,7 @@ paths:
                     maxLength: 256
                   state:
                     type: string
-                    enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
+                    enum: [delivered]
         "202":
           description: Accepted for delivery
           content:
@@ -895,13 +889,7 @@ paths:
                     maxLength: 256
                   state:
                     type: string
-                    enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
+                    enum: [accepted]
         "400":
           description: Invalid request
           content:
@@ -938,6 +926,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MaisterErrorBody"
+        "413":
+          description: The request exceeds 64 KiB of UTF-8 JSON.
         "422":
           description: Invalid content or answer
           content:
@@ -41140,7 +41130,7 @@ components:
         status:
           type: string
           enum:
-            [queued, admitted, running, completed, stopped, failed, withdrawn]
+            [queued, admitted, running, awaiting_answer, completed, stopped, failed, withdrawn]
           description: |
             `withdrawn` — the queued message was withdrawn by the owner or by a
             reset before its turn ran.
@@ -41177,7 +41167,7 @@ components:
         status:
           type: string
           enum:
-            [queued, admitted, running, completed, stopped, failed, withdrawn]
+            [queued, admitted, running, awaiting_answer, completed, stopped, failed, withdrawn]
         queuePosition: { type: integer, minimum: 1, nullable: true }
 
     LibrarianMessage:
@@ -41233,9 +41223,16 @@ components:
           nullable: true
         turnId: { type: string, format: uuid, nullable: true }
         card:
-          allOf:
-            - $ref: "#/components/schemas/LibrarianCard"
+          type: object
           nullable: true
+          description: An inline private question after checkpoint. Source-masked messages always return null.
+          required: [id, state, question, schema, answer]
+          properties:
+            id: {type: string}
+            state: {type: string, enum: [checkpoint_pending, open, accepted, delivered, closed]}
+            question: {type: string}
+            schema: {type: object, description: Version-one MAIster form grammar.}
+            answer: {type: object, nullable: true, additionalProperties: true}
         update:
           allOf:
             - $ref: "#/components/schemas/LibrarianUpdateCard"

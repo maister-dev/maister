@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { lockOwnerConversation } from "./conversation";
@@ -59,7 +59,7 @@ export async function requestLibrarianReset(
         and(
           eq(librarianTurns.conversationId, conversation.id),
           eq(librarianTurns.segmentId, conversation.currentSegmentId!),
-          eq(librarianTurns.status, "queued"),
+          inArray(librarianTurns.status, ["queued", "awaiting_answer"]),
         ),
       );
     log.info(
@@ -131,7 +131,14 @@ export async function acknowledgeLibrarianReset(
       .where(
         and(
           eq(librarianCards.segmentId, segment.id),
-          eq(librarianCards.status, "pending"),
+          or(
+            eq(librarianCards.status, "pending"),
+            and(
+              eq(librarianCards.kind, "question"),
+              eq(librarianCards.status, "accepted"),
+              isNull(librarianCards.questionDeliveredAt),
+            ),
+          ),
         ),
       );
     await tx

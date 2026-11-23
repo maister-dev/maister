@@ -280,3 +280,83 @@ test("B3 keeps history and attention scrollable without displacing the composer"
     await expect(opener).toBeFocused();
   }
 });
+
+test("E2E-ASK-02 owner answers a private question from the transcript with the keyboard", async ({
+  page,
+}) => {
+  await page.goto("/inbox");
+  const res = await page.request.get("/api/librarian/conversation");
+  expect(res.ok()).toBe(true);
+  const { conversation, segment } = (await res.json()) as {
+    conversation: { id: string };
+    segment: { id: string };
+  };
+  const cardId = randomUUID(),
+    turnId = randomUUID(),
+    messageId = randomUUID();
+  await withE2EDb(async (pool) => {
+    await pool.query(
+      `WITH t AS (
+      INSERT INTO librarian_turns (id,conversation_id,segment_id,variant,status)
+      VALUES ($1,$2,$3,'owner_message','awaiting_answer') RETURNING id
+    ), card AS (
+      INSERT INTO librarian_cards (id,conversation_id,segment_id,kind,status,target,payload,payload_digest,requires_owner,expires_at,question_turn_id,question_key,question_checkpoint_at)
+      SELECT $4,$2,$3,'question','pending','{}',$5,'fixture',true,now()+interval '1 day',t.id,'journey',now() FROM t RETURNING id
+    ), seq AS (
+      UPDATE librarian_conversations SET last_seq=last_seq+1 WHERE id=$2 RETURNING last_seq
+    ) INSERT INTO librarian_messages (id,conversation_id,segment_id,turn_id,card_id,author_kind,seq,body,delivery_state)
+      SELECT $6,$2,$3,$1,card.id,'librarian',seq.last_seq,'Which customer journey?','processed' FROM card,seq`,
+      [
+        turnId,
+        conversation.id,
+        segment.id,
+        cardId,
+        JSON.stringify({
+          requestKey: "journey",
+          question: "Which customer journey?",
+          schema: {
+            schemaVersion: 1,
+            fields: [
+              {
+                name: "journey",
+                type: "string",
+                required: true,
+                label: "Journey",
+                options: ["Checkout", "Browse"],
+              },
+            ],
+          },
+        }),
+        messageId,
+      ],
+    );
+  });
+  try {
+    await openPanel(page);
+    const question = page
+      .getByTestId("librarian-private-question")
+      .filter({ hasText: "Which customer journey?" });
+    await expect(question).toBeVisible();
+    await question.getByRole("button", { name: "Checkout" }).focus();
+    await page.keyboard.press("Enter");
+    const input = question.getByRole("textbox", { name: /Journey/ });
+    await expect(input).toHaveValue("Checkout");
+    await input.fill("Custom mobile checkout");
+    await question.getByRole("button", { name: "Send answer" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(question).toContainText("Answer queued");
+    await page.reload();
+    await openPanel(page);
+    await expect(question).toContainText("Custom mobile checkout");
+    await expect(
+      question.getByRole("button", { name: "Send answer" }),
+    ).toHaveCount(0);
+  } finally {
+    await withE2EDb(async (pool) => {
+      await pool.query("DELETE FROM librarian_messages WHERE turn_id=$1", [
+        turnId,
+      ]);
+      await pool.query("DELETE FROM librarian_turns WHERE id=$1", [turnId]);
+    });
+  }
+});

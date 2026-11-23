@@ -241,6 +241,7 @@ export async function prepareLibrarianPrompt(input: {
     apply: async (tx) => {
       finish = await finishLibrarianTurnInTransaction(tx, {
         turnId: ref.turnId,
+        assignmentId: ref.assignmentId,
         end,
       });
 

@@ -133,7 +133,7 @@ flowchart LR
 
 ## Expectations
 
-- **ASK-02:** (Designed) Only the active conversation owner may answer its private question and resume the exact suspended turn once.
+- **ASK-02:** (Implemented) Only the active conversation owner may answer its private question and resume the exact suspended turn once.
 
 - **LUI-01:** The top-nav entry MUST render on every `(app)` route with an accessible name and an indicator of `running | unread | action_required`, and MUST NEVER show a numeric global count, enforced by `librarian-trigger.tsx` in `top-nav.tsx` (Implemented).
 - **LUI-02:** The panel MUST be mounted in `(app)/layout.tsx`, navigation and collapse MUST preserve conversation, draft and scroll, and reload MUST restore messages and pending operations, enforced by `librarian-panel.tsx` (Implemented).

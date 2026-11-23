@@ -79,6 +79,7 @@ export async function runLibrarianRetention(
     .where(
       and(
         lt(librarianMessages.createdAt, messageCutoff),
+        sql`NOT EXISTS (SELECT 1 FROM librarian_cards c WHERE c.question_turn_id = ${librarianMessages.turnId} AND c.kind='question' AND (c.status='pending' OR (c.status='accepted' AND c.question_delivered_at IS NULL)))`,
         messageCursor ? gt(librarianMessages.id, messageCursor) : undefined,
       ),
     )
@@ -117,7 +118,7 @@ export async function runLibrarianRetention(
     .where(
       and(
         lt(librarianContextSnapshots.createdAt, snapshotCutoff),
-        sql`${librarianTurns.status} NOT IN ('admitted', 'running')`,
+        sql`${librarianTurns.status} NOT IN ('admitted', 'running', 'awaiting_answer', 'queued')`,
         snapshotCursor
           ? gt(librarianContextSnapshots.id, snapshotCursor)
           : undefined,

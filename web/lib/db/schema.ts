@@ -10729,6 +10729,7 @@ export const LIBRARIAN_TURN_STATUSES = [
   "queued",
   "admitted",
   "running",
+  "awaiting_answer",
   "completed",
   "stopped",
   "failed",
@@ -10912,9 +10913,10 @@ export const librarianTurns = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    uniqOwner: unique("librarian_turns_owner_uq").on(t.id, t.conversationId, t.segmentId),
     uniqOneActive: uniqueIndex("librarian_turns_one_active_uq")
       .on(t.conversationId)
-      .where(sql`${t.status} IN ('admitted', 'running')`),
+      .where(sql`${t.status} IN ('admitted', 'running', 'awaiting_answer')`),
     uniqOneSummary: uniqueIndex("librarian_turns_one_summary_uq")
       .on(t.segmentId)
       .where(
@@ -10930,7 +10932,7 @@ export const librarianTurns = pgTable(
     ),
     statusCheck: check(
       "librarian_turns_status_check",
-      sql`${t.status} IN ('queued', 'admitted', 'running', 'completed', 'stopped', 'failed', 'withdrawn')`,
+      sql`${t.status} IN ('queued', 'admitted', 'running', 'awaiting_answer', 'completed', 'stopped', 'failed', 'withdrawn')`,
     ),
     runningHasSnapshot: check(
       "librarian_turns_running_has_snapshot_check",
@@ -11055,6 +11057,7 @@ export const librarianCards = pgTable(
         "knowledge_proposal",
         "brain_proposal",
         "vault_edit",
+        "question",
       ],
     }).notNull(),
     status: text("status", {
@@ -11069,6 +11072,11 @@ export const librarianCards = pgTable(
     }).notNull(),
     target: jsonb("target").$type<Record<string, string>>().notNull(),
     targetRevision: text("target_revision"),
+    questionTurnId: text("question_turn_id"),
+    questionKey: text("question_key"),
+    questionCheckpointAt: timestamp("question_checkpoint_at", { withTimezone: true, mode: "date" }),
+    questionAnswer: jsonb("question_answer").$type<Record<string, unknown>>(),
+    questionDeliveredAt: timestamp("question_delivered_at", { withTimezone: true, mode: "date" }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     effectContext: jsonb("effect_context").$type<Record<string, unknown>>(),
     payloadDigest: text("payload_digest").notNull(),
@@ -11083,6 +11091,25 @@ export const librarianCards = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    questionOwner: foreignKey({
+      name: "librarian_cards_question_owner_fk",
+      columns: [t.questionTurnId, t.conversationId, t.segmentId],
+      foreignColumns: [librarianTurns.id, librarianTurns.conversationId, librarianTurns.segmentId],
+    }).onDelete("cascade"),
+    questionKeyUnique: uniqueIndex("librarian_cards_question_key_uq")
+      .on(t.questionTurnId, t.questionKey).where(sql`${t.kind} = 'question'`),
+    pendingQuestion: uniqueIndex("librarian_cards_pending_question_uq")
+      .on(t.questionTurnId).where(sql`${t.kind} = 'question' AND ${t.status} = 'pending'`),
+    questionShape: check("librarian_cards_question_shape_check", sql`(
+      (${t.kind} <> 'question' AND ${t.questionTurnId} IS NULL AND ${t.questionKey} IS NULL
+        AND ${t.questionCheckpointAt} IS NULL AND ${t.questionAnswer} IS NULL AND ${t.questionDeliveredAt} IS NULL)
+      OR (${t.kind} = 'question' AND ${t.questionTurnId} IS NOT NULL
+        AND length(${t.questionKey}) BETWEEN 1 AND 128 AND ${t.requiresOwner}
+        AND (${t.status} <> 'pending' OR (${t.questionAnswer} IS NULL AND ${t.decidedAt} IS NULL))
+        AND (${t.status} <> 'accepted' OR (${t.questionCheckpointAt} IS NOT NULL
+          AND jsonb_typeof(${t.questionAnswer}) = 'object' AND ${t.decidedAt} IS NOT NULL))
+        AND (${t.questionDeliveredAt} IS NULL OR ${t.status} = 'accepted'))
+    ) IS TRUE`),
     idxHistory: index("librarian_cards_history_idx").on(
       t.conversationId,
       t.createdAt.desc(),
@@ -11093,7 +11120,7 @@ export const librarianCards = pgTable(
       .where(sql`${t.status} = 'pending'`),
     kindCheck: check(
       "librarian_cards_kind_check",
-      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit')`,
+      sql`${t.kind} IN ('statement_proposal', 'confirmation', 'memory_suggestion', 'knowledge_proposal', 'brain_proposal', 'vault_edit', 'question')`,
     ),
     statusCheck: check(
       "librarian_cards_status_check",

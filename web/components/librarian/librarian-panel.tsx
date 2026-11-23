@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactElement } from "react";
+import { LibrarianQuestion } from "./librarian-question";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import type { LibrarianPanelMode } from "@/components/librarian/panel-mode";
 import type { LibrarianSubject } from "@/lib/librarian/types";
@@ -128,6 +129,7 @@ function systemText(
   t: ReturnType<typeof useTranslations>,
   body: string | null,
 ): string {
+  if (body === "private_answer_queued") return t("questionAccepted");
   if (body === "turn_stopped") return t("systemTurnStopped");
   if (body?.startsWith("turn_failed:")) {
     const reason = body.slice("turn_failed:".length);
@@ -423,6 +425,13 @@ function LibrarianPanelBody(): ReactElement {
           createdAt: message.createdAt,
         })),
     [messages, t],
+  );
+  const questions = useMemo(
+    () =>
+      new Map(
+        messages.filter((m) => m.card && !m.masked).map((m) => [m.id, m.card]),
+      ),
+    [messages],
   );
   const updatesById = useMemo(
     () =>
@@ -883,6 +892,14 @@ function LibrarianPanelBody(): ReactElement {
                   );
                 }}
                 renderCustomMessage={(messageId) => {
+                  const question = questions.get(messageId);
+                  if (question)
+                    return (
+                      <LibrarianQuestion
+                        card={question}
+                        onSubmitted={refresh}
+                      />
+                    );
                   const update = updatesById.get(messageId)?.update;
 
                   return update ? (

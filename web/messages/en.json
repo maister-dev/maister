@@ -6781,6 +6781,14 @@
     "Abandoned": "Abandoned"
   },
   "librarian": {
+    "questionSubmit": "Send answer",
+    "questionAccepted": "Answer queued",
+    "questionDelivered": "Answer delivered",
+    "questionClosed": "Question closed",
+    "questionParking": "Waiting for the turn to pause",
+    "questionError": "Check the answer and try again.",
+    "questionJsonParsed": "Parsed as JSON",
+    "questionPlainText": "Stored as text",
     "openAppliedMemory": "Open applied memory revision",
     "openKnowledgeProposal": "Open proposal",
     "history": {

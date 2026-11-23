@@ -1614,3 +1614,100 @@ test("AV-07 confirms a Librarian Project Brain proposal as the owner", async ({
   ]);
   await expect(card).toHaveCount(0);
 });
+
+test("E2E-ASK-02 private MCP question resumes the same conversation after a supervisor and Web restart", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(240_000);
+  const key = randomUUID();
+  const title = `Which journey ${key.slice(0, 8)}?`;
+  const answer = "Custom mobile checkout";
+  const expectedReply = `Journey continued ${key.slice(0, 8)}`;
+  await page.goto("/");
+  await page.getByTestId("librarian-trigger").click();
+  const composer = page.getByTestId("librarian-composer");
+  await composer.fill(
+    scriptedTurn({
+      calls: [
+        {
+          tool: "ask_human",
+          args: {
+            requestKey: key,
+            question: title,
+            schema: {
+              schemaVersion: 1,
+              fields: [
+                {
+                  name: "journey",
+                  type: "string",
+                  label: "Journey",
+                  required: true,
+                  options: ["Browse", "Cart"],
+                },
+              ],
+            },
+          },
+        },
+      ],
+      reply: expectedReply + " {{results}}",
+    }),
+  );
+  await composer.press("Enter");
+  const card = page
+    .getByTestId("librarian-private-question")
+    .filter({ hasText: title });
+  await expect(card).toBeVisible({ timeout: 90_000 });
+  await restartProcesses();
+  await page.reload();
+  await page.getByTestId("librarian-trigger").click();
+  await expect(card.getByRole("button", { name: "Cart" })).toBeEnabled();
+  const other = await context.newPage();
+  try {
+    await other.goto("/inbox");
+    await other.getByTestId("librarian-trigger").click();
+    const second = other
+      .getByTestId("librarian-private-question")
+      .filter({ hasText: title });
+    await expect(second).toBeVisible();
+    const id = (await card.getAttribute("aria-labelledby"))!.slice(
+      "private-question-".length,
+    );
+    const path = `/api/librarian/cards/${id}/answer`;
+    const invalid = await other.request.post(path, {
+      data: { answer: { journey: 123 } },
+    });
+    expect(invalid.status()).toBe(422);
+    await card.getByRole("textbox", { name: /Journey/ }).fill(answer);
+    await card.getByRole("button", { name: "Send answer" }).press("Enter");
+    await expect(card).toContainText(answer);
+    const repeated = await other.request.post(path, {
+      data: { answer: { journey: answer } },
+    });
+    expect([200, 202]).toContain(repeated.status());
+    const conflict = await other.request.post(path, {
+      data: { answer: { journey: "Other" } },
+    });
+    expect(conflict.status()).toBe(409);
+    await expect(second).toContainText("Answer delivered", { timeout: 90_000 });
+    await expect(
+      librarianReplies(page).filter({ hasText: expectedReply }),
+    ).toHaveCount(1);
+    await expect(latestReply(page)).toContainText('"isError":false');
+    const state = await withE2EDb(
+      async (pool) =>
+        (
+          await pool.query(
+            `SELECT c.question_delivered_at, t.status,
+        (SELECT count(*)::int FROM librarian_messages WHERE turn_id=t.id AND body LIKE $2 AND author_kind='librarian') AS replies
+        FROM librarian_cards c JOIN librarian_turns t ON t.id=c.question_turn_id WHERE c.id=$1`,
+            [id, expectedReply + "%"],
+          )
+        ).rows[0],
+    );
+    expect(state).toMatchObject({ status: "completed", replies: 1 });
+    expect(state.question_delivered_at).toBeTruthy();
+  } finally {
+    await other.close();
+  }
+});

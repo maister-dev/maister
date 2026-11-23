@@ -41,6 +41,7 @@ type ActiveTurn = {
   startAttempts: number;
   deadlineAt: Date | null;
   runId: string | null;
+  assignmentId: string | null;
 };
 
 async function activeTurnOfRun(
@@ -57,12 +58,14 @@ async function activeTurnOfRun(
       startAttempts: librarianTurns.startAttempts,
       deadlineAt: librarianTurns.deadlineAt,
       runId: librarianConversations.runId,
+      assignmentId: runs.executionAssignmentId,
     })
     .from(librarianTurns)
     .innerJoin(
       librarianConversations,
       eq(librarianConversations.id, librarianTurns.conversationId),
     )
+    .innerJoin(runs, eq(runs.id, librarianConversations.runId))
     .where(
       and(
         eq(librarianConversations.runId, runId),
@@ -90,6 +93,10 @@ async function promptCommandOf(
       assignmentId: executionCommands.executionAssignmentId,
     })
     .from(executionCommands)
+    .innerJoin(
+      runs,
+      eq(runs.executionAssignmentId, executionCommands.executionAssignmentId),
+    )
     .where(
       and(
         eq(executionCommands.ownerKind, "librarian_turn"),
@@ -145,6 +152,7 @@ export async function failLibrarianTurnForHostLoss(
       reason: command ? "host_lost" : "start_failed",
     },
     ["admitted", "running"],
+    turn.assignmentId,
   );
 
   log.warn(
@@ -169,8 +177,13 @@ export async function stopLibrarianTurn(
   const turn = await db.transaction(async (tx) => {
     const { conversation } = await lockOwnerConversation(tx, ownerId);
     const [active] = await tx
-      .select({ id: librarianTurns.id, status: librarianTurns.status })
+      .select({
+        id: librarianTurns.id,
+        status: librarianTurns.status,
+        assignmentId: runs.executionAssignmentId,
+      })
       .from(librarianTurns)
+      .leftJoin(runs, eq(runs.id, conversation.runId ?? ""))
       .where(
         and(
           eq(librarianTurns.conversationId, conversation.id),
@@ -188,7 +201,7 @@ export async function stopLibrarianTurn(
     });
   const command = await promptCommandOf(db, turn.id);
 
-  if (command?.targetSessionId) {
+  if (command?.targetSessionId && command.assignmentId === turn.assignmentId) {
     try {
       const client = await createExecutionHosts({ db }).forAssignment({
         id: command.assignmentId,
@@ -206,10 +219,13 @@ export async function stopLibrarianTurn(
       );
     }
   }
-  await endLibrarianTurn(db, turn.id, { status: "stopped" }, [
-    "admitted",
-    "running",
-  ]);
+  await endLibrarianTurn(
+    db,
+    turn.id,
+    { status: "stopped" },
+    ["admitted", "running"],
+    turn.assignmentId,
+  );
   log.warn({ ownerId, turnId: turn.id }, "librarian turn stopped by its owner");
 
   return { turnId: turn.id };
@@ -238,8 +254,13 @@ export async function runLibrarianTurnSweep(
     clears: 0,
   };
   const overdue = await db
-    .select({ id: librarianTurns.id })
+    .select({ id: librarianTurns.id, assignmentId: runs.executionAssignmentId })
     .from(librarianTurns)
+    .innerJoin(
+      librarianConversations,
+      eq(librarianConversations.id, librarianTurns.conversationId),
+    )
+    .innerJoin(runs, eq(runs.id, librarianConversations.runId))
     .where(
       and(
         eq(librarianTurns.status, "running"),
@@ -252,7 +273,10 @@ export async function runLibrarianTurnSweep(
     try {
       const command = await promptCommandOf(db, turn.id);
 
-      if (command?.targetSessionId) {
+      if (
+        command?.targetSessionId &&
+        command.assignmentId === turn.assignmentId
+      ) {
         const client = await createExecutionHosts({ db }).forAssignment({
           id: command.assignmentId,
         });
@@ -260,10 +284,16 @@ export async function runLibrarianTurnSweep(
         await client.cancelPrompt(command.targetSessionId).catch(() => null);
       }
       if (
-        await endLibrarianTurn(db, turn.id, {
-          status: "failed",
-          reason: "deadline",
-        })
+        await endLibrarianTurn(
+          db,
+          turn.id,
+          {
+            status: "failed",
+            reason: "deadline",
+          },
+          ["running"],
+          turn.assignmentId,
+        )
       )
         summary.deadlines += 1;
       log.warn({ turnId: turn.id }, "librarian turn passed its deadline");
@@ -333,7 +363,12 @@ export async function runLibrarianTurnSweep(
   const waiting = await db
     .selectDistinct({ conversationId: librarianTurns.conversationId })
     .from(librarianTurns)
-    .where(eq(librarianTurns.status, "queued"))
+    .where(
+      and(
+        eq(librarianTurns.status, "queued"),
+        sql`NOT EXISTS (SELECT 1 FROM librarian_turns active WHERE active.conversation_id = ${librarianTurns.conversationId} AND active.status IN ('admitted','running','awaiting_answer'))`,
+      ),
+    )
     .limit(100);
 
   for (const row of waiting) {

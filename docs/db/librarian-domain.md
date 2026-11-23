@@ -436,6 +436,6 @@ the first attempt hits it and reads the existing result, and reconciling an
   [`integrations-domain.md`](integrations-domain.md) ·
   [`domain-events.md`](domain-events.md) — the shared tables
 
-## Package and agent delivery (Designed)
+## Private questions
 
-A private question belongs to one conversation segment and turn. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)
+Migration `0372_librarian_private_questions` binds a `question` card to its turn, conversation and segment through a composite foreign key. A partial unique index permits one pending question per turn. `(question_turn_id, question_key)` identifies a retry. The original form is stored in `payload`. The prompt checkpoint sets `question_checkpoint_at`; the owner’s validated `question_answer` and `decided_at` commit before resumption. The successful continuation writes `question_delivered_at`. Reset may close a pending card or an accepted card awaiting delivery. The SQL shape check excludes question fields on every earlier card kind.

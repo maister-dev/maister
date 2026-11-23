@@ -218,11 +218,13 @@ abort-triggered stream exit (Implemented).
 - A `librarian.work` event prompts a fresh authorized read without advancing message replay. An older effect settling, expiry of a pending card and changed grants each invalidate the relevant projection.
 - **(Implemented) Bounded single-transaction card evaluation and eligible-set reuse.** `getLibrarianConversationView` computes `readEligibleConfirmationIds` once and passes the eligible pending card set into `getLinkedWork`, avoiding duplicate `prepareKnowledgeCard` work. Both `getLinkedWork` (including vault `governedEffectLink` lookups) and `readEligibleConfirmationIds` evaluate governed cards sequentially inside a single outer transaction with per-card `tx.transaction` savepoints to isolate `MaisterError` denials without bursting `pg.Pool` connections.
 
-### Inline question (Designed)
+### Inline owner question (Implemented)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Pending: commit card and checkpoint
+  [*] --> CheckpointPending: record request key and current turn
+  CheckpointPending --> Pending: matching prompt completes and Run parks
+  CheckpointPending --> Cleared: prompt fails or context is reset
   Pending --> Accepted: owner answers
   Accepted --> Delivered: original turn consumes answer
   Pending --> Cleared: explicit reset
@@ -231,13 +233,15 @@ stateDiagram-v2
   Cleared --> [*]
 ```
 
-Closing a browser tab leaves the question open. On restart a worker reads the original conversation, segment, turn and receipt. Reset and delivery serialize on the conversation and turn. A successful delivery resumes exactly once. A reset invalidates any undelivered command. The private transcript read checks the active owner even for administrators.
+The `ask_human` tool records a private question under the running librarian credential. The prompt owner releases the assignment and publishes the card in the transcript when the prompt ends successfully. `awaiting_answer` holds the conversation’s queue position. Closing the panel or restarting Web and supervisor preserves it.
+
+The signed-in owner submits `POST /api/librarian/cards/{cardId}/answer`. The server checks the source grants and stored form, records one answer and queues the same turn. Duplicate submissions return its receipt. A different answer returns 409. Admission records a new context snapshot and assignment. Only completion of its owning prompt marks the answer delivered. A context reset closes any undelivered question and subsequent submission returns 410. Conversation messages drive the existing private SSE refresh. Task clarifications addressed to a teammate continue through their assignment.
 
 ## Expectations
 
 - **LCV-01:** Exactly one `librarian_conversations` row MUST exist per user and no route or tool may create a second, enforced by UNIQUE `librarian_conversations_user_uq` behind `getOrCreateConversation` (Implemented).
 - **LCV-02:** An owner message MUST be committed before any turn admission, and a repeated `(conversation_id, client_message_id)` MUST return the stored message, enforced by partial UNIQUE `librarian_messages_client_id_uq` in `appendOwnerMessage` (Implemented).
-- **LCV-03:** At most one turn per conversation MAY be `admitted` or `running`, later messages MUST queue in `seq` order, and a message MAY be withdrawn only while `queued`, enforced by partial UNIQUE `librarian_turns_one_active_uq` under the `librarian_conversations` row lock (Implemented).
+- **LCV-03:** At most one turn per conversation MAY be `admitted`, `running` or `awaiting_answer`, later messages MUST queue in `seq` order, and a message MAY be withdrawn only while `queued`, enforced by partial UNIQUE `librarian_turns_one_active_uq` under the `librarian_conversations` row lock (Implemented).
 - **LCV-04:** A turn MUST run on the conversation's single `runs` row with `run_kind='librarian'`, `project_id IS NULL`, `task_id IS NULL`, `persistent=true`, `flow_version='librarian'` and `created_by_user_id` = owner, adopted as a `directory` workspace under `<runtimeRoot>/.maister/_librarian/<conversationId>/`, and every prompt MUST carry owner kind `librarian_turn`, enforced by CHECK `runs_librarian_shape_check` and `execution_commands_prompt_owner_required` (Implemented).
 - **LCV-05:** A conversation MUST hold a slot only while its run is `Running`, MUST be parked `NeedsInputIdle` between turns and NEVER TTL-abandoned, and a full `MAISTER_MAX_CONCURRENT_LIBRARIAN_TURNS` pool MUST queue rather than refuse, enforced by the `tryStartRun` librarian pool arm and the `persistent=true` keep-alive Pass2 exemption (Implemented).
 - **LCV-06:** ACP `session/resume` MUST be used only when `run_sessions.librarian_context_epoch` equals the conversation's current `context_epoch` and the runner snapshot is unchanged, and otherwise a fresh session MUST start from a composed context, enforced by the composer guard (Implemented).

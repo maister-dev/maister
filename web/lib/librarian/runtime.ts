@@ -8,7 +8,7 @@ import type { LibrarianPromptVariant } from "./prompt-owner";
 import type { ComposerMessage } from "./composer";
 import type { LibrarianSubject } from "./types";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -33,6 +33,7 @@ import {
   LIBRARIAN_INSTRUCTIONS_VERSION,
   librarianInstructions,
 } from "./instructions";
+import { privateAnswerContext } from "./questions";
 import { admitLibrarianPrompt, librarianPromptOwners } from "./prompt-owner";
 import {
   librarianEnforcementProfile,
@@ -119,6 +120,7 @@ async function renewStartLease(
   db: Db,
   turnId: string,
   startAttempt: number,
+  assignmentId: string,
 ): Promise<void> {
   const renewed = await db
     .update(librarianTurns)
@@ -128,6 +130,7 @@ async function renewStartLease(
         eq(librarianTurns.id, turnId),
         eq(librarianTurns.status, "running"),
         eq(librarianTurns.startAttempts, startAttempt),
+        sql`EXISTS (SELECT 1 FROM librarian_conversations c JOIN runs r ON r.id=c.run_id WHERE c.id=${librarianTurns.conversationId} AND r.execution_assignment_id=${assignmentId})`,
       ),
     )
     .returning({ id: librarianTurns.id });
@@ -139,6 +142,7 @@ async function assertCurrentStart(
   db: Db,
   turnId: string,
   startAttempt: number,
+  assignmentId: string,
 ): Promise<void> {
   const [turn] = await db
     .select({ id: librarianTurns.id })
@@ -148,6 +152,7 @@ async function assertCurrentStart(
         eq(librarianTurns.id, turnId),
         eq(librarianTurns.status, "running"),
         eq(librarianTurns.startAttempts, startAttempt),
+        sql`EXISTS (SELECT 1 FROM librarian_conversations c JOIN runs r ON r.id=c.run_id WHERE c.id=${librarianTurns.conversationId} AND r.execution_assignment_id=${assignmentId})`,
       ),
     );
 
@@ -280,11 +285,18 @@ async function prepareStart(
       if (!sources) return { refused: true, reason: "source_access_changed" };
       currentRestrictions = [...priorRestrictions, ...sources];
     }
+    const answeredQuestions = await privateAnswerContext(tx, turn.id);
     const current: ComposerMessage = {
       id: message.id,
       seq: BigInt(message.seq),
       authorKind: turn.variant === "summary" ? "librarian" : "owner",
-      body: message.body,
+      body: answeredQuestions.text
+        ? [
+            message.body,
+            "Human answers to this turn:",
+            answeredQuestions.text,
+          ].join("\n\n")
+        : message.body,
     };
     const retrieved = await retrieveLibrarianContext(tx, {
       ownerId: ref.userId,
@@ -330,6 +342,7 @@ async function prepareStart(
       );
     const restrictions = canonicalKnowledgeRestrictions([
       ...currentRestrictions,
+      ...answeredQuestions.sources,
       ...composed.messageIds.flatMap(
         (id) => retrieved.sourceMessages.get(id) ?? [],
       ),
@@ -371,7 +384,10 @@ async function prepareStart(
 
     await writeContextSnapshot(tx, {
       turnId,
-      composed,
+      composed: {
+        ...composed,
+        messageIds: [...composed.messageIds, ...answeredQuestions.messageIds],
+      },
       authzFingerprint: fingerprint,
       contextEpoch: epoch,
     });
@@ -458,9 +474,15 @@ export async function endLibrarianTurn(
   turnId: string,
   end: LibrarianTurnEnd,
   fromStatuses: readonly ("admitted" | "running")[] = ["running"],
+  assignmentId?: string | null,
 ): Promise<boolean> {
   const finish = await db.transaction((tx) =>
-    finishLibrarianTurnInTransaction(tx, { turnId, end, fromStatuses }),
+    finishLibrarianTurnInTransaction(tx, {
+      turnId,
+      end,
+      fromStatuses,
+      assignmentId,
+    }),
   );
 
   await afterLibrarianTurnFinished(db, finish);
@@ -514,7 +536,13 @@ export async function startLibrarianTurn(
 
   if ("refused" in prepared) {
     log.warn({ turnId, reason: prepared.reason }, "librarian turn not started");
-    if (prepared.reason === "runner_unavailable")
+    if (
+      [
+        "runner_unavailable",
+        "source_access_changed",
+        "source_capture_limit",
+      ].includes(prepared.reason)
+    )
       await endLibrarianTurn(
         db,
         turnId,
@@ -529,16 +557,19 @@ export async function startLibrarianTurn(
   }
   const hosts = deps.hosts ?? createExecutionHosts({ db });
   const lease = setInterval(() => {
-    void renewStartLease(db, turnId, prepared.startAttempt).catch(
-      (err: unknown) => {
-        if (err instanceof StartSupersededError) clearInterval(lease);
-        else
-          log.error(
-            { turnId, startAttempt: prepared.startAttempt, err },
-            "librarian start lease renewal failed",
-          );
-      },
-    );
+    void renewStartLease(
+      db,
+      turnId,
+      prepared.startAttempt,
+      prepared.assignmentId,
+    ).catch((err: unknown) => {
+      if (err instanceof StartSupersededError) clearInterval(lease);
+      else
+        log.error(
+          { turnId, startAttempt: prepared.startAttempt, err },
+          "librarian start lease renewal failed",
+        );
+    });
   }, 15_000);
 
   lease.unref?.();
@@ -548,13 +579,24 @@ export async function startLibrarianTurn(
   const deadline = setTimeout(
     () => {
       void (async () => {
-        await assertCurrentStart(db, turnId, prepared.startAttempt);
+        await assertCurrentStart(
+          db,
+          turnId,
+          prepared.startAttempt,
+          prepared.assignmentId,
+        );
         if (promptIssued && client)
           await client.cancelPrompt(promptIssued.sessionId).catch(() => {});
-        await endLibrarianTurn(db, turnId, {
-          status: "failed",
-          reason: "deadline",
-        });
+        await endLibrarianTurn(
+          db,
+          turnId,
+          {
+            status: "failed",
+            reason: "deadline",
+          },
+          ["running"],
+          prepared.assignmentId,
+        );
       })().catch((err: unknown) =>
         log.error(
           { turnId, err: err instanceof Error ? err.message : String(err) },
@@ -592,7 +634,12 @@ export async function startLibrarianTurn(
 
     if (prepared.mode === "resume" && prepared.resumeSessionId) {
       try {
-        await renewStartLease(db, turnId, prepared.startAttempt);
+        await renewStartLease(
+          db,
+          turnId,
+          prepared.startAttempt,
+          prepared.assignmentId,
+        );
         session = await bound.createOwnedSession(
           {
             variant: "librarian",
@@ -612,7 +659,12 @@ export async function startLibrarianTurn(
       }
     }
     if (!session) {
-      await renewStartLease(db, turnId, prepared.startAttempt);
+      await renewStartLease(
+        db,
+        turnId,
+        prepared.startAttempt,
+        prepared.assignmentId,
+      );
       session = await bound.createOwnedSession(
         {
           variant: "librarian",
@@ -647,6 +699,7 @@ export async function startLibrarianTurn(
           })
           .where(
             and(
+              eq(runSessions.executionAssignmentId, prepared.assignmentId),
               eq(runSessions.runId, prepared.runId),
               eq(runSessions.sessionName, "default"),
             ),
@@ -655,7 +708,12 @@ export async function startLibrarianTurn(
     }
     const hostSessionId = session.hostSessionId;
 
-    await renewStartLease(db, turnId, prepared.startAttempt);
+    await renewStartLease(
+      db,
+      turnId,
+      prepared.startAttempt,
+      prepared.assignmentId,
+    );
 
     // Set BEFORE the call: a prompt call that fails may still have reached
     // the host, and cancelling an idle session is harmless.
@@ -690,7 +748,12 @@ export async function startLibrarianTurn(
 
     if (superseded) return;
     try {
-      await assertCurrentStart(db, turnId, prepared.startAttempt);
+      await assertCurrentStart(
+        db,
+        turnId,
+        prepared.startAttempt,
+        prepared.assignmentId,
+      );
     } catch (cause) {
       if (cause instanceof StartSupersededError) return;
       throw cause;
@@ -719,11 +782,16 @@ export async function startLibrarianTurn(
             "librarian prompt cancel failed",
           ),
         );
-    await revokeLibrarianTurnToken(turnId, db).catch(() => 0);
-    await endLibrarianTurn(db, turnId, {
-      status: "failed",
-      reason: promptIssued ? "host_lost" : "start_failed",
-    }).catch((cause: unknown) =>
+    await endLibrarianTurn(
+      db,
+      turnId,
+      {
+        status: "failed",
+        reason: promptIssued ? "host_lost" : "start_failed",
+      },
+      ["running"],
+      prepared.assignmentId,
+    ).catch((cause: unknown) =>
       log.error(
         {
           turnId,

@@ -8,7 +8,12 @@ import {
   type MockInstance,
 } from "vitest";
 
-import { dispatchTool, isToolInToolset, toolNamesForToolset } from "@/tools";
+import {
+  dispatchTool,
+  isToolInToolset,
+  toolNamesForToolset,
+  toolSpecForToolset,
+} from "@/tools";
 
 // ADR-186 (T1.6): the librarian's discovery/read tools, the operation key a
 // librarian sends as `Idempotency-Key`, and the `librarian` toolset listing.
@@ -244,6 +249,7 @@ describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools",
     const names = toolNamesForToolset("librarian");
 
     for (const offered of [
+      "ask_human",
       "task_search",
       "task_create",
       "run_launch",
@@ -267,7 +273,6 @@ describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools",
       "task_complete",
       "triage_set",
       "agent_memory_write",
-      "ask_human",
     ]) {
       expect(names).not.toContain(withheld);
       expect(isToolInToolset(withheld, "librarian")).toBe(false);
@@ -278,4 +283,58 @@ describe("CT-LAU-06 the librarian toolset lists only librarian-permitted tools",
     expect(toolNamesForToolset(undefined)).toContain("hitl_respond");
     expect(isToolInToolset("hitl_respond", undefined)).toBe(true);
   });
+});
+
+describe("IT-ASK-01 owner-scoped questions", () => {
+  it("exposes the node question beside the vault tools only with the bound origin", async () => {
+    expect(isToolInToolset("ask_human", "vault")).toBe(false);
+    expect(isToolInToolset("ask_human", "vault", [], "flow-node")).toBe(true);
+    const args = {
+      requestKey: "choice",
+      question: "Which?",
+      schema: { schemaVersion: 1, fields: [] },
+    };
+
+    await dispatchTool({
+      name: "ask_human",
+      args,
+      toolset: "vault",
+      askHumanOrigin: "flow-node",
+      ctx,
+      baseUrl: BASE_URL,
+    });
+    expect(call().url).toBe(BASE_URL + "/api/v1/ext/flow-node/human-asks");
+    expect(JSON.parse(String(call().init.body))).toEqual(args);
+  });
+
+  it.each(["librarian", "flow-node"] as const)(
+    "routes %s to its credential-owned question",
+    async (toolset) => {
+      const body = {
+        requestKey: "pick-journey",
+        question: "Which journey?",
+        schema: {
+          schemaVersion: 1,
+          fields: [{ name: "journey", type: "string" }],
+        },
+      };
+      const spec = toolSpecForToolset("ask_human", toolset);
+
+      expect(spec.inputSchema.required).toEqual(
+        expect.arrayContaining(["question", "schema", "requestKey"]),
+      );
+      expect(spec.inputSchema.properties).not.toHaveProperty("taskId");
+      await dispatchTool({
+        name: "ask_human",
+        args: body,
+        toolset,
+        ctx,
+        baseUrl: BASE_URL,
+      });
+      expect(call().url).toBe(
+        BASE_URL + "/api/v1/ext/" + toolset + "/human-asks",
+      );
+      expect(JSON.parse(String(call().init.body))).toEqual(body);
+    },
+  );
 });

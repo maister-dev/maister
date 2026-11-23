@@ -155,7 +155,8 @@ paths:
   /api/v1/ext/librarian/human-asks:
     post:
       operationId: createPrivateTurnQuestion
-      summary: (Designed) Open a question for the credential-owned execution
+      summary: Record a private question from the current owner-message turn
+      description: The librarian:cards capability and bearer identify the conversation, segment and current turn. The question becomes answerable when this prompt completes and the Run parks. A reused request key must have identical content.
       security:
         - librarianTurnToken: []
       parameters: []
@@ -183,31 +184,6 @@ paths:
                       - accepted
                       - delivered
                       - closed
-                      - failed
-        "201":
-          description: Durably open
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - questionId
-                  - state
-                properties:
-                  questionId:
-                    type: string
-                    minLength: 1
-                    maxLength: 256
-                  state:
-                    type: string
-                    enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
         "202":
           description: Checkpoint pending
           content:
@@ -225,13 +201,7 @@ paths:
                     maxLength: 256
                   state:
                     type: string
-                    enum:
-                      - checkpoint_pending
-                      - open
-                      - accepted
-                      - delivered
-                      - closed
-                      - failed
+                    enum: [checkpoint_pending]
         "400":
           description: Invalid request
           content:
@@ -268,6 +238,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExtErrorBody"
+        "413":
+          description: The request exceeds 64 KiB of UTF-8 JSON.
         "422":
           description: Invalid content or answer
           content:

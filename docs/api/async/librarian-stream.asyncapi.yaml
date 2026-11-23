@@ -241,6 +241,7 @@ components:
             - queued
             - admitted
             - running
+            - awaiting_answer
             - completed
             - stopped
             - failed

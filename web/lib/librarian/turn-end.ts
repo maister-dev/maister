@@ -3,7 +3,7 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 import type { LibrarianTurnFailureReason } from "./types";
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { admitNextTurnInTransaction, type AdmittedTurn } from "./admission";
@@ -12,6 +12,11 @@ import {
   appendConversationMessage,
   lockOwnerConversation,
 } from "./conversation";
+import {
+  checkpointPrivateQuestions,
+  closeUndeliveredQuestions,
+} from "./questions";
+import { turnSourceProjectIds } from "./disclosed-context";
 import { applyLibrarianPark } from "./park";
 import { dispatchLibrarianTurn, type LibrarianTurnStarter } from "./pool";
 import { readLibrarianSettings } from "./settings";
@@ -21,8 +26,9 @@ import {
   librarianConversations,
   librarianMessages,
   librarianTurns,
-  tokenAuditLog,
+  runs,
 } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { localHost } from "@/lib/execution-host/resolver";
 import { promoteNextPending } from "@/lib/scheduler";
 import { admitNextLibrarianTurn } from "@/lib/librarian/admission";
@@ -53,25 +59,6 @@ export function librarianSystemCode(end: LibrarianTurnEnd): string | null {
   return null;
 }
 
-/** The projects the turn's tool calls touched, from its own audit rows — what
- * masks the reply for an owner who later loses one of them (LMM-09). */
-async function sourceProjectIds(tx: Db, turnId: string): Promise<string[]> {
-  const rows = await tx
-    .selectDistinct({ projectId: tokenAuditLog.project_id })
-    .from(tokenAuditLog)
-    .where(
-      and(
-        eq(tokenAuditLog.librarian_turn_id, turnId),
-        isNotNull(tokenAuditLog.project_id),
-      ),
-    );
-
-  return rows
-    .map((row: { projectId: string | null }) => row.projectId)
-    .filter((id: string | null): id is string => id !== null)
-    .sort();
-}
-
 /** ADR-185 D3/D19: the ONE turn-end transaction. Under the conversation lock:
  * the turn reaches its terminal status exactly once, the reply or a system
  * line lands, the token dies, the run parks, and the next queued turn is
@@ -81,6 +68,7 @@ export async function finishLibrarianTurnInTransaction(
   input: {
     turnId: string;
     end: LibrarianTurnEnd;
+    assignmentId?: string | null;
     /** A running turn only — the prompt owner's case. A stop also ends an
      * admitted turn that never started. */
     fromStatuses?: readonly ("admitted" | "running")[];
@@ -117,6 +105,13 @@ export async function finishLibrarianTurnInTransaction(
 
     return null;
   }
+  if (input.assignmentId !== undefined) {
+    const [current] = await tx
+      .select({ id: runs.executionAssignmentId })
+      .from(runs)
+      .where(eq(runs.id, locked.conversation.runId ?? ""));
+    if ((current?.id ?? null) !== input.assignmentId) return null;
+  }
   let end = input.end;
 
   if (turn.variant === "summary" && end.status === "completed") {
@@ -132,6 +127,45 @@ export async function finishLibrarianTurnInTransaction(
       log.warn({ turnId: turn.id, error }, "librarian summary rejected");
     }
     if (!saved) end = { status: "failed", reason: "summary_invalid" };
+  }
+  const question =
+    end.status === "completed" && locked.conversation.resetState === "none"
+      ? await checkpointPrivateQuestions(tx, turn.id)
+      : await closeUndeliveredQuestions(tx, turn.id);
+  if (question) {
+    const runId = locked.conversation.runId;
+    if (!runId)
+      throw new MaisterError(
+        "CONFLICT",
+        "Private question lost its owning Run",
+      );
+    const park = await applyLibrarianPark(tx, runId);
+    if (!park.parked)
+      throw new MaisterError(
+        "CONFLICT",
+        "Private question could not park the owning Run",
+      );
+    await tx
+      .update(librarianTurns)
+      .set({ status: "awaiting_answer", startLeaseAt: null, deadlineAt: null })
+      .where(eq(librarianTurns.id, turn.id));
+    await appendConversationMessage(tx, {
+      conversationId: turn.conversationId,
+      segmentId: turn.segmentId,
+      authorKind: "librarian",
+      body: String(question.payload.question),
+      turnId: turn.id,
+      cardId: question.id,
+      sourceProjectIds: await turnSourceProjectIds(tx, turn.id),
+    });
+    await revokeLibrarianTurnToken(turn.id, tx);
+    return {
+      turnId: turn.id,
+      runId,
+      conversationId: turn.conversationId,
+      parked: true,
+      next: null,
+    };
   }
   const [ended] = await tx
     .update(librarianTurns)
@@ -172,7 +206,7 @@ export async function finishLibrarianTurnInTransaction(
       authorKind: "librarian",
       body: end.reply,
       turnId: turn.id,
-      sourceProjectIds: await sourceProjectIds(tx, turn.id),
+      sourceProjectIds: await turnSourceProjectIds(tx, turn.id),
     });
   else
     await appendConversationMessage(tx, {

@@ -76,7 +76,11 @@ export type LibrarianAdmissionDeps = {
   now?: () => Date;
 };
 
-const ACTIVE_TURN_STATUSES = ["admitted", "running"] as const;
+const ACTIVE_TURN_STATUSES = [
+  "admitted",
+  "running",
+  "awaiting_answer",
+] as const;
 
 function utcDate(now: Date): string {
   return now.toISOString().slice(0, 10);

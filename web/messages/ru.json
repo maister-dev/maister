@@ -6781,6 +6781,14 @@
     "Abandoned": "Отменено"
   },
   "librarian": {
+    "questionSubmit": "Отправить ответ",
+    "questionAccepted": "Ответ в очереди",
+    "questionDelivered": "Ответ доставлен",
+    "questionClosed": "Вопрос закрыт",
+    "questionParking": "Ожидаем остановки хода",
+    "questionError": "Проверьте ответ и попробуйте ещё раз.",
+    "questionJsonParsed": "Распознано как JSON",
+    "questionPlainText": "Будет сохранено как текст",
     "openAppliedMemory": "Открыть применённую версию памяти",
     "openKnowledgeProposal": "Открыть предложение",
     "history": {

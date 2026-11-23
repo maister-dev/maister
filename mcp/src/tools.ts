@@ -4,8 +4,10 @@ import { z } from "zod";
 
 import { installationToolNames } from "../../runtime/installation-agent-tools";
 import taskQualificationSchema from "../../runtime/task-qualification.schema.json";
+import scopedAskHumanInputSchema from "../../runtime/scoped-ask-human-input.schema.json";
 import askHumanInputSchema from "../../runtime/ask-human-input.schema.json";
 import agentMemorySchema from "../../runtime/agent-memory.schema.json";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 
 import { type AuthContext, resolveAuthHeader } from "./auth";
 import {
@@ -18,7 +20,6 @@ import {
   librarianVaultToolSpecs,
 } from "./librarian-vault-tools";
 import { isToolsetName, TOOLSETS } from "./toolsets";
-import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 import {
   isTaskLaunchTool,
   isLaunchAdmissionTool,
@@ -1593,6 +1594,7 @@ export async function dispatchTool(opts: {
   baseUrl: string;
   signal?: AbortSignal;
   toolset?: string;
+  askHumanOrigin?: string;
 }): Promise<DispatchResult> {
   const { name, args, ctx, baseUrl, signal } = opts;
 
@@ -1681,7 +1683,7 @@ export async function dispatchTool(opts: {
   // never the body — the ext routes validate their bodies strictly.
   const { operationKey, ...routedArgs } = nativeArguments;
   const normalizedArgs = coerceNumericArgs(
-    toolSpecForToolset(name, opts.toolset)?.inputSchema,
+    toolSpecForToolset(name, opts.toolset, opts.askHumanOrigin)?.inputSchema,
     routedArgs,
   );
   const installationPage =
@@ -1720,15 +1722,23 @@ export async function dispatchTool(opts: {
     librarian && name === "knowledge_propose"
       ? normalizedArgs.idempotencyKey
       : operationKey;
-  const { method, path, body } = confirmation
+  const origin = questionOrigin(opts.toolset, opts.askHumanOrigin);
+  const scopedQuestion = name === "ask_human" && origin;
+  const { method, path, body } = scopedQuestion
     ? {
         method: "POST" as const,
-        path: "/api/v1/ext/librarian/cards",
-        body: confirmation,
+        path: `/api/v1/ext/${origin}/human-asks`,
+        body: normalizedArgs,
       }
-    : installationPage
-      ? routeInstallationPage(name, installationPage.data)
-      : resolveRouting(name, normalizedArgs);
+    : confirmation
+      ? {
+          method: "POST" as const,
+          path: "/api/v1/ext/librarian/cards",
+          body: confirmation,
+        }
+      : installationPage
+        ? routeInstallationPage(name, installationPage.data)
+        : resolveRouting(name, normalizedArgs);
   const headers =
     typeof contextKey === "string" && contextKey.length > 0
       ? { "Idempotency-Key": contextKey }
@@ -2885,6 +2895,7 @@ function resolveRouting(
 export function toolNamesForToolset(
   toolset: string | undefined,
   scopes: readonly string[] = [],
+  askHumanOrigin?: string,
 ): string[] {
   const names = Object.keys(TOOL_SPECS);
 
@@ -2907,15 +2918,35 @@ export function toolNamesForToolset(
 
   const allowed = new Set<string>(selection);
 
+  if (toolset === "vault" && askHumanOrigin === "flow-node")
+    allowed.add("ask_human");
+
   return names.filter((name) => allowed.has(name));
+}
+
+function questionOrigin(
+  toolset?: string,
+  origin?: string,
+): "librarian" | "flow-node" | null {
+  if (toolset === "librarian") return "librarian";
+  if (toolset === "flow-node" || origin === "flow-node") return "flow-node";
+
+  return null;
 }
 
 export function toolSpecForToolset(
   name: string,
   toolset: string | undefined,
+  askHumanOrigin?: string,
 ): ToolSpec {
   const standard = TOOL_SPECS[name];
 
+  if (name === "ask_human" && questionOrigin(toolset, askHumanOrigin))
+    return {
+      description:
+        "Ask a human to clarify this execution. Supply a stable requestKey and the MAIster form schema. Suggested options on a string field allow a custom answer. Stop this turn once the question has been recorded.",
+      inputSchema: { ...scopedAskHumanInputSchema, type: "object" },
+    };
   if (toolset === "librarian" && name === "memory_propose") {
     return {
       ...standard,
@@ -2959,9 +2990,10 @@ export function isToolInToolset(
   name: string,
   toolset: string | undefined,
   scopes: readonly string[] = [],
+  askHumanOrigin?: string,
 ): boolean {
   return (
     Object.hasOwn(TOOL_SPECS, name) &&
-    toolNamesForToolset(toolset, scopes).includes(name)
+    toolNamesForToolset(toolset, scopes, askHumanOrigin).includes(name)
   );
 }

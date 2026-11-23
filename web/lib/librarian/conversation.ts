@@ -216,6 +216,7 @@ export async function appendConversationMessage(
     body: string;
     turnId?: string | null;
     sourceProjectIds?: string[];
+    cardId?: string;
   },
 ): Promise<LibrarianMessageRow> {
   const seq = await allocateSeq(tx, input.conversationId);
@@ -230,6 +231,7 @@ export async function appendConversationMessage(
       deliveryState: "processed",
       turnId: input.turnId ?? null,
       sourceProjectIds: input.sourceProjectIds ?? [],
+      cardId: input.cardId ?? null,
     })
     .returning();
 

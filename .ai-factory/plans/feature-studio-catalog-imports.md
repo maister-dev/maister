@@ -259,17 +259,19 @@ For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](h
 
 ### Phase 5 — Durable human questions and the private librarian surface
 
-- [ ] **T18. Extend the caller-aware ask contract.**
+IT-ASK-02 and the populated migration and recovery suites passed 21 PostgreSQL cases. All 568 MCP unit tests and eight stdio modes passed. E2E-ASK-02 used the running Web process, supervisor, stdio facade and a deterministic ACP peer, restarted both services at a pending private question, answered from two tabs, and observed one continuation in the original conversation. The keyboard and reload scenario also passed.
+
+- [x] **T18. Extend the caller-aware ask contract.**
   - **After** T02.
   - Extend `web/lib/services/{agent-question-contract,agent-question,agent-question-response}.ts`, `web/lib/specialist-assignments/flow-question.ts`, `mcp/src/{tools,toolsets,main}.ts` and the generator for `runtime/ask-human-input.schema.json`. Reuse the typed MAIster form, suggested answers and custom responses. Derive caller and owning turn from its ephemeral credential. Expose appropriate inputs without task IDs/retrigger flags for librarian and node calls. Keep existing standalone and specialist shapes independently readable.
   - **Acceptance** — positive and denied calls per origin, unavailable/expired capability, cross-owner forgery, and unchanged legacy tool schema behavior for old callers.
   - **Diagnostics** — INFO origin and request ID, WARN wrong scope.
-- [ ] **T19. Persist a private question and continue its conversation.**
+- [x] **T19. Persist a private question and continue its conversation.**
   - **After** T18.
   - Extend `web/lib/librarian/{authority,cards,conversation,prompt-owner,turn-recovery,reset,stream,toolset}.ts` and scoped librarian HTTP/MCP routes. Bind the pending question to owner/segment/turn, keep an idempotent answer intent and delivery receipt, reconcile worker restart. A tab close preserves pending input; explicit reset supersedes it. Teammate questions about a Backlog task keep their recipient-directed assignment.
   - **Acceptance** — same conversation continues once after a response, access denied to another user, stale reset answer rejected, no private text in project task/Inbox or logs.
   - **Diagnostics** — IDs and state transitions.
-- [ ] **T20. Render the question inline, with live outcome.**
+- [x] **T20. Render the question inline, with live outcome.**
   - **After** T19.
   - Extend `web/components/librarian/librarian-panel.tsx`, librarian read models, stream and EN/RU resources. Show options, custom input, submit, submitted answer and pending/resumed feedback in transcript order. Reuse existing form controls and private SSE.
   - **Acceptance** — keyboard-only answer, reload, duplicate click/two tabs, server-side errors and eventual continuation in `web/e2e/librarian-panel.spec.ts`.
