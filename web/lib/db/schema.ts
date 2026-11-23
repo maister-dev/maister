@@ -5573,7 +5573,7 @@ export const executionEvents = pgTable(
     ),
     protocolBoundsCheck: check(
       "execution_events_protocol_bounds_check",
-      sql`(${t.hostSequence} IS NULL OR ${t.hostSequence} >= 0) AND (${t.runSequence} IS NULL OR ${t.runSequence} >= 0) AND (${t.assignmentEpoch} IS NULL OR ${t.assignmentEpoch} >= 1) AND (${t.payloadBytes} IS NULL OR ${t.payloadBytes} BETWEEN 0 AND 1048576) AND (${t.source} <> 'host' OR (${t.executionHostId} IS NOT NULL AND ${t.hostBootId} IS NOT NULL AND ${t.envelopeVersion} = 1))`,
+      sql`(${t.hostSequence} IS NULL OR ${t.hostSequence} >= 0) AND (${t.runSequence} IS NULL OR ${t.runSequence} >= 0) AND (${t.assignmentEpoch} IS NULL OR ${t.assignmentEpoch} >= 1) AND (${t.payloadBytes} IS NULL OR ${t.payloadBytes} BETWEEN 0 AND 1048576) AND (${t.source} <> 'host' OR (${t.executionHostId} IS NOT NULL AND ${t.hostBootId} IS NOT NULL AND (${t.envelopeVersion} = 1 OR (${t.envelopeVersion} = 2 AND ${t.eventType} = 'workspace.command.terminal' AND ${t.payloadSchema} = 'maister.workspace.command.terminal.v1'))))`,
     ),
   }),
 );
@@ -6016,6 +6016,7 @@ export const workspaces = pgTable(
     executionWorkspaceId: text("execution_workspace_id"),
     preparationAssignmentId: text("preparation_assignment_id"),
     workspaceGeneration: integer("workspace_generation"),
+    workspaceMaterializationGeneration: integer("workspace_materialization_generation"),
     workspaceInputDigest: text("workspace_input_digest"),
     rootWorkspaceId: text("root_workspace_id"),
     legacyHostAdoptionIssue: text("legacy_host_adoption_issue", {
@@ -6148,6 +6149,13 @@ export const workspaces = pgTable(
           AND (${t.rootWorkspaceId} IS NULL
             OR (${t.rootWorkspaceId} <> ${t.id} AND ${t.executionWorkspaceId} IS NULL)))
       ) IS TRUE`,
+    ),
+    hostMaterializationShape: check(
+      "workspaces_host_materialization_shape_check",
+      sql`${t.workspaceMaterializationGeneration} IS NULL OR (
+        ${t.ownershipKind} = 'host_owned' AND ${t.workspaceMaterializationGeneration} > 0
+        AND (${t.executionWorkspaceId} IS NOT NULL OR ${t.rootWorkspaceId} IS NOT NULL)
+      )`,
     ),
     publicationOwner: unique("workspaces_publication_owner_uq").on(
       t.projectId,

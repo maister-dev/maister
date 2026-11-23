@@ -21,11 +21,10 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Serializes an entire smoke-cache lifecycle, including invalidation, adapter
- * probe, and final cache write. SQLite releases the transaction lock on a
- * process crash, so an interrupted probe cannot leave a stale owner path.
+ * Serializes an operation on a private filesystem resource. SQLite releases
+ * the transaction lock if its owner exits.
  */
-export async function withAdapterSmokeCacheLock<T>(
+export async function withSqliteFileLock<T>(
   cachePath: string,
   effect: () => Promise<T>,
 ): Promise<T> {
@@ -52,7 +51,7 @@ export async function withAdapterSmokeCacheLock<T>(
       if (acquired || !isSqliteBusy(err)) throw err;
       if (Date.now() >= deadline) {
         throw new Error(
-          `timed out waiting for adapter smoke cache lock: ${cachePath}`,
+          "timed out waiting for the private filesystem resource lock",
         );
       }
       await delay(RETRY_DELAY_MS);

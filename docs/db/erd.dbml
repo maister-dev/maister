@@ -4871,6 +4871,7 @@ table workspaces {
   execution_workspace_id text
   preparation_assignment_id text
   workspace_generation integer
+  workspace_materialization_generation integer
   workspace_input_digest text
   root_workspace_id text
   legacy_host_adoption_issue text
@@ -4913,6 +4914,7 @@ table workspaces {
     (id, execution_host_id) [name: 'workspaces_host_scoped_identity_uq', unique]
     (execution_host_id, execution_workspace_id) [name: 'workspaces_active_host_handle_uq', unique]
     run_id [name: 'workspaces_active_host_run_uq', unique]
+
 
 
 

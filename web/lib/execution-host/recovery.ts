@@ -33,6 +33,7 @@ import { reconcilePromptCommand } from "./prompt-reconciliation";
 import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
+import { recoverWorkspacePreparation } from "./workspace-prepare-delivery";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
   reportUnreconciledCommands,
@@ -513,6 +514,17 @@ export async function recoverExecutionCommands(
     }
     if (ageMs(row, at) < graceMs) {
       summary.skippedInFlight += 1;
+
+      return;
+    }
+    if (row.kind === "workspace.prepare") {
+      if (row.nextAttemptAt && row.nextAttemptAt > at) {
+        summary.skippedInFlight += 1;
+
+        return;
+      }
+      const sent = await recoverWorkspacePreparation(db, row, transport, at);
+      summary[sent ? "redelivered" : "skippedInFlight"] += 1;
 
       return;
     }

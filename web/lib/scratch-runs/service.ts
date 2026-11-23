@@ -42,6 +42,7 @@ import { currentBudgetTermination } from "@/lib/runs/budget-termination";
 import { assertRuntimeObjectsReferenceable } from "@/lib/execution-host/runtime-object-holds";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import {
+  observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
   usesHostWorkspacePreparation,
 } from "@/lib/execution-host/workspace-preparation";
@@ -981,10 +982,9 @@ export async function* launchScratchRunStaged(
 
   const runId = randomUUID();
   const branch = resolveScratchBranch({ body: args.body, project, runId });
-  const baseCommit = await resolveBaseCommit({
-    projectRepoPath: project.repoPath,
-    baseRef: args.body.baseBranch,
-  });
+  const baseCommit = hostPreparesWorkspace
+    ? await observeSelectedWorkspaceRevision(project.id, args.body.baseBranch, hosts.transport)
+    : await resolveBaseCommit({ projectRepoPath: project.repoPath, baseRef: args.body.baseBranch });
 
   if (!hostPreparesWorkspace && await branchExists({ projectRepoPath: project.repoPath, branch })) {
     throw new MaisterError(

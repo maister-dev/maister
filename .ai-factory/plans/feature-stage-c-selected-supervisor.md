@@ -248,7 +248,21 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   scratch-placement integration suites on Darwin arm64, Node 24.15.0
   with PostgreSQL and disposable Git repos. All 48 cases passed. The
   checkout consumer and recovery across the HTTP boundary are T05H.
-- [ ] **T05H · Supervisor / checkout and recovery (after T05).** Implement fetch-at-SHA, preparation and Web result application against the reserved owner. Verify Git origin, SHA, canonical root and workspace mode. Serialize cache writes and workspace writers, and guard the apply with owner/epoch/generation CAS. Drop the reply after real Git preparation, restart Web and prove one incarnation and one applied result. A moved ref, unavailable SHA, failed DB apply, alias or child affinity conflict cannot overwrite the first Run’s dirty work. Exercise plain, shared, read-only and empty modes through their actual entry points.
+- [x] **T05H · Supervisor / checkout and recovery (after T05).** Implement fetch-at-SHA, preparation and Web result application against the reserved owner. Verify Git origin, SHA, canonical root and workspace mode. Serialize cache writes and workspace writers, and guard the apply with owner/epoch/generation CAS. Drop the reply after real Git preparation, restart Web and prove one incarnation and one applied result. A moved ref, unavailable SHA, failed DB apply, alias or child affinity conflict cannot overwrite the first Run’s dirty work. Exercise plain, shared, read-only and empty modes through their actual entry points.
+
+  **C-06 evidence.** RED on `fedd22bf6` returned 404 for the approved
+  revision observation. GREEN on Darwin arm64 and Node 24.15.0 used
+  real Git, file-backed SQLite, and PostgreSQL. Supervisor HTTP cases
+  replayed an acceptance and exact receipt after a same-key restart,
+  checked out the original SHA after upstream advanced, and preserved
+  the first checkout's edits when allocating the new SHA. They exercised
+  all workspace modes plus a stale shared generation, a second directory
+  owner, an escaped alias and a missing commit. Real Web ingestion
+  ACKed a terminal event after the accepted reply was lost. A forced
+  PostgreSQL rollback left the workspace unbound. A fresh Web worker
+  process applied the original event and receipt once. The 53 Web and
+  52 supervisor integration cases cover these boundaries and adjacent
+  regressions. Workspace inputs and session permission enforcement are T06.
 - [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 

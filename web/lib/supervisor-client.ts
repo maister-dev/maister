@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
+import type { WorkspacePrepareReceipt, WorkspacePrepareRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -43,6 +44,7 @@ import {
   EXECUTION_HOST_KEY_HEADER,
   EXECUTION_HOST_KEY_PATTERN,
 } from "../../runtime/execution-host-address";
+import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import {
   MAX_OBJECT_RESPONSE_BYTES,
   parseObjectContentLength,
@@ -57,6 +59,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { WorkspacePrepareAcceptanceSchema, WorkspacePrepareReceiptSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -1900,6 +1903,64 @@ export async function getCommandReceipt(
   } catch (err) {
     if (httpStatusOf(err) === 404) return null;
     throw err;
+  }
+}
+
+export async function sendWorkspacePreparation(input: WorkspacePrepareRequest): Promise<void> {
+  const commandPath = `/v1/commands/${encodeURIComponent(input.command.id)}`;
+  const res = await request<unknown>({
+    method: "POST",
+    path: "/v1/workspaces/prepare",
+    body: input,
+    ctx: "sendWorkspacePreparation",
+    fallbackCode: "ACP_PROTOCOL",
+    timeoutMs: 10_000,
+  });
+  const received = WorkspacePrepareAcceptanceSchema.safeParse(res.body);
+  if (!received.success || received.data.commandId !== input.command.id ||
+      res.status !== 202 || res.headers.get("location") !== commandPath)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace acceptance");
+}
+
+export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {
+  const res = await request<unknown>({
+    method: "POST",
+    path: "/v1/repositories/resolve-revision",
+    body: { repositoryId, ref },
+    ctx: "observeWorkspaceRevision",
+    fallbackCode: "PRECONDITION",
+    timeoutMs: 10_000,
+  });
+  const received = z.object({
+    repositoryId: z.literal(repositoryId),
+    ref: z.literal(ref),
+    commit: z.string().regex(GIT_OBJECT_ID),
+  }).strict().safeParse(res.body);
+  if (res.status !== 200 || !received.success)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid Git revision witness");
+
+  return received.data.commit;
+}
+
+export async function getWorkspacePreparationReceipt(
+  commandId: string,
+): Promise<WorkspacePrepareReceipt | null> {
+  try {
+    const res = await request<unknown>({
+      method: "GET",
+      path: `/v1/commands/${encodeURIComponent(commandId)}`,
+      ctx: "getWorkspacePreparationReceipt",
+      fallbackCode: "ACP_PROTOCOL",
+      timeoutMs: ADMIN_READ_TIMEOUT_MS,
+    });
+    const receipt = WorkspacePrepareReceiptSchema.safeParse(res.body);
+    if (!receipt.success || receipt.data.commandId !== commandId)
+      throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace receipt");
+
+    return receipt.data;
+  } catch (error) {
+    if (httpStatusOf(error) === 404) return null;
+    throw error;
   }
 }
 

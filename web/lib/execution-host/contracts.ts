@@ -36,7 +36,8 @@ import type {
   RuntimeObjectState,
   WorkspaceKind,
 } from "./types";
-import type { RuntimeEventEnvelope } from "./runtime-events";
+import type { RuntimeEventWireEnvelope } from "./runtime-events";
+import type { WorkspacePrepareRequest, WorkspacePrepareReceipt } from "../../../runtime/workspace-prepare";
 
 // ADR-166 D10: the typed boundary domain code addresses execution through.
 // `ExecutionHostTransport` is the replaceable wire (local-direct today); the
@@ -182,7 +183,7 @@ export type RuntimeEventSpanPage =
   | Readonly<{
       state: "complete" | "partial";
       nextAfter: string | null;
-      events: RuntimeEventEnvelope[];
+      events: RuntimeEventWireEnvelope[];
     }>
   | Readonly<{
       state: "unavailable";
@@ -287,7 +288,7 @@ export interface ExecutionHostTransport {
   streamRuntimeEvents(opts?: {
     afterSequence?: string;
     signal?: AbortSignal;
-  }): AsyncGenerator<RuntimeEventEnvelope, void, void>;
+  }): AsyncGenerator<RuntimeEventWireEnvelope, void, void>;
   acknowledgeRuntimeEvents(input: {
     streamId: string;
     throughSequence: string;
@@ -300,6 +301,9 @@ export interface ExecutionHostTransport {
     signal?: AbortSignal;
   }): Promise<RuntimeEventSpanPage>;
   getCommandReceipt(commandId: string): Promise<CommandReceipt | null>;
+  sendWorkspacePreparation?(request: WorkspacePrepareRequest): Promise<void>;
+  getWorkspacePreparationReceipt?(commandId: string): Promise<WorkspacePrepareReceipt | null>;
+  observeWorkspaceRevision?(repositoryId: string, ref: string): Promise<string>;
   retireCommand(
     commandId: string,
     request: CommandRetirementRequest,

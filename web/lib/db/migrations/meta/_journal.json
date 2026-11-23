@@ -2577,6 +2577,13 @@
       "when": 1795472604780,
       "tag": "0371_stage_c_prepare_command",
       "breakpoints": true
+    },
+    {
+      "idx": 372,
+      "version": "7",
+      "when": 1795474258490,
+      "tag": "0372_stage_c_workspace_events",
+      "breakpoints": true
     }
   ]
 }

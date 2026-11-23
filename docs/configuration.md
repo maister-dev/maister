@@ -1342,6 +1342,8 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
 > | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 > | `MAISTER_SELECTED_EXECUTION_HOST_KEY` | no | — | Web pins the configured supervisor by the stable key reported in health. Set `MAISTER_SUPERVISOR_URL` to its trusted HTTP(S) origin. |
+> | `MAISTER_WORKSPACE_REPOSITORIES` | no | — | Supervisor-only JSON map from approved repository IDs to credential-free HTTPS/SSH URLs or trusted absolute paths. The default ID for a project checkout is the Web project ID. The supervisor uses its own Git credentials and private Git cache. |
+> | `MAISTER_WORKSPACE_DIRECTORIES` | no | — | Supervisor-only JSON map from directory profile IDs to absolute directories inside its approved workspace roots. |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |

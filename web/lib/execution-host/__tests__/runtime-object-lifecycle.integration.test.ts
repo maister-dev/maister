@@ -147,6 +147,7 @@ async function deliverAvailable(objectId: string): Promise<void> {
   })) {
     await ingestRuntimeEvent({ db, executionHostId: host.id, envelope });
     sequence = envelope.sequence;
+    if (envelope.envelopeVersion !== 1) throw new Error("unexpected workspace event in runtime object fixture");
     const summary = await projectCanonicalRuntimeObjects({
       db,
       runId: envelope.runId,

@@ -292,6 +292,13 @@ remain immutable during delivery and recovery. Session create and prompt
 admission require a prepared handle on a host-owned workspace. Scratch
 capabilities retain their selection before a host materializes it.
 
+Migration `0372_stage_c_workspace_events` admits the typed workspace terminal
+envelope on the existing event stream. The projection compares the selected
+host's receipt to the committed stream ID, event ID, owner and request/outcome
+digests. It updates the workspace and its active assignment in one
+transaction. Checkout does not authorize a session until the host-owned
+materialization generation is also present.
+
 SQLite schema 19 upgrades a v18 store in one transaction. A private
 `workspace_execution_state` row tracks generation, input and materialization
 digests, and the operation claim and fence. The migration seeds the initial

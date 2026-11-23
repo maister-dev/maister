@@ -154,6 +154,7 @@ import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import {
+  observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
   usesHostWorkspacePreparation,
 } from "@/lib/execution-host/workspace-preparation";
@@ -1719,15 +1720,9 @@ async function* executeFlowLaunch(
 
     const requestedBaseCommit =
       input.baseCommit ?? taskAdmission.baseCommit ?? undefined;
-    if (hostPreparesWorkspace && !requestedBaseCommit)
-      throw new MaisterError(
-        "PRECONDITION",
-        "Selected supervisor preparation requires a frozen source revision",
-        { details: { reason: "source_revision_required" } },
-      );
     let baseCommit: string;
-    if (hostPreparesWorkspace && requestedBaseCommit) {
-      baseCommit = requestedBaseCommit;
+    if (hostPreparesWorkspace) {
+      baseCommit = requestedBaseCommit ?? await observeSelectedWorkspaceRevision(project.id, base);
     } else {
       // Refresh origin (read-only: updates remote-tracking refs, never the working
       // tree) so the branch allow-list and the base commit reflect the freshest

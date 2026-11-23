@@ -43,6 +43,7 @@ import {
 import { readCreateIntent } from "@/lib/execution-host/create-intent";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { createExecutionHosts } from "@/lib/execution-host/client";
 import { listCommandsForRun } from "@/lib/execution-host/commands";
 import { readyExecutionHostCapabilities } from "@/test-support/supervisor-health-fixture";
 import {
@@ -1698,9 +1699,19 @@ describe("Addressed Scratch preparation", () => {
     resetResolverForTests();
 
     try {
+      const selectedHosts = createExecutionHosts({
+        db,
+        transport: {
+          ...fake.transport,
+          async observeWorkspaceRevision(repositoryId, ref) {
+            expect(repositoryId).toBe(projectId);
+            return (await git(join(tmpRoot, "repo"), "rev-parse", ref)).trim();
+          },
+        },
+      });
       const gen = launchScratchRunStaged(
         { body: launchBody(), userId: USER_ID },
-        { executionHosts: hosts },
+        { executionHosts: selectedHosts },
       );
       const stages: string[] = [];
       let step = await gen.next();

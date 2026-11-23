@@ -682,15 +682,20 @@ export function validateStageCWorkspaceExamples(
     if (seenRoutes.has(key)) throw new Error(`Stage C duplicate operation: ${key}`);
     seenRoutes.add(key);
     const isWeb = path.startsWith("/api/");
+    const existing = (isWeb ? web : supervisor).paths?.[path]?.[method.toLowerCase()];
     if (extension) {
-      const existing = (isWeb ? web : supervisor).paths?.[path]?.[method.toLowerCase()];
       if (!existing?.responses?.[String(status)]) {
         throw new Error(`${id}: missing existing response ${key} ${status}`);
       }
-    } else if (supervisor.paths?.[path]?.[method.toLowerCase()] ||
-               web.paths?.[path]?.[method.toLowerCase()] ||
-               (!isWeb && !path.startsWith("/v1/"))) {
-      throw new Error(`${id}: new Stage C route must be versioned and distinct from legacy operations`);
+    } else {
+      const wrongSurface = (isWeb ? supervisor : web).paths?.[path]?.[method.toLowerCase()];
+      const expectedSchema = `stage-c-workspace.schema.yaml#/definitions/${request ?? response}`;
+      if (wrongSurface || (!isWeb && !path.startsWith("/v1/")) ||
+          (existing && (existing.operationId !== id ||
+            existing["x-stage-c-schema"] !== expectedSchema ||
+            !existing.responses?.[String(status)]))) {
+        throw new Error(`${id}: new Stage C route must be versioned and distinct from legacy operations`);
+      }
     }
     const example = cases[id];
     if (request === null) {

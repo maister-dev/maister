@@ -28,6 +28,7 @@ import { isMaisterError } from "@/lib/errors";
 import { fakeExecutionHosts, type FakeExecutionHost } from "@/test-support/fake-execution-host";
 import { readyExecutionHostCapabilities } from "@/test-support/supervisor-health-fixture";
 import { resetResolverForTests } from "@/lib/execution-host/resolver";
+import { setDefaultTransportForTests } from "@/lib/execution-host/default-transport";
 import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
@@ -888,6 +889,13 @@ describe("Addressed agent preparation", () => {
       ...readyExecutionHostCapabilities(),
       workspaceProtocol: [1],
     });
+    setDefaultTransportForTests({
+      ...fake.transport,
+      async observeWorkspaceRevision(repositoryId, ref) {
+        expect(repositoryId).toBe(projectId);
+        return (await exec("git", ["-C", repoPath, "rev-parse", ref])).stdout.trim();
+      },
+    });
     vi.stubEnv("MAISTER_SELECTED_EXECUTION_HOST_KEY", fake.identity.hostKey);
     vi.stubEnv("MAISTER_SUPERVISOR_URL", "http://127.0.0.1:1");
     resetResolverForTests();
@@ -922,6 +930,7 @@ describe("Addressed agent preparation", () => {
         .not.toHaveProperty("stdout", expect.stringContaining(result.runId));
     } finally {
       discovery.mockRestore();
+      setDefaultTransportForTests(fake.transport);
       vi.unstubAllEnvs();
       resetResolverForTests();
     }

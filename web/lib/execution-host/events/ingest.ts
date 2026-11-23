@@ -26,7 +26,7 @@ import { seedCanonicalProjectionConsumers } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
 
 import {
-  RuntimeEventEnvelopeSchema,
+  RuntimeEventWireEnvelopeSchema,
   SessionContentReferenceSchema,
   StdoutSegmentMetadataSchema,
   type RuntimeEventEnvelope,
@@ -145,7 +145,16 @@ export {
 /** The one envelope normalization: schema parse, then the jsonb-safe escape
  * `execution_events.payload` needs (U+0000 and lone surrogates). */
 export function normalizeRuntimeEnvelope(raw: unknown): RuntimeEventEnvelope {
-  return encodeJsonbSafe(RuntimeEventEnvelopeSchema.parse(raw));
+  const parsed = encodeJsonbSafe(RuntimeEventWireEnvelopeSchema.parse(raw));
+  if (parsed.envelopeVersion === 1) return parsed;
+
+  return {
+    ...parsed,
+    runId: parsed.payload.owner.runId,
+    assignmentId: parsed.payload.owner.assignmentId,
+    assignmentEpoch: parsed.payload.owner.assignmentEpoch,
+    hostSessionId: null,
+  };
 }
 
 function invariantError(

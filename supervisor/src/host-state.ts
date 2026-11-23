@@ -11,6 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
+import type { WorkspaceTerminalPayload } from "../../runtime/workspace-prepare";
 
 import { reuseSqliteStatements } from "./sqlite-statements";
 import {
@@ -86,8 +87,9 @@ import {
 } from "./runtime-file-budget";
 import {
   buildRuntimeEventEnvelope,
+  deterministicRuntimeEventId,
   MAX_RUNTIME_EVENT_BYTES,
-  RuntimeEventEnvelopeSchema,
+  RuntimeEventWireEnvelopeSchema,
   type RuntimeEventDraft,
 } from "./runtime-events";
 
@@ -331,11 +333,25 @@ export type RuntimeEventSpanPage =
       reason: RuntimeEventSpanUnavailableReason;
     }>;
 
-export type AppendRuntimeEventInput = {
-  draft: RuntimeEventDraft;
+type WorkspaceTerminalDraft = {
+  runId: string;
+  assignmentId: string;
+  assignmentEpoch: number;
+  hostSessionId: null;
+  eventType: "workspace.command.terminal";
+  occurredAt: string;
+  payload: WorkspaceTerminalPayload;
+};
+
+export type AppendRuntimeEventInput<
+  Draft extends RuntimeEventDraft | WorkspaceTerminalDraft = RuntimeEventDraft,
+> = {
+  draft: Draft;
   terminal?: boolean;
   funding?: EventFunding;
 };
+
+type OutboxEventInput = AppendRuntimeEventInput<RuntimeEventDraft | WorkspaceTerminalDraft>;
 
 export type RuntimeEventOutboxStats = {
   budget: OutboxBudgetSnapshot;
@@ -489,8 +505,10 @@ export type HostState = {
     request: CommandRetirementProof,
   ): ReceiptRetirementOutcome;
   findWorkspaceByRealPath(runId: string, realPath: string): WorkspaceRow | null;
+  activeWorkspacePathOwner(realPath: string): { runId: string } | null;
   getWorkspace(id: string): WorkspaceRow | null;
   getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
+  recordWorkspaceInput(id: string, generation: number, digest: string): void;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -534,6 +552,10 @@ export type HostState = {
     receipt: CommandReceiptRow,
     event: AppendRuntimeEventInput,
     admission: ReceiptAdmission,
+  ): HostRuntimeEventRow;
+  putReceiptWithRuntimeEvent(
+    receipt: SettledReceiptRow,
+    event: AppendRuntimeEventInput<WorkspaceTerminalDraft>,
   ): HostRuntimeEventRow;
   putReceiptWithRuntimeEvent(
     receipt: SettledReceiptRow,
@@ -2282,6 +2304,13 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
 
       return row ? toWorkspaceRow(row) : null;
     },
+    activeWorkspacePathOwner(realPath) {
+      const row = db.prepare(
+        "SELECT run_id AS runId FROM workspaces WHERE real_path = ? AND released_at IS NULL LIMIT 1",
+      ).get(realPath) as { runId: string } | undefined;
+
+      return row ?? null;
+    },
     getWorkspace(id) {
       const row = db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id);
 
@@ -2299,6 +2328,20 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
         .get(id) as WorkspaceExecutionState | undefined;
 
       return row ?? null;
+    },
+    recordWorkspaceInput(id, generation, digest) {
+      storage.write(() => {
+        const changed = db.prepare(
+          `UPDATE workspace_execution_state SET input_digest = ?
+             WHERE workspace_id = ? AND generation = ?
+               AND (input_digest IS NULL OR input_digest = ?)`,
+        ).run(digest, id, generation, digest);
+        if (changed.changes !== 1)
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "workspace input does not match its retained generation",
+          );
+      });
     },
     getWorkspaceWait(waitId) {
       return (
@@ -2566,7 +2609,7 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
     },
     putReceiptWithRuntimeEvent(
       receipt: CommandReceiptRow,
-      eventInput: AppendRuntimeEventInput,
+      eventInput: OutboxEventInput,
       admission?: ReceiptAdmission,
     ) {
       return storage.write(() => {
@@ -3180,7 +3223,7 @@ function appendRuntimeEventInTransaction(
     hostKey: string;
     bootId: string;
     now: () => Date;
-    input: AppendRuntimeEventInput;
+    input: OutboxEventInput;
     limits: RuntimeLimits;
   },
 ): HostRuntimeEventRow {
@@ -3195,13 +3238,24 @@ function appendRuntimeEventInTransaction(
   }
 
   const sequenceText = sequence.toString();
-  const envelope = buildRuntimeEventEnvelope({
+  const identity = {
     hostKey: args.hostKey,
     hostBootId: args.bootId,
     streamId: stream.stream_id,
     sequence: sequenceText,
-    draft: args.input.draft,
-  });
+  };
+  const { draft } = args.input;
+  const envelope = draft.eventType === "workspace.command.terminal"
+    ? {
+        ...identity,
+        envelopeVersion: 2,
+        eventId: deterministicRuntimeEventId(identity),
+        eventType: draft.eventType,
+        occurredAt: draft.occurredAt,
+        payloadSchema: "maister.workspace.command.terminal.v1",
+        payload: draft.payload,
+      }
+    : buildRuntimeEventEnvelope({ ...identity, draft });
   const envelopeJson = JSON.stringify(envelope);
   const encodedBytes = Buffer.byteLength(envelopeJson, "utf8");
   const partition = spendEventCapacity(db, args.limits, {
@@ -3446,7 +3500,7 @@ function auditRuntimeEventState(db: DatabaseSync): void {
         "runtime event outbox sequences are not contiguous",
       );
     }
-    const envelope = RuntimeEventEnvelopeSchema.parse(
+    const envelope = RuntimeEventWireEnvelopeSchema.parse(
       JSON.parse(row.envelope_json),
     );
 

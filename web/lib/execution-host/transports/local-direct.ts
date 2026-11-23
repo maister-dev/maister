@@ -23,7 +23,7 @@ import {
 } from "../session-inventory";
 import { asExecutionWorkspaceId } from "../types";
 import {
-  RuntimeEventEnvelopeSchema,
+  RuntimeEventWireEnvelopeSchema,
   RuntimeEventSpanSchema,
 } from "../runtime-events";
 
@@ -194,7 +194,7 @@ export function createLocalDirectTransport(
         );
       }
       for await (const raw of wire.streamRuntimeEvents(opts)) {
-        const parsed = RuntimeEventEnvelopeSchema.safeParse(raw);
+        const parsed = RuntimeEventWireEnvelopeSchema.safeParse(raw);
 
         if (!parsed.success) {
           throw new MaisterError(
@@ -270,6 +270,9 @@ export function createLocalDirectTransport(
 
       return receipt ? toReceipt(receipt) : null;
     },
+    sendWorkspacePreparation: wire.sendWorkspacePreparation,
+    getWorkspacePreparationReceipt: wire.getWorkspacePreparationReceipt,
+    observeWorkspaceRevision: wire.observeWorkspaceRevision,
     retireCommand(commandId, request) {
       return wire.retireCommand(commandId, request);
     },

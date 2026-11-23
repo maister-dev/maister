@@ -367,6 +367,7 @@ import {
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import {
+  observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
   usesHostWorkspacePreparation,
 } from "@/lib/execution-host/workspace-preparation";
@@ -855,6 +856,7 @@ export async function resolveWorkspaceRefCommittish(
     workspaceRef: string;
     taskQualificationSnapshot?: TaskQualificationLaunchSnapshot | null;
     repoPath: string;
+    observeRevision?: (ref: string) => Promise<string>;
     trigger: {
       source: AgentTriggerSource;
       eventId?: number | bigint | null;
@@ -936,6 +938,7 @@ export async function resolveWorkspaceRefCommittish(
   }
 
   // PRECONDITION on an unresolvable ref — v1 never auto-fetches.
+  if (args.observeRevision) return args.observeRevision(ref);
   return resolveBaseCommit({
     projectRepoPath: args.repoPath,
     baseRef: ref,
@@ -1804,11 +1807,15 @@ async function launchAgentRunWithAdmission(
     }
   }
 
+  const selectedHost = configuredSelectedExecutionEndpoint()
+    ? await localHost({ db: _db as unknown as ExecutionDb, force: true })
+    : null;
+  const hostPreparesWorkspace = selectedHost !== null && usesHostWorkspacePreparation(selectedHost);
   // ADR-090: a repo_read run against the PARENT checkout is only verifiable
   // from a clean baseline. With workspace_ref the run gets an EPHEMERAL
   // detached checkout instead — clean by construction, so the baseline check
   // is skipped and the ref must resolve NOW (launch-surface PRECONDITION).
-  if (workspace === "repo_read") {
+  if (workspace === "repo_read" && !hostPreparesWorkspace) {
     if (ctx.effective.parsed.workspaceRef) {
       if (replacement?.readOnly)
         await resolveBaseCommit({
@@ -1876,12 +1883,8 @@ async function launchAgentRunWithAdmission(
   // ADR-166 D1: the registered local execution host is the readiness gate —
   // unreachable/refused surfaces as EXECUTOR_UNAVAILABLE before any worktree
   // or row exists. The host row is what the launch tx places the run on.
-  const placementHost = await localHost({
-    db: _db as unknown as ExecutionDb,
-    force: configuredSelectedExecutionEndpoint() !== null,
-  });
+  const placementHost = selectedHost ?? await localHost({ db: _db as unknown as ExecutionDb });
   const executionDataPlaneMode = executionDataPlaneModeForHost(placementHost);
-  const hostPreparesWorkspace = usesHostWorkspacePreparation(placementHost);
 
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
   // Hold the shared worktree directory's mutex through provenance, row commit
@@ -1915,13 +1918,20 @@ async function launchAgentRunWithAdmission(
         ctx.effective.parsed.recommended?.branch_base ??
         ctx.project.mainBranch;
       if (workspace !== "none" && !isShared) {
+        const observeRevision = (ref: string) => observeSelectedWorkspaceRevision(input.projectId, ref);
         baseCommit =
           acceptedExecution?.settings.baseCommit ??
-          replacement?.worktree?.baseCommit ??
-          await resolveBaseCommit({
-            projectRepoPath: ctx.project.repoPath,
-            baseRef: resolvedBranchBase,
-          });
+          replacement?.worktree?.baseCommit ?? replacement?.readOnly?.commit ??
+          (ctx.effective.parsed.workspaceRef
+            ? await resolveWorkspaceRefCommittish(_db, {
+                agentId: input.agentId,
+                workspaceRef: ctx.effective.parsed.workspaceRef,
+                taskQualificationSnapshot,
+                repoPath: ctx.project.repoPath,
+                observeRevision,
+                trigger: input.trigger,
+              })
+            : await observeRevision(resolvedBranchBase));
       }
       branch = workspace === "worktree"
         ? acceptedExecution?.claim.identity.branch ?? agentWorktreeBranchName({

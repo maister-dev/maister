@@ -237,11 +237,11 @@ async function untilReceipt(commandId: string): Promise<void> {
 
 function tamperTerminal(stopReason: string) {
   return (envelope: RuntimeEventEnvelope): RuntimeEventEnvelope => {
+    if (envelope.eventType !== "session.command") return envelope;
     const terminal = envelope.payload?.terminal as
       { result?: Record<string, unknown> } | undefined;
 
-    if (envelope.eventType !== "session.command" || !terminal?.result)
-      return envelope;
+    if (!terminal?.result) return envelope;
 
     return {
       ...envelope,

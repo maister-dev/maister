@@ -18,6 +18,7 @@ import { applyCreateAck } from "../create-ack";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
+import { applyWorkspaceEvidence, prepareWorkspaceEvidence } from "./workspace-prepare-projector";
 import {
   ExecutionEventProjectionError,
   projectExecutionEvents,
@@ -80,13 +81,15 @@ export async function reconcileSkippedSessionCrashes(db: Db): Promise<number> {
 
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,
+  prepare: prepareWorkspaceEvidence,
   project: projectLifecycle,
   afterCommit(events) {
     const lifecycle = events.find(
       (event) =>
         event.eventType === "session.created" ||
         event.eventType === "session.exited" ||
-        event.eventType === "session.crashed",
+        event.eventType === "session.crashed" ||
+        event.eventType === "workspace.command.terminal",
     );
 
     if (lifecycle) runEventWakeBus.wake(lifecycle.runId);
@@ -670,6 +673,11 @@ export async function reconcileHistoricalAgentLifecycle(
 }
 
 async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
+  if (event.eventType === "workspace.command.terminal") {
+    await applyWorkspaceEvidence(tx, event);
+
+    return;
+  }
   if (
     event.eventType === "session.command" &&
     event.payload?.kind === "session.checkpoint" &&

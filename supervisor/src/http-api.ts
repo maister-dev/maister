@@ -83,6 +83,15 @@ import {
 } from "./execution-fence";
 import { finishProgressTurn } from "./guardrail-progress";
 import { executionHostCapabilities } from "./data-plane-capabilities";
+import {
+  configuredWorkspaceSources,
+  listWorkspaceSourceRefs,
+  observeWorkspaceSource,
+  WorkspaceRefListingQuery,
+  WorkspaceRepositoryId,
+  WorkspaceSourceQuery,
+} from "./workspace-source";
+import { registerWorkspacePreparation } from "./workspace-prepare-api";
 import { outboxLimitOf } from "./host-runtime-errors";
 import {
   EXECUTION_HOST_PROTOCOL_VERSION,
@@ -662,7 +671,8 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   app.addHook("onRequest", async (req, reply) => {
     const expected = req.headers[EXECUTION_HOST_KEY_HEADER];
 
-    if (expected !== undefined && expected !== hostState.hostKey) {
+    if ((expected !== undefined || req.url.startsWith("/v1/")) &&
+        expected !== hostState.hostKey) {
       await reply.status(409).send({
         code: "EXECUTOR_UNAVAILABLE",
         message: "addressed request belongs to a different execution host",
@@ -1971,7 +1981,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send(body);
   });
 
-  app.get("/capabilities", async (_req, reply) => {
+  app.get("/capabilities", async (req, reply) => {
     const capabilities = executionHostCapabilities();
 
     logger.info(
@@ -1982,7 +1992,58 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       },
       "execution-host-capabilities-read",
     );
-    reply.status(200).send(capabilities);
+    const canPrepare = req.headers[EXECUTION_HOST_KEY_HEADER] === hostState.hostKey &&
+      (workspaceSources.size > 0 || process.env.MAISTER_WORKSPACE_DIRECTORIES);
+
+    reply.status(200).send({
+      ...capabilities,
+      ...(canPrepare ? { workspaceProtocol: [1] } : {}),
+    });
+  });
+
+  const workspaceSources = configuredWorkspaceSources();
+  registerWorkspacePreparation({
+    app, state: hostState, registry: workspaces, runtimeRoot,
+    sources: workspaceSources, logger,
+  });
+  app.get<{ Params: { repositoryId: string } }>("/v1/repositories/:repositoryId/refs", async (req, reply) => {
+    const repository = WorkspaceRepositoryId.safeParse(req.params.repositoryId);
+    const query = WorkspaceRefListingQuery.safeParse(req.query);
+    if (!repository.success || !query.success)
+      return reply.status(400).send({
+        code: "PRECONDITION",
+        message: "Invalid repository ref listing request",
+        details: { reason: "invalid_request" },
+      });
+    const source = workspaceSources.get(repository.data);
+    if (!source)
+      return reply.status(404).send({
+        code: "NOT_FOUND",
+        message: "approved repository not found",
+        details: { reason: "resource_not_found" },
+      });
+
+    return reply.status(200).send(await listWorkspaceSourceRefs(source, query.data.cursor));
+  });
+  app.post("/v1/repositories/resolve-revision", async (req, reply) => {
+    const query = WorkspaceSourceQuery.safeParse(req.body);
+    if (!query.success) {
+      return reply.status(400).send({
+        code: "PRECONDITION",
+        message: "a repository ID and exact full branch ref are required",
+        details: { reason: "invalid_request" },
+      });
+    }
+    const source = workspaceSources.get(query.data.repositoryId);
+    if (!source)
+      return reply.status(404).send({
+        code: "NOT_FOUND",
+        message: "approved repository not found",
+        details: { reason: "resource_not_found" },
+      });
+    const commit = await observeWorkspaceSource(source, query.data.ref);
+
+    return reply.status(200).send({ ...query.data, commit });
   });
 
   function runtimeObjectEvent(

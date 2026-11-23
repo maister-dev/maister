@@ -950,6 +950,16 @@ owns capacity and lease transitions.
 
 ### Workspace protocol 1
 
+The checked-in preparation path negotiates protocol 1 with its selected
+supervisor. Repository discovery uses that host's configured source
+registry. Checkout uses the exact frozen commit, a private cache fenced by
+source identity, and a canonical directory reserved for the command. The
+supervisor durably accepts the request before fetching or creating a
+workspace. The terminal receipt and version 2 outbox event commit together.
+Web applies the result under the Run, host, assignment, generation and
+digest checks after committing and acknowledging the event. The
+materialization generation separately gates model dispatch.
+
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and
 terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)

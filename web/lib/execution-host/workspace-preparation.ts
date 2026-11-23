@@ -2,6 +2,7 @@ import "server-only";
 
 import type { WorkspacePrepareInput } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
+import type { ExecutionHostTransport } from "./contracts";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
@@ -9,10 +10,12 @@ import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 
 import { COMMAND_POLICY } from "./deliverer";
+import { defaultTransport } from "./default-transport";
 import { issueCommand } from "./ledger";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 
 import { workspaces } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 type WorkspaceMetadata = Pick<
   typeof workspaces.$inferInsert,
@@ -35,6 +38,26 @@ export function usesHostWorkspacePreparation(host: ExecutionHost): boolean {
     protocol.length === 1 &&
     protocol[0] === 1
   );
+}
+
+export async function observeSelectedWorkspaceRevision(
+  repositoryId: string,
+  branch: string,
+  transport: ExecutionHostTransport = defaultTransport(),
+): Promise<string> {
+  if (!transport.observeWorkspaceRevision)
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Selected host cannot observe approved Git sources",
+      {
+        details: { reason: "workspace_protocol_unsupported" },
+      },
+    );
+  const ref = branch.startsWith("refs/heads/")
+    ? branch
+    : `refs/heads/${branch}`;
+
+  return transport.observeWorkspaceRevision(repositoryId, ref);
 }
 
 /** Reserve the logical workspace and command in the transaction that places the Run. */
@@ -73,7 +96,7 @@ export function workspacePreparationReadySql(runId: SQL): SQL {
     SELECT 1 FROM ${workspaces} preparation
     WHERE preparation.run_id = ${runId}
       AND preparation.ownership_kind = 'host_owned'
-      AND preparation.execution_workspace_id IS NULL
+      AND preparation.workspace_materialization_generation IS NULL
       AND preparation.removed_at IS NULL
   )`;
 }

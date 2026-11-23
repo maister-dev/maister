@@ -115,6 +115,80 @@ tags:
       composition can address this socket. Nothing here takes a filesystem path
       or an active assignment.
 paths:
+  /v1/repositories/{repositoryId}/refs:
+    parameters:
+      - { name: repositoryId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [execution-host]
+      operationId: stageCRepositoryRefs
+      summary: List branch refs from an approved supervisor Git source
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/RefQuery
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 512 } }
+      responses:
+        "200": { description: Up to 100 branch refs and the default ref. }
+        "400": { description: Invalid repository identifier or cursor. }
+        "404": { description: Approved repository is absent. }
+        "409": { description: Addressed host key mismatch. }
+        "503": { description: Upstream observation failed. }
+  /v1/repositories/resolve-revision:
+    post:
+      tags: [execution-host]
+      operationId: stageCResolveRevision
+      summary: Observe a full approved branch ref and exact commit
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/SourceQuery
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [repositoryId, ref], properties: { repositoryId: { type: string }, ref: { type: string } } }
+      responses:
+        "200": { description: Approved repository ID and branch-to-commit observation. }
+        "400": { description: Invalid full ref or repository identifier. }
+        "404": { description: Approved repository is absent. }
+        "409": { description: Ref refusal or addressed host key mismatch. }
+        "503": { description: Upstream observation failed. }
+  /v1/workspaces/prepare:
+    post:
+      tags: [execution-host]
+      operationId: stageCPrepare
+      summary: Accept a fenced workspace preparation operation
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCPrepareRequest
+      description: The linked versioned profile defines the strict body and replay identity.
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: The exact accepted command. Its replay returns the same acceptance.
+          headers:
+            Location:
+              schema: { type: string }
+              description: The selected host's addressed command receipt resource.
+        "400": { description: Invalid payload or owner shape. }
+        "409": { description: "Command digest, assignment, source approval or host key mismatch." }
+        "503": { description: Workspace protocol or execution storage unavailable. }
+  /v1/commands/{commandId}:
+    parameters:
+      - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [execution-host]
+      operationId: stageCGetCommandReceipt
+      summary: Retained accepted or terminal addressed workspace receipt
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/WorkspaceCommandReceipt
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Versioned receipt containing either the original acceptance or exact terminal evidence. }
+        "404": { description: No workspace receipt on this host. }
+        "409": { description: Addressed host key mismatch. }
   /capabilities:
     get:
       tags: [execution-host]
@@ -4246,6 +4320,12 @@ components:
       required: [dataPlaneVersion, eventStream, asyncPrompt, runtimeObjects, limits]
       properties:
         dataPlaneVersion: { type: string, enum: ["execution-host-data-plane.v1"] }
+        workspaceProtocol:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { type: integer, enum: [1] }
+          description: Present for an addressed manager request when approved workspace sources are configured.
         eventStream: { type: boolean }
         asyncPrompt: { type: boolean }
         runtimeObjects: { type: boolean }
