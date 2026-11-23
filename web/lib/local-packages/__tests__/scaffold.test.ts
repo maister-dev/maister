@@ -38,7 +38,7 @@ describe("scaffoldArtifact (ADR-116 P5)", () => {
     expect(res.navigate).toBe("/studio/edit/pkg1/flows/build/flow.yaml");
   });
 
-  it("skill → skills/<name>/SKILL.md + skill-screen nav", () => {
+  it("skill → registered capability tree + skill-screen nav", () => {
     const res = scaffoldArtifact({
       kind: "skill",
       name: "arch",
@@ -48,7 +48,8 @@ describe("scaffoldArtifact (ADR-116 P5)", () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(find(res.files, "skills/arch/SKILL.md")).toContain("name: arch");
+    expect(find(res.files, "capability/skills/arch/SKILL.md")).toContain("name: arch");
+    expect(find(res.files, "maister-package.yaml")).toContain("path: capability");
     expect(res.navigate).toBe("/studio/edit/pkg1/skills/arch");
   });
 

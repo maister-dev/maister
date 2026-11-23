@@ -22,13 +22,13 @@ import type { ReactElement, ReactNode } from "react";
 import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CreateFlowInput } from "@/lib/local-packages/create-flow-contract";
 
-import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import { ContextUsageMeter } from "@/components/runs/context-usage-meter";
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
 import { useLibrarianHostComposer } from "@/components/librarian/librarian-provider";
@@ -1025,6 +1025,9 @@ export function LocalPackageEditor({
                   crumbStudio: labels.crumbStudio,
                   crumbLocal: labels.crumbLocal,
                   crumbSkills: tStudio("viewer.tabSkills"),
+                  root: tStudio("catalog.root"),
+                  registerLegacy: tStudio("catalog.registerLegacy"),
+                  migrationError: tStudio("catalog.error"),
                   notFound: tStudio("composition.notFound"),
                   rename: renameLabels(tStudio),
                 }}
@@ -1079,6 +1082,7 @@ export function LocalPackageEditor({
                 packageId={packageId}
                 readOnly={readOnly}
                 saveLabel={labels.home.save}
+                onCatalogApplied={onAssistantActivity}
                 onCompareElement={
                   divergence
                     ? (path: string) => {

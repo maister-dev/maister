@@ -191,7 +191,7 @@ paths:
   /api/studio/local-packages/{id}/catalog/search:
     get:
       operationId: searchDraftCatalog
-      summary: (Designed) Search approved catalog sources for this editable draft
+      summary: Search approved catalog sources for this editable draft
       security:
         - sessionCookie: []
       parameters:
@@ -333,7 +333,7 @@ paths:
   /api/studio/local-packages/{id}/catalog/preview:
     post:
       operationId: previewDraftCatalog
-      summary: (Designed) Review exact upstream bytes and draft destination
+      summary: Review exact upstream bytes and draft destination
       security:
         - sessionCookie: []
       parameters:
@@ -354,18 +354,26 @@ paths:
                 additionalProperties: false
                 required:
                   - previewId
+                  - importId
+                  - publisher
+                  - sourceUrl
+                  - destination
                   - pin
                   - digest
                   - expectedDraftBase
                   - notices
                   - files
+                  - affectedRefs
                   - configuration
                   - expiresAt
                 properties:
+                  importId: {type: string, pattern: "^[a-f0-9]{64}$"}
+                  publisher: {type: string, minLength: 1}
+                  sourceUrl: {type: string, format: uri}
+                  destination: {type: string, minLength: 1, maxLength: 512}
                   previewId:
                     type: string
-                    minLength: 1
-                    maxLength: 256
+                    format: uuid
                   pin:
                     type: string
                     minLength: 1
@@ -390,12 +398,16 @@ paths:
                       required:
                         - path
                         - change
+                        - before
+                        - after
                         - digest
                       properties:
                         path:
                           type: string
                           minLength: 1
                           maxLength: 512
+                        before: {type: string, nullable: true}
+                        after: {type: string, nullable: true}
                         change:
                           type: string
                           enum:
@@ -403,10 +415,14 @@ paths:
                             - modify
                             - remove
                             - conflict
+                            - local
                         digest:
                           type: string
                           pattern: ^[a-f0-9]{64}$
                           nullable: true
+                  affectedRefs:
+                    type: array
+                    items: {type: string}
                   configuration:
                     type: array
                     items:
@@ -468,7 +484,7 @@ paths:
         required: true
         content:
           application/json:
-            example: {"kind": "skill", "sourceId": "anthropic-skills", "selector": "frontend-design", "destination": "capability/skills/frontend-design"}
+            example: {"kind": "skill", "sourceId": "anthropic-skills", "selector": "skills/frontend-design", "destination": "capability/skills/frontend-design"}
             schema:
               type: object
               additionalProperties: false
@@ -502,7 +518,7 @@ paths:
   /api/studio/local-packages/{id}/catalog/apply:
     post:
       operationId: applyDraftCatalog
-      summary: (Designed) Apply the reviewed preview under the draft lock
+      summary: Apply the reviewed preview under the draft lock
       security:
         - sessionCookie: []
       parameters:
@@ -534,7 +550,6 @@ paths:
                     enum:
                       - pending
                       - applied
-                      - failed
                   draftDigest:
                     type: string
                     pattern: ^[a-f0-9]{64}$
@@ -558,7 +573,6 @@ paths:
                     enum:
                       - pending
                       - applied
-                      - failed
                   draftDigest:
                     type: string
                     pattern: ^[a-f0-9]{64}$
@@ -608,7 +622,7 @@ paths:
         required: true
         content:
           application/json:
-            example: {"previewId": "preview-a", "expectedDraftBase": "1111111111111111111111111111111111111111111111111111111111111111", "requestKey": "apply-a"}
+            example: {"previewId": "565e4210-f5cf-4ef5-9479-65139d920f69", "expectedDraftBase": "1111111111111111111111111111111111111111111111111111111111111111", "requestKey": "apply-a"}
             schema:
               type: object
               additionalProperties: false
@@ -619,8 +633,7 @@ paths:
               properties:
                 previewId:
                   type: string
-                  minLength: 1
-                  maxLength: 256
+                  format: uuid
                 expectedDraftBase:
                   type: string
                   pattern: ^[a-f0-9]{64}$
@@ -649,7 +662,7 @@ paths:
   /api/studio/local-packages/{id}/catalog/operations/{operationId}:
     get:
       operationId: readDraftCatalogOperation
-      summary: (Designed) Read the state of an authorized draft operation
+      summary: Read the state of an authorized draft operation
       security:
         - sessionCookie: []
       parameters:
@@ -688,7 +701,6 @@ paths:
                     enum:
                       - pending
                       - applied
-                      - failed
                   draftDigest:
                     type: string
                     pattern: ^[a-f0-9]{64}$

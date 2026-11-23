@@ -5,6 +5,8 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { reconcileCatalogApply } from "./catalog-operation";
+
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -244,7 +246,7 @@ export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
         ),
       ),
     )
-    .returning({ id: lp.id });
+    .returning({ id: lp.id, workingDir: lp.workingDir });
 
   if (claimed.length === 0) {
     throw new MaisterError(
@@ -252,6 +254,16 @@ export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
       "another operation on this package is already in progress — try again shortly",
       { details: { reason: "operation_in_progress" } },
     );
+  }
+
+  try {
+    await reconcileCatalogApply({
+      packageId: id,
+      workingDir: claimed[0].workingDir,
+    });
+  } catch (error) {
+    await releasePublishLock(id, claimedAt, db);
+    throw error;
   }
 
   return claimedAt;

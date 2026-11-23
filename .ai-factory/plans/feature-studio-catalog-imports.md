@@ -167,17 +167,19 @@ Each task names the implementation owner, observable acceptance and diagnostic e
 
 ### Phase 1 — Reviewed catalog import into a versioned package
 
-- [ ] **T04. Implement approved source discovery.**
+Verification on Node 24 included a live read of Anthropic frontend-design at e4bb5d960d87126ff3b3a8af1a104b7db67560ba with its notices and the Registry record ai.sageteacher/learning-printables@1.0.0. IT-CAT-03 passed six PostgreSQL apply, cut and recovery cases. E2E-CAT-02 passed on a production Web build, checking both imports, edited companion bytes, version cut and project attachment. The Studio and local-package regression suites passed 263 cases.
+
+- [x] **T04. Implement approved source discovery.**
   - **After** T01, T02.
   - Extend `web/lib/local-packages/` and the Studio route family; reuse existing Git imports where safe. Build self-hosted search over approved publisher repositories, resolve supported skills.sh links, and search the official MCP Registry or approved descriptor repositories. Keep Vercel OIDC search conditional on verified deployment support. Preview skill subtrees with relative companions and license/notice files. Normalize HTTP remotes and exact distribution descriptors; unsupported transports explain their requirements.
   - **Acceptance** — real source identity, bounded retries/size, error per source, redirect/address/archive validation, no install execution during fetch.
   - **Diagnostics** — DEBUG source ID, latency, digest, WARN refusal or retry.
-- [ ] **T05. Preview, apply and update exact reviewed bytes.**
+- [x] **T05. Preview, apply and update exact reviewed bytes.**
   - **After** T04.
   - Extend `web/lib/local-packages/{import,lock,working-dir-save,versions,sync-merge}.ts` and companion catalog routes beside `web/app/api/studio/local-packages/[id]/import/route.ts`. Serialize atomic writes with save/cut/commit, persist upstream base and notices, detect modified/removed files and local collisions on update. An interrupted import must expose either its complete old tree or complete new tree to cut.
   - **Acceptance** — stale preview, cross-user replay, parallel cut, local edit conflict, idempotent reapply and three crash windows. Verify a fetched fixture with an install script produces no execution effect.
   - **Diagnostics** — INFO applied revision, DEBUG byte/file counts, WARN stale/conflict.
-- [ ] **T06. Integrate search-as-you-type and source review into Studio.**
+- [x] **T06. Integrate search-as-you-type and source review into Studio.**
   - **After** T04, T05.
   - Extend `web/components/studio/{package-composition,skill-screen,import-dialog}.tsx`, `web/lib/local-packages/{bom,scaffold,rename-artifact}.ts`, `web/lib/queries/package-bom.ts` and `web/components/flows/artifact-editors/mcp-template-editor.tsx`. Use manifest-registered skill roots; migrate legacy layout explicitly. Keep draft MCP descriptor and manifest refs aligned. Support loading, empty, failure, cancellation, keyboard selection and dirty-draft review in EN/RU.
   - **Acceptance** — search A→B→clear with out-of-order replies, import/edit/cut/attach in a second project, and matching draft/installed IDs and companion bytes.

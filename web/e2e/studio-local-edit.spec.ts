@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -861,4 +861,188 @@ test("UX-03A/B Fit View and keyboard location keep eleven editor nodes reachable
       ),
   );
   await expect(transform).toHaveAttribute("style", minimapCamera!);
+});
+
+test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and attaches the release", async ({
+  page,
+}) => {
+  test.setTimeout(180000);
+  const name = "catalog-" + Date.now().toString(36);
+  const created = await page.request.post("/api/studio/local-packages", {
+    data: {
+      name,
+      flow: {
+        id: name,
+        metadata: {
+          title: "Catalog",
+          summary: "Catalog test",
+          route_when: "Catalog work",
+        },
+      },
+    },
+  });
+
+  expect(created.status(), await created.text()).toBe(201);
+  const {
+    localPackage: { id },
+  } = await created.json();
+  const base = "/api/studio/local-packages/" + id;
+  let releaseOld: () => void = () => {};
+  const oldGate = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+
+  await page.route("**/catalog/search?**", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const q = query.get("q")!;
+    const kind = query.get("kind");
+
+    if (q === "old") await oldGate;
+    const sourceId = kind === "skill" ? "anthropic-skills" : "mcp-registry";
+
+    await route.fulfill({
+      json: {
+        results: [
+          {
+            sourceId,
+            resultId:
+              kind === "skill" ? "skills/design" : "com.example/design@1.0.0",
+            name: q,
+            publisher: "fixture",
+            kind,
+          },
+        ],
+        sources: [{ sourceId, state: "available" }],
+        nextCursor: null,
+      },
+    });
+  });
+  await page.route("**/catalog/preview", async (route) => {
+    const { kind, destination } = route.request().postDataJSON();
+    const { working_dir, locked_by_user_id } = await withE2EDb(async (pool) => {
+      const result = await pool.query<{
+        working_dir: string;
+        locked_by_user_id: string;
+      }>(
+        "select working_dir,locked_by_user_id from local_packages where id=$1",
+        [id],
+      );
+
+      return result.rows[0];
+    });
+    const bytes = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--import",
+        "./scripts/_register-shim.mjs",
+        "./e2e/_seed/studio-catalog-preview.ts",
+        working_dir,
+        id,
+        locked_by_user_id,
+        kind,
+        destination,
+      ],
+      { encoding: "utf8" },
+    );
+
+    await route.fulfill({ json: JSON.parse(bytes) });
+  });
+  for (const kind of ["skills", "mcps"]) {
+    await page.goto("/studio/edit/" + id + "?tab=" + kind);
+    await page.getByTestId("catalog-open").click();
+    const panel = page.getByTestId("catalog-panel");
+    const search = panel.getByRole("searchbox");
+
+    if (kind === "skills") {
+      const requested = page.waitForRequest(
+        (r) =>
+          r.url().includes("/catalog/search?") &&
+          new URL(r.url()).searchParams.get("q") === "old",
+      );
+
+      await search.fill("old");
+      await requested;
+      await search.fill("intermediate");
+      await panel
+        .getByRole("button", { name: "intermediate · fixture" })
+        .waitFor();
+      await search.fill("");
+      releaseOld();
+      await expect(
+        panel.getByRole("button", { name: "old · fixture" }),
+      ).toHaveCount(0);
+    }
+    await search.fill("design");
+    await panel.getByRole("button", { name: "design · fixture" }).click();
+    await expect(page.getByTestId("catalog-preview")).toContainText(
+      kind === "skills" ? "companion.md" : "https://example.com/mcp",
+    );
+    const applied = page.waitForResponse((r) =>
+      r.url().endsWith("/catalog/apply"),
+    );
+
+    await panel.getByTestId("catalog-apply").click();
+    const appliedResponse = await applied;
+
+    expect(appliedResponse.ok(), await appliedResponse.text()).toBeTruthy();
+    await expect(page).toHaveURL(
+      kind === "skills" ? /\/skills\/design$/ : /tab=mcps&sel=design$/,
+    );
+  }
+  await page
+    .getByRole("checkbox", { name: "Share this MCP across project sessions" })
+    .check();
+  const saveMcp = page.getByTestId("composition-inline-save-top");
+  await saveMcp.click();
+  await expect(saveMcp).toBeDisabled();
+  await page.getByTestId("local-editor-end-edit").click();
+  await page.waitForURL(/\/studio\/local$/);
+  const sessionId = "catalog-e2e";
+  const lock = await page.request.post(base + "/lock-refresh", {
+    data: { sessionId },
+  });
+
+  expect(lock.ok()).toBeTruthy();
+  const filePath = "capability/skills/design/companion.md";
+  const edit = await page.request.put(base + "/files/" + filePath, {
+    data: { sessionId, content: "Updated checkout journey" },
+  });
+
+  expect(edit.ok(), await edit.text()).toBeTruthy();
+  const commit = await page.request.post(base + "/commit", {
+    data: { sessionId, message: "Catalog acceptance" },
+  });
+
+  expect(commit.ok(), await commit.text()).toBeTruthy();
+  const project = loadFixtures().byKey.board;
+  const cut = await page.request.post(base + "/cut-version", {
+    data: { attachToProjectId: project.projectId },
+  });
+
+  expect(cut.ok(), await cut.text()).toBeTruthy();
+  const { installId } = await cut.json();
+  const installed = await withE2EDb(
+    async (pool) =>
+      (
+        await pool.query<{ installed_path: string }>(
+          "select pi.installed_path from package_installs pi join project_package_attachments pa on pa.package_install_id=pi.id where pi.id=$1 and pa.project_id=$2",
+          [installId, project.projectId],
+        )
+      ).rows[0],
+  );
+
+  expect(readFileSync(join(installed.installed_path, filePath), "utf8")).toBe(
+    "Updated checkout journey",
+  );
+  expect(
+    readFileSync(
+      join(installed.installed_path, "maister-package.yaml"),
+      "utf8",
+    ),
+  ).toContain("https://example.com/mcp");
+  expect(
+    readFileSync(join(installed.installed_path, "mcps/design.yaml"), "utf8"),
+  ).toContain("scope: project");
 });

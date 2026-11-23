@@ -100,6 +100,28 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/local-packages/catalog-operation.ts",
+      "repository-worktree",
+      "Read and apply reviewed package draft changes and their recovery journal under the draft lock.",
+      [
+        ["applyCatalogPreview", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+        ["optionalText", "node:fs/promises.readFile", "read"],
+        ["previewCatalogImport", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+        ["previewCatalogImport", "node:fs/promises.lstat", "stat"],
+        ["previewCatalogImport", "node:fs/promises.mkdir", "write"],
+        ["previewCatalogImport", "node:fs/promises.readdir", "list"],
+        ["previewCatalogImport", "node:fs/promises.rm", "remove"],
+        ["readDraft", "lib/local-packages/paths.ts#resolveWithinWorkingDir", "wrapper"],
+        ["readDraft", "node:fs/promises.lstat", "stat"],
+        ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+        ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteText", "wrapper"],
+        ["reconcileCatalogApply", "lib/local-packages/paths.ts#resolveWithinWorkingDir", "wrapper"],
+        ["reconcileCatalogApply", "node:fs/promises.rm", "remove"],
+        ["walk", "node:fs.createReadStream", "read"],
+        ["walk", "node:fs/promises.readdir", "list"],
+      ],
+    ),
+    ...classified(
       "lib/agent-memory-vault/import-legacy.ts",
       "operator-import",
       "Resolve the configured legacy root at the operator import boundary. Source reads use only confined inventory or retained receipt paths.",
@@ -3149,6 +3171,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/local-packages/catalog-operation.ts", "repository-worktree", [
+    ["applyCatalogPreview", false],
+    ["previewCatalogImport", false],
+    ["readCatalogOperation", false],
+    ["reconcileCatalogApply", false],
+  ]),
   ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [
     ["readCommittedCanonicalSql", false],
   ]),

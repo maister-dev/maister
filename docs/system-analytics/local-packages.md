@@ -811,11 +811,11 @@ deduplication and lineage use the resolved install ID. Element path confinement
 and the existing partial-copy behavior apply to that exact bundle (UX-01C).
 See the [Web API](../api/web.openapi.yaml).
 
-### Catalog provenance (Designed)
+### Catalog provenance
 
-Each imported skill tree or MCP declaration retains the reviewed upstream digest, publisher, license, exact revision, package-relative destination and applied digest through version cut. Update compares the previous imported bytes to both the working tree and the newly reviewed source. Adoption publishes the cut revision to one project. [Studio authoring](flow-studio.md#catalog-authoring-designed)
+Each imported skill tree or MCP declaration retains the reviewed upstream digest, publisher, license, exact revision, package-relative destination and applied digest through version cut. Update compares the previous imported bytes to both the working tree and the newly reviewed source. Adoption publishes the cut revision to one project. [Studio authoring](flow-studio.md#catalog-authoring)
 
-#### Draft publication and recovery (Designed)
+#### Draft publication and recovery
 
 ```mermaid
 sequenceDiagram
@@ -832,11 +832,11 @@ sequenceDiagram
   S-->>E: Applied draft digest
 ```
 
-After interruption, verify the base and candidate digests under the same lock. Resume staged publication only for its owner. A matching published tree completes the pending receipt. A third digest reports a conflict and blocks cut until reconciliation.
+Each preview binds the editor, draft tree SHA-256, exact source pin and reviewed bytes for 15 minutes. The package-wide lease also covers save, commit, discard and cut. Recovery reconstructs the expected base from the journal, checks each changed path, then finishes the operation or restores the old bytes if approval was revoked. A durable applied receipt commits the outcome. Divergent bytes block the next cut until the draft is reconciled. Exact request replay returns the original receipt.
 
 ## Expectations
 
-- **CAT-03:** (Designed) One apply operation must publish a complete reviewed tree and its manifest from the expected draft base.
+- **CAT-03:** (Implemented) One apply operation must publish a complete reviewed tree and its manifest from the expected draft base.
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
   resolve under `localPackagesRoot()` and MUST NEVER appear in any client

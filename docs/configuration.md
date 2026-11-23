@@ -1841,3 +1841,7 @@ main database. A vector request reports provider failures after bounded retry.
 An inherited environment value must be a decimal integer in range. If a reset exposes invalid configuration, the update rolls back. Correct the environment or supply a platform override. Production host settings belong in `/etc/maister/maister.env`. Keep the environment consistent across web replicas. Project settings and repository files carry no authority over the limits.
 
 The per-file `config.worktree` limit is 1 MiB. See [operational integrity](system-analytics/operational-agent-lifecycle.md#integrity-boundary) for how to interpret failures.
+
+## Studio catalog sources
+
+The web process reads approved GitHub repositories from `MAISTER_STUDIO_CATALOG_REPOS`, a JSON array of `{id,repo,kind}` entries. The built-in list contains Anthropic skills and Vercel agent skills. An explicit array replaces that list. Set `kind` to `skill` for repositories publishing `skills/<directory>/SKILL.md` or `mcp` for versioned Registry-format `server.json` descriptors. The independent official MCP Registry connector uses its public HTTPS API. The web process needs outbound TLS to api.github.com, registry.modelcontextprotocol.io and, for npm metadata, registry.npmjs.org. Sources carry no credentials. Preview and apply share the local-package storage volume, including its sibling `.maister-catalog` journal directory. Restrict that directory to the web service account and back it up with the drafts. A release carries the upstream identity and license information in `catalog-origins/`.

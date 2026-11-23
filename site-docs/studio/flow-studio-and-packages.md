@@ -115,3 +115,7 @@ upstream default branch directly.
 - Pass data with [structured results and Run context](/studio/structured-results-and-context).
 - Configure [MCP bindings](/administration/mcp-and-secrets).
 - Compare process outcomes in [Evaluation Lab](/evaluation/run-comparison).
+
+## Import skills and MCP servers
+
+In a local package, open **Skills** or **MCPs** and select **Add from catalog**. Search by name or paste a supported skills.sh or GitHub link. Choose a local name and capability root, review the pinned source, companion files and notices, then apply the changes. Commit the draft, cut a version and adopt it in the project. **Update from source** compares with the previously reviewed revision and lets you resolve file conflicts before saving. The package sharing controls determine which sessions may receive its skills and MCPs.

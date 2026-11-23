@@ -184,14 +184,14 @@ sequenceDiagram
     W-->>Op: run started (immutable)
 ```
 
-### Catalog authoring (Designed)
+### Catalog authoring
 
 Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory-designed)
 
 ## Expectations
 
-- **CAT-01:** (Designed) Eligible editors must be able to resolve approved sources to a pinned reviewable result.
-- **CAT-02:** (Designed) Only the result for the current query may be displayed after a later query or clear.
+- **CAT-01:** (Implemented) Eligible editors must be able to resolve approved sources to a pinned reviewable result.
+- **CAT-02:** (Implemented) Only the result for the current query may be displayed after a later query or clear.
 
 The following bullets are copied verbatim from SDD §7.1 (RFC-2119 spirit, each
 testable):

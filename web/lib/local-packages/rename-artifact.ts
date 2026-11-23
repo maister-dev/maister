@@ -3,6 +3,8 @@ import type { CompositionKind } from "@/lib/local-packages/composition";
 
 import { parseDocument } from "yaml";
 
+import { rewriteMcpIdentity, rewritePackageIdentity } from "./catalog-manifest";
+
 import { renamePackageFilePath } from "@/lib/flows/editor/package-files-draft";
 import {
   flowCanvasHref,
@@ -153,10 +155,25 @@ export function renameArtifact(opts: {
   const { kind, id, path, packageId, draftFiles } = opts;
 
   switch (kind) {
+    case "mcps": {
+      const nextPath = dirOf(path) + "/" + newName + extOf(path);
+
+      try {
+        return {
+          ok: true,
+          files: rewriteMcpIdentity(draftFiles, path, nextPath),
+          navigate: inlineSelectHref(packageId, kind, newName),
+        };
+      } catch (error) {
+        return fail(
+          "CONFIG",
+          error instanceof Error ? error.message : "Invalid MCP rename",
+        );
+      }
+    }
     case "rules":
     case "agents":
-    case "subagents":
-    case "mcps": {
+    case "subagents": {
       const ext = extOf(path);
       const dir = dirOf(path);
       const newPath = dir ? `${dir}/${newName}${ext}` : `${newName}${ext}`;
@@ -188,7 +205,14 @@ export function renameArtifact(opts: {
 
       return {
         ok: true,
-        files: rewritten,
+        files: rewritePackageIdentity(
+          rewritten,
+          "skills",
+          id,
+          newName,
+          oldPrefix.slice(0, -1),
+          newPrefix.slice(0, -1),
+        ),
         navigate: skillScreenHref(packageId, newName),
       };
     }

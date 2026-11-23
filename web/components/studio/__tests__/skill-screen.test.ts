@@ -33,6 +33,9 @@ const labels = {
   crumbLocal: "Local",
   crumbSkills: "Skills",
   notFound: "No such skill",
+  root: "Capability root",
+  registerLegacy: "Register skill in package",
+  migrationError: "Registration failed",
   rename: { open: "Rename", confirm: "Save name", cancel: "Cancel" },
 };
 
@@ -79,6 +82,7 @@ describe("SkillScreen (ADR-116 §P4)", () => {
     expect(html).not.toContain("maister-package.yaml");
     // The folder rename affordance is present (editable).
     expect(html).toContain('data-testid="skill-screen-rename-open"');
+    expect(html).toContain("Register skill in package");
   });
 
   it("hides Rename when readOnly", () => {
@@ -86,6 +90,7 @@ describe("SkillScreen (ADR-116 §P4)", () => {
 
     expect(html).toContain('data-testid="skill-screen"');
     expect(html).not.toContain('data-testid="skill-screen-rename-open"');
+    expect(html).not.toContain("Register skill in package");
   });
 
   it("shows a not-found state for an unknown skill", () => {

@@ -4,9 +4,9 @@ Each domain owns its expectation. Planned test IDs identify the test that must d
 
 | ID | Contract | Tasks | Primary test | Status |
 | --- | --- | --- | --- | --- |
-| CAT-01 | Eligible editors must be able to resolve approved sources to a pinned reviewable result. | T04 | IT-CAT-01 | Planned |
-| CAT-02 | Only the result for the current query may be displayed after a later query or clear. | T05, T06 | E2E-CAT-02 | Planned |
-| CAT-03 | One apply operation must publish a complete reviewed tree and its manifest from the expected draft base. | T05 | IT-CAT-03 | Planned |
+| CAT-01 | Eligible editors must be able to resolve approved sources to a pinned reviewable result. | T04 | IT-CAT-01 | Implemented |
+| CAT-02 | Only the result for the current query may be displayed after a later query or clear. | T05, T06 | E2E-CAT-02 | Implemented |
+| CAT-03 | One apply operation must publish a complete reviewed tree and its manifest from the expected draft base. | T05 | IT-CAT-03 | Implemented |
 | CAP-01 | New Flow authoring must reject retired node skill settings and retain the pinned legacy read path. | T03 | IT-CAP-01 | Implemented |
 | CAP-02 | A surviving MCP override must belong to exactly one project attachment and logical ref across adoption. | T07, T24 | IT-CAP-02 | Planned |
 | CAP-03 | Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table. | T08, T09 | IT-CAP-03 | Planned |

@@ -2,6 +2,8 @@ import "server-only";
 
 import { parse as parseYaml } from "yaml";
 
+import { validateCatalogFiles } from "./catalog-validate";
+
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { validateSubagentMarkdown } from "@/lib/agents/subagent-definition";
 import { flowYamlV1Schema } from "@/lib/config.schema";
@@ -72,6 +74,7 @@ export function validatePackageArtifacts(input: {
     // no commit-time content contract.
   }
 
+  errors.push(...validateCatalogFiles(input.files, changed));
   errors.push(...validateLifecycleSchemaArtifacts(input, changed));
 
   return errors;

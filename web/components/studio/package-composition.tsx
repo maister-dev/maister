@@ -8,9 +8,21 @@ import type { CompositionKind } from "@/lib/local-packages/composition";
 import type { ReactElement, ReactNode } from "react";
 
 import { useMemo, useState } from "react";
+import { parseDocument, stringify } from "yaml";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { CatalogImportPanel } from "./catalog-import-panel";
+
+import {
+  catalogManifest,
+  editMcpDescriptor,
+  manifestMcp,
+} from "@/lib/local-packages/catalog-manifest";
+import {
+  PACKAGE_MANIFEST_FILENAME,
+  parsePackageManifest,
+} from "@/lib/local-packages/manifest";
 import {
   FrontmatterArtifactEditor,
   type FrontmatterArtifactKind,
@@ -25,6 +37,7 @@ import {
   PackageTabs,
   type PackageTabDescriptor,
 } from "@/components/studio/package-tabs";
+import { packageProfileChoices } from "@/lib/agents/package-profile-choices";
 import { upsertPackageFile } from "@/lib/flows/editor/package-files-draft";
 import {
   COMPOSITION_TAB_IDS,
@@ -95,6 +108,7 @@ export function PackageComposition({
   onSaveDraft,
   onCreateArtifact,
   onCreateFlow,
+  onCatalogApplied,
   onCompareElement,
 }: {
   packageId: string;
@@ -121,6 +135,7 @@ export function PackageComposition({
   // Flow creation is intentionally not a generic file scaffold: it goes through
   // the canonical metadata wizard and server-side operation journal.
   onCreateFlow: () => void;
+  onCatalogApplied?: () => void;
   // ADR-132 (T18): opens the divergence drawer scoped to one element path.
   // Absent when the package has no upstream lineage — compare entries degrade
   // silently to absent.
@@ -131,7 +146,11 @@ export function PackageComposition({
   const searchParams = useSearchParams();
 
   const counts = compositionCounts(bom);
-  const activeTab = resolveCompositionTab(searchParams.get("tab"), bom);
+  const requestedTab = searchParams.get("tab");
+  const activeTab =
+    !readOnly && (requestedTab === "skills" || requestedTab === "mcps")
+      ? requestedTab
+      : resolveCompositionTab(requestedTab, bom);
   const selectedId = searchParams.get("sel");
 
   // Live substring filter over the current list's names. Available on the
@@ -150,6 +169,7 @@ export function PackageComposition({
   const tabs: PackageTabDescriptor[] = COMPOSITION_TAB_IDS.map((id) => ({
     id,
     label: t(TAB_LABEL_KEY[id]),
+    showWhenEmpty: !readOnly && (id === "skills" || id === "mcps"),
     count: id === "files" ? fileCount : counts[id as CompositionKind],
   }));
 
@@ -162,6 +182,14 @@ export function PackageComposition({
     forkPhase2Hint: t("viewer.forkPhase2Hint"),
   };
 
+  const manifestFile = draftFiles.find(
+    (f) => f.path === PACKAGE_MANIFEST_FILENAME,
+  );
+  const parsed = manifestFile && parsePackageManifest(manifestFile.content);
+  const delivery =
+    parsed && parsed.ok
+      ? (parsed.raw.delivery as { shareSkills?: boolean } | undefined)
+      : undefined;
   const cards = buildCompositionCards({
     onCompareElement,
     packageId,
@@ -225,6 +253,40 @@ export function PackageComposition({
         )}
       </header>
 
+      {!readOnly && activeTab === "skills" && manifestFile && parsed?.ok ? (
+        <div className="flex items-center gap-3">
+          <label>
+            <input
+              checked={delivery?.shareSkills !== false}
+              type="checkbox"
+              onChange={(e) => {
+                const { doc } = catalogManifest(manifestFile.content);
+
+                doc.setIn(["delivery", "shareSkills"], e.target.checked);
+                onDraftFilesChange(
+                  upsertPackageFile(draftFiles, manifestFile.path, String(doc)),
+                );
+              }}
+            />{" "}
+            {t("catalog.shareSkills")}
+          </label>
+          {dirty ? (
+            <button type="button" onClick={onSaveDraft}>
+              {saveLabel}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {!readOnly && (activeTab === "skills" || activeTab === "mcps") ? (
+        <CatalogImportPanel
+          key={activeTab}
+          dirty={dirty}
+          files={draftFiles}
+          kind={activeTab === "skills" ? "skill" : "mcp"}
+          packageId={packageId}
+          onApplied={() => onCatalogApplied?.()}
+        />
+      ) : null}
       {counts.flows === 0 ? (
         <p
           className="m-0 rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12px] text-ink-2"
@@ -534,10 +596,29 @@ function InlineEditor({
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
 }): ReactElement {
+  const t = useTranslations("studio.catalog");
+  const isMcp = isMcpDescriptorPath(filePath);
+  const id = filePath
+    .split("/")
+    .at(-1)!
+    .replace(/\.(ya?ml|json)$/i, "");
+  const manifest =
+    draftFiles.find((f) => f.path === PACKAGE_MANIFEST_FILENAME)?.content ?? "";
+  const declared = isMcp ? manifestMcp(manifest, id) : undefined;
   const content =
-    draftFiles.find((file) => file.path === filePath)?.content ?? "";
+    draftFiles.find((f) => f.path === filePath)?.content ??
+    (declared ? stringify(declared) : "");
   const onChange = (next: string): void =>
-    onDraftFilesChange(upsertPackageFile(draftFiles, filePath, next));
+    onDraftFilesChange(
+      isMcp
+        ? editMcpDescriptor(draftFiles, filePath, next)
+        : upsertPackageFile(draftFiles, filePath, next),
+    );
+  const effectiveScope =
+    declared?.scope ??
+    (declared && parseDocument(manifest).get("delivery") === undefined
+      ? "project"
+      : "package");
 
   // Save persists the whole draft; enabled only when dirty. Shown top + bottom
   // so a long artifact does not force a scroll to reach Save.
@@ -564,8 +645,26 @@ function InlineEditor({
         </div>
         {readOnly ? null : saveButton("composition-inline-save-top")}
       </div>
+      {isMcp && !readOnly ? (
+        <label>
+          <input
+            checked={effectiveScope === "project"}
+            type="checkbox"
+            onChange={(e) => {
+              const doc = parseDocument(content);
+
+              if (!doc.errors.length) {
+                doc.set("scope", e.target.checked ? "project" : "package");
+                onChange(String(doc));
+              }
+            }}
+          />{" "}
+          {t("shareMcp")}
+        </label>
+      ) : null}
       {isMcpDescriptorPath(filePath) ? (
         <McpTemplateEditor
+          key={String(effectiveScope)}
           catalog={mcpCatalog}
           content={content}
           fileName={filePath}
@@ -581,6 +680,11 @@ function InlineEditor({
           content={content}
           kind={frontmatterKind}
           labels={filesLabels.frontmatter}
+          packageChoices={
+            frontmatterKind === "agent_definition"
+              ? packageProfileChoices(draftFiles)
+              : undefined
+          }
           readOnly={readOnly}
           onChange={onChange}
         />
@@ -740,6 +844,13 @@ function CreateArtifactControl({
     () => listCapabilities(draftFiles),
     [draftFiles],
   );
+  const manifest = parsePackageManifest(
+    draftFiles.find((f) => f.path === PACKAGE_MANIFEST_FILENAME)?.content ?? "",
+  );
+  const skillRoots = manifest.ok
+    ? manifest.model.capabilities.map((c) => c.path)
+    : [];
+  const [skillRoot, setSkillRoot] = useState("");
   const [capability, setCapability] = useState(capabilities[0] ?? "");
   const [error, setError] = useState<string | null>(null);
 
@@ -755,7 +866,12 @@ function CreateArtifactControl({
       name,
       packageId,
       draftFiles,
-      capability: kind === "subagent" ? capability : undefined,
+      capability:
+        kind === "subagent"
+          ? capability
+          : kind === "skill" && skillRoot
+            ? skillRoot
+            : undefined,
     });
 
     if (!result.ok) {
@@ -815,6 +931,20 @@ function CreateArtifactControl({
         value={name}
         onChange={(event) => setName(event.target.value)}
       />
+      {kind === "skill" && skillRoots.length > 1 ? (
+        <select
+          aria-label={t("catalog.root")}
+          value={skillRoot}
+          onChange={(e) => setSkillRoot(e.target.value)}
+        >
+          <option value="">{t("catalog.root")}</option>
+          {skillRoots.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      ) : null}
       {kind === "subagent" ? (
         <input
           aria-label={t("composition.create.capability")}

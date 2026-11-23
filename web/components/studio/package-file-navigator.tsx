@@ -9,6 +9,8 @@ import type { ComponentPropsWithoutRef, ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { isMcpDescriptorPath } from "@/lib/local-packages/composition";
+import { rewriteMcpIdentity } from "@/lib/local-packages/catalog-manifest";
 import {
   ContentEditor,
   uniqueNewPath,
@@ -235,7 +237,17 @@ export function PackageFileNavigator({
 
         return;
       }
-      commit(renamePackageFilePath(draftFiles, rename.path, newPath));
+      try {
+        commit(
+          !pathPrefix && isMcpDescriptorPath(rename.path)
+            ? rewriteMcpIdentity(draftFiles, rename.path, newPath)
+            : renamePackageFilePath(draftFiles, rename.path, newPath),
+        );
+      } catch (error) {
+        setError(error instanceof Error ? error.message : labels.errorConflict);
+
+        return;
+      }
       if (selectedPath === rename.path) setSelectedPath(newPath);
     }
     setRename(null);
@@ -251,7 +263,17 @@ export function PackageFileNavigator({
       );
       if (selectedPath?.startsWith(prefix)) setSelectedPath(null);
     } else {
-      commit(removePackageFile(draftFiles, path));
+      try {
+        commit(
+          !pathPrefix && isMcpDescriptorPath(path)
+            ? rewriteMcpIdentity(draftFiles, path, null)
+            : removePackageFile(draftFiles, path),
+        );
+      } catch (error) {
+        setError(error instanceof Error ? error.message : labels.errorConflict);
+
+        return;
+      }
       if (selectedPath === path) setSelectedPath(null);
     }
   }

@@ -109,12 +109,13 @@ function render(
 }
 
 describe("PackageComposition (ADR-116 §P2/P3)", () => {
-  it("renders tab counts and hides empty kind tabs; Files is always present", () => {
+  it("shows empty writable catalog tabs and Files while hiding other empty kinds", () => {
     const html = render(bomOf({ flows: [flow] }));
 
     expect(html).toContain('data-testid="package-tab-flows"');
     expect(html).toContain('data-testid="package-tab-files"');
-    expect(html).not.toContain('data-testid="package-tab-skills"');
+    expect(html).toContain('data-testid="package-tab-skills"');
+    expect(html).toContain('data-testid="package-tab-mcps"');
     expect(html).not.toContain('data-testid="package-tab-rules"');
     expect(html).toContain('data-testid="flow-preview-card"');
   });
