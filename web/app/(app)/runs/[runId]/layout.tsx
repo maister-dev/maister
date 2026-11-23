@@ -87,6 +87,7 @@ import {
   type RunInspectorFlowSummary,
   type RunInspectorLabels,
 } from "@/components/runs/run-inspector";
+import { FlowChecksLink } from "@/components/runs/flow-checks-link";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 import {
   ResolvedCapabilitySetPanel,
@@ -1527,6 +1528,116 @@ export default async function RunDetailLayout({
     !isOperational &&
     flowResultDto.graph.kind === "ready" &&
     flowResultDto.graph.nodes.some((node) => node.id === detail.currentStepId);
+  const projectFlow = detail.runKind === "flow";
+  const policyBadge = (
+    <ExecutionPolicyBadge
+      labels={{
+        supervised: t("execPolicySupervised"),
+        assisted: t("execPolicyAssisted"),
+        unattended: t("execPolicyUnattended"),
+        custom: t("execPolicyCustom"),
+      }}
+      policy={detail.executionPolicy}
+    />
+  );
+  const detailActions = projectFlow
+    ? viewerLifecycleActions.filter((action) => action !== "stop")
+    : viewerLifecycleActions;
+  const headerStop =
+    projectFlow &&
+    viewerLifecycleActions.includes("stop") &&
+    projectRolesForActions(["recoverRun"]).includes(role) ? (
+      <WorkbenchLifecycleActions
+        actions={["stop"]}
+        variant="detail"
+        stopLabel={t("headerStopRun")}
+        runId={runId}
+        runKind="flow"
+      />
+    ) : null;
+  const gateRows = new Set(
+    [
+      ...(evidence?.results.checks ?? []),
+      ...(evidence?.results.previous ?? []),
+    ].map((row) => row.id),
+  );
+  const checksSummary = verification ? (
+    <ReadinessSummary
+      labels={{
+        state: {
+          ready: tReadiness("recordedClear"),
+          none: tReadiness("noChecks"),
+          excluded: tReadiness("policyExcluded"),
+          unevaluated: tReadiness("unevaluated"),
+          unknown: tReadiness("verificationUnknown"),
+          blocked: tReadiness("blocked"),
+          stale: tReadiness("stale"),
+          failed: tReadiness("failed"),
+          waiting: tReadiness("waiting"),
+          overridden: tReadiness("overridden"),
+        },
+        summary: tReadiness("flowVerification"),
+        reasons: tReadiness("reasons"),
+      }}
+      reasons={verification.reasons.map((reason) => {
+        if (reason.kind === "artifact")
+          return {
+            id: `artifact:${reason.id}`,
+            explanation: tReadiness("missingEvidence", {
+              id: reason.id,
+            }),
+            nextAction: tReadiness("produceEvidence"),
+          };
+
+        const { status } = reason;
+        return {
+          id: `gate:${reason.rowId}`,
+          explanation: tReadiness(`gateDetails.${status}.reason`, {
+            id: reason.id,
+          }),
+          nextAction: tReadiness(`gateDetails.${status}.nextAction`),
+          evidence:
+            hasWorkbench &&
+            status !== "pending" &&
+            status !== "running" &&
+            gateRows.has(`gate:${reason.rowId}`) ? (
+              <FlowChecksLink
+                workbench
+                rowId={reason.rowId}
+                label={tReadiness("viewGateEvidence", { id: reason.id })}
+              />
+            ) : null,
+        };
+      })}
+      state={verification.state}
+    />
+  ) : null;
+  const reviewOwnsChecks = !!(showReview && reviewData && reviewReadiness);
+  const hasFlowHeading =
+    !!flowGraphData && !isOperational && flowResultDto.graph.kind === "ready";
+  const attention =
+    verification &&
+    ["failed", "stale", "blocked"].includes(verification.state) ? (
+      <FlowChecksLink
+        workbench={hasWorkbench}
+        label={`${tReadiness("flowVerification")} · ${tReadiness(verification.state as "failed" | "stale" | "blocked")}`}
+      />
+    ) : null;
+  function requestCheck(rowId?: string): ReactNode {
+    if (!rowId) return null;
+    const reachable = hasWorkbench
+      ? gateRows.has(`gate:${rowId}`)
+      : verification?.reasons.some(
+          (r) => r.kind === "gate" && r.rowId === rowId,
+        );
+    return reachable ? (
+      <FlowChecksLink
+        workbench={hasWorkbench}
+        rowId={rowId}
+        label={tReadiness("requestCheck")}
+      />
+    ) : null;
+  }
   const primaryResult =
     flowGraphData || showAgentCenter ? (
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
@@ -1551,6 +1662,7 @@ export default async function RunDetailLayout({
                 topology={flowGraphData.topology}
               />
             }
+            checksLink={reviewOwnsChecks ? null : attention}
             interruptControl={interruptControl}
             labels={flowRunCenterLabels}
             locale={locale}
@@ -1719,6 +1831,8 @@ export default async function RunDetailLayout({
               }
             : undefined
         }
+        policyBadge={projectFlow ? policyBadge : null}
+        stopControl={headerStop}
         branch={isOperational ? null : detail.branch}
         budgetStatus={detail.budgetStatus}
         canReopen={canAct}
@@ -1729,6 +1843,7 @@ export default async function RunDetailLayout({
         hideChangeSummary={isOperational}
         inspector={
           <>
+            {hasWorkbench ? null : checksSummary}
             {waitId ? (
               <RunWaitCard key={waitId} runId={detail.runId} waitId={waitId} />
             ) : null}
@@ -1810,6 +1925,7 @@ export default async function RunDetailLayout({
               noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
               summary={outcomeSummary}
             />
+            {!hasFlowHeading && !reviewOwnsChecks ? attention : null}
             {currentStepHasHeader ? null : interruptControl}
           </>
         }
@@ -1862,17 +1978,7 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <ExecutionPolicyBadge
-              labels={{
-                supervised: t("execPolicySupervised"),
-                assisted: t("execPolicyAssisted"),
-                unattended: t("execPolicyUnattended"),
-                custom: t("execPolicyCustom"),
-              }}
-              policy={detail.executionPolicy}
-            />
-          </div>
+          {projectFlow ? null : policyBadge}
 
           {detail.cutoverFailure ? (
             <CutoverFailureBanner
@@ -1889,9 +1995,9 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {viewerLifecycleActions.length > 0 || (canAct && syncAttempt) ? (
+          {detailActions.length > 0 || (canAct && syncAttempt) ? (
             <WorkbenchLifecycleActions
-              actions={viewerLifecycleActions}
+              actions={detailActions}
               runId={detail.runId}
               runKind={detail.runKind}
               syncAttempt={
@@ -1909,61 +2015,6 @@ export default async function RunDetailLayout({
               workspaceAvailable={
                 Boolean(detail.worktreePath) && !detail.pruned
               }
-            />
-          ) : null}
-
-          {verification ? (
-            <ReadinessSummary
-              labels={{
-                state: {
-                  ready: tReadiness("recordedClear"),
-                  none: tReadiness("noChecks"),
-                  excluded: tReadiness("policyExcluded"),
-                  unevaluated: tReadiness("unevaluated"),
-                  unknown: tReadiness("verificationUnknown"),
-                  blocked: tReadiness("blocked"),
-                  stale: tReadiness("stale"),
-                  failed: tReadiness("failed"),
-                  waiting: tReadiness("waiting"),
-                  overridden: tReadiness("overridden"),
-                },
-                summary: tReadiness("flowVerification"),
-                reasons: tReadiness("reasons"),
-              }}
-              reasons={verification.reasons.map((reason) => {
-                if (reason.kind === "artifact")
-                  return {
-                    id: `artifact:${reason.id}`,
-                    explanation: tReadiness("missingEvidence", {
-                      id: reason.id,
-                    }),
-                    nextAction: tReadiness("produceEvidence"),
-                  };
-
-                const { status } = reason;
-                const evidenceQuery = new URLSearchParams({
-                  wb: "evidence",
-                  evidenceItem: `gate:${reason.rowId}`,
-                });
-
-                return {
-                  id: `gate:${reason.rowId}`,
-                  explanation: tReadiness(`gateDetails.${status}.reason`, {
-                    id: reason.id,
-                  }),
-                  nextAction: tReadiness(`gateDetails.${status}.nextAction`),
-                  evidence:
-                    status === "pending" || status === "running"
-                      ? undefined
-                      : {
-                          href: `/runs/${runId}?${evidenceQuery}`,
-                          label: tReadiness("viewGateEvidence", {
-                            id: reason.id,
-                          }),
-                        },
-                };
-              })}
-              state={verification.state}
             />
           ) : null}
 
@@ -2089,6 +2140,7 @@ export default async function RunDetailLayout({
                   <p className="mb-4 text-[14px] leading-[1.4] text-ink">
                     {detail.pendingHitl.prompt}
                   </p>
+                  {requestCheck(detail.pendingHitl.verificationGateRowId)}
                   <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
                     {detail.pendingHitl.assignmentActionKind ? (
                       <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
@@ -2286,6 +2338,7 @@ export default async function RunDetailLayout({
               <p className="mb-3 text-[14px] leading-[1.4] text-ink">
                 {pendingHitl.prompt}
               </p>
+              {requestCheck(pendingHitl.verificationGateRowId)}
               <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
                 {pendingHitl.assignmentActionKind ? (
                   <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
@@ -2399,19 +2452,22 @@ export default async function RunDetailLayout({
                   />
                 }
                 evidence={
-                  evidence ? (
-                    <RunResultsAndChecksView
-                      graph={evidence.graph}
-                      graphLabels={evidenceLabels}
-                      outcome={outcomeSummary}
-                      results={evidence.results}
-                      runId={detail.runId}
-                    />
-                  ) : (
-                    <p className="p-3 text-sm text-mute" role="status">
-                      {tEvidence("results.unavailable")}
-                    </p>
-                  )
+                  <>
+                    {checksSummary}
+                    {evidence ? (
+                      <RunResultsAndChecksView
+                        graph={evidence.graph}
+                        graphLabels={evidenceLabels}
+                        outcome={outcomeSummary}
+                        results={evidence.results}
+                        runId={detail.runId}
+                      />
+                    ) : (
+                      <p className="p-3 text-sm text-mute" role="status">
+                        {tEvidence("results.unavailable")}
+                      </p>
+                    )}
+                  </>
                 }
                 filesPane={children}
                 filesTree={
@@ -2459,6 +2515,7 @@ export default async function RunDetailLayout({
               prNumber={detail.prNumber}
               promotionMode={reviewData.promotionMode}
               prUrl={detail.prUrl}
+              checksLink={reviewOwnsChecks ? attention : null}
               readiness={reviewReadiness}
               reviewedTargetCommit={reviewData.reviewedTargetCommit}
               runBranch={detail.branch}

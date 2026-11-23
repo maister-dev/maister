@@ -73,7 +73,9 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   // (2) Open the failed run. The readiness badge sits in the card's actions
   // block OUTSIDE the run link (by design — actions need a non-link surface),
   // so navigate via the card's run-detail link instead of the badge.
-  const verification = page.getByTestId("flow-verification");
+  const verification = page
+    .getByTestId("flow-verification")
+    .filter({ visible: true });
   const disclosure = verification.locator("summary");
   const decoyId = randomUUID();
   const decoyLabel = "another-failed-check";
@@ -95,9 +97,10 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   try {
     await page.locator(`a[href="/runs/${fx.failedRunId}"]`).first().click();
     await page.waitForURL(`/runs/${fx.failedRunId}*`);
-    await expect(disclosure).toContainText("Flow verification");
-    await disclosure.focus();
-    await disclosure.press("Enter");
+    await expect(verification).toHaveCount(0);
+    await page.getByRole("link", { name: /Flow checks.*Failed/i }).click();
+    await expect(disclosure).toContainText("Flow checks");
+    await expect(disclosure).toBeFocused();
     const failedReason = verification
       .getByRole("listitem")
       .filter({ hasText: fx.gateId });
@@ -145,6 +148,10 @@ test("readiness summary: badge on board/portfolio + panel on run-detail", async 
   await page.locator(`a[href="/runs/${fx.overriddenRunId}"]`).first().click();
   await page.waitForURL(`/runs/${fx.overriddenRunId}*`);
 
+  await expect(verification).toHaveCount(0);
+  await page
+    .getByRole("tab", { name: "Results and checks", exact: true })
+    .click();
   await expect(disclosure).toContainText("Overridden");
   await disclosure.press("Enter");
   const overrideReason = verification
@@ -258,7 +265,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
       ).toBeVisible();
       await expect(page.getByTestId("flow-verification")).toHaveCount(0);
     }
-    await page.goto(`/runs/${flow}`);
+    await page.goto(`/runs/${flow}?wb=evidence`);
     await expect(verification).toContainText("Recorded checks clear");
     await expect(
       page.getByTestId("run-header-status").filter({ visible: true }),
@@ -348,7 +355,7 @@ test("UX-07 Running operational work and historical executor failure stay separa
       "Produce or refresh the required evidence before continuing.",
     );
 
-    await page.goto(`/runs/${noChecksRun}`);
+    await page.goto(`/runs/${noChecksRun}?wb=evidence&inspector=open`);
     await expect(verification).toContainText("No blocking checks configured");
   } finally {
     await withE2EDb(async (pool) => {

@@ -518,6 +518,10 @@ test("a viewer project-member is denied the repo file route (member-gate)", asyn
       selected.getByRole("button", { name: "About stopping the current step" }),
     ).toBeEnabled();
 
+    await expect(
+      shell.getByRole("button", { name: "Stop run", exact: true }),
+    ).toHaveCount(0);
+
     // readRepoFiles requires `member`; a viewer project member is below it → 403
     // (the admin/owner, exercised by the other tests, is NOT denied).
     const res = await page.request.get(`/api/runs/${fx.runId}/files`);
@@ -663,3 +667,71 @@ test("project repo tab renders the file-tree of tracked repo files", async ({
     page.locator('[data-testid="file-tree-entry"]', { hasText: "README.md" }),
   ).toBeVisible();
 });
+
+for (const [locale, policy, stop, step] of [
+  ["en", "Unattended", "Stop run", "Stop current step"],
+  ["ru", "Без контроля", "Остановить запуск", "Остановить текущий шаг"],
+] as const) {
+  test(`Flow run metadata and controls in ${locale}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fx = loadM22Fixture();
+    await page
+      .context()
+      .addCookies([{ name: "NEXT_LOCALE", value: locale, url: baseURL! }]);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`/runs/${fx.runId}?inspector=closed`);
+    const shell = page.getByTestId("run-shell").filter({ visible: true });
+    const header = shell.locator("header").first();
+    const action = header.getByRole("button", { name: stop, exact: true });
+    const branch = header.getByTestId("run-header-branch");
+    await expect(header.getByTestId("execution-policy-badge")).toHaveText(
+      policy,
+    );
+    await expect(action).toBeVisible();
+    const badge = await header
+      .getByTestId("execution-policy-badge")
+      .boundingBox();
+    const button = await action.boundingBox();
+    expect(
+      Math.abs(badge!.y + badge!.height / 2 - button!.y - button!.height / 2),
+    ).toBeLessThan(3);
+    expect(await branch.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+      true,
+    );
+    await branch.press("Enter");
+    await expect(branch.locator("..").locator("div")).toHaveText(
+      new RegExp(fx.branch),
+    );
+    await branch.press("Enter");
+    let posts = 0;
+    await page.route(`**/api/runs/${fx.runId}/stop`, async (route) => {
+      posts++;
+      expect(route.request().postDataJSON()).toEqual({});
+      await route.fulfill({ status: 409, json: { code: "CONFLICT" } });
+    });
+    await action.click();
+    await page.keyboard.press("Escape");
+    await expect(action).toBeFocused();
+    expect(posts).toBe(0);
+    await action.click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", {
+        name: locale === "en" ? "Confirm" : "Подтвердить",
+        exact: true,
+      })
+      .click();
+    await expect.poll(() => posts).toBe(1);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 320, height: 768 });
+    await expect(action).toBeVisible();
+    await expect(
+      shell.getByRole("button", { name: step, exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+  });
+}

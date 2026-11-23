@@ -67,9 +67,9 @@ The positive integration fixture pairs a persisted gate permission with its own 
 
 ### Phase 2. Run metadata and checks · depends on S0, integrates with phase 1
 
-- [ ] **2R — RED.** Establish META-1/2, CHECK-1/2/3 tests from the matrix. Where a test already proves the domain result, extend its journey to the new entry point. Record expected placement, destination or read-model failures individually.
-- [ ] **2G — GREEN, metadata.** Route the Flow badge and authorized stop through `run-shell.tsx` into `run-header.tsx`. Combine lifecycle eligibility with the existing project role mapping. Reuse the stop dialog/submission owner in `web/components/workbench/lifecycle-actions.tsx`; preserve the detail Git host and remaining actions. Handle a missing or long branch, the custom-policy marker, and the shared shell's other callers.
-- [ ] **2H — GREEN, checks.** Place `ReadinessSummary` in the workbench evidence slot alongside `RunResultsAndChecksView`; implement CHECK-3 in the server read model before wiring its minimal result into the corresponding input card. Reuse `getFlowRunVerification`, `verification.rollup`, existing query helpers and the review block. Resolve the link destination from the rendered surfaces and evidence rows. Keep server-derived check meaning separate from placement.
+- [x] **2R — RED.** Establish META-1/2, CHECK-1/2/3 tests from the matrix. Where a test already proves the domain result, extend its journey to the new entry point. Record expected placement, destination or read-model failures individually.
+- [x] **2G — GREEN, metadata.** Route the Flow badge and authorized stop through `run-shell.tsx` into `run-header.tsx`. Combine lifecycle eligibility with the existing project role mapping. Reuse the stop dialog/submission owner in `web/components/workbench/lifecycle-actions.tsx`; preserve the detail Git host and remaining actions. Handle a missing or long branch, the custom-policy marker, and the shared shell's other callers.
+- [x] **2H — GREEN, checks.** Place `ReadinessSummary` in the workbench evidence slot alongside `RunResultsAndChecksView`; implement CHECK-3 in the server read model before wiring its minimal result into the corresponding input card. Reuse `getFlowRunVerification`, `verification.rollup`, existing query helpers and the review block. Resolve the link destination from the rendered surfaces and evidence rows. Keep server-derived check meaning separate from placement.
 - [ ] **2F — Refactor and verify.** Consolidate repeated link/placement decisions only where they share the same contract. Run the same failing tests and the existing lifecycle, readiness and multi-request regressions. Verify that no client gained raw permission data or a new mutation path.
 
 ### Phase 3. Fullscreen graph · depends on S0, integrates with the Run shell
@@ -89,3 +89,7 @@ The positive integration fixture pairs a persisted gate permission with its own 
 Phase 1 baseline: 15/15 focused tests passed. RED: selected cursor lacked its action, and the independent help trigger was absent (2 failed, 14 passed).
 
 Phase 1 GREEN: 16/16 focused assertions, one additional busy/refresh DOM scenario, and web typecheck passed. Full unit run passed 9,309 tests; the additional DOM scenario ran separately.
+
+Phase 1 browser verification passed for step selection, keyboard help, refusal feedback, viewer permissions and parked restart. The full integration run is in progress.
+
+Phase 2 RED reproduced missing header slots (1 of 18), missing validated permission projection (1 of 4 PostgreSQL cases) and incorrect default summary placement (M15 browser). GREEN PostgreSQL passed 4/4, and both M15 browser journeys passed for the exact evidence row, graph navigation, quiet states and next actions.

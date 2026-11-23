@@ -324,6 +324,44 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     expect(JSON.stringify(detail)).not.toContain("req-secret-rd");
     expect(detail?.pendingHitl?.options).toHaveLength(2);
 
+    await pool.query(
+      "INSERT INTO node_attempts(id,run_id,node_id,node_type,attempt,status) VALUES ('old','run-rd','work','ai_coding',1,'Failed'), ('current','run-rd','work','ai_coding',2,'Running')",
+    );
+    await pool.query(
+      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES ('v1','run-rd','old','check','ai_judgment','blocking','running'), ('v2','run-rd','current','check','ai_judgment','blocking','running')",
+    );
+    for (const [id, evaluationId, nodeAttemptId] of [
+      ["linked", "v2", "current"],
+      ["stale", "v1", "old"],
+      ["mismatch", "v2", "old"],
+    ]) {
+      await seedHitlRequest(id, "run-rd", "permission", "high", {
+        ...permissionSchema,
+        flowPrompt: {
+          version: 1,
+          variant: "gate_ai",
+          gateId: "check",
+          evaluationId,
+          nodeAttemptId,
+          commandId: "private-command",
+          assignmentId: "private-assignment",
+          incarnationId: "private-incarnation",
+          promptOrdinal: 0,
+        },
+      });
+      await pool.query("UPDATE hitl_requests SET step_id='check' WHERE id=$1", [
+        id,
+      ]);
+    }
+    const projected = (await getRunDetail("run-rd"))!.pendingHitls;
+    expect(
+      projected
+        .filter((row) => row.verificationGateRowId)
+        .map((row) => [row.hitlRequestId, row.verificationGateRowId]),
+    ).toEqual([["linked", "v2"]]);
+    expect(projected.every((row) => row.schema === null)).toBe(true);
+    expect(JSON.stringify(projected)).not.toContain("private-command");
+
     // T3.1: the run-detail header data carries task identity + flow ref.
     expect(detail?.taskTitle).toBe("Task task-rd");
     expect(detail?.taskPrompt).toBe("Do something");

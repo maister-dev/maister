@@ -69,6 +69,8 @@ export interface RunHeaderProps {
   // The launching task's prompt, rendered as a collapsible Markdown block.
   taskPrompt?: string | null;
   status: string;
+  policyBadge?: ReactNode;
+  stopControl?: ReactNode;
   branch?: string | null;
   targetBranch?: string | null;
   // ADR-140 PR lifecycle: provider PR state + conflict flag for the header chip.
@@ -130,6 +132,8 @@ export function RunHeader({
   projectLabel,
   taskPrompt,
   status,
+  policyBadge,
+  stopControl,
   branch,
   targetBranch,
   prState,
@@ -241,7 +245,7 @@ export function RunHeader({
             {subtitle}
           </p>
         ) : null}
-        <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 md:flex-nowrap">
           <span
             className={clsx(
               "inline-flex rounded-full border px-2 py-0.5 font-mono text-[11px] font-semibold",
@@ -251,6 +255,7 @@ export function RunHeader({
           >
             {labels.runStatus}: {status}
           </span>
+          {policyBadge}
           {status === "Pending" && labels.queueReason ? (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[11px] font-semibold text-amber"
@@ -279,13 +284,19 @@ export function RunHeader({
             )
           ) : null}
           {branch ? (
-            <span
-              className="min-w-0 truncate font-mono text-[11px] text-mute"
-              data-testid="run-header-branch"
-            >
-              {labels.branch}: {branch}
-              {targetBranch ? ` -> ${targetBranch}` : ""}
-            </span>
+            <details className="relative min-w-0 max-w-full font-mono text-[11px] text-mute">
+              <summary
+                className="cursor-pointer truncate"
+                data-testid="run-header-branch"
+              >
+                {labels.branch}: {branch}
+                {targetBranch ? ` -> ${targetBranch}` : ""}
+              </summary>
+              <div className="absolute left-0 z-20 w-max max-w-[min(70vw,32rem)] wrap-anywhere rounded-md border border-line bg-paper p-2 text-ink">
+                {branch}
+                {targetBranch ? ` -> ${targetBranch}` : ""}
+              </div>
+            </details>
           ) : null}
           {budgetBadge ? (
             <span
@@ -303,6 +314,9 @@ export function RunHeader({
               prState={prState ?? null}
               runId={canReopen === false ? undefined : runId}
             />
+          ) : null}
+          {stopControl ? (
+            <div className="ml-auto shrink-0">{stopControl}</div>
           ) : null}
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">

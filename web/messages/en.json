@@ -2927,6 +2927,7 @@
     "agentCenterReviewChanges": "Review changes",
     "agentCenterOpenDiff": "Open diff",
     "flowCenterTitle": "Flow result",
+    "headerStopRun": "Stop run",
     "flowCenterFullscreen": "Fullscreen",
     "flowCenterReviewChanges": "Review changes",
     "flowCenterNodes": "Nodes",
@@ -3766,7 +3767,8 @@
     "artifactKindPlan": "Plan"
   },
   "readiness": {
-    "flowVerification": "Flow verification",
+    "requestCheck": "View related Flow check",
+    "flowVerification": "Flow checks",
     "recordedClear": "Recorded checks clear",
     "noChecks": "No blocking checks configured",
     "policyExcluded": "Checks excluded by policy",

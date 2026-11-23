@@ -2927,6 +2927,7 @@
     "agentCenterReviewChanges": "Ревью изменений",
     "agentCenterOpenDiff": "Открыть диф",
     "flowCenterTitle": "Результат Flow",
+    "headerStopRun": "Остановить запуск",
     "flowCenterFullscreen": "На весь экран",
     "flowCenterReviewChanges": "Ревью изменений",
     "flowCenterNodes": "Шаги",
@@ -3766,7 +3767,8 @@
     "artifactKindPlan": "План"
   },
   "readiness": {
-    "flowVerification": "Проверка процесса",
+    "requestCheck": "Открыть связанную проверку Flow",
+    "flowVerification": "Проверки Flow",
     "recordedClear": "Записанные проверки пройдены",
     "noChecks": "Блокирующие проверки не настроены",
     "policyExcluded": "Проверки исключены политикой",

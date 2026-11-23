@@ -1,8 +1,7 @@
 import type { FlowVerificationState } from "@/lib/queries/readiness";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import clsx from "clsx";
-import Link from "next/link";
 
 import { READINESS_BADGE } from "@/components/readiness-badge";
 
@@ -16,7 +15,7 @@ interface ReadinessSummaryReason {
   id: string;
   explanation: string;
   nextAction: string;
-  evidence?: { href: string; label: string };
+  evidence?: ReactNode;
 }
 
 export interface ReadinessSummaryProps {
@@ -56,13 +55,21 @@ export function ReadinessSummary({
 
   if (reasons.length === 0)
     return (
-      <div className={containerClass} data-testid="flow-verification">
+      <div
+        tabIndex={-1}
+        className={containerClass}
+        data-testid="flow-verification"
+      >
         {label}
       </div>
     );
 
   return (
-    <details className={containerClass} data-testid="flow-verification">
+    <details
+      tabIndex={-1}
+      className={containerClass}
+      data-testid="flow-verification"
+    >
       <summary className="cursor-pointer">{label}</summary>
       <div className="mt-4">
         <h3 className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-mute">
@@ -72,19 +79,14 @@ export function ReadinessSummary({
           {reasons.map((reason) => (
             <li
               key={reason.id}
+              tabIndex={-1}
+              data-check-row={reason.id}
               className="flex gap-2 text-[13px] leading-[1.4] text-body before:flex-none before:text-mute before:content-['•']"
             >
               <div className="min-w-0">
                 <p className="break-words">{reason.explanation}</p>
                 <p className="text-xs text-mute">{reason.nextAction}</p>
-                {reason.evidence ? (
-                  <Link
-                    className="text-xs underline"
-                    href={reason.evidence.href}
-                  >
-                    {reason.evidence.label}
-                  </Link>
-                ) : null}
+                {reason.evidence}
               </div>
             </li>
           ))}

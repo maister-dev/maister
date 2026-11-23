@@ -43,6 +43,7 @@ export interface WorkbenchLifecycleActionsProps {
   runId: string;
   runKind: RunKind;
   actions: WorkbenchLifecycleActionId[];
+  stopLabel?: string;
   className?: string;
   variant?: "compact" | "detail" | "menu";
   compactHiddenGitActions?: readonly WorkbenchLifecycleActionId[];
@@ -501,6 +502,7 @@ export function WorkbenchLifecycleActions({
   runId,
   runKind,
   actions,
+  stopLabel,
   className,
   variant = "compact",
   compactHiddenGitActions,
@@ -732,7 +734,8 @@ export function WorkbenchLifecycleActions({
         </button>
       ) : null}
       {displayActions.map((action) => {
-        const label = t(`action.${action}`);
+        const label =
+          action === "stop" && stopLabel ? stopLabel : t(`action.${action}`);
 
         return (
           <button

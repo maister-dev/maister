@@ -34,6 +34,8 @@ export interface RunShellProps {
   projectLabel?: string | null;
   taskPrompt?: string | null;
   status: string;
+  policyBadge?: ReactNode;
+  stopControl?: ReactNode;
   branch?: string | null;
   targetBranch?: string | null;
   prState?: RunHeaderProps["prState"];
@@ -78,6 +80,8 @@ export function RunShell({
   projectLabel,
   taskPrompt,
   status,
+  policyBadge,
+  stopControl,
   branch,
   targetBranch,
   prState,
@@ -140,6 +144,8 @@ export function RunShell({
     >
       <RunHeader
         agentHistory={agentHistory}
+        policyBadge={policyBadge}
+        stopControl={stopControl}
         branch={branch}
         budgetStatus={budgetStatus}
         canReopen={canReopen}

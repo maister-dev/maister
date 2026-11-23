@@ -411,6 +411,7 @@ export function FlowRunCenter({
   labels,
   locale,
   graphView,
+  checksLink,
   interruptControl,
   restartTarget,
 }: {
@@ -418,6 +419,7 @@ export function FlowRunCenter({
   labels: FlowRunCenterLabels;
   locale: string;
   graphView?: ReactNode;
+  checksLink?: ReactNode;
   interruptControl?: ReactNode;
   restartTarget?: {
     id: string;
@@ -453,7 +455,8 @@ export function FlowRunCenter({
         <h2 className="m-0 font-sans text-[18px] font-bold tracking-[-0.01em] text-ink">
           {labels.title}
         </h2>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {checksLink}
           <Link
             className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
             data-testid="flow-run-fullscreen"

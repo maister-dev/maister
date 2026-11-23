@@ -156,6 +156,7 @@ export function RunResultsAndChecksView({
             <section
               ref={detail}
               className="grid gap-2 rounded-md border border-line p-3"
+              data-result-id={selected.id}
               data-testid="selected-result"
               tabIndex={-1}
             >

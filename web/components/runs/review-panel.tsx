@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReadinessDTO } from "@/lib/queries/readiness";
-import type { Key, ReactElement } from "react";
+import type { Key, ReactElement, ReactNode } from "react";
 
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 import { Button, Input, ListBox, Select } from "@heroui/react";
@@ -103,6 +103,7 @@ export interface ReviewPanelProps {
   promotionMode: PromotionMode;
   deliveryPolicy: PromotionDeliveryPolicy;
   reviewedTargetCommit: string | null;
+  checksLink?: ReactNode;
   readiness: ReadinessDTO | null;
   diff: ReviewPanelDiff;
   labels: ReviewPanelLabels;
@@ -198,6 +199,7 @@ export function ReviewPanel({
   promotionMode,
   deliveryPolicy,
   reviewedTargetCommit,
+  checksLink,
   readiness,
   diff,
   labels,
@@ -519,6 +521,7 @@ export function ReviewPanel({
           >
             {readinessReady ? labels.readinessReady : labels.readinessBlocked}
           </span>
+          {checksLink}
           {!readinessReady && readiness.reasons.length > 0 ? (
             <ul className="mt-2 flex list-none flex-col gap-1 p-0 font-mono text-[10.5px] text-mute">
               {readiness.reasons.map((reason) => (

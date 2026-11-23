@@ -1392,7 +1392,10 @@ const M27_MANIFEST = {
 // project_members row proves the readRepoFiles member-gate (viewer → 403).
 
 const M22_SLUG = "e2e-m22";
-const M22_BRANCH = "maister/e2e-m22-workbench";
+const M22_BRANCH =
+  "maister/e2e-m22-workbench/" +
+  "extended-branch-description-".repeat(6) +
+  "review";
 const M22_CURRENT_NODE = "implement";
 const M22_READER_EMAIL = "e2e-m22-reader@maister.local";
 const M22_VIEWER_EMAIL = "e2e-m22-viewer@maister.local";
@@ -6066,8 +6069,8 @@ async function seedM22Fixture(
     [ids.task, ids.project, "E2E workbench", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, 'Running', $5, 'v0.0.1', now())`,
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at, execution_policy)
+     VALUES ($1, $2, $3, $4, 'Running', $5, 'v0.0.1', now(), '{"preset":"unattended"}')`,
     [ids.run, ids.task, ids.project, ids.flow, M22_CURRENT_NODE],
   );
   await seedDefaultRunSession(pool, {
