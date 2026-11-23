@@ -55,7 +55,7 @@ export async function createHitlRequest(
 ): Promise<void> {
   await assertHitlBudgetAdmission(tx, values.runId);
   await tx.insert(hitlRequests).values(values);
-  await emitNeedsInput(tx, values, options);
+  await emitHitlDecisionOpened(tx, values, options);
 }
 
 /**
@@ -79,7 +79,7 @@ export async function createHitlRequestIfAbsent<
     .onConflictDoNothing()
     .returning(returning)) as Array<Record<string, unknown>>;
 
-  if (inserted) await emitNeedsInput(tx, values, options);
+  if (inserted) await emitHitlDecisionOpened(tx, values, options);
 
   return inserted;
 }
@@ -108,10 +108,10 @@ async function assertHitlBudgetAdmission(tx: Db, runId: string): Promise<void> {
     );
 }
 
-async function emitNeedsInput(
+export async function emitHitlDecisionOpened(
   tx: Db,
   values: HitlInsertValues,
-  options: CreateHitlRequestOptions,
+  options: CreateHitlRequestOptions = {},
 ): Promise<void> {
   if (options.silent === true) return;
 

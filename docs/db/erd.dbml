@@ -2163,6 +2163,11 @@ table hitl_requests {
   prompt text [not null]
   task_id text
   specialist_assignment_id text
+  flow_node_attempt_id text
+  flow_request_key text
+  flow_answer_accepted_at "timestamp with time zone"
+  flow_answer_user_id text
+  flow_reconciled_at "timestamp with time zone"
   specialist_input_revision integer
   specialist_answer_input_revision integer
   specialist_answer jsonb
@@ -2187,6 +2192,9 @@ table hitl_requests {
 
   indexes {
     run_id [name: 'hitl_requests_run_idx']
+
+    (flow_node_attempt_id, schema) [name: 'hitl_flow_question_turn_uq', unique]
+
 
 
 
@@ -5866,9 +5874,13 @@ ref hitl_requests_task_id_tasks_id_fk: hitl_requests.task_id > tasks.id [delete:
 
 ref hitl_requests_specialist_assignment_id_specialist_assignments_id_fk: hitl_requests.specialist_assignment_id > specialist_assignments.id [delete: restrict, update: no action]
 
+ref hitl_requests_flow_answer_user_id_users_id_fk: hitl_requests.flow_answer_user_id > users.id [delete: restrict, update: no action]
+
 ref hitl_requests_parent_hitl_request_id_hitl_requests_id_fk: hitl_requests.parent_hitl_request_id > hitl_requests.id [delete: cascade, update: no action]
 
 ref hitl_requests_source_artifact_id_artifact_instances_id_fk: hitl_requests.source_artifact_id > artifact_instances.id [delete: cascade, update: no action]
+
+ref hitl_flow_question_owner_fk: hitl_requests.(run_id, flow_node_attempt_id) > node_attempts.(run_id, id) [delete: cascade, update: no action]
 
 ref hitl_specialist_input_fk: hitl_requests.(specialist_assignment_id, specialist_input_revision) > specialist_input_revisions.(assignment_id, revision) [delete: restrict, update: no action]
 

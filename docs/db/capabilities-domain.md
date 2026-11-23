@@ -264,6 +264,6 @@ consolidated ERD; see [`erd.md`](erd.md) for the entity block.
 
 A registered standalone import has a [project dependency declaration](projects-domain.md) before its first materialized capability revision. The capability row owns trust and setup evidence for effective content. See [dependency installation](../system-analytics/project-dependency-installation.md).
 
-## Package and agent delivery (Designed)
+## Package and agent delivery
 
-Release defaults and sparse overrides belong to the stable attachment and logical MCP reference. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)
+Release defaults and sparse overrides belong to the stable attachment and logical MCP reference. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)

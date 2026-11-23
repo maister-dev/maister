@@ -19,6 +19,7 @@ import {
 } from "drizzle-orm";
 import pino from "pino";
 
+import { currentFlowQuestionResumeEligible } from "@/lib/execution-host/flow-question-source";
 import { taskLaunchIntents } from "@/lib/db/schema";
 import { claimTaskLaunchIntent } from "@/lib/tasks/launch-dispatch-claim";
 import { isTaskLaunchContention } from "@/lib/tasks/launch-contention";
@@ -1101,6 +1102,7 @@ export async function promoteNextPending(
         and(
           eq(runs.status, "NeedsInputIdle"),
           isNotNull(runs.resumeRequestedAt),
+          currentFlowQuestionResumeEligible(),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
           sql`(${tasks.id} IS NULL OR ${tasks.queuePaused} = false)`,
           queuedRunHasAvailableSlots(),

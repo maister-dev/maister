@@ -51,7 +51,6 @@ import { loadCompanyFlowSessionContext } from "../company-flow-session-context";
 import { prepareCompanyFlowWorkspace } from "../company-flow-workspace";
 import { resolveFlowBoundAgent } from "../flow-binding";
 import { resolveCompanyFlowNodeEnforcement } from "../company-flow-enforcement";
-
 import { companyAgentWorkdirPath } from "../workspace-paths";
 import { assertCompanyRunReadAccess } from "../company-run-read-access";
 import {
@@ -895,6 +894,7 @@ async function seedRetainedStandalone(): Promise<void> {
     retainedRunId,
   ]);
   const {
+    projectAgentProfile: _newProjectAgentProfile,
     companyCancellationIntent: _newCancellationColumn,
     agentMemoryHashFormat: _newMemoryHashFormat,
     flowPublicationGrant: _newPublicationColumn,

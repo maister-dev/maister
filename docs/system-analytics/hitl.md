@@ -814,7 +814,7 @@ fields:
     default: false
 ```
 
-### Ordinary Flow attempt questions (Designed)
+### Ordinary Flow attempt questions (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -830,12 +830,16 @@ stateDiagram-v2
   Closed --> [*]
 ```
 
-Lock Run, attempt and question in that order. Persist the continuation command with the claim. A competing different answer conflicts. Reconcile an unknown outcome through its command receipt before retry. Only the affected attempt releases its credential and slot. Keep the aggregate Run running while a sibling can progress. Re-admit a resumable attempt through the normal capacity check. Delivery alone cannot complete the graph node.
+The node’s credential identifies its project, Run, attempt, assignment and prompt ordinal. The server captures the accepted prompt command and incarnation and commits the original checkpoint command before contacting its supervisor. Successful checkpoint evidence and the closed incarnation open one human assignment and revoke the issuing credential. Run detail and Inbox read the same question. The Run keeps its slot while siblings can work. A rejected checkpoint leaves the original prompt owner eligible to apply its real result. Replacing the attempt closes any unactivated question without creating human work.
+
+The response transaction locks the Run, attempt and question in order and verifies the human’s current project membership. It claims one answer and queues its original visit. An identical submission from the same responder replays. The scheduler reacquires capacity, verifies the prior host and approved checkpoint and restores the same ACP handle. Accepted successor prompt evidence marks delivery. A host restart or lost acknowledgement can be reconciled from the existing command. The node’s normal result advances the graph. A stop or replacement fences an undelivered answer.
 
 ## Expectations
 
-- **ASK-01:** (Designed) The current execution credential must determine the owner and allowed question origin on every ask.
-- **ASK-04:** (Designed) An accepted answer may resume only its original recoverable attempt after checking current authority and assignment.
+- **ASK-01:** (Implemented) The current execution credential must determine the owner and allowed question origin on every ask.
+The canonical Run stream records the separate accepted and delivered transitions under stable event IDs. A reconnect replays both in order. The browser refreshes the current authorized read model from these notifications. When a queued answer loses current authority, the recovery sweep selects the oldest still-authorized answer for another parked visit in the Run.
+
+- **ASK-04:** (Implemented) An accepted answer may resume only its original recoverable attempt after checking current authority and assignment.
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
 budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three

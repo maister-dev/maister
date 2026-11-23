@@ -148,6 +148,6 @@ erDiagram
 
 Source: `web/lib/db/schema.ts`.
 
-## Package and agent delivery (Designed)
+## Package and agent delivery
 
-The project human assignment and Run detail point to one durable Flow question. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)
+The project human assignment and Run detail point to one durable Flow question. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)

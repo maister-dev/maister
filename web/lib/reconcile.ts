@@ -1808,6 +1808,17 @@ export async function runReconcileSweep(
     );
   }
 
+  try {
+    const { recoverFlowNodeQuestions } =
+      await import("@/lib/services/flow-node-question");
+
+    await recoverFlowNodeQuestions(db as unknown as ExecutionDb, hosts);
+  } catch (error) {
+    log.warn(
+      { code: isMaisterError(error) ? error.code : "INTERNAL" },
+      "Flow node question recovery unavailable",
+    );
+  }
   await closeTerminalRunAssignments(db);
 
   // ADR-121 (T15): clear stale C2 admission claims first — independent of the run

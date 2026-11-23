@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { eq, and, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
+import { loadCurrentFlowNodeQuestionSession } from "@/lib/execution-host/flow-question-source";
 import { getDb } from "@/lib/db/client";
 import { continueResumeSessionCreate } from "@/lib/runs/resume-session-create";
 import { SessionCreatePending } from "@/lib/execution-host/owned-session-create";
@@ -352,6 +353,8 @@ export async function runResumedSession(
   let supervisorSessionId = opts.supervisorSessionId;
 
   if (
+    (supervisorSessionId === null &&
+      (await loadCurrentFlowNodeQuestionSession(db, runId))) ||
     (await hasFlowPermissionResume(db, runId)) ||
     (await hasDurableFlowSession(db, runId, supervisorSessionId))
   ) {
@@ -868,6 +871,8 @@ export function scheduleResumedSessionDrive(
         const db = opts.db ?? getDb();
 
         if (
+          (opts.supervisorSessionId === null &&
+            (await loadCurrentFlowNodeQuestionSession(db, opts.runId))) ||
           (await hasFlowPermissionResume(db, opts.runId)) ||
           (await hasDurableFlowSession(
             db,

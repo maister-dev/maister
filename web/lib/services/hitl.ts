@@ -30,8 +30,6 @@ import pino from "pino";
 import { answerAssignmentQuestion } from "./assignment-question-response";
 
 import { decodeAssignmentQuestionSubject } from "@/lib/specialist-assignments/question-authority";
-import { parseScheduledRequestSnapshot } from "@/lib/agents/scheduled-request";
-import { assertScheduledRequestMatches } from "@/lib/agents/scheduled-request-store";
 import { requireProjectAction } from "@/lib/authz";
 import {
   claimAssignment,
@@ -7038,6 +7036,7 @@ export async function respondToHitl(
     db: any;
     recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
     executionHosts?: ExecutionHosts;
+    wakeFlowQueue?: () => void;
     restartPrincipal?: InteractiveTaskLaunchPrincipal;
   },
 ): Promise<NextResponse> {
@@ -7150,6 +7149,45 @@ export async function respondToHitl(
   }
 
   if (hitlRow.kind === "agent_question") {
+    if (hitlRow.flowNodeAttemptId) {
+      if (actor.kind !== "user")
+        throw new MaisterError(
+          "UNAUTHORIZED",
+          "A Flow node question requires a human responder",
+        );
+      if (bodyKeys.length !== 1 || bodyKeys[0] !== "response")
+        throw new MaisterError("CONFIG", "Submit exactly the response field");
+      const { answerFlowNodeQuestion } = await import("./flow-node-answer");
+
+      try {
+        const result = await answerFlowNodeQuestion(
+          db,
+          runId,
+          hitlRequestId,
+          actor.userId,
+          body.response,
+          recordSuccessAudit,
+        );
+
+        if (result.status === 202 && runRow.status === "NeedsInputIdle")
+          deps.wakeFlowQueue?.();
+
+        return NextResponse.json(
+          { ...result.receipt, ok: true, runStatus: runRow.status },
+          { status: result.status },
+        );
+      } catch (error) {
+        if (
+          isMaisterError(error) &&
+          error.details?.reason === "node_question_closed"
+        )
+          return NextResponse.json(
+            { code: error.code, message: error.message },
+            { status: 410 },
+          );
+        throw error;
+      }
+    }
     if (typeof hitlRow.specialistAssignmentId === "string") {
       if (actor.kind !== "user")
         throw new MaisterError(

@@ -7,7 +7,7 @@ info:
     for the session user's personal librarian conversation, delivered by
     `GET /api/librarian/stream`.
 
-    (Designed) A private question appends a transcript card. Use the existing librarian.message cursor for its creation and answer, and librarian.turn for continuation. Reconnect refetches the current authorized card and turn.
+    A private question appends a transcript card. Use the existing librarian.message cursor for its creation and answer, and librarian.turn for continuation. Reconnect refetches the current authorized card and turn.
 
     One `EventSource` per signed-in reader, addressed by the **session user**:
     a user has exactly one conversation (`librarian_conversations_user_uq`),

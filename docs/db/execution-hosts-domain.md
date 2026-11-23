@@ -370,6 +370,6 @@ head observation against the exact wait workspace binding.
 
 See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).
 
-## Package and agent delivery (Designed)
+## Package and agent delivery
 
-The current assignment and a verified host receipt identify each preparation effect. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)
+The current assignment and a verified host receipt identify each preparation effect. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)

@@ -190,7 +190,14 @@ export function buildE2ePlaywrightEnvironment(
 function worktreeLaneForE2eArguments(
   arguments_: readonly string[],
 ): TestWorktreeLane {
-  return arguments_.includes("playwright.live.config.ts") ? "e2e-live" : "e2e";
+  const live = arguments_.some((argument) =>
+    [
+      "playwright.live.config.ts",
+      "playwright.studio-catalog.config.ts",
+    ].includes(argument),
+  );
+
+  return live ? "e2e-live" : "e2e";
 }
 
 type E2eInvocation = {

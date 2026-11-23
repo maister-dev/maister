@@ -7,6 +7,7 @@ import pino from "pino";
 import { scheduleResumedSessionDrive } from "./resume-driver";
 import { rollbackResumedRun } from "./state-transitions";
 
+import { loadCurrentFlowNodeQuestionSession } from "@/lib/execution-host/flow-question-source";
 import { hasFlowPermissionResume } from "@/lib/flows/graph/permission-resume";
 import { getDb } from "@/lib/db/client";
 import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
@@ -60,6 +61,7 @@ type RecoveryCandidate = {
   acpSessionId: string;
   stepId: string;
   hitlRequestId: string;
+  flowNodeQuestion: boolean;
 };
 
 async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
@@ -104,12 +106,18 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
     const hitlRows: Array<{
       id: string;
       stepId: string;
+      flowNodeAttemptId: string | null;
     }> = await db
-      .select({ id: hitlRequests.id, stepId: hitlRequests.stepId })
+      .select({
+        id: hitlRequests.id,
+        stepId: hitlRequests.stepId,
+        flowNodeAttemptId: hitlRequests.flowNodeAttemptId,
+      })
       .from(hitlRequests)
       .where(
         and(
           eq(hitlRequests.runId, row.id),
+          sql`(${hitlRequests.flowNodeAttemptId} IS NULL OR ${hitlRequests.stepId}=${row.currentStepId})`,
           isNotNull(hitlRequests.response),
           isNull(hitlRequests.respondedAt),
         ),
@@ -126,6 +134,7 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
       acpSessionId,
       stepId: hitl.stepId,
       hitlRequestId: hitl.id,
+      flowNodeQuestion: !!hitl.flowNodeAttemptId,
     });
   }
 
@@ -235,6 +244,26 @@ export async function runResumeRecoverySweep(
   let skipped = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
+    if (cand.flowNodeQuestion) {
+      const current = await loadCurrentFlowNodeQuestionSession(db, cand.runId);
+
+      if (!current?.acpSessionId) {
+        skipped++;
+
+        return;
+      }
+      scheduleDriver({
+        runId: cand.runId,
+        supervisorSessionId: null,
+        acpSessionId: current.acpSessionId,
+        stepId: cand.stepId,
+        db,
+        executionHosts: hosts,
+      });
+      rescheduled++;
+
+      return;
+    }
     const sessionLoad = await loadSessions(cand.runId);
 
     if (!sessionLoad.ok) {

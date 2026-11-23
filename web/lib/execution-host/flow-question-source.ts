@@ -10,6 +10,8 @@ import { nodePermissionSourceSchema } from "./flow-permission-source";
 
 import {
   hitlRequests,
+  nodeAttempts,
+  runs,
   runSessionIncarnations,
   runSessions,
 } from "@/lib/db/schema";
@@ -19,6 +21,11 @@ export type FlowQuestionSource = Readonly<{
   supervisorSessionId: string;
   flowQuestion: z.infer<typeof nodePermissionSourceSchema>;
 }>;
+
+/** The Run lock serializes transitions, while attempt numbers distinguish visits to the same graph node. */
+export function latestFlowQuestionAttempt() {
+  return sql`NOT EXISTS (SELECT 1 FROM node_attempts newer WHERE newer.run_id=${nodeAttempts.runId} AND newer.node_id=${nodeAttempts.nodeId} AND newer.attempt>${nodeAttempts.attempt})`;
+}
 
 /** Current appointment resolution also works while its exact source is parked; it grants no new prompt proof. */
 export async function selectCurrentFlowQuestionNode(
@@ -48,6 +55,7 @@ export async function selectCurrentFlowQuestionNode(
 export async function captureFlowQuestionSource(
   tx: Db,
   runId: string,
+  credentialAttemptId?: string,
 ): Promise<FlowQuestionSource> {
   const rows = (
     await tx.execute(sql`
@@ -55,7 +63,7 @@ export async function captureFlowQuestionSource(
       attempt.id AS node_attempt_id,attempt.action_prompt_ordinal,
       fence.id AS assignment_id,incarnation.id AS incarnation_id
     FROM runs execution
-    JOIN node_attempts attempt ON attempt.run_id=execution.id AND attempt.node_id=execution.current_step_id
+    JOIN node_attempts attempt ON attempt.run_id=execution.id AND ${credentialAttemptId === undefined ? sql`attempt.node_id=execution.current_step_id` : sql`attempt.id=${credentialAttemptId}`}
       AND attempt.status='Running' AND attempt.execution_assignment_id=execution.execution_assignment_id
     JOIN execution_assignments fence ON fence.id=execution.execution_assignment_id AND fence.run_id=execution.id AND fence.state='active'
     JOIN execution_commands command ON command.run_id=execution.id AND command.execution_assignment_id=fence.id
@@ -66,6 +74,7 @@ export async function captureFlowQuestionSource(
       AND incarnation.run_id=execution.id AND incarnation.execution_assignment_id=fence.id
       AND incarnation.execution_host_id=command.execution_host_id AND incarnation.assignment_epoch=fence.epoch
       AND incarnation.host_session_id=command.target_session_id AND incarnation.acp_session_id IS NOT NULL
+      ${credentialAttemptId === undefined ? sql`` : sql`AND incarnation.state='active'`}
     WHERE execution.id=${runId} AND execution.run_kind='flow' AND execution.status='Running'
       AND NOT EXISTS(SELECT 1 FROM node_attempts newer WHERE newer.run_id=execution.id AND newer.node_id=attempt.node_id AND newer.attempt>attempt.attempt)
     FOR UPDATE OF attempt
@@ -161,4 +170,86 @@ export async function loadFlowQuestionSession(
     );
 
   return rows[0];
+}
+
+/** The Run pointer selects a parked attempt; the recorded incarnation selects its exact logical session. */
+export async function loadCurrentFlowNodeQuestionSession(
+  db: Db,
+  runId: string,
+) {
+  const [row] = await db
+    .select({
+      id: runSessions.id,
+      executionAssignmentId: runSessionIncarnations.executionAssignmentId,
+      sessionName: runSessions.sessionName,
+      acpSessionId: runSessionIncarnations.acpSessionId,
+      hostSessionId: runSessionIncarnations.hostSessionId,
+      runnerSnapshot: runSessions.runnerSnapshot,
+      capabilityAgent: runSessions.capabilityAgent,
+      runnerId: runSessions.runnerId,
+      runnerResolutionTier: runSessions.runnerResolutionTier,
+    })
+    .from(runs)
+    .innerJoin(
+      nodeAttempts,
+      and(
+        eq(nodeAttempts.runId, runs.id),
+        eq(nodeAttempts.nodeId, runs.currentStepId),
+      ),
+    )
+    .innerJoin(
+      hitlRequests,
+      and(
+        eq(hitlRequests.flowNodeAttemptId, nodeAttempts.id),
+        sql`${hitlRequests.id}=${nodeAttempts.actionResume}->>'questionId'`,
+      ),
+    )
+    .innerJoin(
+      runSessionIncarnations,
+      sql`${runSessionIncarnations.id}=${nodeAttempts.actionResume}->>'sourceIncarnationId'`,
+    )
+    .innerJoin(
+      runSessions,
+      eq(runSessions.id, runSessionIncarnations.runSessionId),
+    )
+    .where(
+      and(
+        eq(runs.id, runId),
+        sql`${nodeAttempts.actionResume}->>'kind'='node_question'
+      AND ${nodeAttempts.status} IN ('Running','NeedsInput') AND ${hitlRequests.flowAnswerAcceptedAt} IS NOT NULL
+      AND ${hitlRequests.supersededAt} IS NULL AND ${runSessionIncarnations.runId}=${runs.id}
+      AND NOT EXISTS (SELECT 1 FROM node_attempts newer WHERE newer.run_id=${runs.id} AND newer.node_id=${nodeAttempts.nodeId} AND newer.attempt>${nodeAttempts.attempt})`,
+      ),
+    );
+
+  return row ?? null;
+}
+
+/** Current accepted answers for the correlated Run. Callers order them by first acceptance. */
+function eligibleFlowQuestionAnswers() {
+  return sql`SELECT q.step_id,q.flow_answer_accepted_at,q.id FROM hitl_requests q
+    JOIN node_attempts n ON n.id=q.flow_node_attempt_id AND n.run_id=q.run_id
+    JOIN users u ON u.id=q.flow_answer_user_id
+    WHERE q.run_id=${runs.id} AND q.activation_state='active' AND q.responded_at IS NULL AND q.superseded_at IS NULL
+      AND q.flow_answer_accepted_at IS NOT NULL AND n.action_resume->>'questionId'=q.id AND n.status='NeedsInput'
+      AND NOT EXISTS (SELECT 1 FROM node_attempts newer WHERE newer.run_id=n.run_id AND newer.node_id=n.node_id AND newer.attempt>n.attempt)
+      AND u.account_status='active' AND NOT u.must_change_password AND
+      (u.role='admin' OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=${runs.projectId} AND m.user_id=u.id AND m.role IN ('owner','admin','member')))`;
+}
+
+/** An obsolete or unauthorized node answer cannot occupy the first capacity-queue position. */
+export function currentFlowQuestionResumeEligible() {
+  return sql`(NOT EXISTS (SELECT 1 FROM hitl_requests q WHERE q.run_id=${runs.id} AND q.step_id=${runs.currentStepId}
+    AND q.flow_node_attempt_id IS NOT NULL AND q.activation_state='active' AND q.responded_at IS NULL AND q.superseded_at IS NULL)
+    OR EXISTS (${eligibleFlowQuestionAnswers()} AND q.step_id=${runs.currentStepId}))`;
+}
+
+/** A revoked responder or replaced visit must not prevent an already accepted sibling from resuming. */
+export async function recoverEligibleFlowQuestionHeads(db: Db): Promise<void> {
+  await db.execute(sql`WITH replacements AS (
+    SELECT runs.id,candidate.step_id FROM runs
+    CROSS JOIN LATERAL (${eligibleFlowQuestionAnswers()} ORDER BY q.flow_answer_accepted_at,q.id LIMIT 1) AS candidate
+    WHERE runs.status='NeedsInputIdle' AND runs.resume_requested_at IS NOT NULL AND NOT ${currentFlowQuestionResumeEligible()}
+    ORDER BY runs.resume_requested_at,runs.id LIMIT 30 FOR NO KEY UPDATE OF runs SKIP LOCKED
+  ) UPDATE runs SET current_step_id=replacements.step_id FROM replacements WHERE runs.id=replacements.id`);
 }

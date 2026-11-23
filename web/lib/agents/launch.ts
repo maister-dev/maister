@@ -4332,7 +4332,7 @@ export async function resolveAgentProfileMcpServers(args: {
 // not runnable in this deployment — the caller decides whether that is fatal.
 export function agentFacadeMcpServer(
   tokenSecret: string,
-  toolset: "project-run" | "company" | "vault" | undefined,
+  toolset: "project-run" | "company" | "vault" | "flow-node" | undefined,
 ): AgentMcpServer | null {
   const launch = resolveFacadeLaunch();
 
@@ -4350,7 +4350,7 @@ export function agentFacadeMcpServer(
 
 function agentFacadeDescriptor(
   tokenSecret: string,
-  toolset: "project-run" | "company" | "vault" | undefined,
+  toolset: "project-run" | "company" | "vault" | "flow-node" | undefined,
   webOrigin: string,
 ): AgentMcpServer {
   return {
@@ -4369,7 +4369,7 @@ export async function agentFacadeMcpServerForRun(
   db: ExecutionDb,
   runId: string,
   tokenSecret: string,
-  toolset: "project-run" | "company" | "vault" | undefined,
+  toolset: "project-run" | "company" | "vault" | "flow-node" | undefined,
 ): Promise<AgentMcpServer | null> {
   if (!configuredSelectedExecutionEndpoint())
     return agentFacadeMcpServer(tokenSecret, toolset);

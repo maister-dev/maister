@@ -84,6 +84,7 @@ export default defineConfig({
         // line it ran UNAUTHENTICATED in the default lane and contributed four
         // guaranteed failures to every full-suite run.
         /execution-ab-.*\.spec\.ts$/,
+        /(?:studio-catalog-delivery|flow-node-question)\.spec\.ts$/,
         /librarian-(acceptance|live)\.spec\.ts$/,
       ],
     },

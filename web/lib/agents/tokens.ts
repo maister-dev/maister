@@ -497,6 +497,30 @@ export async function issueNativeNodeRunToken(
   return issueNodeRunToken(args, AGENT_TOKEN_SCOPES);
 }
 
+export function flowQuestionTokenPrefix(
+  runId: string,
+  assignmentId: string,
+  ordinal: number,
+): string {
+  return `orchestrator-run:${runId}:question:${assignmentId}:${ordinal}:`;
+}
+export async function issueFlowQuestionNodeToken(
+  args: NodeRunTokenInput &
+    Readonly<{
+      nodeAttemptId: string;
+      agentId: string;
+      assignmentId: string;
+      promptOrdinal: number;
+      memoryScopes?: readonly ["agent_memory:read", "agent_memory:write"];
+    }>,
+): Promise<IssuedAgentToken> {
+  return issueNodeRunToken(
+    args,
+    ["hitl:request", ...(args.memoryScopes ?? [])],
+    `${flowQuestionTokenPrefix(args.runId, args.assignmentId, args.promptOrdinal)}${args.agentId}`,
+  );
+}
+
 export async function issueProjectVaultNodeToken(
   args: NodeRunTokenInput & Readonly<{ nodeAttemptId: string }>,
 ): Promise<IssuedAgentToken> {
@@ -527,6 +551,7 @@ async function appointedProjectCoordinatorScope(
 async function issueNodeRunToken(
   args: NodeRunTokenInput,
   scopes: readonly (typeof TOKEN_SCOPES)[number][],
+  name = `orchestrator-run:${args.runId}`,
 ): Promise<IssuedAgentToken> {
   const _db = args.db ?? getDb();
   const { secret, prefix, hash } = generateToken();
@@ -571,7 +596,7 @@ async function issueNodeRunToken(
       project_id: args.projectId,
       bound_run_id: args.runId,
       origin_kind: "orchestrator_run",
-      name: `orchestrator-run:${args.runId}`,
+      name,
       token_kind: "project",
       prefix,
       token_hash: hash,

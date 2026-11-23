@@ -345,6 +345,6 @@ the parent starts ordinary rework. A child response accepts exactly one
 top-level `optionId`; extra fields are rejected before the stored response can
 change.
 
-## Package and agent delivery (Designed)
+## Package and agent delivery
 
-An ordinary Flow question belongs to its exact Run, attempt, turn and epoch. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)
+An ordinary Flow question belongs to its exact Run, attempt, turn and epoch. [Migration sequence and constraints](../database-schema.md#studio-package-delivery-project-agent-profiles-and-human-questions)

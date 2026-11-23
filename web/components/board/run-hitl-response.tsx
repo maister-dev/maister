@@ -23,6 +23,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@heroui/react";
 import { ArrowPathIcon } from "@heroicons/react/24/outline";
 
+import { flowQuestionAgent } from "@/lib/hitl-response-contract";
 import {
   HitlDecisionControls,
   type NodeInterruptOptionMatrixView,
@@ -234,6 +235,7 @@ export function RunHitlResponse({
 
     return () => window.clearTimeout(timer);
   }, [busy]);
+  const nodeQuestionAgent = flowQuestionAgent(schema);
   const currentAnswer =
     localAnswer?.requestKey === requestKey ? localAnswer : null;
   const budgetClaimCanBeReplaced =
@@ -371,7 +373,8 @@ export function RunHitlResponse({
         });
       } else if (
         res.status === 202 &&
-        isPendingHitlDeliveryState(accepted?.state)
+        (isPendingHitlDeliveryState(accepted?.state) ||
+          (nodeQuestionAgent && accepted?.state === "accepted"))
       ) {
         setLocalAnswer({
           requestKey,
@@ -669,8 +672,9 @@ export function RunHitlResponse({
           ? t("submitting")
           : t("submit"),
     reviewCommentsPlaceholder: t("reviewCommentsPlaceholder"),
-    formInstructions:
-      kind === "agent_question"
+    formInstructions: nodeQuestionAgent
+      ? t("flowNodeQuestionInstructions", { agent: nodeQuestionAgent })
+      : kind === "agent_question"
         ? t("agentQuestionInstructions")
         : t("formInstructions"),
     formCustomPlaceholder: t("formCustomPlaceholder"),
@@ -871,6 +875,11 @@ export function RunHitlResponse({
   ) : null;
 
   if (isStored) {
+    const answerStatus = nodeQuestionAgent
+      ? "flowNodeAnswerAccepted"
+      : currentAnswer?.completed
+        ? "answerRecorded"
+        : "answerSaved";
     const savedOption =
       retryPayload && "optionId" in retryPayload
         ? options.find((option) => option.optionId === retryPayload.optionId)
@@ -884,7 +893,7 @@ export function RunHitlResponse({
     return (
       <>
         <span aria-live="polite" className="sr-only">
-          {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
+          {t(answerStatus)}
         </span>
         {operationStatus}
         <div
@@ -898,9 +907,7 @@ export function RunHitlResponse({
         >
           {refusal?.requestKey === requestKey &&
           isStoredAnswerDeliveryReason(refusal.reason) ? null : (
-            <p className="text-sm text-ink-2">
-              {t(currentAnswer?.completed ? "answerRecorded" : "answerSaved")}
-            </p>
+            <p className="text-sm text-ink-2">{t(answerStatus)}</p>
           )}
           {savedOption ? (
             <p className="font-semibold text-ink">
@@ -938,7 +945,11 @@ export function RunHitlResponse({
           ) : null}
           {specialized ? decisionControls : null}
           <div className="flex gap-2">
-            {canAct && validPayload && !reconciling && !sessionEnded ? (
+            {canAct &&
+            validPayload &&
+            !nodeQuestionAgent &&
+            !reconciling &&
+            !sessionEnded ? (
               <Button
                 ref={storedActionRef}
                 className="border-amber bg-amber font-mono text-xs font-semibold text-white"

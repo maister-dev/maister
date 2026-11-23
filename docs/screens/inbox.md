@@ -218,6 +218,10 @@ ACP resume. EN/RU labels cover asking-agent context, answer, stale/superseded,
 and activation-unavailable states.
 Answer validation follows the [agent-question contract](../system-analytics/hitl.md#agent-question--task-bound-clarification-implemented--adr-136).
 
+### Questions from an ordinary Flow node
+
+When an agent asks for input, the supervisor checkpoints the requesting attempt before its question becomes actionable. Inbox and Run detail show the same human assignment, with the originating task, Run, agent and node. Another active node can continue independently. The first eligible answer claims the assignment. An identical retry by the same responder returns the recorded state. A competing answer receives a conflict. The Run stream distinguishes the accepted answer from its delivery to the resumed attempt.
+
 ## Data & APIs
 
 - The shared [status bar](chrome/status-bar.md) subscribes to attention updates,

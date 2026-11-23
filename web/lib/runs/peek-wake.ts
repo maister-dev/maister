@@ -28,6 +28,7 @@ const hintSchema = z
       "run_messages",
       "agent_continuation_episodes",
       "run_waits",
+      "hitl_requests",
       "run_autonomous_decisions",
       "run_sync_attempts",
     ]),
@@ -48,6 +49,17 @@ export async function notifyContinuationAttentionChanged(
 ): Promise<void> {
   await tx.execute(sql`SELECT pg_notify('maister_run_peek', jsonb_build_object(
     'source', 'agent_continuation_episodes', 'topic', 'summary', 'runId', ${runId}::text,
+    'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
+  )::text)`);
+}
+
+/** A human wait can open or change while another node keeps the same Run status and pointer. */
+export async function notifyNodeQuestionChanged(
+  tx: Pick<Db, "execute">,
+  runId: string,
+): Promise<void> {
+  await tx.execute(sql`SELECT pg_notify('maister_run_peek', jsonb_build_object(
+    'source', 'hitl_requests', 'topic', 'summary', 'runId', ${runId}::text,
     'parentRunId', NULL, 'previousParentRunId', NULL, 'rootRunId', NULL
   )::text)`);
 }

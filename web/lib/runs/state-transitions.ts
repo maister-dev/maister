@@ -48,6 +48,7 @@ import { EXECUTION_HOST_PERMANENTLY_LOST } from "@/lib/execution-host/types";
 import { closeConditionWaitsForRun } from "@/lib/waits/close";
 import { gcAgeDays } from "@/lib/instance-config";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { authorizeFlowNodeAnswerResume } from "@/lib/services/flow-node-answer";
 import { authorizeAssignmentQuestionNodeResume } from "@/lib/specialist-assignments/flow-question";
 import { assignmentBudgetAllowsDispatchSql } from "@/lib/specialist-assignments/delegated-budget";
 import {
@@ -375,6 +376,7 @@ export async function markResumed(
           await authorizeNodePermissionResume(tx, assignment);
           await authorizeNodeInterruptResume(tx, assignment);
           await authorizeAssignmentQuestionNodeResume(tx, assignment);
+          await authorizeFlowNodeAnswerResume(tx, assignment);
         }
       }
       await opts.recordSuccessAudit?.(tx);

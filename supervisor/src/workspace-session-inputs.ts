@@ -26,13 +26,16 @@ function resolveNativeFacade(server: McpServerInput): McpServerInput {
   const declaredOrigin = trustedWebOrigin(server.env?.MAISTER_API_BASE_URL);
   const token = server.env?.MAISTER_PROJECT_TOKEN;
   const toolset = server.env?.MAISTER_MCP_TOOLSET;
+  const askHumanOrigin = server.env?.MAISTER_ASK_HUMAN_ORIGIN;
   if (
     server.transport !== "stdio" ||
     !webOrigin ||
     declaredOrigin !== webOrigin ||
     !token ||
     !/^mai_[A-Za-z0-9_-]{43}$/.test(token) ||
-    (toolset && !["project-run", "company", "vault"].includes(toolset))
+    (toolset && !["project-run", "company", "vault", "flow-node"].includes(toolset)) ||
+    (askHumanOrigin !== undefined &&
+      (askHumanOrigin !== "flow-node" || (toolset !== "flow-node" && toolset !== "vault")))
   )
     throw new SupervisorError(
       "PRECONDITION",
@@ -60,6 +63,7 @@ function resolveNativeFacade(server: McpServerInput): McpServerInput {
       MAISTER_API_BASE_URL: webOrigin,
       MAISTER_PROJECT_TOKEN: token,
       ...(toolset ? { MAISTER_MCP_TOOLSET: toolset } : {}),
+      ...(askHumanOrigin ? { MAISTER_ASK_HUMAN_ORIGIN: askHumanOrigin } : {}),
     },
   };
 }

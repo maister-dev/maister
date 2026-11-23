@@ -851,6 +851,7 @@ export async function recoverPendingAgentQuestions(args: {
     .where(
       and(
         eq(hitlRequests.kind, "agent_question"),
+        isNull(hitlRequests.flowNodeAttemptId),
         eq(hitlRequests.activationState, "pending_termination"),
         isNull(hitlRequests.respondedAt),
         isNull(hitlRequests.supersededAt),

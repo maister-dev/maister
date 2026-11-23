@@ -57,7 +57,11 @@ import {
   readableKnowledgeRunIds,
   assertRunsKnowledgeDisclosure,
 } from "@/lib/brain/knowledge-run-disclosure";
-import { isInboxVisibleHitlRow, mapRowsToHitlItems } from "@/lib/queries/hitl";
+import {
+  isInboxVisibleHitlRow,
+  mapRowsToHitlItems,
+  visibleFlowNodeQuestion,
+} from "@/lib/queries/hitl";
 import {
   resolveNodeInterruptMatrices,
   resolveStages,
@@ -1420,6 +1424,7 @@ export async function getCrossProjectHitlInbox(
           companyScope,
         ),
         isNull(hitlRequests.respondedAt),
+        visibleFlowNodeQuestion(),
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
           and(

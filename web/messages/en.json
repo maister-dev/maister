@@ -3062,6 +3062,8 @@
     "hitlResponseInProgressHint": "MAIster is saving the answer and preparing the next Flow step. Actions are locked to prevent a duplicate response.",
     "errorInvalidJson": "Response must be valid JSON.",
     "formInstructions": "Complete each field. For a closed list, choose one of its options.",
+    "flowNodeAnswerAccepted": "Answer accepted. The agent will receive it when this node resumes.",
+    "flowNodeQuestionInstructions": "{agent} is waiting at this Flow node. Your answer will continue the same session.",
     "agentQuestionInstructions": "Answer this clarification for the requesting agent. Your response will start its follow-up work; the original run stays complete.",
     "answerClarification": "Answer clarification",
     "answeringClarification": "Saving clarification…",

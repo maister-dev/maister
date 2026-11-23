@@ -245,6 +245,11 @@ export interface BoundClient {
     sessionId: HostSessionId | string,
   ): Promise<{ cancelled: boolean }>;
   checkpoint(sessionId: HostSessionId | string): Promise<CheckpointResult>;
+  prepareQuestionCheckpoint(
+    tx: Db,
+    sessionId: string,
+    commandId: string | null,
+  ): Promise<{ commandId: string; deliver: () => Promise<void> }>;
   deleteSession(
     sessionId: HostSessionId | string,
     options?: { assertCommit: (tx: Db) => Promise<void> },
@@ -419,26 +424,35 @@ export function createExecutionHosts(
         for (const server of envelope.payload.mcpServers ?? []) {
           if (!server.distribution) continue;
           const prepare = hostTransport.prepareMcp;
+
           if (!prepare) {
-            throw new MaisterError("EXECUTOR_UNAVAILABLE", "Assigned supervisor lacks MCP preparation");
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Assigned supervisor lacks MCP preparation",
+            );
           }
           const payload = { ...server.distribution, refId: server.name };
           const receipt = await immediate(
             "mcp.prepare",
             payload,
-            req => prepare(req, timeoutFor("mcp.prepare")),
+            (req) => prepare(req, timeoutFor("mcp.prepare")),
             {
-              resultSummary: result => ({
+              resultSummary: (result) => ({
                 artifactDigest: result.artifactDigest,
                 hostId: result.hostId,
                 cacheHit: result.cacheHit,
               }),
             },
           );
+
           if (receipt.artifactDigest !== payload.artifactDigest) {
-            throw new MaisterError("ACP_PROTOCOL", "MCP preparation receipt references a different distribution");
+            throw new MaisterError(
+              "ACP_PROTOCOL",
+              "MCP preparation receipt references a different distribution",
+            );
           }
         }
+
         return hostTransport.createSession(envelope, options);
       },
     };
@@ -1005,6 +1019,77 @@ export function createExecutionHosts(
             ),
           { targetSessionId: sessionId },
         );
+      },
+      async prepareQuestionCheckpoint(tx, sessionId, commandId) {
+        const send = (issued: IssuedCommand<Record<string, never>>) => ({
+          commandId: issued.row.id,
+          deliver: async () => {
+            await deliver(
+              issued,
+              (env) =>
+                transport.checkpointSession(
+                  sessionId,
+                  env,
+                  timeoutFor("session.checkpoint"),
+                ),
+              { targetSessionId: sessionId },
+            );
+          },
+        });
+
+        if (commandId === null)
+          return send(await issue(tx, "session.checkpoint", {}, sessionId));
+        const [prior] = await tx
+          .select()
+          .from(executionCommands)
+          .where(eq(executionCommands.id, commandId))
+          .for("update");
+
+        if (
+          !prior ||
+          prior.kind !== "session.checkpoint" ||
+          prior.runId !== current.runId ||
+          prior.executionAssignmentId !== current.id ||
+          prior.assignmentEpoch !== current.epoch ||
+          prior.executionHostId !== host.id ||
+          prior.targetSessionId !== sessionId
+        )
+          throw new MaisterError(
+            "CONFLICT",
+            "Checkpoint command belongs to another session or assignment",
+          );
+        if (prior.state === "succeeded")
+          return { commandId, deliver: async () => {} };
+        if (prior.state !== "queued" && prior.state !== "delivering")
+          throw new MaisterError(
+            "CONFLICT",
+            "Flow question checkpoint command is terminal",
+            { details: { reason: "question_checkpoint_failed" } },
+          );
+        const row =
+          prior.state === "queued"
+            ? prior
+            : (await requeueDelivering(tx, commandId, { logger })).row;
+
+        if (!row)
+          throw new MaisterError(
+            "CONFLICT",
+            "Checkpoint command changed during recovery",
+          );
+
+        return send({
+          row,
+          envelope: buildEnvelope({
+            commandId,
+            kind: "session.checkpoint",
+            hostKey: host.hostKey,
+            assignmentId: current.id,
+            assignmentEpoch: current.epoch,
+            runId: current.runId,
+            issuedAt: prior.createdAt,
+            payload: {},
+          }),
+        });
       },
       checkpoint(sessionId) {
         return immediate<Record<string, never>, CheckpointResult>(

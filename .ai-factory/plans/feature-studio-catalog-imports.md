@@ -279,17 +279,19 @@ IT-ASK-02 and the populated migration and recovery suites passed 21 PostgreSQL c
 
 ### Phase 6 — Ordinary Flow node questions and Inbox
 
-- [ ] **T21. Issue the least-privileged node tool and park its attempt.**
+IT-ASK-03/04 exercised parallel waits, reverse-order answers, lost acknowledgements, revoked authority and the original ACP handle after restart. E2E-ASK-03 ran in Chromium against production Web and the supervisor. Run 567da745-5538-4818-b054-05188244988a, question 8473564f-80ac-45ea-82d9-14b217934993. Separate Inbox and Run forms raced: the winner received 202, the competing claim 409 and the delivered replay 200. Anonymous access returned 401. Both views updated, and the SSE reconnect recovered both durable transitions.
+
+- [x] **T21. Issue the least-privileged node tool and park its attempt.**
   - **After** T10, T18.
   - Generalize `web/lib/specialist-assignments/flow-question.ts`, `web/lib/services/{agent-question,assignment-question-response}.ts`, `web/lib/flows/{runner-agent,graph/action-resume}.ts`. Ordinary nodes need a scoped ask even without a vault configuration. Reuse the checkpoint/pause mechanism and bind the intent to exact execution, attempt, turn and epoch. Fence token revocation, termination observations and open-question lookup to that owner. Prevent stale/cross-node delivery and preserve concurrently live siblings.
   - **Acceptance** — confirmed recoverable park before exposure, recovery from lost acknowledgement, and unchanged specialist-assignment behavior.
   - **Diagnostics** — INFO checkpoint/activation state and owner, WARN stale epoch.
-- [ ] **T22. Route one question to Inbox and Run detail.**
+- [x] **T22. Route one question to Inbox and Run detail.**
   - **After** T21.
   - Extend `web/lib/assignments/service.ts`, HITL/Run read models, answer routes, Inbox and Run components. A real human assignment identifies the agent, task, Run and node, with eligible recipient/role and a link. Display the same question from both surfaces. Atomically claim the first eligible answer, return replay or conflict for a second, and distinguish answer accepted from delivery/resumed/failed.
   - **Acceptance** — recipient/role visibility, denial after access change, EN/RU, existing SSE refresh and one answer across tabs/surfaces.
   - **Diagnostics** — answer state and actor ID, never form contents.
-- [ ] **T23. Deliver the answer and resume the same work.**
+- [x] **T23. Deliver the answer and resume the same work.**
   - **After** T14, T21, T22.
   - Extend `web/lib/flows/graph/{action-resume,runner-graph}.ts`, `web/lib/execution-host/{session-binding,owned-session-create}.ts` and existing reconcilers. Reuse specialist answer-prompt/authorized-resume helpers. Target original profile and checkpoint and persist successful delivery/restart evidence. Advance the graph only on its normal node result. Preserve other in-flight work, cancel/reset races and slot accounting.
   - **Acceptance** — checkpoint plus host restart, double delivery, expired assignment, replaced attempt, stop while awaiting an answer and a lost acknowledgement after actual delivery.

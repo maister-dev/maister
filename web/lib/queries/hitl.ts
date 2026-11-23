@@ -61,6 +61,16 @@ const {
   workspaces,
 } = schema;
 
+/** Node questions become actionable only after their exact checkpoint, and close with the source Run. */
+export function visibleFlowNodeQuestion() {
+  return sql`(${hitlRequests.flowNodeAttemptId} IS NULL OR (
+    ${hitlRequests.activationState}='active' AND ${hitlRequests.supersededAt} IS NULL AND EXISTS (
+      SELECT 1 FROM runs qrun JOIN node_attempts n ON n.run_id=qrun.id AND n.id=${hitlRequests.flowNodeAttemptId}
+      WHERE qrun.id=${hitlRequests.runId} AND qrun.status IN ('Running','NeedsInput','NeedsInputIdle')
+        AND n.status IN ('Running','NeedsInput') AND n.action_resume->>'questionId'=${hitlRequests.id}
+        AND NOT EXISTS (SELECT 1 FROM node_attempts later WHERE later.run_id=n.run_id AND later.node_id=n.node_id AND later.attempt>n.attempt))))`;
+}
+
 function db(): NodePgDatabase<typeof schema> {
   return getDb();
 }
@@ -100,7 +110,11 @@ export async function getHitlRequestsForRun(
       })
       .from(hitlRequests)
       .where(
-        and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
+        and(
+          eq(hitlRequests.runId, runId),
+          isNull(hitlRequests.respondedAt),
+          visibleFlowNodeQuestion(),
+        ),
       )
       .orderBy(asc(hitlRequests.createdAt));
   }
@@ -115,6 +129,7 @@ export async function getHitlRequestsForRun(
       and(
         eq(hitlRequests.runId, runId),
         isNull(hitlRequests.respondedAt),
+        visibleFlowNodeQuestion(),
         or(
           and(
             eq(hitlRequests.kind, "agent_question"),
@@ -411,7 +426,7 @@ export function mapRowsToHitlItems(
 }
 
 /** Browser form data excludes the native question's server-owned execution witnesses. */
-function projectQuestionForm(kind: string, schema: unknown): unknown {
+export function projectQuestionForm(kind: string, schema: unknown): unknown {
   if (
     kind !== "agent_question" ||
     schema === null ||
@@ -419,6 +434,16 @@ function projectQuestionForm(kind: string, schema: unknown): unknown {
     Array.isArray(schema)
   )
     return schema;
+
+  if ("requestingAgent" in schema && "flowQuestion" in schema) {
+    const form = schema as Record<string, unknown>;
+
+    return {
+      schemaVersion: form.schemaVersion,
+      fields: form.fields,
+      requestingAgent: form.requestingAgent,
+    };
+  }
 
   return Object.fromEntries(
     Object.entries(schema).filter(
@@ -492,6 +517,7 @@ export async function getHitlInbox(
     .where(
       and(
         isNull(hitlRequests.respondedAt),
+        visibleFlowNodeQuestion(),
         eq(runs.projectId, projectId),
         or(
           inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),

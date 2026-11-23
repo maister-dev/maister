@@ -421,7 +421,8 @@ async function createOwnedSessionFromIntent(
             : [];
 
         if (
-          ((attempt?.resume?.kind === "permission" ||
+          ((attempt?.resume?.kind === "node_question" ||
+            attempt?.resume?.kind === "permission" ||
             attempt?.resume?.kind === "permission_continue") &&
             attempt.resume.assignmentId === authority.assignmentId) ||
           evaluation?.resume?.assignmentId === authority.assignmentId

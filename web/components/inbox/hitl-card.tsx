@@ -18,6 +18,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { flowQuestionAgent } from "@/lib/hitl-response-contract";
 import { Chip, HitlPanel } from "@/components/inbox/hitl-panel";
 import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
 import { WorkStageChip } from "@/components/work/work-stage-chip";
@@ -165,7 +166,7 @@ export function HitlCard({
             </Chip>
             {isAgentQuestion ? (
               <Chip className="border-amber-line bg-amber-soft text-amber">
-                {t("agentQuestion")}
+                {flowQuestionAgent(item.schema) ?? t("agentQuestion")}
               </Chip>
             ) : null}
             <span className="font-mono text-[10.5px] font-bold text-amber">
