@@ -49,7 +49,6 @@ function withinDirectory(root: string, candidate: string): boolean {
 
 export type AcceptedDirectorySymlink = Readonly<{
   relativePath: string;
-  relativeTarget: string;
 }>;
 
 async function readInternalDirectorySymlinks(
@@ -76,7 +75,6 @@ async function readInternalDirectorySymlinks(
       if (!withinDirectory(root, resolvedTarget)) throw changedCapability();
       links.push({
         relativePath: path.relative(root, entryPath),
-        relativeTarget: path.relative(root, resolvedTarget),
       });
     }
   }
@@ -106,18 +104,51 @@ export async function captureAcceptedDirectory(
   return readInternalDirectorySymlinks(capturedPath, capturedPath);
 }
 
-/** Only skills/agents are delivered into .claude; links into omitted package content would dangle after capture cleanup. */
-function assertCopiedBundleSymlinks(
+/** Validate each hop in the private capture before delivering a subset verbatim. */
+export async function assertCapturedProjectionSymlinks(
+  capture: string,
   links: ReadonlyArray<AcceptedDirectorySymlink>,
-): void {
-  for (const link of links) {
-    const sourceRoot = link.relativePath.split(path.sep)[0];
-    const targetRoot = link.relativeTarget.split(path.sep)[0];
+  projectedTrees: readonly string[],
+): Promise<void> {
+  const roots = projectedTrees.map((tree) => path.join(capture, tree));
 
-    if (
-      ["skills", "agents"].includes(sourceRoot) &&
-      !["skills", "agents"].includes(targetRoot)
-    )
+  if (roots.some((root) => root === capture || !withinDirectory(capture, root)))
+    throw changedCapability();
+  for (const link of links) {
+    const source = path.join(capture, link.relativePath);
+
+    if (!roots.some((root) => withinDirectory(root, source))) continue;
+    let current = capture;
+    const remaining = link.relativePath.split(path.sep);
+
+    // Resolving ".." before a symlink hop would change its physical meaning.
+    while (remaining.length) {
+      const segment = remaining.shift()!;
+
+      if (segment === "" || segment === ".") continue;
+      const next = path.join(current, segment);
+
+      if (
+        !withinDirectory(capture, next) ||
+        !roots.some(
+          (root) => withinDirectory(root, next) || withinDirectory(next, root),
+        )
+      ) {
+        log.warn(
+          { reason: "omitted_projection_component" },
+          "accepted package link crosses omitted content",
+        );
+        throw changedCapability();
+      }
+      if ((await lstat(next)).isSymbolicLink()) {
+        const target = await readlink(next);
+
+        remaining.unshift(...target.split(path.sep));
+      } else {
+        current = next;
+      }
+    }
+    if (!roots.some((root) => withinDirectory(root, current)))
       throw changedCapability();
   }
 }
@@ -189,12 +220,15 @@ export async function withTaskLaunchCapabilityBundles(
           capturedPath,
           source.accepted.contentDigest,
         );
+        await assertCapturedProjectionSymlinks(capturedPath, links, [
+          "skills",
+          "agents",
+        ]);
       } catch (cause) {
         if (cause instanceof MaisterError) throw cause;
         throw changedCapability(cause);
       }
 
-      assertCopiedBundleSymlinks(links);
       captures.push({
         installedPath: await assertManagedCapturePath(capturedPath),
       });

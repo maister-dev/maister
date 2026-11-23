@@ -34,6 +34,7 @@ import {
 import { scheduledRequestSnapshotSchema } from "@/lib/agents/scheduled-request";
 import { deriveEvaluationParticipationFromSource } from "@/lib/evaluations/membership";
 import { isSettledRunStatus } from "@/lib/runs/run-status-sets";
+import { findHostRestartRecovery } from "@/lib/runs/host-restart-recovery";
 import { MaisterError } from "@/lib/errors";
 
 const identifier = z.string().min(1).max(256);
@@ -237,6 +238,25 @@ export function tokenTaskLaunchRecoveryAuthority(
   };
 }
 
+export function hostRestartTaskLaunchRecoveryAuthority(
+  runId: string,
+  assignmentId: string,
+): TaskLaunchRecoveryAuthority {
+  return {
+    [recoveryAuthority]: true,
+    actor: { type: "system", id: null },
+    assert: async (db, projectId) => {
+      const witness = await findHostRestartRecovery(db, {
+        runId,
+        assignmentId,
+      });
+
+      if (witness?.projectId !== projectId)
+        throw launchRefusal("launch_recovery_conflict");
+    },
+  };
+}
+
 export type PreparedTaskLaunchRecovery =
   | Readonly<{ kind: "conflict" | "unresumable" }>
   | Readonly<{ kind: "prepared"; apply: () => Promise<void> }>;
@@ -246,6 +266,7 @@ export async function prepareTaskLaunchRecovery(
   db: Db,
   runId: string,
   authority: TaskLaunchRecoveryAuthority | undefined,
+  fromStatus: "Crashed" | "Failed" = "Crashed",
 ): Promise<PreparedTaskLaunchRecovery | null> {
   const [navigation] = await db
     .select({
@@ -291,7 +312,7 @@ export async function prepareTaskLaunchRecovery(
     .from(tasks)
     .where(eq(tasks.id, navigation.taskId))
     .for("update");
-  if (!run || run.status !== "Crashed") return null;
+  if (!run || run.status !== fromStatus) return null;
   if (
     !intent ||
     intent.runId !== run.id ||
@@ -346,7 +367,7 @@ export async function prepareTaskLaunchRecovery(
 
   if (
     intent.state !== "settled" ||
-    intent.terminalOutcome !== "Crashed" ||
+    intent.terminalOutcome !== fromStatus ||
     !intent.dispatchCommittedAt ||
     !witness ||
     witness.runId !== run.id ||

@@ -2929,6 +2929,28 @@ export const operationalRunAcknowledgements = pgTable(
   }),
 );
 
+export const flowNodeRestartCheckpoints = pgTable(
+  "flow_node_restart_checkpoints",
+  {
+    assignmentId: text("assignment_id")
+      .primaryKey()
+      .references((): AnyPgColumn => executionAssignments.id, {
+        onDelete: "cascade",
+      }),
+    attemptId: text("attempt_id")
+      .notNull()
+      .references((): AnyPgColumn => nodeAttempts.id),
+    checkpointSha: text("checkpoint_sha").notNull(),
+    previewToken: text("preview_token").notNull(),
+    rescueRef: text("rescue_ref"),
+  },
+  (t) => ({
+    byAttempt: index("flow_node_restart_checkpoints_attempt_idx").on(
+      t.attemptId,
+    ),
+  }),
+);
+
 // --- Execution hosts (ADR-166, migration 0130) ------------------------------
 // Postgres is the SSOT for hosts, assignments, and commands; the supervisor
 // keeps its own private state (identity, fences, handles, receipts) in a
@@ -13620,6 +13642,7 @@ export const agentMemoryProposals = pgTable(
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     reviewerId: text("reviewer_id"),
     decisionKey: text("decision_key"),
+    decisionReason: text("decision_reason"),
     appliedOperationId: text("applied_operation_id"),
   },
   (t) => ({
@@ -13638,6 +13661,14 @@ export const agentMemoryProposals = pgTable(
     queue: index("agent_memory_proposal_queue_idx")
       .on(t.vaultId, t.createdAt, t.id)
       .where(sql`${t.state}='pending'`),
+    decisionReasonShape: check(
+      "agent_memory_proposal_decision_reason_check",
+      sql`${t.decisionReason} IS NULL OR (
+        ${t.state} IN ('accepted','rejected')
+        AND char_length(${t.decisionReason}) BETWEEN 1 AND 2000
+        AND ${t.decisionReason} !~ '^[[:space:]]|[[:space:]]$'
+      )`,
+    ),
     shape: check(
       "agent_memory_proposal_shape_check",
       sql`

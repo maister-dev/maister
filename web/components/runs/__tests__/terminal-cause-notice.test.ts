@@ -47,6 +47,29 @@ function render(
 
 describe("TerminalCauseNotice", () => {
   it.each([en, ru])(
+    "shows unsupported ACP notifications in the run failure",
+    (messages) => {
+      const labels = labelsOf(messages);
+      const html = renderToStaticMarkup(
+        createElement(TerminalCauseNotice, {
+          status: "Failed",
+          cause: {
+            code: "ACP_PROTOCOL",
+            reason: "agent_session_create_failed",
+            source: "agent",
+            acpMethod: "fixture/unsupported_notification",
+            acpMessageKind: "notification",
+          },
+          labels,
+        }),
+      );
+
+      expect(html).toContain(labels.unsupportedAcpMessage.notification);
+      expect(html).toContain("<code>fixture/unsupported_notification</code>");
+    },
+  );
+
+  it.each([en, ru])(
     "explains session cleanup failure without claiming the runner is unavailable",
     (messages) => {
       const labels = labelsOf(messages);

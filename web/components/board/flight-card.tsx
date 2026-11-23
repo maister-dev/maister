@@ -4,6 +4,7 @@ import type {
   SpineSegment,
 } from "@/lib/queries/board";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
@@ -43,6 +44,7 @@ export interface FlightCardLabels {
   autoPromoted: (lane: string) => string;
   // ADR-140 PR-state chip labels (open / merged / closed / conflicts / reopen).
   prChip: PrStateChipLabels;
+  prLink: (number: number | null, state: FlightCardData["prState"]) => string;
   // ADR-170: the whole `workStage` namespace, so the label lookup happens
   // once here rather than as a switch at every render site.
   workStage: WorkStageLabels;
@@ -111,6 +113,13 @@ const AGENT_PILL: Record<NonNullable<FlightCardData["agent"]>, string> = {
 const BADGE =
   "rounded-full border px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em]";
 
+const DELIVERED_PR_GIT_ACTIONS: readonly WorkbenchLifecycleActionId[] = [
+  "snapshotCommit",
+  "discardChanges",
+  "exportBranch",
+  "openPr",
+];
+
 const ACTIVE_SEGMENT: Record<ActiveNodeState, string> = {
   running: "bg-accent-4 shadow-[0_0_0_0_var(--accent-4)]",
   needs: "bg-amber shadow-[0_0_0_0_var(--amber)]",
@@ -153,6 +162,8 @@ export function FlightCard({
   labels,
 }: FlightCardProps): ReactElement {
   const isDone = card.status === "done";
+  const hasDeliveredPr =
+    isDone && card.prUrl !== null && card.prState !== "closed";
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
   const isHumanWorking = card.status === "humanworking";
@@ -352,7 +363,9 @@ export function FlightCard({
             )}
             title={labels.readyToPromote}
           >
-            {card.prNumber !== null ? `PR #${card.prNumber}` : "↗"}
+            {card.prNumber !== null && !card.prUrl
+              ? `PR #${card.prNumber}`
+              : "↗"}
           </span>
         ) : null}
         {card.autoPromotedLane ? (
@@ -375,12 +388,28 @@ export function FlightCard({
           promotedKind={card.workStagePromotedKind}
           stage={card.workStage}
         />
-        <PrStateChip
-          labels={labels.prChip}
-          prHasConflicts={card.prHasConflicts}
-          prState={card.prState}
-          runId={canAct ? card.runId : undefined}
-        />
+        {card.prUrl ? (
+          <a
+            className={clsx(
+              BADGE,
+              "relative z-10 border-line bg-paper text-ink-2 hover:border-amber hover:text-amber focus-visible:outline-2 focus-visible:outline-offset-2",
+              card.prState === "merged" && "border-good bg-good-soft text-good",
+            )}
+            href={card.prUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {labels.prLink(card.prNumber, card.prState)}
+          </a>
+        ) : null}
+        {!card.prUrl || card.prHasConflicts ? (
+          <PrStateChip
+            labels={labels.prChip}
+            prHasConflicts={card.prHasConflicts}
+            prState={card.prState}
+            runId={canAct ? card.runId : undefined}
+          />
+        ) : null}
         {card.runCount > 0 ? (
           <span
             className={clsx(BADGE, "border-line bg-ivory text-ink-2")}
@@ -460,6 +489,9 @@ export function FlightCard({
         <div className="relative z-10">
           <WorkbenchLifecycleActions
             actions={card.lifecycleActions}
+            compactHiddenGitActions={
+              hasDeliveredPr ? DELIVERED_PR_GIT_ACTIONS : undefined
+            }
             runId={card.runId}
             runKind="flow"
           />

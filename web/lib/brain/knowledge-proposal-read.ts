@@ -38,7 +38,10 @@ import {
   knowledgeProposalContentSchema,
   knowledgeProposalListSchema,
 } from "./knowledge-write-types";
-import { knowledgeProposalReadPolicyCte } from "./knowledge-proposal-query";
+import {
+  knowledgeProposalReadPolicyCte,
+  knowledgeProposalReviewActions,
+} from "./knowledge-proposal-query";
 import {
   authorizeSourceRestrictions,
   authorizeKnowledgeRevisionRead,
@@ -74,13 +77,22 @@ export const knowledgeProposalViewSchema = z
     attribution: knowledgeActorSchema,
     acceptedRecordId: identity.nullable(),
     acceptedRecordRevision: knowledgeRevisionSchema.nullable(),
+    decision: z
+      .object({
+        by: identity.nullable(),
+        at: z.string().datetime().nullable(),
+        reason: postgresTextSchema.max(2000).nullable(),
+        reviewedVersion: identity.nullable(),
+      })
+      .strict()
+      .optional(),
     evidence: z.array(knowledgeRecordEvidenceSummarySchema).max(64),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
   .strict();
 export const knowledgeProposalSummarySchema = knowledgeProposalViewSchema
-  .omit({ content: true, evidence: true })
+  .omit({ content: true, evidence: true, decision: true })
   .extend({
     change: z.enum(["add", "correct"]),
     title: postgresTextSchema.min(1).max(256),
@@ -101,11 +113,25 @@ export type KnowledgeProposalPage = Readonly<{
   nextCursor: string | null;
 }>;
 
+/** Prove the inspection role using the credential already locked for the source-scoped read. */
+function proposalInspectionCredential(
+  principal: KnowledgePrincipal,
+): KnowledgePrincipal {
+  return principal.kind === "personal_read"
+    ? { kind: "token", tokenId: principal.tokenId }
+    : principal;
+}
+
 async function readProposal(
   tx: KnowledgeTransaction,
   principal: KnowledgePrincipal,
   proposalId: string,
-): Promise<{ proposal: KnowledgeProposalView; access: KnowledgeAccessWalk }> {
+  historyRead: boolean,
+): Promise<{
+  proposal: KnowledgeProposalView;
+  access: KnowledgeAccessWalk;
+  canReview: boolean;
+}> {
   const actor = await resolveKnowledgePrincipal(
     tx,
     principal,
@@ -115,21 +141,31 @@ async function readProposal(
     actor,
     principal,
     sql`p.id=${proposalId}`,
+    sql`${historyRead}`,
   );
-  const row = (
-    await tx.execute(
-      sql`${policy} SELECT p.*,permitted.inspection_action FROM brain_proposals p JOIN knowledge_readable_proposals permitted ON permitted.id=p.id FOR SHARE OF p`,
-    )
-  ).rows[0];
+  const [row] = (
+    await tx.execute(sql`${policy}
+    SELECT p.*,permitted.inspection_action,
+      cardinality(${knowledgeProposalReviewActions(actor, "permitted")}) > 0 AS can_review
+    FROM brain_proposals p JOIN knowledge_readable_proposals permitted ON permitted.id=p.id FOR SHARE OF p
+  `)
+  ).rows;
 
   if (!row) throw unavailableKnowledgeReference();
   const owner = knowledgeOwner(row);
   const action =
     row.inspection_action === "review"
       ? "knowledge:review"
-      : "knowledge:propose";
+      : row.inspection_action === "propose"
+        ? "knowledge:propose"
+        : "knowledge:read";
 
-  await authorizeKnowledge(tx, principal, owner, action);
+  await authorizeKnowledge(
+    tx,
+    proposalInspectionCredential(principal),
+    owner,
+    action,
+  );
   let access = await authorizeSourceRestrictions(tx, principal, [owner]);
 
   access = await authorizeSourceRestrictions(
@@ -237,6 +273,24 @@ async function readProposal(
     attribution: row.knowledge_attribution,
     acceptedRecordId: row.published_record_id,
     acceptedRecordRevision: row.published_record_revision,
+    ...(row.status !== "pending" && {
+      decision: (() => {
+        const resolution = z
+          .object({
+            actor: z.object({ id: identity }).optional(),
+            reason: postgresTextSchema.max(2000).optional(),
+          })
+          .safeParse(row.resolution);
+
+        return {
+          by: resolution.data?.actor?.id ?? null,
+          reason: resolution.data?.reason ?? null,
+          at: row.resolved_at ? knowledgeTimestamp(row.resolved_at) : null,
+          reviewedVersion:
+            Number(row.revision) > 1 ? String(Number(row.revision) - 1) : null,
+        };
+      })(),
+    }),
     evidence,
     createdAt: knowledgeTimestamp(row.created_at),
     updatedAt: knowledgeTimestamp(row.updated_at),
@@ -248,14 +302,15 @@ async function readProposal(
       "Retained proposal does not match its explicit read projection",
     );
 
-  return { proposal: value.data, access };
+  return { proposal: value.data, access, canReview: row.can_review === true };
 }
 
-export async function getKnowledgeProposal(
+export async function inspectKnowledgeProposal(
   db: KnowledgeDatabase,
   principal: KnowledgePrincipal,
   proposalId: string,
-): Promise<KnowledgeProposalView> {
+  options?: Readonly<{ historyRead: true }>,
+): Promise<{ proposal: KnowledgeProposalView; canReview: boolean }> {
   if (!identity.safeParse(proposalId).success)
     throw new MaisterError("CONFIG", "Invalid knowledge proposal identity");
   try {
@@ -263,7 +318,12 @@ export async function getKnowledgeProposal(
       await tx.execute(sql`SET LOCAL statement_timeout='10s'`);
       await tx.execute(sql`SET LOCAL lock_timeout='5s'`);
       const consumer = await lockKnowledgeReadConsumer(tx, principal);
-      const result = await readProposal(tx, principal, proposalId);
+      const result = await readProposal(
+        tx,
+        principal,
+        proposalId,
+        options?.historyRead ?? false,
+      );
 
       if (Buffer.byteLength(JSON.stringify(result.proposal), "utf8") > 524288)
         throw new MaisterError(
@@ -284,11 +344,27 @@ export async function getKnowledgeProposal(
         "knowledge proposal disclosed",
       );
 
-      return result.proposal;
+      return { proposal: result.proposal, canReview: result.canReview };
     });
   } catch (error) {
     throw redactQueryError(error);
   }
+}
+
+export async function getKnowledgeProposal(
+  db: KnowledgeDatabase,
+  principal: KnowledgePrincipal,
+  proposalId: string,
+  options?: Readonly<{ historyRead: true }>,
+): Promise<KnowledgeProposalView> {
+  const { proposal } = await inspectKnowledgeProposal(
+    db,
+    principal,
+    proposalId,
+    options,
+  );
+
+  return proposal;
 }
 
 /** A review page exposes bounded metadata; evidence inspection remains a separate exact-detail operation. */
@@ -361,7 +437,11 @@ export async function listKnowledgeProposals(
         "knowledge:read",
       );
 
-      await resolveKnowledgePrincipal(tx, principal, "knowledge:review");
+      await resolveKnowledgePrincipal(
+        tx,
+        proposalInspectionCredential(principal),
+        "knowledge:review",
+      );
       const scope = await knowledgeCursorScope(tx, principal, actor, {
         kind: "proposals",
         ...filters,

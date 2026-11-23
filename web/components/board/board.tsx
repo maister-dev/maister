@@ -1,5 +1,9 @@
 import type { BoardColumn } from "@/lib/board";
-import type { BoardData, BoardFlowIncompatibility } from "@/lib/queries/board";
+import type {
+  BoardData,
+  BoardFlowIncompatibility,
+  FlightCard as FlightCardData,
+} from "@/lib/queries/board";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
 import type { TaskQueueControlsLabels } from "@/components/board/task-queue-controls";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
@@ -77,6 +81,7 @@ export async function Board({
   const tLaunch = await getTranslations("launch");
   const tRun = await getTranslations("run");
   const tRunStatus = await getTranslations("run.runStatus");
+  const tGit = await getTranslations("workbenchGit");
   const tWorkStage = await getTranslations("workStage");
   const tReadiness = await getTranslations("readiness");
   const runStatusLabels = Object.fromEntries(
@@ -118,6 +123,11 @@ export async function Board({
     autoPromoted: (lane: string) => t("autoPromoted", { lane }),
     // ADR-140 PR-state chip labels — sourced from the shared `run` namespace.
     workStage: buildWorkStageLabels(tWorkStage),
+    prLink: (number: number | null, state: FlightCardData["prState"]) =>
+      tGit("prChip", {
+        number: number ?? "?",
+        state: tGit(`prState.${state ?? "unknown"}`),
+      }),
     prChip: {
       open: tRun("prOpen"),
       merged: tRun("prMerged"),

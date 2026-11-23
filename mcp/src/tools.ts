@@ -18,6 +18,7 @@ import {
   librarianVaultToolSpecs,
 } from "./librarian-vault-tools";
 import { isToolsetName, TOOLSETS } from "./toolsets";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../runtime/knowledge-tool-effects";
 import {
   isTaskLaunchTool,
   isLaunchAdmissionTool,
@@ -674,12 +675,13 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   memory_promote: {
     description:
-      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Review is required.",
+      "Submit an exact current vault note revision as evidence for a governed Brain or knowledge proposal. Returns a pending submission receipt and a link for inspecting its review state.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       required: ["path", "ifRevisionId", "ifHash", "requestKey", "target"],
       properties: {
+        title: { type: "string", minLength: 1, maxLength: 256 },
         path: {
           type: "string",
           minLength: 1,
@@ -2879,21 +2881,33 @@ function resolveRouting(
   }
 }
 
-// The tools a facade process exposes. An unnamed or unknown toolset exposes
-// every registered tool — the default for project and agent tokens.
+// The default preserves the existing surface. Personal tools require opt-in.
 export function toolNamesForToolset(
   toolset: string | undefined,
   scopes: readonly string[] = [],
 ): string[] {
-  if (!isToolsetName(toolset)) return Object.keys(TOOL_SPECS);
+  const names = Object.keys(TOOL_SPECS);
 
-  const allowed = new Set<string>(
+  if (!isToolsetName(toolset)) {
+    const personal = new Set<string>(PERSONAL_KNOWLEDGE_TOOLS);
+
+    return names.filter((name) => !personal.has(name));
+  }
+
+  const selection =
     toolset === "installation"
       ? installationToolNames(scopes)
-      : TOOLSETS[toolset],
-  );
+      : TOOLSETS[toolset];
 
-  return Object.keys(TOOL_SPECS).filter((name) => allowed.has(name));
+  if ("exclude" in selection) {
+    const excluded = new Set<string>(selection.exclude);
+
+    return names.filter((name) => !excluded.has(name));
+  }
+
+  const allowed = new Set<string>(selection);
+
+  return names.filter((name) => allowed.has(name));
 }
 
 export function toolSpecForToolset(

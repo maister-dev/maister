@@ -17,6 +17,7 @@ import { KnowledgeConfirmation } from "@/components/brain/knowledge-decision-con
 import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { getKnowledgeRecord } from "@/lib/brain/knowledge-records";
+import { listKnowledgeRevisions } from "@/lib/brain/knowledge-revisions";
 import { getKnowledgeConflictsPage } from "@/lib/brain/knowledge-conflicts";
 import { knowledgeRecordActions } from "@/lib/brain/knowledge-ui";
 import {
@@ -38,14 +39,18 @@ export default async function KnowledgeRecordPage({
   const { recordId } = await params;
   const query = knowledgePageParams(await searchParams);
 
-  requireKnowledgeQueryKeys(query, ["revision", "conflictCursor"]);
+  requireKnowledgeQueryKeys(query, [
+    "revision",
+    "conflictCursor",
+    "revisionCursor",
+  ]);
   const selector = knowledgeRecordSelector(recordId, query.get("revision"));
   const principal = { kind: "user" as const, userId: user.id };
   const db = getDb();
 
   const view = await knowledgeReferenceView(async () => {
     const record = await getKnowledgeRecord(db, principal, selector);
-    const [actions, conflicts] = await Promise.all([
+    const [actions, conflicts, history] = await Promise.all([
       knowledgeRecordActions(db, principal, record.owner, recordId),
       getKnowledgeConflictsPage(
         db,
@@ -53,13 +58,21 @@ export default async function KnowledgeRecordPage({
         { recordId, revision: record.revision },
         { limit: 20, cursor: query.get("conflictCursor") ?? undefined },
       ),
+      listKnowledgeRevisions(db, principal, recordId, {
+        limit: 20,
+        cursor: query.get("revisionCursor") ?? undefined,
+      }),
     ]);
 
-    return { record, actions, conflicts };
+    return { record, actions, conflicts, history };
   });
 
   if (view.state === "unavailable") return <KnowledgeUnavailable />;
-  const { record, actions, conflicts } = view.value;
+  const { record, actions, conflicts, history } = view.value;
+  const historyParams = new URLSearchParams(query);
+
+  if (history.nextCursor)
+    historyParams.set("revisionCursor", history.nextCursor);
   const conflictParams = new URLSearchParams(query);
 
   if (conflicts.nextCursor !== null)
@@ -76,6 +89,37 @@ export default async function KnowledgeRecordPage({
           </Link>
         ) : null}
       </KnowledgeHeader>
+      <details
+        className={`${knowledgePanelClass} mb-5`}
+        open={query.has("revisionCursor") || undefined}
+      >
+        <summary className="cursor-pointer font-semibold">
+          {t("recordRevisions")}
+        </summary>
+        <ul className="mt-3 space-y-1 text-sm">
+          {history.items.map((entry) => (
+            <li key={entry.revision}>
+              <Link
+                aria-current={
+                  entry.revision === record.revision ? "page" : undefined
+                }
+                className="underline"
+                href={entry.href}
+              >
+                r{entry.revision} · {entry.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+        {history.nextCursor ? (
+          <Link
+            className="mt-3 inline-block underline"
+            href={`?${historyParams}`}
+          >
+            {t("next")}
+          </Link>
+        ) : null}
+      </details>
       {query.has("revision") ? (
         <p className={`${knowledgePanelClass} mb-5 text-sm`}>
           {t("historical")}{" "}

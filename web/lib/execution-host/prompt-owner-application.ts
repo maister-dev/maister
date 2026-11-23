@@ -25,7 +25,10 @@ import {
   promptApplicationDiagnostic,
   promptApplicationFailureSnapshot,
 } from "./prompt-owner-errors";
-import { projectionTransaction } from "./events/projection-transaction";
+import {
+  isProjectionTransactionUnavailable,
+  projectionTransaction,
+} from "./events/projection-transaction";
 import { runEventWakeBus } from "./events/run-wake";
 import { commandSignals } from "./signals";
 import { TERMINAL_COMMAND_STATES } from "./types";
@@ -345,7 +348,10 @@ async function prepareWithLease(input: {
 }
 
 function serviceFailure(error: unknown): boolean {
-  if (error instanceof MaisterError && error.code === "EXECUTOR_UNAVAILABLE")
+  if (
+    isProjectionTransactionUnavailable(error) ||
+    (error instanceof MaisterError && error.code === "EXECUTOR_UNAVAILABLE")
+  )
     return true;
   let current: unknown = error;
 

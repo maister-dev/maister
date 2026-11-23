@@ -466,6 +466,35 @@ export async function listBrainSources(
   db: SourcesDb,
   projectId: string,
 ): Promise<BrainSourceDto[]> {
+  return readBrainSources(db, projectId, sql``, sql``);
+}
+
+export async function listBrainSourcesPage(
+  db: SourcesDb,
+  projectId: string,
+  query: string,
+  page: number,
+) {
+  const pageSize = 20;
+  const filter = query
+    ? sql`AND strpos(lower(s.path), lower(${query})) > 0`
+    : sql``;
+  const rows = await readBrainSources(
+    db,
+    projectId,
+    filter,
+    sql`LIMIT ${pageSize + 1} OFFSET ${(page - 1) * pageSize}`,
+  );
+
+  return { sources: rows.slice(0, pageSize), hasNext: rows.length > pageSize };
+}
+
+async function readBrainSources(
+  db: SourcesDb,
+  projectId: string,
+  filter: SQL,
+  paging: SQL,
+): Promise<BrainSourceDto[]> {
   const rows = await db.execute(sql`
     SELECT s.id, s.kind, s.path, s.chunker_id, s.chunker_version, s.enabled,
            s.source_hash, s.last_indexed_at, s.last_error,
@@ -478,9 +507,10 @@ export async function listBrainSources(
            count(c.id)::int AS chunk_count
     FROM brain_sources s
     LEFT JOIN brain_chunks c ON c.source_id = s.id
-    WHERE s.project_id = ${projectId} AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb)
+    WHERE s.project_id = ${projectId} AND s.chunker_id <> 'native_submission' AND (s.source_restrictions IS NULL OR s.source_restrictions='[]'::jsonb) ${filter}
     GROUP BY s.id
-    ORDER BY s.created_at ASC, s.path ASC
+    ORDER BY s.created_at ASC, s.path ASC, s.id ASC
+    ${paging}
   `);
 
   return rows.rows.map(toBrainSourceDto);

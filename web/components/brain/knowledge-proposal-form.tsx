@@ -2,7 +2,11 @@
 
 import type { FormEvent, ReactElement } from "react";
 import type { KnowledgeOwnerChoice } from "@/lib/brain/knowledge-owner-selection";
-import type { KnowledgeRecordDto } from "@/lib/brain/knowledge-read-types";
+import type { KnowledgeDraft } from "@/lib/brain/knowledge-types";
+import type {
+  KnowledgeRecordDto,
+  KnowledgeWitnessDto,
+} from "@/lib/brain/knowledge-read-types";
 import type { KnowledgeDelivery } from "./knowledge-client";
 
 import { Button, Input } from "@heroui/react";
@@ -26,28 +30,100 @@ import {
 import { knowledgeWitnessSchema } from "@/lib/brain/knowledge-read-types";
 import { MaisterError } from "@/lib/errors-core";
 import { useFeedback } from "@/components/feedback/feedback-provider";
+import { useIsClient } from "@/lib/use-is-client";
 
 const fieldClass =
   "block w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink";
 
+type WitnessLink = Readonly<{
+  relation: KnowledgeDraft["evidence"][number]["relation"];
+  witness: Pick<KnowledgeWitnessDto, "id" | "sourceVersion" | "sha256">;
+}>;
+
+function proposalEvidence(
+  links: readonly WitnessLink[],
+): KnowledgeDraft["evidence"] {
+  const evidence: KnowledgeDraft["evidence"] = [];
+
+  for (const { witness, relation } of links) {
+    if (
+      evidence.some(
+        (link) =>
+          link.reference.id === witness.id && link.relation === relation,
+      )
+    )
+      continue;
+    evidence.push({
+      relation,
+      reference: {
+        kind: "witness",
+        id: witness.id,
+        ...(witness.sourceVersion === null
+          ? {}
+          : { version: witness.sourceVersion }),
+        ...(witness.sha256 === null ? {} : { sha256: witness.sha256 }),
+      },
+    });
+  }
+
+  return evidence;
+}
+
 export function KnowledgeProposalForm({
   owners,
   record,
+  inheritedOwner,
 }: {
   owners: readonly KnowledgeOwnerChoice[];
   record?: KnowledgeRecordDto;
+  inheritedOwner?: KnowledgeOwnerChoice;
 }): ReactElement {
   const t = useTranslations("knowledge");
   const router = useRouter();
   const feedback = useFeedback();
+  const ready = useIsClient();
   const captureDelivery = useRef<KnowledgeDelivery | null>(null);
   const proposalDelivery = useRef<KnowledgeDelivery | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedOwner, setSelectedOwner] = useState("");
+  const [witnessId, setWitnessId] = useState("");
+  const [witness, setWitness] = useState<KnowledgeWitnessDto | null>(null);
+  const [witnessStatus, setWitnessStatus] = useState<
+    "idle" | "loading" | "unavailable"
+  >("idle");
+  const needsWitnessInspection = witnessId.trim() !== "" && witness === null;
+
+  async function inspectWitness() {
+    if (!witnessId.trim() || witnessStatus === "loading") return;
+    setWitnessStatus("loading");
+    setWitness(null);
+    try {
+      const response = await fetch(
+        `/api/knowledge/witnesses/${encodeURIComponent(witnessId.trim())}`,
+        { cache: "no-store" },
+      );
+      const parsed = knowledgeWitnessSchema.safeParse(await response.json());
+
+      if (
+        !response.ok ||
+        !parsed.success ||
+        parsed.data.availability !== "available"
+      ) {
+        setWitnessStatus("unavailable");
+
+        return;
+      }
+      setWitness(parsed.data);
+      setWitnessStatus("idle");
+    } catch {
+      setWitnessStatus("unavailable");
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (busy) return;
+    if (busy || needsWitnessInspection) return;
     const form = new FormData(event.currentTarget);
 
     setBusy(true);
@@ -57,32 +133,25 @@ export function KnowledgeProposalForm({
     try {
       const owner =
         record?.owner ??
+        inheritedOwner?.owner ??
         knowledgeOwnerSelection(String(form.get("owner") ?? ""));
 
       if (!owner)
         throw new MaisterError("CONFIG", "Select the knowledge owner");
       const sourceText = String(form.get("sourceText") ?? "");
       const sourceTitle = String(form.get("sourceTitle") ?? "");
-      const evidence =
-        record?.evidence.flatMap((entry) =>
-          "witness" in entry
-            ? [
-                {
-                  relation: entry.relation,
-                  reference: {
-                    kind: "witness" as const,
-                    id: entry.witness.id,
-                    ...(entry.witness.sourceVersion === null
-                      ? {}
-                      : { version: entry.witness.sourceVersion }),
-                    ...(entry.witness.sha256 === null
-                      ? {}
-                      : { sha256: entry.witness.sha256 }),
-                  },
-                },
-              ]
-            : [],
-        ) ?? [];
+      const links =
+        record?.evidence.filter((entry) => "witness" in entry) ?? [];
+
+      if (witness) {
+        links.push({
+          relation:
+            form.get("witnessRelation") === "supports"
+              ? "supports"
+              : "derived_from",
+          witness,
+        });
+      }
 
       if (sourceText !== "") {
         if (!sourceTitle.trim())
@@ -101,18 +170,9 @@ export function KnowledgeProposalForm({
           knowledgeWitnessSchema,
         );
 
-        evidence.push({
-          relation: "supports",
-          reference: {
-            kind: "witness",
-            id: witness.id,
-            ...(witness.sourceVersion === null
-              ? {}
-              : { version: witness.sourceVersion }),
-            ...(witness.sha256 === null ? {} : { sha256: witness.sha256 }),
-          },
-        });
+        links.push({ relation: "supports", witness });
       }
+      const evidence = proposalEvidence(links);
       const missing = String(form.get("missingReason") ?? "").trim();
       const missingEvidence = [
         ...(record?.missingEvidence.filter((_entry, index) =>
@@ -188,9 +248,14 @@ export function KnowledgeProposalForm({
       className="max-w-3xl space-y-5 rounded-xl border border-line bg-paper p-5"
       onSubmit={(event) => void submit(event)}
     >
-      <fieldset className="space-y-4" disabled={busy}>
+      <fieldset className="space-y-4" disabled={!ready || busy}>
         {record ? (
           <p className="text-sm text-mute">{t("supportRetained")}</p>
+        ) : inheritedOwner ? (
+          <p className="text-sm">
+            <span className="text-mute">{t("owner")}</span> ·{" "}
+            {inheritedOwner.projectName}
+          </p>
         ) : (
           <label className="block text-sm">
             {t("owner")}
@@ -198,9 +263,13 @@ export function KnowledgeProposalForm({
               required
               aria-label={t("owner")}
               className={`${fieldClass} mt-1`}
-              defaultValue={owners[0]?.value ?? ""}
               name="owner"
+              value={selectedOwner}
+              onChange={(event) => setSelectedOwner(event.target.value)}
             >
+              <option disabled value="">
+                {t("chooseOwner")}
+              </option>
               {owners.map((owner) => (
                 <option key={owner.value} value={owner.value}>
                   {owner.projectName ?? t("company")}
@@ -262,6 +331,57 @@ export function KnowledgeProposalForm({
             rows={7}
           />
         </label>
+        <div className="space-y-2 rounded-lg border border-line p-3">
+          <label className="block text-sm">
+            {t("witnessReference")}
+            <Input
+              disabled={witnessStatus === "loading"}
+              maxLength={128}
+              value={witnessId}
+              onChange={(event) => {
+                setWitnessId(event.target.value);
+                setWitness(null);
+                setWitnessStatus("idle");
+              }}
+            />
+          </label>
+          <Button
+            isDisabled={!witnessId.trim()}
+            isPending={witnessStatus === "loading"}
+            type="button"
+            variant="secondary"
+            onPress={() => void inspectWitness()}
+          >
+            {t("inspectWitness")}
+          </Button>
+          {witnessStatus === "unavailable" ? (
+            <p role="alert">{t("unavailable")}</p>
+          ) : null}
+          {needsWitnessInspection ? (
+            <p className="text-sm text-mute" role="status">
+              {t("inspectWitnessBeforeSubmit")}
+            </p>
+          ) : null}
+          {witness ? (
+            <div className="space-y-2 text-sm">
+              <Link
+                className="underline"
+                href={`/knowledge/witnesses/${encodeURIComponent(witness.id)}`}
+              >
+                {witness.sourceVersion ?? witness.id}
+              </Link>
+              <label className="block">
+                {t("evidenceRelation")}
+                <select className={fieldClass} name="witnessRelation">
+                  <option value="derived_from">
+                    {t("relation.derived_from")}
+                  </option>
+                  <option value="supports">{t("relation.supports")}</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
+        </div>
         <p className="text-sm text-mute">{t("capturedHint")}</p>
         <label className="block text-sm">
           {t("sourceTitle")}
@@ -338,7 +458,9 @@ export function KnowledgeProposalForm({
       ) : null}
       <div className="flex items-center gap-4">
         <Button
-          isDisabled={busy || (!record && owners.length === 0)}
+          isDisabled={
+            busy || needsWitnessInspection || (!record && owners.length === 0)
+          }
           type="submit"
         >
           {t(busy ? "busy" : "submitProposal")}

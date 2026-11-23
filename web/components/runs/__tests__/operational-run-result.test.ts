@@ -32,6 +32,55 @@ const invalid: OperationalOutcome = {
 };
 
 it.each([
+  [
+    "en",
+    en,
+    "Execution ended before a result could be verified",
+    "The diagnostic archive exceeded its size or history limit",
+  ],
+  [
+    "ru",
+    ru,
+    "Исполнение завершилось ошибкой до проверки результата",
+    "Диагностический архив превысил лимит размера или истории Git",
+  ],
+] as const)(
+  "explains execution and evidence failures independently in %s",
+  (locale, messages, execution, cleanup) => {
+    const html = renderToStaticMarkup(
+      createElement(NextIntlClientProvider, {
+        locale,
+        messages,
+        timeZone: "UTC",
+        // eslint-disable-next-line react-jsx/no-children-prop -- Provider props require children in the non-JSX renderer.
+        children: createElement(OperationalRunResult, {
+          runId: "run",
+          canAct: false,
+          outcome: {
+            ...invalid,
+            validation: "unchecked",
+            resultRevision: null,
+            reasonCodes: ["operational_execution_failed"],
+            cleanup: {
+              state: "retry",
+              errorCode: "operational_evidence_limit",
+              revision: 1,
+              dueAt: null,
+              attempts: 1,
+              evidenceIds: [],
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain(execution);
+    expect(html).toContain(cleanup);
+    expect(html).not.toContain(messages.operationalAgents.invalidResult);
+  },
+);
+
+it.each([
   ["en", en, "Continuation needs attention", "Recheck execution"],
   ["ru", ru, "Продолжение требует внимания", "Проверить исполнение"],
 ] as const)(

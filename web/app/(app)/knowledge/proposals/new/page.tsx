@@ -11,13 +11,21 @@ import { requireActiveSession } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import { knowledgeOwnerChoices } from "@/lib/brain/knowledge-ui";
 
-export default async function NewKnowledgeProposalPage(): Promise<ReactElement> {
+export default async function NewKnowledgeProposalPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ owner?: string }>;
+}): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("knowledge");
   const owners = await knowledgeOwnerChoices(
     getDb(),
     { kind: "user", userId: user.id },
     "knowledge:propose",
+  );
+  const { owner } = await searchParams;
+  const inherited = owners.find(
+    (option) => option.owner.kind === "project" && option.value === owner,
   );
 
   return (
@@ -28,7 +36,7 @@ export default async function NewKnowledgeProposalPage(): Promise<ReactElement> 
           {t("noOwners")}
         </p>
       ) : (
-        <KnowledgeProposalForm owners={owners} />
+        <KnowledgeProposalForm inheritedOwner={inherited} owners={owners} />
       )}
     </>
   );

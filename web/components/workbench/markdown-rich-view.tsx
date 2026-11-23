@@ -104,9 +104,11 @@ const markdownComponents: Components = {
 export function MarkdownRichView({
   source,
   path,
+  images = "allow",
 }: {
   source: string;
   path: string;
+  images?: "allow" | "omit";
 }): ReactElement {
   return (
     <article
@@ -116,6 +118,7 @@ export function MarkdownRichView({
     >
       <ReactMarkdown
         components={markdownComponents}
+        disallowedElements={images === "omit" ? ["img"] : undefined}
         remarkPlugins={[remarkGfm]}
       >
         {source}

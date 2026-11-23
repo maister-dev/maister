@@ -17,6 +17,7 @@ export interface TerminalCauseLabels {
   reasons: Partial<Record<string, string>>;
   reasonLabel: string;
   unknownReason: string;
+  unsupportedAcpMessage: Record<"request" | "notification", string>;
 }
 
 /**
@@ -44,8 +45,11 @@ export function TerminalCauseNotice({
   const reasonCopy = cause.reason ? labels.reasons[cause.reason] : undefined;
   const primary =
     reasonCopy ?? codeCopy ?? (cause.reason ? labels.unknownReason : undefined);
+  const acpCopy = cause.acpMessageKind
+    ? labels.unsupportedAcpMessage[cause.acpMessageKind]
+    : undefined;
 
-  if (!primary) return null;
+  if (!primary && !acpCopy) return null;
 
   return (
     <div
@@ -60,7 +64,18 @@ export function TerminalCauseNotice({
         {showTitle ? (
           <p className="font-semibold text-ink">{labels.title[status]}</p>
         ) : null}
-        <p>{primary}</p>
+        {primary ? <p>{primary}</p> : null}
+        {acpCopy ? (
+          <p>
+            {acpCopy}
+            {cause.acpMethod ? (
+              <>
+                {" "}
+                <code>{cause.acpMethod}</code>
+              </>
+            ) : null}
+          </p>
+        ) : null}
         {cause.reason && !reasonCopy ? (
           <p className="text-xs text-mute">
             {labels.reasonLabel}: <code>{cause.reason}</code>

@@ -62,6 +62,20 @@ let unownedTurn;
 const outputWrites = [];
 const sizedOutputWrites = [];
 
+function writeUnsupportedNotification() {
+  const frame = {
+    jsonrpc: "2.0",
+    method: "fixture/unsupported_notification",
+    params: { content: "private-acp-fixture-content" },
+  };
+
+  return new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(frame)}\n`, (error) =>
+      error ? reject(error) : resolve(),
+    );
+  });
+}
+
 for (let i = 0; i < args.length; i += 1) {
   const arg = args[i];
 
@@ -411,6 +425,8 @@ class LifecycleAgent {
         -32000,
         "session not found: fixture-missing-session",
       );
+    if (request.sessionId === "fixture-unsupported-acp-notification")
+      await writeUnsupportedNotification();
     this.resumed = true;
     return {};
   }
@@ -558,6 +574,7 @@ class LifecycleAgent {
         params,
         JSON.parse(fixtureLine.slice("fixture-output:".length)),
       );
+      if (spec.unsupportedAcpNotification) await writeUnsupportedNotification();
       if (spec.contextFailure === "claude-input")
         throw acp.RequestError.internalError(
           { errorKind: "invalid_request" },

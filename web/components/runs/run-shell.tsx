@@ -1,13 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
+import type { RunDiffScope } from "@/lib/runs/diff-scopes";
 
 import { useRef, useSyncExternalStore } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
 import { useModalA11y } from "@/components/use-modal-a11y";
-import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
+import {
+  buildRunHref,
+  parseRunQueryState,
+  RUN_WORKBENCH_CHANGES_ID,
+} from "@/lib/runs/run-query-state";
 import { useRunPeek } from "@/components/runs/run-peek-controller";
 import { RunPeekPanel } from "@/components/runs/run-peek-panel";
 import {
@@ -20,6 +25,7 @@ export type RunShellLabels = RunHeaderLabels;
 
 export interface RunShellProps {
   title: string;
+  liveness?: ReactNode;
   subtitle?: string;
   keyRef?: string | null;
   taskHref?: string | null;
@@ -35,6 +41,7 @@ export interface RunShellProps {
   runId?: RunHeaderProps["runId"];
   canReopen?: RunHeaderProps["canReopen"];
   changeSummary?: RunHeaderProps["changeSummary"];
+  changeScope?: RunDiffScope;
   budgetStatus?: RunHeaderProps["budgetStatus"];
   reviewHref?: RunHeaderProps["reviewHref"];
   promotionOperation?: RunHeaderProps["promotionOperation"];
@@ -62,6 +69,7 @@ const desktopInspector = (): boolean => false;
 
 export function RunShell({
   title,
+  liveness,
   subtitle,
   keyRef,
   taskHref,
@@ -77,6 +85,7 @@ export function RunShell({
   runId,
   canReopen,
   changeSummary,
+  changeScope,
   budgetStatus,
   reviewHref,
   promotionOperation,
@@ -89,8 +98,16 @@ export function RunShell({
 }: RunShellProps): ReactNode {
   const peek = useRunPeek();
   const peeking = !!peek?.ready && peek.selected !== null;
+  const pathname = usePathname();
   const search = useSearchParams();
   const selected = parseRunQueryState(search).inspector;
+  const changesHref = changeScope
+    ? `${buildRunHref(pathname, search, {
+        wb: "diff",
+        scope: changeScope,
+        diffFile: null,
+      })}#${RUN_WORKBENCH_CHANGES_ID}`
+    : null;
   const inspectorOpen =
     selected === null ? defaultInspectorOpen : selected === "open";
   const compact = useSyncExternalStore(
@@ -126,6 +143,7 @@ export function RunShell({
         branch={branch}
         budgetStatus={budgetStatus}
         canReopen={canReopen}
+        changesHref={changesHref}
         changeSummary={changeSummary}
         hideChangeSummary={hideChangeSummary}
         inspectorDisabledReason={
@@ -134,6 +152,7 @@ export function RunShell({
         inspectorOpen={inspectorOpen}
         keyRef={keyRef}
         labels={labels}
+        liveness={liveness}
         prHasConflicts={prHasConflicts}
         projectHref={projectHref}
         projectLabel={projectLabel}

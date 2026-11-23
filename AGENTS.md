@@ -25,8 +25,8 @@ Full description: `.ai-factory/DESCRIPTION.md`.
 - **Styling:** Tailwind CSS 4 + `tailwind-variants`
 - **Database:** Postgres 16 via Drizzle ORM
 - **Supervisor daemon (`supervisor/`):** Fastify 5 + pino + zod; ACP via
-  `@agentclientprotocol/sdk@2.0.2` spawning `claude-agent-acp@0.95.0`,
-  `codex-acp@2.2.2`, and readiness-gated `gemini --acp`, `opencode acp`,
+  `@agentclientprotocol/sdk@2.0.2` spawning `claude-agent-acp@0.109.1`,
+  `codex-acp@2.9.0`, and readiness-gated `gemini --acp`, `opencode acp`,
   and `mimo acp` adapter binaries
 - **Tests:** vitest (unit + integration), Playwright (E2E)
 - **Package manager:** pnpm (monorepo workspace: `web` + `supervisor`)

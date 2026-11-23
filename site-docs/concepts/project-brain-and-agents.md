@@ -135,6 +135,14 @@ Write access permits retention and proposals; it does not permit publication.
 - No ambient context: the Run did not opt in, the project is disabled, no item
   met the confidence threshold, or recall degraded safely.
 
+## Browse agent memory
+
+Open **Knowledge → Agent memory**, then choose the project attachment or installation binding. The same qualified agent can have different notes in each location. A catalog entry shows whether memory is available, disabled or awaiting activation. Where legacy access is available, **Read legacy memory** opens the previous project note.
+
+A note's **Revision history** opens stable retained versions. Compare one with the current note, or restore it as a new revision if your permissions allow it. The comparison shows the beginning of each version and tells you when differences fall beyond the preview. If content was redacted or source access was withdrawn, the old link can become unavailable. Open the current note to edit or propose material for review.
+
+**Propose from this note** shows the destination and exact source revision. Follow the submission receipt to the awaiting decision. If this publishes knowledge, the publication points back to the exact source evidence under current access.
+
 ## Personal librarian memory
 
 The [personal librarian](/guides/personal-librarian) maintains a separate

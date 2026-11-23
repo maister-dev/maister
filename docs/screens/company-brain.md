@@ -1,6 +1,6 @@
 # Company Brain and explicit access
 
-Routes: `/knowledge`, `/knowledge/{recordId}`, `/knowledge/proposals`,
+Routes: `/knowledge`, `/knowledge/reviews`, `/knowledge/memory`, `/knowledge/{recordId}`, `/knowledge/proposals`,
 `/knowledge/proposals/new`, `/knowledge/proposals/{proposalId}`,
 `/knowledge/{recordId}/correct`, `/knowledge/witnesses/{witnessId}`,
 `/settings/company-grants`, `/settings/company-grants/new`,
@@ -8,6 +8,23 @@ Routes: `/knowledge`, `/knowledge/{recordId}`, `/knowledge/proposals`,
 Status: Implemented locally; cross-surface and full runtime qualification remains separate.
 Source: `web/app/(app)/knowledge/`, `web/components/brain/knowledge-*`,
 `web/components/brain/company-grant-*`.
+
+## Knowledge workspace
+
+[Linked mockups](../../.ai-factory/designs/knowledge-management.html) cover Records, the selected review, decision outcomes, the owner-aware vault catalog, note comparison and promotion. Use the scope and example-state controls to exercise accessible and unavailable selections. The production screen uses the existing HeroUI controls and i18n catalogs.
+
+| Screen | Wide layout | Narrow layout and focus |
+| --- | --- | --- |
+| Records and proposals | Owner scope and filters above a paged list; selected record or proposal beside the list | A selected detail occupies the screen. Back restores the filter, scroll position and row focus. Keyboard activation moves focus to the detail heading. |
+| Decision | Show owner, author, source, reviewed version, reason and acceptance effect. Show the reviewer, time and disposition in history. Mark missing legacy values as unrecorded. | Place actions after evidence in reading order. Announce the current outcome. On conflict retain the reason and offer to load the new version. |
+| Vault and comparison | Owner and path navigation, safe preview/source, exact revision metadata and comparison | Navigate owner → folder → note → history as nested views. Historical detail offers comparison and restore as a new revision. Return to the current note before editing. |
+| Note promotion | Show destination, exact source version, excerpt and intended outcome before submitting | The receipt links to the pending decision. The decision links to its authorized outcome. |
+
+Use readable text labels for states in both themes. A successful empty response, protected content, insufficient evidence and retryable failure each have distinct copy. See the [review lifecycle](../system-analytics/company-brain.md#shared-human-review) and [vault contract](../system-analytics/agent-memory.md#human-catalog-historical-identity-and-review-rationale).
+
+Revision comparison starts at the beginning of both note versions. Each column shows up to 32,768 UTF-16 code units and preserves complete characters. The content hashes indicate whether the entire note texts match, including any omitted suffix. Reading a continuation of the current note requires the same revision and current access.
+
+After a decision, **Next proposal** continues from the selected review's position in the scoped queue. The open detail is revalidated on attention reconnect and review invalidation. In History, the same signal reloads the current filtered page and total. A withdrawn source clears the row, preview and result links. Vault outcomes page applied revisions independently of the proposed changes.
 
 ## JTBD
 
@@ -68,8 +85,11 @@ Proposal detail keeps publication state and its evidence together. The separate
 confirmation panel selects available supporting witnesses and requires a
 reason. Source inspection shows exact identity/version/digest, original source
 group, availability and a bounded excerpt. The correction form retains original
-witness references and allows explicit retention/removal of recorded limitations
-and missing-evidence declarations.
+witness references, including their versions and digests. Selecting another
+relation for the same witness keeps both links. Selecting an existing relation
+keeps one copy. Authors can retain or remove recorded limitations and
+missing-evidence declarations. A newly entered witness ID blocks submission
+until inspection succeeds or the reviewer clears the field.
 
 Company authority history is view-only. New grants use a dedicated form with
 searchable current recipients and explicit actions/classes. Revocation opens the

@@ -16,6 +16,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+import { workspacePackageSkillsPrompt } from "@/lib/capabilities/package-skills";
 import {
   tasks,
   taskLaunchIntents,
@@ -116,6 +117,15 @@ beforeAll(async () => {
   await mkdir(skillDirectory, { recursive: true });
   await writeFile(skillFile, "accepted bundle A\n");
   await symlink("SKILL.md", path.join(skillDirectory, "linked.md"));
+  await mkdir(path.join(bundle, "agents"));
+  await writeFile(
+    path.join(bundle, "agents", "helper.md"),
+    "accepted companion\n",
+  );
+  await symlink(
+    "../../agents/helper.md",
+    path.join(skillDirectory, "helper.md"),
+  );
   await mkdir(path.join(bundle, "skills", "repo-owned"), { recursive: true });
   await writeFile(
     path.join(bundle, "skills", "repo-owned", "SKILL.md"),
@@ -276,6 +286,25 @@ it("binds only verified private bytes, preserves repo entries and relative links
   expect(await readFile(path.join(copied, "linked.md"), "utf8")).toBe(
     "accepted bundle A\n",
   );
+  const advertised = await workspacePackageSkillsPrompt(
+    claim.identity.worktreePath,
+    bound.runId,
+  );
+  const skill = advertised.match(/^- copy-proof: `([^`]+)`$/m)?.[1];
+
+  if (!skill) throw new Error("Expected a workspace-readable packaged skill");
+  const projected = path.dirname(path.join(claim.identity.worktreePath, skill));
+
+  expect(await readlink(path.join(projected, "linked.md"))).toBe("SKILL.md");
+  expect(await readFile(path.join(projected, "linked.md"), "utf8")).toBe(
+    "accepted bundle A\n",
+  );
+  expect(await readlink(path.join(projected, "helper.md"))).toBe(
+    "../../agents/helper.md",
+  );
+  expect(await readFile(path.join(projected, "helper.md"), "utf8")).toBe(
+    "accepted companion\n",
+  );
   expect(
     await readFile(
       path.join(
@@ -434,7 +463,7 @@ it("refuses copied bundle bytes that differ from admission despite restored sour
   ).toEqual([]);
 });
 
-it.each(["outside", "uncopied"] as const)(
+it.each(["outside", "uncopied", "uncopied intermediate"] as const)(
   "refuses a bundle link into %s content without dispatch",
   async (targetKind) => {
     barrier.sourceRoot = "";
@@ -445,7 +474,9 @@ it.each(["outside", "uncopied"] as const)(
         : path.join(bundle, "docs", "not-materialized.txt");
 
     await mkdir(path.dirname(outside), { recursive: true });
-    await writeFile(outside, "PRIVATE_BUNDLE_TARGET_SENTINEL");
+    if (targetKind === "uncopied intermediate")
+      await symlink("../agents/helper.md", outside);
+    else await writeFile(outside, "PRIVATE_BUNDLE_TARGET_SENTINEL");
     const link = path.join(skillDirectory, "outside.md");
 
     await symlink(path.relative(skillDirectory, outside), link);
@@ -481,6 +512,7 @@ it.each(["outside", "uncopied"] as const)(
       ).toEqual([]);
     } finally {
       await rm(link);
+      await rm(outside);
     }
   },
 );

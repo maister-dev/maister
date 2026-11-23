@@ -65,6 +65,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 import {
   driveResume,
+  restartFailedFlowNode,
   resumeCrashedRun,
   type RunFlowResumeOpts,
 } from "@/lib/runs/recover";
@@ -341,6 +342,60 @@ function installCreateSession<T extends (...args: never[]) => unknown>(
 function sessionResult(acpSessionId = "acp-resumed"): CreateSessionResult {
   return { sessionId: "sup-resumed", pid: 4242, acpSessionId };
 }
+
+it("admits exactly one restart for the last open attempt of a failed Flow", async () => {
+  const runId = await seedRun({ status: "Failed", currentStepId: null });
+  const attemptId = randomUUID();
+
+  await db.insert(schema.nodeAttempts).values({
+    id: attemptId,
+    runId,
+    nodeId: "implement",
+    nodeType: "ai_coding",
+    status: "Running",
+  });
+  const opts = { db, executionHosts: hosts };
+
+  expect(await restartFailedFlowNode(runId, randomUUID(), opts)).toEqual({
+    state: "conflict",
+  });
+  const results = await Promise.all([
+    restartFailedFlowNode(runId, attemptId, opts),
+    restartFailedFlowNode(runId, attemptId, opts),
+  ]);
+
+  expect(results.map(({ state }) => state).sort()).toEqual([
+    "conflict",
+    "resumed",
+  ]);
+  const row = await readRun(runId);
+  const [oldAttempt] = await db
+    .select()
+    .from(schema.nodeAttempts)
+    .where(eq(schema.nodeAttempts.id, attemptId));
+
+  expect(oldAttempt).toMatchObject({
+    status: "Failed",
+    endedAt: expect.any(Date),
+  });
+  expect(row).toMatchObject({
+    status: "Running",
+    currentStepId: "implement",
+    resumeStartedAt: expect.any(Date),
+  });
+
+  const runFlow = vi.fn(async () => {});
+  const result = await driveResume(runId, { ...opts, runFlow });
+
+  expect(runFlow).toHaveBeenCalledOnce();
+  expect(runFlow).toHaveBeenCalledWith(
+    runId,
+    expect.objectContaining({
+      crashResume: { targetStepId: "implement", freshSession: true },
+    }),
+  );
+  expect(result).toEqual({ state: "transient" });
+}, 60_000);
 
 describe("resumeCrashedRun — resume-agent happy path (slot free)", () => {
   it("flips Crashed→Running + stamps resume_started_at + current_step_id BEFORE the graph re-entry, then {state:'resumed'}", async () => {

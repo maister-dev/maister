@@ -235,6 +235,9 @@ export function OperationalOutcomeDetails({
   const t = useTranslations("operationalAgents");
   const reported = outcome.reportedResult;
   const attention = outcome.continuationAttention;
+  const executionFailed =
+    outcome.validation === "unchecked" &&
+    outcome.reasonCodes.includes("operational_execution_failed");
   const integrityRefused = outcome.reasonCodes.some(
     (reason) =>
       reason === "operational_integrity_refused" ||
@@ -344,6 +347,8 @@ export function OperationalOutcomeDetails({
           <p>{t("continuationRefused")}</p>
           <p>{t("continuationRefusedGuidance")}</p>
         </div>
+      ) : executionFailed ? (
+        <p>{t("executionFailed")}</p>
       ) : (
         <p>
           {t(outcome.state === "pending" ? "awaitingResult" : "invalidResult")}
@@ -382,6 +387,9 @@ export function OperationalOutcomeDetails({
           {t("cleanup")}: {t(`cleanupState.${outcome.cleanup.state}`)}
           {outcome.cleanup.errorCode ? ` · ${outcome.cleanup.errorCode}` : ""}
         </p>
+      ) : null}
+      {outcome.cleanup?.errorCode === "operational_evidence_limit" ? (
+        <p>{t("cleanupEvidenceLimit")}</p>
       ) : null}
       {cleanupNotice}
     </>

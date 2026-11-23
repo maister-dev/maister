@@ -47,7 +47,7 @@ import {
   type OwnedCreateContinuation,
 } from "./create-continuation";
 import { assertRuntimeObjectsReferenceable } from "./runtime-object-holds";
-import { staleSessionBinding } from "./session-binding";
+import { lockLogicalRunSession, staleSessionBinding } from "./session-binding";
 import { asHostSessionId } from "./types";
 import { projectPrivateCreateFailure } from "./private-create-failure";
 
@@ -493,6 +493,30 @@ async function createOwnedSessionFromIntent(
           }
           if (predecessor && (!existing || existing.state !== "failed"))
             throw createIntentError("create_replacement_source");
+          if (owner.variant === "gate_chat") {
+            const session = payload.sessionName
+              ? await lockLogicalRunSession(tx, {
+                  runId: authority.runId,
+                  sessionName: payload.sessionName,
+                })
+              : null;
+
+            if (
+              !session?.runnerSnapshot ||
+              !payload.resumeSessionId ||
+              session.acpSessionId !== payload.resumeSessionId
+            )
+              throw new MaisterError(
+                "CONFIG",
+                "Gate chat create must resume its configured logical session",
+                {
+                  details: {
+                    runId: authority.runId,
+                    sessionName: payload.sessionName,
+                  },
+                },
+              );
+          }
           if (continuation)
             await assertRuntimeObjectsReferenceable(
               tx,

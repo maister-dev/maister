@@ -159,6 +159,22 @@ export function assertDraftVersion(input: {
   }
 }
 
+function requireCapabilityKind(
+  capability: CapabilityRow,
+  expectedKind: AuthoredCapabilityKind | undefined,
+): void {
+  if (expectedKind === undefined || capability.kind === expectedKind) return;
+
+  log.warn(
+    { capId: capability.id, expectedKind, actualKind: capability.kind },
+    "authored capability write refused for mismatched kind",
+  );
+  throw new MaisterError(
+    "CONFIG",
+    `Authored capability ${capability.id} has kind ${capability.kind}; expected ${expectedKind}`,
+  );
+}
+
 export async function listAuthoredCapabilities(args: {
   projectSlug: string;
   db?: CatalogDb;
@@ -449,6 +465,7 @@ function packageFilesFromBody(
 export async function updateAuthoredDraft(args: {
   projectSlug: string;
   capId: string;
+  expectedKind?: AuthoredCapabilityKind;
   input: UpdateAuthoredDraftInput;
   editor?: EditorLockContext;
   db?: TransactionalCatalogDb;
@@ -458,6 +475,8 @@ export async function updateAuthoredDraft(args: {
   return db.transaction(async (tx) => {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
+
+    requireCapabilityKind(cap, args.expectedKind);
 
     // Immutability dominates the lock: an ARCHIVED row clears its lock columns
     // on archive, so checking the lock first would refuse a concurrent-archive
@@ -609,6 +628,7 @@ export async function updateAuthoredDraft(args: {
 export async function publishAuthoredCapabilityLocal(args: {
   projectSlug: string;
   capId: string;
+  expectedKind?: AuthoredCapabilityKind;
   expectedDraftVersion?: number;
   validateDraftRevision?: (revision: AuthoredCapabilityRevision) => void;
   editor?: EditorLockContext;
@@ -622,6 +642,8 @@ export async function publishAuthoredCapabilityLocal(args: {
   return db.transaction(async (tx) => {
     const projectId = await resolveProjectId(tx, args.projectSlug);
     const cap = await loadCapability(tx, projectId, args.capId);
+
+    requireCapabilityKind(cap, args.expectedKind);
 
     // Immutability dominates the lock (see updateAuthoredDraft): check ARCHIVED
     // before the edit-lock so a concurrent-archive race yields "cannot publish",

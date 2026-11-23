@@ -24,7 +24,7 @@ import {
 } from "./operations";
 import { resolveLibrarianVault } from "./vaults";
 
-import { lockConfirmationSources } from "@/lib/agent-memory-vault/card-redaction-fence";
+import { lockVaultSources } from "@/lib/agent-memory-vault/source-redaction-fence";
 import { agentMemoryVaultLimits } from "@/lib/agent-memory-vault/limits";
 import {
   applyVaultMutationInTransaction,
@@ -136,7 +136,7 @@ export async function prepareKnowledgeCard(
 ): Promise<Prepared> {
   const principal = { kind: "user", userId } as const;
 
-  await lockConfirmationSources(tx);
+  await lockVaultSources(tx);
   await authorizeSourceRestrictions(tx, principal, inherited);
 
   if (proposal.action === "vault_edit") {
@@ -328,7 +328,7 @@ export async function decideKnowledgeCard(
       .where(eq(librarianConversations.id, locator.conversationId))
       .for("update");
 
-    await lockConfirmationSources(tx);
+    await lockVaultSources(tx);
     const [card] = await tx
       .select()
       .from(librarianCards)

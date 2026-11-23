@@ -49,7 +49,11 @@ import {
   recordCrashRecoverContinuationOutcome,
 } from "@/lib/runs/crash-recover";
 import { routeCrashRecover } from "@/lib/runs/crash-recover-route";
-import { driveResume } from "@/lib/runs/recover";
+import { driveResume, resumeFlowAfterHostRestart } from "@/lib/runs/recover";
+import {
+  deferHostRestartRecovery,
+  findHostRestartRecovery,
+} from "@/lib/runs/host-restart-recovery";
 import { markResumedFromWait } from "@/lib/runs/state-transitions";
 import { projectionTransaction } from "@/lib/execution-host/events/projection-transaction";
 import { projectionLimitsFromEnv } from "@/lib/execution-host/events/projection-limits";
@@ -86,10 +90,13 @@ export function startFlowContinuationWorker(input: {
   const controller = new AbortController();
   const workerId = `flow-continuation-worker:${randomUUID()}`;
   const failures = new Map<number, string>();
+  const runContinuation: typeof runFlow = (runId, options) =>
+    runFlow(runId, { ...input, ...options, signal: controller.signal });
   let shutdownFailure: { error: unknown } | undefined;
   let stopped = false;
   const serve = async (slot: number): Promise<void> => {
     let cursor: string | null = null;
+    let hostRestartCursor: string | undefined;
 
     await runWorkerLoop(controller.signal, async () => {
       try {
@@ -196,6 +203,13 @@ export function startFlowContinuationWorker(input: {
                                 and(
                                   isNull(nodeAttempts.finishContinuation),
                                   or(
+                                    and(
+                                      eq(nodeAttempts.status, "Pending"),
+                                      eq(
+                                        executionAssignments.placementReason,
+                                        "node_restart",
+                                      ),
+                                    ),
                                     and(
                                       eq(nodeAttempts.status, "Running"),
                                       isNull(nodeAttempts.endedAt),
@@ -336,6 +350,33 @@ export function startFlowContinuationWorker(input: {
         if (!candidate) {
           failures.delete(slot);
           cursor = null;
+          const hostRestart = await projectionTransaction(input.db, (tx) =>
+            findHostRestartRecovery(tx, { afterRunId: hostRestartCursor }),
+          );
+
+          hostRestartCursor = hostRestart?.runId;
+          if (hostRestart && !controller.signal.aborted) {
+            try {
+              const result = await resumeFlowAfterHostRestart(
+                hostRestart.runId,
+                hostRestart.assignmentId,
+                {
+                  db: input.db,
+                  executionHosts: input.executionHosts,
+                  runFlow: runContinuation,
+                },
+              );
+
+              log.info(
+                { workerId, runId: hostRestart.runId, state: result.state },
+                "flow-host-restart-recovery",
+              );
+            } finally {
+              await deferHostRestartRecovery(input.db, hostRestart);
+            }
+
+            return;
+          }
           await runEventWakeBus.waitForProjection(1_000, controller.signal);
 
           return;
@@ -362,6 +403,20 @@ export function startFlowContinuationWorker(input: {
           (candidate.crashRecoverNextRetryAt === null ||
             candidate.crashRecoverNextRetryAt.getTime() <= Date.now())
         ) {
+          if (candidate.placementReason === "node_restart") {
+            const outcome = await driveResume(candidate.id, {
+              ...input,
+              runFlow: runContinuation,
+            });
+
+            await recordCrashRecoverContinuationOutcome(
+              input.db,
+              candidate.id,
+              outcome.state,
+            );
+
+            return;
+          }
           await serveCrashRecover({
             id: candidate.id,
             resumeStartedAt: candidate.resumeStartedAt,

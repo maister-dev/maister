@@ -24,7 +24,7 @@ const librarianGovernedImports = {
   "disclosed-context.ts": ["brain/knowledge-restrictions"],
   "history-search.ts": ["brain/knowledge-disclosure"],
   "knowledge-card-effects.ts": [
-    "agent-memory-vault/card-redaction-fence",
+    "agent-memory-vault/source-redaction-fence",
     "agent-memory-vault/limits",
     "agent-memory-vault/store",
     "brain/guard",

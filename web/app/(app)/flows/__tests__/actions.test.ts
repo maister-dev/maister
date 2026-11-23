@@ -95,6 +95,7 @@ describe("authored Flow server actions", () => {
     expect(updateAuthoredDraftMock).toHaveBeenCalledWith(
       expect.objectContaining({
         capId: "cap-1",
+        expectedKind: "flow",
         input: expect.objectContaining({
           body: expect.objectContaining({
             packageMetadata: expect.objectContaining({
@@ -353,6 +354,7 @@ describe("authored Flow server actions", () => {
       expect.objectContaining({
         projectSlug: "demo",
         capId: "cap-1",
+        expectedKind: "flow",
         expectedDraftVersion: 2,
         validateDraftRevision: expect.any(Function),
       }),

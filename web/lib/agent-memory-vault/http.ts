@@ -74,8 +74,16 @@ export function vaultErrorResponse(
       {
         code: error.code,
         message: error.message,
+        ...((error.details?.reason === "agent_memory_disabled" ||
+          error.details?.reason === "agent_memory_attachment_disabled" ||
+          error.details?.reason === "agent_memory_cutover_required") && {
+          details: { reason: error.details.reason },
+        }),
       },
-      error.details?.reason === "agent_memory_unavailable" ? 404 : 409,
+      error.details?.reason === "agent_memory_unavailable" ||
+        error.details?.reason === "knowledge_reference_unavailable"
+        ? 404
+        : 409,
     );
 
   return privateErrorResponse(error, route);

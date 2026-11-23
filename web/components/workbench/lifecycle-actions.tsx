@@ -44,6 +44,7 @@ export interface WorkbenchLifecycleActionsProps {
   actions: WorkbenchLifecycleActionId[];
   className?: string;
   variant?: "compact" | "detail" | "menu";
+  compactHiddenGitActions?: readonly WorkbenchLifecycleActionId[];
   // Rail `menu` variant extras: the run link for "Open run", the linked-task
   // KEY-N chip in the sheet/rename header, and the current name seeding rename.
   runHref?: string;
@@ -498,6 +499,7 @@ export function WorkbenchLifecycleActions({
   actions,
   className,
   variant = "compact",
+  compactHiddenGitActions,
   runHref,
   taskKey,
   taskNumber,
@@ -679,7 +681,11 @@ export function WorkbenchLifecycleActions({
 
   const displayActions =
     variant === "menu" ? [] : actions.filter((id) => isOwnAction(id));
-  const gitActions = actions.filter((id) => !isOwnAction(id));
+  const gitActions = actions.filter(
+    (id) =>
+      !isOwnAction(id) &&
+      (variant !== "compact" || !compactHiddenGitActions?.includes(id)),
+  );
   const menuItems = railMenuItems(actions, runKind, workspaceAvailable);
   const error = compactErrorText(t, errorState);
   const unpushed = unpushedCounts(guard);

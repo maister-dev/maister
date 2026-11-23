@@ -12,6 +12,8 @@ import type { AgentParkApplication } from "./park";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { readUnsupportedAcpMessage } from "../../../runtime/unsupported-acp-message";
+
 import {
   prepareAgentRunFinalization,
   prepareUndispatchedAgentFailure,
@@ -30,6 +32,7 @@ import {
 import { lockCurrentSessionAssignment } from "@/lib/execution-host/session-binding";
 import { UNKNOWN_OUTCOME_DETAIL } from "@/lib/execution-host/contracts";
 import { isMaisterError } from "@/lib/errors";
+import { isMaisterErrorCode } from "@/lib/errors-core";
 import { isHostPressureFailure } from "@/lib/execution-host/host-pressure";
 
 const log = pino({
@@ -178,6 +181,9 @@ export async function settleAgentCreateFailure(
       const message =
         turn.variant === "live_message" ||
         turn.variant === "persistent_message";
+      const unsupportedAcpMessage = readUnsupportedAcpMessage(
+        create?.lastError,
+      );
 
       if (!create) {
         // Nothing reached the host but the refused adoption.
@@ -201,8 +207,22 @@ export async function settleAgentCreateFailure(
 
           return { finalized: false };
         }
+        const code = create.lastError?.code;
+
+        log.warn(
+          {
+            runId: turn.runId,
+            turnId: turn.id,
+            turnVariant: turn.variant,
+            assignmentEpoch: assignment.epoch,
+            commandId: create.id,
+            code: isMaisterErrorCode(code) ? code : null,
+            ...unsupportedAcpMessage,
+          },
+          "agent-session-create-failure-confirmed",
+        );
       }
-      const result = await prepared.apply(tx);
+      const result = await prepared.apply(tx, unsupportedAcpMessage);
 
       if (!result.finalized) return result;
       // A message turn the finalization already superseded keeps its stamp:

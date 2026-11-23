@@ -6,6 +6,8 @@ import schemas from "../../runtime/knowledge-tool-input.schema.json";
 import { NATIVE_KNOWLEDGE_TOOL_EFFECTS } from "../../runtime/knowledge-tool-effects";
 
 export type KnowledgeToolName = keyof typeof schemas;
+const personalVaultScope =
+  " Global personal tokens need explicit agent_memory:read for vault-dependent sources.";
 const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   assignment_question_ask:
     "Request human clarification for your current appointed assignment using exact business/input revisions from assignment_get, a version-one MAIster FormSchema and a stable idempotencyKey. The server retains your actual Run/node and checkpoints its current prompt before Inbox activation. Never supply actor, owner, grants or source proof. Human answers become attributed input; they do not accept work or confer action authority.",
@@ -18,27 +20,43 @@ const descriptions: Readonly<Record<KnowledgeToolName, string>> = {
   assignment_context_get:
     "Read the exact authorized working context of your appointed assignment. Preserve its revision, input witness, original authors, evidence and unresolved questions. Context is working material; notes and child completion do not confirm Brain facts or accept the overall assignment.",
   knowledge_witness_get:
-    "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit.",
+    "Inspect an accessible original evidence witness, including its exact source version, availability and limitations. Missing evidence must remain explicit." +
+    personalVaultScope,
   knowledge_propose:
     "Submit an attributable knowledge addition or revision-bound correction for review. Acceptance and factual confirmation are separate actions. Reuse the same idempotencyKey for the same delivery.",
   knowledge_proposal_get:
-    "Inspect an accessible proposal, its evidence, review state and accepted publication. A proposal is not a confirmed fact.",
+    "Inspect an accessible proposal, its evidence, review state and accepted publication. A proposal is not a confirmed fact." +
+    personalVaultScope,
   knowledge_proposals_list:
-    "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue.",
+    "List proposals the current principal may review, with bounded summaries and authorization-scoped continuation. Follow nextCursor to continue." +
+    personalVaultScope,
   knowledge_decide:
-    "Accept or reject an exact proposal revision only under explicit current review authority. Acceptance does not confirm the published assertion. Ordinary specialist tokens cannot review.",
+    "Accept or reject an exact proposal revision under current review authority. Replay requires the original reviewer, delivery key and payload, plus current source and result access. An accepted restricted correction also rechecks the record review grant. Confirmation is a separate operation. Ordinary specialist tokens cannot review.",
   knowledge_confirm:
     "Confirm or revoke confirmation of an exact record revision under explicit current confirmation authority. Confirmation requires available versioned evidence; agent completion does not confer this authority.",
   knowledge_search:
-    "Search accessible structured company/project knowledge. Ownership does not grant visibility. Results separate observations, assumptions, confirmation and freshness. Use the exact returned identities and revisions for follow-up; retrieval rank never confirms a claim.",
+    "Search accessible structured company/project knowledge. Ownership does not grant visibility. Results separate observations, assumptions, confirmation and freshness. Use the exact returned identities and revisions for follow-up; retrieval rank never confirms a claim." +
+    personalVaultScope,
   knowledge_get:
-    "Inspect an accessible structured record and its exact revision, server attribution, confirmation, missing support and unresolved conflicts. Omit revision to select the current head. Missing or inaccessible references never authorize invented citations.",
+    "Inspect an accessible structured record and its exact revision, server attribution, confirmation, missing support and unresolved conflicts. Omit revision to select the current head. Missing or inaccessible references never authorize invented citations." +
+    personalVaultScope,
   knowledge_evidence:
-    "Inspect bounded captured evidence for an accessible record revision. Preserve witness identities, content hashes and source versions in findings. Follow nextCursor to inspect the remaining original proof. Capture time is not observation time.",
+    "Inspect bounded captured evidence for an accessible record revision. Preserve witness identities, content hashes and source versions in findings. Follow nextCursor to inspect the remaining original proof. Capture time is not observation time." +
+    personalVaultScope,
   knowledge_conflicts:
-    "Inspect accessible conflicting claims through bounded pages. Each edge retains the original opposing record revision. A score or a newer claim does not resolve a conflict; inaccessible claims remain withheld.",
+    "Inspect accessible conflicting claims through bounded pages. Each edge retains the original opposing record revision. A score or a newer claim does not resolve a conflict; inaccessible claims remain withheld." +
+    personalVaultScope,
   knowledge_capture_source:
     "Capture exact bounded submitted source bytes as attributable evidence, without asserting independent corroboration, historical observation time or factual confirmation. Reuse the same idempotencyKey for the same delivery. Company ownership requires no project.",
+  proposal_reviews_list: "List authorized pending decisions or retained decisions by scope. Requires a global personal token and the appropriate content scopes.",
+  proposal_review_get: "Inspect an exact authorized human review and its observed version, evidence or diff, and available decision outcome. This works independently of the current list page. Pass nextCursor as cursor for preview text and revisionsNextCursor as outcomeCursor for applied vault revisions.",
+  proposal_review_decide: "Settle one inspected Brain or vault proposal with the exact version and a stable request key. Rejection needs a reason. Use knowledge_decide for structured knowledge.",
+  personal_vault_list: "Page project and installation memory locations available to this human. Requires explicit agent_memory:read.",
+  personal_vault_view: "Read the indicated vault location by directory or note path, or by stable note ID. Follow the authorized continuation for remaining content.",
+  personal_vault_revisions: "Page retained revisions for one exact note in an authorized vault.",
+  personal_vault_revision_get: "Read an exact authorized retained revision. A removed or concealed payload is unavailable.",
+  knowledge_revisions_list:
+    "Page exact retained record revisions visible under current owner and source policies. Requires a global personal token with knowledge:read. Vault-dependent heads and historical revisions additionally require explicit agent_memory:read.",
 };
 
 export const KNOWLEDGE_TOOL_SPECS = Object.fromEntries(
@@ -78,6 +96,41 @@ export function knowledgeToolRouting(
   name: KnowledgeToolName,
   args: Record<string, unknown>,
 ): { method: "GET" | "POST" | "PATCH"; path: string; body?: unknown } {
+  const reviewRoot = "/api/v1/ext/inbox/reviews";
+  const vaultRoot = "/api/v1/ext/knowledge/vaults";
+  const encode = (value: unknown) => encodeURIComponent(String(value));
+  const get = (path: string, filters: Record<string, unknown>) => {
+    const query = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined) query.set(key, String(value));
+    }
+
+    return { method: "GET" as const, path: query.size ? `${path}?${query}` : path };
+  };
+
+  if (name === "proposal_reviews_list") return get(reviewRoot, args);
+  if (name === "proposal_review_get" || name === "proposal_review_decide") {
+    const { kind, proposalId, ...input } = args;
+    const path = `${reviewRoot}/${encode(kind)}/${encode(proposalId)}`;
+
+    return name === "proposal_review_decide" ? { method: "POST", path: `${path}/decision`, body: input } : get(path, input);
+  }
+  if (name === "personal_vault_list") return get(vaultRoot, args);
+  if (name === "personal_vault_view" || name === "personal_vault_revisions" || name === "personal_vault_revision_get") {
+    const { locationId, noteId, revisionId, ...filters } = args;
+    const path = `${vaultRoot}/${encode(locationId)}`;
+
+    if (name === "personal_vault_view") return get(noteId ? `${path}/notes/${encode(noteId)}` : `${path}/view`, filters);
+    const note = `${path}/notes/${encode(noteId)}/revisions`;
+
+    return get(name === "personal_vault_revision_get" ? `${note}/${encode(revisionId)}` : note, filters);
+  }
+  if (name === "knowledge_revisions_list") {
+    const { recordId, ...filters } = args;
+
+    return get(`/api/v1/ext/knowledge/${encode(recordId)}/revisions`, filters);
+  }
   if (name === "assignment_question_ask") {
     const { assignmentId, ...body } = args;
 

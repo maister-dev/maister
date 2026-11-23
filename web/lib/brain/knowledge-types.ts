@@ -81,6 +81,7 @@ export type KnowledgeReference = z.infer<typeof knowledgeReferenceSchema>;
 export type KnowledgePrincipal =
   | Readonly<{ kind: "user"; userId: string }>
   | Readonly<{ kind: "token"; tokenId: string }>
+  | Readonly<{ kind: "personal_read"; tokenId: string; userId: string }>
   | Readonly<{ kind: "librarian_read"; tokenId: string }>
   /** Server-only read inspection; no wire input accepts this principal. */
   | Readonly<{

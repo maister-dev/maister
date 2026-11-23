@@ -12,6 +12,7 @@ import {
   evaluationParticipants,
   evaluationStudies,
   executionAssignments,
+  nodeAttempts,
   flowRevisions,
   flows,
   runs,
@@ -60,7 +61,7 @@ import { prepareTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { takeSchedulerLock } from "@/lib/scheduler";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
-import { resumeCrashedRun } from "@/lib/runs/recover";
+import { restartFailedFlowNode, resumeCrashedRun } from "@/lib/runs/recover";
 
 let database: StartedPostgresTestDb;
 let fixture: TaskLaunchFixture;
@@ -195,6 +196,50 @@ async function committedCrash(): Promise<
 
   return source;
 }
+
+it("reacquires the original task reservation when restarting a failed node", async () => {
+  const source = await committedRun();
+  const attemptId = randomUUID();
+
+  await database.db.insert(nodeAttempts).values({
+    id: attemptId,
+    runId: source.runId,
+    nodeId: "check",
+    nodeType: "check",
+    status: "Failed",
+    endedAt: new Date(),
+  });
+  await database.db
+    .update(runs)
+    .set({
+      status: "Failed",
+      currentStepId: null,
+      endedAt: new Date(),
+    })
+    .where(eq(runs.id, source.runId));
+  const [original] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, source.intentId));
+
+  await expect(
+    restartFailedFlowNode(source.runId, attemptId, {
+      db: database.db,
+      executionHosts: hostFixture.hosts,
+      recoveryAuthority: interactiveTaskLaunchRecoveryAuthority(
+        await interactiveTaskLaunchPrincipal(),
+      ),
+    }),
+  ).resolves.toEqual({ state: "resumed" });
+  const [intent] = await database.db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, source.intentId));
+
+  expect(intent.state).toBe("run_bound");
+  expect(intent.dispatchReceipt).toEqual(original.dispatchReceipt);
+  expect(intent.inputSnapshot).toEqual(original.inputSnapshot);
+});
 
 it("LA08 a v2 crash recovery requires fresh current recovery authority before claiming the original reservation", async () => {
   const source = await committedCrash();

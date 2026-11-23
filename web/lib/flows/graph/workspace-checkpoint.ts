@@ -2,18 +2,15 @@ import "server-only";
 
 import type { WorkspacePolicy } from "@/lib/config.schema";
 
-import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import pino from "pino";
 
 import { MaisterError } from "@/lib/errors";
 import { runtimeRoot } from "@/lib/instance-config";
-
-const execFileAsync = promisify(execFile);
+import { executeRepositoryGit } from "@/lib/project-config-persistence/git-process";
 
 const log = pino({
   name: "workspace-checkpoint",
@@ -46,15 +43,11 @@ async function git(
   env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", worktreePath, ...args],
-      {
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: EXEC_MAX_BUFFER,
-        env: env ?? process.env,
-      },
-    );
+    const { stdout } = await executeRepositoryGit(worktreePath, args, {
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: EXEC_MAX_BUFFER,
+      env: env ?? process.env,
+    });
 
     return stdout;
   } catch (err) {
@@ -70,6 +63,32 @@ async function git(
       { cause: err instanceof Error ? err : undefined },
     );
   }
+}
+
+export async function restoreNodeCheckpoint(
+  worktreePath: string,
+  checkpointSha: string,
+  authorizeWrite: () => Promise<void>,
+): Promise<void> {
+  containmentAssert(worktreePath);
+  const preAttemptTip = (
+    await git(worktreePath, ["rev-parse", `${checkpointSha}^`])
+  ).trim();
+
+  // Clean before changing ignore rules from the current working tree.
+  await authorizeWrite();
+  await git(worktreePath, ["clean", "-fd"]);
+  await authorizeWrite();
+  await git(worktreePath, ["reset", "--hard", preAttemptTip]);
+  await authorizeWrite();
+  await git(worktreePath, [
+    "read-tree",
+    "--reset",
+    "-u",
+    `${checkpointSha}^{tree}`,
+  ]);
+  await authorizeWrite();
+  await git(worktreePath, ["reset", "--mixed", preAttemptTip]);
 }
 
 function assertRefSegment(value: string, label: string): void {
@@ -307,10 +326,7 @@ export async function deleteChatCheckpoint(
   const ref = checkpointRefName("chat-checkpoints", runId, hitlRequestId);
 
   try {
-    await execFileAsync("git", ["-C", worktreePath, "update-ref", "-d", ref], {
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
+    await git(worktreePath, ["update-ref", "-d", ref]);
     log.debug({ worktreePath, ref }, "[checkpoint] chat baseline deleted");
   } catch {
     log.debug(

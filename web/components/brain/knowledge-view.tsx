@@ -38,7 +38,8 @@ export async function KnowledgeHeader({
         className="flex flex-wrap gap-4 text-sm text-ink"
       >
         <Link href="/knowledge">{t("records")}</Link>
-        <Link href="/knowledge/proposals">{t("proposals")}</Link>
+        <Link href="/knowledge/reviews">{t("reviewWorkspace")}</Link>
+        <Link href="/knowledge/memory">{t("agentMemory")}</Link>
         {children}
       </nav>
     </header>

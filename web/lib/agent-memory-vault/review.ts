@@ -1,16 +1,21 @@
 import "server-only";
 
 import type { PendingVaultProposal } from "./proposals";
+import type { AgentMemoryRestriction } from "./types";
 import type { VaultAccess, VaultRevision } from "./store";
 import type { Db } from "@/lib/execution-host/db";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
+import pino from "pino";
 
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
+import { lockVaultSources } from "./source-redaction-fence";
 import { parseAgentMemoryMutation } from "./commands";
 import { authorizeHumanInstallationVault } from "./installation-access";
 import { agentMemoryVaultLimits } from "./limits";
-import { authorizeRetainedProjectVaultReview } from "./project-access";
-import { vaultProposalBases } from "./proposals";
+import { authorizeRetainedProjectVault } from "./project-access";
+import { vaultOperationRevisions, vaultProposalBases } from "./proposals";
 import {
   applyVaultMutationInTransaction,
   lockVault,
@@ -25,15 +30,44 @@ import {
 } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 
-export async function lockVaultReview(
+const log = pino({
+  name: "agent-memory-review",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function reviewSourceRestrictions(
+  proposal: PendingVaultProposal,
+  revisions: readonly VaultRevision[],
+) {
+  const byIdentity = new Map<string, AgentMemoryRestriction>();
+
+  for (const source of [
+    ...proposal.sourceRestrictions,
+    ...revisions.flatMap((revision) => revision.sourceRestrictions),
+  ]) {
+    const restriction =
+      source.kind === "legacy_project_private"
+        ? { kind: "project_context" as const, projectId: source.projectId }
+        : source;
+
+    byIdentity.set(canonicalCommandJson(restriction), restriction);
+  }
+
+  return [...byIdentity.values()];
+}
+
+async function loadVaultReview(
   tx: Db,
   proposalId: string,
   userId: string,
+  access: "review" | "history",
 ): Promise<{
   reviewer: VaultAccess;
   proposal: PendingVaultProposal;
   enabled: boolean;
   bases: VaultRevision[];
+  applied: VaultRevision[];
+  locationId: string | null;
 }> {
   const owner = (
     await tx.execute<{
@@ -41,10 +75,13 @@ export async function lockVaultReview(
       agent_id: string;
       vault_id: string;
       binding_id: string | null;
+      location_id: string | null;
     }>(sql`
-    SELECT p.slug,v.agent_id,v.id AS vault_id,b.id AS binding_id
+    SELECT p.slug,v.agent_id,v.id AS vault_id,b.id AS binding_id,
+      CASE WHEN p.id IS NOT NULL THEN 'project:'||link.id ELSE 'installation:'||b.id END AS location_id
     FROM agent_memory_proposals proposal JOIN agent_memory_vaults v ON v.id=proposal.vault_id
     LEFT JOIN projects p ON p.id=v.project_id
+    LEFT JOIN agent_project_links link ON link.project_id=v.project_id AND link.agent_id=v.agent_id
     LEFT JOIN company_specialist_bindings b ON b.company_id=v.company_id AND b.agent_id=v.agent_id AND b.detached_at IS NULL
     LEFT JOIN company_specialist_binding_revisions revision ON (revision.binding_id,revision.revision)=(b.id,b.revision)
     WHERE proposal.id=${proposalId}
@@ -55,24 +92,38 @@ export async function lockVaultReview(
   if (!owner) throw unavailableMemory();
 
   try {
-    const { reviewer, enabled } =
+    const { reviewer, enabled, canReadSourceProjects } =
       owner.slug !== null
-        ? await authorizeRetainedProjectVaultReview(
+        ? await authorizeRetainedProjectVault(
             tx,
-            { userId, slug: owner.slug, agentId: owner.agent_id },
+            {
+              userId,
+              slug: owner.slug,
+              agentId: owner.agent_id,
+              action: access === "review" ? "editSettings" : "readRepoFiles",
+            },
             owner.vault_id,
-          )
+          ).then(({ reviewer, enabled }) => ({
+            reviewer,
+            enabled,
+            canReadSourceProjects: async (
+              _tx: Db,
+              projectIds: readonly string[],
+            ) =>
+              projectIds.every((id) => reviewer.sourceProjectIds.includes(id)),
+          }))
         : await authorizeHumanInstallationVault(tx, {
             userId,
             agentId: owner.agent_id,
             bindingId: owner.binding_id!,
-            action: "edit",
-          }).then(({ access, memoryEnabled }) => ({
+            action: access === "review" ? "edit" : "read",
+          }).then(({ access, availability, canReadSourceProjects }) => ({
             reviewer: access,
-            enabled: memoryEnabled,
+            enabled: availability === "available",
+            canReadSourceProjects,
           }));
 
-    await lockVault(tx, owner.vault_id);
+    if (access === "review") await lockVault(tx, owner.vault_id);
     const [proposal] = await tx
       .select()
       .from(proposals)
@@ -82,37 +133,45 @@ export async function lockVaultReview(
           eq(proposals.vaultId, owner.vault_id),
         ),
       )
-      .for("update");
+      .for(access === "review" ? "update" : "share");
 
     if (
       !proposal ||
       proposal.state === "redacted" ||
-      (owner.slug !== null &&
-        !proposal.sourceProjectIds.every((id) =>
-          reviewer.sourceProjectIds.includes(id),
-        ))
+      (access === "history" && proposal.state === "pending")
     )
       throw unavailableMemory();
 
-    await authorizeSourceRestrictions(
-      tx,
-      { kind: "user", userId },
-      proposal.sourceRestrictions.map((source) =>
-        source.kind === "legacy_project_private"
-          ? { kind: "project_context", projectId: source.projectId }
-          : source,
-      ),
-    );
     const bases = await vaultProposalBases(
       tx,
       owner.vault_id,
       proposal.operationId,
     );
 
-    for (const revision of bases) {
-      if (!(await reviewer.canRead(tx, revision))) throw unavailableMemory();
-    }
-    const contentIds = bases
+    const applied = proposal.appliedOperationId
+      ? await vaultOperationRevisions(
+          tx,
+          owner.vault_id,
+          proposal.appliedOperationId,
+          "result",
+        )
+      : [];
+    const protectedRevisions = [...bases, ...applied];
+
+    const sourceProjects = [
+      ...(owner.slug !== null ? proposal.sourceProjectIds : []),
+      ...protectedRevisions.flatMap((revision) => revision.sourceProjectIds),
+    ];
+
+    if (!(await canReadSourceProjects(tx, sourceProjects)))
+      throw unavailableMemory();
+    await authorizeSourceRestrictions(
+      tx,
+      { kind: "user", userId },
+      reviewSourceRestrictions(proposal, protectedRevisions),
+    );
+
+    const contentIds = protectedRevisions
       .filter(({ contentSha256 }) => contentSha256 !== null)
       .map(({ id }) => id);
 
@@ -125,13 +184,27 @@ export async function lockVaultReview(
             eq(revisionPayloads.vaultId, owner.vault_id),
             inArray(revisionPayloads.revisionId, contentIds),
           ),
-        );
+        )
+        .orderBy(revisionPayloads.revisionId)
+        .for("share");
 
       if (content.length !== new Set(contentIds).size)
         throw unavailableMemory();
     }
 
-    return { reviewer, proposal, enabled, bases };
+    log.debug(
+      { proposalId, access, bases: bases.length, results: applied.length },
+      "authorized retained memory review",
+    );
+
+    return {
+      reviewer,
+      proposal,
+      enabled,
+      bases,
+      applied,
+      locationId: owner.location_id,
+    };
   } catch (error) {
     if (
       isMaisterError(error) &&
@@ -140,6 +213,18 @@ export async function lockVaultReview(
       throw unavailableMemory();
     throw error;
   }
+}
+
+export function lockVaultReview(tx: Db, proposalId: string, userId: string) {
+  return loadVaultReview(tx, proposalId, userId, "review");
+}
+
+export function readVaultReviewHistory(
+  tx: Db,
+  proposalId: string,
+  userId: string,
+) {
+  return loadVaultReview(tx, proposalId, userId, "history");
 }
 
 export async function readVaultProposalCommand(
@@ -167,10 +252,15 @@ export type VaultReviewDecision = Readonly<{
   expectedVersion: number;
   decision: "accept" | "reject";
   requestKey: string;
+  reason?: string;
 }>;
 
 export async function decideVaultProposal(db: Db, input: VaultReviewDecision) {
-  return db.transaction((tx) => decideVaultProposalInTransaction(tx, input));
+  return db.transaction(async (tx) => {
+    await lockVaultSources(tx);
+
+    return decideVaultProposalInTransaction(tx, input);
+  });
 }
 
 export async function decideVaultProposalInTransaction(
@@ -184,7 +274,13 @@ export async function decideVaultProposalInTransaction(
   );
   const state = input.decision === "accept" ? "accepted" : "rejected";
 
-  if (proposal.state === state)
+  if (
+    proposal.state === state &&
+    proposal.reviewerId === input.userId &&
+    proposal.decisionKey === input.requestKey &&
+    proposal.version === input.expectedVersion + 1 &&
+    proposal.decisionReason === (input.reason ?? null)
+  )
     return {
       state,
       version: proposal.version,
@@ -238,6 +334,7 @@ export async function decideVaultProposalInTransaction(
       decidedAt: new Date(),
       reviewerId: input.userId,
       decisionKey: input.requestKey,
+      decisionReason: input.reason ?? null,
     })
     .where(eq(proposals.id, proposal.id));
 

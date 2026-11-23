@@ -61,6 +61,7 @@ const labels: FlightCardLabels = {
     runRunning: "running",
     runWaitingOnChildren: "waiting on children",
   },
+  prLink: (number, state) => `PR #${number} · ${state ?? "not checked"}`,
   prChip: {
     open: "PR open",
     merged: "PR merged",
@@ -102,6 +103,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     lifecycleActions: [],
     readyToPromote: false,
     prNumber: null,
+    prUrl: null,
     prState: null,
     prHasConflicts: null,
     crashAction: null,

@@ -146,6 +146,38 @@ describe("loadRunTerminalCause (D-B3)", () => {
     });
   });
 
+  it.each([
+    ["agent_session_create_failed", "agent_session_create_failed"],
+    ["provider error with private details", "operational_execution_failed"],
+    ["unknown-provider-token", "operational_execution_failed"],
+  ])(
+    "reads a retained operational execution reason safely (%s)",
+    async (reason, expected) => {
+      const runId = await seedRun("Failed");
+
+      await event(
+        runId,
+        "run.failed",
+        {
+          agentKind: "operational",
+          reason,
+          cause: {
+            code: null,
+            reason: "operational_execution_failed",
+            source: "agent",
+          },
+        },
+        new Date(),
+      );
+
+      expect(await loadRunTerminalCause(db, runId, "Failed")).toEqual({
+        code: null,
+        reason: expected,
+        source: "agent",
+      });
+    },
+  );
+
   it("a legacy reason is read as a token, and prose never reaches the cause", async () => {
     const hyphenated = await seedRun("Crashed");
     const prose = await seedRun("Crashed");

@@ -117,7 +117,10 @@ test("WI-03 WI-07 saves, diagnoses, and resets workspace limits without restarti
     .first()
     .click();
   await expect(page).toHaveURL(/settings#workspace-integrity-size$/);
-  await expect(page.locator("#workspace-integrity-size")).toHaveValue("1");
+  // React can retain a hidden copy of the field while streaming the page.
+  await expect(
+    page.locator("#workspace-integrity-size").filter({ visible: true }),
+  ).toHaveValue("1");
   await page.getByRole("button", { name: "Reset Total size (MiB)" }).click();
   await page.getByRole("button", { name: "Save limits" }).click();
   await expect(

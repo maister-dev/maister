@@ -55,8 +55,9 @@ design explicitly changes that trust boundary.
 - **Within:** Timeline and Evidence remain regular secondary tabs. Files and
   Diff live inside one **Files / Diff** disclosure, collapsed by default; opening
   `?wb=files` or `?wb=diff` expands the block and selects the requested inner
-  tab. Flow runs may also expose Graph as a fullscreen or main-page view; Graph
-  should not compete with the main Flow landing.
+  tab. Collapsing the block clears that tab selection. Flow runs may also expose
+  Graph as a fullscreen or main-page view; Graph should not compete with the
+  main Flow landing.
 - **Exit:** back to the primary run center, inspector actions, or linked
   artifacts.
 

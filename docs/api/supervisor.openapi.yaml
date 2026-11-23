@@ -4583,6 +4583,15 @@ components:
               producer_method_unsupported,
               producer_output_incomplete,
             ]
+        acpMethod:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*$'
+          description: Method name of an unsupported ACP message, when it is a bounded identifier.
+        acpMessageKind:
+          type: string
+          enum: [request, notification]
+          description: JSON-RPC envelope kind of an unsupported ACP message.
         rule: { $ref: "#/components/schemas/WorkspaceRule" }
         field:
           type: string

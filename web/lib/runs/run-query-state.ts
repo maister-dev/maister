@@ -18,6 +18,7 @@ export const RUN_DIFF_BODY_MODES = ["rich", "raw"] as const;
 export const RUN_DIFF_FILE_TREE_MODES = ["shown", "hidden"] as const;
 export const RUN_INSPECTOR_STATES = ["open", "closed"] as const;
 export const RUN_FLOW_STATES = ["fullscreen"] as const;
+export const RUN_WORKBENCH_CHANGES_ID = "workbench-changes";
 
 export type RunWorkbenchTab = (typeof RUN_WORKBENCH_TABS)[number];
 export type RunFileView = (typeof RUN_FILE_VIEWS)[number];

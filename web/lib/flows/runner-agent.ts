@@ -5,8 +5,6 @@ import type { KnowledgeAccessCapture } from "@/lib/company/types";
 import type { RunResultContract } from "@/lib/run-results/types";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { CapabilityAgent } from "@/lib/config.schema";
-import { acpContextFailureReason } from "../../../runtime/acp-context-failure";
-
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { ExecutionCommand } from "@/lib/db/schema";
 import type { Db } from "@/lib/execution-host/db";
@@ -20,6 +18,8 @@ import { randomUUID } from "node:crypto";
 
 import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
+
+import { acpContextFailureReason } from "../../../runtime/acp-context-failure";
 
 import { PERMISSION_RESUME_PROMPT } from "./graph/permission-resume";
 import { recordDispatchedPrompt } from "./graph/prompt-record";
@@ -62,6 +62,7 @@ import {
   type FlowPermissionOwner,
 } from "./graph/prompt-permission";
 
+import { isProjectionTransactionUnavailable } from "@/lib/execution-host/events/projection-transaction";
 import {
   assertMemorySessionSources,
   stageProjectFlowMemory,
@@ -1671,7 +1672,7 @@ async function runNewSession(
           nodeAttemptId: ctx.nodeAttemptId,
           db: ctx.db,
         });
-        const facade = agentFacadeMcpServer(credential.secret);
+        const facade = agentFacadeMcpServer(credential.secret, "vault");
 
         if (!facade)
           throw new MaisterError(
@@ -1680,7 +1681,7 @@ async function runNewSession(
           );
         sessionCapabilities.mcpServers = [
           ...(sessionCapabilities.mcpServers ?? []),
-          { ...facade, env: { ...facade.env, MAISTER_MCP_TOOLSET: "vault" } },
+          facade,
         ];
       }
 
@@ -2117,7 +2118,10 @@ async function runNewSession(
       );
       throw new FlowPromptContinuationPending(null, err);
     }
-    if (err instanceof FlowPromptContinuationPending) {
+    if (
+      err instanceof FlowPromptContinuationPending ||
+      isProjectionTransactionUnavailable(err)
+    ) {
       continuationPending = true;
       throw err;
     }

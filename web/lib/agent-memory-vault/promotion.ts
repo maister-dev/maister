@@ -46,6 +46,7 @@ import {
   requireInstallationCredential,
 } from "@/lib/agents/installation-authority";
 import { MaisterError } from "@/lib/errors";
+import { truncateUtf16 } from "@/lib/utf8";
 
 const log = pino({
   name: "agent-memory-promotion",
@@ -61,6 +62,13 @@ const promotionInput = z.strictObject({
   ifRevisionId: targetId,
   ifHash: z.string().regex(/^[a-f0-9]{64}$/),
   requestKey: z.string().regex(/^[A-Za-z0-9_.:-]{8,128}$/),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .refine((value) => !value.includes("\0") && value.isWellFormed())
+    .optional(),
   target: z.strictObject({
     kind: z.enum(["brain", "knowledge"]),
     ownerKind: z.enum(["project", "company"]),
@@ -169,6 +177,9 @@ export async function promoteMemory(
   input: ReturnType<typeof parseMemoryPromotion>,
   prepare: PrepareVaultAccess,
 ) {
+  const proposalKind = input.target.kind;
+  const destination = (proposalId: string) =>
+    `/knowledge/reviews?${new URLSearchParams({ proposalKind, proposalId })}`;
   const result = await db.transaction(async (tx) => {
     await assertBrainSchemaApplied(tx);
     await lockKnowledgeWriteConsumer(tx, principal);
@@ -251,6 +262,8 @@ export async function promoteMemory(
         status: "pending" as const,
         operationId: prior.operation.id,
         proposalId: prior.promotion.proposalId,
+        proposalKind,
+        proposalHref: destination(prior.promotion.proposalId),
       };
     }
     const current = (await loadActiveHeads(tx, vault.id)).find(
@@ -276,6 +289,11 @@ export async function promoteMemory(
     );
     const operationId = randomUUID();
     let proposalId: string;
+    const basename = current.path
+      .slice(current.path.lastIndexOf("/") + 1, -3)
+      .trim();
+    const title =
+      input.title ?? (truncateUtf16(basename, 256) || "Agent memory proposal");
 
     if (input.target.kind === "brain" && target.kind === "project") {
       proposalId = (
@@ -283,7 +301,7 @@ export async function promoteMemory(
           projectId: target.projectId,
           kind: "state",
           evidenceItemIds: [],
-          draft: { title: "Agent memory proposal", witnessId },
+          draft: { title, witnessId },
           autonomyDecision: "manual",
           blastRadius: "low",
           actor: {
@@ -303,7 +321,7 @@ export async function promoteMemory(
           principal,
           idempotencyKey: `vault:${operationId}`,
           draft: {
-            title: "Agent memory proposal",
+            title,
             kind: "assertion",
             assertion,
             basis: "inferred",
@@ -337,7 +355,13 @@ export async function promoteMemory(
     });
     await access.capture(tx, [current]);
 
-    return { status: "pending" as const, operationId, proposalId };
+    return {
+      status: "pending" as const,
+      operationId,
+      proposalId,
+      proposalKind,
+      proposalHref: destination(proposalId),
+    };
   });
 
   log.info(

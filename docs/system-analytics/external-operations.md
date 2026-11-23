@@ -725,6 +725,21 @@ Detach is session-only (`DELETE /api/projects/{slug}/tasks/{number}/source`);
 no token can detach. MCP `task_update` stays title/prompt only. See
 [`tasks.md`](tasks.md#external-source-binding).
 
+## Human knowledge and vault integration
+
+| Caller | Shared proposal review and human vault surface |
+| --- | --- |
+| Active web session | Current owner/action/source policies. Existing web-only memory commands retain their own authorization. |
+| Global personal bearer token | Current owner/action/source policies plus operation admission. Queue requires `decisions:read` and the relevant content scope. Brain and vault decision require exact `decisions:review` plus the corresponding content scope. Vault disclosure requires explicit `agent_memory:read`. |
+| Project token or agent/installation execution token | Personal routes refuse the caller. The current actor or session vault remains available through its existing scoped methods. |
+| Librarian turn token | Personal routes refuse the caller. The token can use only its owner- and turn-bound methods with their existing authority checks. |
+
+A request key is scoped to the resolved human identity across the browser and bearer adapters. Token activity and decision authority are rechecked at mutation and replay. Validate a continuation against its credential, operation and selected filters before honoring it. Audit only the admitted scope, caller, safe result class and correlation reference through the existing external audit owner. Operational logs exclude source text, paths, reasons, queries and tokens. The explicit personal MCP profile advertises the new operations. Direct calls check profile and the server still authorizes each request (K11, K12). See the [external contract](../api/external/operations.openapi.yaml) and [shared review sequence](company-brain.md#shared-human-review).
+
+Proposal preview cursors bind the exact proposal snapshot and the issuing PAT. Applied vault outcomes return up to 20 revisions in operation order. Pass `revisionsNextCursor` as `outcomeCursor` on the same review GET or MCP `proposal_review_get`. The API rechecks all result sources and validates the continuation against the bound credential, proposal version, and operation.
+
+Global personal tokens must include explicit `agent_memory:read` to read vault-dependent knowledge. Native search, records, revisions, evidence, conflicts, witnesses and proposal reads apply the grant to the complete current source graph before response metadata and pagination. Proposal inspection also requires the current owner review permission or originating-author propose permission as applicable. A missing or concealed exact reference returns `404`. Concealed members of a collection contribute no item or continuation. The personal MCP profile inherits these checks through the same HTTP routes.
+
 ## Expectations
 
 - `project_tokens.token_hash` MUST be `sha256_hex(fullTokenString)` — never bcrypt,

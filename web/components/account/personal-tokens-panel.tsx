@@ -51,15 +51,17 @@ function scopeLabelKey(scope: TokenScope): string {
   return `scopeLabels.${camel}`;
 }
 
-// The picker is the human-manageable vocabulary: every scope a person may grant
-// MINUS the machine-only evaluator set (already excluded by
-// USER_TOKEN_SCOPE_VALUES) and minus the exact-only human scope, which this
-// surface grants through its own checkbox. Previously a hand-maintained list of
-// 22, it had drifted 8 scopes behind — including `flows:read` and
-// `runners:read`, the very grants ADR-168 exists to let an operator add after
-// issuance.
-const SCOPE_OPTIONS: ScopeOption[] = USER_TOKEN_SCOPE_VALUES.filter(
-  (scope) => !EXACT_ONLY_TOKEN_SCOPES.has(scope),
+const PERSONAL_EXACT_SCOPES = [
+  "agent_memory:read",
+  "decisions:review",
+] as const;
+const SCOPE_OPTIONS: ScopeOption[] = (
+  [
+    ...USER_TOKEN_SCOPE_VALUES.filter(
+      (scope) => !EXACT_ONLY_TOKEN_SCOPES.has(scope),
+    ),
+    ...PERSONAL_EXACT_SCOPES,
+  ] satisfies TokenScope[]
 ).map((value) => ({ value, labelKey: scopeLabelKey(value) }));
 
 function formatDate(value: string | null, emptyLabel: string): string {
@@ -82,23 +84,10 @@ function tokenStatus(
   return "active";
 }
 
-function toggleScope(
-  selected: TokenScope[],
-  // The picker never offers the exact-only human scope — it has its own
-  // checkbox — so this stays the broad vocabulary.
-  scope: TokenScope,
-): TokenScope[] {
-  if (scope === "*") return ["*"];
+function toggleScope(selected: TokenScope[], scope: TokenScope): TokenScope[] {
+  const next = toggleScopeForEdit(selected, scope);
 
-  const withoutAll = selected.filter((item) => item !== "*");
-
-  if (withoutAll.includes(scope)) {
-    const next = withoutAll.filter((item) => item !== scope);
-
-    return next.length > 0 ? next : ["*"];
-  }
-
-  return [...withoutAll, scope];
+  return next.length ? next : [TOKEN_SCOPE_ALL];
 }
 
 function toLocalInputValue(value: string | null): string {

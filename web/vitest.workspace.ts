@@ -53,6 +53,9 @@ export default [
     test: {
       name: "integration",
       maxWorkers,
+      globalSetup: process.env.MAISTER_ISOLATION_WEB_BUILD_LOG
+        ? ["./test-support/vitest-production-web.setup.ts"]
+        : [],
       exclude:
         process.platform === "linux"
           ? []

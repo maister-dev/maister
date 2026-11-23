@@ -210,6 +210,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ],
         [
           "captureTaskAgentPackage",
+          "lib/tasks/launch-capability-materialization.ts#assertCapturedProjectionSymlinks",
+          "wrapper",
+        ],
+        [
+          "captureTaskAgentPackage",
           "lib/tasks/launch-capture-path.ts#assertManagedCapturePath",
           "wrapper",
         ],
@@ -326,6 +331,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["readInternalDirectorySymlinks", "node:fs/promises.readdir", "list"],
         ["readInternalDirectorySymlinks", "node:fs/promises.readlink", "read"],
         ["readInternalDirectorySymlinks", "node:fs/promises.realpath", "stat"],
+        ["assertCapturedProjectionSymlinks", "node:fs/promises.lstat", "stat"],
+        [
+          "assertCapturedProjectionSymlinks",
+          "node:fs/promises.readlink",
+          "read",
+        ],
       ],
     ),
     ...classified(
@@ -1111,8 +1122,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [
         ["entryStat", "node:fs/promises.lstat", "stat"],
         ["skillEntries", "node:fs/promises.readdir", "list"],
+        ["workspacePackageSkillsPrompt", "node:fs/promises.readdir", "list"],
         ["<object>.materialize", "node:fs/promises.mkdir", "write"],
-        ["<object>.materialize", "node:fs/promises.cp", "write"],
+        ["materializeWorkspacePackageSkills", "node:fs/promises.cp", "write"],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.mkdir",
+          "write",
+        ],
+        [
+          "materializeCapturedWorkspacePackageSkills",
+          "node:fs/promises.cp",
+          "write",
+        ],
         ["<object>.filter", "node:fs/promises.lstat", "stat"],
       ],
     ),
@@ -1562,11 +1584,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "manager-flow-state",
       "flow-engine state the manager owns: installed package content, authored packages, run inputs/outputs under .maister/<slug>/runs",
       [
-        ["git", "node:child_process.execFile", "spawn", "git"],
         ["captureWorkspaceTree", "node:fs/promises.mkdtemp", "write"],
         ["captureWorkspaceTree", "node:fs/promises.copyFile", "write"],
         ["captureWorkspaceTree", "node:fs/promises.rm", "remove"],
-        ["deleteChatCheckpoint", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -2195,6 +2215,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "lib/runs/node-restart-checkpoint.ts",
+      "repository-worktree",
+      "Compare the physical Git root to the retained run worktree before previewing or restoring a failed node checkpoint.",
+      [["inspectWorktree", "node:fs/promises.realpath", "stat"]],
+    ),
+    ...classified(
       "../runtime/pull-request.ts",
       "repository-worktree",
       "Provider CLI writes shared by execution-host Flow publication and the human Git panel",
@@ -2767,6 +2793,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     "repository-worktree",
     [
       ["captureAcceptedDirectory", true],
+      ["assertCapturedProjectionSymlinks", true],
       ["withTaskLaunchCapabilityBundles", false],
     ],
   ),
@@ -3034,6 +3061,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["runCapabilitiesCleanupSweep", false],
   ]),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
+    ["materializeCapturedWorkspacePackageSkills", false],
     ["materializeWorkspacePackageSkills", false],
     ["workspacePackageSkillsPrompt", false],
   ]),
@@ -3157,11 +3185,8 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["runReviewHuman", false],
   ]),
   ...wrappers("lib/flows/graph/workspace-checkpoint.ts", "manager-flow-state", [
-    ["applyWorkspacePolicy", false],
     ["captureCheckpoint", false],
     ["captureWorkspaceTree", false],
-    ["deleteChatCheckpoint", false],
-    ["deleteRunCheckpointRefs", false],
   ]),
   ...wrappers("lib/flows/lifecycle.ts", "manager-flow-state", [
     ["removeRevision", false],
@@ -3311,6 +3336,10 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/runs/node-interrupt.ts", "manager-flow-state", [
     ["escalateNodeInterrupt", false],
     ["parkNodeForHostPressure", false],
+  ]),
+  ...wrappers("lib/runs/node-restart-checkpoint.ts", "repository-worktree", [
+    ["applyNodeRestartCheckpoint", false],
+    ["loadNodeRestartCheckpointPreview", false],
   ]),
   ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
     ["getPrState", false],

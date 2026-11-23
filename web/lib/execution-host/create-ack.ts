@@ -51,6 +51,7 @@ export async function applyCreateAck(
 
   if (!assignment) return "stale";
   let contextNodeAttemptId = input.nodeAttemptId;
+  let gateChatCreate: { resumeSessionId: unknown } | undefined;
 
   if (input.commandId) {
     const [command] = await tx
@@ -69,6 +70,8 @@ export async function applyCreateAck(
     )
       throw createIntentError("create_ack_command");
     if (!(await currentCreateCommand(tx, command))) return "stale";
+    if (command.createIntent?.owner.variant === "gate_chat")
+      gateChatCreate = { resumeSessionId: command.payload.resumeSessionId };
     if (
       contextNodeAttemptId === null &&
       typeof command.payload.nodeAttemptId === "string"
@@ -92,6 +95,26 @@ export async function applyCreateAck(
     if (owned) return "stale";
   }
   const session = await lockLogicalRunSession(tx, input);
+
+  if (
+    gateChatCreate &&
+    (!session?.runnerSnapshot ||
+      typeof gateChatCreate.resumeSessionId !== "string" ||
+      (session.acpSessionId !== gateChatCreate.resumeSessionId &&
+        (session.hostSessionId !== input.result.sessionId ||
+          session.acpSessionId !== input.result.acpSessionId)))
+  ) {
+    log.warn(
+      {
+        runId: input.runId,
+        commandId: input.commandId,
+        sessionName: input.sessionName,
+      },
+      "gate-chat create receipt has no matching configured logical session",
+    );
+
+    return "stale";
+  }
   const [incarnation] = await tx
     .select()
     .from(runSessionIncarnations)

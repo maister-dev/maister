@@ -382,6 +382,26 @@ Directory generations describe the visible subtree selected by the request.
 A recursive mutation submits the original selected subtree generation and
 the exact complete set of member revisions for atomic revalidation.
 
+## Human catalog, historical identity and review rationale
+
+| Object or state | Required behavior |
+| --- | --- |
+| Project attachment or reviewed installation binding | Catalog selects an authorized owner and qualified agent without creating a vault. The same agent in two projects and one installation has three independent identities. An authorized binding selector resolves independently of pagination. |
+| Vault unreadable or unavailable | After access checks distinguish empty, disabled attachment, disabled memory, and pre-cutover legacy read. A temporary failure permits retry. Conceal missing and unauthorized owner/note resources through the same refusal. |
+| Disabled attachment or memory | Live vault reads and writes require an enabled attachment and enabled memory. This includes the installation binding head and its reviewed memory grant. Authorized reviewers may inspect and reject pending changes, and authorized readers may inspect settled review history under current source access. Accepting a pending change while disabled yields `CONFLICT` and preserves the proposal and note heads. |
+| Historical note revision | Bind history to the vault, stable note ID and revision ID. Rename, deletion and path reuse leave the original URL attached to its original identity. Restore creates a new revision with the ordinary current-head CAS. |
+| Edit under review policy | Submission leaves heads unchanged. Acceptance applies the frozen command only if its reviewed base and authorization still hold. Rejection records the reviewer, time and any validated reason and preserves all heads. |
+| Settled review or outcome continuation | Authorize the complete base and result set before returning any page or count. Check distinct source projects and inherited restrictions together. Shared locks retain the proposal and protected payloads for the read. Settlement continues to take the vault write lock. |
+| Redacted revision | Recheck operation bases, applied revisions and inherited restrictions at every read. Erase stored dependent free-text reason alongside dependent proposal content while retaining authorized decision identity. |
+
+Vault review detail and settlement take the shared source-redaction fence
+before reading source metadata or locking a proposal, vault, or payload row.
+Redaction takes the exclusive fence before its first vault lock. A review that
+waits for redaction rechecks authority after the redaction commits and
+conceals the withdrawn source and its dependent review content.
+
+The catalog, historical identity and decision-rationale contracts are implemented. K04, K05 and K08–K10 define their acceptance checks. A conflict on a version, generation or selected head leaves the change atomic and the browser draft recoverable. The [vault review owner](../../web/lib/agent-memory-vault/review.ts) checks current source authority. The [redaction owner](../../web/lib/agent-memory-vault/redaction.ts) invalidates dependent content. For pending promotion see [Project Brain disposition](project-brain.md#human-review-and-disposition) or the [knowledge publication lifecycle](company-brain.md).
+
 ## Expectations
 
 The ADR-152 expectations in this section apply to the pre-cutover file store.

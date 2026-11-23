@@ -17,7 +17,8 @@ import {
 import { Client, Pool } from "pg";
 
 import * as schema from "@/lib/db/schema";
-import { MaisterError } from "@/lib/errors";
+import { isMaisterError, MaisterError } from "@/lib/errors";
+import { pgErrorOf } from "@/lib/db/pg-error";
 
 const TRANSACTION_BUDGET_MS = 5_000;
 const CLEANUP_BUDGET_MS = 500;
@@ -80,6 +81,26 @@ function deadlineError(): MaisterError {
       details: { reason: "projection_transaction_deadline" },
     },
   );
+}
+
+export function isProjectionTransactionUnavailable(error: unknown): boolean {
+  const visited = new Set<Error>();
+  let current = error;
+
+  while (current instanceof Error && !visited.has(current)) {
+    if (
+      isMaisterError(current) &&
+      (current.details?.reason === "projection_transaction_deadline" ||
+        current.details?.reason === "projection_connection_timeout" ||
+        current.details?.reason ===
+          "projection_transaction_cleanup_unconfirmed")
+    )
+      return true;
+    visited.add(current);
+    current = current.cause;
+  }
+
+  return false;
 }
 
 function queryText(argument: unknown): string {
@@ -303,6 +324,11 @@ export async function boundedPostgresTransaction<T>(
     }, config);
 
     return await Promise.race([operation, timeout]);
+  } catch (error) {
+    const code = pgErrorOf(error)?.code;
+
+    if (code === "55P03" || code === "57014") throw deadlineError();
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
     const settled = operation ? await settleWithinCleanup(operation) : false;

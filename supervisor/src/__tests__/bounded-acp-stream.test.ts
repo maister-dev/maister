@@ -55,6 +55,54 @@ function createClient(): { client: BoundedAcpClient; messages: AnyMessage[] } {
 }
 
 describe("bounded ACP framed-source contract", () => {
+  it.each([
+    ["auth/status_update", { id: null }, "request", "auth/status_update"],
+    ["future/update", {}, "notification", "future/update"],
+    ["unsafe\nmethod", {}, "notification", undefined],
+    [`future/${"x".repeat(128)}`, {}, "notification", undefined],
+  ] as const)(
+    "refuses method %s and reports only bounded envelope metadata",
+    async (method, id, acpMessageKind, acpMethod) => {
+      const source = new PassThrough({ objectMode: true });
+      const stdin = new PassThrough();
+      const failures: SupervisorError[] = [];
+      const reader = boundedAcpStream({
+        source,
+        stdin,
+        client: createClient().client,
+        onFailure: (error) => failures.push(error),
+      }).readable.getReader();
+
+      try {
+        source.end(
+          Buffer.from(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              method,
+              ...id,
+              params: { private: "fixture content" },
+            })}\n`,
+          ),
+        );
+        await expect(reader.read()).rejects.toMatchObject({
+          code: "ACP_PROTOCOL",
+        });
+        expect(failures.map((failure) => failure.details)).toEqual([
+          {
+            reason: "required_output_incomplete",
+            outputFailure: "producer_method_unsupported",
+            acpMessageKind,
+            ...(acpMethod ? { acpMethod } : {}),
+          },
+        ]);
+      } finally {
+        reader.releaseLock();
+        source.destroy();
+        stdin.destroy();
+      }
+    },
+  );
+
   it("keeps the prompt response reachable after malformed optional context frames", async () => {
     const source = new PassThrough({ objectMode: true });
     const stdin = new PassThrough();

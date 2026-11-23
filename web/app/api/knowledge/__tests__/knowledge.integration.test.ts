@@ -22,6 +22,7 @@ import { parse } from "yaml";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
 import knowledgeToolSchemas from "../../../../../runtime/knowledge-tool-input.schema.json";
+import { PERSONAL_KNOWLEDGE_TOOLS } from "../../../../../runtime/knowledge-tool-effects";
 
 import { resolveKnowledgePrincipal } from "@/lib/brain/knowledge-access";
 import { lockKnowledgeReadConsumer } from "@/lib/brain/knowledge-disclosure";
@@ -36,6 +37,7 @@ import {
 import { GET as readEvidence } from "@/app/api/knowledge/[recordId]/evidence/route";
 import { GET as searchRecords } from "@/app/api/knowledge/route";
 import { GET as getRecord } from "@/app/api/knowledge/[recordId]/route";
+import { GET as browserRevisions } from "@/app/api/knowledge/[recordId]/revisions/route";
 import {
   createInvocation,
   invocationFromEnvironment,
@@ -48,6 +50,7 @@ import { GET as extEvidence } from "@/app/api/v1/ext/knowledge/[recordId]/eviden
 import { GET as extConflicts } from "@/app/api/v1/ext/knowledge/[recordId]/conflicts/route";
 import { GET as extSearch } from "@/app/api/v1/ext/knowledge/route";
 import { GET as extRecord } from "@/app/api/v1/ext/knowledge/[recordId]/route";
+import { GET as personalRevisions } from "@/app/api/v1/ext/knowledge/[recordId]/revisions/route";
 import { GET as extWitness } from "@/app/api/v1/ext/knowledge/witnesses/[witnessId]/route";
 import { GET as extProposal } from "@/app/api/v1/ext/knowledge/proposals/[proposalId]/route";
 import {
@@ -71,6 +74,7 @@ import { issueAgentRunToken } from "@/lib/agents/tokens";
 import { seedRun } from "@/test-support/execution-host-seed";
 import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { GET as listProposals } from "@/app/api/knowledge/proposals/route";
+import { POST as decideInbox } from "@/app/api/inbox/reviews/[kind]/[proposalId]/decision/route";
 import { GET as getProposal } from "@/app/api/knowledge/proposals/[proposalId]/route";
 import { POST as proposeKnowledge } from "@/app/api/knowledge/proposals/route";
 import { POST as decideKnowledge } from "@/app/api/knowledge/proposals/[proposalId]/decision/route";
@@ -122,6 +126,160 @@ async function readRecord(id: string, query = ""): Promise<Response> {
     { params: Promise.resolve({ recordId: id }) },
   );
 }
+
+it("K04 K05 confines structured decision replay to the original reviewer and current record grants", async () => {
+  const principal = { kind: "user", userId: readerId } as const;
+  const owner = { kind: "company", companyId } as const;
+  const draft: CreateKnowledgeProposalInput["draft"] = {
+    title: "Reviewed operating assumption",
+    kind: "assertion",
+    assertion: `Initial assumption ${readerId}`,
+    basis: "inferred",
+    evidence: [],
+    missingEvidence: [{ state: "unknown", reason: "Source not retained" }],
+    limitations: [],
+  };
+  const initial = await createBrainProposal(database.db, {
+    principal,
+    owner,
+    draft,
+    kind: "knowledge_add",
+    idempotencyKey: `${readerId}_replay_base`,
+  });
+  const published = await reviewKnowledgeProposal(database.db, {
+    principal,
+    proposalId: initial.id,
+    expectedRevision: initial.revision,
+    decision: "accept",
+    reason: "Retain the original assertion",
+    idempotencyKey: `${readerId}_replay_publish`,
+  });
+  const nativeSettled = await decideInbox(
+    jsonRequest(`/api/inbox/reviews/knowledge/${initial.id}/decision`, {
+      expectedVersion: String(initial.revision),
+      decision: "accept",
+      reason: "Retain the original assertion",
+      requestKey: `${readerId}_replay_publish`,
+    }),
+    { params: Promise.resolve({ kind: "knowledge", proposalId: initial.id }) },
+  );
+
+  expect.soft(nativeSettled.status).toBe(409);
+  const recordId = published.acceptedRecordId!;
+  const correction = await createBrainProposal(database.db, {
+    principal,
+    owner,
+    kind: "knowledge_correct",
+    targetRecordId: recordId,
+    expectedRecordRevision: published.acceptedRecordRevision!,
+    draft: { ...draft, assertion: "Corrected operating assumption" },
+    idempotencyKey: `${readerId}_replay_correct`,
+  });
+  const otherId = randomUUID();
+
+  await database.pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES($1,$2,'member','active')",
+    [otherId, `${otherId}@example.test`],
+  );
+  await database.pool.query(
+    "INSERT INTO company_grants(company_id,principal_type,principal_id,action,created_by) SELECT $1,'user',$2,action,$3 FROM unnest(ARRAY['knowledge:read','knowledge:review']) action",
+    [companyId, otherId, readerId],
+  );
+  await database.pool.query(
+    `INSERT INTO brain_record_grants(record_id,principal_type,principal_id,action,created_by)
+     SELECT $1,'user',reviewer,action,jsonb_build_object('kind','user','id',$2::text,'runId',null,'attemptId',null)
+     FROM unnest(ARRAY[$2::text,$3::text]) reviewer
+     CROSS JOIN unnest(ARRAY['knowledge:read','knowledge:review']) action`,
+    [recordId, readerId, otherId],
+  );
+  const [originalToken, alternateToken] = await Promise.all(
+    [readerId, otherId].map((ownerUserId) =>
+      issueUserAccessToken(
+        {
+          ownerUserId,
+          name: "Structured decision replay",
+          scopes: ["knowledge:read", "knowledge:review"],
+        },
+        database.db,
+      ),
+    ),
+  );
+  const proposalId = correction.id;
+  const requestKey = `${readerId}_review_receipt`;
+  const reason = "Publish the corrected guidance";
+  const inboxDecision = () =>
+    decideInbox(
+      jsonRequest(`/api/inbox/reviews/knowledge/${proposalId}/decision`, {
+        expectedVersion: String(correction.revision),
+        decision: "accept",
+        reason,
+        requestKey,
+      }),
+      { params: Promise.resolve({ kind: "knowledge", proposalId }) },
+    );
+  const nativeDecision = (token: string) =>
+    extDecide(
+      new NextRequest(
+        `http://localhost/api/v1/ext/knowledge/proposals/${proposalId}/decision`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            expectedRevision: correction.revision,
+            decision: "accept",
+            reason,
+            idempotencyKey: requestKey,
+          }),
+        },
+      ),
+      { params: Promise.resolve({ proposalId }) },
+    );
+  const settled = await inboxDecision();
+  const receipt = await settled.json();
+
+  expect(settled.status, JSON.stringify(receipt)).toBe(200);
+  expect(receipt).toMatchObject({
+    domainState: "accepted",
+    outcome: { recordId, revision: 2 },
+  });
+  expect(await (await inboxDecision()).json()).toMatchObject({
+    receiptId: receipt.receiptId,
+    replayed: true,
+  });
+  const sameUser = await nativeDecision(originalToken!.secret);
+
+  expect(sameUser.status).toBe(200);
+  expect(await sameUser.json()).toMatchObject({
+    id: proposalId,
+    status: "accepted",
+    duplicate: true,
+  });
+  expect.soft((await nativeDecision(alternateToken!.secret)).status).toBe(409);
+  const originalSession = session!;
+
+  session = { ...originalSession, id: otherId };
+  expect.soft((await inboxDecision()).status).toBe(409);
+  session = originalSession;
+
+  await database.pool.query(
+    "UPDATE brain_record_grants SET revoked_at=now() WHERE record_id=$1 AND principal_id=$2 AND action='knowledge:review'",
+    [recordId, readerId],
+  );
+  expect((await readRecord(recordId)).status).toBe(200);
+  expect.soft((await nativeDecision(originalToken!.secret)).status).toBe(404);
+  expect.soft((await inboxDecision()).status).toBe(404);
+  expect(
+    (
+      await database.pool.query(
+        "SELECT user_id FROM inbox_review_receipts WHERE request_key=$1",
+        [requestKey],
+      )
+    ).rows,
+  ).toEqual([{ user_id: readerId }]);
+});
 
 beforeAll(async () => {
   database = await startMainAndBrainPostgresTestDb({
@@ -1010,7 +1168,9 @@ it("IT-CBX-02 the built MCP publishes nested native schemas and calls the real H
     };
 
     expect(result.tools.map((tool) => tool.name).sort()).toEqual(
-      Object.keys(knowledgeToolSchemas).sort(),
+      Object.keys(knowledgeToolSchemas)
+        .filter((name) => !new Set<string>(PERSONAL_KNOWLEDGE_TOOLS).has(name))
+        .sort(),
     );
     for (const tool of result.tools)
       expect(tool.inputSchema).toEqual(
@@ -1546,6 +1706,62 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     idempotencyKey: `${readerId}_correct`,
     draft: { ...draft, assertion: `Corrected ${readerId}` },
   });
+  const recordRevisions = {
+    params: Promise.resolve({ recordId: reference.id }),
+  };
+  const revisionUrl = `http://localhost/api/knowledge/${reference.id}/revisions?limit=1`;
+  const browserPage = await browserRevisions(
+    new Request(revisionUrl),
+    recordRevisions,
+  );
+  const latest = await browserPage.json();
+
+  expect(browserPage.status).toBe(200);
+  expect(latest).toMatchObject({
+    items: [{ recordId: reference.id, revision: 2 }],
+    nextCursor: expect.any(String),
+  });
+  const continuation = new URL(revisionUrl);
+
+  continuation.searchParams.set("cursor", latest.nextCursor);
+  expect(
+    await (
+      await browserRevisions(new Request(continuation), recordRevisions)
+    ).json(),
+  ).toMatchObject({
+    items: [{ recordId: reference.id, revision: 1 }],
+    nextCursor: null,
+  });
+  const token = await issueUserAccessToken(
+    {
+      ownerUserId: readerId,
+      name: "Personal record revision history",
+      scopes: ["knowledge:read"],
+    },
+    database.db,
+  );
+  const personalPage = await personalRevisions(
+    new Request(revisionUrl, {
+      headers: { authorization: `Bearer ${token.secret}` },
+    }),
+    recordRevisions,
+  );
+
+  expect(personalPage.status).toBe(200);
+  expect((await personalPage.json()).items).toEqual(latest.items);
+  const personalHistory = (recordId: string) =>
+    personalRevisions(
+      new Request(
+        `http://localhost/api/v1/ext/knowledge/${recordId}/revisions`,
+        {
+          headers: { authorization: `Bearer ${token.secret}` },
+        },
+      ),
+      { params: Promise.resolve({ recordId }) },
+    );
+  const missingHistory = await personalHistory("missing-review-record");
+
+  expect(missingHistory.status).toBe(404);
   const retained = await getKnowledgeEvidencePage(
     database.db,
     principal,
@@ -1578,6 +1794,10 @@ it("IT-CBE-01 record references pin exact evidence, reuse one capture and retain
     "UPDATE brain_items SET visibility='restricted' WHERE id=$1",
     [reference.id],
   );
+  const concealedHistory = await personalHistory(reference.id);
+
+  expect(concealedHistory.status).toBe(404);
+  expect(await concealedHistory.json()).toEqual(await missingHistory.json());
   const hiddenProposal = await getProposal(
     new NextRequest(
       `http://localhost/api/knowledge/proposals/${proposals[0]!.id}`,

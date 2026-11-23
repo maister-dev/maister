@@ -484,8 +484,15 @@ export async function disposeOperationalRun(
           const integrity = await inspectForCleanup(() =>
             inspectOperationalWorkspace(db, run, "cleanup"),
           );
+          // A clean detached checkout contains the pinned source and expected
+          // materialization. The Run retains its execution evidence separately.
+          const cleanFailedCheckout =
+            run.status === "Failed" &&
+            context.resourceKind === "ephemeral_checkout" &&
+            integrity.verdict === "clean";
           const preserveBytes =
-            run.status !== "Done" || integrity.verdict !== "clean";
+            !cleanFailedCheckout &&
+            (run.status !== "Done" || integrity.verdict !== "clean");
 
           if (preserveBytes) {
             if (!client)

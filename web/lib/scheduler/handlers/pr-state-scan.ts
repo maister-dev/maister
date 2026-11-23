@@ -99,7 +99,7 @@ export type PrStateScanSummary = {
 
 // ADR-140: the per-project PR-state poll. A pure provider-read + DB job — it
 // NEVER spawns a session, mutates git, or writes `runs.merge_commit_sha` (that
-// column stays owned by repo_delivery_scan). It applies three edge-guarded,
+// column stays owned by repo_delivery_scan). It applies edge-guarded,
 // exactly-once state transitions, and writes state ONLY from a successful read.
 // The durable keyset cursor is what bounds a bad row: it advances past anything
 // that fails, so no row can stall the per-project job.
@@ -407,8 +407,19 @@ async function applyStateEdges(args: {
       (await mergedEdge({ db, projectId, candidate, state })) || changed;
   } else if (state.state === "closed") {
     changed = (await closedEdge(args)) || changed;
+  } else {
+    const opened = rowsOf(
+      await db.execute(sql`
+        UPDATE workspaces
+        SET pr_state = 'open'
+        WHERE ${currentPrObservation(candidate, state)}
+          AND pr_state IS NULL
+        RETURNING id
+      `),
+    );
+
+    changed = opened.length > 0 || changed;
   }
-  // open — nothing to write; the row stays in the candidate set.
 
   return changed ? "updated" : "stamped";
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Db as ExecutionDb } from "@/lib/execution-host/db";
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -13,6 +13,7 @@ import {
   matchesGovernedCardEffect,
   prepareKnowledgeCard,
 } from "./knowledge-card-effects";
+import { resolveLibrarianVault } from "./vaults";
 
 import { getDb } from "@/lib/db/client";
 import {
@@ -38,6 +39,7 @@ export type LibrarianCardView = {
   id: string;
   kind: typeof librarianCards.$inferSelect.kind;
   effectPreview?: string;
+  effectLink?: Readonly<{ kind: "proposal" | "vault"; href: string }>;
   status: string;
   action: string;
   target: Record<string, string>;
@@ -101,6 +103,60 @@ function resultRunId(result: unknown): string | null {
   return typeof runId === "string" ? runId : null;
 }
 
+async function governedEffectLink(
+  db: Db,
+  ownerId: string,
+  card: typeof librarianCards.$inferSelect,
+  result: unknown,
+): Promise<LibrarianCardView["effectLink"]> {
+  const raw = resultBody(result)?.effect;
+
+  if (raw === null || typeof raw !== "object") return undefined;
+  const effect = raw as Record<string, unknown>;
+
+  if (
+    (effect.kind === "knowledge" || effect.kind === "brain") &&
+    typeof effect.proposalId === "string"
+  ) {
+    return {
+      kind: "proposal",
+      href: `/knowledge/reviews?${new URLSearchParams({ proposalKind: effect.kind, proposalId: effect.proposalId })}`,
+    };
+  }
+  if (
+    effect.kind !== "vault" ||
+    !card.target.vaultId ||
+    !Array.isArray(effect.revisionIds)
+  )
+    return undefined;
+  const [revisionId] = effect.revisionIds;
+
+  if (typeof revisionId !== "string") return undefined;
+  try {
+    const { target } = await db.transaction((tx) =>
+      resolveLibrarianVault(tx, ownerId, card.target.vaultId!, "read"),
+    );
+    const selection = new URLSearchParams({
+      tab: "memory",
+      memoryRevision: revisionId,
+    });
+
+    if (target.slug)
+      return {
+        kind: "vault",
+        href: `/projects/${encodeURIComponent(target.slug)}/agents/${encodeURIComponent(target.agent_id)}?${selection}`,
+      };
+    if (!target.binding_id) return undefined;
+    selection.set("locationId", `installation:${target.binding_id}`);
+
+    return { kind: "vault", href: `/knowledge/memory?${selection}` };
+  } catch (error) {
+    if (isMaisterError(error) && error.code === "PRECONDITION")
+      return undefined;
+    throw error;
+  }
+}
+
 export async function getLinkedWork(
   ownerId: string,
   db: Db = getDb(),
@@ -144,6 +200,33 @@ export async function getLinkedWork(
       .orderBy(desc(librarianTaskLinks.createdAt))
       .limit(100),
   ]);
+  const governedReceiptKeys = cardRows
+    .filter(
+      (card) =>
+        card.status === "accepted" &&
+        ["knowledge_proposal", "brain_proposal", "vault_edit"].includes(
+          card.kind,
+        ),
+    )
+    .map((card) => `card:${card.id}`);
+  const governedReceipts = governedReceiptKeys.length
+    ? await db
+        .select({
+          key: librarianOperations.idempotencyKey,
+          result: librarianOperations.result,
+        })
+        .from(librarianOperations)
+        .where(
+          and(
+            eq(librarianOperations.conversationId, conversation.id),
+            eq(librarianOperations.status, "succeeded"),
+            inArray(librarianOperations.idempotencyKey, governedReceiptKeys),
+          ),
+        )
+    : [];
+  const effectByKey = new Map(
+    governedReceipts.map((receipt) => [receipt.key, receipt.result]),
+  );
   const taskIds = [
     ...new Set([
       ...linkRows.map((link) => link.taskId),
@@ -278,6 +361,14 @@ export async function getLinkedWork(
             : card.target.runId
               ? !!runById.get(card.target.runId)
               : true);
+      const effectLink = effectAvailable
+        ? await governedEffectLink(
+            db,
+            ownerId,
+            card,
+            effectByKey.get(`card:${card.id}`),
+          )
+        : undefined;
 
       return {
         id: card.id,
@@ -294,6 +385,7 @@ export async function getLinkedWork(
           effectContext.success && {
             effectPreview: effectContext.data.preview,
           }),
+        ...(effectLink && { effectLink }),
         currentPrompt: available && task ? task.prompt : null,
         proposedPrompt:
           available &&

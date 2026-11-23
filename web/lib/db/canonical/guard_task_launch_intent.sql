@@ -54,7 +54,15 @@ BEGIN
         AND NEW.reason='launch_capacity_wait' AND OLD.dispatch_committed_at IS NULL AND NEW.run_id=OLD.run_id
         AND NEW.preparation_identity IS NOT NULL AND EXISTS(SELECT 1 FROM runs WHERE id=NEW.run_id AND status='Pending')
         AND NOT EXISTS(SELECT 1 FROM execution_commands WHERE run_id=NEW.run_id AND kind IN ('session.create','session.prompt'))) OR
-      OLD.state='settled' AND NEW.state='run_bound' AND OLD.terminal_outcome='Crashed' AND NEW.run_id=OLD.run_id
+      OLD.state='settled' AND NEW.state='run_bound' AND NEW.run_id=OLD.run_id AND (
+        OLD.terminal_outcome='Crashed' OR OLD.terminal_outcome='Failed' AND EXISTS(
+          SELECT 1 FROM runs execution
+          JOIN execution_assignments placement ON placement.id=execution.execution_assignment_id
+          WHERE execution.id=NEW.run_id AND execution.status='Failed' AND execution.run_kind='flow'
+            AND execution.company_id IS NULL AND execution.parent_run_id IS NULL
+            AND placement.run_id=execution.id AND placement.state='active' AND placement.placement_reason='node_restart'
+        )
+      )
     ) THEN
       RAISE EXCEPTION 'Task launch state transition is not allowed'
         USING ERRCODE='23514',CONSTRAINT='task_launch_intents_transition_check';

@@ -19,8 +19,8 @@
     "test:watch": "vitest --project unit"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.95.0",
-    "@agentclientprotocol/codex-acp": "2.2.2",
+    "@agentclientprotocol/claude-agent-acp": "0.109.1",
+    "@agentclientprotocol/codex-acp": "2.9.0",
     "@agentclientprotocol/sdk": "2.0.2",
     "@modelcontextprotocol/sdk": "1.32.2",
     "fastify": "^5.12.7",

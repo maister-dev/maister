@@ -10,7 +10,7 @@ import {
   connectCompiledMcp,
 } from "../../test-support/compiled-client";
 
-import { TOOL_SPECS } from "@/tools";
+import { toolNamesForToolset, toolSpecForToolset } from "@/tools";
 
 type CapturedRequest = {
   method?: string;
@@ -243,7 +243,7 @@ describe("MCP stdio wire contract", () => {
     });
   });
 
-  it("publishes every tool's complete schema through tools/list", async () => {
+  it("publishes complete schemas for the default toolset", async () => {
     const { tools } = await client.listTools();
 
     expect(
@@ -254,7 +254,10 @@ describe("MCP stdio wire contract", () => {
         ...(annotations ? { annotations } : {}),
       })),
     ).toEqual(
-      Object.entries(TOOL_SPECS).map(([name, spec]) => ({ name, ...spec })),
+      toolNamesForToolset(undefined).map((name) => ({
+        name,
+        ...toolSpecForToolset(name, undefined),
+      })),
     );
   });
 
@@ -1038,6 +1041,60 @@ describe("MCP stdio wire contract", () => {
         }),
       },
     ]);
+  });
+
+  it("exposes project routing catalogs without directory access for project Run credentials", async () => {
+    const projectRun = await connectClient({
+      token: "mai_project_run_wire",
+      toolset: "project-run",
+    });
+
+    try {
+      const { tools } = await projectRun.listTools();
+      const names = tools.map((tool) => tool.name);
+      const directoryTools = [
+        "project_get",
+        "project_list",
+        "project_members_list",
+      ];
+
+      expect(names).toEqual(
+        toolNamesForToolset(undefined).filter(
+          (name) => !directoryTools.includes(name),
+        ),
+      );
+
+      const count = requests.length;
+
+      for (const name of directoryTools) {
+        const refused = await projectRun.callTool({
+          name,
+          arguments: name === "project_list" ? {} : { slug: "work" },
+        });
+
+        expect(refused.isError).toBe(true);
+      }
+      expect(requests).toHaveLength(count);
+
+      for (const [name, catalog] of [
+        ["flow_list", "flows"],
+        ["runner_list", "runners"],
+      ]) {
+        const result = await projectRun.callTool({
+          name,
+          arguments: { slug: "work" },
+        });
+
+        expect(result.isError).not.toBe(true);
+        expect(requests.at(-1)).toMatchObject({
+          method: "GET",
+          url: `/api/v1/ext/projects/work/${catalog}`,
+          authorization: "Bearer mai_project_run_wire",
+        });
+      }
+    } finally {
+      await closeClient(projectRun);
+    }
   });
 
   it("the bundled company facade lists the native knowledge and governed work tools and refuses unrelated operations before REST", async () => {

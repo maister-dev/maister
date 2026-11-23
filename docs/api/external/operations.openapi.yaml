@@ -6087,7 +6087,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens without explicit agent_memory:read omit vault-dependent results before
+        pagination. Wildcard alone does not grant this scope.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6195,7 +6196,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read when the current head or requested
+        revision depends on a vault source. Otherwise the reference is concealed.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6250,7 +6252,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read for vault-dependent records and evidence.
+        Source authority applies before returning evidence or pagination metadata.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -6359,7 +6362,8 @@ paths:
       summary: List authorized native knowledge proposals
       description: Requires current knowledge read/review and source restrictions. Only native knowledge
         proposals are returned; existing improvement proposal APIs remain separate. Ownership does not grant
-        access.
+        access. Global personal tokens without explicit agent_memory:read omit vault-dependent proposals
+        before pagination.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read and knowledge:review
       responses:
@@ -6471,8 +6475,10 @@ paths:
       description: Requires current knowledge:review. URL identifiers are
         untrusted selectors resolved through current server ownership/access. Actors, grants, source witnesses,
         target endpoint and execution ownership are derived from authenticated context/server state. Writes
-        compare canonical payload digest and expected revision; exact replay returns the original currently
-        accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
+        compare canonical payload digest and expected revision. Replay requires the original reviewer, delivery key
+        and payload under current owner, source and result authority. An accepted restricted correction also
+        rechecks its record-level review grant. A changed reviewer, key or payload conflicts.
+        Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
         apply.
       x-implementation-status: Implemented
@@ -7895,7 +7901,8 @@ paths:
       summary: Inspect a native proposal and its exact publication
       description: Current source/owner read is required with review authority, or proposer authority for
         the originating principal. Missing and concealed proposals share an existence-safe response. Publication
-        record identity and revision are server-recorded.
+        record identity and revision are server-recorded. Global personal tokens need explicit agent_memory:read
+        when the proposal or its exact publication depends on a vault source.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read and authorized proposal inspection
       responses:
@@ -7940,7 +7947,8 @@ paths:
         compare canonical payload digest and expected revision; exact replay returns the original currently
         accessible receipt, changed payload conflicts. Existing external-handler CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Scope authorization plus required transactional token audit
-        apply.
+        apply. Global personal tokens need explicit agent_memory:read for a vault-dependent root or conflict
+        reference. Concealed conflict references are omitted before pagination.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -8003,6 +8011,7 @@ paths:
         identity, exact source version, availability and bounded captured excerpt, including before publication.
         Missing and inaccessible references share an existence-safe refusal. CONFIG/JSON/schema failures are
         422; unavailable references use 404; other PRECONDITION/CONFLICT failures use 409. Current scope and transactional token audit apply.
+        Global personal tokens need explicit agent_memory:read when the witness depends on a vault source.
       x-implementation-status: Implemented
       x-required-scope: knowledge:read
       responses:
@@ -8758,6 +8767,439 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  /api/v1/ext/inbox/reviews/{kind}/{proposalId}/decision:
+    post:
+      operationId: decidePersonalProposalReview
+      summary: Settle one exact proposal decision
+      description: An active global personal token is required. Requires exact decisions:review and the content
+        scope for Brain or vault. Use the established native knowledge decision route for knowledge. Replays use
+        the original receipt under current authority. A changed request or stale version conflicts.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ brain, vault ]
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HumanKnowledgeDecisionInput" }
+            example: { expectedVersion: 2026-11-21 10:00:00+00, decision: accept, requestKey: example-001 }
+      responses:
+        "200":
+          description: Settle one exact proposal decision.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeDecisionReceipt" }
+              example:
+                id: example-proposal
+                kind: brain
+                reviewedVersion: 2026-11-21 10:00:00+00
+                domainState: accepted
+                outcome:
+                  {
+                    type: accepted_proposal,
+                    proposalId: example-proposal,
+                    href: /knowledge?view=reviews&kind=brain&proposalId=example-proposal
+                  }
+                receiptId: example-receipt
+                replayed: false
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/vaults:
+    get:
+      operationId: listPersonalKnowledgeVaults
+      summary: List authorized agent-memory locations
+      description: An active global personal token is required. Catalog browsing has no creation side effects.
+        Requires explicit agent_memory:read and current vault and source access.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: projectId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: companyId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: agentId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List authorized agent-memory locations.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultCatalog" }
+              example:
+                items: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/{recordId}/revisions:
+    get:
+      operationId: listPersonalKnowledgeRevisions
+      summary: List accessible retained record revisions
+      description: Requires an active global personal token with knowledge:read. Vault-dependent head and
+        historical revisions also require an explicit agent_memory:read scope. Wildcard alone does not grant it.
+        Apply current head and exact revision source rights before pagination. A concealed head returns the
+        missing-resource response. Inaccessible historical revisions are omitted.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: recordId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List accessible retained record revisions.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeRevisionPage" }
+              example:
+                items: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/inbox/reviews:
+    get:
+      operationId: listPersonalProposalReviews
+      summary: List authorized proposal reviews
+      description: "An active global personal token is required. Requires decisions:read and the content scope for
+        each visible kind (knowledge:read, memory:read or explicit agent_memory:read). Apply current owner and
+        source closure before list, count or continuation. "
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            type: string
+            enum: [ brain, knowledge, vault ]
+        - name: projectId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: companyId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: agentId
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [ pending, history ]
+            default: pending
+          description: History applies current reader/source authority independently of review actions.
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List authorized proposal reviews.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeReviewPage" }
+              example:
+                items: []
+                nextCursor: null
+                total: 0
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/inbox/reviews/{kind}/{proposalId}:
+    get:
+      operationId: getPersonalProposalReview
+      summary: Read one authorized proposal review
+      description: An active global personal token is required. Requires decisions:read and the content scope for
+        each visible kind (knowledge:read, memory:read or explicit agent_memory:read). Check source and result
+        visibility from the exact proposal ID independently of its list position. Applied vault operations
+        paginate result revisions independently of the preview. Each continuation rechecks current authority and sources.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ brain, knowledge, vault ]
+        - name: proposalId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed preview continuation for this credential and exact proposal snapshot.
+        - name: outcomeCursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for the applied vault operation, this credential and the exact proposal. Independent of the preview cursor.
+      responses:
+        "200":
+          description: Read one authorized proposal review.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeReviewDetail" }
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/vaults/{locationId}/view:
+    get:
+      operationId: viewPersonalKnowledgeVault
+      summary: Read a folder or current note by path
+      description: An active global personal token is required. Resolve each response within the selected owner.
+        Requires explicit agent_memory:read and current vault and source access.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: path
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 512 }
+          required: true
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: Read a folder or current note by path.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultView" }
+              example:
+                kind: directory
+                path: /memories
+                entries: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}:
+    get:
+      operationId: getPersonalKnowledgeVaultNote
+      summary: Read current note by stable identity
+      description: An active global personal token is required.  Requires explicit agent_memory:read and current
+        vault and source access.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: noteId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+      responses:
+        "200":
+          description: Read current note by stable identity.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultNote" }
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}/revisions:
+    get:
+      operationId: listPersonalKnowledgeVaultNoteRevisions
+      summary: List retained note revisions
+      description: An active global personal token is required. The original note ID survives path reuse. Requires
+        explicit agent_memory:read and current vault and source access.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: noteId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Signed continuation for this credential, operation and effective selection.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: List retained note revisions.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultRevisionPage" }
+              example:
+                items: []
+                nextCursor: null
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+  /api/v1/ext/knowledge/vaults/{locationId}/notes/{noteId}/revisions/{revisionId}:
+    get:
+      operationId: getPersonalKnowledgeVaultNoteRevision
+      summary: Read an exact note revision
+      description: An active global personal token is required. Redacted content is concealed. Requires explicit
+        agent_memory:read and current vault and source access.
+      x-implementation-status: Implemented
+      security:
+        - projectToken: []
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: noteId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+        - name: revisionId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 192 }
+      responses:
+        "200":
+          description: Read an exact note revision.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [ "private, no-store" ]
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HumanKnowledgeVaultNote" }
+        "401": { $ref: "#/components/responses/AgentVault401" }
+        "403": { $ref: "#/components/responses/AgentVault403" }
+        "404": { $ref: "#/components/responses/AgentVault404" }
+        "409": { $ref: "#/components/responses/AgentVault409" }
+        "413": { $ref: "#/components/responses/AgentVault413" }
+        "422": { $ref: "#/components/responses/AgentVault422" }
+        "500": { description: Unexpected transient server failure. The selection can be retried. }
+
 components:
   securitySchemes:
     projectToken:
@@ -9084,6 +9526,511 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
+    HumanKnowledgeOwner:
+      type: object
+      additionalProperties: false
+      required: [ kind, id, label ]
+      properties:
+        kind:
+          type: string
+          enum: [ project, company ]
+        id: { type: string, minLength: 1, maxLength: 192 }
+        label: { type: string, minLength: 1, maxLength: 512 }
+    HumanKnowledgeOutcome:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [ type, recordId, revision, href ]
+          properties:
+            type:
+              type: string
+              enum: [ published_revision ]
+            recordId: { type: string, minLength: 1, maxLength: 192 }
+            revision: { type: integer, minimum: 1 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, draftId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ catalog_draft ]
+            draftId: { type: string, minLength: 1, maxLength: 192 }
+            href:
+              type: string
+              nullable: true
+              description: The authorized original rule or skill draft viewer, or the Flow editor for a Flow draft.
+        - type: object
+          additionalProperties: false
+          required: [ type, taskId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ project_task ]
+            taskId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, proposalId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ accepted_proposal ]
+            proposalId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ type, operationId, href, revisionCount, revisions, revisionsNextCursor ]
+          properties:
+            type:
+              type: string
+              enum: [ applied_vault_operation ]
+            operationId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+            revisionCount: { type: integer, minimum: 0 }
+            revisionsNextCursor:
+              type: string
+              nullable: true
+              maxLength: 2048
+              description: Pass as outcomeCursor on the exact review GET for the next result page. Null marks the end.
+            revisions:
+              type: array
+              description: Up to 20 authorized result revisions ordered by the operation's retained ordinal.
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [ noteId, revisionId, path, href ]
+                properties:
+                  noteId: { type: string, minLength: 1, maxLength: 192 }
+                  revisionId: { type: string, minLength: 1, maxLength: 192 }
+                  path: { type: string, minLength: 1, maxLength: 512 }
+                  href:
+                    type: string
+                    nullable: true
+                    description: Null when standalone vault navigation is unavailable.
+        - type: object
+          additionalProperties: false
+          required: [ type, proposalId, href ]
+          properties:
+            type:
+              type: string
+              enum: [ rejected ]
+            proposalId: { type: string, minLength: 1, maxLength: 192 }
+            href: { type: string, nullable: true }
+    HumanKnowledgeReviewDecision:
+      type: object
+      additionalProperties: false
+      required: [ by, at, reason, reviewedVersion ]
+      properties:
+        by: { type: string, nullable: true }
+        at: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true, maxLength: 2000 }
+        reviewedVersion: { type: string, nullable: true, maxLength: 128 }
+    HumanKnowledgeReviewRow:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          kind,
+          id,
+          version,
+          title,
+          allowed,
+          createdAt,
+          owner,
+          agentId,
+          author,
+          domainState,
+          outcomeAvailable
+        ]
+      properties:
+        kind:
+          type: string
+          enum: [ brain, knowledge, vault ]
+        id: { type: string, minLength: 1, maxLength: 192 }
+        version: { type: string, minLength: 1, maxLength: 128 }
+        title: { type: string, minLength: 1, maxLength: 512 }
+        allowed:
+          type: array
+          items:
+            type: string
+            enum: [ accept, reject ]
+          maxItems: 2
+        createdAt: { type: string, format: date-time }
+        owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+        agentId: { type: string, nullable: true }
+        author: { type: string, nullable: true }
+        domainState: { type: string }
+        outcomeAvailable: { type: boolean }
+    HumanKnowledgeReviewPage:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor, total ]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HumanKnowledgeReviewRow" }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
+        total: { type: integer, minimum: 0 }
+    HumanKnowledgeReviewDetail:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ knowledge ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ proposalRevision, baseRevision, proposalHref, sourceHref ]
+              properties:
+                proposalRevision: { type: integer, minimum: 1 }
+                baseRevision: { type: integer, minimum: 1, nullable: true }
+                proposalHref: { type: string }
+                sourceHref: { type: string, nullable: true }
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ brain ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ proposalKind, origin, expectedEffect, contentFormat, draftPath, sourceHref ]
+              properties:
+                proposalKind:
+                  type: string
+                  enum: [ rule, skill, flow, adr, roadmap, state ]
+                origin:
+                  type: string
+                  enum: [ ordinary, vault_promotion ]
+                expectedEffect:
+                  type: string
+                  enum: [ catalog_draft, project_task, accepted_proposal ]
+                contentFormat:
+                  type: string
+                  enum: [ markdown, yaml, text ]
+                  description: Display format for summary. Legacy unstructured drafts can appear as text.
+                draftPath: { type: string, nullable: true }
+                sourceHref:
+                  type: string
+                  nullable: true
+                  description: The authorized exact witness for a vault promotion.
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required:
+            [
+              kind,
+              id,
+              version,
+              title,
+              allowed,
+              createdAt,
+              owner,
+              agentId,
+              author,
+              domainState,
+              outcomeAvailable,
+              detail,
+              decision,
+              outcome,
+              summary,
+              sourceRevisionId,
+              nextCursor
+            ]
+          properties:
+            kind:
+              type: string
+              enum: [ vault ]
+            id: { type: string, minLength: 1, maxLength: 192 }
+            version: { type: string, minLength: 1, maxLength: 128 }
+            title: { type: string, minLength: 1, maxLength: 512 }
+            allowed:
+              type: array
+              items:
+                type: string
+                enum: [ accept, reject ]
+              maxItems: 2
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+            agentId: { type: string, nullable: true }
+            author: { type: string, nullable: true }
+            domainState: { type: string }
+            outcomeAvailable: { type: boolean }
+            detail:
+              type: object
+              additionalProperties: false
+              required: [ operationId, changeCount, vaultHref ]
+              properties:
+                operationId: { type: string, minLength: 1, maxLength: 192 }
+                changeCount: { type: integer, minimum: 1, maximum: 1024 }
+                vaultHref: { type: string, nullable: true }
+            decision:
+              allOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeReviewDecision" }
+              description: Unknown historical fields are null. Pending rows use empty metadata.
+            outcome:
+              oneOf:
+                - { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+                - type: object
+                  nullable: true
+                  enum: [ null ]
+              description: Null for pending or concealed outcomes.
+            summary: { type: string }
+            sourceRevisionId: { type: string, nullable: true }
+            nextCursor: { type: string, nullable: true }
+    HumanKnowledgeDecisionInput:
+      type: object
+      additionalProperties: false
+      required: [ expectedVersion, requestKey, decision ]
+      properties:
+        expectedVersion: { type: string, minLength: 1, maxLength: 128 }
+        requestKey: { type: string, minLength: 8, maxLength: 128, pattern: "^[A-Za-z0-9_.:-]{8,128}$" }
+        decision:
+          type: string
+          enum: [ accept, reject ]
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 2000,
+            description: Required for rejection and for native knowledge.
+          }
+    HumanKnowledgeDecisionReceipt:
+      type: object
+      additionalProperties: false
+      required: [ id, kind, reviewedVersion, domainState, outcome, receiptId, replayed ]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 192 }
+        kind:
+          type: string
+          enum: [ brain, knowledge, vault ]
+        reviewedVersion: { type: string, minLength: 1, maxLength: 128 }
+        domainState: { type: string }
+        outcome: { $ref: "#/components/schemas/HumanKnowledgeOutcome" }
+        receiptId: { type: string, minLength: 1, maxLength: 192 }
+        replayed: { type: boolean }
+    HumanKnowledgeVaultLocation:
+      type: object
+      additionalProperties: false
+      required: [ locationId, ownerKind, owner, agentId, agentName, bindingId, projectSlug, state, allowedActions, href ]
+      properties:
+        locationId: { type: string, minLength: 1, maxLength: 192 }
+        ownerKind:
+          type: string
+          enum: [ project, installation ]
+        owner: { $ref: "#/components/schemas/HumanKnowledgeOwner" }
+        agentId: { type: string, minLength: 1, maxLength: 192 }
+        agentName: { type: string }
+        projectSlug: { type: string, nullable: true }
+        bindingId: { type: string, nullable: true }
+        state:
+          type: string
+          enum: [ ready, empty, disabled_attachment, disabled_memory, legacy, awaiting_cutover ]
+        allowedActions:
+          type: array
+          items:
+            type: string
+            enum: [ view, edit, settings, legacy_read ]
+          maxItems: 4
+        href: { type: string, nullable: true }
+    HumanKnowledgeVaultCatalog:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor ]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HumanKnowledgeVaultLocation" }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
+    HumanKnowledgeVaultNote:
+      type: object
+      additionalProperties: false
+      required: [ id, path, revisionId, sha256, createdAt, author, content, nextCursor ]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 192 }
+        path: { type: string }
+        revisionId: { type: string, minLength: 1, maxLength: 192 }
+        sha256: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        author: { type: string, nullable: true }
+        content: { type: string }
+        nextCursor: { type: string, nullable: true }
+    HumanKnowledgeVaultView:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [ kind, path, entries, nextCursor ]
+          properties:
+            kind:
+              type: string
+              enum: [ directory ]
+            path: { type: string }
+            entries:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [ kind, name, path, noteId ]
+                properties:
+                  kind:
+                    type: string
+                    enum: [ note, folder ]
+                  name: { type: string }
+                  path: { type: string }
+                  noteId: { type: string, nullable: true }
+              maxItems: 100
+            nextCursor: { type: string, nullable: true }
+        - type: object
+          additionalProperties: false
+          required: [ kind, note ]
+          properties:
+            kind:
+              type: string
+              enum: [ note ]
+            note: { $ref: "#/components/schemas/HumanKnowledgeVaultNote" }
+    HumanKnowledgeVaultRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor ]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ id, path, createdAt, author, sha256 ]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 192 }
+              path: { type: string }
+              createdAt: { type: string, format: date-time }
+              author: { type: string, nullable: true }
+              sha256: { type: string, nullable: true }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
+    HumanKnowledgeRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [ items, nextCursor ]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ recordId, revision, title, status, createdAt, href ]
+            properties:
+              recordId: { type: string, minLength: 1, maxLength: 192 }
+              revision: { type: integer, minimum: 1 }
+              title: { type: string }
+              status: { type: string }
+              createdAt: { type: string, format: date-time }
+              href: { type: string }
+          maxItems: 100
+        nextCursor: { type: string, nullable: true }
     AgentVaultLibrarianEffect:
       oneOf:
         - type: object
@@ -9378,6 +10325,8 @@ components:
           type: string
           minLength: 1
           maxLength: 192
+        proposalKind: { type: string, enum: [brain, knowledge] }
+        proposalHref: { type: string }
     AgentVaultPromotion:
       type: object
       additionalProperties: false
@@ -9388,6 +10337,7 @@ components:
         - requestKey
         - target
       properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
         path:
           type: string
           minLength: 1
@@ -12877,6 +13827,15 @@ components:
             the cause; `source: legacy` marks an event written before `cause`
             existed.
           properties:
+            acpMethod:
+              type: string
+              maxLength: 128
+              pattern: '^[A-Za-z_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*$'
+              description: Bounded method name retained from an unsupported ACP envelope.
+            acpMessageKind:
+              type: string
+              enum: [request, notification]
+              description: Kind of the unsupported ACP envelope that ended the run.
             code:
               type: string
               nullable: true
@@ -21236,6 +22195,8 @@ components:
         - createdAt
         - updatedAt
       properties:
+        decision:
+          $ref: "#/components/schemas/HumanKnowledgeReviewDecision"
         id:
           type: string
           minLength: 1

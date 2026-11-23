@@ -52,6 +52,12 @@ async function describeRevision(db: Db, revision: VaultRevision) {
           ? ("tombstone" as const)
           : ("available" as const),
     createdAt: revision.createdAt.toISOString(),
+    author:
+      "userId" in revision.author
+        ? revision.author.userId
+        : "agentId" in revision.author
+          ? revision.author.agentId
+          : null,
   };
 }
 
@@ -59,6 +65,7 @@ export async function vaultRevisionDetail(
   db: Db,
   revisionId: string,
   prepare: PrepareVaultAccess,
+  expectedNoteId?: string,
 ) {
   return db.transaction(async (tx) => {
     const access = await prepare(tx);
@@ -74,7 +81,12 @@ export async function vaultRevisionDetail(
         ),
       );
 
-    if (!row || !(await access.canRead(tx, row))) throw unavailableMemory();
+    if (
+      !row ||
+      (expectedNoteId && row.noteId !== expectedNoteId) ||
+      !(await access.canRead(tx, row))
+    )
+      throw unavailableMemory();
     const revision = await describeRevision(tx, row);
     const content =
       revision.state === "available" ? await readVaultPayload(tx, row) : null;

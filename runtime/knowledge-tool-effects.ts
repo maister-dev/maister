@@ -16,7 +16,26 @@ export const NATIVE_KNOWLEDGE_TOOL_EFFECTS = {
   knowledge_propose: "write",
   knowledge_decide: "write",
   knowledge_confirm: "write",
+  proposal_reviews_list: "read",
+  proposal_review_get: "read",
+  proposal_review_decide: "write",
+  personal_vault_list: "read",
+  personal_vault_view: "read",
+  personal_vault_revisions: "read",
+  personal_vault_revision_get: "read",
+  knowledge_revisions_list: "read",
 } as const;
+
+export const PERSONAL_KNOWLEDGE_TOOLS = [
+  "proposal_reviews_list",
+  "proposal_review_get",
+  "proposal_review_decide",
+  "personal_vault_list",
+  "personal_vault_view",
+  "personal_vault_revisions",
+  "personal_vault_revision_get",
+  "knowledge_revisions_list",
+] as const;
 
 export function isNativeKnowledgeReadTool(name: string): boolean {
   return (

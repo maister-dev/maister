@@ -184,9 +184,11 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
 }) => {
   const fx = loadScratchDetailFixture();
 
-  await page.goto(`/scratch-runs/${fx.scratchRunId}?wb=diff`);
+  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await page.getByTestId("run-header-change-summary").click();
+  await expect(page).toHaveURL(/[?&]wb=diff/);
 
-  // Diff deep link opens the collapsed Files/Diff workbench and selects Diff.
+  // The Changes link opens the collapsed Files/Diff workbench and selects Diff.
   await expect(
     page
       .getByRole("main")

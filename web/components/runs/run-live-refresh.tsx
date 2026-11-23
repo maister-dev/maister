@@ -141,12 +141,10 @@ export function RunLiveRefresh({
   if (!live && !workbench) return null;
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] px-4 pt-3 sm:px-6">
-      <RunStreamLiveness
-        labels={livenessLabels}
-        liveness={liveness}
-        onReconnect={reconnect}
-      />
-    </div>
+    <RunStreamLiveness
+      labels={livenessLabels}
+      liveness={liveness}
+      onReconnect={reconnect}
+    />
   );
 }

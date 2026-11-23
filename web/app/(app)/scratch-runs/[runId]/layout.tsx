@@ -229,6 +229,7 @@ export default async function ScratchRunDetailLayout({
   return (
     <RunShell
       branch={detail.branch}
+      changeScope="run"
       changeSummary={changeSummary}
       inspector={
         <div className="flex flex-col gap-3">
