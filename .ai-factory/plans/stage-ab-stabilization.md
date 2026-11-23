@@ -908,6 +908,16 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   original bytes with attachment disposition. The supervisor uses the
   deterministic resumable ACP fixture.
 
+  The browser smoke now drives the board Launch dialog, receives the exact
+  canonical permission event on a live-only SSE subscription, and observes
+  the Run move to NeedsInput without a reload. It clicks Allow after a
+  checkpoint and Web restart, then uses the Run Stop confirmation on an
+  independent Flow. Stop returns Review with supervisor termination
+  confirmed, and the assignment releases. The production-image Chrome 157
+  run used Linux arm64 and Node 24.22.2 on image
+  `sha256:b66189f539ff68a86340525b6c5d46224fa430dfe810cf53d20e6c3f8187993d`.
+  Local log `/private/tmp/maister-stage-c-final-chrome.log`.
+
   - Build `maister-s53-stage-c:local`, Linux arm64, image ID
     `sha256:d402a6350b86eedb18d17980842f4b72a146cdecf849a61c62db3adb13d714cc`,
     Node 24.22.2, Next.js 16.4.6. The Docker build used the branch's

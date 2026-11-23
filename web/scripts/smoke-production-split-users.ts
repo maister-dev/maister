@@ -3,17 +3,23 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
-import { chromium, type Browser } from "@playwright/test";
+import { chromium, expect, type Browser } from "@playwright/test";
 
 import { readLaunchResult } from "../e2e/_seed/launch-stream";
+import { readTaskLaunchReceipt } from "../e2e/_seed/task-launch";
 import { poll } from "../test-support/durable-workers-ledger";
 import { WORKER_ADMIN } from "../test-support/durable-workers-seed";
-import { launchFlowThroughHttp } from "../test-support/launch-flow-through-http";
 import { startMainAndBrainPostgresTestDb } from "../test-support/pg-container";
 
 const image = process.argv[2];
 
-assert(image, "usage: smoke-production-split-users.ts IMAGE");
+assert(
+  image,
+  "usage: smoke-production-split-users.ts IMAGE [--chrome] [--second-supervisor]",
+);
+
+const useChrome = process.argv.includes("--chrome");
+const useSecondSupervisor = process.argv.includes("--second-supervisor");
 
 type SeededTarget = {
   projectId: string;
@@ -98,12 +104,12 @@ try {
     install -d -o 1001 -g 1001 -m 0700 /s53/web
     install -d -o 1002 -g 1001 -m 0700 /s53/host /s53/host/home /s53/host/journal
     install -d -o 1001 -g 1001 -m 2770 /s53/shared /s53/shared/worktrees
-    cat > /s53/host/fixture <<'EOF'
+    cat > /s53/fixture <<'EOF'
 #!/bin/sh
+while [ -n "${"$"}MOCK_ACP_S53_START_GATE" ] && [ ! -f "${"$"}MOCK_ACP_S53_START_GATE" ]; do sleep 0.1; done
 exec node /app/supervisor/test/fixtures/mock-acp-adapter-resumable.mjs "$@"
 EOF
-    chown 1002:1001 /s53/host/fixture
-    chmod 0700 /s53/host/fixture
+    chmod 0755 /s53/fixture
   `,
   ]);
   const port = (await docker(["port", container, "3000/tcp"]))
@@ -189,59 +195,148 @@ EOF
       ],
       fixtureEnvironment,
     );
-  const startSupervisor = (adapterEnvironment: string[]): Promise<string> =>
+  const startSupervisor = (
+    adapterEnvironment: string[],
+    {
+      root,
+      port,
+      user,
+      workspaceRoot,
+    }: { root: string; port: number; user: string; workspaceRoot: string },
+  ): Promise<string> =>
     docker([
       "exec",
       "--detach",
       "--user",
-      "1002:1001",
+      user,
       "--workdir",
       "/app/supervisor",
       "--env",
-      "HOME=/s53/host/home",
+      "HOME=" + root + "/home",
       "--env",
-      "MAISTER_RUNTIME_ROOT=/s53/host",
+      "MAISTER_RUNTIME_ROOT=" + root,
       "--env",
-      "MAISTER_EXECUTION_HOST_STATE_DIR=/s53/host/state",
+      "MAISTER_EXECUTION_HOST_STATE_DIR=" + root + "/state",
       "--env",
-      "MAISTER_WORKSPACE_ROOTS=/s53/shared",
+      "MAISTER_SUPERVISOR_PORT=" + port,
       "--env",
-      "MAISTER_ADAPTER_BINARY_CLAUDE=/s53/host/fixture",
+      "MAISTER_WORKSPACE_ROOTS=" + workspaceRoot,
+      "--env",
+      "MAISTER_ADAPTER_BINARY_CLAUDE=/s53/fixture",
       ...adapterEnvironment,
       "--env",
-      "MOCK_ACP_STATE_DIR=/s53/host/journal",
+      "MOCK_ACP_STATE_DIR=" + root + "/journal",
       "--env",
       "MAISTER_HEARTBEAT_INTERVAL_MS=1000",
       appContainer,
       "sh",
       "-ec",
-      'umask 002; echo "$$" > /s53/host/pid; exec node --import tsx src/main.ts >> /s53/host/boot.log 2>&1',
+      'umask 002; echo "$$" > "$MAISTER_RUNTIME_ROOT/pid"; exec node --import tsx src/main.ts >> "$MAISTER_RUNTIME_ROOT/boot.log" 2>&1',
     ]);
 
   type HostIdentity = { hostKey: string; bootId: string };
-  const readHost = async (): Promise<HostIdentity | null> => {
+  const readHost = async (port = 7777): Promise<HostIdentity | null> => {
     const observed = await inContainer("1001:1001", [
       "node",
       "--input-type=module",
       "-e",
       `try {
-        const result = await fetch("http://127.0.0.1:7777/health", { signal: AbortSignal.timeout(1000) });
+        const result = await fetch("http://127.0.0.1:" + process.argv[1] + "/health", { signal: AbortSignal.timeout(1000) });
         console.log(JSON.stringify(result.ok ? (await result.json()).host : null));
       } catch (error) {
         if (!(error instanceof TypeError) && error.name !== "TimeoutError") throw error;
         console.log("null");
       }`,
+      String(port),
     ]);
 
     return JSON.parse(observed) as HostIdentity | null;
   };
 
-  await startSupervisor(["--env", "MOCK_ACP_REQUEST_PERMISSION=1"]);
+  const primary = {
+    root: "/s53/host",
+    port: 7777,
+    user: "1002:1001",
+    workspaceRoot: "/s53/shared",
+  };
+  const secondary = {
+    root: "/s53/host-b",
+    port: 7778,
+    user: "1003:1001",
+    workspaceRoot: "/s53/host-b/workspaces",
+  };
+  const gate = primary.root + "/release-adapter";
+  await startSupervisor(
+    [
+      "--env",
+      "MOCK_ACP_REQUEST_PERMISSION=1",
+      "--env",
+      "MOCK_ACP_S53_START_GATE=" + gate,
+    ],
+    primary,
+  );
   const initialHost = await poll(
     readHost,
     30_000,
     "initial supervisor identity",
   );
+  let secondHost: HostIdentity | null = null;
+  if (useSecondSupervisor) {
+    await inContainer("0", [
+      "useradd",
+      "-u",
+      "1003",
+      "-g",
+      "1001",
+      "-d",
+      secondary.root + "/home",
+      "-s",
+      "/usr/sbin/nologin",
+      "maister-s53-host-b",
+    ]);
+    await inContainer("0", [
+      "install",
+      "-d",
+      "-o",
+      "1003",
+      "-g",
+      "1001",
+      "-m",
+      "0700",
+      secondary.root,
+      secondary.root + "/home",
+      secondary.root + "/journal",
+      secondary.workspaceRoot,
+    ]);
+    await startSupervisor([], secondary);
+    secondHost = await poll(
+      () => readHost(secondary.port),
+      30_000,
+      "second supervisor identity",
+    );
+    assert.notEqual(secondHost.hostKey, initialHost.hostKey);
+    assert.notEqual(secondHost.bootId, initialHost.bootId);
+    assert.equal(
+      await inContainer("0", [
+        "sh",
+        "-ec",
+        'ps -o uid= -p "$(cat /s53/host-b/pid)" | tr -d " "',
+      ]),
+      "1003",
+    );
+    await inContainer("1001:1001", [
+      "sh",
+      "-ec",
+      "test ! -r /s53/host-b/state/state.sqlite && test ! -x /s53/host-b/workspaces",
+    ]);
+    note("two-supervisors-ready", {
+      primary: initialHost,
+      secondary: secondHost,
+      supervisorUids: [1002, 1003],
+      ports: [primary.port, secondary.port],
+    });
+  }
+
   const ready = () =>
     poll(
       async () => {
@@ -303,8 +398,15 @@ EOF
     node: uid.split("\n").at(-1),
     sqlite: "EACCES",
   });
-  browser = await chromium.launch();
-  const context = await browser.newContext({ baseURL: origin });
+  browser = await chromium.launch(useChrome ? { channel: "chrome" } : {});
+  const context = await browser.newContext({
+    baseURL: origin,
+    locale: "en-US",
+  });
+  note("browser-ready", {
+    browser: useChrome ? "Chrome" : "Chromium",
+    version: browser.version(),
+  });
   const page = await context.newPage();
   await page.goto("/login");
   await page.locator('input[name="email"]').fill(WORKER_ADMIN.email);
@@ -325,56 +427,143 @@ EOF
       headers: { ...init.headers, cookie },
     });
   };
-  await page.goto("/projects/" + witness.slug);
-  const runId = await launchFlowThroughHttp({
-    api,
-    origin,
-    taskId: witness.taskId,
-  });
-  const runRow = async () =>
-    (
-      await db.pool.query<{ status: string }>(
-        "select status from runs where id=$1",
-        [runId],
-      )
-    ).rows[0];
-  const pending = await poll(
-    async () => {
-      const { rows } = await db.pool.query<{ id: string }>(
-        "select h.id from hitl_requests h join runs r on r.id=h.run_id where h.run_id=$1 and r.status='NeedsInput' and h.responded_at is null",
-        [runId],
-      );
-      return rows[0] ?? null;
-    },
-    60_000,
-    "live permission request",
-  );
-  await page.goto("/runs/" + runId);
-  await page
-    .getByRole("main")
-    .getByTestId("run-header-status")
-    .waitFor({ timeout: 30_000 });
-  const liveStream = await api("/api/runs/" + runId + "/stream", {
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  assert.equal(liveStream.status, 200);
-  assert.match(
-    liveStream.headers.get("content-type") ?? "",
-    /^text\/event-stream/,
-  );
-  const streamReader = liveStream.body?.getReader();
-
-  assert(streamReader);
-  try {
-    assert(
-      (await streamReader.read()).value?.byteLength,
-      "run stream returned no event bytes",
+  const launchFromBoard = async (taskId: string): Promise<string> => {
+    await page.goto("/projects/" + witness.slug);
+    const board = page.getByRole("region", { name: "Task board", exact: true });
+    await board
+      .getByRole("article")
+      .filter({ hasText: "Durable worker flow task" })
+      .getByRole("button", { name: "Launch", exact: true })
+      .click({ timeout: 30_000 });
+    const accepted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/task-launch-intents" &&
+        response.request().method() === "POST",
     );
-  } finally {
-    await streamReader.cancel();
+    await page
+      .getByTestId("task-launch-dialog")
+      .getByRole("button", { name: "Launch", exact: true })
+      .click();
+    const receipt = await readTaskLaunchReceipt(await accepted);
+    assert.equal(receipt.taskId, taskId);
+
+    return poll(
+      async () => {
+        const { rows } = await db.pool.query<{ id: string }>(
+          `select r.id from task_launch_intents i join runs r
+          on r.id=i.run_id and r.task_launch_intent_id=i.id and r.task_id=i.task_id
+          where i.id=$1 and i.task_id=$2`,
+          [receipt.intentId, taskId],
+        );
+        return rows[0]?.id ?? null;
+      },
+      60_000,
+      "browser intent bound to its Run",
+    );
+  };
+  const runStatus = page.getByRole("main").getByTestId("run-header-status");
+  const allow = page
+    .getByTestId("pending-input-card")
+    .getByRole("button", { name: /^allow$/i });
+
+  const runId = await launchFromBoard(witness.taskId);
+  await page.goto("/runs/" + runId);
+  await expect(runStatus).toBeVisible();
+  await expect(runStatus).not.toContainText("NeedsInput");
+
+  // Keep the adapter at its start gate until a browser connection has received
+  // the stream's initial marker. The permission event must arrive live.
+  const livePermission = page.evaluate(
+    (id) =>
+      new Promise<string>((resolve, reject) => {
+        const stream = new EventSource(
+          "/api/runs/" + id + "/stream?replay=live",
+        );
+        const timeout = window.setTimeout(() => {
+          stream.close();
+          reject(
+            new Error("the live stream did not deliver a permission event"),
+          );
+        }, 30_000);
+        stream.onmessage = (message) => {
+          const event = JSON.parse(message.data) as {
+            type: string;
+            runSequence?: string;
+          };
+          if (event.type === "session.stream_ready")
+            document.documentElement.dataset.s53Stream = "ready";
+          if (event.type !== "session.permission_request") return;
+          window.clearTimeout(timeout);
+          stream.close();
+          resolve(event.runSequence ?? "");
+        };
+      }),
+    runId,
+  );
+  const [permissionSequence] = await Promise.all([
+    livePermission,
+    (async () => {
+      await page.waitForFunction(
+        () => document.documentElement.dataset.s53Stream === "ready",
+      );
+      await inContainer("1002:1001", ["touch", gate]);
+    })(),
+  ]);
+  assert.match(permissionSequence, /^\d+$/);
+  await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 30_000 });
+  await expect(allow).toBeVisible();
+  note("board-launch-and-live-permission", { runId });
+
+  if (secondHost) {
+    const { rows: active } = await db.pool.query<{ host_key: string }>(
+      `select h.host_key from execution_assignments a
+       join execution_hosts h on h.id=a.execution_host_id
+       where a.run_id=$1 and a.state='active'`,
+      [runId],
+    );
+    assert.deepEqual(active, [{ host_key: initialHost.hostKey }]);
+    const { rows: registered } = await db.pool.query<{ host_key: string }>(
+      "select host_key from execution_hosts where retired_at is null",
+    );
+    assert.deepEqual(registered, [{ host_key: initialHost.hostKey }]);
+    const receiptCount = ({ root, user }: { root: string; user: string }) =>
+      inContainer(user, [
+        "node",
+        "--disable-warning=ExperimentalWarning",
+        "--input-type=module",
+        "-e",
+        `import {DatabaseSync} from "node:sqlite";
+       const db = new DatabaseSync(process.argv[1] + "/state/state.sqlite", {readOnly:true});
+       console.log(db.prepare("select count(*) AS n from command_receipts where run_id=?").get(process.argv[2]).n);`,
+        root,
+        runId,
+      ]);
+    const primaryReceipts = Number(await receiptCount(primary));
+    assert(primaryReceipts > 0);
+    assert.equal(await receiptCount(secondary), "0");
+    assert.deepEqual(await readHost(secondary.port), secondHost);
+    const admin = await context.newPage();
+    try {
+      await admin.goto("/admin/execution-host");
+      await expect(
+        admin.getByText(initialHost.hostKey, { exact: true }).first(),
+      ).toBeVisible();
+      await expect(
+        admin.getByText(secondHost.hostKey, { exact: true }),
+      ).toHaveCount(0);
+      if (process.env.MAISTER_S53_SCREENSHOT) {
+        await admin.screenshot({ path: process.env.MAISTER_S53_SCREENSHOT });
+      }
+    } finally {
+      await admin.close();
+    }
+    note("board-placement-with-two-live-supervisors", {
+      runId,
+      assignedHost: initialHost.hostKey,
+      primaryReceipts,
+      secondaryReceipts: 0,
+    });
   }
-  note("board-launch-and-permission");
   await db.pool.query(
     "update runs set keepalive_until=clock_timestamp()-interval '1 second' where id=$1",
     [runId],
@@ -384,23 +573,21 @@ EOF
     headers: { "X-Maister-Cron-Token": cronToken },
   });
   assert([200, 207].includes(sweep.status));
-  await poll(
-    async () => ((await runRow()).status === "NeedsInputIdle" ? true : null),
-    60_000,
-    "checkpointed permission",
-  );
+  await expect(runStatus).toContainText("NeedsInputIdle", { timeout: 60_000 });
   await restartWeb();
-  const respond = await page.request.post(
-    "/api/runs/" + runId + "/hitl/" + pending.id + "/respond",
-    { data: { optionId: "allow" } },
+  await page.reload();
+  await expect(runStatus).toContainText("NeedsInputIdle");
+  const responded = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith(
+        "/api/runs/" + runId + "/hitl/",
+      ) &&
+      new URL(response.url()).pathname.endsWith("/respond") &&
+      response.request().method() === "POST",
   );
-  assert.equal(respond.status(), 202);
-  await poll(
-    async () =>
-      ["Review", "Done"].includes((await runRow()).status) ? true : null,
-    90_000,
-    "resumed Flow completion",
-  );
+  await allow.click();
+  assert.equal((await responded).status(), 202);
+  await expect(runStatus).toContainText("Review", { timeout: 90_000 });
   const { rows: epochs } = await db.pool.query<{
     epoch: number;
     state: string;
@@ -417,11 +604,9 @@ EOF
     epochs[0].execution_workspace_id,
     epochs[1].execution_workspace_id,
   );
-  await page.reload();
-  await page.getByRole("main").getByTestId("run-header-status").waitFor();
   note("checkpoint-web-restart-and-resume", {
     epochs: epochs.map((x) => x.epoch),
-    status: (await runRow()).status,
+    status: await runStatus.textContent(),
   });
   const secondProject = await docker(
     [
@@ -447,25 +632,31 @@ EOF
     fixtureEnvironment,
   );
   const secondTask = fixtureOutput(secondProject, "S53_TASK:");
-  const cancelled = await launchFlowThroughHttp({
-    api,
-    origin,
-    taskId: secondTask,
-  });
-  await poll(
-    async () =>
-      (await db.pool.query("select status from runs where id=$1", [cancelled]))
-        .rows[0]?.status === "NeedsInput"
-        ? true
-        : null,
-    60_000,
-    "second permission",
+  const cancelled = await launchFromBoard(secondTask);
+  await page.goto("/runs/" + cancelled);
+  await expect(runStatus).toContainText(/NeedsInput$/, { timeout: 60_000 });
+  await page
+    .getByTestId("workbench-lifecycle-actions")
+    .getByRole("button", { name: "Stop", exact: true })
+    .click();
+  const stopped = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/runs/" + cancelled + "/stop" &&
+      response.request().method() === "POST",
   );
-  const stopped = await api("/api/runs/" + cancelled + "/stop", {
-    method: "POST",
-    headers: { Origin: origin },
+  await page
+    .getByRole("dialog", { name: "Stop run" })
+    .getByRole("button", { name: "Confirm", exact: true })
+    .click();
+  const stopReply = await stopped;
+  assert.equal(stopReply.status(), 200);
+  assert.deepEqual(await stopReply.json(), {
+    ok: true,
+    runId: cancelled,
+    runStatus: "Review",
+    supervisorStopped: true,
   });
-  assert.equal(stopped.status, 200);
+  await expect(runStatus).toContainText("Review", { timeout: 30_000 });
   await poll(
     async () => {
       const { rows } = await db.pool.query<{ active: boolean }>(
@@ -492,7 +683,7 @@ EOF
     30_000,
     "supervisor shutdown",
   );
-  await startSupervisor(["--env", "MOCK_ACP_REQUEST_PERMISSION=0"]);
+  await startSupervisor(["--env", "MOCK_ACP_REQUEST_PERMISSION=0"], primary);
   const restartedHost = await poll(
     readHost,
     30_000,
