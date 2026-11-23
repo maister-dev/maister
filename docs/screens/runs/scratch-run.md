@@ -270,3 +270,5 @@ lifecycle actions.
 ## Package 2 presentation (Implemented)
 
 The initial viewport distinguishes stopping the current turn from ending the Run. Files and Diff remain available when permitted.
+
+Long USER disclosure presentation: [workbench contract](../../system-analytics/workbench.md#compact-user-presentation-designed).

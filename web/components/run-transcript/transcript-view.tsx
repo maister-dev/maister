@@ -15,6 +15,9 @@ import { useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { UserMessage } from "./user-message";
+import { isLongUserText, repeatedUserIds } from "./user-message-presentation";
+
 import { isScratchTranscriptClearCommand } from "@/lib/scratch-runs/commands";
 import { parseScratchMessageContent } from "@/lib/run-transcript/transcript";
 
@@ -608,6 +611,7 @@ export function TranscriptView({
 
     return result;
   }, [messages]);
+  const repeated = useMemo(() => repeatedUserIds(messages), [messages]);
   const { historyBlocks, currentBlocks } = useMemo(
     () => splitBlocksOnLatestClear(blocks),
     [blocks],
@@ -696,6 +700,19 @@ export function TranscriptView({
     if (parsed.kind !== "text") return null;
 
     const isUser = message.role === "user";
+
+    if (isUser && (message.preview || isLongUserText(message.content))) {
+      return (
+        <UserMessage
+          key={JSON.stringify([message.id, message.content, message.preview?.fullContentHref])}
+          attachments={attachments}
+          labels={labels}
+          message={message}
+          repeated={repeated.has(message.id)}
+          userLabel={userLabel}
+        />
+      );
+    }
     const deliveryBadge =
       isUser &&
       (message.delivery === "queued" || message.delivery === "steered") &&

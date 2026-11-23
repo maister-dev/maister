@@ -1,4 +1,16 @@
 {
+  "transcriptUser": {
+    "show": "Show fully ({count} chars)",
+    "collapse": "Collapse",
+    "repeated": "Sent again, unchanged",
+    "skills": "{count} skills",
+    "showFull": "Show full message",
+    "load": "Load full content",
+    "loading": "Loading full content…",
+    "retrying": "Retrying full content ({count}/2)…",
+    "loadError": "Could not load the full message. Try expanding or copying again.",
+    "copyError": "Could not copy. Allow clipboard access and try again."
+  },
   "contextUsage": {
     "label": "Context",
     "details": "Context usage details",
@@ -1112,7 +1124,11 @@
       "filter": "Review type",
       "all": "All reviews",
       "clear": "Clear filters",
-      "kind": { "vault": "Agent memory", "brain": "Project Brain", "knowledge": "Knowledge" },
+      "kind": {
+        "vault": "Agent memory",
+        "brain": "Project Brain",
+        "knowledge": "Knowledge"
+      },
       "selected": "{count} selected",
       "accept": "Accept selected",
       "reject": "Reject selected",
@@ -1132,7 +1148,13 @@
       "reason": "Reason (optional)",
       "requiredReason": "Reason (required)",
       "link": "Open reviews in Inbox",
-      "outcome": { "applied": "Accepted", "rejected": "Rejected", "conflict": "Changed during review", "unavailable": "Unavailable", "refused": "Refused" }
+      "outcome": {
+        "applied": "Accepted",
+        "rejected": "Rejected",
+        "conflict": "Changed during review",
+        "unavailable": "Unavailable",
+        "refused": "Refused"
+      }
     },
     "resultRun": "Run",
     "resultAvailable": "Result available",

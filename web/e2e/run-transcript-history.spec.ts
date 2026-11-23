@@ -729,3 +729,191 @@ test("a newer visible-window response wins over the older latest snapshot in the
     await page.unrouteAll({ behavior: "wait" });
   }
 });
+
+const packagedExplanation =
+  "When the task or agent instructions require a packaged skill, read its SKILL.md using the workspace-relative path below. Use this copy for the packaged instructions and resolve its companion files relative to SKILL.md.";
+const compactPrompt = `Task <unsafe>\n${"Describe the requested implementation precisely. ".repeat(60)}\n## Packaged skills\n${packagedExplanation}\n${Array.from({ length: 21 }, (_, i) => `- skill-${i}: \`workspace/skill-${i}/SKILL.md\``).join("\n")}\nEnd of original prompt.`;
+
+async function seedUserPrompts(
+  contents: readonly string[],
+  node = false,
+): Promise<string[]> {
+  const ids = contents.map(() => randomUUID());
+
+  await withE2EDb(async (pool) => {
+    for (const [index, content] of contents.entries()) {
+      await pool.query(
+        "INSERT INTO run_messages(id,run_id,node_attempt_id,sequence,role,content,supervisor_event_id) VALUES($1,$2,$3,$4,'user',$5,$6)",
+        [
+          ids[index],
+          node ? fixture.flowRunId : fixture.agentRunId,
+          node ? fixture.nodeAttemptId : null,
+          index + 2,
+          content,
+          String(index + 2),
+        ],
+      );
+    }
+  });
+
+  return ids;
+}
+
+function userRow(page: Page, id: string): Locator {
+  return history(page).locator(`[data-transcript-message-id="${id}"]`);
+}
+
+for (const surface of ["agent", "node"] as const) {
+  test(`${surface} long USER disclosures preserve exact content, URL and keyboard access`, async ({
+    page,
+    context,
+  }) => {
+    const ids = await seedUserPrompts(
+      [compactPrompt, "clarification", compactPrompt],
+      surface === "node",
+    );
+    const runId = surface === "node" ? fixture.flowRunId : fixture.agentRunId;
+
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto(`/runs/${runId}`);
+    const first = userRow(page, ids[0]);
+    const repeat = userRow(page, ids[2]);
+    const preview = first.getByTestId("user-message-preview");
+
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("21 skills");
+    await expect(preview).not.toContainText("workspace/");
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const geometry = await preview.evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        lineHeight: parseFloat(getComputedStyle(element).lineHeight),
+      }));
+
+      expect(geometry.height).toBeLessThanOrEqual(geometry.lineHeight * 4 + 1);
+      expect(geometry.height).toBeGreaterThan(geometry.lineHeight * 3);
+      await expect(
+        first.getByRole("button", { name: "Copy", exact: true }),
+      ).toBeVisible();
+    }
+    await expect(repeat.locator("summary")).toHaveText("Sent again, unchanged");
+    await expect(repeat.getByTestId("user-message-preview")).toHaveCount(0);
+    await expect(userRow(page, ids[1]).locator("details")).toHaveCount(0);
+    await first.getByRole("button", { name: "Copy", exact: true }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      compactPrompt,
+    );
+    const summary = first.locator("summary").first();
+
+    await summary.focus();
+    await page.keyboard.press("Enter");
+    await expect(first.locator("details").first()).toHaveAttribute("open", "");
+    const skills = first.locator("details").nth(1);
+
+    await skills.locator("summary").focus();
+    await page.keyboard.press("Space");
+    await expect(skills).toHaveAttribute("open", "");
+    await expect(skills).toContainText("workspace/skill-20/SKILL.md");
+    await expect(first).toContainText("Task <unsafe>");
+    await expect(first.locator("unsafe")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.history.replaceState(
+        { ...window.history.state, retained: 7 },
+        "",
+        window.location.href + "&unrelated=value#anchor",
+      );
+    });
+    await summary.click();
+    await expect(first.locator("details").first()).not.toHaveAttribute("open");
+    expect(await page.evaluate(() => window.history.state.retained)).toBe(7);
+    expect(new URL(page.url()).searchParams.get("unrelated")).toBe("value");
+    expect(new URL(page.url()).hash).toBe("#anchor");
+    await summary.click();
+    await expect(first.locator("details").nth(1)).toHaveAttribute("open", "");
+    const shared = page.url();
+
+    expect(shared).not.toContain("workspace");
+    await page.reload();
+    await expect(
+      userRow(page, ids[0]).locator("details").nth(1),
+    ).toHaveAttribute("open", "");
+    await repeat.locator("summary").click();
+    await expect(repeat).toContainText("End of original prompt.");
+    await repeat.getByRole("button", { name: "Copy", exact: true }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      compactPrompt,
+    );
+  });
+}
+
+test("bounded USER expansion and copying use the real full-content endpoint once", async ({
+  page,
+  context,
+}) => {
+  const original =
+    compactPrompt + "\n" + "Full retained content. ".repeat(30_000);
+  const [id] = await seedUserPrompts([original]);
+  const requests: Request[] = [];
+
+  page.on("request", (request) => {
+    if (request.url().includes(`/transcript/messages/${id}`))
+      requests.push(request);
+  });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const url = new URL(`/runs/${fixture.agentRunId}`, "http://localhost");
+
+  url.searchParams.append(
+    "transcript-open",
+    JSON.stringify([1, id, "message"]),
+  );
+  await page.goto(url.pathname + url.search);
+  const row = userRow(page, id);
+
+  await expect(
+    row.getByRole("button", { name: "Load full content" }),
+  ).toBeVisible();
+  expect(requests).toHaveLength(0);
+  await expect(row.getByText(/chars/)).toHaveCount(0);
+  await expect(row.getByRole("link")).toHaveCount(1);
+  await row.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(original);
+  await expect(row).toContainText("Full retained content.");
+  await row.getByRole("button", { name: "Copy", exact: true }).click();
+  expect(requests).toHaveLength(1);
+});
+
+test("clipboard refusal stays retryable without false copied feedback", async ({
+  page,
+}) => {
+  const [id] = await seedUserPrompts([compactPrompt]);
+
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new DOMException("Denied", "NotAllowedError");
+        },
+      },
+    });
+  });
+  await page.goto(`/runs/${fixture.agentRunId}`);
+  const row = userRow(page, id);
+
+  await row.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(row.getByRole("alert")).toContainText("Could not copy");
+  await expect(
+    row.getByRole("button", { name: "Copy", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    }),
+  );
+  await row.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(row.getByRole("alert")).toContainText("Could not copy");
+});

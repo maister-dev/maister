@@ -582,3 +582,5 @@ The Run layout follows the [Flow verification contract](../../system-analytics/r
 ## Package 2 presentation (Implemented)
 
 The initial viewport shows the Run outcome and its next applicable action. Results and checks provides recorded verification and retained output even when execution fails.
+
+Long USER disclosure presentation: [workbench contract](../../system-analytics/workbench.md#compact-user-presentation-designed).

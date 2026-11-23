@@ -227,6 +227,35 @@ automatic parent transcript following from moving the page (UX-09A–B).
 - Node, file, tab, review anchor, Git panel, child peek and browser history preserve their existing selectors. An explicit inspector selector controls disclosure. Close restores focus to its trigger.
 - At 1440×1000 and 390×844 the reading path remains available with the inspector or Librarian open. In constrained space the inspector may occupy an overlay with a clear return action.
 
+## Compact USER presentation (Designed)
+
+`TranscriptView` derives presentation only; retained messages, HTTP/SSE,
+DB schemas, error taxonomy and deployment contracts are unchanged.
+`user-message-presentation.ts` owns classification, lossless segmentation and
+exact repeats; `user-message.tsx` owns native disclosures and full-copy access.
+
+| Scenario | Required behavior / enforcing check |
+| --- | --- |
+| Threshold | Close above 2,000 UTF-16 units or 12 logical lines; CRLF counts once and trailing blanks count (presentation tests). |
+| Preview | At most four visual lines; Copy stays visible beside native details, metadata and attachments remain outside clipping (component/browser tests). |
+| Exact repeat | Complete long USER text alone qualifies; compare exact strings in order, reset at /clear, recompute after pagination/eviction (presentation tests). |
+| Skills | Recognize generated heading, exact explanation and contiguous valid entries outside fences; retain original slices, heading and all list lines; malformed lists stay text (reconstruction tests). |
+| Disclosure | Closed/open state is view state; nested skills retain openness when the parent closes (browser tests). |
+| Bounded content | Closed and URL-open previews never fetch automatically; explicit expand/load/copy uses the supplied authorized same-origin full-content URL, with one shared in-flight request (browser tests). |
+| Failures | Network/5xx gets at most two retries with visible localized status; 4xx fails immediately; final errors allow retry and preserve download access; abort on unmount or message replacement (browser tests). |
+| Copy | Clipboard receives unmodified full text; only success shows copied feedback, unavailable/rejected writes show localized retryable errors (browser tests). |
+| History | Existing initial/latest scrolling, history pagination and custom renderers retain ownership (history regression suite). |
+
+Repeated `transcript-open` query values are JSON tuples
+`[1,messageId,section]`, where section is `message` or `skills:<ordinal>`.
+Only explicit opens are stored, sorted and deduplicated on writes; malformed
+or unknown values are ignored. No content, path or hash enters the tuple.
+`use-user-message-expansion.ts` restores via popstate and a same-document
+event, using closed SSR snapshots. User toggles replace the current entry,
+preserving unrelated query parameters, URL hash and `history.state`; restoration
+does not write history. Unloaded IDs remain in the URL. Shared links and
+back/forward restore each entry's choices without creating messages or fetching.
+
 ## Expectations
 
 - Node color is the **highest-`attempt` `node_attempts.status`** for each `node_id`
