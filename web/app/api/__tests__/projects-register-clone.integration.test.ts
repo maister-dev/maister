@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -305,6 +312,81 @@ describe("POST /api/projects — real source resolution (integration)", () => {
     // The clone happened (CONFIG is thrown only after resolveProjectSource
     // cloned) and was rolled back — no leftover dir under reposRoot.
     expect(await pathExists(join(reposRoot, derivedName))).toBe(false);
+  });
+
+  it.each(["acknowledgment", "reconciliation"] as const)(
+    "retains the accepted clone after losing the %s connection",
+    async (lost) => {
+      const slug = `lost-${lost}`;
+      const bare = await buildBareRepoWithoutManifest(slug);
+      const transaction = db.transaction.bind(db);
+      const spy = vi
+        .spyOn(db, "transaction")
+        .mockImplementationOnce(async (callback) => {
+          await transaction(callback);
+          throw new Error("connection closed after commit");
+        });
+
+      if (lost === "reconciliation")
+        spy.mockRejectedValueOnce(new Error("connection unavailable"));
+      try {
+        const res = await POST(
+          request({
+            repoUrl: `file://${bare}`,
+            taskKey: lost === "acknowledgment" ? "LACK" : "LREC",
+          }),
+        );
+
+        expect(res.status).toBe(lost === "acknowledgment" ? 201 : 503);
+        const row = await projectRow(slug);
+
+        expect(row.repoPath).toBe(join(reposRoot, slug));
+        expect(await pathExists(join(row.repoPath, ".git"))).toBe(true);
+        if (res.status === 201)
+          expect(await res.json()).toMatchObject({ projectId: row.id, slug });
+        else
+          expect(await res.json()).toMatchObject({
+            reason: "registration_commit_unknown",
+          });
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it("removes only newly initialized Git metadata on confirmed rollback", async () => {
+    const name = "core-refusal";
+    const dir = join(reposRoot, name);
+
+    await mkdir(dir);
+    await writeFile(join(dir, "user.txt"), "keep me");
+    const spy = vi
+      .spyOn(db, "transaction")
+      .mockRejectedValueOnce(new Error("core transaction refused"));
+
+    try {
+      const res = await POST(request({ target: name }));
+
+      expect(res.status).toBe(500);
+      expect(await pathExists(join(dir, ".git"))).toBe(false);
+      expect(await readFile(join(dir, "user.txt"), "utf8")).toBe("keep me");
+      expect(await projectRow(name)).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("retains pre-existing Git metadata even if Git cannot open it", async () => {
+    const name = "broken-metadata";
+    const dir = join(reposRoot, name);
+
+    await mkdir(dir);
+    await writeFile(join(dir, ".git"), "gitdir: /missing");
+    const res = await POST(request({ target: name }));
+
+    expect(res.status).toBe(409);
+    expect(await readFile(join(dir, ".git"), "utf8")).toBe("gitdir: /missing");
+    expect(await projectRow(name)).toBeUndefined();
   });
 
   it("existing-local with remote: resolves origin url, provider=github", async () => {

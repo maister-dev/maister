@@ -2556,6 +2556,13 @@
       "when": 1795435885577,
       "tag": "0368_run_sync_attempt_peek_hint",
       "breakpoints": true
+    },
+    {
+      "idx": 369,
+      "version": "7",
+      "when": 1795462341910,
+      "tag": "0369_project_dependencies",
+      "breakpoints": true
     }
   ]
 }

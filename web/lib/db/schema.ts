@@ -1,3 +1,10 @@
+import {
+  dependencyAttemptStatuses,
+  dependencyKinds,
+  dependencyStages,
+  type ProjectDependencyPin,
+  type DependencyCheckpoint,
+} from "@/lib/project-dependencies/types";
 import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
 import type {
   CompletionGitAnchor,
@@ -8876,9 +8883,171 @@ export const projectPackageAttachments = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    projectAttachment: unique("project_package_attachments_owner_id_uq").on(
+      t.projectId,
+      t.id,
+    ),
     uniqProjectPackage: unique(
       "project_package_attachments_project_name_uq",
     ).on(t.projectId, t.packageName),
+  }),
+);
+
+export const projectDependencyDeclarations = pgTable(
+  "project_dependency_declarations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: dependencyKinds }).notNull(),
+    logicalId: text("logical_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    generation: integer("generation").notNull().default(1),
+    desired: jsonb("desired").$type<ProjectDependencyPin>().notNull(),
+    effectiveAttachmentId: text("effective_attachment_id"),
+    effectiveRevision: text("effective_revision"),
+    effectiveGeneration: integer("effective_generation"),
+  },
+  (t) => ({
+    owner: unique("dependency_head_owner_uq").on(t.projectId, t.id),
+    attachmentOwner: foreignKey({
+      name: "dependency_attachment_owner_fk",
+      columns: [t.projectId, t.effectiveAttachmentId],
+      foreignColumns: [
+        projectPackageAttachments.projectId,
+        projectPackageAttachments.id,
+      ],
+    }),
+    attachment: unique("dependency_effective_attachment_uq").on(
+      t.effectiveAttachmentId,
+    ),
+    flowNamespace: uniqueIndex("dependency_flow_namespace_uq")
+      .on(t.projectId, t.logicalId)
+      .where(sql`${t.kind} IN ('flow','package')`),
+    importNamespace: uniqueIndex("dependency_import_namespace_uq")
+      .on(t.projectId, t.logicalId)
+      .where(sql`${t.kind} IN ('capability_import','package')`),
+    shape: check(
+      "dependency_head_shape",
+      sql`
+      ${t.kind} IN ('package','flow','capability_import') AND length(${t.logicalId}) > 0 AND ${t.ordinal} >= 0 AND ${t.generation} >= 1
+      AND jsonb_typeof(${t.desired}) = 'object' AND ${t.desired} ?& ARRAY['source','version']
+      AND jsonb_typeof(${t.desired}->'source') = 'string' AND length(${t.desired}->>'source') > 0
+      AND jsonb_typeof(${t.desired}->'version') = 'string' AND length(${t.desired}->>'version') > 0
+      AND (${t.effectiveGeneration} IS NULL) = (${t.effectiveRevision} IS NULL)
+      AND (${t.effectiveGeneration} IS NULL OR ${t.effectiveGeneration} BETWEEN 1 AND ${t.generation})
+      AND (${t.effectiveAttachmentId} IS NULL OR (${t.kind} = 'package' AND ${t.effectiveRevision} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export const projectDependencyAttempts = pgTable(
+  "project_dependency_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id").notNull(),
+    declarationId: text("declaration_id").notNull(),
+    generation: integer("generation").notNull(),
+    attemptNo: integer("attempt_no").notNull(),
+    desired: jsonb("desired").$type<ProjectDependencyPin>().notNull(),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    status: text("status", { enum: dependencyAttemptStatuses })
+      .notNull()
+      .default("pending"),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    stage: text("stage", { enum: dependencyStages }),
+    reason: text("reason"),
+    resolvedRevision: text("resolved_revision"),
+    memberRef: text("member_ref"),
+    retryOfAttemptId: text("retry_of_attempt_id"),
+    checkpoint: jsonb("checkpoint")
+      .$type<DependencyCheckpoint>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    owner: foreignKey({
+      name: "dependency_attempt_owner_fk",
+      columns: [t.projectId, t.declarationId],
+      foreignColumns: [
+        projectDependencyDeclarations.projectId,
+        projectDependencyDeclarations.id,
+      ],
+    }).onDelete("cascade"),
+    identity: unique("dependency_attempt_number_uq").on(
+      t.declarationId,
+      t.generation,
+      t.attemptNo,
+    ),
+    retryOwner: unique("dependency_attempt_owner_generation_uq").on(
+      t.declarationId,
+      t.generation,
+      t.id,
+    ),
+    retrySource: foreignKey({
+      name: "dependency_retry_owner_fk",
+      columns: [t.declarationId, t.generation, t.retryOfAttemptId],
+      foreignColumns: [t.declarationId, t.generation, t.id],
+    }),
+    retryReceipt: unique("dependency_retry_receipt_uq").on(t.retryOfAttemptId),
+    claim: uniqueIndex("dependency_single_claim_uq")
+      .on(t.declarationId)
+      .where(sql`${t.status} = 'running'`),
+    due: index("dependency_attempt_due_idx")
+      .on(t.dueAt, t.projectId)
+      .where(sql`${t.status} = 'pending'`),
+    expired: index("dependency_attempt_expiry_idx")
+      .on(t.leaseExpiresAt)
+      .where(sql`${t.status} = 'running'`),
+    shape: check(
+      "dependency_attempt_shape",
+      sql`
+      ${t.generation} >= 1 AND ${t.attemptNo} >= 1
+      AND ${t.status} IN ('pending','running','failed','succeeded','recovery_required')
+      AND (${t.status} = 'running') = (${t.claimToken} IS NOT NULL)
+      AND (${t.status} = 'running') = (${t.leaseExpiresAt} IS NOT NULL)
+      AND (${t.stage} IS NULL OR ${t.stage} IN ('resolve','install','attach','setup','projection'))
+      AND (${t.reason} IS NULL OR length(${t.reason}) BETWEEN 1 AND 512)
+      AND (${t.status} NOT IN ('failed','recovery_required') OR (${t.reason} IS NOT NULL AND ${t.stage} IS NOT NULL))
+      AND (${t.status} <> 'recovery_required' OR (${t.stage} = 'setup' AND ${t.memberRef} IS NOT NULL AND ${t.resolvedRevision} IS NOT NULL))`,
+    ),
+  }),
+);
+
+export const projectDependencySetupReceipts = pgTable(
+  "project_dependency_setup_receipts",
+  {
+    materialKey: text("material_key").primaryKey(),
+    status: text("status", {
+      enum: ["running", "succeeded", "failed"],
+    }).notNull(),
+    claimToken: text("claim_token").notNull(),
+    ownerHost: text("owner_host"),
+    ownerPid: integer("owner_pid"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    shape: check(
+      "dependency_setup_shape",
+      sql`${t.status} IN ('running','succeeded','failed') AND (${t.ownerPid} IS NULL OR ${t.ownerPid} > 0)`,
+    ),
   }),
 );
 

@@ -85,11 +85,11 @@ CREATE TRIGGER librarian_memory_items_content_immutable BEFORE UPDATE OF content
 CREATE TRIGGER node_attempts_knowledge_actor_immutable BEFORE UPDATE OF knowledge_actor ON public.node_attempts FOR EACH ROW EXECUTE FUNCTION guard_native_knowledge_actor();
 CREATE TRIGGER node_attempts_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.node_attempts FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('execution', 'run_id,node_id,node_type,attempt,status,decision,error_code,started_at,ended_at');
 CREATE TRIGGER specialist_flow_question_resume_guard BEFORE INSERT OR UPDATE ON public.node_attempts FOR EACH ROW EXECUTE FUNCTION guard_specialist_flow_question_resume();
-CREATE TRIGGER project_config_install_before_update BEFORE UPDATE ON public.package_installs FOR EACH ROW EXECUTE FUNCTION project_config_install_revision();
 CREATE TRIGGER project_config_persist_guard_before_update BEFORE UPDATE ON public.project_config_persist_operations FOR EACH ROW EXECUTE FUNCTION project_config_guard_intent();
 CREATE TRIGGER project_config_push_guard_before_update BEFORE UPDATE ON public.project_config_push_intents FOR EACH ROW EXECUTE FUNCTION project_config_guard_intent();
-CREATE TRIGGER project_config_attachment_after_change AFTER INSERT OR DELETE OR UPDATE ON public.project_package_attachments FOR EACH ROW EXECUTE FUNCTION project_config_attachment_revision();
-CREATE TRIGGER project_config_attachment_before_binding_change BEFORE INSERT OR DELETE OR UPDATE ON public.project_package_attachments FOR EACH ROW EXECUTE FUNCTION project_config_lock_attachment_installs();
+CREATE TRIGGER project_dependency_attempt_before_write BEFORE INSERT OR UPDATE ON public.project_dependency_attempts FOR EACH ROW EXECUTE FUNCTION project_dependency_guard_attempt();
+CREATE TRIGGER project_config_declaration_after_change AFTER INSERT OR DELETE OR UPDATE ON public.project_dependency_declarations FOR EACH ROW EXECUTE FUNCTION project_config_declaration_revision();
+CREATE TRIGGER project_dependency_head_before_update BEFORE UPDATE ON public.project_dependency_declarations FOR EACH ROW EXECUTE FUNCTION project_dependency_guard_head();
 CREATE TRIGGER project_tokens_company_binding_insert_guard BEFORE INSERT ON public.project_tokens FOR EACH ROW WHEN ((new.installation_run_id IS NULL)) EXECUTE FUNCTION guard_company_agent_credential();
 CREATE TRIGGER project_tokens_company_binding_update_guard BEFORE UPDATE ON public.project_tokens FOR EACH ROW WHEN (((old.installation_run_id IS NULL) AND (new.installation_run_id IS NULL))) EXECUTE FUNCTION guard_company_agent_credential();
 CREATE TRIGGER project_tokens_installation_binding_guard BEFORE INSERT OR UPDATE ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_installation_agent_credential();
@@ -104,6 +104,7 @@ CREATE TRIGGER run_messages_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public
 CREATE CONSTRAINT TRIGGER run_results_operational_receipt AFTER INSERT OR DELETE OR UPDATE ON public.run_results DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_operational_terminal_result();
 CREATE TRIGGER run_results_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_results FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('summary', 'run_id,revision,validity,schema_ref,schema_version,value,value_bytes,invalid_reason,first_collected_at');
 CREATE TRIGGER run_sessions_consensus_binding BEFORE INSERT OR UPDATE OF runner_id, session_name ON public.run_sessions FOR EACH ROW EXECUTE FUNCTION guard_consensus_child_runner_binding();
+CREATE TRIGGER run_sync_attempts_peek_hint AFTER INSERT OR DELETE OR UPDATE ON public.run_sync_attempts FOR EACH ROW EXECUTE FUNCTION maister_run_peek_hint('summary', 'run_id,phase,mode,target_ref,target_sha,head_sha_before,head_sha_after,session_name,runner_id,conflicted_files,pushed,error_code');
 CREATE CONSTRAINT TRIGGER agent_installation_schedule_run_authority AFTER INSERT ON public.runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION check_installation_schedule_run_authority();
 CREATE TRIGGER agent_memory_capture_webhook_run AFTER INSERT OR UPDATE OF trigger_source ON public.runs FOR EACH ROW EXECUTE FUNCTION agent_memory_capture_external_source();
 CREATE TRIGGER agent_memory_run_hash_format BEFORE INSERT OR UPDATE OF agent_memory_hash, agent_memory_hash_format ON public.runs FOR EACH ROW EXECUTE FUNCTION agent_memory_set_hash_format();

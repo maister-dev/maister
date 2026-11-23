@@ -375,11 +375,11 @@ in the [schema narrative](../database-schema.md#project-configuration-persistenc
 The [domain contract](../system-analytics/project-config-persistence.md) owns the
 state machine and crash-window outcomes. Existing source/locator data is preserved.
 
-Attachment binding changes acquire sorted install-row `FOR SHARE NOWAIT` locks
-before their revision trigger (migration 0198). This serializes concurrent
-install metadata changes with new/switched/deleted bindings; contention refuses
-without partial writes. The [owning concurrency contract](../system-analytics/project-config-persistence.md#lock-and-recovery-contract-implemented)
-and its PostgreSQL tests define retry and accepted-publication behavior.
+As of migration 0369 each desired package pin owns its export revision. Its
+insert, removal or coordinate edit participates in the current publication
+fence. Installation status, retries and effective-attachment switches can
+progress while a user reviews the same YAML. The [Git persistence contract](../system-analytics/project-config-persistence.md#lock-and-recovery-contract-implemented)
+defines the review and confirmation behavior.
 
 ## Flow wait and delivery ownership (Designed)
 

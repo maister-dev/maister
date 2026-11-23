@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path, { join } from "node:path";
+import { join } from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -13,19 +13,9 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
-const schema = schemaModule as unknown as Record<string, any>;
-
 let testDatabase: StartedPostgresTestDb;
 let db: NodePgDatabase;
-let homeDir: string;
-let projectDir: string;
-let pkgDir: string;
-let legacyProjectDir: string;
-let legacyPkgDir: string;
-let originalHome: string | undefined;
-
-const SLUG = "reg-pkg-proj";
-
+let root: string;
 // The seeded bootstrap admin (migration 0005) is the FK target for the owner
 // membership; authz is mocked to avoid @/auth → next-auth in the module graph.
 const ADMIN_ID = "usr_bootstrap_admin";
@@ -44,257 +34,213 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => db,
 }));
 
-// Source resolution is covered elsewhere; here it must hand the route a real
-// on-disk project dir without running git. Other graph modules import
-// redactUrl/detectProvider/readRemoteOrigin — provide them all.
-vi.mock("@/lib/repo-source", () => ({
-  gitInit: vi.fn(async () => undefined),
-  redactUrl: (url: string) => url,
-  detectProvider: vi.fn(() => null),
-  readRemoteOrigin: vi.fn(async () => null),
-  resolveProjectSource: vi.fn(async (input: { target?: string }) => ({
-    dir: input.target ?? projectDir,
-    repoUrl: null,
-    provider: null,
-    gitStatus: "no-remote",
-    clonedByUs: false,
-  })),
-}));
-
 let POST: typeof import("@/app/api/projects/route").POST;
-let packagesGET: typeof import("@/app/api/projects/[slug]/packages/route").GET;
 
 beforeAll(async () => {
   testDatabase = await startMainPostgresTestDb({
     databaseName: "reg_pkg_test",
   });
   db = testDatabase.db;
-
-  homeDir = await mkdtemp(join(tmpdir(), "reg-pkg-home-"));
-  originalHome = process.env.HOME;
-  process.env.HOME = homeDir;
-
-  pkgDir = await mkdtemp(join(tmpdir(), "reg-pkg-fixture-"));
-  await mkdir(join(pkgDir, "flows/reg-flow"), { recursive: true });
-  await writeFile(
-    join(pkgDir, "flows/reg-flow/flow.yaml"),
-    "schemaVersion: 1\nname: reg-flow\ncompat:\n  engine_min: 1.1.0\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n",
-  );
-  await mkdir(join(pkgDir, "capability/skills/skill-one"), { recursive: true });
-  await mkdir(join(pkgDir, "capability/agents"), { recursive: true });
-  await writeFile(join(pkgDir, "capability/skills/skill-one/SKILL.md"), "s\n");
-  await writeFile(join(pkgDir, "capability/agents/agent-one.md"), "a\n");
-  await writeFile(
-    join(pkgDir, "maister-package.yaml"),
-    `schemaVersion: 1
-name: regpkg
-flows:
-  - { id: reg-flow, path: flows/reg-flow }
-capabilities:
-  - { id: reg-bundle, path: capability }
-mcps:
-  - { id: reg-mcp, transport: http, url: "https://mcp.example.com", env: ["env:REG_TOKEN"] }
-restrictions:
-  - { id: reg-protect, paths: ["docs/**"] }
-`,
-  );
-
-  projectDir = await mkdtemp(join(tmpdir(), "reg-pkg-proj-"));
-  await writeFile(
-    join(projectDir, "maister.yaml"),
-    `schemaVersion: 2
-project:
-  name: Reg Pkg Proj
-flows: []
-packages:
-  - { id: regpkg, source: ${pkgDir}, version: local }
-`,
-  );
-
-  legacyPkgDir = await mkdtemp(join(tmpdir(), "reg-pkg-legacy-fixture-"));
-  await mkdir(join(legacyPkgDir, "flows/legacy-flow"), { recursive: true });
-  await writeFile(
-    join(legacyPkgDir, "flows/legacy-flow/flow.yaml"),
-    "schemaVersion: 1\nname: legacy-flow\nsteps: []\n",
-  );
-  await writeFile(
-    join(legacyPkgDir, "maister-package.yaml"),
-    `schemaVersion: 1
-name: legacyregpkg
-flows:
-  - { id: legacy-flow, path: flows/legacy-flow }
-`,
-  );
-  legacyProjectDir = await mkdtemp(join(tmpdir(), "reg-pkg-legacy-proj-"));
-  await writeFile(
-    join(legacyProjectDir, "maister.yaml"),
-    `schemaVersion: 2
-project:
-  name: Legacy registration
-flows: []
-packages:
-  - { id: legacyregpkg, source: ${legacyPkgDir}, version: local }
-`,
-  );
-
+  root = await mkdtemp(join(tmpdir(), "reg-pkg-proj-"));
   ({ POST } = await import("@/app/api/projects/route"));
-  ({ GET: packagesGET } =
-    await import("@/app/api/projects/[slug]/packages/route"));
 }, 180_000);
 
 afterAll(async () => {
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
   await testDatabase?.stop();
-  for (const dir of [
-    homeDir,
-    projectDir,
-    pkgDir,
-    legacyProjectDir,
-    legacyPkgDir,
-  ]) {
-    await rm(dir, { recursive: true, force: true });
-  }
-  // Member-flow symlinks land under the route's default workspace root (cwd).
-  await rm(path.join(process.cwd(), ".maister", SLUG), {
-    recursive: true,
-    force: true,
-  });
+  if (root) await rm(root, { recursive: true, force: true });
 });
 
-describe("POST /api/projects — packages[] bootstrap materializes the attachment model (real fixture)", () => {
-  it("maps a legacy package member to 502 FLOW_INSTALL and compensates every registration write", async () => {
-    const response = await POST(
-      new NextRequest("http://localhost/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target: legacyProjectDir }),
-      }),
+async function register(name: string, body: string) {
+  const target = join(root, name);
+
+  await mkdir(target);
+  await writeFile(
+    join(target, "maister.yaml"),
+    `schemaVersion: 2
+project: { name: ${name} }
+${body}`,
+  );
+
+  return POST(
+    new NextRequest("http://localhost/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ target }),
+    }),
+  );
+}
+
+describe("POST /api/projects — register dependencies before installation", () => {
+  it("accepts a project before reading a package with an unsupported member", async () => {
+    const pkg = join(root, "legacy-pkg");
+
+    await mkdir(join(pkg, "legacy"), { recursive: true });
+    await writeFile(
+      join(pkg, "maister-package.yaml"),
+      "schemaVersion: 1\nname: legacy\nflows: [{ id: legacy, path: legacy }]\n",
+    );
+    await writeFile(
+      join(pkg, "legacy/flow.yaml"),
+      "schemaVersion: 1\nname: legacy\nsteps: []\n",
     );
 
-    expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({
-      code: "FLOW_INSTALL",
-      message:
-        "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]",
-    });
+    const response = await register(
+      "legacy-registration",
+      `flows: []
+packages:
+  - { id: legacy, source: ${pkg}, version: local }`,
+    );
+
+    expect(response.status).toBe(201);
+    const { projectId } = await response.json();
+
+    expect(await db.select().from(schemaModule.packageInstalls)).toHaveLength(
+      0,
+    );
     expect(
-      await db
-        .select()
-        .from(schema.projects)
-        .where(eq(schema.projects.slug, "legacy-registration")),
+      await db.select().from(schemaModule.projectPackageAttachments),
     ).toHaveLength(0);
     expect(
       await db
         .select()
-        .from(schema.packageInstalls)
-        .where(eq(schema.packageInstalls.name, "legacyregpkg")),
-    ).toHaveLength(0);
-    expect(
-      await db
-        .select()
-        .from(schema.projectPackageAttachments)
-        .where(
-          eq(schema.projectPackageAttachments.packageName, "legacyregpkg"),
-        ),
-    ).toHaveLength(0);
+        .from(schemaModule.projectDependencyAttempts)
+        .where(eq(schemaModule.projectDependencyAttempts.projectId, projectId)),
+    ).toMatchObject([{ status: "pending", actorUserId: ADMIN_ID }]);
   });
 
-  it("registers with packages[] and produces install + attachment + FK-wired members + ingestion", async () => {
-    const res = await POST(
-      new NextRequest("http://localhost/api/projects", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target: projectDir }),
-      }),
+  it("atomically registers owner, role and immutable inputs for all three kinds, including same-name Flow/import", async () => {
+    const missing = join(root, "absent");
+    const res = await register(
+      "mixed",
+      `flow_roles: [{ ref: reviewer }]
+flows:
+  - { id: common, source: ${missing}, version: v1, runner: requested }
+packages:
+  - { id: alias, source: ${missing}, version: rel/v1, path: subtree }
+capability_imports:
+  - { id: common, source: ${missing}, version: v1, trust: explicit }
+capabilities:
+  skills: [{ id: shown }]`,
     );
 
     expect(res.status).toBe(201);
-    const body = await res.json();
+    const { projectId, slug, gitStatus } = await res.json();
 
-    expect(body.slug).toBe(SLUG);
+    expect([slug, gitStatus]).toEqual(["mixed", "initialized"]);
+    const {
+      projectMembers,
+      projectDependencyDeclarations: heads,
+      projectDependencyAttempts: attempts,
+    } = schemaModule;
 
-    const [project] = await db
+    expect(
+      await db
+        .select()
+        .from(projectMembers)
+        .where(eq(projectMembers.projectId, projectId)),
+    ).toMatchObject([{ userId: ADMIN_ID, role: "owner" }]);
+    const items = await db
       .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.slug, SLUG));
+      .from(heads)
+      .where(eq(heads.projectId, projectId))
+      .orderBy(heads.kind);
 
-    // Platform install row: local source → trusted_by_policy, Installed.
-    const installs = await db.select().from(schema.packageInstalls);
-
-    expect(installs).toHaveLength(1);
-    expect(installs[0]).toMatchObject({
-      name: "regpkg",
-      packageStatus: "Installed",
-      trustStatus: "trusted_by_policy",
-    });
-
-    // Attachment row — the packages tab / project APIs read THIS, so the
-    // bootstrapped package is manageable after registration.
-    const attachments = await db
+    expect(items).toMatchObject([
+      {
+        kind: "capability_import",
+        logicalId: "common",
+        desired: { source: missing, version: "v1", trust: "explicit" },
+      },
+      {
+        kind: "flow",
+        logicalId: "common",
+        desired: {
+          source: missing,
+          version: "v1",
+          runner: "requested",
+          roleRefs: ["reviewer"],
+          capabilityRefIds: { skill: ["shown", "common"] },
+        },
+      },
+      {
+        kind: "package",
+        logicalId: "alias",
+        desired: { source: missing, version: "rel/v1", path: "subtree" },
+      },
+    ]);
+    const work = await db
       .select()
-      .from(schema.projectPackageAttachments)
-      .where(eq(schema.projectPackageAttachments.projectId, project.id));
+      .from(attempts)
+      .where(eq(attempts.projectId, projectId));
 
-    expect(attachments).toHaveLength(1);
-    expect(attachments[0]).toMatchObject({
-      packageName: "regpkg",
-      packageInstallId: installs[0].id,
-    });
-
-    // Member rows joined to the group via package_install_id.
-    const flowRows = await db
-      .select()
-      .from(schema.flows)
-      .where(eq(schema.flows.projectId, project.id));
-
-    expect(flowRows.map((f: any) => f.flowRefId)).toEqual(["reg-flow"]);
-    expect(flowRows[0].packageInstallId).toBe(installs[0].id);
-    expect(flowRows[0].trustStatus).toBe("trusted_by_policy");
-
-    const imports = await db
-      .select()
-      .from(schema.capabilityImports)
-      .where(eq(schema.capabilityImports.projectId, project.id));
-
-    expect(imports).toHaveLength(1);
-    expect(imports[0].packageInstallId).toBe(installs[0].id);
-    expect(imports[0].setupStatus).toMatch(/done|not_required/);
-
-    // Typed ingestion (mcps[] / restrictions[]) — previously silently dropped
-    // on the registration path — plus the bundle agent_definition record.
-    const records = await db
-      .select()
-      .from(schema.capabilityRecords)
-      .where(
-        and(
-          eq(schema.capabilityRecords.projectId, project.id),
-          eq(schema.capabilityRecords.source, "flow-package"),
-        ),
-      );
-    const byRef = new Map(records.map((r: any) => [r.capabilityRefId, r]));
-
-    expect(byRef.get("reg-mcp")?.kind).toBe("mcp");
-    expect(byRef.get("reg-mcp")?.material).toMatchObject({
-      packageInstallId: installs[0].id,
-    });
-    expect(byRef.get("reg-protect")?.kind).toBe("restriction");
-    expect(byRef.get("reg-bundle")?.kind).toBe("agent_definition");
+    expect(work).toHaveLength(items.length);
+    for (const item of items) {
+      expect(work.find((a) => a.declarationId === item.id)).toMatchObject({
+        actorUserId: ADMIN_ID,
+        status: "pending",
+        attemptNo: 1,
+        generation: 1,
+        desired: item.desired,
+      });
+    }
+    expect(await db.select().from(schemaModule.flows)).toHaveLength(0);
+    expect(await db.select().from(schemaModule.capabilityImports)).toHaveLength(
+      0,
+    );
   });
 
-  it("exposes the bootstrapped package through GET /api/projects/{slug}/packages", async () => {
-    const res = await packagesGET(
-      new NextRequest(`http://localhost/api/projects/${SLUG}/packages`),
-      { params: Promise.resolve({ slug: SLUG }) },
+  it("projects inline capabilities when there are no dependencies", async () => {
+    const res = await register(
+      "inline",
+      "flows: []\ncapabilities:\n  restrictions: [{ id: protect, paths: ['docs/**'] }]",
     );
 
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    expect(res.status).toBe(201);
+    const { projectId } = await res.json();
+    const { capabilityRecords, projectDependencyDeclarations } = schemaModule;
 
-    expect(body.attachments).toHaveLength(1);
-    expect(body.attachments[0]).toMatchObject({
-      packageName: "regpkg",
-      flows: ["reg-flow"],
-    });
+    expect(
+      await db
+        .select()
+        .from(projectDependencyDeclarations)
+        .where(eq(projectDependencyDeclarations.projectId, projectId)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(capabilityRecords)
+        .where(eq(capabilityRecords.projectId, projectId)),
+    ).toMatchObject([{ kind: "restriction", capabilityRefId: "protect" }]);
   });
+
+  it.each([
+    [
+      "credentials",
+      "flows: []\npackages: [{ id: deps, source: 'https://user:do-not-echo@example.org/pkg', version: v1 }]",
+    ],
+    [
+      "bad-scheme",
+      "flows: []\ncapability_imports: [{id: one, source: 'unsupported://example.org/repo', version: v1}]",
+    ],
+    [
+      "shared-package-id",
+      "flows: [{ id: deps, source: /existing, version: v1 }]\npackages: [{ id: deps, source: /existing, version: v1 }]",
+    ],
+  ])(
+    "rejects %s prior to initializing a caller-owned directory",
+    async (name, body) => {
+      const response = await register(name, body);
+
+      expect(response.status).toBe(422);
+      expect(await response.text()).not.toContain("do-not-echo");
+      await expect(stat(join(root, name, ".git"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(
+        await db
+          .select()
+          .from(schemaModule.projects)
+          .where(eq(schemaModule.projects.slug, name)),
+      ).toHaveLength(0);
+    },
+  );
 });
