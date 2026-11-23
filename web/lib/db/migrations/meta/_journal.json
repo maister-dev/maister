@@ -2563,6 +2563,13 @@
       "when": 1795462341910,
       "tag": "0369_project_dependencies",
       "breakpoints": true
+    },
+    {
+      "idx": 370,
+      "version": "7",
+      "when": 1795463255644,
+      "tag": "0370_dependency_source_guard",
+      "breakpoints": true
     }
   ]
 }

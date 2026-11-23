@@ -90,6 +90,7 @@ CREATE TRIGGER project_config_push_guard_before_update BEFORE UPDATE ON public.p
 CREATE TRIGGER project_dependency_attempt_before_write BEFORE INSERT OR UPDATE ON public.project_dependency_attempts FOR EACH ROW EXECUTE FUNCTION project_dependency_guard_attempt();
 CREATE TRIGGER project_config_declaration_after_change AFTER INSERT OR DELETE OR UPDATE ON public.project_dependency_declarations FOR EACH ROW EXECUTE FUNCTION project_config_declaration_revision();
 CREATE TRIGGER project_dependency_head_before_update BEFORE UPDATE ON public.project_dependency_declarations FOR EACH ROW EXECUTE FUNCTION project_dependency_guard_head();
+CREATE TRIGGER project_dependency_source_before_write BEFORE INSERT OR UPDATE OF desired ON public.project_dependency_declarations FOR EACH ROW EXECUTE FUNCTION project_dependency_guard_source();
 CREATE TRIGGER project_tokens_company_binding_insert_guard BEFORE INSERT ON public.project_tokens FOR EACH ROW WHEN ((new.installation_run_id IS NULL)) EXECUTE FUNCTION guard_company_agent_credential();
 CREATE TRIGGER project_tokens_company_binding_update_guard BEFORE UPDATE ON public.project_tokens FOR EACH ROW WHEN (((old.installation_run_id IS NULL) AND (new.installation_run_id IS NULL))) EXECUTE FUNCTION guard_company_agent_credential();
 CREATE TRIGGER project_tokens_installation_binding_guard BEFORE INSERT OR UPDATE ON public.project_tokens FOR EACH ROW EXECUTE FUNCTION guard_installation_agent_credential();

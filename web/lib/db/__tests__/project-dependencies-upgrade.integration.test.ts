@@ -1,6 +1,7 @@
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { readExportSnapshot } from "@/lib/project-config-persistence/projection";
 import { pgErrorOf } from "@/lib/db/pg-error";
 import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
@@ -26,6 +27,7 @@ afterAll(async () => {
 
 it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance and fences future requests", async () => {
   const pool = database.pool;
+
   await pool.query(`
     INSERT INTO projects (id, slug, name, repo_path, task_key)
     VALUES ('dep','dep','Legacy','/tmp/dep','DEP'), ('other','other','Empty','/tmp/other','OTH');
@@ -49,6 +51,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
   `);
   const revisions = () =>
     pool.query("SELECT id,config_export_revision FROM projects ORDER BY id");
+
   await expect(
     upgradeMainTestDb(database, predecessor).catch((error: unknown) => {
       throw pgErrorOf(error) ?? error;
@@ -75,19 +78,38 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
       i.manifest->>'sourceSubpath' AS path, i.resolved_revision AS "resolvedRevision"
       FROM project_package_attachments a JOIN package_installs i ON i.id=a.package_install_id WHERE a.project_id='dep'`)
   ).rows;
-  const before = (await revisions()).rows;
-  const receiptsBefore = (await historical()).rows;
   const apply = () =>
     migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
+
+  await pool.query(
+    "UPDATE package_installs SET source_url='https://user:synthetic-marker@example.invalid/acme' WHERE id='installed'",
+  );
+  const refusal = await apply().then(
+    () => null,
+    (error: unknown) => pgErrorOf(error),
+  );
+  expect(refusal?.message).toContain("bound");
+  expect(refusal?.message).not.toContain("synthetic-marker");
+  expect(
+    (
+      await pool.query(
+        "SELECT to_regclass('project_dependency_declarations') AS relation",
+      )
+    ).rows[0].relation,
+  ).toBeNull();
+  await pool.query(
+    "UPDATE package_installs SET source_url='https://example.invalid/acme' WHERE id='installed'",
+  );
+  const receiptsBefore = (await historical()).rows;
+  const before = (await revisions()).rows;
   await apply();
   await apply();
   expect((await revisions()).rows).toEqual(before);
   expect((await historical()).rows).toEqual(receiptsBefore);
-  const exported = () =>
-    pool.query(`SELECT logical_id AS id, desired->>'source' AS source, desired->>'version' AS version,
-      desired->>'path' AS path, effective_revision AS "resolvedRevision"
-      FROM project_dependency_declarations WHERE project_id='dep' AND kind='package'`);
-  expect((await exported()).rows).toEqual(previousExport);
+  const exported = async () =>
+    (await readExportSnapshot(database.db, "dep")).projection.packages;
+
+  expect(await exported()).toEqual(previousExport);
   expect(
     (
       await pool.query(
@@ -123,9 +145,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     "UPDATE project_dependency_declarations SET desired=jsonb_set(desired, '{version}', to_jsonb($1::text)),generation=2,effective_generation=2 WHERE logical_id='tools'",
     ["v2"],
   );
-  expect((await exported()).rows).toEqual([
-    { ...previousExport[0], version: "v2" },
-  ]);
+  expect(await exported()).toEqual([{ ...previousExport[0], version: "v2" }]);
   const insert = (id: string, kind: string, logicalId: string) =>
     pool.query(
       "INSERT INTO project_dependency_declarations (id,project_id,kind,logical_id,ordinal,desired) VALUES ($1,'other',$2,$3,0,$4)",
@@ -136,6 +156,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
         { source: "https://example.invalid/acme", version: "v2" },
       ],
     );
+
   await insert("flow", "flow", "shared");
   await insert("import", "capability_import", "shared");
   await expect(insert("bad", "package", "shared")).rejects.toMatchObject({
@@ -166,6 +187,41 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     FROM project_dependency_declarations WHERE id='pin'`,
       [id, n],
     );
+
   await claim("a1", 1);
   await expect(claim("a2", 2)).rejects.toMatchObject({ code: "23505" });
 });
+
+it("upgrades an existing 0369 head only after its unsafe coordinates are repaired", async () => {
+  const previous = "0369_project_dependencies";
+  const old = await startMainPostgresTestDbUpTo(
+    { databaseName: "dependency_0369_repair" },
+    previous,
+  );
+  try {
+    await old.pool
+      .query(`INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES ('p','p','Project','/tmp/p','PRE');
+      INSERT INTO project_dependency_declarations(id,project_id,kind,logical_id,ordinal,desired)
+      VALUES ('head','p','flow','legacy',0,'{"source":"https://host.test/a?synthetic-marker","version":"v1"}');`);
+    const refusal = await upgradeMainTestDb(old, previous).then(
+      () => null,
+      (error: unknown) => pgErrorOf(error),
+    );
+    expect(refusal?.message).toContain("head");
+    expect(refusal?.message).not.toContain("synthetic-marker");
+    await old.pool.query(
+      `UPDATE project_dependency_declarations SET desired=jsonb_set(desired,'{source}',to_jsonb('git@host.test:repo'::text)),generation=2 WHERE id='head'`,
+    );
+    await migrate(old.db, { migrationsFolder: "./lib/db/migrations" });
+    await expect(
+      old.pool.query(
+        `UPDATE project_dependency_declarations SET desired=jsonb_set(desired,'{source}',to_jsonb('ssh://git:private@host.test/repo'::text)),generation=3 WHERE id='head'`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      message: "Invalid dependency source for project p",
+    });
+  } finally {
+    await old.stop();
+  }
+}, 180000);

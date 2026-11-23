@@ -434,14 +434,22 @@ running web service.
 
 ## 11. Updates
 
+Build the selected revision in a separate release checkout. Keep repository storage, runtime data and service credentials at their configured persistent paths. After the build completes, drain the old processes and switch the units to the new release. Retain the old release until its processes have exited.
+
+For an installation using the single checkout in the example units, schedule downtime before updating its files. Drain active work and settle accepted project configuration publications. Keep a database backup from the same release as the old application.
+
 ```bash
-cd /opt/maister && git pull
+sudo systemctl stop maister-web maister-supervisor
+cd /opt/maister
+git pull --ff-only
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build          # rebuilds the internal MCP facade and the web app
+pnpm --filter maister-web build
 set -a; . /etc/maister/maister.env; set +a
 pnpm --filter maister-web db:migrate
-sudo systemctl restart maister-supervisor maister-web
+sudo systemctl start maister-supervisor maister-web
 ```
+
+Migrations 0369–0370 transfer package export ownership to project declarations and validate stored dependency sources. Stop old CLI and web writers before applying it. When new declarations exist, rollback requires the matching pre-cutover database backup. A failed migration reports the inconsistent attachment so it can be repaired before retry.
 
 Run the MCP contract check from the smoke test before starting new agent runs.
 
