@@ -2041,7 +2041,7 @@ See [`system-analytics/run-results.md`](system-analytics/run-results.md).
 
 ### Session-agent discovery (Designed)
 
-A graph binds a package agent through the existing session-agent setting. Each bound attempt gets its own logical session, including when the runner and named session match a sibling. Explicit node MCP requirements participate in preflight. Required skill dependencies belong to the owning package. [Inventory resolution](system-analytics/capabilities.md#project-run-capability-inventory-designed)
+A graph binds a package agent through the existing session-agent setting. Each bound attempt gets its own logical session, including when the runner and named session match a sibling. Explicit node MCP requirements participate in preflight. Required skill dependencies belong to the owning package. [Inventory resolution](system-analytics/capabilities.md#project-run-capability-inventory)
 
 ## Authored package files
 

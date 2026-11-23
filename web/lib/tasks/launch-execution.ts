@@ -253,6 +253,9 @@ export async function assertFrozenTaskLaunchCurrent(
     projectId: intent.projectId,
     flowRevisionId: settings.flowRevisionId,
     flowSource: revision.source,
+    flowPackageInstallId: settings.packageInstallId ?? flow.packageInstallId,
+    flowManifest: revision.manifest,
+    historical: settings.resolvedCapabilitySet?.delivery ? undefined : true,
   });
 
   if (

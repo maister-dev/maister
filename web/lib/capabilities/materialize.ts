@@ -57,6 +57,7 @@ const WORKTREE_EXCLUDE_PATTERNS = [
 export const SETTINGS_OWNED_MARKER_SUFFIX = ".maister-owned";
 
 export type MaterializeCapabilityProfileArgs = {
+  scopedSession?: true;
   runId: string;
   worktreePath: string;
   profile: MaterializableCapabilityProfile;
@@ -348,7 +349,10 @@ export async function materializeCapabilityProfile(
   // it as the "local" settings tier via cwd, NOT from the node-scoped dir.
   let settingsLocalPath: string | null = null;
 
-  if (artifacts.settingsLocal !== null) {
+  if (artifacts.settingsLocal && args.scopedSession) {
+    settingsLocalPath = path.join(rootPath, "adapter-settings.json");
+    await atomicWriteJson(settingsLocalPath, artifacts.settingsLocal);
+  } else if (artifacts.settingsLocal !== null) {
     settingsLocalPath = await materializeCapabilitySettings({
       cwd: worktreePath,
       runId: args.runId,

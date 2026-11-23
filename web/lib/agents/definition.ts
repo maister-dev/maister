@@ -157,13 +157,15 @@ const flowRefValueSchema = z
     "flow must not be '.', '..' or contain '..'",
   );
 
+const profileRefsSchema = z
+  .array(capabilityRefIdSchema)
+  .max(32)
+  .transform((items) => [...new Set(items)]);
+
 export const capabilityProfileSchema = z
   .object({
-    mcps: z
-      .array(capabilityRefIdSchema)
-      .max(32)
-      .transform((items) => [...new Set(items)])
-      .optional(),
+    mcps: profileRefsSchema.optional(),
+    skills: profileRefsSchema.optional(),
   })
   .strict();
 

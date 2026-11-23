@@ -55,6 +55,7 @@ type AdapterCapabilityHomeInput = Readonly<{
   runId: string;
   nodeAttemptId?: string;
   installedPaths: readonly string[];
+  selectedSkills?: readonly string[];
   // Injectable for tests; defaults to the host's global codex home.
   codexGlobalHome?: string;
 }>;
@@ -247,6 +248,7 @@ async function materializeAdapterCapabilities(
     cwd: args.worktreePath,
     runId: args.runId,
     installedPaths: args.installedPaths,
+    selectedSkills: args.selectedSkills,
   });
   const native = await materializeNativeAdapterCapabilities(args, runtimePath);
 
@@ -287,6 +289,7 @@ async function materializeNativeAdapterCapabilities(
           path.join(worktreePath, materialization.dir, "skills"),
           args.installedPaths,
           ownedPaths,
+          args.selectedSkills,
         );
         const plannedAgents =
           args.agent === "claude"
@@ -302,7 +305,7 @@ async function materializeNativeAdapterCapabilities(
         const copiedSkills = await copyBundleSkills(
           path.join(worktreePath, materialization.dir, "skills"),
           args.installedPaths,
-          { ownedPaths },
+          { ownedPaths, selectedSkills: args.selectedSkills },
         );
         const copiedAgents =
           args.agent === "claude"
@@ -378,6 +381,7 @@ async function materializeNativeAdapterCapabilities(
         await composeCodexHome({
           homeRoot,
           installedPaths: args.installedPaths,
+          selectedSkills: args.selectedSkills,
           codexGlobalHome:
             args.codexGlobalHome ?? path.join(homedir(), ".codex"),
         });
@@ -385,6 +389,7 @@ async function materializeNativeAdapterCapabilities(
         await copyBundleSkills(
           path.join(homeRoot, "skills"),
           args.installedPaths,
+          { selectedSkills: args.selectedSkills },
         );
       }
 
@@ -409,6 +414,7 @@ async function composeCodexHome(args: {
   homeRoot: string;
   installedPaths: readonly string[];
   codexGlobalHome: string;
+  selectedSkills?: readonly string[];
 }): Promise<void> {
   // 1. Symlink global auth + config so the relocated home keeps credentials.
   for (const file of ["auth.json", "config.toml"]) {
@@ -439,7 +445,10 @@ async function composeCodexHome(args: {
   }
 
   // 3. Copy project bundle skills — PROJECT WINS (replace a same-named global).
-  await copyBundleSkills(skillsDir, args.installedPaths, { projectWins: true });
+  await copyBundleSkills(skillsDir, args.installedPaths, {
+    projectWins: true,
+    selectedSkills: args.selectedSkills,
+  });
 }
 
 // Copy each bundle's `skills/<slug>` into `destSkillsDir`. With `projectWins`,
@@ -450,6 +459,7 @@ async function copyBundleSkills(
   installedPaths: readonly string[],
   opts: {
     projectWins?: boolean;
+    selectedSkills?: readonly string[];
     ownedPaths?: ReadonlySet<string>;
   } = {},
 ): Promise<string[]> {
@@ -459,7 +469,11 @@ async function copyBundleSkills(
     const src = path.join(installedPath, "skills");
 
     for (const entry of await listDir(src)) {
-      if (entry.startsWith(".")) continue;
+      if (
+        entry.startsWith(".") ||
+        (opts.selectedSkills && !opts.selectedSkills.includes(entry))
+      )
+        continue;
       const dest = path.join(destSkillsDir, entry);
 
       if (await pathExists(dest)) {
@@ -488,6 +502,7 @@ async function plannedBundleEntries(
   destinationDirectory: string,
   installedPaths: readonly string[],
   ownedPaths: ReadonlySet<string>,
+  selectedSkills?: readonly string[],
 ): Promise<string[]> {
   const planned: string[] = [];
 
@@ -498,7 +513,11 @@ async function plannedBundleEntries(
     );
 
     for (const entry of await listDir(sourceDirectory)) {
-      if (entry.startsWith(".")) continue;
+      if (
+        entry.startsWith(".") ||
+        (selectedSkills && !selectedSkills.includes(entry))
+      )
+        continue;
       const destination = path.join(destinationDirectory, entry);
 
       if (!(await pathExists(destination)) || ownedPaths.has(destination)) {

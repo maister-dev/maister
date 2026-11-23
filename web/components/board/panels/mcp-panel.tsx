@@ -1,5 +1,6 @@
 "use client";
 
+import type { AttachmentMcpScope } from "@/lib/packages/mcp-scope";
 import type { MatchCandidate } from "@/components/board/panels/mcp-bind-dialogs";
 import type { ReactElement } from "react";
 
@@ -74,6 +75,7 @@ export interface McpPanelProps {
   slug: string;
   isAdmin: boolean;
   requirements?: McpRequirement[];
+  packageScopes?: AttachmentMcpScope[];
   servers?: HubServerView[];
   bindings?: McpBindingView[];
   platformCandidates?: PlatformCandidateView[];
@@ -95,6 +97,7 @@ export function McpPanel({
   slug,
   isAdmin,
   requirements = [],
+  packageScopes = [],
   servers = [],
   bindings = [],
   platformCandidates = [],
@@ -324,6 +327,52 @@ export function McpPanel({
         </div>
       ) : null}
 
+      {isAdmin && packageScopes.length > 0 ? (
+        <fieldset className="mb-5 flex flex-col gap-2" disabled={busy}>
+          <legend>{t("packageScope")}</legend>
+          {packageScopes.map((row) => (
+            <label
+              key={row.attachmentId + "/" + row.refId}
+              className="flex items-center gap-2"
+            >
+              <span>{row.refId}</span>
+              <select
+                aria-label={t("scopeFor", { ref: row.refId })}
+                value={row.origin === "override" ? row.effective : "inherit"}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  act("scope:" + row.refId, () =>
+                    fetch(
+                      `/api/projects/${encodeURIComponent(slug)}/packages/${encodeURIComponent(row.attachmentId)}/mcps/${encodeURIComponent(row.refId)}/scope`,
+                      {
+                        method: "PUT",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                          scope: value === "inherit" ? null : value,
+                          expectedRevision: row.revision,
+                          expectedInstallId: row.installId,
+                        }),
+                      },
+                    ),
+                  );
+                }}
+              >
+                <option value="inherit">
+                  {t("inheritScope", {
+                    scope: t(
+                      row.declared === "project"
+                        ? "scopeProject"
+                        : "scopePackage",
+                    ),
+                  })}
+                </option>
+                <option value="package">{t("scopePackage")}</option>
+                <option value="project">{t("scopeProject")}</option>
+              </select>
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       {requirements.length > 0 ? (
         <div className="mb-6" data-testid="mcp-requirements">
           <h3 className="m-0 mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-mute">

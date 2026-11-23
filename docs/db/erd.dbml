@@ -2964,10 +2964,22 @@ table project_package_attachments {
   package_install_id text [not null]
   package_name text [not null]
   attached_at "timestamp with time zone" [not null, default: `now()`]
+  scope_revision integer [not null, default: 1]
 
   indexes {
     (project_id, id) [name: 'project_package_attachments_owner_id_uq', unique]
     (project_id, package_name) [name: 'project_package_attachments_project_name_uq', unique]
+  }
+}
+
+table project_package_mcp_scope_overrides {
+  attachment_id text [not null]
+  ref_id text [not null]
+  scope text [not null]
+
+  indexes {
+    (attachment_id, ref_id) [pk]
+
   }
 }
 
@@ -5974,6 +5986,8 @@ ref project_members_user_id_users_id_fk: project_members.user_id > users.id [del
 ref project_package_attachments_project_id_projects_id_fk: project_package_attachments.project_id > projects.id [delete: cascade, update: no action]
 
 ref project_package_attachments_package_install_id_package_installs_id_fk: project_package_attachments.package_install_id > package_installs.id [delete: restrict, update: no action]
+
+ref project_package_mcp_scope_overrides_attachment_id_project_package_attachments_id_fk: project_package_mcp_scope_overrides.attachment_id > project_package_attachments.id [delete: cascade, update: no action]
 
 ref project_tokens_project_id_projects_id_fk: project_tokens.project_id > projects.id [delete: cascade, update: no action]
 

@@ -222,6 +222,7 @@ export type RunAgentStepCtx = {
   // consensus/runtime, and `sync-${attempt}` in runs/sync-target).
   sessionName: string;
   context: ExecutionFlowContext;
+  packageSkillView?: import("../../../runtime/package-skill-tree").PackageSkillView;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -1478,7 +1479,11 @@ async function dispatchAgentStep(
   const skillPrompt =
     "owner" in ctx.context.run || !ctx.worktreePath
       ? ""
-      : await workspacePackageSkillsPrompt(ctx.worktreePath, ctx.runId);
+      : await workspacePackageSkillsPrompt(
+          ctx.worktreePath,
+          ctx.runId,
+          ctx.packageSkillView ? ctx.nodeAttemptId : undefined,
+        );
   const ordinaryPrompt = appendScheduledRequest(
     nativeFindingsCompletionPrompt(
       isResultProducerNode(ctx.resultContract ?? null, ctx.stepId)
@@ -1722,6 +1727,7 @@ async function runNewSession(
         stepId: ctx.stepId,
         nodeAttemptId: ctx.nodeAttemptId,
         sessionName: ctx.sessionName,
+        ...(ctx.packageSkillView?{packageSkillView:ctx.packageSkillView}:{}),
         executor: executorToSupervisorInput(ctx.executor),
         runner: ctx.runner,
         capabilityProfileObjectId: capabilityBundle?.profileObjectId,

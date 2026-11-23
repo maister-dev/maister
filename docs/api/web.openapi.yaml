@@ -725,7 +725,7 @@ paths:
   /api/projects/{slug}/packages/{attachmentId}/mcps/{refId}/scope:
     put:
       operationId: setAttachmentMcpScope
-      summary: (Designed) Set or clear a release scope override
+      summary: Set or clear a release scope override
       security:
         - sessionCookie: []
       parameters:

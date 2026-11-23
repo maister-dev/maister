@@ -175,6 +175,8 @@ export async function taskLaunchSettingsMetadataToken(
         projectId: row.project.id,
         flowRevisionId: revision.id,
         flowSource: revision.source,
+        flowPackageInstallId: selected?.packageInstallId ?? null,
+        flowManifest: revision.manifest,
       })
     : null;
 
@@ -616,6 +618,8 @@ async function resolveFlowLaunchSettingsForSource(
       projectId: project.id,
       flowRevisionId: revision.id,
       flowSource: revision.source,
+      flowPackageInstallId: packageInstallId,
+      flowManifest: revision.manifest,
     })),
     taskSettingsDigest: retryDigest(taskLaunchSelectedConfiguration(task)),
     resolutionToken: source

@@ -4831,6 +4831,11 @@
     "appliedInMaister": "Applied in MAIster. Save configuration separately in Settings → Git."
   },
   "mcpPanel": {
+    "packageScope": "Package MCP sharing",
+    "scopeFor": "Sharing for {ref}",
+    "inheritScope": "Use package setting ({scope})",
+    "scopePackage": "Owning package",
+    "scopeProject": "Entire project",
     "title": "Project MCP servers",
     "count": "{count} servers",
     "add": "Add MCP",
@@ -5677,6 +5682,9 @@
       "agentRecommendedEvents": "Recommended event kinds",
       "agentRecommendedMention": "Recommend a mention trigger (summonable by @id in a comment)",
       "agentCapabilityProfile": "Capability profile (JSON object)",
+      "agentProfileSkills": "Selected package skills",
+      "agentProfileMcps": "Selected package MCPs",
+      "agentAllSkills": "Use all skills in this package",
       "agentCapabilityProfileInvalid": "Invalid JSON object — not saved until valid",
       "allowedPaths": "Allowed paths",
       "forbiddenPaths": "Forbidden paths",

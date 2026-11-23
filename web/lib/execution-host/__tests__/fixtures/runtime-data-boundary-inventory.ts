@@ -100,6 +100,76 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "../runtime/package-skill-tree.ts",
+      "repository-worktree",
+      "Digest the selected skill tree under the prepared package or session view.",
+      [
+        ["visit", "node:fs/promises.lstat", "stat"],
+        ["visit", "node:fs/promises.readFile", "read"],
+        ["visit", "node:fs/promises.readdir", "list"],
+      ],
+    ),
+    ...classified(
+      "lib/agents/package-contract.ts",
+      "repository-worktree",
+      "Inspect the declared skill and MCP references in a local package before cutting the revision.",
+      [
+        ["assertPackageOperationalContracts", "node:fs/promises.lstat", "stat"],
+        ["assertPackageOperationalContracts", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/capabilities/capture-package-delivery.ts",
+      "repository-worktree",
+      "Read the adopted package roots to pin the skill inventory at admission.",
+      [
+        ["capturePackageDelivery", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        ["capturePackageDelivery", "node:fs/promises.lstat", "stat"],
+        ["capturePackageDelivery", "node:fs/promises.readdir", "list"],
+      ],
+    ),
+    ...classified(
+      "lib/capabilities/materialize-bundle.ts",
+      "repository-worktree",
+      "Stage immutable inputs from attached packages for the Run checkout.",
+      [
+        ["materializeBundleSet", "lib/capabilities/package-skills.ts#stagePackageSkillInputs", "wrapper"],
+      ],
+    ),
+    ...classified(
+      "lib/capabilities/materialize.ts",
+      "repository-worktree",
+      "Write the effective capability profile into the owned Run or attempt workspace.",
+      [
+        ["materializeCapabilityProfile", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+      ],
+    ),
+    ...classified(
+      "lib/capabilities/package-skills.ts",
+      "repository-worktree",
+      "Copy and verify pinned package members under the selected checkout and publish the session discovery tree.",
+      [
+        ["<object>.filter", "node:fs/promises.realpath", "stat"],
+        ["<object>.materialize", "node:fs/promises.mkdtemp", "write"],
+        ["<object>.materialize", "node:fs/promises.rename", "write"],
+        ["<object>.materialize", "node:fs/promises.rm", "remove"],
+        ["materializePackageSessionSkills", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        ["materializePackageSessionSkills", "node:fs/promises.cp", "write"],
+        ["stagePackageSkillInputs", "node:fs/promises.cp", "write"],
+        ["witnessPackageSkillView", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        ["witnessPackageSkillView", "node:fs/promises.readFile", "read"],
+      ],
+    ),
+    ...classified(
+      "lib/flows/graph/runner-graph.ts",
+      "repository-worktree",
+      "Prepare the selected skill view for the current Run and node attempt.",
+      [
+        ["materializeNodeCapabilities", "lib/capabilities/package-skills.ts#materializePackageSessionSkills", "wrapper"],
+        ["materializeNodeCapabilities", "lib/capabilities/package-skills.ts#witnessPackageSkillView", "wrapper"],
+      ],
+    ),
+    ...classified(
       "lib/local-packages/catalog-operation.ts",
       "repository-worktree",
       "Read and apply reviewed package draft changes and their recovery journal under the draft lock.",
@@ -3171,6 +3241,17 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("../runtime/package-skill-tree.ts", "repository-worktree", [
+    ["packageSkillTreeDigest", true],
+  ]),
+  ...wrappers("lib/capabilities/capture-package-delivery.ts", "repository-worktree", [
+    ["capturePackageDelivery", false],
+  ]),
+  ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
+    ["materializePackageSessionSkills", true],
+    ["stagePackageSkillInputs", true],
+    ["witnessPackageSkillView", true],
+  ]),
   ...wrappers("lib/local-packages/catalog-operation.ts", "repository-worktree", [
     ["applyCatalogPreview", false],
     ["previewCatalogImport", false],

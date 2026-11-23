@@ -339,7 +339,7 @@ is authored as a first-class node — see
 
 ### Catalog selection (Designed)
 
-Skills and MCPs each have an Add from catalog action with type-ahead search, keyboard selection and source-specific errors. Opening a result displays publisher, pin, destination and reviewed contents. Apply changes only the editable draft. The package agent editor can select skills and MCPs from the providing package. A Flow node chooses an agent and can refine its MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory-designed)
+Skills and MCPs each have an Add from catalog action with type-ahead search, keyboard selection and source-specific errors. Opening a result displays publisher, pin, destination and reviewed contents. Apply changes only the editable draft. The package agent editor can select skills and MCPs from the providing package. A Flow node chooses an agent and can refine its MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory)
 
 ## States
 

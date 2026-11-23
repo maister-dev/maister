@@ -7,6 +7,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   realpath,
   rename,
   writeFile,
@@ -37,6 +38,7 @@ let contextUsage;
 let supportsResume = false;
 let sessionStateDir;
 let invocationLog;
+let inspectPackageSkills = false;
 let controlledPrompt = false;
 let completionOnCheckpoint;
 let controlledTerminal = false;
@@ -115,6 +117,8 @@ for (let i = 0; i < args.length; i += 1) {
     contextUsage = JSON.parse(args[++i]);
   } else if (arg === "--supports-resume") {
     supportsResume = true;
+  } else if (arg === "--inspect-package-skills") {
+    inspectPackageSkills = true;
   } else if (arg === "--session-state-dir") {
     sessionStateDir = args[++i];
     if (!sessionStateDir)
@@ -415,6 +419,52 @@ class LifecycleAgent {
   }
 
   async newSession(request) {
+    if (inspectPackageSkills) {
+      const home = process.env.CLAUDE_CONFIG_DIR;
+      const directory = join(home, "skills");
+      const skills = await Promise.all(
+        (await readdir(directory)).sort().map(async (slug) => ({
+          slug,
+          companion: await readFile(
+            join(directory, slug, "companion.md"),
+            "utf8",
+          ),
+        })),
+      );
+      const [{ Client }, { StreamableHTTPClientTransport }] = await Promise.all(
+        [
+          import("@modelcontextprotocol/sdk/client/index.js"),
+          import("@modelcontextprotocol/sdk/client/streamableHttp.js"),
+        ],
+      );
+      for (const target of request.mcpServers) {
+        const url = new URL(target.url);
+        if (url.hostname !== "127.0.0.1")
+          throw new Error("Discovery witness requires a local test MCP");
+        const client = new Client({
+          name: "skill-discovery-fixture",
+          version: "1",
+        });
+        await client.connect(new StreamableHTTPClientTransport(url));
+        try {
+          const listed = await client.listTools();
+          if (!listed.tools.some((tool) => tool.name === "read_companion"))
+            throw new Error("Expected native MCP tool");
+          await client.callTool({
+            name: "read_companion",
+            arguments: { value: skills[0].companion },
+          });
+        } finally {
+          await client.close();
+        }
+      }
+      await logInvocation({
+        method: "native-discovery",
+        home,
+        skills,
+        mcps: request.mcpServers.map((s) => s.name),
+      });
+    }
     await logInvocation({ method: "session/new", at: Date.now() });
     if (hangNewSession) return never();
     if (expectedNativeModel !== undefined && (

@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  packageProfileChoices,
+  type AgentPackageChoices,
+} from "@/lib/agents/package-profile-choices";
+
 import type {
   AuthoredFlowPackageFile,
   AuthoredFlowPackageFileKind,
@@ -215,6 +220,7 @@ export function PackageFilesEditor({
           <div className="rounded-lg border border-line bg-ivory p-3">
             {selectedFile ? (
               <SelectedFileEditor
+                packageChoices={packageProfileChoices(effectiveFiles)}
                 disabled={disabled}
                 file={selectedFile}
                 kindLabels={kindLabels}
@@ -320,6 +326,7 @@ function FileTreeNodes({
 }
 
 function SelectedFileEditor({
+  packageChoices,
   disabled,
   file,
   kindLabels,
@@ -329,6 +336,7 @@ function SelectedFileEditor({
   onRemove,
   onRename,
 }: {
+  packageChoices?: AgentPackageChoices;
   disabled: boolean;
   file: AuthoredFlowPackageFile;
   kindLabels: Record<AuthoredFlowPackageFileKind, string>;
@@ -380,6 +388,7 @@ function SelectedFileEditor({
           {labels.content}
         </span>
         <ContentEditor
+          packageChoices={packageChoices}
           key={file.path}
           disabled={disabled}
           file={file}
@@ -394,6 +403,7 @@ function SelectedFileEditor({
 }
 
 export function ContentEditor({
+  packageChoices,
   disabled,
   file,
   inferredKind,
@@ -401,6 +411,7 @@ export function ContentEditor({
   mcpCatalog,
   onChangeContent,
 }: {
+  packageChoices?: AgentPackageChoices;
   disabled: boolean;
   file: AuthoredFlowPackageFile;
   inferredKind: AuthoredFlowPackageFileKind;
@@ -440,6 +451,7 @@ export function ContentEditor({
   ) {
     return (
       <FrontmatterArtifactEditor
+        packageChoices={packageChoices}
         content={file.content}
         kind={inferredKind}
         labels={labels.frontmatter}

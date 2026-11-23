@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { isMcpDistribution, type McpDistribution } from "../../runtime/mcp-distribution";
+import {
+  isMcpDistribution,
+  type McpDistribution,
+} from "../../runtime/mcp-distribution";
 
 import { ACP_CONTEXT_FAILURE_REASONS } from "../../runtime/acp-context-failure";
 
@@ -1866,8 +1869,16 @@ export const packageManifestMcpSchema = z
   })
   .strict()
   .superRefine((mcp, ctx) => {
-    if (mcp.distribution && (mcp.transport !== "stdio" || mcp.command !== mcp.distribution.executable)) {
-      ctx.addIssue({code: "custom", path: ["distribution"], message: "A reviewed npm distribution requires stdio and its declared executable as command"});
+    if (
+      mcp.distribution &&
+      (mcp.transport !== "stdio" || mcp.command !== mcp.distribution.executable)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["distribution"],
+        message:
+          "A reviewed npm distribution requires stdio and its declared executable as command",
+      });
     }
     const hasImplementation =
       mcp.command !== undefined ||
@@ -1994,10 +2005,13 @@ function addDuplicateIdIssues(
 export const maisterPackageManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
-    delivery: z.object({
-      version: z.literal(1),
-      shareSkills: z.boolean().default(true),
-    }).strict().optional(),
+    delivery: z
+      .object({
+        version: z.literal(1),
+        shareSkills: z.boolean().default(true),
+      })
+      .strict()
+      .optional(),
     name: capabilityRefIdSchema,
     compat: flowCompatSchema.optional(),
     metadata: flowMetadataSchema.optional(),

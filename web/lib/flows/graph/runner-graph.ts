@@ -178,6 +178,10 @@ import {
 import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { gateAndOverlayMcpServers } from "@/lib/mcp/materialization-gate";
+import type { PackageSkillView } from "../../../../runtime/package-skill-tree";
+import { resolveCurrentPackageSessionCatalog } from "@/lib/capabilities/session-package-catalog";
+import { materializePackageSessionSkills, witnessPackageSkillView } from "@/lib/capabilities/package-skills";
+import { resolvePackageSession, sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
   mergeRunnerAdapterLaunch,
@@ -229,6 +233,7 @@ import {
 import { headCommit, resolveBaseRef, resolveRefSha } from "@/lib/worktree";
 import {
   allNodeMcpRefs,
+  normalizeNodeMcps,
   workspacePolicySchema,
   type WorkspacePolicy,
 } from "@/lib/config.schema";
@@ -1608,6 +1613,7 @@ async function executeNodeAction(
     // The traversal-independent root handle (opts.driver.rootDb, else db) for
     // work that outlives this traversal — a coordinator's child dispatch.
     rootDb: Db;
+    packageSkillView?: PackageSkillView;
     capabilityProfilePath?: string;
     capabilityInstructionsPath?: string;
     capabilityContent?: CapabilityBundleContent;
@@ -1891,6 +1897,7 @@ async function executeNodeAction(
               env: sessionExecutor.env ?? undefined,
             },
             runner: runnerSupervisorInput({ snapshot: sessionRunner }),
+            packageSkillView:ctx.packageSkillView,
             capabilityProfilePath: ctx.capabilityProfilePath,
             capabilityInstructionsPath: ctx.capabilityInstructionsPath,
             capabilityContent: ctx.capabilityContent,
@@ -2182,6 +2189,7 @@ async function findLatestRespondedHitl(
 // placeholders the materializer emits (R-SECRET). Does NOT write the
 // materialization ledger (that is T4.2).
 type MaterializedNodeCapabilities = {
+  packageSkillView?: PackageSkillView;
   capabilityProfilePath?: string;
   capabilityInstructionsPath?: string;
   capabilityContent?: CapabilityBundleContent;
@@ -2268,15 +2276,17 @@ async function materializeNodeCapabilities(
   // codex node needs no materialization.
   const pinModelOnly = !declares && agent === "claude" && !!executor.model;
 
-  if (!declares && !pinModelOnly && !usesStructuredKnowledgeContext(loaded.run))
+  const delivery = loaded.run.resolvedCapabilitySet?.delivery;
+  const scoped = delivery ? resolvePackageSession(delivery,node.id,settings?.mcps === undefined ? undefined : allNodeMcpRefs(settings.mcps)) : undefined;
+  if (!scoped && !declares && !pinModelOnly && !usesStructuredKnowledgeContext(loaded.run))
     return undefined;
 
-  const selectedMcpIds =
+  const selectedMcpIds = scoped?.mcps ?? (
     declares && settings
       ? settings.mcps === undefined
         ? undefined
         : allNodeMcpRefs(settings.mcps)
-      : [];
+      : []);
   // Only retained revisions can supply an explicit node skill selection.
   const selectedSkillIds = declares && settings ? settings.skills : [];
   const selectedRuleIds: string[] = [];
@@ -2291,6 +2301,11 @@ async function materializeNodeCapabilities(
     db as never,
   );
 
+  const required=normalizeNodeMcps(settings?.mcps).required;
+  const current = scoped && delivery && loaded.run.resolvedCapabilitySet ? await resolveCurrentPackageSessionCatalog(db,{
+    projectId:loaded.run.projectId,delivery,snapshot:loaded.run.resolvedCapabilitySet,skills:scoped.skills,selected:scoped.mcps,required,bindings:mcpBindings,
+  }):undefined;
+  if(current?.withheld.length) logger.warn({nodeId:node.id,refs:current.withheld},"Optional MCP targets are unavailable under their captured identity");
   const profile = resolveCapabilityProfile({
     projectId: loaded.run.projectId,
     executorAgent: agent,
@@ -2298,16 +2313,17 @@ async function materializeNodeCapabilities(
     // declares: undefined mcps → resolver default set; explicit list → that set
     // (required ∪ additional, T-C6). model-only pin → explicit [] so NO default
     // MCPs are pulled in (idsForKind treats undefined as "the default set").
-    selectedMcpIds,
+    selectedMcpIds:current?.mcps ?? selectedMcpIds,
     selectedSkillIds,
     selectedRuleIds,
     selectedAgentDefinitionIds,
     selectedRestrictionIds: declares && settings ? settings.restrictions : [],
     planMode: "off",
-    catalog,
+    catalog:current?.catalog ?? catalog,
   });
 
   const capabilityArgs = {
+    scopedSession: scoped ? true : undefined,
     runId: loaded.run.id,
     profile,
     nodeAttemptId,
@@ -2359,6 +2375,9 @@ async function materializeNodeCapabilities(
     adapter: agent,
   });
 
+  if(scoped) for (const ref of required) {
+    if (!mcpServers.some(server=>server.name===ref)) throw new MaisterError("PRECONDITION",`Required MCP ${ref} was withheld by the current transport or trust gate`);
+  }
   if (overlaidRefs.length > 0) {
     logger.debug(
       { nodeId: node.id, overlaidRefs },
@@ -2383,7 +2402,11 @@ async function materializeNodeCapabilities(
   const addressedRole = addressed && (node.nodeType === "ai_coding" || node.nodeType === "orchestrator")
     ? (settings && "agent" in settings ? settings.agent : undefined) ?? loaded.run.agentId
     : null;
+  if (!addressed && scoped && delivery && worktreePath) {
+    await materializePackageSessionSkills({cwd:worktreePath,runId:loaded.run.id,nodeAttemptId,delivery,skills:scoped.skills});
+  }
   const plan: MaterializationPlan = {
+    ...(scoped ? {packageSkills:scoped.skills} : {}),
     // Fold the enforcement profile into the digest so the long-lived-session
     // consistency guard catches a mid-session enforcement change (D4).
     profileDigest: foldEnforcementProfileIntoDigest(
@@ -2445,6 +2468,7 @@ async function materializeNodeCapabilities(
   );
 
   return {
+    packageSkillView: scoped && worktreePath && "settingsLocalPath" in m ? await witnessPackageSkillView(worktreePath, loaded.run.id, nodeAttemptId, m.settingsLocalPath) : undefined,
     ...("capabilityContent" in m
       ? {
           capabilityContent: m.capabilityContent,
@@ -3476,7 +3500,9 @@ export async function runGraph(
       // that session's host runner and shares its continuous acp_session_id; the
       // `default` session keeps byte-identical run-level behavior (the run-level
       // executor/runner snapshot are used directly).
-      const nodeSessionName = node.session ?? "default";
+      const declaredSessionName = node.session ?? "default";
+      const delivery = isCompanyFlowRun(loaded) ? undefined : loaded.run.resolvedCapabilitySet?.delivery;
+      const nodeSessionName = sessionNameForPackageNode(delivery,node.id,declaredSessionName);
       const nodeSession = loaded.sessions.get(nodeSessionName);
       const usesNamedSession =
         nodeSession !== undefined && nodeSessionName !== "default";
@@ -3736,6 +3762,7 @@ export async function runGraph(
       if (
         !startsFresh &&
         !attemptResumeSessionId &&
+        nodeSessionName === declaredSessionName &&
         usesNamedSession &&
         nodeSession?.acpSessionId
       ) {
@@ -4256,6 +4283,7 @@ export async function runGraph(
               signal: opts.driver?.signal,
               bindExecution: ensureExecution,
               rootDb,
+              packageSkillView:materialized?.packageSkillView,
               capabilityProfilePath: materialized?.capabilityProfilePath,
               capabilityInstructionsPath:
                 materialized?.capabilityInstructionsPath,

@@ -9,8 +9,8 @@ Each domain owns its expectation. Planned test IDs identify the test that must d
 | CAT-03 | One apply operation must publish a complete reviewed tree and its manifest from the expected draft base. | T05 | IT-CAT-03 | Implemented |
 | CAP-01 | New Flow authoring must reject retired node skill settings and retain the pinned legacy read path. | T03 | IT-CAP-01 | Implemented |
 | CAP-02 | A surviving MCP override must belong to exactly one project attachment and logical ref across adoption. | T07, T24 | IT-CAP-02 | Planned |
-| CAP-03 | Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table. | T08, T09 | IT-CAP-03 | Planned |
-| CAP-04 | Each bound node must own an isolated ACP session and adapter discovery view across interruption. | T10 | IT-CAP-04 | Planned |
+| CAP-03 | Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table. | T08, T09 | IT-CAP-03 | Implemented |
+| CAP-04 | Each bound node must own an isolated ACP session and adapter discovery view across interruption. | T10 | IT-CAP-04 | Implemented |
 | CAP-05 | Updating one active project link must affect only that instance on subsequent launches and preserve the adopted source. | T11, T12, T13 | IT-CAP-05, E2E-CAP-05 | Planned |
 | HST-01 | Each tool probe and dispatch must execute on the current assigned host under the correct epoch. | T14, T16, T17 | E2E-HST-01 | Planned |
 | HST-02 | A workload may start only a reviewed selected distribution whose digest, target runtime and trust are verified before use. | T15 | IT-HST-02 | Planned |

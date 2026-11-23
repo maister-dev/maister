@@ -74,7 +74,7 @@ function bindingByRef(
 // SOURCE_PRECEDENCE (project > platform > flow-package). Shared by the snapshot
 // builder, the selection materializer, and the agent-support gate so all three
 // agree on the winner.
-function pickMcpWinner<T extends { source: string }>(
+export function pickMcpWinner<T extends { source: string }>(
   records: readonly T[],
   binding: McpBindingInput | undefined,
 ): {

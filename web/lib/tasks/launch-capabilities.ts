@@ -7,6 +7,7 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
 import { capabilityRecords, capabilityImports } from "@/lib/db/schema";
+import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
 import { buildResolvedCapabilitySet } from "@/lib/capabilities/resolver";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
 import { retryDigest } from "@/lib/agents/retry-guards";
@@ -80,6 +81,9 @@ export async function resolveTaskLaunchCapabilities(
     projectId: string;
     flowRevisionId: string;
     flowSource: string;
+    flowPackageInstallId: string | null;
+    flowManifest: unknown;
+    historical?: true;
   },
 ): Promise<{
   resolvedCapabilitySet: ResolvedCapabilitySet;
@@ -126,15 +130,32 @@ export async function resolveTaskLaunchCapabilities(
     .where(eligibleProjectImport(input.projectId))
     .orderBy(asc(capabilityImports.id));
 
+  const delivery = input.historical
+    ? undefined
+    : await capturePackageDelivery(db, {
+        ...input,
+        nonPackageMcpRefs: records
+          .filter(
+            (r) =>
+              r.kind === "mcp" &&
+              r.selectedByDefault &&
+              r.source !== "flow-package",
+          )
+          .map((r) => r.capabilityRefId),
+      });
   return {
-    resolvedCapabilitySet: buildResolvedCapabilitySet({
-      records,
-      flowRevisionId: input.flowRevisionId,
-      flowOrigin: input.flowSource.startsWith("/") ? "authored" : "git",
-      mcpBindings: bindings,
-    }),
+    resolvedCapabilitySet: {
+      ...buildResolvedCapabilitySet({
+        records,
+        flowRevisionId: input.flowRevisionId,
+        flowOrigin: input.flowSource.startsWith("/") ? "authored" : "git",
+        mcpBindings: bindings,
+      }),
+      ...(delivery ? { delivery } : {}),
+    },
     capabilityResolutionDigest: retryDigest({
       version: 2,
+      ...(delivery ? { delivery } : {}),
       records,
       bindings,
       imports,

@@ -756,6 +756,7 @@ export default async function ProjectBoardPage({
           isAdmin={isAdmin}
           platformCandidates={mcpPanelData.platformCandidates}
           projectServers={mcpPanelData.projectServers}
+          packageScopes={isAdmin ? mcpHub.packageScopes : []}
           requirements={mcpHub.requirements}
           servers={isAdmin ? mcpHub.servers : []}
           slug={slug}

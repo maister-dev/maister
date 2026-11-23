@@ -187,22 +187,24 @@ Verification on Node 24 included a live read of Anthropic frontend-design at e4b
 
 ### Phase 2 — Package scope, agent authoring and effective inventories
 
-- [ ] **T07. Persist sharing defaults, overrides and adoption.**
+IT-CAP-03 and IT-CAP-04 exercised three adopted packages on PostgreSQL, child and owning Flow pins, omitted versus empty selectors, a duplicate slug and distinct private companion bytes during concurrent preparation. The host integration started two ACP processes, observed separate adapter homes and server lists, and resumed the first ACP session by its original ID. Studio picker and raw editor tests passed. Migration 0369 upgraded legacy attachments and retained explicitly set overrides across adoption and rollback.
+
+- [x] **T07. Persist sharing defaults, overrides and adoption.**
   - **After** T02.
   - Extend `web/lib/config.schema.ts`, `web/lib/packages/{install,attach,manifest}.ts`, `web/lib/db/schema.ts`, the project attachment routes and MCP Hub. Store overrides by stable project attachment plus ref across adoption; attach currently rebuilds capability records. Support both override directions and reset. Maintain required-only slots and independent target binding/trust.
   - **Acceptance** — SET/CLEAR/re-add, two projects on different pins, old attachments, dropped/new refs, explicit equal-to-default overrides, and stale concurrent adoption.
   - **Diagnostics** — INFO adoption/override revision and source, WARN version conflict.
-- [ ] **T08. Add skill and MCP selection to package agent definitions.**
+- [x] **T08. Add skill and MCP selection to package agent definitions.**
   - **After** T02.
   - Extend `web/lib/agents/{definition,effective,frozen-definition}.ts` and `web/components/flows/artifact-editors/frontmatter-artifact-editor.tsx`. Add optional skill refs beside MCPs, keep omitted/empty distinct in round trips, resolve package IDs and check at cut. Preserve old frozen hashes and signed bytes.
   - **Acceptance** — picker/raw editor parity, missing ref diagnostics and old/new/explicit-empty definitions on standalone and bound paths.
   - **Diagnostics** — DEBUG profile schema version and validated counts, WARN invalid refs.
-- [ ] **T09. Resolve and freeze the effective Run and session inventories.**
+- [x] **T09. Resolve and freeze the effective Run and session inventories.**
   - **After** T07, T08.
   - Extend `web/lib/tasks/launch-capability-materialization.ts`, `web/lib/capabilities/{resolver,materialize-bundle,adapter-home,package-skills}.ts`, `web/lib/agents/{launch,flow-binding,retry-snapshot}.ts` and `web/lib/flows/graph/runner-graph.ts`. Prepare all pinned packages once per Flow Run, select the correct trees per session, and hand an explicit MCP list to native config and ACP. An empty selection stays empty. Honor node restrictions, agent refs, project sharing and permission preflight.
   - **Acceptance** — two product packages with shared core, same-slug source resolution, child Flow pin, action-time revocation, package adoption during a Run and unchanged old retry witnesses.
   - **Diagnostics** — INFO resolved pin/digest, DEBUG origin and withheld reason per ref.
-- [ ] **T10. Isolate each bound session agent and its continuation.**
+- [x] **T10. Isolate each bound session agent and its continuation.**
   - **After** T09.
   - Update `web/lib/flows/{runner-agent,graph/runner-graph}.ts`, `web/lib/runs/node-resume-session.ts`, `web/lib/execution-host/{owned-session-create,session-binding}.ts` and the named-session compiler/validator. Fence reads **and writes** of the ACP handle by Run, node attempt and assignment. Give sibling sessions separate adapter homes/tool configs; preserve explicit same-attempt continuation, rework policy, historical graphs and Claude subagent semantics.
   - **Acceptance** — different ACP IDs and tool/skill inventories for adjacent and overlapping agents, a reachable selected companion file, an actual MCP call and an authoring diagnostic for an incompatible shared name.

@@ -46,6 +46,9 @@ const labels: FrontmatterArtifactEditorLabels = {
   agentRecommendedEvents: "Events",
   agentRecommendedMention: "Recommended mention trigger",
   agentCapabilityProfile: "Capability profile",
+  agentAllSkills: "Use all package skills",
+  agentProfileSkills: "Selected skills",
+  agentProfileMcps: "Selected MCPs",
   agentCapabilityProfileInvalid: "Invalid capability profile",
   allowedPaths: "Allowed paths",
   forbiddenPaths: "Forbidden paths",
@@ -233,6 +236,10 @@ describe("FrontmatterArtifactEditor recommended.mention round-trip", () => {
       return createElement(FrontmatterArtifactEditor, {
         content: value,
         kind: "agent_definition",
+        packageChoices: {
+          skills: ["design", "build"],
+          mcps: ["github", "figma"],
+        },
         labels,
         onChange: (next: string) => {
           latest = next;
@@ -245,6 +252,37 @@ describe("FrontmatterArtifactEditor recommended.mention round-trip", () => {
 
     return { node, read: () => latest };
   }
+
+  it("round-trips omitted, empty and selected package skills with MCPs through both editor views", () => {
+    const { node, read } = mountAgentEditor(content);
+    const check = (name: string): HTMLInputElement => {
+      const element = Array.from(node.querySelectorAll("label"))
+        .find((l) => l.textContent?.trim() === name)
+        ?.querySelector("input");
+      if (!element) throw new Error("Missing package picker option " + name);
+      return element;
+    };
+    expect(check("Use all package skills").checked).toBe(true);
+    act(() => check("Use all package skills").click());
+    expect(
+      parseAgentDefinition("test:reviewer", read()).capabilityProfile?.skills,
+    ).toEqual([]);
+    act(() => check("design").click());
+    act(() => check("figma").click());
+    const profile = parseAgentDefinition(
+      "test:reviewer",
+      read(),
+    ).capabilityProfile;
+    expect(profile).toEqual({ skills: ["design"], mcps: ["github", "figma"] });
+    const raw = node.querySelector<HTMLTextAreaElement>(
+      '[data-testid="agent-capability-profile"]',
+    )!;
+    expect(raw.value).toContain("design");
+    act(() => check("Use all package skills").click());
+    expect(
+      parseAgentDefinition("test:reviewer", read()).capabilityProfile,
+    ).toEqual({ mcps: ["github", "figma"] });
+  });
 
   function mentionCheckbox(node: HTMLElement): HTMLInputElement {
     const box = node.querySelector<HTMLInputElement>(

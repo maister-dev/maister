@@ -4831,6 +4831,11 @@
     "appliedInMaister": "Применено в MAIster. Сохраните конфигурацию отдельно в Настройки → Git."
   },
   "mcpPanel": {
+    "packageScope": "Область доступа пакетных MCP",
+    "scopeFor": "Область доступа для {ref}",
+    "inheritScope": "Из пакета ({scope})",
+    "scopePackage": "Только в пакете",
+    "scopeProject": "Весь проект",
     "title": "MCP-серверы проекта",
     "count": "Серверов: {count}",
     "add": "Добавить MCP",
@@ -5677,6 +5682,9 @@
       "agentRecommendedEvents": "Рекомендованные события",
       "agentRecommendedMention": "Рекомендовать триггер упоминания (вызов через @id в комментарии)",
       "agentCapabilityProfile": "Профиль возможностей (JSON-объект)",
+      "agentProfileSkills": "Выбранные скиллы пакета",
+      "agentProfileMcps": "Выбранные MCP пакета",
+      "agentAllSkills": "Использовать все скиллы пакета",
       "agentCapabilityProfileInvalid": "Невалидный JSON-объект — не сохранится, пока не исправите",
       "allowedPaths": "Разрешённые пути",
       "forbiddenPaths": "Запрещённые пути",

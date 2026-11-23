@@ -336,7 +336,7 @@ declared:
 
 ### Package scope (Designed)
 
-Each new declaration defaults to package scope. The attachment adopts the release setting. A maintainer can explicitly force project or package scope, or clear the override to inherit. Keep an explicit override when a later release happens to match it. Removing an MCP from an agent link removes only the local addition. Disabling a runtime target takes precedence over sharing. Legacy packages retain their original delivery semantics until adoption of a versioned declaration. [Session inventory](capabilities.md#project-run-capability-inventory-designed)
+Each new declaration defaults to package scope. The attachment adopts the release setting. A maintainer can explicitly force project or package scope, or clear the override to inherit. Keep an explicit override when a later release happens to match it. Removing an MCP from an agent link removes only the local addition. Disabling a runtime target takes precedence over sharing. Legacy packages retain their original delivery semantics until adoption of a versioned declaration. [Session inventory](capabilities.md#project-run-capability-inventory)
 
 ## Expectations
 

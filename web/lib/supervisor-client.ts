@@ -153,6 +153,7 @@ export type SupervisorRunnerInput = {
 // run dir, context mounts) derives from the adopted handle; only the
 // `workspace.adopt` payload built in `execution-host/adoption.ts` carries one.
 export type CreateSessionInput = {
+  packageSkillView?: import("../../runtime/package-skill-tree").PackageSkillView;
   stepId: string;
   nodeAttemptId?: string;
   // M42 (ADR-114): the logical Flow session this ACP process serves — stamped

@@ -693,13 +693,14 @@ The reviewed company binding grants explicit installation reach as described in 
   `runs` writes after the terminal flip; agent tokens MUST stay per-launch
   ephemeral with the fixed scope set and the `{type:'agent', id}` actor, never
   logged/streamed/client-visible.
-- A standalone package-agent run MUST materialize every skill-kind capability
-  from the providing pinned package install's manifest capability roots. Claude
+- A standalone package-agent Run MUST resolve skills from its pinned providing package.
+  Omitting `capability_profile.skills` selects the whole bundle. An explicit list
+  selects exactly those skill slugs, including zero for an empty list. Claude
   runs MUST also materialize capability-local subagents from those roots into
   `.claude/agents/`; non-Claude runs MUST omit subagents. User-owned same-name
   skill or subagent entries MUST be preserved.
-- `capability_profile` frontmatter MUST be strict `{ mcps?: string[] }`; unknown
-  keys such as `skills`, `mcp_servers`, or `restrictions` MUST be reported as
+- `capability_profile` frontmatter MUST be strict `{ skills?: string[], mcps?: string[] }`; unknown
+  keys such as `mcp_servers` or `restrictions` MUST be reported as
   `MaisterError("CONFIG")` during registration/resync and no invalid row may be
   written.
 - Studio draft save MUST preserve invalid `capability_profile` text/value in the
@@ -723,7 +724,7 @@ The reviewed company binding grants explicit installation reach as described in 
   flow-node `settings.agent` bindings do NOT yet derive/deliver the profile
   (follow-up)** — the seam supports it (the interceptor is agent-agnostic), but the
   agent launch path (`launch.ts`) is not wired to `deriveSessionEnforcementProfile`
-  in this milestone. The agent `capability_profile` frontmatter (`{ mcps?: string[] }`)
+  in this milestone. The agent `capability_profile.mcps` frontmatter
   is the intended MCP-server allow-set source when that wiring lands; see
   [`guardrail-hooks.md`](guardrail-hooks.md) + [`flow-settings.md`](flow-settings.md).
 - An agent token minted for project A MUST reach project B only when an ENABLED
@@ -771,7 +772,7 @@ The reviewed company binding grants explicit installation reach as described in 
 - **Pinned package skill record points at a missing member-root file** →
   `MaisterError("CONFIG")` with `agentId`, `packageInstallId`, and
   `capabilityRefId`; no partial materialization.
-- **Legacy `capability_profile` keys (`skills`, `mcp_servers`, `restrictions`)**
+- **Unsupported `capability_profile` keys (such as `mcp_servers` or `restrictions`)**
   → invalid-definition reporting during registration/resync; no invalid `agents`
   row is written.
 - **Budget breach with `onBudgetBreach='terminate_restorable'`** → the run lands in

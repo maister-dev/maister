@@ -1,3 +1,4 @@
+import { publicCapabilitySet } from "@/lib/capabilities/package-delivery";
 import "server-only";
 
 import type { CapabilityAgent } from "@/lib/config.schema";
@@ -1851,9 +1852,10 @@ export async function getRunResolvedCapabilitySet(
   // ADR-129 (W-E): merge the run-level withheld-MCP sink into the read model so
   // the run-detail panel surfaces trust/exec-trust withholds (visible but not
   // executed) alongside the frozen resolved set.
+  const publicSet = publicCapabilitySet(row.resolved);
   return row.withheld && row.withheld.length > 0
-    ? { ...row.resolved, withheldMcps: row.withheld }
-    : row.resolved;
+    ? { ...publicSet, withheldMcps: row.withheld }
+    : publicSet;
 }
 
 // null when the run has no such node (no capability materialization happened).

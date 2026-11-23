@@ -363,9 +363,9 @@ materialization target"; this section states only what this domain requires.
   [flow-settings.md](flow-settings.md)); the supervisor still forwards the
   assembled prompt unchanged.
 
-### Project Run capability inventory (Designed)
+### Project Run capability inventory
 
-At admission the Run captures every attached package revision. Preparation may copy all these trees to host-owned storage once. A session receives only the discovery roots selected below. Each Flow must ship skills that its authored prompts require. A child Flow resolves its own package from its launch capture.
+At admission the Run captures every attached package revision. Run preparation stages package skill trees under the checkout with their package identity. A session receives only the discovery roots selected below. Each Flow must ship skills that its authored prompts require. A child Flow resolves its own package from its launch capture.
 
 | Consumer | Discoverable package skills | MCP candidates before current binding, trust and adapter checks |
 | --- | --- | --- |
@@ -377,13 +377,13 @@ Omitted agent skill selection includes the entire agent package. An empty list s
 
 A project with `core` (shared), `design` (private, Figma scoped to package) and `development` (private) pins all three. A development node sees development and core skills and no Figma. A design Flow binding a designer from design sees the selected design skills plus core. A child development Flow invoked from design receives development and core. A standalone designer with an empty skill list sees zero package skills. Disabling Figma stops a node requiring Figma and withholds it from a node where it is optional. A release or override change during execution leaves the captured selection intact. Recheck current authorization at dispatch and resume.
 
-Claude and Gemini currently discover from cwd. Give bound attempts isolated discovery views for those adapters. Codex, OpenCode and MiMo receive dedicated composed homes. Each adapter must see the exact same selected package inventory as the progressive-disclosure prompt. Preserve ambient user settings according to existing adapter policy and ensure package-installed content cannot re-enter via a sibling home or cwd. Record Run, owner, package pins, profile digest and withheld reasons in structured diagnostics.
+For versioned Flow delivery the supervisor checks the selected tree digest and prepares an adapter home. Claude uses CLAUDE_CONFIG_DIR and Codex uses CODEX_HOME. Gemini, OpenCode and MiMo receive their adapter-specific configuration roots. Each adapter must see the exact same selected package inventory as the progressive-disclosure prompt. Preserve ambient user settings according to existing adapter policy and ensure package-installed content cannot re-enter via a sibling home or cwd. Record Run, owner, package pins, profile digest and withheld reasons in structured diagnostics.
 
 ## Expectations
 
 - **CAP-01:** New Flow authoring must reject retired node skill settings and retain the pinned legacy read path.
-- **CAP-03:** (Designed) Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table.
-- **CAP-04:** (Designed) Each bound node must own an isolated ACP session and adapter discovery view across interruption.
+- **CAP-03:** (Implemented) Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table.
+- **CAP-04:** (Implemented) Each bound node must own an isolated ACP session and adapter discovery view across interruption.
 - **CAP-06:** (Designed) Project routing must allow a design and a development Run in the same project without either session receiving private resources of the other package.
 
 These are the steady-state invariants the materialization code MUST satisfy

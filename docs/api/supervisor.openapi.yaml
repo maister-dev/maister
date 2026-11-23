@@ -4290,6 +4290,14 @@ components:
             canonical host events so spend and events are
             attributable per logical session, not only per supervisor
             `sessionId`. Absent → treated as `default` (single-session run).
+        packageSkillView:
+          type: object
+          additionalProperties: false
+          required: [skillsDigest]
+          properties:
+            skillsDigest: {type: string, pattern: "^[a-f0-9]{64}$"}
+            settingsDigest: {type: string, pattern: "^[a-f0-9]{64}$"}
+          description: The assigned host verifies the selected skill tree and optional native settings before opening the node's private adapter home. Requires nodeAttemptId.
         nodeAttemptId:
           type: string
           minLength: 1

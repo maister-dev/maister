@@ -44,6 +44,22 @@ restrictions:
 `;
 
 describe("loadMaisterPackageManifest", () => {
+  it("preserves the delivery version that distinguishes private and legacy MCP defaults", async () => {
+    const root = await packageRoot(
+      VALID.replace("name: aif", "name: aif\ndelivery: { version: 1 }").replace(
+        "id: docs-search",
+        "id: docs-search\n    scope: project",
+      ),
+    );
+    const manifest = await loadMaisterPackageManifest(root);
+
+    expect(manifest.delivery).toEqual({ version: 1, shareSkills: true });
+    expect(manifest.mcps[0]?.scope).toBe("project");
+    expect(
+      (await loadMaisterPackageManifest(await packageRoot(VALID))).delivery,
+    ).toBeUndefined();
+  });
+
   it("round-trips a valid manifest with all sections", async () => {
     const root = await packageRoot(VALID);
     const manifest = await loadMaisterPackageManifest(root);

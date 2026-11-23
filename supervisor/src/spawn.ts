@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 import { claudeContextWindow } from "../../runtime/acp-context";
 
+import { preparePackageSkillHome } from "./package-skill-home";
 import { prepareProducerFiles, type ProducerFiles } from "./producer-files";
 import { HostRuntimeEventError } from "./host-runtime-errors";
 import { producerPressure, type ProducerPauseBound } from "./producer-pressure";
@@ -205,6 +206,7 @@ export async function spawnSession(
         opts.runtimeObjectEnv?.capabilityInstructionsPath,
       outputPaths: opts.runtimeObjectEnv?.outputPaths,
     });
+    Object.assign(childEnv, await preparePackageSkillHome(request, workspace));
     const nativeLaunch = await protectWorkspaceProcess(workspace, {
       binary,
       arguments: args,

@@ -5,6 +5,10 @@ import type { FlowYamlV1 } from "@/lib/config.schema";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  readPackageMcpScopes,
+  type AttachmentMcpScope,
+} from "@/lib/packages/mcp-scope";
 import { getDb } from "@/lib/db/client";
 import { flowManifestMcpRequirements } from "@/lib/flows/mcp-requirements";
 import {
@@ -56,6 +60,7 @@ export type ProjectMcpHub = {
   servers: HubServerEntry[];
   requirements: RequirementEntry[];
   effectiveCount: number;
+  packageScopes?: AttachmentMcpScope[];
 };
 
 const SOURCE_TO_TARGET_KIND: Record<string, HubSource> = {
@@ -374,7 +379,10 @@ export async function getProjectMcpHub(
     "[mcp.hub] assembled",
   );
 
-  return hub;
+  return {
+    ...hub,
+    packageScopes: await readPackageMcpScopes(database, projectId),
+  };
 }
 
 // Just the project-effective MCP count (board-header metacell). Cheap wrapper.

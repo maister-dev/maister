@@ -474,6 +474,16 @@ export const StartSessionRequestSchema = z
       .min(1)
       .max(128)
       .regex(SAFE_PATH_SEGMENT, safeSegmentMessage("stepId")),
+    packageSkillView: z
+      .object({
+        skillsDigest: z.string().regex(/^[a-f0-9]{64}$/),
+        settingsDigest: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .optional(),
     nodeAttemptId: z
       .string()
       .min(1)

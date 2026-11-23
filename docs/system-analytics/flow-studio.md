@@ -186,7 +186,7 @@ sequenceDiagram
 
 ### Catalog authoring
 
-Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory-designed)
+Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory)
 
 ## Expectations
 

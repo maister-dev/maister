@@ -2263,6 +2263,7 @@ export type WithheldMcp = {
 };
 
 export type ResolvedCapabilitySet = {
+  delivery?: import("@/lib/capabilities/package-delivery").FlowDeliverySnapshot;
   flowRevisionId: string;
   flowOrigin: "authored" | "git";
   // `scope` is the winning record's source (project | platform | flow-package);
@@ -8926,6 +8927,7 @@ export type NodeAttemptOutputContract = {
 };
 
 export type MaterializationPlan = {
+  packageSkills?: import("@/lib/capabilities/package-delivery").PackageSkillWitness[];
   profileDigest: string;
   resolvedRevisions: { refId: string; kind: string; sha: string }[];
   materializedFiles: string[];
@@ -9109,6 +9111,7 @@ export const projectPackageAttachments = pgTable(
     attachedAt: timestamp("attached_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
+    scopeRevision: integer("scope_revision").notNull().default(1),
   },
   (t) => ({
     projectAttachment: unique("project_package_attachments_owner_id_uq").on(
@@ -9298,6 +9301,21 @@ export const projectDependencySetupReceipts = pgTable(
       "dependency_setup_shape",
       sql`${t.status} IN ('running','succeeded','failed') AND (${t.ownerPid} IS NULL OR ${t.ownerPid} > 0)`,
     ),
+  }),
+);
+
+export const projectPackageMcpScopeOverrides = pgTable(
+  "project_package_mcp_scope_overrides",
+  {
+    attachmentId: text("attachment_id").notNull().references(
+      () => projectPackageAttachments.id, {onDelete: "cascade"},
+    ),
+    refId: text("ref_id").notNull(),
+    scope: text("scope", {enum: ["package", "project"]}).notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({columns: [t.attachmentId, t.refId]}),
+    validScope: check("project_package_mcp_scope_valid", sql`${t.scope} IN ('package', 'project')`),
   }),
 );
 
