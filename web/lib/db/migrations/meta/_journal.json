@@ -2794,6 +2794,13 @@
       "when": 1795713824127,
       "tag": "0402_package_mcp_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 403,
+      "version": "7",
+      "when": 1795713876396,
+      "tag": "0403_project_agent_instance_profile",
+      "breakpoints": true
     }
   ]
 }

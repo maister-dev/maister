@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import type { AgentConfigParam } from "@/lib/agents/definition";
 import type { ProjectSourceReview } from "@/lib/agents/project-source-review-types";
 
+import { Tooltip } from "@heroui/react";
 import { useState, useTransition } from "react";
 import { DocumentTextIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
@@ -53,6 +54,7 @@ export type AgentRecommendedView = {
 };
 
 export type AttachedAgentRow = {
+  promptDiverged?: boolean;
   activity?: AgentActivitySummary;
   linkId: string;
   enabled: boolean;
@@ -337,6 +339,20 @@ export function AgentsAttachPanel({
                   >
                     {row.agent.id}
                   </Link>
+                  {row.promptDiverged ? (
+                    <Tooltip>
+                      <Link
+                        aria-label={activityLabels("instanceDiverged")}
+                        className="ml-2 inline-flex h-6 w-6 items-center justify-center rounded border border-line text-xs font-semibold text-ink"
+                        href={`/projects/${slug}/agents/${encodeURIComponent(row.agent.id)}?tab=definition&compare=1`}
+                      >
+                        !
+                      </Link>
+                      <Tooltip.Content>
+                        {activityLabels("instanceDiverged")}
+                      </Tooltip.Content>
+                    </Tooltip>
+                  ) : null}
                   <span className="mt-1 block text-[11px] text-mute">
                     {row.activity
                       ? activityLabels("summaryCounts", {

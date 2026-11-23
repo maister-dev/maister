@@ -5,6 +5,11 @@ import path from "node:path";
 
 import { expect, test } from "@playwright/test";
 
+import { readStubSessionRecords } from "./_seed/session-records";
+import {
+  E2E_HOLD_TURN_MARKER,
+  STUB_SESSIONS_DIR,
+} from "./_seed/stub-supervisor";
 import { withE2EDb, seedDefaultRunSession } from "./_seed/db";
 import { seedOperationalStopAgent } from "./_seed/operational-stop-agent";
 import contract from "./_seed/operational-contract.json" with { type: "json" };
@@ -644,3 +649,100 @@ fi
 });
 
 /** Catalog only: the test obtains assignment, baseline, session and prompt from the real launcher. */
+
+test("E2E-CAP-05 save, inspect and restore a project persona in EN and RU", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  test.setTimeout(120_000);
+  const fixture = await seedManualTaskLaunchFixture();
+  const agentId = await seedOperationalStopAgent(fixture);
+  const route = `/projects/${fixture.slug}/agents/${encodeURIComponent(agentId)}?tab=definition`;
+  const api = `/api/projects/${fixture.slug}/agents/${encodeURIComponent(agentId)}`;
+
+  for (const locale of ["en", "ru"] as const) {
+    const en = locale === "en";
+    const localized = (english: string, russian: string): string =>
+      en ? english : russian;
+
+    await context.addCookies([
+      { name: "NEXT_LOCALE", value: locale, url: baseURL! },
+    ]);
+    await page.goto(route);
+    const edit = page.getByRole("button", {
+      name: localized("Edit instance", "Редактировать инстанс"),
+    });
+    const compare = page.getByRole("button", {
+      name: localized(
+        "Compare with package prompt",
+        "Сравнить с пакетным промптом",
+      ),
+    });
+
+    await expect(compare).toHaveCount(0);
+    await edit.focus();
+    await page.keyboard.press("Enter");
+    const text = page.getByRole("textbox", {
+      name: localized("Agent prompt", "Промпт агента"),
+    });
+    const original = await text.inputValue();
+    const changed = `Local persona ${locale} ${randomUUID()} ${E2E_HOLD_TURN_MARKER}`;
+
+    await text.fill(changed);
+    const save = page.getByRole("button", {
+      name: localized("Save changes", "Сохранить изменения"),
+    });
+
+    await save.press("Enter");
+    await expect(compare).toBeVisible();
+    await compare.focus();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText(`+ ${changed}`, { exact: false }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(compare).toBeVisible();
+    if (en) {
+      const response = await page.request.post(`${api}/launch`, {
+        headers: { Origin: new URL(baseURL!).origin },
+        data: {},
+      });
+
+      expect(response.status(), await response.text()).toBe(202);
+      const { runId } = (await response.json()) as { runId: string };
+
+      await expect
+        .poll(
+          () =>
+            readStubSessionRecords(STUB_SESSIONS_DIR).find(
+              (record) => record.request.runId === runId,
+            )?.prompts[0]?.prompt,
+          { timeout: 45000 },
+        )
+        .toContain(changed);
+      const stopped = await page.request.post(`/api/runs/${runId}/stop`);
+
+      expect(stopped.ok(), await stopped.text()).toBe(true);
+    }
+    await edit.press("Enter");
+    await page
+      .getByRole("button", {
+        name: localized(
+          "Restore package prompt",
+          "Восстановить пакетный промпт",
+        ),
+      })
+      .press("Enter");
+    await expect(text).toHaveValue(original);
+    await save.press("Enter");
+    await expect(compare).toHaveCount(0);
+    const persisted = await page.request.get(`${api}/definition`);
+
+    expect(await persisted.json()).toMatchObject({
+      prompt: original,
+      instance: { promptOverridden: false, diverged: false },
+    });
+  }
+});

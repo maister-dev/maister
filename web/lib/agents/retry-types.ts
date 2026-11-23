@@ -1,3 +1,4 @@
+import type { ProjectAgentProfileSnapshot } from "./project-instance-profile";
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 import type { RunnerSnapshot } from "@/lib/acp-runners/resolve";
 import type { EffectiveAgentDefinition } from "@/lib/agents/effective";
@@ -69,6 +70,7 @@ export type ProjectAgentRetryRecipe = AgentRetryRecipeFields &
     | { version: 1 }
     | {
         version: 2;
+        projectAgentProfile?: ProjectAgentProfileSnapshot;
         strategy: AgentRetryStrategy;
         qualificationSha: string | null;
         replacement?: ProjectSpecialistReplacement;

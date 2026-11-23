@@ -236,6 +236,7 @@ export async function gateAndOverlayMcpServers(args: {
   db: GateDb;
   projectId: string;
   runId: string;
+  overlays?: Map<string, McpConfigOverlay>;
   supported: ReadonlyArray<{
     kind: string;
     capabilityRefId: string;
@@ -266,10 +267,9 @@ export async function gateAndOverlayMcpServers(args: {
     await mergeRunWithheldMcps(args.db, args.runId, withheld);
   }
 
-  const overlays = await loadProjectMcpOverlays(
-    args.projectId,
-    args.db as never,
-  );
+  const overlays =
+    args.overlays ??
+    (await loadProjectMcpOverlays(args.projectId, args.db as never));
 
   return {
     mcpServers: overlays.size > 0 ? applyMcpOverlays(kept, overlays) : kept,

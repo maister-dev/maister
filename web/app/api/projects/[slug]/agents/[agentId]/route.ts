@@ -11,6 +11,10 @@ import {
 } from "@/lib/agents/activity-access";
 import { contextRepoSchema } from "@/lib/config.schema";
 import { agentsErrorResponse } from "@/lib/agents/admin-shared";
+import {
+  additionalMcpRefsSchema,
+  promptOverrideSchema,
+} from "@/lib/agents/project-instance-profile";
 import { detachAgent, updateAgentLink } from "@/lib/agents/project-links";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -74,10 +78,23 @@ const patchBodySchema = z
     // ADR-157: read-only sibling repos this attachment's runs may read.
     // Nullable so an operator can CLEAR the declaration; absent leaves it.
     contextRepos: z.array(contextRepoSchema).max(8).nullable().optional(),
+    expectedInstallId: z.string().min(1).max(256).optional(),
+    promptOverride: promptOverrideSchema.nullable().optional(),
+    additionalMcpRefs: additionalMcpRefsSchema.optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
     schedulesRevision: z.number().int().min(1).optional(),
   })
   .strict()
+  .refine(
+    (body) =>
+      body.promptOverride === undefined && body.additionalMcpRefs === undefined
+        ? body.expectedInstallId === undefined
+        : body.expectedInstallId !== undefined &&
+          body.schedulesRevision !== undefined,
+    {
+      message: "profile edits require expectedInstallId and schedulesRevision",
+    },
+  )
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
   })
@@ -150,6 +167,12 @@ export async function PATCH(
         `invalid PATCH body: ${parsed.error.message}`,
       );
     }
+
+    if (
+      parsed.data.promptOverride !== undefined ||
+      parsed.data.additionalMcpRefs !== undefined
+    )
+      await requireProjectAction(project.id, "readRepoFiles");
 
     // Wire field `configValues` maps to the service/column key `config`
     // (ADR-111); `undefined` stays untouched, explicit null clears.

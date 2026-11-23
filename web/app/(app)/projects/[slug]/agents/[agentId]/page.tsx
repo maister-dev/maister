@@ -25,6 +25,7 @@ import {
 } from "@/components/agents/agent-history";
 import { AgentMemoryControl } from "@/components/agents/agent-memory-control";
 import { LegacyMemoryReader } from "@/components/agents/legacy-memory-reader";
+import { ProjectAgentDefinitionEditor } from "@/components/agents/project-agent-definition-editor";
 import { ProjectAgentSettings } from "@/components/agents/project-agent-settings";
 import { listHumanVaultLocations } from "@/lib/agent-memory-vault/human-catalog";
 
@@ -41,6 +42,7 @@ const querySchema = z
     memorySearchCursor: z.string().min(1).max(2048).optional(),
     memoryTagCursor: z.string().min(1).max(2048).optional(),
     memoryBacklinkCursor: z.string().min(1).max(2048).optional(),
+    compare: z.literal("1").optional(),
     tab: z
       .enum(["history", "attempts", "memory", "definition", "settings"])
       .default("history"),
@@ -350,10 +352,16 @@ export default async function ProjectAgentPage({
               {t("pinnedDefinition")} · {definition.packageVersion} ·{" "}
               <code>{definition.definitionDigest?.slice(0, 12)}</code>
             </p>
-            <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-paper p-4 text-sm">
-              {definition.prompt}
-            </pre>
-            <p className="text-xs text-mute">{t("promptEditBoundary")}</p>
+            {definition.instance && definition.prompt !== null ? (
+              <ProjectAgentDefinitionEditor
+                key={`${definition.instance.expectedInstallId}-${definition.instance.revision}`}
+                canEdit={access.canEditSettings}
+                endpoint={`/api/projects/${encodeURIComponent(slug)}/agents/${encodeURIComponent(access.agentId)}`}
+                initialDiffOpen={query.compare === "1"}
+                instance={definition.instance}
+                prompt={definition.prompt}
+              />
+            ) : null}
           </section>
         ) : (
           <p className="text-sm text-mute">

@@ -257,6 +257,62 @@ async function seedOperationalQuestionTriager(): Promise<string> {
 }
 
 describe("ADR-111 launch-time config snapshot", () => {
+  it("captures the local persona for manual and triggered reservations and delivers the original prompt after editing the link", async () => {
+    const agentId = await seedTriager(null);
+    const { resolveEffectiveAgentDefinition } =
+      await import("@/lib/agents/effective");
+    const effective = await resolveEffectiveAgentDefinition(
+      { agentId, projectId },
+      db,
+    );
+    const original = "  Current project role.\n";
+
+    await pool.query(
+      "UPDATE agent_project_links SET prompt_override=$1 WHERE project_id=$2 AND agent_id=$3",
+      [original, projectId, agentId],
+    );
+    for (const source of ["manual", "webhook"] as const) {
+      const launched = await launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source },
+        db,
+      });
+
+      if (!("runId" in launched))
+        throw new Error("Expected reserved agent run");
+      await pool.query(
+        "UPDATE agent_project_links SET prompt_override=$1 WHERE project_id=$2 AND agent_id=$3",
+        ["Edited project role.", projectId, agentId],
+      );
+      const {
+        rows: [witness],
+      } = await pool.query(
+        "SELECT project_agent_profile FROM runs WHERE id=$1",
+        [launched.runId],
+      );
+
+      expect(witness.project_agent_profile).toMatchObject({
+        prompt: original,
+        promptOrigin: "project",
+        packageInstallId: effective.packageInstallId,
+      });
+      const prompt = await buildAgentPrompt(db, effective.parsed, {
+        id: launched.runId,
+        agentId,
+        projectId,
+        triggerSource: source,
+        projectAgentProfile: witness.project_agent_profile,
+      });
+
+      expect(prompt.startsWith(original)).toBe(true);
+      expect(prompt).not.toContain("Edited project role.");
+      await pool.query(
+        "UPDATE agent_project_links SET prompt_override=$1 WHERE project_id=$2 AND agent_id=$3",
+        [original, projectId, agentId],
+      );
+    }
+  });
   it("retains independent claimed requests through queued launches after schedule deletion", async () => {
     const agentId = await seedTriager({ intake_mode: "triage_only" });
     const requests = [

@@ -296,9 +296,12 @@ async function loadRequirementSources(
   const agentRows = rowsOf<{
     agent_id: string;
     capability_profile: { mcps?: unknown } | null;
+    additional_refs: string[];
   }>(
     await database.execute(sql`
-      SELECT a.id AS agent_id, a.capability_profile
+      SELECT a.id AS agent_id, a.capability_profile,
+             ARRAY(SELECT x.ref_id FROM agent_project_mcp_additions x
+                   WHERE x.link_id = l.id ORDER BY x.ref_id) AS additional_refs
       FROM agent_project_links l
       JOIN agents a ON a.id = l.agent_id
       WHERE l.project_id = ${projectId} AND l.enabled = true AND a.enabled = true
@@ -311,8 +314,13 @@ async function loadRequirementSources(
       ? mcps.filter((m): m is string => typeof m === "string" && m.length > 0)
       : [];
 
-    if (refs.length > 0) {
-      sources.push({ kind: "agent", agentId: agent.agent_id, refs });
+    if (refs.length > 0 || agent.additional_refs?.length) {
+      sources.push({
+        kind: "agent",
+        agentId: agent.agent_id,
+        refs,
+        additional: agent.additional_refs,
+      });
     }
   }
 

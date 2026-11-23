@@ -13,6 +13,7 @@ import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { seedProjectRow } from "@/test-support/execution-host-seed";
 import { seedAgentTokenRunOwner } from "@/test-support/seed-token-run-owner";
 import { renderAgentDefinition } from "@/lib/agents/definition";
 import { ProjectAgentsPanel } from "@/components/agents/project-agents-panel";
@@ -180,6 +181,204 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await testDatabase?.stop();
+});
+
+it("IT-CAP-05 fences link capability edits to the adopted package revision and restores package defaults", async () => {
+  const {
+    rows: [pin],
+  } = await pool.query<{ id: string; installed_path: string }>(
+    "SELECT id, installed_path FROM package_installs WHERE name = 'test-pkg'",
+  );
+  const packageFile = path.join(
+    pin.installed_path,
+    "maister-agents",
+    "platform-helper.md",
+  );
+  const original = await readFile(packageFile, "utf8");
+
+  const secondProject = await seedProjectRow(db);
+  const siblingId = "test-pkg:sibling";
+
+  await pool.query(
+    "INSERT INTO project_package_attachments(id,project_id,package_install_id,package_name) VALUES ($1,$2,$3,'test-pkg')",
+    [randomUUID(), secondProject.id, pin.id],
+  );
+  await attachAgent({ projectId: secondProject.id, agentId: fx.agentId }, db);
+  await pool.query(
+    `INSERT INTO agents(id,package_name,version_label,origin,name,description,workspace,mode,triggers,risk_tier,source_path)
+     SELECT $1,package_name,version_label,origin,'Sibling',description,workspace,mode,triggers,risk_tier,source_path FROM agents WHERE id=$2`,
+    [siblingId, fx.agentId],
+  );
+  await pool.query(
+    "INSERT INTO agent_project_links(id,project_id,agent_id) VALUES($1,$2,$3)",
+    [randomUUID(), fx.projectId, siblingId],
+  );
+  await pool.query(
+    `INSERT INTO capability_records(id,project_id,capability_ref_id,kind,label,source,agents,enforceability,material)
+     VALUES($1,$2,'foreign','mcp','Other project','project','["claude"]','enforced','{"transport":"http","url":"https://example.test/foreign"}')`,
+    [randomUUID(), secondProject.id],
+  );
+  await attachAgent(fx, db);
+  try {
+    const save = (patch: Parameters<typeof updateAgentLink>[0]["patch"]) =>
+      updateAgentLink({ ...fx, patch }, db);
+    const conditions = { expectedInstallId: pin.id, schedulesRevision: 1 };
+
+    await expect(
+      save({
+        ...conditions,
+        expectedInstallId: "stale",
+        promptOverride: "draft",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      save({ ...conditions, additionalMcpRefs: ["foreign"] }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+    await pool.query(
+      `INSERT INTO capability_records
+      (id, project_id, capability_ref_id, kind, label, source, agents, enforceability, selected_by_default, selectable, material, created_at, updated_at)
+      VALUES ($1,$2,'design','mcp','Design','project','["claude"]','enforced',false,true,'{"origin":"project-mcp","transport":"http","url":"https://example.test/mcp"}',now(),now())`,
+      [randomUUID(), fx.projectId],
+    );
+    await save({
+      ...conditions,
+      promptOverride: "Local\r\npersona.",
+      additionalMcpRefs: ["design"],
+    });
+    await expect(
+      save({ ...conditions, promptOverride: null }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const { readProjectAgentProfile } =
+      await import("@/lib/agents/project-instance-profile");
+
+    expect(await readProjectAgentProfile(db, fx.projectId, fx.agentId)).toEqual(
+      {
+        revision: 2,
+        promptOverride: "Local\npersona.",
+        additionalMcpRefs: ["design"],
+      },
+    );
+    for (const [otherProject, otherAgent] of [
+      [secondProject.id, fx.agentId],
+      [fx.projectId, siblingId],
+    ]) {
+      expect(
+        await readProjectAgentProfile(db, otherProject, otherAgent),
+      ).toEqual({ revision: 1, promptOverride: null, additionalMcpRefs: [] });
+    }
+    const { captureProjectAgentProfile, applyProjectAgentProfile } =
+      await import("@/lib/agents/project-instance-profile");
+    const { resolveEffectiveAgentDefinition } =
+      await import("@/lib/agents/effective");
+    const effective = await resolveEffectiveAgentDefinition(fx, db);
+    const captured = await db.transaction((tx) =>
+      captureProjectAgentProfile(tx, {
+        ...fx,
+        packageName: effective.packageName,
+        packageInstallId: effective.packageInstallId,
+        definition: effective.parsed,
+      }),
+    );
+
+    await save({
+      ...conditions,
+      schedulesRevision: 2,
+      promptOverride: null,
+      additionalMcpRefs: [],
+    });
+    expect(captured).toMatchObject({
+      version: 1,
+      agentId: fx.agentId,
+      projectId: fx.projectId,
+      packageInstallId: pin.id,
+      linkRevision: 2,
+      prompt: "Local\npersona.",
+      promptOrigin: "project",
+      additionalMcpRefs: ["design"],
+    });
+    const { resolveAgentProfileMcpServers } =
+      await import("@/lib/agents/launch");
+    const dispatch = {
+      db,
+      projectId: fx.projectId,
+      capabilityProfile: { mcps: captured.additionalMcpRefs },
+      frozenTargets: captured.mcpTargets,
+      capabilityAgent: "claude",
+      execTrust: "trusted" as const,
+      runId: randomUUID(),
+    };
+
+    expect(await resolveAgentProfileMcpServers(dispatch)).toMatchObject([
+      { name: "design", url: "https://example.test/mcp" },
+    ]);
+    await pool.query(
+      `UPDATE capability_records SET material=jsonb_set(material,'{url}','"https://changed.example.test/mcp"'::jsonb)
+      WHERE project_id=$1 AND capability_ref_id='design'`,
+      [fx.projectId],
+    );
+    expect(await resolveAgentProfileMcpServers(dispatch)).toEqual([]);
+    await expect(
+      resolveAgentProfileMcpServers({
+        ...dispatch,
+        requiredMcpRefs: ["design"],
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { refId: "design" },
+    });
+    await pool.query(
+      "UPDATE capability_records SET source='flow-package', material=material||jsonb_build_object('packageInstallId',$2::text) WHERE project_id=$1 AND capability_ref_id='design'",
+      [fx.projectId, pin.id],
+    );
+    const { connectedAgentMcpRefs, availableAgentMcpCatalog } =
+      await import("@/lib/agents/project-instance-profile");
+
+    expect(await connectedAgentMcpRefs(db, fx.projectId)).toContain("design");
+    await pool.query(
+      "UPDATE package_installs SET trust_status='untrusted' WHERE id=$1",
+      [pin.id],
+    );
+    try {
+      expect(await connectedAgentMcpRefs(db, fx.projectId)).not.toContain(
+        "design",
+      );
+      expect(
+        (await availableAgentMcpCatalog(db, fx.projectId)).map(
+          (record) => record.capabilityRefId,
+        ),
+      ).not.toContain("design");
+    } finally {
+      await pool.query(
+        "UPDATE package_installs SET trust_status='trusted' WHERE id=$1",
+        [pin.id],
+      );
+    }
+    const inherited = {
+      ...effective.parsed,
+      capabilityProfile: { mcps: ["design"] },
+    };
+    const restored = applyProjectAgentProfile(
+      inherited,
+      await readProjectAgentProfile(db, fx.projectId, fx.agentId),
+    );
+
+    expect(restored).toEqual({
+      prompt: effective.parsed.prompt,
+      mcpRefs: ["design"],
+    });
+    expect(await readProjectAgentProfile(db, fx.projectId, fx.agentId)).toEqual(
+      {
+        revision: 3,
+        promptOverride: null,
+        additionalMcpRefs: [],
+      },
+    );
+    expect(await readFile(packageFile, "utf8")).toBe(original);
+  } finally {
+    await pool.query("DELETE FROM projects WHERE id=$1", [secondProject.id]);
+    await pool.query("DELETE FROM agents WHERE id=$1", [siblingId]);
+    await detachAgent(fx, db);
+  }
 });
 
 it("retains server-reviewed native automation authority with atomic CAS and explicit clearing", async () => {

@@ -3244,6 +3244,9 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("../runtime/package-skill-tree.ts", "repository-worktree", [
     ["packageSkillTreeDigest", true],
   ]),
+  ...wrappers("lib/agents/effective.ts", "repository-worktree", [
+    ["resolveCapturedProjectAgentDefinition", false],
+  ]),
   ...wrappers("lib/capabilities/capture-package-delivery.ts", "repository-worktree", [
     ["capturePackageDelivery", false],
   ]),

@@ -26,6 +26,11 @@ import { agentsErrorResponse } from "@/lib/agents/admin-shared";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { getAgentActivitySummaries } from "@/lib/agents/activity-queries";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
+import { readPackageMcpScopes } from "@/lib/packages/mcp-scope";
+import {
+  connectedAgentMcpRefs,
+  readProjectAgentProfile,
+} from "@/lib/agents/project-instance-profile";
 import { resolveAgentConfig } from "@/lib/agents/config";
 import { buildAgentActivitySnapshot } from "@/lib/agents/activity-snapshot";
 
@@ -178,6 +183,16 @@ export type AgentDefinitionView = {
   definitionDigest: string | null;
   prompt: string | null;
   configuration: Record<string, unknown> | null;
+  instance?: {
+    expectedInstallId: string;
+    revision: number;
+    packagePrompt: string;
+    promptOverridden: boolean;
+    diverged: boolean;
+    inheritedMcpRefs: string[];
+    additionalMcpRefs: string[];
+    connectedMcpRefs: string[];
+  };
 };
 
 /** Only the pinned effective definition can populate prompt/configuration; history never depends on its availability. */
@@ -216,6 +231,21 @@ export async function getAgentDefinitionView(
       );
 
     if (!link) return unavailable;
+    const profile = await readProjectAgentProfile(
+      access.db,
+      access.projectId,
+      access.agentId,
+    );
+
+    if (!profile) return unavailable;
+    const packagePrompt = effective.parsed.prompt.replace(/\r\n?/g, "\n");
+    const prompt = profile.promptOverride ?? packagePrompt;
+    const [connectedMcpRefs, scopes] = await Promise.all([
+      access.canEditSettings
+        ? connectedAgentMcpRefs(access.db, access.projectId)
+        : [],
+      readPackageMcpScopes(access.db, access.projectId),
+    ]);
 
     return {
       state: "available",
@@ -224,7 +254,24 @@ export async function getAgentDefinitionView(
       packageVersion: effective.versionLabel,
       definitionDigest: buildAgentActivitySnapshot(access.agentId, effective)
         .definitionSha256,
-      prompt: effective.parsed.prompt,
+      prompt,
+      instance: {
+        expectedInstallId: effective.packageInstallId,
+        revision: profile.revision,
+        packagePrompt,
+        promptOverridden: profile.promptOverride !== null,
+        diverged: prompt !== packagePrompt,
+        inheritedMcpRefs: [
+          ...new Set([
+            ...(effective.parsed.capabilityProfile?.mcps ?? []),
+            ...scopes
+              .filter((entry) => entry.sharedWithAgents)
+              .map((entry) => entry.refId),
+          ]),
+        ].sort(),
+        additionalMcpRefs: profile.additionalMcpRefs,
+        connectedMcpRefs,
+      },
       configuration: resolveAgentConfig(effective.parsed.config, link.config),
     };
   } catch (error) {

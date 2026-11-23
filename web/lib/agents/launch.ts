@@ -36,6 +36,14 @@ import pino from "pino";
 import { installationEnforcementProfile } from "../../../runtime/installation-agent-tools";
 
 import {
+  agentMcpTargets,
+  availableAgentMcpCatalog,
+  type AgentMcpTarget,
+  captureProjectAgentProfile,
+  connectedAgentMcpRefs,
+  retainedProjectAgentProfile,
+} from "./project-instance-profile";
+import {
   admitAgentTurnPrompt,
   findInitialAgentPrompt,
   waitForAgentPrompt,
@@ -243,6 +251,7 @@ import {
 } from "@/lib/agents/session-observer-registry";
 import {
   resolveEffectiveAgentDefinition,
+  resolveCapturedProjectAgentDefinition,
   type EffectiveAgentDefinition,
 } from "@/lib/agents/effective";
 import { resolveFacadeLaunch } from "@/lib/agents/facade-launch";
@@ -2536,6 +2545,17 @@ async function launchAgentRunWithAdmission(
           .insert(runs)
           .values({
             ...runRow,
+            projectAgentProfile: retryIntent
+              ? retryIntent.recipe.version === 2
+                ? (retryIntent.recipe.projectAgentProfile ?? null)
+                : null
+              : await captureProjectAgentProfile(tx, {
+                  projectId: input.projectId,
+                  agentId: input.agentId,
+                  packageName: ctx.effective.packageName,
+                  packageInstallId: ctx.effective.packageInstallId,
+                  definition: ctx.effective.parsed,
+                }),
             agentScheduleId,
             knowledgeAccess:
               assignmentCapture ??
@@ -3368,7 +3388,7 @@ export async function buildAgentPrompt(
   memory?: string | null,
   vaultBlock?: string | null,
 ): Promise<string> {
-  const sections = [parsed.prompt.trim()];
+  const sections = [run.projectAgentProfile?.prompt ?? parsed.prompt.trim()];
   const scopeBlock = await projectScopeBlock(_db, run);
   const configBlock = configContextBlock(parsed, run);
   const taskBlock = await taskContextBlock(_db, run);
@@ -4184,6 +4204,8 @@ export async function resolveAgentProfileMcpServers(args: {
   db: Db;
   projectId: string;
   capabilityProfile?: AgentCapabilityProfile;
+  frozenTargets?: readonly AgentMcpTarget[];
+  requiredMcpRefs?: readonly string[];
   capabilityAgent: string;
   execTrust: "untrusted" | "trusted";
   runId: string;
@@ -4195,7 +4217,7 @@ export async function resolveAgentProfileMcpServers(args: {
   const [
     { loadSelectableCapabilities, resolveCapabilityProfile },
     { mapProfileToAgentArtifacts },
-    { loadProjectMcpBindings },
+    { loadProjectMcpBindings, loadProjectMcpOverlays },
     { gateAndOverlayMcpServers },
   ] = await Promise.all([
     import("@/lib/capabilities/resolver"),
@@ -4203,18 +4225,65 @@ export async function resolveAgentProfileMcpServers(args: {
     import("@/lib/mcp/binding-service"),
     import("@/lib/mcp/materialization-gate"),
   ]);
-  const catalog = await loadSelectableCapabilities(args.projectId, args.db);
+  const catalog = args.frozenTargets
+    ? await availableAgentMcpCatalog(args.db, args.projectId)
+    : await loadSelectableCapabilities(args.projectId, args.db);
   // ADR-130 (D5): an agent's declared capability_profile.mcps resolve through the
   // SAME binding-aware resolver as flows/scratch — one resolution path.
   const mcpBindings = await loadProjectMcpBindings(
     args.projectId,
     args.db as never,
   );
+  const overlays = args.frozenTargets
+    ? await loadProjectMcpOverlays(args.projectId, args.db)
+    : undefined;
+  let selectedMcpIds = declared;
+
+  if (args.frozenTargets) {
+    const targets = new Map(
+      args.frozenTargets.map((target) => [target.refId, target]),
+    );
+    const current = agentMcpTargets(declared, catalog, mcpBindings, overlays!);
+
+    selectedMcpIds = current
+      .filter((candidate) => {
+        const retained = targets.get(candidate.refId);
+
+        return (
+          retained?.recordId === candidate.recordId &&
+          retained.source === candidate.source &&
+          retained.revision === candidate.revision &&
+          retained.materialSha256 === candidate.materialSha256
+        );
+      })
+      .map((target) => target.refId);
+    const withheld = declared.filter((ref) => !selectedMcpIds.includes(ref));
+    const missingRequired = withheld.find((ref) =>
+      args.requiredMcpRefs?.includes(ref),
+    );
+
+    if (missingRequired)
+      throw new MaisterError(
+        "PRECONDITION",
+        `Required agent MCP "${missingRequired}" changed or is unavailable`,
+        {
+          details: {
+            refId: missingRequired,
+            reason: "agent_mcp_target_unavailable",
+          },
+        },
+      );
+    if (withheld.length)
+      log.warn(
+        { runId: args.runId, refs: withheld },
+        "Captured agent MCP target changed or is unavailable",
+      );
+  }
   const profile = resolveCapabilityProfile({
     projectId: args.projectId,
     executorAgent: args.capabilityAgent as never,
     mcpBindings,
-    selectedMcpIds: declared,
+    selectedMcpIds,
     selectedSkillIds: [],
     selectedRuleIds: [],
     selectedRestrictionIds: [],
@@ -4235,6 +4304,7 @@ export async function resolveAgentProfileMcpServers(args: {
     db: args.db as never,
     projectId: args.projectId,
     runId: args.runId,
+    overlays,
     supported: profile.supported,
     mcpServers: mapped.mcpServers,
     execTrust: args.execTrust,
@@ -5010,10 +5080,19 @@ async function driveAgentSession(
       retryRecipe?.definition ??
       (await frozenTaskAgentDefinition(_db, run)) ??
       frozenOperationalDefinition(run) ??
-      (await resolveEffectiveAgentDefinition(
-        { agentId: run.agentId as string, projectId: run.projectId as string },
-        _db,
-      ));
+      (run.projectAgentProfile
+        ? await resolveCapturedProjectAgentDefinition(_db, {
+            agentId: run.agentId,
+            projectId: run.projectId,
+            packageInstallId: run.projectAgentProfile.packageInstallId,
+          })
+        : await resolveEffectiveAgentDefinition(
+            {
+              agentId: run.agentId as string,
+              projectId: run.projectId as string,
+            },
+            _db,
+          ));
   } catch (err) {
     log.error(
       { runId, err: err instanceof Error ? err.message : String(err) },
@@ -5746,6 +5825,27 @@ async function driveAgentSession(
               vault: prepared.mode === "vault" ? prepared.text : null,
             };
           });
+      const projectProfile =
+        !companyContext && run.projectAgentProfile
+          ? retainedProjectAgentProfile(run.projectAgentProfile, {
+              projectId: run.projectId,
+              agentId: run.agentId,
+              packageInstallId: effective.packageInstallId,
+            })
+          : null;
+
+      if (projectProfile)
+        log.info(
+          {
+            runId,
+            agentId: projectProfile.agentId,
+            packageInstallId: projectProfile.packageInstallId,
+            linkRevision: projectProfile.linkRevision,
+            promptOrigin: projectProfile.promptOrigin,
+            personaSha256: projectProfile.promptSha256,
+          },
+          "project agent persona resolved",
+        );
       const basePrompt = companyContext
         ? [buildCompanyAgentPrompt(companyContext), installationMemory]
             .filter(Boolean)
@@ -5781,12 +5881,30 @@ async function driveAgentSession(
             completionPrompt,
           )
         : completionPrompt;
+      const connected = projectProfile?.additionalMcpRefs.length
+        ? new Set(await connectedAgentMcpRefs(_db, project.id))
+        : new Set<string>();
       const profileMcpServers = companyContext
         ? []
         : await resolveAgentProfileMcpServers({
             db: _db,
             projectId: project.id as string,
-            capabilityProfile: effective.parsed.capabilityProfile ?? undefined,
+            frozenTargets: projectProfile?.mcpTargets,
+            requiredMcpRefs: projectProfile?.packageMcpRefs,
+            capabilityProfile: projectProfile
+              ? {
+                  ...effective.parsed.capabilityProfile,
+                  mcps: [
+                    ...new Set([
+                      ...projectProfile.packageMcpRefs,
+                      ...projectProfile.sharedMcps.map((item) => item.refId),
+                      ...projectProfile.additionalMcpRefs.filter((ref) =>
+                        connected.has(ref),
+                      ),
+                    ]),
+                  ],
+                }
+              : (effective.parsed.capabilityProfile ?? undefined),
             capabilityAgent: snapshot.capabilityAgent as string,
             execTrust: effective.execTrust,
             runId,
@@ -5848,6 +5966,10 @@ async function driveAgentSession(
         worktreePath: cwd,
         runId,
         installedPaths: packageSkillRoots,
+        ...(!companyContext &&
+        effective.parsed.capabilityProfile?.skills !== undefined
+          ? { selectedSkills: effective.parsed.capabilityProfile.skills }
+          : {}),
       };
       const packageSkillHome =
         !cwd || !capabilityRoot || packageSkillRoots.length === 0

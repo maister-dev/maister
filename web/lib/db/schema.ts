@@ -5,6 +5,7 @@ import {
   type ProjectDependencyPin,
   type DependencyCheckpoint,
 } from "@/lib/project-dependencies/types";
+import type { ProjectAgentProfileSnapshot } from "@/lib/agents/project-instance-profile";
 import type { FlowPublicationGrant } from "@/lib/workbench-git/flow-publication-grant";
 import type {
   CompletionGitAnchor,
@@ -1359,6 +1360,7 @@ export const agentProjectLinks = pgTable(
     // since package slugs are not portable across installations. NULL = none
     // declared (the honest meaning for every pre-0124 row).
     contextRepos: jsonb("context_repos").$type<ContextRepoDecl[]>(),
+    promptOverride: text("prompt_override"),
     // ADR-140: fences full-replacement binding saves so a stale editor cannot
     // erase telemetry or bindings added after it loaded the attachment.
     schedulesRevision: integer("schedules_revision").notNull().default(1),
@@ -1370,6 +1372,7 @@ export const agentProjectLinks = pgTable(
       .defaultNow(),
   },
   (t) => ({
+    promptCheck: check("agent_project_links_prompt_check", sql`${t.promptOverride} IS NULL OR (length(${t.promptOverride}) <= 65536 AND ${t.promptOverride} ~ '[^[:space:]]')`),
     uniqAgentProject: unique("agent_project_links_agent_project_uq").on(
       t.agentId,
       t.projectId,
@@ -1379,6 +1382,18 @@ export const agentProjectLinks = pgTable(
       "agent_project_links_memory_write_policy_check",
       sql`${t.memoryWritePolicy} IN ('auto','review')`,
     ),
+  }),
+);
+
+export const agentProjectMcpAdditions = pgTable(
+  "agent_project_mcp_additions",
+  {
+    linkId: text("link_id").notNull().references(() => agentProjectLinks.id, { onDelete: "cascade" }),
+    refId: text("ref_id").notNull(),
+  },
+  (t) => ({
+    identity: primaryKey({ columns: [t.linkId, t.refId] }),
+    refCheck: check("agent_project_mcp_additions_ref_check", sql`length(${t.refId}) BETWEEN 1 AND 128 AND ${t.refId} ~ '^[A-Za-z0-9._-]+$' AND ${t.refId} <> '.' AND position('..' IN ${t.refId}) = 0`),
   }),
 );
 
@@ -2402,6 +2417,7 @@ export const runs = pgTable(
       "activity_timestamp_provenance",
     ).$type<AgentActivityTimestampProvenance>(),
     knowledgeAccess: jsonb("knowledge_access").$type<KnowledgeAccessCapture>(),
+    projectAgentProfile: jsonb("project_agent_profile").$type<ProjectAgentProfileSnapshot>(),
     agentActivitySnapshot: jsonb(
       "agent_activity_snapshot",
     ).$type<AgentActivitySnapshot>(),

@@ -111,6 +111,43 @@ export async function resolveEffectiveAgentDefinition(
   return readInstalledAgentDefinition(input.agentId, install);
 }
 
+/** A previously admitted Run owns this exact installed revision, including after project adoption. */
+export async function resolveCapturedProjectAgentDefinition(
+  db: SqlTransaction,
+  owner: { agentId: string; projectId: string; packageInstallId: string },
+): Promise<EffectiveAgentDefinition> {
+  const { packageName } = splitQualifiedAgentId(owner.agentId);
+  const {
+    rows: [pin],
+  } = await db.execute(sql`
+    SELECT i.id AS "packageInstallId", i.installed_path AS "installedPath",
+           i.manifest, i.package_status AS "packageStatus", i.trust_status AS "trustStatus",
+           i.version_label AS "versionLabel", i.resolved_revision AS "resolvedRevision"
+    FROM package_installs i
+    JOIN project_package_attachments a ON a.package_name = i.name AND a.project_id = ${owner.projectId}
+    JOIN agent_project_links l ON l.project_id = a.project_id AND l.agent_id = ${owner.agentId}
+    JOIN agents ag ON ag.id = l.agent_id
+    WHERE i.id = ${owner.packageInstallId} AND i.name = ${packageName}
+      AND l.enabled AND ag.enabled AND ag.quarantined_at IS NULL
+  `);
+
+  if (!pin)
+    throw new MaisterError(
+      "PRECONDITION",
+      "Captured project agent package or its current authority is unavailable",
+    );
+
+  return readInstalledAgentDefinition(owner.agentId, {
+    packageInstallId: z.string().parse(pin.packageInstallId),
+    installedPath: z.string().parse(pin.installedPath),
+    manifest: pin.manifest,
+    packageStatus: z.string().parse(pin.packageStatus),
+    trustStatus: z.string().parse(pin.trustStatus),
+    versionLabel: z.string().parse(pin.versionLabel),
+    resolvedRevision: z.string().parse(pin.resolvedRevision),
+  });
+}
+
 type AgentInstallPin = Readonly<{
   packageInstallId: string;
   installedPath: string;

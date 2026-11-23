@@ -4550,22 +4550,24 @@ paths:
                 schedulesRevision:
                   type: integer
                   minimum: 1
-                  description: Required with schedules or the Designed prompt/MCP instance fields. Exact link revision CAS.
+                  description: Required with schedules, promptOverride or additionalMcpRefs. Uses the exact current link revision.
                 expectedInstallId:
                   type: string
-                  description: (Designed) Required when modifying promptOverride or additionalMcpRefs.
+                  minLength: 1
+                  maxLength: 256
+                  description: Required when modifying promptOverride or additionalMcpRefs. Omit for other changes.
                 promptOverride:
                   type: string
                   nullable: true
                   minLength: 1
                   maxLength: 65536
-                  description: (Designed) Save local persona text, or send null to restore the adopted persona. Reject whitespace-only values.
+                  description: Save local persona text, or send null to restore the adopted persona. Whitespace-only values are invalid.
                 additionalMcpRefs:
                   type: array
                   uniqueItems: true
                   maxItems: 64
-                  items: {type: string, minLength: 1, maxLength: 256}
-                  description: (Designed) Replace only this link's additions from connected project MCPs.
+                  items: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._-]+$"}
+                  description: Replace this link's additions from connected project MCPs. A single dot or a ref containing two consecutive dots is invalid.
                 schedules:
                   type: array
                   maxItems: 16
@@ -30104,6 +30106,31 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+        instance:
+          type: object
+          additionalProperties: false
+          description: Current instance and adopted package comparison, available only to repository-file readers.
+          required: [expectedInstallId, revision, packagePrompt, promptOverridden, diverged, inheritedMcpRefs, additionalMcpRefs, connectedMcpRefs]
+          properties:
+            expectedInstallId: {type: string, minLength: 1, maxLength: 256}
+            revision: {type: integer, minimum: 1}
+            packagePrompt: {type: string, maxLength: 1048576}
+            promptOverridden: {type: boolean}
+            diverged: {type: boolean}
+            inheritedMcpRefs:
+              type: array
+              uniqueItems: true
+              items: &instanceMcpRef {type: string, minLength: 1, maxLength: 128, pattern: '^(?!\.$)(?!.*\.\.)[A-Za-z0-9._-]+$'}
+            additionalMcpRefs:
+              type: array
+              maxItems: 64
+              uniqueItems: true
+              items: *instanceMcpRef
+            connectedMcpRefs:
+              type: array
+              description: Currently selectable server references. Empty for readers without project settings access.
+              uniqueItems: true
+              items: *instanceMcpRef
     AgentIncidentEpisode:
       type: object
       additionalProperties: false

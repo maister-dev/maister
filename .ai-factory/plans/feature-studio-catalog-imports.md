@@ -212,17 +212,19 @@ IT-CAP-03 and IT-CAP-04 exercised three adopted packages on PostgreSQL, child an
 
 ### Phase 3 — Project agent instances
 
-- [ ] **T11. Add and remove instance MCP additions.**
+IT-CAP-05 passed on populated PostgreSQL, including two project instances, stale edits, inherited MCPs, changed trust at dispatch and retry after a persona edit. The production browser scenario passed in EN and RU with keyboard save, divergence tooltip, diff and restore. The running controlled supervisor received the saved prompt. The full three-consumer delivery scenario is tracked separately under T25.
+
+- [x] **T11. Add and remove instance MCP additions.**
   - **After** T07, T08.
   - Extend `web/lib/agents/project-links.ts`, `web/app/api/projects/[slug]/agents/[agentId]/route.ts`, `web/components/agents/project-agents-panel.tsx`, `web/lib/mcp/{hub-service,binding-service,requirements-ledger}.ts` and the link schema/migration. Limit picker and save to connected project servers. Inherited entries are read-only. Removing an addition also declared by an adopted package leaves that inherited ref effective.
   - **Acceptance** — manual/triggered agent dispatch, deduplication, stable refs on upgrade, sibling isolation and denial across project IDs.
   - **Diagnostics** — INFO link revision and origin, WARN unavailable target.
-- [ ] **T12. Edit, save and compare instance persona text.**
+- [x] **T12. Edit, save and compare instance persona text.**
   - **After** T02, T11.
   - Extend the same guarded link PATCH, the agent definition read route, `web/components/agents/project-agents-panel.tsx` and `web/components/workbench/diff-view.tsx`. Render only an accessible icon with hover/focus tooltip for divergence; activation opens a read-only diff against the adopted package revision. Save, clear and restore by CAS. Normalize line endings, distinguish meaningful whitespace, reject blank content, compare again after adoption.
   - **Acceptance** — both EN/RU flows, keyboard use, read/write permission differences and unchanged package bytes.
   - **Diagnostics** — INFO link revision and override state, excluding persona text.
-- [ ] **T13. Apply effective agent configuration to real launches.**
+- [x] **T13. Apply effective agent configuration to real launches.**
   - **After** T09, T10, T11, T12.
   - Wire `web/lib/agents/{effective,flow-binding,launch,frozen-definition,retry-snapshot}.ts` and shared agent read models. Freeze effective prompt, origin and selected refs for standalone manual/triggered runs and where a bound Flow actually consumes the persona. Preserve independent system/task prompt planes and company authority.
   - **Acceptance** — two projects and sibling agents, manual versus triggered parity, exact prompt delivered on dispatch and restored on retry, disabled target withheld/refused according to requirement.

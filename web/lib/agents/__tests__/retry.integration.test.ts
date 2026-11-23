@@ -1,6 +1,6 @@
 import type { ScheduledAgentRequestSnapshot } from "@/lib/agents/scheduled-request";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rm, writeFile, readFile, access } from "node:fs/promises";
 import path from "node:path";
 
@@ -817,6 +817,40 @@ it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges
     requestAtLaunch: "Original retry request: Отчёт 😀",
   };
   const fixtureData = await fixture("none", snapshot);
+  const {
+    rows: [binding],
+  } = await database.pool.query<{
+    agent_id: string;
+    package_install_id: string;
+  }>(
+    "SELECT l.agent_id,a.package_install_id FROM agent_project_links l JOIN project_package_attachments a ON a.project_id=l.project_id WHERE l.project_id=$1",
+    [fixtureData.projectId],
+  );
+  const originalProfile = {
+    version: 1,
+    projectId: fixtureData.projectId,
+    agentId: binding.agent_id,
+    packageInstallId: binding.package_install_id,
+    prompt: "Original private role",
+    promptSha256: createHash("sha256")
+      .update("Original private role")
+      .digest("hex"),
+    promptOrigin: "project",
+    packageMcpRefs: [],
+    additionalMcpRefs: [],
+    sharedMcps: [],
+    mcpTargets: [],
+    linkRevision: 1,
+  };
+
+  await database.pool.query(
+    "UPDATE runs SET project_agent_profile=$2 WHERE id=$1",
+    [fixtureData.runId, originalProfile],
+  );
+  await database.pool.query(
+    "UPDATE agent_project_links SET prompt_override='Changed role' WHERE project_id=$1",
+    [fixtureData.projectId],
+  );
   const alternativeId = randomUUID();
   const alternative = testRunnerSnapshot(alternativeId, "codex");
 
@@ -882,13 +916,14 @@ it("IT-UX-14 accepts one immutable retry of a proven pre-work failure, converges
   });
   const children = (
     await database.pool.query(
-      "SELECT retry_of_run_id,trigger_source,trigger_event_id,agent_config,status,scheduled_request_snapshot FROM runs WHERE retry_of_run_id=$1",
+      "SELECT retry_of_run_id,trigger_source,trigger_event_id,agent_config,status,scheduled_request_snapshot,project_agent_profile FROM runs WHERE retry_of_run_id=$1",
       [fixtureData.runId],
     )
   ).rows;
 
   expect(children).toHaveLength(1);
   expect(children[0].scheduled_request_snapshot).toEqual(snapshot);
+  expect(children[0].project_agent_profile).toEqual(originalProfile);
   const recipe = (
     await database.pool.query(
       "SELECT recipe FROM agent_retry_intents WHERE id=$1",

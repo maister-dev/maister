@@ -18,6 +18,10 @@ import {
 } from "./package-delivery";
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
+import {
+  applyProjectAgentProfile,
+  readProjectAgentProfile,
+} from "@/lib/agents/project-instance-profile";
 import { readPackageMcpScopes } from "@/lib/packages/mcp-scope";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import { MaisterError } from "@/lib/errors";
@@ -170,6 +174,18 @@ export async function capturePackageDelivery(
       agentId,
       packageInstallId: pkg.installId,
     });
+    const { rows: links } = await db.execute(
+      sql`SELECT l.enabled FROM agent_project_links l WHERE l.project_id=${input.projectId} AND l.agent_id=${agentId}`,
+    );
+    if (links[0]?.enabled === false)
+      throw new MaisterError(
+        "PRECONDITION",
+        `Project agent ${agentId} is disabled`,
+      );
+    const profile = links.length
+      ? await readProjectAgentProfile(db, input.projectId, agentId)
+      : null;
+    const applied = applyProjectAgentProfile(definition.parsed, profile);
     bindings[node.id] = {
       agentId,
       installId: pkg.installId,
@@ -178,9 +194,9 @@ export async function capturePackageDelivery(
       ...(definition.parsed.capabilityProfile?.skills !== undefined
         ? { skills: definition.parsed.capabilityProfile.skills }
         : {}),
-      mcpRefs: definition.parsed.capabilityProfile?.mcps ?? [],
-      linkRevision: null,
-      promptOverride: null,
+      mcpRefs: applied.mcpRefs,
+      linkRevision: profile?.revision ?? null,
+      promptOverride: profile?.promptOverride ?? null,
     };
   }
   const result: FlowDeliverySnapshot = {
