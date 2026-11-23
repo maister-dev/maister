@@ -892,7 +892,39 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
 | Postgres connection loss during projection | B3: committed consumer claim, identified backend blocked at its domain write; terminate that backend. | isolation; `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D3; retain web `web/lib/execution-host/events/__tests__/projection-worker.integration.test.ts:163,201` | Existing tests prove failed **shutdown cleanup**, not loss during apply. Production control proves effect/cursor rollback together, original failure visible, successor claim retries and projects once without new event. Preserve cleanup tests' EXECUTOR_UNAVAILABLE/retained-claim assertions. |
 | Web death between create ACK and first prompt | Create ACK and binding committed; proxy holds first prompt before upstream forwarding. Kill web group, then restart. | isolation; `web/test-support/__tests__/execution-ab-process-death.integration.test.ts`, D4 | Production proof qualified locally. Same create intent/session recovered, zero host prompts at death, one prompt/application after restart. Existing `web/lib/flows/graph/__tests__/prompt-owners.integration.test.ts:1015` before_admission/before_effect/**before_ack** windows do not prove this post-ACK window. |
 
-- [ ] **S5.3 — Browser lifecycle and runtime/transport matrix.** Includes the Linux uid/mount-namespace isolation driver and separate-user Linux deployment layout deferred by S5.2 option B. Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
+- [x] **S5.3 — Browser lifecycle and runtime/transport matrix.** Includes the Linux uid/mount-namespace isolation driver and separate-user Linux deployment layout deferred by S5.2 option B. Owner Q; Depends: S5.2 and S3 browser policy. Files: new dedicated Playwright real-supervisor config, lifecycle/content specs, CI/scripts, minimum Node/image qualification. Exercise launch→stream→HITL→checkpoint→resume→cancel/completion/history, each owner-visible reply and active MIME download after restarts. Run AT-17 on minimum 24.15, 24.19 and selected image with exact binary/dependency versions. Logging: scenario/revision/runtime/image/transport phase and result. Acceptance: browser outcomes come from real web/supervisor; default fake-peer E2E remains supporting regression only; no full-Node-24 claim from one passing patch.
+
+  **Local S5.3 qualification.** The [production-image browser smoke](../../web/scripts/smoke-production-split-users.ts)
+  boots production Web and supervisor on Linux arm64 with UID 1001 and 1002,
+  a shared Git/worktree group, a private supervisor runtime directory and
+  a fresh migrated PostgreSQL database. Web receives `EACCES` on the
+  supervisor's live SQLite file. Chromium signs in and opens the board.
+  The board launch HTTP path and Run stream return the expected effects.
+  A checkpointed permission resumes after Web SIGKILL under epoch 2 with
+  the original workspace handle and reaches Review. An independent run
+  cancels and releases assignment ownership. The supervisor restarts with
+  the same durable key and a new boot ID. Chromium downloads the saved
+  HTML after another Web restart and the content endpoint returns the
+  original bytes with attachment disposition. The supervisor uses the
+  deterministic resumable ACP fixture.
+
+  - Build `maister-s53-stage-c:local`, Linux arm64, image ID
+    `sha256:d402a6350b86eedb18d17980842f4b72a146cdecf849a61c62db3adb13d714cc`,
+    Node 24.22.2, Next.js 16.4.6. The Docker build used the branch's
+    `945b1127e` runtime source. The browser harness runs outside the
+    image and uses only the packaged runtime code for Web and supervisor.
+  - AT-17 passed 20/20 on Node 24.15.0 (Darwin arm64), 24.19.0 (Linux
+    arm64 with the Node binary from `node:24.19-bookworm-slim`) and
+    the selected production Linux image. The image's HTTP/SIGTERM smoke
+    also passed against migrated PostgreSQL.
+  - Reports are `/private/tmp/maister-s53-split-user-confirmed.log` and
+    `/private/tmp/maister-s53-{node24.15-binary,node24.19-binary,image-binary,image-http}.log`.
+    The [earlier Librarian browser job](https://github.com/maister-dev/maister/actions/runs/45222613398/job/137860624146)
+    passed Testcontainers startup on base `22df665aa`. This is separate
+    evidence from the corrected S5.4 candidate.
+  - The release workflow runs the split-user smoke against its built
+    image. The systemd units keep their documented shared-user rollout.
+    This locally verified checkpoint brings the plan to **44/45**.
 
   **Owner sequencing override (2026-10-02):** finish one further corrective
   iteration in `codex-stage-ab-ci-r9.md`, then enter S5.3. S5.2 stays open at
@@ -995,6 +1027,11 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   change · **no** migration · **no** new `runs.status` · **no** new index.
 
 - [ ] **S5.4 — Final specification, lineage and acceptance gate.** Owner D/Q; Depends: S5.1–S5.3. Files: all affected canonical docs/analytics/API/ERD/error/config surfaces and this plan; no new summary-report deliverable. Recheck current main/HEAD; revalidate changed findings, migration order/constraints/snapshot hashes and ADR anchors, including prose provisional numbering. Run full suites/gates, verify every AT row with actual runner/case/artifact evidence, and adversarial review of final fix cycles. Logging: exact gate/ref/scenario/evidence state and unresolved risk IDs. Acceptance: all AB-01–17 and final matrix rows satisfied; no known A/B defect remains hidden by quarantine or Implemented prose; Stage C is still unimplemented.
+
+  The corrected candidate still needs same-revision hosted acceptance:
+  the three preflights and combined isolation receipt, Web/runtime matrix
+  and the production image job including the new browser check. Historical
+  or locally passing reports cannot discharge these release conditions.
 
 S5 rollback: qualification-only changes can revert independently, but evidence cannot be treated as passing after reverting a tested fix. Runtime state retains S1–S4 recovery/retention guarantees. Release only a commit whose concrete scenario matrix and specification gates correspond to that exact revision.
 

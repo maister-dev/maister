@@ -128,9 +128,21 @@ shared-root layout does not enforce that isolation boundary. What must stay true
 roots differ: the supervisor identity must still read the web's runtime root
 where read-only context mounts are materialized (ADR-157) and write the
 shared worktrees root; `MAISTER_WORKSPACE_ROOTS` must list every root the web
-creates worktrees or local packages under. A separate-user deployment with a
-`0700` supervisor root has not been qualified on Linux yet (S5.3); until it
-is, treat the shared-user layout as the supported one.
+creates worktrees or local packages under.
+
+S5.3 qualifies a Linux container layout with distinct Web and supervisor
+users. Give the supervisor a private `0700` runtime root with its SQLite
+state inside it. Make the Stage B project repositories and worktrees
+accessible through a shared service group and set-GID directories, with
+`umask 0002` for both service processes. Both identities still need access
+to the shared Git data they use. Keep operator Git trust and credentials
+scoped to their intended service user. The packaged browser smoke exercises
+the production application under Web UID 1001 and supervisor UID 1002
+with those permissions and checks that Web receives `EACCES` when opening
+the live supervisor SQLite store. It also checks the board launch, SSE,
+permission checkpoint and resume, restart, cancellation and active content
+download through the same two processes. Systemd installation below uses
+the existing shared-user units.
 
 **Execution-host state (Implemented — [ADR-166](decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces)).**
 The supervisor keeps a private `node:sqlite` state store under

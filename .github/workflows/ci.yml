@@ -434,3 +434,10 @@ jobs:
         env:
           MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
         run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-image.ts maister-ab:ci
+      - name: Install the production browser fixture
+        run: pnpm --filter maister-web exec playwright install --with-deps chromium
+      - name: Qualify the browser lifecycle with separate Linux service users
+        working-directory: web
+        env:
+          MAISTER_TEST_DOCKER_PROBE_TIMEOUT_MS: "30000"
+        run: pnpm exec tsx --import ./scripts/_register-shim.mjs scripts/smoke-production-split-users.ts maister-ab:ci

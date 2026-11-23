@@ -2732,6 +2732,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       ],
     ),
     ...classified(
+      "scripts/smoke-production-split-users.ts",
+      "build-tooling",
+      "CI provisions disposable Docker containers and verifies separate Linux service UIDs; never runs inside the web process",
+      [["docker", "node:child_process.execFile", "spawn", "docker"]],
+    ),
+    ...classified(
       "scripts/validate-authored-flow.ts",
       "manager-flow-state",
       "operator CLIs over manager-owned package artifacts (install/import/export/validate); never run inside the web process",
