@@ -352,6 +352,14 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
   if (incarnation.runId !== event.runId) {
     throw permanent("terminal session event has no matching incarnation");
   }
+  await applyTerminalToIncarnation(tx, event, incarnation);
+}
+
+async function applyTerminalToIncarnation(
+  tx: Db,
+  event: ExecutionEvent,
+  incarnation: RunSessionIncarnation,
+): Promise<void> {
   const checkpointed =
     event.eventType === "session.exited" &&
     event.payload?.reason === "checkpoint";
@@ -395,6 +403,52 @@ async function projectTerminal(tx: Db, event: ExecutionEvent): Promise<void> {
       .where(eq(runSessionIncarnations.id, incarnation.id));
   }
   await bindEventToIncarnation(tx, event, incarnation.id);
+}
+
+async function projectReleasedSessionCrash(
+  tx: Db,
+  event: ExecutionEvent,
+): Promise<void> {
+  if (
+    event.source !== "host" ||
+    !event.executionHostId ||
+    !event.executionAssignmentId ||
+    event.assignmentEpoch === null ||
+    !event.hostSessionId
+  )
+    return;
+
+  const [incarnation] = await tx
+    .select()
+    .from(runSessionIncarnations)
+    .where(
+      and(
+        eq(runSessionIncarnations.runId, event.runId),
+        eq(runSessionIncarnations.executionHostId, event.executionHostId),
+        eq(
+          runSessionIncarnations.executionAssignmentId,
+          event.executionAssignmentId,
+        ),
+        eq(runSessionIncarnations.assignmentEpoch, event.assignmentEpoch),
+        eq(runSessionIncarnations.hostSessionId, event.hostSessionId),
+        inArray(runSessionIncarnations.state, [
+          "created",
+          "active",
+          "lost",
+          "crashed",
+        ]),
+      ),
+    )
+    .for("update");
+
+  if (!incarnation) return;
+  if (
+    event.runSessionIncarnationId !== null &&
+    event.runSessionIncarnationId !== incarnation.id
+  ) {
+    throw permanent("historical crash is bound to another incarnation");
+  }
+  await applyTerminalToIncarnation(tx, event, incarnation);
 }
 
 function ownedCheckpointReceipt(db: Db) {
@@ -594,7 +648,14 @@ async function projectLifecycle(tx: Db, event: ExecutionEvent): Promise<void> {
   ) {
     return;
   }
-  if (!(await currentCanonicalAssignment(tx, event))) return;
+  if (!(await currentCanonicalAssignment(tx, event))) {
+    // Ingest already accepted this event. A prompt owner may have released the
+    // assignment while this independent cursor was waiting to project it.
+    if (event.eventType === "session.crashed")
+      await projectReleasedSessionCrash(tx, event);
+
+    return;
+  }
   if (event.eventType === "session.created") {
     await projectCreated(tx, event);
 

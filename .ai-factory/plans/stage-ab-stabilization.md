@@ -1,7 +1,7 @@
 # Implementation Plan: Stage A/B stabilization
 
 Branch at planning: `feature/stage-b-durable-execution-host-data-plane`.
-Created: 2026-09-05. Status: **Implementation in progress; S0–S4 qualified (C07–C10 closed); S5.1 complete; S5.2 accepted by exact-source hosted macOS evidence; 43/45 complete; S5.3/S5.4 pending**.
+Created: 2026-09-05. Status: **44/45 complete. S0–S4 qualified (C07–C10 closed), S5.1 complete, S5.2 historically qualified on hosted macOS, and S5.3 qualified locally. S5.4/C11 awaits release qualification.**
 Implementation base: the audited Stage B tip, followed by revalidation against the then-current local `main`.
 
 ## Settings
@@ -970,7 +970,11 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   took 1,269 seconds out of 1,901 seconds available. W06/W08 exceeded its
   case budget while repeatedly booting the real stack. Part 2 published no
   complete production result. Parts 1 and 3 passed 20 and 10 cases,
-  respectively. The combined gate remained red.
+  respectively. The combined gate remained red. Web unit failed on both
+  Node 24 and Node 26 because `inspectDeliveryBase` was missing from the
+  operation-scoped filesystem inventory. The repository-worktree classification
+  restored the existing inventory invariant. The full Web unit suite passes
+  9,313/9,313 on Node 24.15.0 and Node 26.13.1 at `fced03c63`.
 
   **Correction.** Keep the measured process-death suite on its own VM
   and distribute the remaining whole suites across the existing parts
@@ -993,6 +997,8 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   Testcontainers initialization timeout into this gate: collect phase evidence
   before changing the probe contract. A generic 3-second client-init timeout
   does not prove the Docker daemon itself was unavailable.
+  Librarian passed all 15 browser scenarios locally on `fced03c63`
+  under Node 24.15.0, with phase diagnostics and zero process leaks.
 
   **Named scenario added by ADR-180 (one owner for the permission deadline).**
   *A permission older than the old host window while the operator is active →
@@ -1027,6 +1033,25 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   change · **no** migration · **no** new `runs.status` · **no** new index.
 
 - [ ] **S5.4 — Final specification, lineage and acceptance gate.** Owner D/Q; Depends: S5.1–S5.3. Files: all affected canonical docs/analytics/API/ERD/error/config surfaces and this plan; no new summary-report deliverable. Recheck current main/HEAD; revalidate changed findings, migration order/constraints/snapshot hashes and ADR anchors, including prose provisional numbering. Run full suites/gates, verify every AT row with actual runner/case/artifact evidence, and adversarial review of final fix cycles. Logging: exact gate/ref/scenario/evidence state and unresolved risk IDs. Acceptance: all AB-01–17 and final matrix rows satisfied; no known A/B defect remains hidden by quarantine or Implemented prose; Stage C is still unimplemented.
+
+  **Local corrective checkpoint.** Web integration passed 381/381 on shard 1.
+  Shard 2 on `fced03c63` passed 344/345. Its failing permission/crash case
+  observed `Crashed` with a still-active incarnation. A one-worker projection
+  run reproduced the failure. A read of the disposable database confirmed the
+  lifecycle cursor had advanced over the accepted unbound crash after assignment
+  release. The ordered ingest regression reproduces the lost historical witness
+  with an active successor. The canonical projector now settles only the exact
+  historical incarnation, and migration `0369_reconcile_skipped_session_crashes`
+  repairs the same disposition after an old cursor has advanced. See [ADR-177](../../docs/decisions/adr-177.md).
+
+  The ingest suite passes 22/22 on the corrected source, including fresh schema
+  setup and the data repair on populated PostgreSQL, its replay and untouched
+  successor and stale-epoch sibling. The real supervisor HITL/crash suite passes
+  15/15 under each supported one- and two-worker projection configuration.
+  Its restart test observes the durable crash with automatic re-entry paused.
+  The unchanged crash-recover continuation suite passed 15/15 with autonomous
+  re-entry enabled. RED and GREEN logs are in
+  `/private/tmp/maister-stage-ab-s54-fced03c63`.
 
   The corrected candidate still needs same-revision hosted acceptance:
   the three preflights and combined isolation receipt, Web/runtime matrix

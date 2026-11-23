@@ -149,7 +149,7 @@ For each operation put executable success, refusal and replay examples alongside
 
 ### Storage contracts and cutover
 
-Reserve PostgreSQL 0369 and SQLite 19 for the G1 expansion. Assign the
+Reserve PostgreSQL 0370 and SQLite 19 for the G1 expansion. Assign the
 G2 singleton-index replacement after the G1 migration on the current merge
 tip. Check the final journal and SQLite upgrade chain before generating SQL.
 

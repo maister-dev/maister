@@ -563,6 +563,19 @@ async function boundaryState(runId: string): Promise<BoundaryState> {
   };
 }
 
+async function boundaryAfterCrashProjection(
+  runId: string,
+  what: string,
+): Promise<BoundaryState> {
+  // The lifecycle consumer can settle the incarnation after the run's owner
+  // commits its terminal state. Read the full boundary once both are visible.
+  return waitFor(async () => {
+    const state = await boundaryState(runId);
+
+    return state.incarnations.at(-1) === "crashed" ? state : null;
+  }, `${what}: the incarnation projects crashed`);
+}
+
 async function seedFlowRun(name: string, flowDefinition: unknown = AGENT_FLOW) {
   const repoPath = await initRepo(`${sup.runtimeRoot}/repo-${name}`);
   const worktreePath = await addWorktree(
@@ -735,7 +748,9 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     await crashAdapter(runId);
     await settled(runId, "flow-sigkill");
     await flow;
-    expect(await boundaryState(runId)).toEqual(FLOW_SESSION_CRASHED);
+    expect(await boundaryAfterCrashProjection(runId, "flow-sigkill")).toEqual(
+      FLOW_SESSION_CRASHED,
+    );
     expect(await crashReason(runId)).toBe("session-crashed");
 
     let resumed: Promise<void> | undefined;
@@ -784,16 +799,9 @@ describe("the crash boundary with a permission pending (G0, no answer sent)", ()
     await crashAdapter(runId);
     await settled(runId, "scratch-sigkill");
     await driver;
-    // The scratch consumer settles the run from the session stream, ahead of
-    // the canonical lifecycle projection of the same crash.
-    await waitFor(
-      async () =>
-        (await boundaryState(runId)).incarnations.every(
-          (state) => state === "crashed",
-        ),
-      "scratch-sigkill: the incarnation projects crashed",
-    );
-    expect(await boundaryState(runId)).toEqual(SCRATCH_CHILD_KILLED);
+    expect(
+      await boundaryAfterCrashProjection(runId, "scratch-sigkill"),
+    ).toEqual(SCRATCH_CHILD_KILLED);
   }, 180_000);
 
   it("(iii-b) agent: the adapter child dies under a live host → Failed, row closed (D-G3)", async () => {
@@ -980,6 +988,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
       expect(closedHitl.id).toBe(hitl.id);
       expect(closedHitl.respondedAt).not.toBeNull();
       expect(await crashReason(runId)).toBe("session-crashed");
+      await boundaryAfterCrashProjection(runId, "gate-sigkill");
       expect((await getRunDetail(runId))?.recoverable).toBe(true);
     } finally {
       abort.abort();
@@ -1088,6 +1097,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
       await flow;
     }
 
+    await boundaryAfterCrashProjection(runId, "gate-witness-missing");
     await db
       .update(schema.gateResults)
       .set({ status: "failed" })
@@ -1153,11 +1163,13 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
       await flow;
     }
 
+    await boundaryAfterCrashProjection(runId, "gate-queued-recover");
     const blockerId = await seedFlowRun("gate-queued-blocker");
 
+    // A human-owned slot counts toward capacity without admitting an ACP driver.
     await db
       .update(schema.runs)
-      .set({ status: "Running" })
+      .set({ status: "HumanWorking" })
       .where(eq(schema.runs.id, blockerId));
     const originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
 
@@ -1255,6 +1267,7 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
     let resumedAgain: Promise<void> | undefined;
 
     try {
+      await boundaryAfterCrashProjection(runId, "gate-prefix-preserved");
       expect(
         await resumeCrashedRun(runId, {
           db,
@@ -1293,6 +1306,10 @@ describe("a gate permission park whose adapter dies under a live host (G1)", () 
         resumed,
       );
 
+      await boundaryAfterCrashProjection(
+        runId,
+        "gate-prefix-preserved: resumed gate",
+      );
       expect(
         await resumeCrashedRun(runId, {
           db,
@@ -1375,11 +1392,9 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
     }
     await settled(runId, "flow-answer");
     await flow;
-    expect(await boundaryState(runId)).toEqual(FLOW_SESSION_CRASHED);
-    // On master the answer won the CAS and failed the run HITL_TIMEOUT.
-    expect(
-      (await boundaryState(runId)).terminalEvents.includes("run.failed"),
-    ).toBe(false);
+    expect(await boundaryAfterCrashProjection(runId, "flow-answer")).toEqual(
+      FLOW_SESSION_CRASHED,
+    );
   }, 240_000);
 
   // The crash's canonical event is held, as in (i): the scratch and agent
@@ -1430,16 +1445,9 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
 
     await answerHeldCrash(runId, hitl.id, "scratch-answer");
     await driver;
-    // The scratch consumer settles the run from the session stream, ahead of
-    // the canonical lifecycle projection of the same crash.
-    await waitFor(
-      async () =>
-        (await boundaryState(runId)).incarnations.every(
-          (state) => state === "crashed",
-        ),
-      "scratch-answer: the incarnation projects crashed",
+    expect(await boundaryAfterCrashProjection(runId, "scratch-answer")).toEqual(
+      SCRATCH_CHILD_KILLED,
     );
-    expect(await boundaryState(runId)).toEqual(SCRATCH_CHILD_KILLED);
   }, 180_000);
 
   // T3.3 on the real host: the session is live but no longer holds the
@@ -1490,6 +1498,10 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
 
 describe("the host restarts under a pending permission (G0 (ii), last: it recycles the host)", () => {
   it("(ii) flow: turn_lost → Crashed, recoverable, row closed by crashRunningRun", async () => {
+    // This case observes settlement before a separate recovery worker may
+    // resume the run and park it at a new permission. Keep owner application
+    // and lifecycle projection running during the supervisor restart.
+    await durable[1].stop();
     const { runId, flow } = await flowOnPermission("flow-restart");
 
     sup = await sup.restart();
