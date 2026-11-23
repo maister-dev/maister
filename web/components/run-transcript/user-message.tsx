@@ -50,7 +50,7 @@ export function UserMessage({
   message: TranscriptMessage;
   repeated: boolean;
   labels: TranscriptLabels;
-  userLabel?: string;
+  userLabel?: string | null;
   attachments: ReactNode;
 }): ReactElement {
   const t = useTranslations("transcriptUser");
