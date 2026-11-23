@@ -2928,6 +2928,7 @@
     "agentCenterOpenDiff": "Open diff",
     "flowCenterTitle": "Flow result",
     "headerStopRun": "Stop run",
+    "flowCenterCloseFullscreen": "Close fullscreen",
     "flowCenterFullscreen": "Fullscreen",
     "flowCenterReviewChanges": "Review changes",
     "flowCenterNodes": "Nodes",

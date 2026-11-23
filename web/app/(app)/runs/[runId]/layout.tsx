@@ -990,6 +990,7 @@ export default async function RunDetailLayout({
     failure: t.raw("failure"),
     title: t("flowCenterTitle"),
     fullscreen: t("flowCenterFullscreen"),
+    closeFullscreen: t("flowCenterCloseFullscreen"),
     reviewChanges: t("flowCenterReviewChanges"),
     nodes: t("flowCenterNodes"),
     selectedNode: t("flowCenterSelectedNode"),
@@ -1652,6 +1653,7 @@ export default async function RunDetailLayout({
             checksLink={reviewOwnsChecks ? null : attention}
             graphView={
               <FlowGraphViewSection
+                heightClassName="h-[var(--flow-canvas-height,420px)]"
                 labels={flowGraphData.labels}
                 layout={flowGraphData.layout}
                 nodeTooltips={flowGraphData.nodeTooltips}
@@ -1844,6 +1846,7 @@ export default async function RunDetailLayout({
           hasWorkbench && !isOperational ? inspectorChangeScope : undefined
         }
         changeSummary={isOperational ? null : changeSummary}
+        hasFullscreenGraph={hasFlowHeading}
         hideChangeSummary={isOperational}
         inspector={
           <>

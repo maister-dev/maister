@@ -15,10 +15,12 @@ import type {
   FlowNodeReviewResult,
 } from "@/lib/runs/flow-node-result";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
+import { useInertSiblings, useModalA11y } from "@/components/use-modal-a11y";
 import { ContextLimitMessage } from "@/components/runs/context-limit-message";
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import { RunRecoverActions } from "@/components/runs/run-recover-actions";
@@ -39,6 +41,7 @@ export interface FlowRunCenterLabels {
   failure: AttemptFailureLabels;
   title: string;
   fullscreen: string;
+  closeFullscreen: string;
   reviewChanges: string;
   nodes: string;
   selectedNode: string;
@@ -435,6 +438,38 @@ export function FlowRunCenter({
   const selectedResult =
     selected !== null ? buildFlowNodeResult(result, selected) : null;
 
+  const surface = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLAnchorElement>(null);
+  const position = useRef<{ x: number; y: number } | null>(null);
+  const expanded =
+    !!graphView && result.graph.kind === "ready" && state.flow === "fullscreen";
+  const active = expanded && !searchParams.get("peek");
+  const close = (): void => {
+    window.history.pushState(
+      null,
+      "",
+      buildRunHref(pathname, window.location.search, { flow: null }) +
+        window.location.hash,
+    );
+  };
+
+  useModalA11y(surface, close, active);
+  useInertSiblings(surface, active);
+  useEffect(() => {
+    if (!surface.current?.getClientRects().length) return;
+    if (expanded) {
+      position.current ??= { x: window.scrollX, y: window.scrollY };
+
+      return;
+    }
+    const previous = position.current;
+
+    if (previous) {
+      opener.current?.focus({ preventScroll: true });
+      window.scrollTo(previous.x, previous.y);
+      position.current = null;
+    }
+  }, [expanded]);
   if (result.graph.kind !== "ready") {
     return (
       <section
@@ -457,13 +492,33 @@ export function FlowRunCenter({
         </h2>
         <div className="flex flex-wrap items-center gap-2">
           {checksLink}
-          <Link
-            className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
-            data-testid="flow-run-fullscreen"
-            href={buildRunHref(pathname, query, { flow: "fullscreen" })}
-          >
-            {labels.fullscreen}
-          </Link>
+          {graphView ? (
+            <a
+              ref={opener}
+              className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
+              data-testid="flow-run-fullscreen"
+              href={buildRunHref(pathname, query, { flow: "fullscreen" })}
+              onClick={(event) => {
+                if (
+                  event.button ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                position.current = { x: window.scrollX, y: window.scrollY };
+                window.history.pushState(
+                  null,
+                  "",
+                  event.currentTarget.href + window.location.hash,
+                );
+              }}
+            >
+              {labels.fullscreen}
+            </a>
+          ) : null}
           {result.run.status === "Review" || result.review !== null ? (
             <Link
               className="rounded-full border border-line bg-ivory px-3 py-2 font-mono text-[11px] font-semibold text-ink hover:border-amber hover:text-amber"
@@ -477,11 +532,36 @@ export function FlowRunCenter({
       </div>
 
       {graphView ? (
-        <div
-          className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-ivory"
-          data-testid="flow-run-graph-view"
-        >
-          {graphView}
+        <div className="h-[420px]">
+          <div
+            ref={surface}
+            aria-label={expanded ? labels.title : undefined}
+            aria-modal={active || undefined}
+            className={clsx(
+              "min-w-0 max-w-full overflow-hidden border border-line bg-paper",
+              expanded
+                ? "fixed inset-0 z-[80] flex flex-col [--flow-canvas-height:100%]"
+                : "rounded-[10px]",
+            )}
+            data-testid="flow-run-graph-view"
+            role={expanded ? "dialog" : undefined}
+          >
+            {expanded ? (
+              <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
+                <span className="font-semibold">{labels.title}</span>
+                <button
+                  className="rounded-md border border-line px-3 py-1.5 text-sm"
+                  type="button"
+                  onClick={close}
+                >
+                  {labels.closeFullscreen}
+                </button>
+              </div>
+            ) : null}
+            <div className={expanded ? "min-h-0 flex-1" : undefined}>
+              {graphView}
+            </div>
+          </div>
         </div>
       ) : null}
 

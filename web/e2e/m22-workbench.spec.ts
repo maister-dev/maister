@@ -807,3 +807,83 @@ test.describe("touch and compact layout", () => {
     });
   }
 });
+
+test("expands the live canvas and preserves history and focus", async ({
+  page,
+  browserName: engine,
+}, testInfo) => {
+  const fx = loadM22Fixture();
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/runs/${fx.runId}?node=${fx.currentNode}&inspector=closed`);
+  const shell = page.getByTestId("run-shell").filter({ visible: true });
+  const enter = shell.getByTestId("flow-run-fullscreen");
+  const graph = shell.getByTestId("flow-run-graph-view");
+  const canvas = graph.locator(".react-flow");
+
+  await expect(canvas).toBeVisible();
+  const inline = await canvas.boundingBox();
+  const originalCanvas = await canvas.elementHandle();
+  await enter.scrollIntoViewIfNeeded();
+  const initialScroll = await page.evaluate(() => window.scrollY);
+
+  await enter.click();
+  await expect(page).toHaveURL(/flow=fullscreen/);
+  await expect
+    .poll(async () => (await canvas.boundingBox())?.height ?? 0)
+    .toBeGreaterThan(inline!.height + 200);
+  const verifyBounds = async () => {
+    const box = await graph.boundingBox();
+
+    expect(Math.abs(box!.x) + Math.abs(box!.y)).toBeLessThanOrEqual(2);
+    expect(Math.abs(box!.width - 1440)).toBeLessThanOrEqual(2);
+    expect(Math.abs(box!.height - 1000)).toBeLessThanOrEqual(2);
+  };
+
+  await verifyBounds();
+  expect(
+    await canvas.evaluate((el, original) => el === original, originalCanvas),
+  ).toBe(true);
+  const closeControl = graph.getByRole("button", { name: "Close fullscreen" });
+  await expect(closeControl).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect
+    .poll(() => graph.evaluate((el) => el.contains(document.activeElement)))
+    .toBe(true);
+  const area = await canvas.boundingBox();
+  const controls = await closeControl.boundingBox();
+  expect(area!.height).toBeGreaterThan(1000 - controls!.height - 30);
+  await testInfo.attach("graph-bounds", {
+    body: JSON.stringify({
+      engine,
+      inline,
+      expanded: await canvas.boundingBox(),
+      surface: await graph.boundingBox(),
+    }),
+    contentType: "application/json",
+  });
+  await page.goBack();
+  await expect(enter).toBeFocused();
+  await expect
+    .poll(async () => (await canvas.boundingBox())?.height)
+    .toBe(inline!.height);
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBe(initialScroll);
+  await page.goForward();
+  await expect(closeControl).toBeFocused();
+  await verifyBounds();
+  await page.reload();
+  const close = graph.getByRole("button", { name: "Close fullscreen" });
+
+  await expect(close).toBeFocused();
+  await close.click();
+  await expect(page).toHaveURL(
+    new RegExp(`node=${fx.currentNode}&inspector=closed$`),
+  );
+  await expect(enter).toBeFocused();
+  await enter.click();
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(enter).toBeFocused();
+});

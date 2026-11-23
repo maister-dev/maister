@@ -2928,6 +2928,7 @@
     "agentCenterOpenDiff": "Открыть диф",
     "flowCenterTitle": "Результат Flow",
     "headerStopRun": "Остановить запуск",
+    "flowCenterCloseFullscreen": "Выйти из полноэкранного режима",
     "flowCenterFullscreen": "На весь экран",
     "flowCenterReviewChanges": "Ревью изменений",
     "flowCenterNodes": "Шаги",

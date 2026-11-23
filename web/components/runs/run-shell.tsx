@@ -34,6 +34,7 @@ export interface RunShellProps {
   projectLabel?: string | null;
   taskPrompt?: string | null;
   status: string;
+  hasFullscreenGraph?: boolean;
   policyBadge?: ReactNode;
   stopControl?: ReactNode;
   branch?: string | null;
@@ -80,6 +81,7 @@ export function RunShell({
   projectLabel,
   taskPrompt,
   status,
+  hasFullscreenGraph = false,
   policyBadge,
   stopControl,
   branch,
@@ -120,7 +122,8 @@ export function RunShell({
     desktopInspector,
   );
   const dialog = useRef<HTMLDivElement>(null);
-  const overlay = inspectorOpen && compact && !peeking;
+  const fullscreen = hasFullscreenGraph && search.get("flow") === "fullscreen";
+  const overlay = inspectorOpen && compact && !peeking && !fullscreen;
 
   function setInspectorOpen(open: boolean): void {
     const { pathname, search, hash } = window.location;
@@ -144,8 +147,6 @@ export function RunShell({
     >
       <RunHeader
         agentHistory={agentHistory}
-        policyBadge={policyBadge}
-        stopControl={stopControl}
         branch={branch}
         budgetStatus={budgetStatus}
         canReopen={canReopen}
@@ -159,6 +160,7 @@ export function RunShell({
         keyRef={keyRef}
         labels={labels}
         liveness={liveness}
+        policyBadge={policyBadge}
         prHasConflicts={prHasConflicts}
         projectHref={projectHref}
         projectLabel={projectLabel}
@@ -167,6 +169,7 @@ export function RunShell({
         reviewHref={reviewHref}
         runId={runId}
         status={status}
+        stopControl={stopControl}
         subtitle={subtitle}
         targetBranch={targetBranch}
         taskHref={taskHref}
@@ -198,7 +201,7 @@ export function RunShell({
                 : "border-l border-line pl-4",
             )}
             data-testid="run-shell-inspector"
-            hidden={peeking}
+            hidden={peeking || fullscreen}
           >
             <div
               ref={dialog}

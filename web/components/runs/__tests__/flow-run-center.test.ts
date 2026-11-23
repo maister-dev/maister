@@ -38,6 +38,7 @@ const LABELS: FlowRunCenterLabels = {
   failure: messages.run.failure,
   title: "Flow result",
   fullscreen: "Fullscreen",
+  closeFullscreen: "Close fullscreen",
   reviewChanges: "Review changes",
   nodes: "Nodes",
   selectedNode: "Selected node",
