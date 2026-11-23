@@ -527,3 +527,5 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   [ADR-149](../decisions.md#adr-149) editor session edit-lock (Implemented).
 - Source seams: `web/lib/capabilities/catalog.ts`,
   `web/lib/capabilities/materialize.ts`, `web/lib/capabilities/cleanup.ts`.
+
+Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).

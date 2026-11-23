@@ -453,3 +453,4 @@ contract. Fixture copies are engine tests, never package-release sources.
 - Related domains: [`flows.md`](flows.md), [`projects.md`](projects.md),
   [`runs.md`](runs.md), [`external-operations.md`](external-operations.md).
 
+Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).

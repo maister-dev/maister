@@ -2613,45 +2613,16 @@ paths:
         (greenfield `mkdir -p` + `git init`, only on an explicit `mode: new`).
 
         It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
-        **Present** → today's path (validate, derive slug from `project.name`
-        kebab-case server-side, install each `flows[]` plugin). **Absent** →
-        validate minimal v2 configuration in memory using
-        `name = body.name || basename(resolvedDir)`, the resolved default branch,
-        and `flows: []`, then follow the same registration pipeline. No manifest
-        is written; `maister_yaml_path` remains null until an explicit reviewed
-        save. Both paths check `slug` / `repo_path` / `taskKey`
-        uniqueness, persist `projects`, and
-        insert a `project_members` row for the caller with `role = "owner"`.
-
-        Phases and their error codes:
-        1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
-           `PASSWORD_CHANGE_REQUIRED` (403)
-        2. Resolve project source (clone / existing / new-empty git-init) —
-           `PRECONDITION` (409) on clone failure (with advisory `reason` +
-           redacted `detail`), missing dir, or a target/new path collision
-        3. Stat `maister.yaml` — **present-but-invalid** → `CONFIG` (422);
-           **missing** → validate minimal configuration in memory without writing a file
-        4. Slug/repo_path/taskKey collision check — `CONFLICT` (409)
-        5. DB write (project + owner membership, plus executors/flows on the
-           present-manifest path) in ONE transaction — `CONFIG` (422) on
-           slug-derivation failure; a concurrent duplicate that races the
-           collision check trips the unique constraint and is reported as
-           `CONFLICT` (409).
-        6. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
-           all-or-nothing: on any install failure the route fully
-           compensates — deletes the `projects` row (FK cascade removes
-           flows and the owner membership) and removes the
-           slug-scoped artifact subtree — so the same `maister.yaml` can be
-           retried with no leftover row. The shared, content-addressed system
-           cache (`~/.maister/flows/<id>@<sha>`) is intentionally retained.
+        **Present** → validate the manifest and derive the slug from project.name.
+        **Absent** → validate in-memory defaults and retain a null manifest path.
+        After source preparation, commit the project, owner, inline configuration
+        and all package, Flow and capability import requests together (ADR-218,
+        designed cutover). HTTP 201 identifies the accepted project. Installation
+        and readiness are observable per declaration after acceptance. Clone
+        and identity failures retain their existing 409/422 classification.
 
         Source: `web/app/api/projects/route.ts`.
       operationId: postProject
-      x-maister-m43-legacy-steps:
-        status: 502
-        code: FLOW_INSTALL
-        sideEffects: compensated-registration
-        message: "legacy steps[] flows are not supported since engine 3.0.0; republish the package with nodes[]"
       requestBody:
         required: true
         content:
@@ -2735,19 +2706,7 @@ paths:
           description: |
             A **present** `maister.yaml` is invalid YAML, fails schema
             validation, or its `project.name` cannot be kebab-cased (`CONFIG`).
-            A **missing** manifest does NOT 422 — MAIster atomically generates a
-            minimal manifest, then validates and registers it (Implemented,
-            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "502":
-          description: |
-            A Flow plugin `git clone` or manifest validation failed
-            (`FLOW_INSTALL`). The whole registration is rolled back — the
-            `projects` row is deleted (cascading to flows and the
-            owner membership) and the slug-scoped artifact subtree is removed —
-            so the identical request can be retried without a 409.
+            A missing manifest uses validated in-memory defaults.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -15969,7 +15928,7 @@ paths:
       tags: [flow-packages, projects]
       summary: (ADR-088 — Implemented) List package attachments of a project
       description: |
-        (ADR-088 — Implemented.) Member-visible. Attachments with member flow
+        (ADR-088 — Implemented.) Requires managePackages. Attachments with member flow
         ids and the `updateAvailable` derivation (a newer matching tag exists
         in the source's discovered snapshot).
       operationId: getProjectPackages
@@ -15987,12 +15946,31 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [attachments]
+                required: [attachments, declarations]
                 properties:
+                  declarations:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectDependencyDeclaration" }
                   attachments:
                     type: array
                     items:
                       { $ref: "#/components/schemas/ProjectPackageAttachment" }
+              examples:
+                failedPackage:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 1, source: "https://example.org/team/packages", version: core/v1, path: null, attempt: 1, state: failed, stage: resolve, reason: source_unavailable, effectiveAttachmentId: null, effectiveRevision: null, memberRef: null, resolvedRevision: null, readiness: unresolved, actions: {edit: true, retry: true, recoverSetup: false}}
+                refreshedAfterEdit:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 2, source: "https://example.org/team/packages", version: core/v1.1, path: packages/core, attempt: 1, state: pending, stage: null, reason: null, effectiveAttachmentId: null, effectiveRevision: null, memberRef: null, resolvedRevision: null, readiness: unresolved, actions: {edit: true, retry: false, recoverSetup: false}}
+                interruptedSetup:
+                  value:
+                    attachments: []
+                    declarations:
+                      - {id: d1, kind: package, ref: core, generation: 2, source: "https://example.org/team/packages", version: core/v1.1, path: packages/core, attempt: 1, state: recovery_required, stage: setup, reason: setup_outcome_unknown, effectiveAttachmentId: null, effectiveRevision: null, memberRef: "capability:bundle", resolvedRevision: edac62b8de8dfa93107149269f82bae440ae287e, readiness: recovery_required, actions: {edit: true, retry: false, recoverSetup: true}}
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -16074,6 +16052,96 @@ paths:
                 details:
                   reason: package_name_taken
                   packageName: aif
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}:
+    patch:
+      tags: [projects]
+      operationId: editProjectDependencyDeclaration
+      summary: Replace editable package coordinates and queue the new generation.
+      description: Designed under ADR-218. Authorize active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditProjectDependency" }
+      responses:
+        "200":
+          description: Replace editable package coordinates and queue the new generation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyDeclaration" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Stale generation or attempt, live setup owner, publication conflict or state ineligible for the action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}/retry:
+    post:
+      tags: [projects]
+      operationId: retryProjectDependency
+      summary: Queue a retry or replay its existing receipt.
+      description: Designed under ADR-218. Authorize active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RetryProjectDependency" }
+      responses:
+        "202":
+          description: Queue a retry or replay its existing receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyReceipt" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Stale generation or attempt, live setup owner, publication conflict or state ineligible for the action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/dependency-declarations/{declarationId}/recover-setup:
+    post:
+      tags: [projects]
+      operationId: recoverProjectDependencySetup
+      summary: Authorize one setup replay against a quiescent exact member.
+      description: Designed under ADR-218. Authorize active project management and global installation authority before mutation or receipt replay.
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}}
+        - {name: declarationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecoverProjectDependencySetup" }
+      responses:
+        "202":
+          description: Authorize one setup replay against a quiescent exact member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDependencyReceipt" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Stale generation or attempt, live setup owner, publication conflict or state ineligible for the action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422": { $ref: "#/components/responses/Config" }
 
   /api/projects/{slug}/packages/{attachmentId}:
@@ -37972,6 +38040,74 @@ components:
           items: { type: string }
           description: "Manifest flow ids."
 
+    EditProjectDependency:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, source, version]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        source: {type: string, minLength: 1}
+        version: {type: string, minLength: 1}
+        path: {type: string, minLength: 1}
+      example: {expectedGeneration: 1, source: "https://example.org/team/packages", version: "core/v1.1", path: packages/core}
+    RetryProjectDependency:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, expectedAttempt]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        expectedAttempt: {type: integer, minimum: 1}
+    RecoverProjectDependencySetup:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration, expectedAttempt, memberRef, resolvedRevision, action]
+      properties:
+        expectedGeneration: {type: integer, minimum: 1}
+        expectedAttempt: {type: integer, minimum: 1}
+        memberRef: {type: string, minLength: 1}
+        resolvedRevision: {type: string, minLength: 1}
+        action: {type: string, enum: [rerun_setup]}
+      example: {expectedGeneration: 2, expectedAttempt: 1, memberRef: "capability:bundle", resolvedRevision: "edac62b8de8dfa93107149269f82bae440ae287e", action: rerun_setup}
+    ProjectDependencyReceipt:
+      type: object
+      description: An identical authorized retry or recovery command replays this receipt.
+      example: {declarationId: d1, generation: 2, attempt: 2}
+      required: [declarationId, generation, attempt]
+      properties:
+        declarationId: {type: string}
+        generation: {type: integer}
+        attempt: {type: integer}
+    ProjectDependencyDeclaration:
+      type: object
+      required: [id, kind, ref, generation, source, version, path, attempt, state, stage, reason, effectiveAttachmentId, effectiveRevision, memberRef, resolvedRevision, readiness, actions]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [package, flow, capability_import]}
+        ref: {type: string}
+        generation: {type: integer, minimum: 1}
+        source: {type: string}
+        version: {type: string}
+        path: {type: string, nullable: true}
+        attempt: {type: integer, nullable: true}
+        state: {type: string, nullable: true, enum: [pending, running, succeeded, failed, recovery_required, null]}
+        stage: {type: string, nullable: true}
+        reason: {type: string, nullable: true}
+        effectiveAttachmentId: {type: string, nullable: true}
+        readiness:
+          type: string
+          enum: [unresolved, awaiting_trust, setup_failed, recovery_required, installed]
+          description: Installation readiness. Run admission also checks runner bindings and current runtime policy.
+        actions:
+          type: object
+          additionalProperties: false
+          required: [edit, retry, recoverSetup]
+          properties:
+            edit: {type: boolean}
+            retry: {type: boolean}
+            recoverSetup: {type: boolean}
+        effectiveRevision: {type: string, nullable: true}
+        memberRef: {type: string, nullable: true}
+        resolvedRevision: {type: string, nullable: true}
     ProjectPackageAttachment:
       type: object
       description: (ADR-088 — Implemented) A project's enablement of one package install.

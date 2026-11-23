@@ -254,21 +254,21 @@ At issuance, use the immutable commit SHA and captured effective URL plus destin
 
 API receipts expose `cleanupState` and optional `cleanupReason` (stable allow-listed reason keys); push results expose the equivalent push cleanup status. These are required fields in the deployed new API family. Current runtime settings and the manifest schema do not gain any of these operational fields.
 
-Package installation retry is an additional export writer: `installPackageRevision`
-can update an existing install's status and manifest metadata, including
-`sourceSubpath`. The install-update trigger advances attached projects in
-sorted ID order for exported coordinates/status; the accepted-publication guard
-refuses changes while an intent is active. Trust/timestamp-only updates stay
-DB-only. Migration 0198 closes concurrent binding changes: before attachment
-insert/delete or semantic binding update, lock the referenced old/new install
-rows in sorted order with `FOR SHARE NOWAIT`. These locks conflict with metadata
-updates, unlike the foreign key's key-share lock. Contention returns
-`CONFLICT/operation_busy` without partial writes; retry after the other operation
-finishes. An update already waiting on a binding transaction observes the newly
-committed attachment before advancing revisions (READ COMMITTED trigger queries).
-No dependency on a pre-existing attachment or application-only locking remains.
-Real two/three-connection tests own both orders, pin switches, retry and accepted
-publication while the installation writer waits.
+Settings → Git exports each package declaration’s logical ID and desired source,
+version and optional path. Successful installation is independent of saving a
+safe remote pin. The project export revision changes on semantic pin edits.
+Processing, retry, trust, shared cache and effective attachment changes leave
+that revision intact. Accepted publication serializes against semantic edits
+on the project row.
+
+A v2 review binds the exact committed manifest blob and the content digest of
+each new or changed local pin. An unresolved local entry with identical
+coordinates in that blob can remain verbatim through an unrelated edit even
+when its directory is unavailable. Source validation applies to every pin,
+including preserved entries. An installed local pin still requires content
+matching the reviewed effective revision. Publication verifies the same source
+and local witnesses before its effects. A terminal v1 receipt replays by its
+original digest. Pending v1 reviews retain their installed-revision check.
 
 The immutable repository snapshot encodes canonical Git-quoted ASCII index entries as base64. `core.quotePath=true` keeps arbitrary path bytes, control characters and non-ASCII names lossless across the text/JSON boundary. Expected published index entries are derived from the immutable prepared commit tree, never a mutable private index. PostgreSQL JSONB cannot represent U+0000; the lossless encoded value remains part of the reviewed-state digest. Do not strip delimiters or normalize path text. Repeated persistence against a non-empty index is a real-Git/real-Postgres acceptance case.
 
@@ -326,3 +326,5 @@ proof before any repository mutation or receipt repair.
 ## Operational preparation recovery (Designed)
 
 Preparation, task launch dispatch and cleanup, Pull and promotion, and configuration publication and recovery share the common Git-directory mutation fence. Preparation holds it through Git mutation and durable publication. Logical settlement runs after release. An orphan remains subject to the existing process-group exclusion and recovery checks. See [Agent workspace preparation](agent-preparation.md).
+
+Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).

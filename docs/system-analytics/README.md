@@ -129,3 +129,5 @@ One row per file — this table is the **canonical index** of the folder
 - [Child Run peek navigation](run-peek-navigation.md) — Implemented UI, hierarchy, routing and focus contract.
 - [Child Run peek data](run-peek-data.md) — Implemented authorization, bounded reads and live delivery.
 - [Child Run peek traceability](run-peek-traceability.md) — Planned requirements, edges and primary tests.
+
+- [Project dependency installation](project-dependency-installation.md) — repository acceptance, durable requests, recovery and readiness.

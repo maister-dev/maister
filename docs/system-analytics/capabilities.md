@@ -497,3 +497,5 @@ These are the steady-state invariants the materialization code MUST satisfy
   `web/lib/flows/enforcement.ts`, `web/lib/flows/graph/{runner-graph,ledger}.ts`,
   `web/lib/flow-paths.ts`, `web/app/api/runs/route.ts`,
   `web/app/api/projects/[slug]/capabilities/[capabilityRefId]/trust/route.ts`.
+
+Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).

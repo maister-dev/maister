@@ -253,3 +253,5 @@ consolidated ERD; see [`erd.md`](erd.md) for the entity block.
 - Authored catalog extension: [`../system-analytics/capability-catalog.md`](../system-analytics/capability-catalog.md),
   [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 - Source (Implemented): migration `0019_m14_capability_materialization`.
+
+A registered standalone import has a [project dependency declaration](projects-domain.md) before its first materialized capability revision. The capability row owns trust and setup evidence for effective content. See [dependency installation](../system-analytics/project-dependency-installation.md).

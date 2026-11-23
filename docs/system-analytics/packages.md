@@ -373,3 +373,5 @@ unchanged.
 - AIF package content: the `maister-plugins` repo (`packages/aif`,
   release `aif/v2.5.0` at `e25937f`); consumption notes in
   [`../flow-aif-plugin.md`](../flow-aif-plugin.md).
+
+Registration dependency processing follows the [designed dependency lifecycle](project-dependency-installation.md).
