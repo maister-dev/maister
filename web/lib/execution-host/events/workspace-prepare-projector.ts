@@ -9,6 +9,7 @@ import {
   isWorkspaceTerminalPayload,
   WORKSPACE_TERMINAL_EVENT,
   workspaceEvidenceDigest,
+  workspaceCommandRequestDigest,
   workspacePrepareRequestDigest,
   workspaceTerminalOutcome,
 } from "../../../../runtime/workspace-prepare";
@@ -24,8 +25,9 @@ import { defaultTransport } from "../default-transport";
 import {
   resolveWorkspacePreparationPeer,
   retainedWorkspacePrepareRequest,
+  retainedWorkspaceMaterializeRequest,
 } from "../workspace-prepare-delivery";
-import { WorkspacePrepareReceiptSchema } from "../workspace-prepare-schema";
+import { WorkspaceCommandReceiptSchema } from "../workspace-prepare-schema";
 
 import { ExecutionEventProjectionError } from "./projector";
 
@@ -65,7 +67,8 @@ export async function prepareWorkspaceEvidence(
   const command = await getCommand(db, payload.commandId);
   if (
     !command ||
-    command.kind !== "workspace.prepare" ||
+    (command.kind !== "workspace.prepare" &&
+      command.kind !== "workspace.materialize") ||
     command.executionHostId !== event.executionHostId ||
     command.executionAssignmentId !== event.executionAssignmentId ||
     command.assignmentEpoch !== event.assignmentEpoch
@@ -77,9 +80,25 @@ export async function prepareWorkspaceEvidence(
     command,
     transport,
   );
-  const request = retainedWorkspacePrepareRequest(command, host.hostKey);
+  let expectedDigest: string;
+  if (payload.operationId === "stageCPrepare") {
+    expectedDigest = workspacePrepareRequestDigest(
+      retainedWorkspacePrepareRequest(command, host.hostKey),
+    );
+  } else {
+    if (!command.targetSessionId) throw inconsistent();
+    const request = retainedWorkspaceMaterializeRequest(command, host.hostKey);
+    expectedDigest = workspaceCommandRequestDigest(request, {
+      operationId: payload.operationId,
+      target: {
+        kind: "workspace",
+        handle: command.targetSessionId,
+        generation: request.payload.generation,
+      },
+    });
+  }
   signal.throwIfAborted();
-  const receipt = await transport.getWorkspacePreparationReceipt?.(command.id);
+  const receipt = await transport.getWorkspaceCommandReceipt?.(command.id);
   if (!receipt || receipt.phase === "accepted")
     throw new ExecutionEventProjectionError(
       "Workspace terminal receipt is temporarily unavailable",
@@ -96,8 +115,11 @@ export async function prepareWorkspaceEvidence(
     receipt.eventId !== event.id ||
     receipt.streamId !== stream?.streamId ||
     receipt.phase !== payload.phase ||
+    receipt.operationId !== payload.operationId ||
+    workspaceEvidenceDigest(receipt.target) !==
+      workspaceEvidenceDigest(payload.target) ||
     receipt.requestSha256 !== payload.requestSha256 ||
-    receipt.requestSha256 !== workspacePrepareRequestDigest(request) ||
+    receipt.requestSha256 !== expectedDigest ||
     receipt.outcomeSha256 !== payload.outcomeSha256 ||
     receipt.outcomeSha256 !==
       workspaceEvidenceDigest(workspaceTerminalOutcome(receipt)) ||
@@ -121,7 +143,7 @@ export async function applyWorkspaceEvidence(
   event: ExecutionEvent,
 ): Promise<void> {
   if (!matchesWorkspaceEvent(event)) return;
-  const parsed = WorkspacePrepareReceiptSchema.safeParse(
+  const parsed = WorkspaceCommandReceiptSchema.safeParse(
     event.payload?.workspaceReceipt,
   );
   if (!parsed.success || parsed.data.phase === "accepted") throw inconsistent();
@@ -143,7 +165,8 @@ export async function applyWorkspaceEvidence(
     .for("update");
   if (
     !command ||
-    command.kind !== "workspace.prepare" ||
+    (command.kind !== "workspace.prepare" &&
+      command.kind !== "workspace.materialize") ||
     !command.targetSessionId
   )
     throw inconsistent();
@@ -172,6 +195,43 @@ export async function applyWorkspaceEvidence(
       transportState: "reconciliation_required",
       lastError: { reason: receipt.condition, eventId: event.id },
     });
+    return;
+  }
+
+  if (receipt.operationId === "stageCMaterialize") {
+    const request = retainedWorkspaceMaterializeRequest(
+      command,
+      receipt.owner.hostKey,
+    );
+    const result = receipt.result;
+    if (
+      receipt.target.handle !== assignment.executionWorkspaceId ||
+      result.generation !== request.payload.generation ||
+      result.manifestDigest !== request.payload.manifestDigest
+    )
+      throw inconsistent();
+    const [applied] = await tx
+      .update(workspaces)
+      .set({ workspaceMaterializationGeneration: result.inputGeneration })
+      .where(
+        and(
+          eq(workspaces.runId, run.id),
+          eq(workspaces.ownershipKind, "host_owned"),
+          eq(workspaces.executionHostId, assignment.executionHostId),
+          eq(workspaces.preparationAssignmentId, assignment.id),
+          eq(workspaces.workspaceGeneration, result.generation),
+          isNull(workspaces.workspaceMaterializationGeneration),
+          isNull(workspaces.removedAt),
+        ),
+      )
+      .returning({ id: workspaces.id });
+    if (!applied) throw inconsistent();
+    const transition = await markSucceeded(tx, command.id, null, {
+      ...result,
+      eventId: event.id,
+      outcomeSha256: receipt.outcomeSha256,
+    });
+    if (!transition.changed) throw inconsistent();
     return;
   }
 

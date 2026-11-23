@@ -92,6 +92,8 @@ import {
   WorkspaceSourceQuery,
 } from "./workspace-source";
 import { registerWorkspacePreparation } from "./workspace-prepare-api";
+import { workspaceSessionMcpServers } from "./workspace-session-inputs";
+import { verifyWorkspaceSessionInputs } from "./workspace-input-materialization";
 import { outboxLimitOf } from "./host-runtime-errors";
 import {
   EXECUTION_HOST_PROTOCOL_VERSION,
@@ -346,6 +348,7 @@ function receiptAdmission(
     case "session.prompt":
     case "workspace.adopt":
     case "workspace.prepare":
+    case "workspace.materialize":
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
@@ -2003,7 +2006,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
   const workspaceSources = configuredWorkspaceSources();
   registerWorkspacePreparation({
-    app, state: hostState, registry: workspaces, runtimeRoot,
+    app, state: hostState, registry: workspaces, objects: runtimeObjects, runtimeRoot,
     sources: workspaceSources, logger,
   });
   app.get<{ Params: { repositoryId: string } }>("/v1/repositories/:repositoryId/refs", async (req, reply) => {
@@ -2978,6 +2981,10 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             request.executionWorkspaceId,
             { stepId: request.stepId },
           );
+          await verifyWorkspaceSessionInputs(hostState, request.executionWorkspaceId, runtimeRoot);
+          const mcpServers = workspaceSessionMcpServers(
+            hostState, request.executionWorkspaceId, request.mcpServers,
+          );
           const sessionId = randomUUID();
           const outputPaths: Partial<
             Record<RuntimeObjectOutputBinding["envName"], string>
@@ -3136,7 +3143,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               logger,
               adapter: request.runner?.adapter ?? request.executor.agent,
               model: request.runner?.model ?? request.executor.model,
-              mcpServers: request.mcpServers,
+              mcpServers,
               resumeSessionId: request.resumeSessionId,
               runner: request.runner,
             });

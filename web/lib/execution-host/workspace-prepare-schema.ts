@@ -3,7 +3,9 @@ import { z } from "zod";
 import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import {
   isWorkspaceAssignmentOwner,
+  isWorkspaceGenerationTarget,
   type WorkspaceAssignmentOwner,
+  type WorkspaceGenerationTarget,
 } from "../../../runtime/workspace-prepare";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -45,6 +47,16 @@ export const WorkspacePreparePayloadSchema = z.union([
     .strict(),
   z.object({ mode: z.literal("emptyDirectory"), inputDigest: digest }).strict(),
 ]);
+export const WorkspaceMaterializationPayloadSchema = z
+  .object({
+    generation,
+    manifestDigest: digest,
+    objects: z
+      .array(z.object({ objectId: z.string().uuid(), sha256: digest }).strict())
+      .min(1)
+      .max(256),
+  })
+  .strict();
 
 export const WorkspacePrepareAcceptanceSchema = z
   .object({
@@ -65,6 +77,15 @@ const terminal = {
   streamId: z.string().uuid(),
   eventId: z.string().uuid(),
   outcomeSha256: digest,
+};
+const materialization = {
+  ...identity,
+  operationId: z.literal("stageCMaterialize"),
+  target: z.custom<WorkspaceGenerationTarget>(isWorkspaceGenerationTarget),
+};
+const terminalMaterialization = {
+  ...terminal,
+  ...materialization,
 };
 
 export const WorkspacePrepareReceiptSchema = z.discriminatedUnion("phase", [
@@ -115,4 +136,56 @@ export const WorkspacePrepareReceiptSchema = z.discriminatedUnion("phase", [
       condition: z.enum(["effect_unconfirmed", "quiescence_unconfirmed"]),
     })
     .strict(),
+]);
+
+export const WorkspaceMaterializationReceiptSchema = z.discriminatedUnion(
+  "phase",
+  [
+    z
+      .object({
+        ...materialization,
+        phase: z.literal("accepted"),
+        status: z.literal(202),
+        acceptance: WorkspacePrepareAcceptanceSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...terminalMaterialization,
+        phase: z.literal("completed"),
+        result: z
+          .object({
+            generation,
+            inputGeneration: generation,
+            manifestDigest: digest,
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...terminalMaterialization,
+        phase: z.literal("rejected"),
+        refusal: z
+          .object({
+            code: z.string().min(1).max(64),
+            message: z.string().min(1).max(256),
+            details: z.object({ reason: z.string().min(1).max(64) }).strict(),
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        ...terminalMaterialization,
+        phase: z.literal("indeterminate"),
+        condition: z.enum(["effect_unconfirmed", "quiescence_unconfirmed"]),
+      })
+      .strict(),
+  ],
+);
+
+export const WorkspaceCommandReceiptSchema = z.union([
+  WorkspacePrepareReceiptSchema,
+  WorkspaceMaterializationReceiptSchema,
 ]);

@@ -1343,6 +1343,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 > | `MAISTER_SELECTED_EXECUTION_HOST_KEY` | no | — | Web pins the configured supervisor by the stable key reported in health. Set `MAISTER_SUPERVISOR_URL` to its trusted HTTP(S) origin. |
 > | `MAISTER_WORKSPACE_REPOSITORIES` | no | — | Supervisor-only JSON map from approved repository IDs to credential-free HTTPS/SSH URLs or trusted absolute paths. The default ID for a project checkout is the Web project ID. The supervisor uses its own Git credentials and private Git cache. |
+> | `MAISTER_API_BASE_URL` | for addressed MAIster MCP | — | Set the same Web origin on Web and its supervisor. The supervisor checks the configured origin before starting the facade and chooses its local executable. Use `MAISTER_MCP_FACADE_COMMAND` on the supervisor to override the executable. |
 > | `MAISTER_WORKSPACE_DIRECTORIES` | no | — | Supervisor-only JSON map from directory profile IDs to absolute directories inside its approved workspace roots. |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |

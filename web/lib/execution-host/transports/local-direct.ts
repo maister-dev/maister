@@ -271,7 +271,8 @@ export function createLocalDirectTransport(
       return receipt ? toReceipt(receipt) : null;
     },
     sendWorkspacePreparation: wire.sendWorkspacePreparation,
-    getWorkspacePreparationReceipt: wire.getWorkspacePreparationReceipt,
+    sendWorkspaceMaterialization: wire.sendWorkspaceMaterialization,
+    getWorkspaceCommandReceipt: wire.getWorkspaceCommandReceipt,
     observeWorkspaceRevision: wire.observeWorkspaceRevision,
     retireCommand(commandId, request) {
       return wire.retireCommand(commandId, request);

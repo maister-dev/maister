@@ -53,6 +53,12 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       "directoryProfileId",
       "inputDigest",
     ]),
+  "workspace.materialize": (payload) => ({
+    ...pickScalars(payload, ["generation", "manifestDigest"]),
+    objects: Array.isArray(payload.objects)
+      ? payload.objects.map((value) => pickScalars(asObject(value), ["objectId", "sha256"]))
+      : [],
+  }),
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),
     ...(asObject(p.owner).kind === "company"

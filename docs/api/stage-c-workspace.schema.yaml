@@ -430,6 +430,29 @@ definitions:
     properties:
       objectId: { $ref: "#/definitions/OpaqueId" }
       sha256: *a6
+  WorkspaceInputManifest:
+    description: Sealed JSON in the first object of MaterializePayload. Maximum encoded size is 262144 bytes. Remaining objects must match the exact file set and total at most 67108864 bytes.
+    type: object
+    additionalProperties: false
+    required: [ version, workspaceInputDigest, files ]
+    properties:
+      version: { const: 1 }
+      workspaceInputDigest: *a6
+      files:
+        type: array
+        maxItems: 255
+        items:
+          type: object
+          additionalProperties: false
+          required: [ path, objectId, sha256 ]
+          properties:
+            path:
+              type: string
+              maxLength: 240
+              pattern: '^[A-Za-z0-9_.-]{1,128}(/[A-Za-z0-9_.-]{1,128})*$'
+              description: Relative UTF-8 file name. Dot segments, .git and case-folded or prefix collisions are rejected.
+            objectId: { type: string, format: uuid }
+            sha256: *a6
   MaterializePayload:
     type: object
     additionalProperties: false
@@ -439,8 +462,13 @@ definitions:
       manifestDigest: *a6
       objects:
         type: array
+        minItems: 1
         maxItems: 256
-        items: { $ref: "#/definitions/InputObject" }
+        items:
+          allOf:
+            - { $ref: "#/definitions/InputObject" }
+            - properties: { objectId: { format: uuid } }
+        description: Sealed SHA-256 manifest object followed by the exact matching set of sealed content objects.
   WorkloadPayload:
     type: object
     additionalProperties: false

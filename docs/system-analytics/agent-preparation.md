@@ -173,8 +173,18 @@ transaction as placement when the selected supervisor advertises workspace
 protocol 1. Web records the host-owned workspace and queued
 `workspace.prepare` command without filesystem paths. A missing handle
 keeps the Run Pending. Session create and prompt admission enforce this
-boundary in the command ledger. HTTP delivery and owner application are the
-subsequent T05H boundary.
+boundary in the command ledger. The addressed host fetches the exact revision
+and returns a durable receipt. Web applies that receipt under the Run's current
+assignment and the reserved generation.
+
+An addressed launch captures approved package assets from a verified private
+copy. The same transaction reserves the input capture and the workspace. After
+checkout, Web checks current authority and seals the captured bytes through
+the runtime object plane. The supervisor verifies each object's digest and
+assignment. It publishes the complete input generation with one rename,
+retains its receipt and rechecks the saved bytes before ACP creation. Web
+records completion only after the canonical receipt has been applied. A package
+installation replaced after capture cannot substitute different bytes.
 
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies

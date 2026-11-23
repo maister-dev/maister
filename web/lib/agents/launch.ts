@@ -366,6 +366,7 @@ import {
 } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -1892,6 +1893,13 @@ async function launchAgentRunWithAdmission(
   // Git still runs before the PostgreSQL transaction.
   let initialAssignmentId: string | null = null;
   const allocateAndPersist = async (): Promise<boolean> => {
+    const workspaceInputs = hostPreparesWorkspace
+      ? await captureWorkspaceBundles(_db as ExecutionDb, {
+          projectId: input.projectId,
+          runId,
+          intentId: acceptedExecution?.intent.id,
+        })
+      : [];
     let worktreePath: string | null = null;
     let branch: string | null = null;
     let baseCommit: string | null = null;
@@ -2534,12 +2542,12 @@ async function launchAgentRunWithAdmission(
               parentHandle: root.executionWorkspaceId,
               parentGeneration: root.workspaceGeneration,
               inputDigest,
-            });
+            }, workspaceInputs);
           } else if (workspace === "none") {
             await reserveHostWorkspace(tx as ExecutionDb, owner, metadata, {
               mode: "emptyDirectory",
               inputDigest,
-            });
+            }, workspaceInputs);
           } else {
             if (!baseCommit)
               throw new MaisterError(
@@ -2552,7 +2560,7 @@ async function launchAgentRunWithAdmission(
               repositoryId: input.projectId,
               commit: baseCommit,
               inputDigest,
-            });
+            }, workspaceInputs);
           }
         } else if (
           workspace === "worktree" &&
@@ -4182,18 +4190,53 @@ export function agentFacadeMcpServer(
   if (!launch) return null;
 
   return {
+    ...agentFacadeDescriptor(
+      tokenSecret,
+      toolset,
+      process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000",
+    ),
+    ...launch,
+  };
+}
+
+function agentFacadeDescriptor(
+  tokenSecret: string,
+  toolset: "project-run" | "company" | "vault" | undefined,
+  webOrigin: string,
+): AgentMcpServer {
+  return {
     name: "maister",
     platformOrigin: "maister_facade",
     transport: "stdio",
-    command: launch.command,
-    args: launch.args,
     env: {
-      MAISTER_API_BASE_URL:
-        process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000",
+      MAISTER_API_BASE_URL: webOrigin,
       MAISTER_PROJECT_TOKEN: tokenSecret,
       ...(toolset === undefined ? {} : { MAISTER_MCP_TOOLSET: toolset }),
     },
   };
+}
+
+export async function agentFacadeMcpServerForRun(
+  db: ExecutionDb,
+  runId: string,
+  tokenSecret: string,
+  toolset: "project-run" | "company" | "vault" | undefined,
+): Promise<AgentMcpServer | null> {
+  if (!configuredSelectedExecutionEndpoint())
+    return agentFacadeMcpServer(tokenSecret, toolset);
+  const [owned] = await db.select({ id: workspaces.id }).from(workspaces).where(and(
+    eq(workspaces.runId, runId), eq(workspaces.ownershipKind, "host_owned"),
+    isNull(workspaces.removedAt),
+  )).limit(1);
+  if (!owned) return agentFacadeMcpServer(tokenSecret, toolset);
+
+  const origin = process.env.MAISTER_API_BASE_URL;
+  if (!origin)
+    throw new MaisterError("CONFIG", "MAISTER_API_BASE_URL is required for an addressed MCP facade", {
+      details: { reason: "workspace_facade_web_origin_missing" },
+    });
+
+  return agentFacadeDescriptor(tokenSecret, toolset, origin);
 }
 
 async function dispatchStoredAgentTurn(
@@ -5728,9 +5771,11 @@ async function driveAgentSession(
       // `platform_mcp` (default true). If it is required but not runnable in this
       // deployment, fail loud rather than silently launch a tool-less agent that
       // burns tokens and a concurrency slot only to give up (the stand bug).
-      const appendFacade = (secret: string): AgentMcpServer[] => {
+      const appendFacade = async (secret: string): Promise<AgentMcpServer[]> => {
         if (!effective.parsed.platformMcp) return [];
-        const facadeServer = agentFacadeMcpServer(
+        const facadeServer = await agentFacadeMcpServerForRun(
+          _db as ExecutionDb,
+          runId,
           secret,
           companyContext ? undefined : "project-run",
         );
@@ -5758,7 +5803,7 @@ async function driveAgentSession(
       const projectFacade =
         companyContext || !effective.parsed.platformMcp
           ? []
-          : appendFacade(
+          : await appendFacade(
               (
                 await issueAgentRunToken({
                   agentId: agent.id,

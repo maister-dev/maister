@@ -258,6 +258,7 @@ const mcpServerFields = {
 } as const;
 
 type McpServerShape = {
+  platformOrigin?: "maister_facade";
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -277,7 +278,7 @@ function refineMcpServerFields(
   const remote = value.transport === "sse" || value.transport === "http";
 
   if (!remote) {
-    if (!value.command) {
+    if (!value.command && value.platformOrigin !== "maister_facade") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "stdio MCP server requires a command",
@@ -716,6 +717,10 @@ export const REASON_TOKENS = [
   "source_commit_unavailable",
   "invalid_request",
   "stale_assignment_epoch",
+  "stale_workspace_generation",
+  "workspace_preparation_pending",
+  "workspace_input_changed",
+  "workspace_protocol_unsupported",
   "legacy_field",
   "missing_envelope",
   "health_query_invalid",

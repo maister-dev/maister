@@ -3393,6 +3393,9 @@ export const executionCommands = pgTable(
     idxAssignment: index("execution_commands_assignment_idx").on(
       t.executionAssignmentId,
     ),
+    uniqWorkspaceMaterialization: uniqueIndex("execution_commands_workspace_materialize_uq")
+      .on(t.executionAssignmentId)
+      .where(sql`${t.kind} = 'workspace.materialize'`),
     idxReconciliation: index("execution_commands_reconciliation_idx")
       .on(t.transportState, t.nextAttemptAt, t.id)
       .where(
@@ -6214,6 +6217,25 @@ export const workspaces = pgTable(
       .where(
         sql`${t.prUrl} is not null and (${t.prState} is null or ${t.prState} = 'open')`,
       ),
+  }),
+);
+
+export const workspaceInputCaptures = pgTable(
+  "workspace_input_captures",
+  {
+    workspaceId: text("workspace_id").primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    originUserId: text("origin_user_id"),
+    files: jsonb("files").$type<readonly { path: string; base64: string }[]>().notNull(),
+    contentDigest: text("content_digest").notNull(),
+  },
+  (t) => ({
+    boundedFiles: check("workspace_input_captures_files_check", sql`
+      CASE WHEN jsonb_typeof(${t.files}) = 'array'
+        THEN jsonb_array_length(${t.files}) <= 255 AND octet_length(${t.files}::text) <= 90 * 1024 * 1024
+        ELSE false
+      END`),
+    digestShape: check("workspace_input_captures_digest_check", sql`${t.contentDigest} ~ '^[a-f0-9]{64}$'`),
   }),
 );
 

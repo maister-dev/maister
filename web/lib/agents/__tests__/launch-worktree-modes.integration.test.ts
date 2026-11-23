@@ -1,6 +1,6 @@
 // M37 Phase 10/11 (ADR-099): worktree allocation modes (own | shared) and the
 // reviewer read-only reuse, exercised end-to-end through launchAgentRun against
-// a real git repo. tryStartRun is stubbed so no supervisor session spawns — the
+// a real git repo. startAllocatedRun is stubbed so no supervisor session spawns — the
 // assertions are on the worktree/branch allocation and the persisted run row.
 
 import { execFile } from "node:child_process";
@@ -36,14 +36,9 @@ import {
 
 const exec = promisify(execFile);
 
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+}));
 
 let testDatabase: StartedPostgresTestDb;
 let pool: Pool;

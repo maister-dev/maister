@@ -2584,6 +2584,13 @@
       "when": 1795474258490,
       "tag": "0372_stage_c_workspace_events",
       "breakpoints": true
+    },
+    {
+      "idx": 373,
+      "version": "7",
+      "when": 1795477280808,
+      "tag": "0373_stage_c_workspace_inputs",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,16 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Logger } from "pino";
 import type { HostState, CommandReceiptRow } from "./host-state";
 import type { CommandFence } from "./types";
 import type { WorkspaceRegistry } from "./workspace-registry";
-import type { WorkspacePrepareRequest } from "../../runtime/workspace-prepare";
+import type {
+  MaterializedWorkspaceInputs,
+  PreparedWorkspace,
+  WorkspaceCommandBinding,
+  WorkspaceCommandRequest,
+  WorkspacePrepareRequest,
+} from "../../runtime/workspace-prepare";
+import type { RuntimeObjectRegistry } from "./runtime-objects";
 
 import { isAbsolute } from "node:path";
 
@@ -12,16 +19,19 @@ import { z } from "zod";
 import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import {
+  isWorkspaceGenerationTarget,
+  WORKSPACE_MATERIALIZE_OPERATION,
   WORKSPACE_PREPARE_OPERATION,
   WORKSPACE_PREPARE_TARGET,
   workspaceEvidenceDigest,
-  workspacePrepareRequestDigest,
+  workspaceCommandRequestDigest,
 } from "../../runtime/workspace-prepare";
 
 import { REPLAYED_HEADER } from "./command-receipts";
 import { applyFence } from "./execution-fence";
 import { prepareOwnedWorkspace } from "./prepare-owned-workspace";
 import { isSupervisorError, SupervisorError } from "./types";
+import { materializeWorkspaceInputs } from "./workspace-input-materialization";
 
 const requestSchemaTag = "maister.workspace.command.request.v1";
 const opaqueId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
@@ -78,6 +88,62 @@ const requestSchema = z
   })
   .strict();
 
+const workspaceHandle = z.string().regex(/^ws_[a-f0-9]{32}$/);
+const materializeSchema = z
+  .object({
+    workspaceProtocol: z.literal(1),
+    owner: ownerSchema,
+    command: z
+      .object({
+        id: z.string().uuid(),
+        kind: z.literal("workspace.materialize"),
+        issuedAt: z.string().max(35).datetime({ offset: true }),
+      })
+      .strict(),
+    payload: z
+      .object({
+        generation,
+        manifestDigest: sha256,
+        objects: z
+          .array(z.object({ objectId: z.string().uuid(), sha256 }).strict())
+          .min(1)
+          .max(256),
+      })
+      .strict(),
+  })
+  .strict();
+
+type WorkspaceEffect = Readonly<{
+  request: WorkspaceCommandRequest;
+  binding: WorkspaceCommandBinding;
+  sourceDigest: string | null;
+  run: (
+    assertOwner: () => void,
+  ) => Promise<PreparedWorkspace | MaterializedWorkspaceInputs>;
+}>;
+
+function receiptBinding(row: CommandReceiptRow): WorkspaceCommandBinding {
+  if (row.kind === "workspace.prepare")
+    return {
+      operationId: WORKSPACE_PREPARE_OPERATION,
+      target: WORKSPACE_PREPARE_TARGET,
+    };
+  const stored = row.body as { workspaceTarget?: unknown };
+  if (
+    row.kind === "workspace.materialize" &&
+    isWorkspaceGenerationTarget(stored.workspaceTarget)
+  )
+    return {
+      operationId: WORKSPACE_MATERIALIZE_OPERATION,
+      target: stored.workspaceTarget,
+    };
+
+  throw new SupervisorError(
+    "ACP_PROTOCOL",
+    "Stored workspace command target is invalid",
+  );
+}
+
 function acceptance(commandId: string): {
   commandId: string;
   state: "accepted";
@@ -85,7 +151,7 @@ function acceptance(commandId: string): {
   return { commandId, state: "accepted" };
 }
 
-function fenceFor(request: WorkspacePrepareRequest): CommandFence {
+function fenceFor(request: WorkspaceCommandRequest): CommandFence {
   const { hostKey, runId, assignmentId, assignmentEpoch } = request.owner;
 
   return { hostKey, runId, assignmentId, assignmentEpoch };
@@ -130,11 +196,12 @@ export function registerWorkspacePreparation(args: {
   app: FastifyInstance;
   state: HostState;
   registry: WorkspaceRegistry;
+  objects: RuntimeObjectRegistry;
   runtimeRoot: string;
   sources: ReadonlyMap<string, string>;
   logger: Logger;
 }): void {
-  const { app, state, registry, runtimeRoot, sources, logger } = args;
+  const { app, state, registry, objects, runtimeRoot, sources, logger } = args;
   const directories = readDirectoryProfiles();
   const inflight = new Map<string, Promise<void>>();
 
@@ -142,7 +209,7 @@ export function registerWorkspacePreparation(args: {
     await Promise.allSettled(inflight.values());
   });
 
-  function assertCurrent(request: WorkspacePrepareRequest): void {
+  function assertCurrent(request: WorkspaceCommandRequest): void {
     const current = state.getFence(request.owner.runId);
     if (
       !current ||
@@ -158,21 +225,14 @@ export function registerWorkspacePreparation(args: {
 
   async function finish(
     row: CommandReceiptRow,
-    request: WorkspacePrepareRequest,
-    source: string | null,
+    effect: WorkspaceEffect,
   ): Promise<void> {
+    const { request, binding } = effect;
     let outcome: Record<string, unknown>;
     let phase: "completed" | "rejected" | "indeterminate";
     try {
       outcome = {
-        result: await prepareOwnedWorkspace({
-          request,
-          source,
-          state,
-          registry,
-          runtimeRoot,
-          assertOwner: () => assertCurrent(request),
-        }),
+        result: await effect.run(() => assertCurrent(request)),
       };
       phase = "completed";
     } catch (error) {
@@ -206,7 +266,12 @@ export function registerWorkspacePreparation(args: {
       {
         ...row,
         phase: phase === "completed" ? "completed" : "rejected",
-        body: { ...outcome, workspacePhase: phase, outcomeSha256 },
+        body: {
+          ...outcome,
+          workspacePhase: phase,
+          outcomeSha256,
+          workspaceTarget: binding.target,
+        },
         completedAt,
       },
       {
@@ -220,16 +285,106 @@ export function registerWorkspacePreparation(args: {
           occurredAt: completedAt,
           payload: {
             commandId: row.commandId,
-            requestSha256: workspacePrepareRequestDigest(request),
-            operationId: WORKSPACE_PREPARE_OPERATION,
+            requestSha256: workspaceCommandRequestDigest(request, binding),
+            ...binding,
             owner: request.owner,
-            target: WORKSPACE_PREPARE_TARGET,
             phase,
             outcomeSha256,
           },
         },
       },
     );
+  }
+
+  function admit(reply: FastifyReply, effect: WorkspaceEffect): FastifyReply {
+    const { request, binding, sourceDigest } = effect;
+    if (request.owner.hostKey !== state.hostKey)
+      return reply
+        .status(409)
+        .send(
+          refusal(
+            "EXECUTOR_UNAVAILABLE",
+            "host_identity_mismatch",
+            "Workspace preparation belongs to another host",
+          ),
+        );
+    const { command, owner } = request;
+    const requestDigest = workspaceCommandRequestDigest(request, binding);
+    const existing = state.getReceipt(command.id);
+    if (
+      existing &&
+      (existing.requestSchema !== requestSchemaTag ||
+        existing.requestDigest !== requestDigest)
+    )
+      return reply
+        .status(409)
+        .send(
+          refusal(
+            "CONFLICT",
+            "command_digest_mismatch",
+            "Command ID already binds a different workspace request",
+          ),
+        );
+    const accept = () =>
+      reply
+        .header("location", `/v1/commands/${command.id}`)
+        .status(202)
+        .send(acceptance(command.id));
+    if (existing) reply.header(REPLAYED_HEADER, "true");
+    if (existing && (existing.phase !== "accepted" || inflight.has(command.id)))
+      return accept();
+
+    if (
+      existing &&
+      (existing.body as { sourceDigest?: unknown }).sourceDigest !==
+        sourceDigest
+    )
+      return reply
+        .status(409)
+        .send(
+          refusal(
+            "PRECONDITION",
+            "source_ref_unapproved",
+            "Workspace source approval changed since acceptance",
+          ),
+        );
+    applyFence({ state, fence: fenceFor(request), logger });
+    const row: CommandReceiptRow = existing ?? {
+      commandId: command.id,
+      runId: owner.runId,
+      kind: command.kind,
+      assignmentId: owner.assignmentId,
+      epoch: owner.assignmentEpoch,
+      hostSessionId: null,
+      hostKey: owner.hostKey,
+      requestVersion: 1,
+      requestSchema: requestSchemaTag,
+      requestDigest,
+      eventId: null,
+      phase: "accepted",
+      httpStatus: 202,
+      body: { sourceDigest, workspaceTarget: binding.target },
+      receivedAt: new Date().toISOString(),
+      completedAt: null,
+    };
+    if (!existing) state.putReceipt(row, { kind: "new_work" });
+
+    const execution = finish(row, effect)
+      .catch((error: unknown) => {
+        state.reportRuntimeStorageFailure(error);
+        logger.error(
+          {
+            commandId: row.commandId,
+            runId: row.runId,
+            errorType: error instanceof Error ? error.name : typeof error,
+          },
+          "workspace-preparation-terminal-write-failed",
+        );
+      })
+      .finally(() => inflight.delete(command.id));
+    inflight.set(command.id, execution);
+
+    return accept();
   }
 
   app.post("/v1/workspaces/prepare", async (req, reply) => {
@@ -260,97 +415,65 @@ export function registerWorkspacePreparation(args: {
           ),
         );
     const request = parsed.data;
-    if (request.owner.hostKey !== state.hostKey)
-      return reply
-        .status(409)
-        .send(
-          refusal(
-            "EXECUTOR_UNAVAILABLE",
-            "host_identity_mismatch",
-            "Workspace preparation belongs to another host",
-          ),
-        );
-    const { command, owner } = request;
-    const requestDigest = workspacePrepareRequestDigest(request);
-    const existing = state.getReceipt(command.id);
-    if (
-      existing &&
-      (existing.requestSchema !== requestSchemaTag ||
-        existing.requestDigest !== requestDigest)
-    )
-      return reply
-        .status(409)
-        .send(
-          refusal(
-            "CONFLICT",
-            "command_digest_mismatch",
-            "Command ID already binds a different workspace request",
-          ),
-        );
-    const accept = () =>
-      reply
-        .header("location", `/v1/commands/${command.id}`)
-        .status(202)
-        .send(acceptance(command.id));
-    if (existing) reply.header(REPLAYED_HEADER, "true");
-    if (existing && (existing.phase !== "accepted" || inflight.has(command.id)))
-      return accept();
-
     const source = getSource(sources, directories, request);
-    const sourceDigest =
-      source === null ? null : workspaceEvidenceDigest(source);
-    if (
-      existing &&
-      (existing.body as { sourceDigest?: unknown }).sourceDigest !==
-        sourceDigest
-    )
-      return reply
-        .status(409)
-        .send(
-          refusal(
-            "PRECONDITION",
-            "source_ref_unapproved",
-            "Workspace source approval changed since acceptance",
-          ),
-        );
-    applyFence({ state, fence: fenceFor(request), logger });
-    const row: CommandReceiptRow = existing ?? {
-      commandId: command.id,
-      runId: owner.runId,
-      kind: command.kind,
-      assignmentId: owner.assignmentId,
-      epoch: owner.assignmentEpoch,
-      hostSessionId: null,
-      hostKey: owner.hostKey,
-      requestVersion: 1,
-      requestSchema: requestSchemaTag,
-      requestDigest,
-      eventId: null,
-      phase: "accepted",
-      httpStatus: 202,
-      body: { sourceDigest },
-      receivedAt: new Date().toISOString(),
-      completedAt: null,
-    };
-    if (!existing) state.putReceipt(row, { kind: "new_work" });
-
-    const execution = finish(row, request, source)
-      .catch((error: unknown) => {
-        state.reportRuntimeStorageFailure(error);
-        logger.error(
-          {
-            commandId: row.commandId,
-            runId: row.runId,
-            errorType: error instanceof Error ? error.name : typeof error,
-          },
-          "workspace-preparation-terminal-write-failed",
-        );
-      })
-      .finally(() => inflight.delete(command.id));
-    inflight.set(command.id, execution);
-
-    return accept();
+    return admit(reply, {
+      request,
+      binding: {
+        operationId: WORKSPACE_PREPARE_OPERATION,
+        target: WORKSPACE_PREPARE_TARGET,
+      },
+      sourceDigest: source === null ? null : workspaceEvidenceDigest(source),
+      run: (assertOwner) =>
+        prepareOwnedWorkspace({
+          request,
+          source,
+          state,
+          registry,
+          runtimeRoot,
+          assertOwner,
+        }),
+    });
   });
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/workspaces/:id/materialization",
+    async (req, reply) => {
+      const parsed = materializeSchema.safeParse(req.body);
+      const handle = workspaceHandle.safeParse(req.params.id);
+      if (!parsed.success || !handle.success)
+        return reply
+          .status(400)
+          .send(
+            refusal(
+              "PRECONDITION",
+              "invalid_request",
+              "Invalid workspace input request",
+            ),
+          );
+      const request = parsed.data;
+      return admit(reply, {
+        request,
+        binding: {
+          operationId: WORKSPACE_MATERIALIZE_OPERATION,
+          target: {
+            kind: "workspace",
+            handle: handle.data,
+            generation: request.payload.generation,
+          },
+        },
+        sourceDigest: null,
+        run: (assertOwner) =>
+          materializeWorkspaceInputs({
+            handle: handle.data,
+            request,
+            state,
+            objects,
+            runtimeRoot,
+            assertOwner,
+          }),
+      });
+    },
+  );
 
   app.get<{ Params: { commandId: string } }>(
     "/v1/commands/:commandId",
@@ -373,7 +496,7 @@ export function registerWorkspacePreparation(args: {
       const record = {
         commandId: row.commandId,
         requestSha256: row.requestDigest,
-        operationId: WORKSPACE_PREPARE_OPERATION,
+        ...receiptBinding(row),
         owner: {
           kind: "assignment",
           hostKey: row.hostKey,
@@ -381,7 +504,6 @@ export function registerWorkspacePreparation(args: {
           assignmentId: row.assignmentId,
           assignmentEpoch: row.epoch,
         },
-        target: WORKSPACE_PREPARE_TARGET,
       };
       if (row.phase === "accepted")
         return reply.status(200).send({
@@ -391,10 +513,11 @@ export function registerWorkspacePreparation(args: {
           acceptance: acceptance(row.commandId),
         });
 
-      const { workspacePhase, ...outcome } = row.body as Record<
-        string,
-        unknown
-      >;
+      const {
+        workspacePhase,
+        workspaceTarget: _workspaceTarget,
+        ...outcome
+      } = row.body as Record<string, unknown>;
 
       return reply.status(200).send({
         ...record,

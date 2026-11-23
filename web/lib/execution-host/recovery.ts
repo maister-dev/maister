@@ -34,6 +34,8 @@ import { getHostById, STALE_ASSIGNMENT_RUN_STATUSES } from "./hosts";
 import { buildEnvelope } from "./ledger";
 import { defaultTransport } from "./default-transport";
 import { recoverWorkspacePreparation } from "./workspace-prepare-delivery";
+import { recoverWorkspaceInputCaptures } from "./workspace-input-recovery";
+import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { reportLegacyActiveRuns } from "./legacy";
 import {
   reportUnreconciledCommands,
@@ -55,6 +57,7 @@ import {
 import { parseRuntimeObjectWireMetadata } from "@/lib/supervisor-client";
 import { executionAssignments, runs } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { MaisterError } from "@/lib/errors";
 
 const defaultLog = pino({
   name: "execution-host",
@@ -494,6 +497,17 @@ export async function recoverExecutionCommands(
     errors: [],
   };
   const hosts = new Map<string, ExecutionHost | null>();
+  if (configuredSelectedExecutionEndpoint() && transport.sendWorkspaceMaterialization) {
+    await recoverWorkspaceInputCaptures(db, transport, (runId, error) => {
+      const reason = error instanceof MaisterError ? error.details?.reason : undefined;
+
+      logger.warn(
+        { runId, reason, code: error instanceof MaisterError ? error.code : undefined },
+        "workspace-input-recovery-failed",
+      );
+      summary.errors.push(`workspace inputs ${runId}: ${reason ?? "unexpected_error"}`);
+    });
+  }
   const hostFor = async (id: string) => {
     if (!hosts.has(id)) hosts.set(id, await getHostById(db, id));
 
@@ -517,7 +531,7 @@ export async function recoverExecutionCommands(
 
       return;
     }
-    if (row.kind === "workspace.prepare") {
+    if (row.kind === "workspace.prepare" || row.kind === "workspace.materialize") {
       if (row.nextAttemptAt && row.nextAttemptAt > at) {
         summary.skippedInFlight += 1;
 

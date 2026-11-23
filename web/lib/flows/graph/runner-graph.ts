@@ -198,7 +198,7 @@ import {
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
 import { loadProjectMcpBindings } from "@/lib/mcp/binding-service";
-import { agentFacadeMcpServer } from "@/lib/agents/launch";
+import { agentFacadeMcpServerForRun } from "@/lib/agents/launch";
 import {
   issueOrchestratorRunToken,
   issueNativeNodeRunToken,
@@ -3975,7 +3975,9 @@ export async function runGraph(
                     nodeAttemptId,
                     db,
                   });
-              const facadeServer = agentFacadeMcpServer(
+              const facadeServer = await agentFacadeMcpServerForRun(
+                db,
+                runId,
                 issued.secret,
                 company ? "company" : "project-run",
               );

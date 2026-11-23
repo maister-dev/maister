@@ -153,6 +153,7 @@ import { assertUpgradeMaintenanceAllows } from "@/lib/maintenance/upgrade-fence"
 import { localHost, mintPlacement } from "@/lib/execution-host";
 import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-capabilities";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
+import { captureWorkspaceBundles } from "@/lib/execution-host/workspace-input-capture";
 import {
   observeSelectedWorkspaceRevision,
   reserveHostWorkspace,
@@ -2008,6 +2009,14 @@ async function* executeFlowLaunch(
           }),
         );
 
+      const workspaceInputs = hostPreparesWorkspace
+        ? await captureWorkspaceBundles(_db as ExecutionDb, {
+            projectId: project.id,
+            runId,
+            intentId: accepted?.intent.id,
+            acceptedBundles: accepted?.settings.capabilityBundles,
+          })
+        : [];
       await _db.transaction(async (tx: any) => {
         await accepted?.beginBinding(tx);
         if (input.specialistAssignment && !agentId)
@@ -2363,6 +2372,7 @@ async function* executeFlowLaunch(
                 runId, baseCommit, resolvedCapabilitySet,
               }),
             },
+            workspaceInputs,
           );
         } else {
           await tx.insert(workspaces).values({

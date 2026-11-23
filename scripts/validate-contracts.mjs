@@ -657,7 +657,7 @@ export function validateStageCWorkspaceExamples(
     throw new Error("Stage C examples must cover each operation exactly once");
   }
   const ajv = new Ajv({ strict: false, allErrors: true });
-  addFormats(ajv, ["date-time"]);
+  addFormats(ajv, ["date-time", "uuid"]);
   ajv.addSchema(profile);
   const validate = (name, value, valid, context) => {
     const check = ajv.getSchema(`${profile.$id}#/definitions/${name}`);

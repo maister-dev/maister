@@ -1,4 +1,5 @@
 import type { Db } from "./db";
+import { assertAddressedWorkspaceSessionAuthority } from "./workspace-input-authority";
 import type { ExecutionRuntimeObject } from "@/lib/db/schema";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
 import type {
@@ -662,6 +663,7 @@ export function createExecutionHosts(
         const sessionName =
           opts?.sessionName ?? payload.sessionName ?? "default";
         const attempt = async (executionWorkspaceId: ExecutionWorkspaceId) => {
+          await assertAddressedWorkspaceSessionAuthority(db, current.runId);
           await ensureSessionOutputIntents(db, client, payload);
 
           return immediate<CreateSessionPayload, CreateSessionResult>(

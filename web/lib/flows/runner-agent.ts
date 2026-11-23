@@ -1665,14 +1665,16 @@ async function runNewSession(
       ) {
         const { issueProjectVaultNodeToken } =
           await import("@/lib/agents/tokens");
-        const { agentFacadeMcpServer } = await import("@/lib/agents/launch");
+        const { agentFacadeMcpServerForRun } = await import("@/lib/agents/launch");
         const credential = await issueProjectVaultNodeToken({
           projectId: memoryProjectId,
           runId: ctx.runId,
           nodeAttemptId: ctx.nodeAttemptId,
           db: ctx.db,
         });
-        const facade = agentFacadeMcpServer(credential.secret, "vault");
+        const facade = await agentFacadeMcpServerForRun(
+          ctx.db ?? getDb(), ctx.runId, credential.secret, "vault",
+        );
 
         if (!facade)
           throw new MaisterError(

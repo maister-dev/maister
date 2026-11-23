@@ -42,6 +42,31 @@ export type WorkspacePrepareRequest = Readonly<{
   payload: WorkspacePrepareInput;
 }>;
 
+export type WorkspaceInputObject = Readonly<{
+  objectId: string;
+  sha256: string;
+}>;
+export type WorkspaceMaterializeRequest = Readonly<{
+  workspaceProtocol: 1;
+  command: Readonly<{
+    id: string;
+    kind: "workspace.materialize";
+    issuedAt: string;
+  }>;
+  owner: WorkspaceAssignmentOwner;
+  payload: Readonly<{
+    generation: number;
+    manifestDigest: string;
+    objects: readonly WorkspaceInputObject[];
+  }>;
+}>;
+
+export type MaterializedWorkspaceInputs = Readonly<{
+  generation: number;
+  inputGeneration: number;
+  manifestDigest: string;
+}>;
+
 export type PreparedWorkspace = Readonly<{
   workspace: Readonly<{
     handle: string;
@@ -54,19 +79,35 @@ export type PreparedWorkspace = Readonly<{
 
 export const WORKSPACE_PREPARE_OPERATION = "stageCPrepare";
 export const WORKSPACE_PREPARE_TARGET = { kind: "prepare" } as const;
+export const WORKSPACE_MATERIALIZE_OPERATION = "stageCMaterialize";
 export const WORKSPACE_TERMINAL_EVENT = "workspace.command.terminal";
 export const WORKSPACE_TERMINAL_SCHEMA =
   "maister.workspace.command.terminal.v1";
 
-export type WorkspaceTerminalPayload = Readonly<{
-  commandId: string;
-  requestSha256: string;
-  operationId: typeof WORKSPACE_PREPARE_OPERATION;
-  owner: WorkspaceAssignmentOwner;
-  target: typeof WORKSPACE_PREPARE_TARGET;
-  phase: "completed" | "rejected" | "indeterminate";
-  outcomeSha256: string;
+export type WorkspaceGenerationTarget = Readonly<{
+  kind: "workspace";
+  handle: string;
+  generation: number;
 }>;
+
+export type WorkspaceCommandBinding =
+  | Readonly<{
+      operationId: typeof WORKSPACE_PREPARE_OPERATION;
+      target: typeof WORKSPACE_PREPARE_TARGET;
+    }>
+  | Readonly<{
+      operationId: typeof WORKSPACE_MATERIALIZE_OPERATION;
+      target: WorkspaceGenerationTarget;
+    }>;
+
+export type WorkspaceTerminalPayload = WorkspaceCommandBinding &
+  Readonly<{
+    commandId: string;
+    requestSha256: string;
+    owner: WorkspaceAssignmentOwner;
+    phase: "completed" | "rejected" | "indeterminate";
+    outcomeSha256: string;
+  }>;
 
 export type WorkspaceTerminalEnvelope = Readonly<{
   envelopeVersion: 2;
@@ -83,11 +124,15 @@ export type WorkspaceTerminalEnvelope = Readonly<{
 
 type ReceiptIdentity = Pick<
   WorkspaceTerminalPayload,
-  "commandId" | "requestSha256" | "operationId" | "owner" | "target"
+  "commandId" | "requestSha256" | "owner"
 >;
 
-export type WorkspacePrepareReceipt = Readonly<
+type WorkspaceReceipt<
+  Binding extends WorkspaceCommandBinding,
+  Result,
+> = Readonly<
   ReceiptIdentity &
+    Binding &
     (
       | {
           phase: "accepted";
@@ -95,7 +140,7 @@ export type WorkspacePrepareReceipt = Readonly<
           acceptance: { commandId: string; state: "accepted" };
         }
       | ({ streamId: string; eventId: string; outcomeSha256: string } & (
-          | { phase: "completed"; result: PreparedWorkspace }
+          | { phase: "completed"; result: Result }
           | {
               phase: "rejected";
               refusal: {
@@ -112,8 +157,27 @@ export type WorkspacePrepareReceipt = Readonly<
     )
 >;
 
+export type WorkspacePrepareReceipt = WorkspaceReceipt<
+  Extract<
+    WorkspaceCommandBinding,
+    { operationId: typeof WORKSPACE_PREPARE_OPERATION }
+  >,
+  PreparedWorkspace
+>;
+export type WorkspaceMaterializeReceipt = WorkspaceReceipt<
+  Extract<
+    WorkspaceCommandBinding,
+    { operationId: typeof WORKSPACE_MATERIALIZE_OPERATION }
+  >,
+  MaterializedWorkspaceInputs
+>;
+export type WorkspaceCommandReceipt =
+  WorkspacePrepareReceipt | WorkspaceMaterializeReceipt;
+export type WorkspaceCommandRequest =
+  WorkspacePrepareRequest | WorkspaceMaterializeRequest;
+
 export function workspaceTerminalOutcome(
-  receipt: Extract<WorkspacePrepareReceipt, { streamId: string }>,
+  receipt: Extract<WorkspaceCommandReceipt, { streamId: string }>,
 ): Record<string, unknown> {
   if (receipt.phase === "completed") return { result: receipt.result };
   if (receipt.phase === "rejected") return { refusal: receipt.refusal };
@@ -182,14 +246,28 @@ export function isWorkspaceTerminalPayload(
     ]) &&
     matches(value.commandId, UUID) &&
     matches(value.requestSha256, DIGEST) &&
-    value.operationId === WORKSPACE_PREPARE_OPERATION &&
     isWorkspaceAssignmentOwner(value.owner) &&
-    exactRecord(value.target, ["kind"]) &&
-    value.target.kind === "prepare" &&
+    (value.operationId === WORKSPACE_PREPARE_OPERATION
+      ? exactRecord(value.target, ["kind"]) && value.target.kind === "prepare"
+      : value.operationId === WORKSPACE_MATERIALIZE_OPERATION &&
+        isWorkspaceGenerationTarget(value.target)) &&
     (value.phase === "completed" ||
       value.phase === "rejected" ||
       value.phase === "indeterminate") &&
     matches(value.outcomeSha256, DIGEST)
+  );
+}
+
+export function isWorkspaceGenerationTarget(
+  value: unknown,
+): value is WorkspaceGenerationTarget {
+  return (
+    exactRecord(value, ["kind", "handle", "generation"]) &&
+    value.kind === "workspace" &&
+    matches(value.handle, /^ws_[a-f0-9]{32}$/) &&
+    typeof value.generation === "number" &&
+    Number.isSafeInteger(value.generation) &&
+    value.generation > 0
   );
 }
 
@@ -234,10 +312,19 @@ export function workspaceEvidenceDigest(value: unknown): string {
 export function workspacePrepareRequestDigest(
   request: WorkspacePrepareRequest,
 ): string {
-  return workspaceEvidenceDigest({
+  return workspaceCommandRequestDigest(request, {
     operationId: WORKSPACE_PREPARE_OPERATION,
-    hostKey: request.owner.hostKey,
     target: WORKSPACE_PREPARE_TARGET,
+  });
+}
+
+export function workspaceCommandRequestDigest(
+  request: WorkspaceCommandRequest,
+  binding: WorkspaceCommandBinding,
+): string {
+  return workspaceEvidenceDigest({
+    ...binding,
+    hostKey: request.owner.hostKey,
     ...request,
   });
 }

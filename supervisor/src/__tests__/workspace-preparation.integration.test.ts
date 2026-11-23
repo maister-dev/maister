@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,11 +24,273 @@ import type {
 import {
   bootHost,
   cleanupRuntimeRoot,
+  createBody,
+  envelope,
+  postJson,
   type BootedHost,
 } from "./_fixtures/boot-host";
 
 const roots: string[] = [];
 const hosts: BootedHost[] = [];
+
+async function sealInput(
+  host: BootedHost,
+  owner: WorkspacePrepareReceipt["owner"],
+  kind: "capability_profile" | "capability_instructions",
+  content: string,
+): Promise<{ objectId: string; sha256: string }> {
+  const objectId = randomUUID();
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const fence = {
+    hostKey: owner.hostKey,
+    runId: owner.runId,
+    assignmentId: owner.assignmentId,
+    assignmentEpoch: owner.assignmentEpoch,
+  };
+  const result = await postJson(
+    host.url + "/runtime-objects",
+    envelope("runtime_object.reserve", fence, {
+      objectId,
+      kind,
+      logicalName:
+        kind === "capability_profile"
+          ? "workspace-inputs.json"
+          : "instructions.md",
+      mimeType:
+        kind === "capability_profile" ? "application/json" : "text/markdown",
+      sizeBytes: Buffer.byteLength(content),
+      sha256,
+      generation: 1,
+      retentionClass: "run",
+    }),
+  );
+  expect(result.status).toBe(201);
+  const upload = await fetch(
+    `${host.url}/runtime-objects/${objectId}/content`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(Buffer.byteLength(content)),
+        "content-digest": `sha-256=:${Buffer.from(sha256, "hex").toString("base64")}:`,
+        "x-maister-command-id": randomUUID(),
+        "x-maister-command-issued-at": new Date().toISOString(),
+        "x-maister-assignment-id": owner.assignmentId,
+        "x-maister-assignment-epoch": String(owner.assignmentEpoch),
+        "x-maister-object-generation": "1",
+        "x-maister-sha256": sha256,
+      },
+      body: content,
+    },
+  );
+  expect(upload.status).toBe(200);
+  await upload.body?.cancel();
+  return { objectId, sha256 };
+}
+
+it("C-07 materializes the exact sealed input manifest under its workspace generation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stage-c-workspace-inputs-"));
+  roots.push(root);
+  const host = await bootHost({
+    runtimeRoot: root,
+    fixture: "mock-acp-record-newsession.mjs",
+  });
+  hosts.push(host);
+  const inputDigest = "8".repeat(64);
+  const prepared = await prepareAndRead(host, {
+    mode: "emptyDirectory",
+    inputDigest,
+  });
+  if (prepared.phase !== "completed")
+    throw new Error("workspace preparation did not complete");
+  const { handle, generation } = prepared.result.workspace;
+  const premature = await postJson(
+    host.url + "/sessions",
+    envelope("session.create", prepared.owner, createBody(handle)),
+  );
+  expect(premature).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_preparation_pending" } },
+  });
+  expect(host.registry.list()).toEqual([]);
+  const bytes = "# frozen instructions\n";
+  const sealed = await sealInput(
+    host,
+    prepared.owner,
+    "capability_instructions",
+    bytes,
+  );
+  const manifest = await sealInput(
+    host,
+    prepared.owner,
+    "capability_profile",
+    JSON.stringify({
+      version: 1,
+      workspaceInputDigest: inputDigest,
+      files: [{ path: "instructions.md", ...sealed }],
+    }),
+  );
+  const commandId = randomUUID();
+  const request = {
+    workspaceProtocol: 1,
+    command: {
+      id: commandId,
+      kind: "workspace.materialize",
+      issuedAt: new Date().toISOString(),
+    },
+    owner: prepared.owner,
+    payload: {
+      generation,
+      manifestDigest: manifest.sha256,
+      objects: [manifest, sealed],
+    },
+  };
+  const route = `/v1/workspaces/${handle}/materialization`;
+  const tampered = randomUUID();
+  const tamperedRequest = {
+    ...request,
+    command: { ...request.command, id: tampered },
+    payload: {
+      ...request.payload,
+      objects: [manifest, { ...sealed, sha256: "0".repeat(64) }],
+    },
+  };
+  expect((await addressedRequest(host, route, tamperedRequest)).status).toBe(
+    202,
+  );
+  await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${tampered}`);
+    expect(await response.json()).toMatchObject({
+      phase: "rejected",
+      refusal: { details: { reason: "workspace_rejected" } },
+    });
+  });
+  expect(
+    host.hostState.getWorkspaceExecutionState(handle)?.materializationDigest,
+  ).toBeNull();
+  const accepted = await addressedRequest(host, route, request);
+  expect(accepted.status).toBe(202);
+  await accepted.body?.cancel();
+  const receipt = await vi.waitFor(async () => {
+    const response = await addressedRequest(host, `/v1/commands/${commandId}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      phase: "completed",
+      operationId: "stageCMaterialize",
+      result: {
+        generation,
+        inputGeneration: 1,
+        manifestDigest: manifest.sha256,
+      },
+    });
+    return body;
+  });
+  const workspace = host.hostState.getWorkspace(handle);
+  if (!workspace) throw new Error("prepared workspace does not exist");
+  const file = join(
+    workspace.runDir,
+    "inputs",
+    manifest.sha256,
+    "instructions.md",
+  );
+  expect(await readFile(file, "utf8")).toBe(bytes);
+  expect((await stat(file)).mode & 0o222).toBe(0);
+  const replay = await addressedRequest(host, route, request);
+  expect(replay.status).toBe(202);
+  expect(
+    await (await addressedRequest(host, `/v1/commands/${commandId}`)).json(),
+  ).toEqual(receipt);
+  await chmod(file, 0o600);
+  await writeFile(file, "# tampered after materialization");
+  await chmod(file, 0o444);
+  const changedInput = await postJson(
+    host.url + "/sessions",
+    envelope("session.create", prepared.owner, createBody(handle)),
+  );
+  expect(changedInput).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_input_changed" } },
+  });
+  await chmod(file, 0o600);
+  await writeFile(file, bytes);
+  await chmod(file, 0o444);
+  vi.stubEnv("MAISTER_API_BASE_URL", "https://workspace-web.example.test");
+  const scopedToken = `mai_${"a".repeat(43)}`;
+  const wrongWeb = await postJson(
+    host.url + "/sessions",
+    envelope(
+      "session.create",
+      prepared.owner,
+      createBody(handle, {
+        mcpServers: [
+          {
+            name: "maister",
+            transport: "stdio",
+            platformOrigin: "maister_facade",
+            env: {
+              MAISTER_API_BASE_URL: "https://another-web.example.test",
+              MAISTER_PROJECT_TOKEN: scopedToken,
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(wrongWeb).toMatchObject({
+    status: 409,
+    body: { details: { reason: "workspace_rejected" } },
+  });
+  expect(host.registry.list()).toEqual([]);
+  const record = join(root, "newsession-record.json");
+  const configuredFacade = join(root, "fixture-facade");
+  vi.stubEnv("MAISTER_MCP_FACADE_COMMAND", configuredFacade);
+  vi.stubEnv("MOCK_ACP_NEWSESSION_RECORD_PATH", record);
+  vi.stubEnv("UNRELATED_MCP_TOKEN", "fixture-private-value");
+  const spawned = await postJson(
+    host.url + "/sessions",
+    envelope(
+      "session.create",
+      prepared.owner,
+      createBody(handle, {
+        mcpServers: [
+          {
+            name: "maister",
+            transport: "stdio",
+            platformOrigin: "maister_facade",
+            command: "/manager/unused-facade",
+            args: ["--manager-path"],
+            env: {
+              MAISTER_API_BASE_URL: "https://workspace-web.example.test",
+              MAISTER_PROJECT_TOKEN: scopedToken,
+              MAISTER_MCP_TOOLSET: "project-run",
+              UNRELATED_MCP_TOKEN: "env:UNRELATED_MCP_TOKEN",
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  expect(spawned.status).toBe(201);
+  expect(JSON.parse(await readFile(record, "utf8"))).toMatchObject({
+    cwd: workspace.path,
+    mcpServers: [
+      {
+        name: "maister",
+        command: configuredFacade,
+        args: ["--stdio"],
+        env: [
+          {
+            name: "MAISTER_API_BASE_URL",
+            value: "https://workspace-web.example.test",
+          },
+          { name: "MAISTER_PROJECT_TOKEN", value: scopedToken },
+          { name: "MAISTER_MCP_TOOLSET", value: "project-run" },
+        ],
+      },
+    ],
+  });
+}, 30_000);
 
 afterEach(async () => {
   vi.unstubAllEnvs();

@@ -264,6 +264,21 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   52 supervisor integration cases cover these boundaries and adjacent
   regressions. Workspace inputs and session permission enforcement are T06.
 - [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
+
+  **C-07 capture and transport checkpoint.** On Darwin arm64 and Node
+  24.15.0 the RED host test received 404 for materialization. A second
+  RED against real PostgreSQL and the supervisor found no recoverable
+  input command after the package source changed. GREEN reserves the
+  input bytes with the Run, rechecks current authority, transfers the
+  original bytes and derives the generation from the durable event
+  and receipt. A revoked project prevents delivery. The supervisor
+  rejects altered references, detects altered retained bytes before
+  spawn, and replays its original receipt. The recording ACP fixture
+  verified the host-local facade command, expected Web origin and
+  scoped token fields. The 53 Web and 22 supervisor integration cases
+  cover this boundary and adjacent regressions. Context repositories,
+  adapter-facing package projection, and the actual facade call under
+  current vault authority still require C-07 evidence.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
 ### C3–C4 — review, board and single-host qualification

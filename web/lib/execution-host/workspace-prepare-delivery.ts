@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { WorkspacePrepareRequest } from "../../../runtime/workspace-prepare";
+import type {
+  WorkspaceAssignmentOwner,
+  WorkspaceMaterializeRequest,
+  WorkspacePrepareRequest,
+} from "../../../runtime/workspace-prepare";
 import type {
   ExecutionAssignment,
   ExecutionCommand,
@@ -12,10 +16,27 @@ import type { ExecutionHostTransport } from "./contracts";
 import { getAssignmentById } from "./assignments";
 import { casTransition, claimDelivering, markAccepted } from "./commands";
 import { hostForAssignment } from "./resolver";
+import { assertWorkspaceRunAuthority } from "./workspace-input-authority";
 import { usesHostWorkspacePreparation } from "./workspace-preparation";
-import { WorkspacePreparePayloadSchema } from "./workspace-prepare-schema";
+import {
+  WorkspaceMaterializationPayloadSchema,
+  WorkspacePreparePayloadSchema,
+} from "./workspace-prepare-schema";
 
 import { MaisterError } from "@/lib/errors";
+
+function retainedOwner(
+  command: ExecutionCommand,
+  hostKey: string,
+): WorkspaceAssignmentOwner {
+  return {
+    kind: "assignment",
+    hostKey,
+    runId: command.runId,
+    assignmentId: command.executionAssignmentId,
+    assignmentEpoch: command.assignmentEpoch,
+  };
+}
 
 export function retainedWorkspacePrepareRequest(
   command: ExecutionCommand,
@@ -35,13 +56,32 @@ export function retainedWorkspacePrepareRequest(
       kind: command.kind,
       issuedAt: command.createdAt.toISOString(),
     },
-    owner: {
-      kind: "assignment",
-      hostKey,
-      runId: command.runId,
-      assignmentId: command.executionAssignmentId,
-      assignmentEpoch: command.assignmentEpoch,
+    owner: retainedOwner(command, hostKey),
+    payload: payload.data,
+  };
+}
+
+export function retainedWorkspaceMaterializeRequest(
+  command: ExecutionCommand,
+  hostKey: string,
+): WorkspaceMaterializeRequest {
+  const payload = WorkspaceMaterializationPayloadSchema.safeParse(
+    command.payload,
+  );
+  if (!payload.success || command.kind !== "workspace.materialize")
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "Stored workspace materialization request is invalid",
+    );
+
+  return {
+    workspaceProtocol: 1,
+    command: {
+      id: command.id,
+      kind: command.kind,
+      issuedAt: command.createdAt.toISOString(),
     },
+    owner: retainedOwner(command, hostKey),
     payload: payload.data,
   };
 }
@@ -88,7 +128,7 @@ export async function recoverWorkspacePreparation(
 ): Promise<boolean> {
   if (
     !transport.sendWorkspacePreparation ||
-    !transport.getWorkspacePreparationReceipt
+    !transport.getWorkspaceCommandReceipt
   )
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
@@ -97,16 +137,38 @@ export async function recoverWorkspacePreparation(
         details: { reason: "workspace_protocol_unsupported" },
       },
     );
-  const { host } = await resolveWorkspacePreparationPeer(
+  const { host, assignment } = await resolveWorkspacePreparationPeer(
     db,
     command,
     transport,
   );
-  const request = retainedWorkspacePrepareRequest(command, host.hostKey);
+  const deliver =
+    command.kind === "workspace.materialize"
+      ? () => {
+          if (
+            !command.targetSessionId ||
+            !transport.sendWorkspaceMaterialization ||
+            command.targetSessionId !== assignment.executionWorkspaceId
+          )
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Workspace materialization no longer has its prepared target",
+            );
+          return transport.sendWorkspaceMaterialization(
+            command.targetSessionId,
+            retainedWorkspaceMaterializeRequest(command, host.hostKey),
+          );
+        }
+      : () =>
+          transport.sendWorkspacePreparation!(
+            retainedWorkspacePrepareRequest(command, host.hostKey),
+          );
   if (command.state !== "queued") {
-    const receipt = await transport.getWorkspacePreparationReceipt(command.id);
+    const receipt = await transport.getWorkspaceCommandReceipt(command.id);
     if (receipt && receipt.phase !== "accepted") return false;
   }
+  if (command.kind === "workspace.materialize")
+    await assertWorkspaceRunAuthority(db, command.runId);
   if (command.attempts >= command.maxAttempts) {
     if (command.transportState !== "reconciliation_required")
       await casTransition(
@@ -142,7 +204,7 @@ export async function recoverWorkspacePreparation(
     if (!retry.changed || !retry.row) return false;
     delivery = retry.row;
   }
-  await transport.sendWorkspacePreparation(request);
+  await deliver();
   if (delivery.state === "delivering")
     await markAccepted(db, command.id, delivery.attempts, { now: at });
 

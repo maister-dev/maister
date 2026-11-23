@@ -175,6 +175,32 @@ paths:
         "400": { description: Invalid payload or owner shape. }
         "409": { description: "Command digest, assignment, source approval or host key mismatch." }
         "503": { description: Workspace protocol or execution storage unavailable. }
+  /v1/workspaces/{id}/materialization:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [execution-host]
+      operationId: stageCMaterialize
+      summary: Accept a sealed input generation for an owned workspace
+      description: The first object is the sealed manifest. The remaining objects must belong to the exact assignment and match the manifest.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCMaterializeRequest
+      parameters:
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202":
+          description: The exact accepted command. Its replay returns the same acceptance.
+          headers:
+            Location:
+              schema: { type: string }
+              description: The selected host's addressed command receipt resource.
+        "400": { description: Invalid payload or owner shape. }
+        "409": { description: "Command digest, assignment, target or host key mismatch." }
+        "503": { description: Workspace protocol or execution storage unavailable. }
   /v1/commands/{commandId}:
     parameters:
       - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }

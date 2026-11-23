@@ -4,17 +4,19 @@ import type { WorkspacePrepareInput } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionHostTransport } from "./contracts";
 import type { ExecutionAssignment, ExecutionHost } from "@/lib/db/schema";
+import type { WorkspaceInputFile } from "./workspace-inputs";
 
 import { randomUUID } from "node:crypto";
 
-import { sql, type SQL } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 
 import { COMMAND_POLICY } from "./deliverer";
 import { defaultTransport } from "./default-transport";
 import { issueCommand } from "./ledger";
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
+import { encodeWorkspaceInputCapture } from "./workspace-input-capture";
 
-import { workspaces } from "@/lib/db/schema";
+import { runs, workspaceInputCaptures, workspaces } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 
 type WorkspaceMetadata = Pick<
@@ -66,9 +68,17 @@ export async function reserveHostWorkspace(
   placement: Readonly<{ host: ExecutionHost; assignment: ExecutionAssignment }>,
   metadata: WorkspaceMetadata,
   payload: WorkspacePrepareInput,
+  files: readonly WorkspaceInputFile[] = [],
 ): Promise<void> {
   const { host, assignment } = placement;
   const workspaceId = randomUUID();
+  const capture = encodeWorkspaceInputCapture(files);
+  const [run] = await tx.select({ userId: runs.createdByUserId }).from(runs)
+    .where(eq(runs.id, assignment.runId));
+  if (!run)
+    throw new MaisterError("CONFLICT", "Workspace reservation requires its admitted Run", {
+      details: { reason: "workspace_preparation_changed" },
+    });
 
   await tx.insert(workspaces).values({
     ...metadata,
@@ -79,6 +89,11 @@ export async function reserveHostWorkspace(
     preparationAssignmentId: assignment.id,
     workspaceGeneration: 1,
     workspaceInputDigest: payload.inputDigest,
+  });
+  await tx.insert(workspaceInputCaptures).values({
+    workspaceId,
+    originUserId: run.userId,
+    ...capture,
   });
 
   await issueCommand(tx, {

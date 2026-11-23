@@ -116,8 +116,7 @@ operationCases:
         generation: 1
         manifestDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
         objects: &a6
-          - &a10
-            objectId: obj_357
+          - objectId: a7fced07-3241-4d20-9245-000000000052
             sha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
     invalidRequest:
       workspaceProtocol: 1
@@ -133,7 +132,7 @@ operationCases:
       state: accepted
     result:
       generation: 1
-      inputGeneration: 2
+      inputGeneration: 1
       manifestDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
     refusal:
       status: 409
@@ -144,7 +143,7 @@ operationCases:
           reason: stale_workspace_generation
       newEffects: 0
     target: {"kind":"workspace","handle":"ws_354c9b5edffe43f0b3a53ffd05b047ef","generation":1}
-    requestSha256: a68bf844471d40629122331d51a226f8852f2f6b8597d060a396fe3a05499739
+    requestSha256: fa7f67b17e1035c5c8294ceaa923d8a8a9f69275cb9ad7ce0f9bbf84ca1236c3
     location: /v1/commands/a7fced07-3241-4d20-9245-000000000001
     replay:
       location: /v1/commands/a7fced07-3241-4d20-9245-000000000001
@@ -188,7 +187,7 @@ operationCases:
       checkValidity: valid
       outputState: sealed
       objects: &a51
-        - *a10
+        - &a10 { objectId: obj_357, sha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff }
       quiescence: proved
     refusal:
       status: 409

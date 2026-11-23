@@ -50,6 +50,7 @@ import { assertRuntimeObjectsReferenceable } from "./runtime-object-holds";
 import { lockLogicalRunSession, staleSessionBinding } from "./session-binding";
 import { asHostSessionId } from "./types";
 import { projectPrivateCreateFailure } from "./private-create-failure";
+import { assertAddressedWorkspaceSessionAuthority } from "./workspace-input-authority";
 
 import { executionCommands, gateResults, nodeAttempts } from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -457,6 +458,7 @@ async function createOwnedSessionFromIntent(
       );
     }
     if (!original || replacement) {
+      await assertAddressedWorkspaceSessionAuthority(db, authority.runId);
       const payload = replacement ?? {
         ...(await input.preparePayload()),
         executionWorkspaceId: await client.ensureWorkspace(),
@@ -493,6 +495,7 @@ async function createOwnedSessionFromIntent(
           }
           if (predecessor && (!existing || existing.state !== "failed"))
             throw createIntentError("create_replacement_source");
+          await assertAddressedWorkspaceSessionAuthority(tx, authority.runId);
           if (owner.variant === "gate_chat") {
             const session = payload.sessionName
               ? await lockLogicalRunSession(tx, {
@@ -724,6 +727,7 @@ async function createOwnedSessionFromIntent(
       });
     }
     try {
+      await assertAddressedWorkspaceSessionAuthority(db, authority.runId);
       const result = await deliverCommand({
         db,
         command: current,

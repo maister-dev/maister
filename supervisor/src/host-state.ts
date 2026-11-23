@@ -509,6 +509,7 @@ export type HostState = {
   getWorkspace(id: string): WorkspaceRow | null;
   getWorkspaceExecutionState(id: string): WorkspaceExecutionState | null;
   recordWorkspaceInput(id: string, generation: number, digest: string): void;
+  recordWorkspaceMaterialization(id: string, generation: number, digest: string): void;
   insertWorkspace(row: WorkspaceRow): void;
   releaseWorkspace(id: string, releasedAt: string): boolean;
   getWorkspaceWait(waitId: string): WorkspaceWaitWitness | null;
@@ -2340,6 +2341,21 @@ export function openHostState(opts: OpenHostStateOptions = {}): HostState {
           throw new HostRuntimeEventError(
             "command_invariant_conflict",
             "workspace input does not match its retained generation",
+          );
+      });
+    },
+    recordWorkspaceMaterialization(id, generation, digest) {
+      storage.write(() => {
+        const changed = db.prepare(
+          `UPDATE workspace_execution_state
+             SET materialization_generation = 1, materialization_digest = ?
+           WHERE workspace_id = ? AND generation = ? AND input_digest IS NOT NULL
+             AND (materialization_digest IS NULL OR materialization_digest = ?)`,
+        ).run(digest, id, generation, digest);
+        if (changed.changes !== 1)
+          throw new HostRuntimeEventError(
+            "command_invariant_conflict",
+            "workspace materialization does not match its retained generation",
           );
       });
     },

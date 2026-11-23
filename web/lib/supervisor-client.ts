@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
-import type { WorkspacePrepareReceipt, WorkspacePrepareRequest } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceMaterializeRequest, WorkspacePrepareRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -59,7 +59,7 @@ import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
-import { WorkspacePrepareAcceptanceSchema, WorkspacePrepareReceiptSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { WorkspacePrepareAcceptanceSchema, WorkspaceCommandReceiptSchema } from "@/lib/execution-host/workspace-prepare-schema";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -1906,13 +1906,13 @@ export async function getCommandReceipt(
   }
 }
 
-export async function sendWorkspacePreparation(input: WorkspacePrepareRequest): Promise<void> {
+async function sendWorkspaceCommand(path: string, input: WorkspaceCommandRequest): Promise<void> {
   const commandPath = `/v1/commands/${encodeURIComponent(input.command.id)}`;
   const res = await request<unknown>({
     method: "POST",
-    path: "/v1/workspaces/prepare",
+    path,
     body: input,
-    ctx: "sendWorkspacePreparation",
+    ctx: input.command.kind,
     fallbackCode: "ACP_PROTOCOL",
     timeoutMs: 10_000,
   });
@@ -1920,6 +1920,14 @@ export async function sendWorkspacePreparation(input: WorkspacePrepareRequest): 
   if (!received.success || received.data.commandId !== input.command.id ||
       res.status !== 202 || res.headers.get("location") !== commandPath)
     throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace acceptance");
+}
+
+export function sendWorkspacePreparation(input: WorkspacePrepareRequest): Promise<void> {
+  return sendWorkspaceCommand("/v1/workspaces/prepare", input);
+}
+
+export function sendWorkspaceMaterialization(handle: string, input: WorkspaceMaterializeRequest): Promise<void> {
+  return sendWorkspaceCommand(`/v1/workspaces/${encodeURIComponent(handle)}/materialization`, input);
 }
 
 export async function observeWorkspaceRevision(repositoryId: string, ref: string): Promise<string> {
@@ -1942,18 +1950,18 @@ export async function observeWorkspaceRevision(repositoryId: string, ref: string
   return received.data.commit;
 }
 
-export async function getWorkspacePreparationReceipt(
+export async function getWorkspaceCommandReceipt(
   commandId: string,
-): Promise<WorkspacePrepareReceipt | null> {
+): Promise<WorkspaceCommandReceipt | null> {
   try {
     const res = await request<unknown>({
       method: "GET",
       path: `/v1/commands/${encodeURIComponent(commandId)}`,
-      ctx: "getWorkspacePreparationReceipt",
+      ctx: "getWorkspaceCommandReceipt",
       fallbackCode: "ACP_PROTOCOL",
       timeoutMs: ADMIN_READ_TIMEOUT_MS,
     });
-    const receipt = WorkspacePrepareReceiptSchema.safeParse(res.body);
+    const receipt = WorkspaceCommandReceiptSchema.safeParse(res.body);
     if (!receipt.success || receipt.data.commandId !== commandId)
       throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace receipt");
 

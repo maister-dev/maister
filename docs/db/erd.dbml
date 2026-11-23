@@ -1713,6 +1713,7 @@ table execution_commands {
 
     terminal_event_id [name: 'execution_commands_terminal_event_idx']
     execution_assignment_id [name: 'execution_commands_assignment_idx']
+    execution_assignment_id [name: 'execution_commands_workspace_materialize_uq', unique]
     (transport_state, next_attempt_at, id) [name: 'execution_commands_reconciliation_idx']
     (application_state, application_next_retry_at, application_claim_expires_at, id) [name: 'execution_commands_application_idx']
     (run_id, logical_operation_key) [name: 'execution_commands_prompt_logical_operation_uq', unique]
@@ -4819,6 +4820,13 @@ table webhook_subscriptions {
   }
 }
 
+table workspace_input_captures {
+  workspace_id text [pk, not null]
+  origin_user_id text
+  files jsonb [not null]
+  content_digest text [not null]
+}
+
 table workspace_reconciliation_findings {
   id text [pk, not null]
   identity_fingerprint text [not null, unique]
@@ -6234,6 +6242,8 @@ ref webhook_events_run_id_runs_id_fk: webhook_events.run_id > runs.id [delete: c
 ref webhook_subscriptions_project_id_projects_id_fk: webhook_subscriptions.project_id > projects.id [delete: cascade, update: no action]
 
 ref webhook_subscriptions_owner_user_id_users_id_fk: webhook_subscriptions.owner_user_id > users.id [delete: cascade, update: no action]
+
+ref workspace_input_captures_workspace_id_workspaces_id_fk: workspace_input_captures.workspace_id > workspaces.id [delete: cascade, update: no action]
 
 ref workspace_reconciliation_findings_project_id_projects_id_fk: workspace_reconciliation_findings.project_id > projects.id [delete: set null, update: no action]
 

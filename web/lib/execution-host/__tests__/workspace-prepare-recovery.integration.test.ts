@@ -4,7 +4,7 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { WorkspacePrepareRequest } from "../../../../runtime/workspace-prepare";
 
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -12,15 +12,19 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { getAssignmentById } from "../assignments";
+import { createExecutionHosts } from "../client";
 import { listCommandsForRun } from "../commands";
 import { consumeRuntimeEventStreamOnce } from "../events/consumer";
 import { canonicalLifecycleProjector } from "../events/lifecycle-projector";
 import { projectExecutionEvents } from "../events/projector";
+import { projectCanonicalRuntimeObjects } from "../events/runtime-object-projector";
 import { mintPlacement } from "../placement";
 import { recoverExecutionCommands } from "../recovery";
 import { ensureLocalExecutionHost } from "../registrar";
 import { createLocalDirectTransport } from "../transports/local-direct";
 import { reserveHostWorkspace } from "../workspace-preparation";
+import { readRuntimeObjectContent } from "../runtime-objects";
+import { WorkspaceMaterializationPayloadSchema } from "../workspace-prepare-schema";
 
 import { workspaces } from "@/lib/db/schema";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
@@ -72,6 +76,13 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     runKind: "flow",
     status: "Pending",
   });
+  const installed = join(root, "installed-package");
+  await mkdir(installed);
+  const instructions = join(installed, "instructions.md");
+  await writeFile(instructions, "# sealed instructions");
+  const capture = [
+    { path: "instructions.md", bytes: await readFile(instructions) },
+  ];
   const assignment = await db.transaction(async (tx) => {
     const placed = await mintPlacement(tx as unknown as Db, {
       runId,
@@ -88,6 +99,7 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
         commit,
         inputDigest: "2".repeat(64),
       },
+      capture,
     );
     return placed;
   });
@@ -144,12 +156,18 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
     await database.pool.query("DROP FUNCTION receipt_application_fault()");
   }
 
-    const output = execFileSync(process.execPath, [
-      "--import", resolve("node_modules/tsx/dist/loader.mjs"),
-      "--import", resolve("scripts/_register-shim.mjs"),
+  const output = execFileSync(
+    process.execPath,
+    [
+      "--import",
+      resolve("node_modules/tsx/dist/loader.mjs"),
+      "--import",
+      resolve("scripts/_register-shim.mjs"),
       resolve("test-support/workspace-prepare-projection-worker.ts"),
-      runId, new Date(projectedAt.getTime() + 60_000).toISOString(),
-    ], {
+      runId,
+      new Date(projectedAt.getTime() + 60_000).toISOString(),
+    ],
+    {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -157,12 +175,17 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
         TSX_TSCONFIG_PATH: resolve("tsconfig.json"),
       },
       timeout: 15_000,
-    });
-    const marker = "workspace-projection ";
-    const line = output.split("\n").find((entry) => entry.startsWith(marker));
-    if (!line) throw new Error("replacement worker returned no projection summary");
-    const after = JSON.parse(line.slice(marker.length)) as { pid: number; projected: number };
-    expect(after.pid).not.toBe(process.pid);
+    },
+  );
+  const marker = "workspace-projection ";
+  const line = output.split("\n").find((entry) => entry.startsWith(marker));
+  if (!line)
+    throw new Error("replacement worker returned no projection summary");
+  const after = JSON.parse(line.slice(marker.length)) as {
+    pid: number;
+    projected: number;
+  };
+  expect(after.pid).not.toBe(process.pid);
   expect(after.projected).toBe(1);
   const [applied] = await listCommandsForRun(db, runId);
   expect(applied).toMatchObject({
@@ -176,4 +199,83 @@ it("C-06 applies one real checkout after a lost acceptance and a rolled-back pro
   expect(
     (await getAssignmentById(db, assignment.id))?.executionWorkspaceId,
   ).toBe(workspace.executionWorkspaceId);
+
+  expect(workspace.workspaceMaterializationGeneration).toBeNull();
+  await writeFile(instructions, "# updated after acceptance");
+  await database.pool.query(
+    "UPDATE projects SET archived_at = now() WHERE id = $1",
+    [project.id],
+  );
+  const revoked = await recoverExecutionCommands({ db, transport, graceMs: 0 });
+  expect(revoked.errors).toEqual([
+    `workspace inputs ${runId}: launch_authority_revoked`,
+  ]);
+  expect((await listCommandsForRun(db, runId)).map(({ kind }) => kind)).toEqual(
+    ["workspace.prepare"],
+  );
+  await database.pool.query(
+    "UPDATE projects SET archived_at = NULL WHERE id = $1",
+    [project.id],
+  );
+  const materializationDelivery = await recoverExecutionCommands({
+    db,
+    transport,
+    graceMs: 0,
+  });
+  expect(materializationDelivery.redelivered).toBe(1);
+  expect(materializationDelivery.errors).toEqual([]);
+  const inputEvents = await consumeRuntimeEventStreamOnce({
+    db,
+    executionHostId: host.id,
+    transport,
+    owner: "fixture",
+    maxEvents: 5,
+    signal: AbortSignal.timeout(15_000),
+  });
+  expect(inputEvents).toMatchObject({
+    received: 5,
+    acknowledged: 1,
+    reconnectRequired: false,
+  });
+  await projectExecutionEvents({
+    db,
+    projector: canonicalLifecycleProjector,
+    runId,
+    now: new Date(projectedAt.getTime() + 90_000),
+  });
+  expect((await readWorkspace()).workspaceMaterializationGeneration).toBe(1);
+  const command = (await listCommandsForRun(db, runId)).find(
+    ({ kind }) => kind === "workspace.materialize",
+  );
+  expect(command).toMatchObject({
+    kind: "workspace.materialize",
+    state: "succeeded",
+    attempts: 1,
+  });
+  if (!command)
+    throw new Error("prepared workspace did not issue its input command");
+  const receipt = await transport.getWorkspaceCommandReceipt!(command.id);
+  const client = await createExecutionHosts({ db, transport }).forAssignment({
+    id: assignment.id,
+  });
+  if (
+    receipt?.phase !== "completed" ||
+    receipt.operationId !== "stageCMaterialize"
+  )
+    throw new Error("host did not retain the completed input receipt");
+  const payload = WorkspaceMaterializationPayloadSchema.parse(command.payload);
+  expect(receipt.result.manifestDigest).toBe(payload.manifestDigest);
+  await projectCanonicalRuntimeObjects({ db, runId });
+  const { content } = await readRuntimeObjectContent({
+    db,
+    runId,
+    objectId: payload.objects[1].objectId,
+    transportForHost: async () => transport,
+  });
+  expect(Buffer.from(content.bytes).toString("utf8")).toBe(
+    "# sealed instructions",
+  );
+  expect(client.assignment.executionWorkspaceId).toBe(
+    workspace.executionWorkspaceId,
+  );
 }, 120_000);
