@@ -449,7 +449,7 @@ pnpm --filter maister-web db:migrate
 sudo systemctl start maister-supervisor maister-web
 ```
 
-Migrations 0369–0370 transfer package export ownership to project declarations and validate stored dependency sources. Stop old CLI and web writers before applying it. When new declarations exist, rollback requires the matching pre-cutover database backup. A failed migration reports the inconsistent attachment so it can be repaired before retry.
+Migrations 0369–0371 transfer package export ownership to project declarations and validate stored dependency sources. Stop old CLI and web writers before applying them. When new declarations exist, rollback requires the matching pre-cutover database backup. If source validation fails, use the reported project, declaration or attachment ID to repair the stored coordinates and retry.
 
 Run the MCP contract check from the smoke test before starting new agent runs.
 

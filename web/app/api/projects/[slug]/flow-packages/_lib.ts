@@ -106,16 +106,18 @@ async function resolveProjectBySlug(
 // Auth-first, then resolve the project from the URL slug (server-state, never a
 // body field), then enforce the managePackages project action. Returns the
 // trusted project row + the db handle for downstream service calls.
-export async function authorizeManagePackages(
-  slug: string,
-): Promise<{ project: Record<string, any>; db: Db }> {
-  await requireActiveSession();
+export async function authorizeManagePackages(slug: string): Promise<{
+  project: Record<string, any>;
+  db: Db;
+  user: Awaited<ReturnType<typeof requireActiveSession>>;
+}> {
+  const user = await requireActiveSession();
 
   const resolved = await resolveProjectBySlug(slug);
 
   await requireProjectAction(resolved.project.id, "managePackages");
 
-  return resolved;
+  return { ...resolved, user };
 }
 
 // Package trust is a PLATFORM-level decision (ADR-088: one operator decision

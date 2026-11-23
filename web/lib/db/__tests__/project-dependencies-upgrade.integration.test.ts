@@ -1,7 +1,9 @@
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { readExportSnapshot } from "@/lib/project-config-persistence/projection";
+import { assertDependencySource } from "@/lib/project-dependencies/source";
 import { pgErrorOf } from "@/lib/db/pg-error";
 import { upgradeMainTestDb } from "@/test-support/migration-upgrade";
 import {
@@ -10,6 +12,13 @@ import {
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
 
+vi.mock("@/auth", () => ({
+  auth: async () => ({ user: { id: "dep-admin" } }),
+}));
+vi.mock("@/lib/db/client", async (original) => ({
+  ...(await original<typeof import("@/lib/db/client")>()),
+  getDb: () => database.db,
+}));
 const predecessor = "0368_run_sync_attempt_peek_hint";
 let database: StartedPostgresTestDb;
 
@@ -88,6 +97,7 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
     () => null,
     (error: unknown) => pgErrorOf(error),
   );
+
   expect(refusal?.message).toContain("bound");
   expect(refusal?.message).not.toContain("synthetic-marker");
   expect(
@@ -102,10 +112,41 @@ it("AC02 aborts an inconsistent upgrade, preserves real attachment provenance an
   );
   const receiptsBefore = (await historical()).rows;
   const before = (await revisions()).rows;
+
   await apply();
   await apply();
   expect((await revisions()).rows).toEqual(before);
   expect((await historical()).rows).toEqual(receiptsBefore);
+  await pool.query(
+    "INSERT INTO users(id,email,role,account_status) VALUES ('dep-admin','dep@example.invalid','admin','active')",
+  );
+  const { GET } = await import("@/app/api/projects/[slug]/packages/route");
+  const response = await GET(
+    new NextRequest("http://localhost/api/projects/dep/packages"),
+    { params: Promise.resolve({ slug: "dep" }) },
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    attachments: [
+      { id: "bound", packageInstallId: "installed", flows: ["member"] },
+    ],
+    declarations: [
+      {
+        ref: "tools",
+        effectiveAttachmentId: "bound",
+        effectiveRevision: "abcdef",
+        state: null,
+        attempt: null,
+      },
+    ],
+  });
+  const { getProjectPackageAttachments } =
+    await import("@/lib/queries/packages");
+
+  expect(await getProjectPackageAttachments("dep")).toMatchObject([
+    { id: "bound", flows: ["member"] },
+  ]);
   const exported = async () =>
     (await readExportSnapshot(database.db, "dep")).projection.packages;
 
@@ -198,6 +239,7 @@ it("upgrades an existing 0369 head only after its unsafe coordinates are repaire
     { databaseName: "dependency_0369_repair" },
     previous,
   );
+
   try {
     await old.pool
       .query(`INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES ('p','p','Project','/tmp/p','PRE');
@@ -207,6 +249,7 @@ it("upgrades an existing 0369 head only after its unsafe coordinates are repaire
       () => null,
       (error: unknown) => pgErrorOf(error),
     );
+
     expect(refusal?.message).toContain("head");
     expect(refusal?.message).not.toContain("synthetic-marker");
     await old.pool.query(
@@ -225,3 +268,65 @@ it("upgrades an existing 0369 head only after its unsafe coordinates are repaire
     await old.stop();
   }
 }, 180000);
+
+it("uses the same coordinate grammar before persistence and after a 0370 upgrade", async () => {
+  const prior = "0370_dependency_source_guard";
+  const old = await startMainPostgresTestDbUpTo(
+    { databaseName: "dependency_source_ports" },
+    prior,
+  );
+
+  try {
+    await old.pool
+      .query(`INSERT INTO projects(id,slug,name,repo_path,task_key) VALUES('port-project','port-project','Port','/tmp/port','PORT');
+      INSERT INTO project_dependency_declarations(id,project_id,kind,logical_id,ordinal,desired)
+      VALUES('port-head','port-project','package','tools',0,'{"source":"https://example.org:65536/private-marker","version":"v1"}')`);
+    const refusal = await upgradeMainTestDb(old, prior).then(
+      () => null,
+      (error: unknown) => pgErrorOf(error),
+    );
+
+    expect(refusal?.message).toContain("port-head");
+    expect(refusal?.message).not.toContain("private-marker");
+    await old.pool.query(
+      `UPDATE project_dependency_declarations SET generation=2,desired=jsonb_set(desired,'{source}','"https://example.org:65535/my%20repo"') WHERE id='port-head'`,
+    );
+    await migrate(old.db, { migrationsFolder: "./lib/db/migrations" });
+    const samples: [string, boolean][] = [
+      ["https://example.org/my repo", false],
+      ["https://example.org/my%20repo", true],
+      ["https://example.org:65536/example", false],
+      ["https://example.org:65535/example", true],
+      ["ssh://git@127.0.0.1:00022/repo", true],
+      ["ssh://git@[::1]:65536/repo", false],
+      ["ssh://git@[::1]:22/repo", true],
+      ["ssh://git@[1::2::3]/repo", false],
+      ["https://example.org:/r", false],
+      ["git@host:my dir", false],
+      ["git@host:team/repo", true],
+      ["ssh://git+deploy@host/repo", false],
+      ["file:///tmp/local%20repo", true],
+      ["file:///tmp/a%2Fb", false],
+      ["file:///tmp/%FF", false],
+      ["file:///tmp/%00", false],
+      ["/tmp/Путь с пробелами", true],
+      ["https://example.org/a\\b", false],
+      ["https://example.org/a\u00a0b", false],
+    ];
+
+    for (const [source, expected] of samples) {
+      const safe = () => assertDependencySource(source);
+
+      if (expected) expect(safe, source).not.toThrow();
+      else expect(safe, source).toThrow();
+      const result = await old.pool.query<{ accepted: boolean }>(
+        "SELECT project_dependency_safe_source($1) AS accepted",
+        [source],
+      );
+
+      expect(result.rows[0].accepted, source).toBe(expected);
+    }
+  } finally {
+    await old.stop();
+  }
+}, 180_000);
