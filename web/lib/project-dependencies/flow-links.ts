@@ -3,7 +3,6 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 
 import { lstat, readlink, readdir, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -12,6 +11,7 @@ import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import { flows, projects } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
+  flowCacheDirectory,
   flowIdSchema,
   flowRevisionSchema,
   projectFlowSymlinkPath,
@@ -31,7 +31,7 @@ function unmanagedLink(): never {
 }
 function isManagedTarget(ref: string, target: string): boolean {
   return (
-    dirname(target) === join(homedir(), ".maister", "flows") &&
+    dirname(target) === flowCacheDirectory() &&
     basename(target).startsWith(ref + "@") &&
     /^(?:[a-f0-9]{12}|unknown)$/.test(basename(target).slice(ref.length + 1))
   );

@@ -1,9 +1,16 @@
 import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import os from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
@@ -11,6 +18,7 @@ import { type SessionUser } from "@/lib/authz";
 import { resolveEffectiveAgentDefinition } from "@/lib/agents/effective";
 import { attachAgent } from "@/lib/agents/project-links";
 import { loadFlowManifest, readAndValidateFormSchemaDoc } from "@/lib/config";
+import { projectFlowSymlinkPath, systemCachePath } from "@/lib/flow-paths";
 import { assertNodeLaunchable } from "@/lib/flows/enforcement";
 import { deriveSessionEnforcementProfile } from "@/lib/flows/enforcement-profile";
 import { enableRevision } from "@/lib/flows/lifecycle";
@@ -93,6 +101,27 @@ it("IT-CBE-04 installs exact native RAH contracts without combining install, tru
     ).rows,
   ).toEqual([]);
   expect((await database.pool.query("SELECT id FROM runs")).rows).toEqual([]);
+  const memberLink = projectFlowSymlinkPath(root, slug, "rah-root-d1");
+  const foreignTarget = join(
+    root,
+    "foreign-cache",
+    basename(systemCachePath("rah-root-d1", installed.resolvedRevision)),
+  );
+  await mkdir(dirname(memberLink), { recursive: true });
+  await symlink(foreignTarget, memberLink);
+  await expect(
+    attachPackage({
+      projectId,
+      projectSlug: slug,
+      packageInstallId: installed.id,
+      workspaceRoot: root,
+      db: database.db,
+    }),
+  ).rejects.toMatchObject({
+    details: { reason: "project_flow_link_conflict" },
+  });
+  expect(await readlink(memberLink)).toBe(foreignTarget);
+  await rm(memberLink);
   const attached = await attachPackage({
     projectId,
     projectSlug: slug,

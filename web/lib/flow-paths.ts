@@ -88,6 +88,10 @@ function validate<T>(
 // number of cached flow versions. The full SHA stays in the DB column.
 const REVISION_SHORT_LEN = 12;
 
+export function flowCacheDirectory(): string {
+  return path.join(os.homedir(), ".maister", "flows");
+}
+
 // Produce the absolute path to the immutable per-revision flow bundle
 // in the system cache. Format: ~/.maister/flows/<flowRefId>@<sha[:12]>/.
 // The revision MUST be a git commit SHA (or the "unknown" sentinel
@@ -100,7 +104,7 @@ export function systemCachePath(flowRefId: string, revision: string): string {
   const rev = validate(flowRevisionSchema, revision, "revision");
   const short = rev.slice(0, REVISION_SHORT_LEN);
 
-  return path.join(os.homedir(), ".maister", "flows", `${id}@${short}`);
+  return path.join(flowCacheDirectory(), `${id}@${short}`);
 }
 
 // Produce the absolute path to the immutable per-revision capability bundle
