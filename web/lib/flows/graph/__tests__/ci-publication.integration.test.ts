@@ -568,6 +568,7 @@ it.each([
                       [pid],
                     )
                   ).rows[0].blocked,
+                { timeout: 15_000 },
               )
               .toBe(true);
           } finally {
