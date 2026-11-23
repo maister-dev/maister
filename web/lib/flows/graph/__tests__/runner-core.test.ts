@@ -145,6 +145,33 @@ describe("loadRun — per-session set (M42)", () => {
     );
   });
 
+  it("ignores a binding-only default when loading the configured Flow sessions", async () => {
+    const loaded = await loadRun(
+      fakeDb([
+        {
+          sessionName: "default",
+          runnerId: null,
+          runnerSnapshot: null,
+          acpSessionId: "acp-plan",
+          hostSessionId: "orphan-host",
+        },
+        {
+          sessionName: "planning",
+          runnerSnapshot: snapshot("planning-runner", "claude-opus-4-8"),
+          acpSessionId: "acp-plan",
+        },
+      ]) as never,
+      "run-1",
+    );
+
+    expect(loaded.runner.id).toBe("planning-runner");
+    expect(loaded.sessions.get("planning")?.acpSessionId).toBe("acp-plan");
+    expect(loaded.sessions.get("default")).toMatchObject({
+      acpSessionId: null,
+      hostSessionId: null,
+    });
+  });
+
   it("uses the pinned revision when the mutable flow cache is legacy", async () => {
     const loaded = await loadRun(
       fakeDb(

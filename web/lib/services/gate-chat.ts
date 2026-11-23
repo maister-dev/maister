@@ -1,6 +1,7 @@
 import "server-only";
 
-import type { ExecutionAssignment, RunnerSnapshot, Run } from "@/lib/db/schema";
+import type { ExecutionAssignment, Run } from "@/lib/db/schema";
+import type { ActiveRunSession } from "@/lib/runs/active-run-session";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -8,7 +9,11 @@ import { promisify } from "node:util";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
+import {
+  mergeRunnerAdapterLaunch,
+  runnerExecutorInput,
+  runnerSupervisorInput,
+} from "@/lib/acp-runners/spawn-intent";
 import { getDb } from "@/lib/db/client";
 import { assertRunKnowledgeDisclosure } from "@/lib/brain/knowledge-run-disclosure";
 import { assertNativeRunKnowledgeInputs } from "@/lib/brain/knowledge-execution-access";
@@ -61,6 +66,7 @@ const {
   gateChatMessages,
   gateChatTurns,
   hitlRequests,
+  runSessions,
   runs,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -460,6 +466,7 @@ async function recoverPendingGateChatCreates(
       turn: gateChatTurns,
       userMessage: gateChatMessages,
       run: runs,
+      session: runSessions,
       commandId: executionCommands.id,
     })
     .from(gateChatTurns)
@@ -476,6 +483,17 @@ async function recoverPendingGateChatCreates(
         sql`${executionCommands.createIntent}->'owner'->>'variant' = 'gate_chat'`,
         sql`${executionCommands.createIntent}->'owner'->>'turnId' = ${gateChatTurns.id}`,
       ),
+    )
+    .innerJoin(
+      runSessions,
+      sql`${runSessions.runId} = ${gateChatTurns.runId}
+        and ${runSessions.sessionName} = ${executionCommands.payload}->>'sessionName'
+        and ${runSessions.runnerSnapshot} is not null
+        and (
+          ${runSessions.acpSessionId} = ${executionCommands.payload}->>'resumeSessionId'
+          or (${runSessions.hostSessionId} = ${executionCommands.result}->>'sessionId'
+            and ${runSessions.acpSessionId} = ${executionCommands.result}->>'acpSessionId')
+        )`,
     )
     .where(
       and(
@@ -496,9 +514,6 @@ async function recoverPendingGateChatCreates(
     if (protectedTurnIds.has(row.turn.id)) continue;
     protectedTurnIds.add(row.turn.id);
     if (!row.turn.leaseExpiresAt) continue;
-    const active = await loadActiveRunSession(db, row.run.id);
-
-    if (!active?.acpSessionId) continue;
     try {
       const leaseExpiresAt = turnLeaseExpiresAt(new Date());
       const renewed = await db
@@ -519,9 +534,9 @@ async function recoverPendingGateChatCreates(
         message: row.userMessage.body,
         db,
         hosts,
-        run: { status: row.run.status, runnerSnapshot: active.runnerSnapshot },
+        runStatus: row.run.status,
         source: { ...row.run, authorUserId: row.userMessage.authorUserId },
-        activeAcpSessionId: active.acpSessionId,
+        activeSession: row.session,
         admitted: {
           turnId: row.turn.id,
           leaseExpiresAt,
@@ -777,12 +792,7 @@ export async function sendGateChatTurn(args: {
   // ACTIVE session (run_sessions), not the dropped runs columns. A multi-session
   // run delivers the turn to the active (paused) session.
   const activeSession = await loadActiveRunSession(d, args.runId);
-  const run = {
-    ...baseRun,
-    acpSessionId: activeSession?.acpSessionId ?? null,
-    runnerSnapshot: activeSession?.runnerSnapshot ?? null,
-  };
-  const activeAcpSessionId = run.acpSessionId;
+  const activeAcpSessionId = activeSession?.acpSessionId ?? null;
 
   // X-IDENT: both ids are url-params; the hitl row must belong to the run.
   if (!hitl || hitl.runId !== args.runId) {
@@ -808,7 +818,7 @@ export async function sendGateChatTurn(args: {
   }
 
   const availability = gateChatAvailability({
-    runStatus: run.status,
+    runStatus: baseRun.status,
     hitlKind: hitl.kind,
     hitlResponse: hitl.response,
     hitlRespondedAt: hitl.respondedAt,
@@ -819,6 +829,15 @@ export async function sendGateChatTurn(args: {
     throw new MaisterError(
       "PRECONDITION",
       `gate-chat unavailable: ${availability.reason}`,
+    );
+  }
+  if (!activeSession?.runnerSnapshot) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "Gate chat requires an active logical session with a runner snapshot",
+      {
+        details: { runId: args.runId, sessionName: activeSession?.sessionName },
+      },
     );
   }
   if (!workspace || workspace.removedAt) {
@@ -1006,9 +1025,9 @@ export async function sendGateChatTurn(args: {
     message: args.message,
     db: d,
     hosts,
-    run,
+    runStatus: baseRun.status,
     source: { ...baseRun, authorUserId: args.actorUserId ?? null },
-    activeAcpSessionId: activeAcpSessionId as string,
+    activeSession,
     admitted,
     createCommandId: null,
   });
@@ -1027,15 +1046,15 @@ async function driveGateChatTurn(
     message: string;
     db: Db;
     hosts: ExecutionHosts;
-    run: Readonly<{ status: string; runnerSnapshot: RunnerSnapshot | null }>;
+    runStatus: string;
     source: Pick<Run, "knowledgeAccess" | "resultContract"> &
       Readonly<{ authorUserId: string | null }>;
-    activeAcpSessionId: string;
+    activeSession: ActiveRunSession;
     admitted: AdmittedGateChatTurn;
     createCommandId: string | null;
   }>,
 ): Promise<SendGateChatTurnResult> {
-  const { db: d, hosts, run, activeAcpSessionId, admitted } = args;
+  const { db: d, hosts, runStatus, activeSession, admitted } = args;
   // (4) resolve the session: live (NeedsInput) vs chat-resume (Idle).
   const stepId = gateChatStepId(args.hitlRequestId);
   let supervisorSessionId: string;
@@ -1045,12 +1064,15 @@ async function driveGateChatTurn(
   let admin!: HostAdminClient;
 
   try {
-    if (run.status === "NeedsInput" && args.createCommandId === null) {
+    if (runStatus === "NeedsInput" && args.createCommandId === null) {
       // The live driver's epoch: the chat turn reuses the run's ACTIVE
       // assignment (Q5) and its live session.
       client = await hosts.forRun(args.runId);
       const sessions = await client.sessionsForRun();
-      const live = sessions.find((s) => s.status === "live");
+      const live = sessions.find(
+        (s) =>
+          s.status === "live" && s.sessionId === activeSession.hostSessionId,
+      );
 
       if (live) {
         supervisorSessionId = live.sessionId;
@@ -1090,7 +1112,7 @@ async function driveGateChatTurn(
     // resume or second chat turn serializes on the markResumed CAS — the
     // loser must not spawn a duplicate supervisor session or prompt a pause
     // it no longer owns.
-    const idleClaim = run.status === "NeedsInputIdle";
+    const idleClaim = runStatus === "NeedsInputIdle";
     let claimed: ExecutionAssignment | undefined;
 
     if (idleClaim) {
@@ -1124,18 +1146,25 @@ async function driveGateChatTurn(
           hitlRequestId: args.hitlRequestId,
           userMessageId: admitted.userMessage.id,
         },
-        async () => ({
-          stepId,
-          executor: {
-            agent: (run.runnerSnapshot?.capabilityAgent ?? "claude") as
-              "claude" | "codex",
-            model: run.runnerSnapshot?.model ?? "unknown",
-          },
-          runner: run.runnerSnapshot
-            ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
-            : undefined,
-          resumeSessionId: activeAcpSessionId,
-        }),
+        async () => {
+          const { acpSessionId, runnerSnapshot, sessionName } = activeSession;
+
+          if (!acpSessionId || !runnerSnapshot)
+            throw new MaisterError(
+              "EXECUTOR_UNAVAILABLE",
+              "Gate chat resume requires a retained ACP session and runner snapshot",
+              { details: { runId: args.runId, sessionName } },
+            );
+
+          return {
+            stepId,
+            sessionName,
+            executor: runnerExecutorInput(runnerSnapshot),
+            runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
+            resumeSessionId: acpSessionId,
+            adapterLaunch: mergeRunnerAdapterLaunch(runnerSnapshot),
+          };
+        },
         {
           assertCommit: async (tx) => {
             const owner = {
@@ -1202,8 +1231,13 @@ async function driveGateChatTurn(
 
     resumed = true;
     log.info(
-      { runId: args.runId, hitlRequestId: args.hitlRequestId },
-      "[gate-chat] idle resume (~$0.28 respawn)",
+      {
+        runId: args.runId,
+        hitlRequestId: args.hitlRequestId,
+        sessionName: activeSession.sessionName,
+        hostSessionId: created.sessionId,
+      },
+      "gate-chat session resumed",
     );
 
     return created.sessionId;

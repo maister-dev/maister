@@ -50,6 +50,7 @@ import { type Db as ExecutionDb } from "@/lib/execution-host/db";
 import { SessionInventoryPending } from "@/lib/execution-host/session-inventory";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import { captureCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
+import { runFlow } from "@/lib/flows/runner";
 import { resolveDirtyWorktree } from "@/lib/runs/dirty-resolution";
 import {
   GATE_CHAT_TURN_LEASE_MS,
@@ -58,6 +59,10 @@ import {
   requireNoLiveGateChatTurn,
   sendGateChatTurn,
 } from "@/lib/services/gate-chat";
+import {
+  reconcilePlanReviewDecisionHandoffs,
+  respondToHitl,
+} from "@/lib/services/hitl";
 import {
   createFakeExecutionHost,
   fakeExecutionHosts,
@@ -78,6 +83,7 @@ let pool: Pool;
 let db: NodePgDatabase;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+vi.mock("@/lib/flows/runner", { spy: true });
 
 // Delegating spies over the resume claim: every test runs the REAL
 // transitions by default; the claim-race test layers a one-shot rival on top.
@@ -286,10 +292,13 @@ async function seedChatPause(
     runStatus?: string;
     hitlKind?: string;
     acpSessionId?: string | null;
+    sessionName?: string;
   } = {},
 ): Promise<{
   runId: string;
   hitlId: string;
+  flowId: string;
+  projectId: string;
   worktree: string;
   repo: string;
 }> {
@@ -370,7 +379,7 @@ async function seedChatPause(
   await db.insert(schema.runSessions).values({
     id: randomUUID(),
     runId,
-    sessionName: "default",
+    sessionName: opts.sessionName ?? "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
@@ -394,7 +403,7 @@ async function seedChatPause(
     prompt: "Review?",
   });
 
-  return { runId, hitlId, worktree, repo };
+  return { runId, hitlId, flowId, projectId, worktree, repo };
 }
 
 async function chatRows(hitlId: string) {
@@ -561,6 +570,15 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
   it("respawns with resumeSessionId, flips Idle→NeedsInput (never Running), no runner drive", async () => {
     const { runId, hitlId } = await seedChatPause({
       runStatus: "NeedsInputIdle",
+      sessionName: "planning",
+    });
+
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "implement",
+      runnerSnapshot: testRunnerSnapshot("implement-runner"),
+      capabilityAgent: "claude",
     });
     const api = await scriptHost({ runId, checkpointed: true });
 
@@ -576,6 +594,23 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
     expect(out.resumed).toBe(true);
     expect(api.createSessionCalls).toHaveLength(1);
     expect(api.createSessionCalls[0].resumeSessionId).toBe("acp-1");
+    expect(api.createSessionCalls[0].sessionName).toBe("planning");
+    const sessions = await pool.query(
+      "SELECT session_name, host_session_id, runner_snapshot FROM run_sessions WHERE run_id=$1 ORDER BY session_name",
+      [runId],
+    );
+
+    expect(sessions.rows).toEqual([
+      expect.objectContaining({
+        session_name: "implement",
+        host_session_id: null,
+      }),
+      expect.objectContaining({
+        session_name: "planning",
+        host_session_id: api.createdSessionIds()[0],
+        runner_snapshot: expect.any(Object),
+      }),
+    ]);
     expect(api.sendPromptCalls[0].sessionId).toBe(api.createdSessionIds()[0]);
     // Q5 (ADR-166): the chat-resume is a NEW driver generation minted as
     // `gate_chat` over the checkpoint-released launch generation; the spawn
@@ -604,6 +639,231 @@ describe("sendGateChatTurn — idle chat-resume (DD3)", () => {
     // The allow-list invariant: Idle→NeedsInput is permitted, →Running NEVER.
     expect(run.status).toBe("NeedsInput");
   }, 60_000);
+
+  it.each([
+    { scenario: "after idle chat", chat: true, runStatus: "NeedsInputIdle" },
+    {
+      scenario: "after crash-window chat",
+      chat: true,
+      runStatus: "NeedsInput",
+    },
+    {
+      scenario: "from idle with a failed first wake",
+      chat: false,
+      runStatus: "NeedsInputIdle",
+      recoverWake: true,
+    },
+    {
+      scenario: "from idle for ordinary review",
+      chat: false,
+      runStatus: "NeedsInputIdle",
+      ordinaryReview: true,
+    },
+  ])(
+    "continues a named-session Flow after approval $scenario",
+    async ({ chat, runStatus, ordinaryReview, recoverWake }) => {
+      const { runId, hitlId, flowId, projectId } = await seedChatPause({
+        runStatus,
+        sessionName: "planning",
+      });
+      const sourceArtifactId = randomUUID();
+      const reviewAttemptId = randomUUID();
+      const runtime = await mkdtemp(join(tmpdir(), "maister-gc-runtime-"));
+
+      createdPaths.push(runtime);
+      const api = await scriptHost({
+        runId,
+        checkpointed: runStatus === "NeedsInputIdle",
+      });
+
+      await db
+        .update(schema.flows)
+        .set({
+          manifest: {
+            schemaVersion: 1,
+            name: "Named session review",
+            sessions: {
+              planning: { runner: "planning-runner" },
+              implement: { runner: "implement-runner" },
+            },
+            nodes: [
+              {
+                id: "plan",
+                type: "ai_coding",
+                session: "planning",
+                action: { prompt: "Produce a plan" },
+                transitions: { success: "review" },
+              },
+              {
+                id: "review",
+                type: "human",
+                finish: { human: { decisions: ["approve"] } },
+                transitions: { approve: "next_review" },
+              },
+              {
+                id: "next_review",
+                type: "human",
+                finish: { human: { decisions: ["approve"] } },
+                transitions: { approve: "implement" },
+              },
+              {
+                id: "implement",
+                type: "ai_coding",
+                session: "implement",
+                action: { prompt: "Implement the plan" },
+                transitions: { success: "done" },
+              },
+            ],
+          },
+        })
+        .where(eq(schema.flows.id, flowId));
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "implement",
+        runnerSnapshot: testRunnerSnapshot("implement-runner"),
+        capabilityAgent: "claude",
+      });
+      if (recoverWake)
+        await db.insert(schema.runSessions).values({
+          id: randomUUID(),
+          runId,
+          sessionName: "default",
+          acpSessionId: "acp-1",
+          hostSessionId: "previous-orphan",
+        });
+      await db.insert(schema.nodeAttempts).values({
+        id: reviewAttemptId,
+        runId,
+        nodeId: "review",
+        nodeType: "human",
+        attempt: 1,
+        status: "NeedsInput",
+        startedAt: new Date(),
+      });
+      await db.insert(schema.artifactInstances).values({
+        id: sourceArtifactId,
+        runId,
+        artifactDefId: "plan-review",
+        nodeId: "plan",
+        attempt: 1,
+        kind: "plan",
+        producer: "runner",
+        locator: { kind: "file", path: "plan-review.json" },
+        validity: "current",
+      });
+      await db
+        .update(schema.hitlRequests)
+        .set({
+          schema: {
+            review: true,
+            allowedDecisions: ["approve"],
+            transitions: { approve: "next_review" },
+            ...(!ordinaryReview && {
+              planReview: {
+                sourceArtifactId,
+                answersVar: "plan_answers",
+                decisions: [],
+                assumptions: [],
+              },
+            }),
+          },
+        })
+        .where(eq(schema.hitlRequests.id, hitlId));
+
+      vi.stubEnv("MAISTER_RUNTIME_ROOT", runtime);
+      try {
+        if (chat) {
+          await sendGateChatTurn({
+            runId,
+            hitlRequestId: hitlId,
+            message: "Explain the plan",
+            db,
+          });
+          expect(api.createSessionCalls).toEqual([
+            expect.objectContaining({
+              sessionName: "planning",
+              resumeSessionId: "acp-1",
+            }),
+          ]);
+        }
+        const runner = vi.mocked(runFlow);
+        const wakeError = new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "Flow driver unavailable for first wake",
+        );
+
+        if (recoverWake) runner.mockRejectedValueOnce(wakeError);
+        const response = await respondToHitl(
+          {
+            runId,
+            hitlRequestId: hitlId,
+            body: { response: { decision: "approve" } },
+          },
+          {
+            kind: "user",
+            userId: randomUUID(),
+            label: "Reviewer",
+            preauthorizedProjectId: projectId,
+          },
+          { db },
+        );
+
+        expect(response.status).toBe(200);
+        if (recoverWake) {
+          const firstWake = runner.mock.calls.findIndex(([id]) => id === runId);
+
+          expect(firstWake).toBeGreaterThanOrEqual(0);
+          await expect(runner.mock.results[firstWake].value).rejects.toBe(
+            wakeError,
+          );
+          await expect(
+            reconcilePlanReviewDecisionHandoffs({ db }),
+          ).resolves.toBe(1);
+        }
+        const callIndex = runner.mock.calls.findLastIndex(
+          ([id]) => id === runId,
+        );
+
+        expect(callIndex).toBeGreaterThanOrEqual(0);
+        await expect(
+          runner.mock.results[callIndex].value,
+        ).resolves.toBeUndefined();
+        const current = await pool.query(
+          "SELECT current_step_id, status FROM runs WHERE id=$1",
+          [runId],
+        );
+
+        expect(current.rows).toEqual([
+          { current_step_id: "next_review", status: "NeedsInput" },
+        ]);
+        const review = await pool.query(
+          "SELECT status, ended_at FROM node_attempts WHERE id=$1",
+          [reviewAttemptId],
+        );
+
+        expect(review.rows).toEqual([
+          { status: "Succeeded", ended_at: expect.any(Date) },
+        ]);
+        expect(await assignmentRows(runId)).toEqual(
+          runStatus === "NeedsInput"
+            ? [expect.objectContaining({ epoch: 1, state: "active" })]
+            : [
+                expect.objectContaining({ epoch: 1, state: "released" }),
+                expect.objectContaining({ epoch: 2, state: "active" }),
+              ],
+        );
+        await expect(
+          realTransitions.markCheckpointed(runId, { db }),
+        ).resolves.toMatchObject({
+          ok: true,
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+    60_000,
+  );
 });
 
 describe("sendGateChatTurn — DD2 refusals", () => {

@@ -5,6 +5,7 @@ import type {
   FlowRevisionExecTrust,
   PlatformAcpRunner,
   Run as RunRow,
+  RunSession,
   RunnerSnapshot,
   Task as TaskRow,
   Workspace as WorkspaceRow,
@@ -335,41 +336,48 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   // M42 (ADR-114): the run's logical sessions are the SOLE source of runner
   // truth. The run-level `runner`/`executor` (used by default-session nodes and
   // capability materialization) is the DEFAULT session's runner.
-  const runSessionRows: Array<Record<string, any>> = await db
+  const runSessionRows: RunSession[] = await db
     .select()
     .from(runSessions)
     .where(eq(runSessions.runId, runId));
+  // Lifecycle evidence can retain a binding-only row. Its handles cannot
+  // participate in dispatch because they have no runner provenance.
+  const configuredRows = runSessionRows.filter(
+    (row) => row.runnerSnapshot != null || row.runnerId != null,
+  );
   const defaultRow =
-    runSessionRows.find((row) => row.sessionName === "default") ??
-    runSessionRows[0];
+    configuredRows.find((row) => row.sessionName === "default") ??
+    configuredRows[0];
   const runner = await loadRunnerSnapshot(
     db,
     {
-      runnerSnapshot: (defaultRow?.runnerSnapshot ??
-        null) as RunnerSnapshot | null,
-      runnerId: (defaultRow?.runnerId ?? null) as string | null,
+      runnerSnapshot: defaultRow?.runnerSnapshot ?? null,
+      runnerId: defaultRow?.runnerId ?? null,
     },
     runId,
   );
   const executor = executorFromRunnerSnapshot(runner);
 
   const sessions = new Map<string, LoadedRunSession>(
-    runSessionRows.map((row) => [
-      row.sessionName as string,
-      {
-        sessionName: row.sessionName as string,
-        runner: (row.runnerSnapshot ?? runner) as RunnerSnapshot,
-        acpSessionId: (row.acpSessionId ?? null) as string | null,
-        hostSessionId: (row.hostSessionId ?? null) as string | null,
-        capabilityAgent: (row.capabilityAgent ?? null) as string | null,
-        runnerResolutionTier: (row.runnerResolutionTier ?? null) as
-          string | null,
-      },
-    ]),
+    await Promise.all(
+      configuredRows.map(async (row): Promise<[string, LoadedRunSession]> => [
+        row.sessionName,
+        {
+          sessionName: row.sessionName,
+          runner:
+            row === defaultRow
+              ? runner
+              : await loadRunnerSnapshot(db, row, runId),
+          acpSessionId: row.acpSessionId ?? null,
+          hostSessionId: row.hostSessionId ?? null,
+          capabilityAgent: row.capabilityAgent ?? null,
+          runnerResolutionTier: row.runnerResolutionTier ?? null,
+        },
+      ]),
+    ),
   );
 
-  // A run with NO session rows (should not occur post-cutover — every creator
-  // writes at least a `default`) still resolves to a usable single session.
+  // An all-named Flow still needs a default runner context for non-ACP nodes.
   if (!sessions.has("default")) {
     sessions.set("default", {
       sessionName: "default",
