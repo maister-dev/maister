@@ -2801,6 +2801,13 @@
       "when": 1795713876396,
       "tag": "0403_project_agent_instance_profile",
       "breakpoints": true
+    },
+    {
+      "idx": 404,
+      "version": "7",
+      "when": 1795713974482,
+      "tag": "0404_assigned_host_mcp_prepare",
+      "breakpoints": true
     }
   ]
 }

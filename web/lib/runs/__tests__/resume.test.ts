@@ -23,6 +23,7 @@ vi.mock("@/lib/execution-host", async (importOriginal) => {
 
   return {
     ...actual,
+    getLatestAssignment: vi.fn(async () => null),
     localHost: vi.fn(async () => ({ id: "host-1", hostKey: "eh_test" })),
     createExecutionHosts: () => ({
       transport: {},

@@ -65,6 +65,22 @@ describe("readiness is decoupled from stream telemetry", () => {
     expect(health.identity?.hostKey).toBe(READY_BODY.host.hostKey);
   });
 
+  it("isolates the supervisor endpoint for concurrent assignment probes", async () => {
+    const urls = supervisorWhoseTelemetryIsBroken();
+    await Promise.all([
+      createLocalDirectTransport({
+        endpoint: "http://127.0.0.1:17771",
+      }).health(),
+      createLocalDirectTransport({
+        endpoint: "http://127.0.0.1:17772",
+      }).health(),
+    ]);
+    expect(urls).toEqual([
+      "http://127.0.0.1:17771/health?includeStream=false",
+      "http://127.0.0.1:17772/health?includeStream=false",
+    ]);
+  });
+
   it("still surfaces the telemetry fault on the diagnostics path", async () => {
     supervisorWhoseTelemetryIsBroken();
     const status = await createLocalDirectTransport().platformStatus();

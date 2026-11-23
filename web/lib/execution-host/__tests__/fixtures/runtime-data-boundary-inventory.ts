@@ -100,6 +100,12 @@ function wrappers(
 export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   [
     ...classified(
+      "lib/execution-host/remote-tls.ts",
+      "manager-flow-state",
+      "Read the web manager's TLS identity and CA from the operator-configured credential files.",
+      [["assignedTlsDispatcher", "node:fs.readFileSync", "read"]],
+    ),
+    ...classified(
       "../runtime/package-skill-tree.ts",
       "repository-worktree",
       "Digest the selected skill tree under the prepared package or session view.",
@@ -3241,6 +3247,7 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
+  ...wrappers("lib/execution-host/remote-tls.ts", "manager-flow-state", [["assignedTlsDispatcher", false]]),
   ...wrappers("../runtime/package-skill-tree.ts", "repository-worktree", [
     ["packageSkillTreeDigest", true],
   ]),

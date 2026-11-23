@@ -8,6 +8,12 @@ import type {
 
 import pino from "pino";
 
+import {
+  isMcpDistribution,
+  type McpDistribution,
+} from "../../../runtime/mcp-distribution";
+
+import { MaisterError } from "@/lib/errors";
 import { capabilitySurfaceFor } from "@/lib/acp-runners/adapter-support";
 
 const log = pino({
@@ -25,6 +31,7 @@ const log = pino({
 export type AgentMcpServer = {
   name: string;
   platformOrigin?: "maister_facade";
+  distribution?: McpDistribution;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -115,10 +122,10 @@ function valueMapOf(
   return { ...(value as Record<string, string>) };
 }
 
-function mcpServerFromMaterial(
+export function mcpTransportFromMaterial(
   name: string,
   material: CapabilityMaterial,
-): AgentMcpServer {
+): Omit<AgentMcpServer, "name"> {
   const transport =
     material.transport === "sse" || material.transport === "http"
       ? material.transport
@@ -126,7 +133,6 @@ function mcpServerFromMaterial(
 
   if (transport === "sse" || transport === "http") {
     return {
-      name,
       transport,
       url: typeof material.url === "string" ? material.url : "",
       headers: valueMapOf(material, "headers"),
@@ -137,10 +143,21 @@ function mcpServerFromMaterial(
     };
   }
 
+  if (
+    material.distribution !== undefined &&
+    !isMcpDistribution(material.distribution)
+  )
+    throw new MaisterError(
+      "CONFIG",
+      "Invalid pinned distribution on MCP " + name,
+    );
+
   return {
-    name,
+    ...(material.distribution ? { distribution: material.distribution } : {}),
     transport: "stdio",
-    command: typeof material.command === "string" ? material.command : "",
+    ...(typeof material.command === "string" && material.command
+      ? { command: material.command }
+      : {}),
     args: Array.isArray(material.args) ? (material.args as string[]) : [],
     env: valueMapOf(material, "env"),
   };
@@ -199,9 +216,10 @@ export function mapProfileToAgentArtifacts(
 
   for (const entry of supported) {
     if (entry.kind === "mcp") {
-      mcpServers.push(
-        mcpServerFromMaterial(entry.capabilityRefId, entry.material),
-      );
+      mcpServers.push({
+        name: entry.capabilityRefId,
+        ...mcpTransportFromMaterial(entry.capabilityRefId, entry.material),
+      });
     } else if (entry.kind === "skill" && supportsSkills) {
       skills.push({ refId: entry.capabilityRefId, material: entry.material });
     }

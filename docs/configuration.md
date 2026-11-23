@@ -1845,3 +1845,30 @@ The per-file `config.worktree` limit is 1 MiB. See [operational integrity](syste
 ## Studio catalog sources
 
 The web process reads approved GitHub repositories from `MAISTER_STUDIO_CATALOG_REPOS`, a JSON array of `{id,repo,kind}` entries. The built-in list contains Anthropic skills and Vercel agent skills. An explicit array replaces that list. Set `kind` to `skill` for repositories publishing `skills/<directory>/SKILL.md` or `mcp` for versioned Registry-format `server.json` descriptors. The independent official MCP Registry connector uses its public HTTPS API. The web process needs outbound TLS to api.github.com, registry.modelcontextprotocol.io and, for npm metadata, registry.npmjs.org. Sources carry no credentials. Preview and apply share the local-package storage volume, including its sibling `.maister-catalog` journal directory. Restrict that directory to the web service account and back it up with the drafts. A release carries the upstream identity and license information in `catalog-origins/`.
+
+
+### Assigned supervisor MCPs
+
+Set `MAISTER_EXECUTION_HOST_KEY` on each supervisor. On web,
+`MAISTER_EXECUTION_HOST_ENDPOINTS` maps these pinned keys to operator-managed
+HTTPS origins or loopback ports of authenticated tunnels. For HTTPS configure
+`MAISTER_EXECUTION_HOST_TLS_CA_FILE`, `MAISTER_EXECUTION_HOST_TLS_CERT_FILE`
+and `MAISTER_EXECUTION_HOST_TLS_KEY_FILE` on web. Require client certificates
+at the supervisor ingress and restart web after rotation. Keep the supervisor
+API private to the control plane. Select the host for new Runs with
+`MAISTER_EXECUTION_HOST_PREFERRED_KEY`. Serve repositories and leased
+workspace roots using the configured host placement. For an interactive
+checkpoint retain its original supervisor and workspace.
+
+On each workload set `MAISTER_WORKLOAD_API_BASE_URL` to the web API origin
+reachable by the platform facade. The image builds the facade into
+`mcp/dist/main.js`. For reviewed, self-contained npm stdio releases, approve
+the descriptor SHA-256 in `MAISTER_MCP_ALLOWED_DIGESTS`. The host fetches
+the exact npm tarball, verifies its SHA-512, manifest publisher and executable,
+and atomically publishes the cache under `MAISTER_MCP_CACHE_DIR`. Every
+reuse checks the retained bytes and current approval. Place the host-owned
+cache outside project workspaces. Bind MCP credentials using `env:MAISTER_MCP_SECRET_<NAME>`
+on the selected server. The supervisor excludes this namespace and ambient MAIster access
+tokens from ACP child environments. HTTP MCPs connect directly from the workload.
+The optional compose profile `remote-supervisor` runs the read-only production
+image with a writable host state volume. Each supervisor needs its own volume.

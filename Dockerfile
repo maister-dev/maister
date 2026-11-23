@@ -61,7 +61,8 @@ COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/
 ARG MAISTER_BUILD_MAX_WORKERS
 ARG MAISTER_BUILD_PROFILE=default
-RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
+RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build \
+ && test -r /app/mcp/dist/main.js
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------
 FROM base AS development
@@ -92,7 +93,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN groupadd --system --gid 1001 app \
  && useradd  --uid 1001 --gid app --home /app --shell /usr/sbin/nologin app \
- && mkdir -p /app/.maister \
+ && mkdir -p /app/.maister/home \
  && chown -R app:app /app
 
 COPY --from=builder --chown=app:app /app /app

@@ -43,7 +43,18 @@ export async function loadMcpReadinessContext(
   logContext: Record<string, unknown> = {},
 ): Promise<McpReadinessContext> {
   const names = [...new Set(rows.flatMap((row) => referencedEnvNames(row)))];
-  const admin = executionHosts.local();
+  const admin = process.env.MAISTER_EXECUTION_HOST_PREFERRED_KEY
+    ? await executionHosts.preferred().catch((error: unknown) => {
+        log.warn(
+          { ...logContext, cause: causeOf(error) },
+          "mcp-readiness-host-unavailable",
+        );
+
+        return null;
+      })
+    : executionHosts.local();
+
+  if (!admin) return { presence: null, adapters: null };
   const adapters = await admin.diagnostics().catch((err: unknown) => {
     log.warn(
       { ...logContext, cause: causeOf(err) },

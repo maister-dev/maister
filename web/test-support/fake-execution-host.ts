@@ -3274,6 +3274,7 @@ export function memoryExecutionHosts(fake: FakeExecutionHost): ExecutionHosts {
 
       return { client, admin };
     },
+    preferred: async () => admin,
     local: () => admin,
   };
 }

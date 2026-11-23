@@ -124,7 +124,10 @@ export function buildChildEnv(
       : {};
 
   return {
-    ...(opts.hostEnvironment ?? process.env),
+    ...Object.fromEntries(Object.entries(opts.hostEnvironment ?? process.env).filter(([name]) =>
+      !name.startsWith("MAISTER_MCP_SECRET_") &&
+      name !== "MAISTER_PROJECT_TOKEN" && name !== "MAISTER_ACCESS_TOKEN",
+    )),
     ...(request.executor.env ?? {}),
     ...(request.adapterLaunch?.env ?? {}),
     ...(opts.capabilityProfilePath

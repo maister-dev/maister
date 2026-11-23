@@ -1,3 +1,7 @@
+import type {
+  McpPreparationReceipt,
+  McpPreparationRequest,
+} from "../../../runtime/mcp-distribution";
 import type { CommandReceiptV2 } from "../../../runtime/command-evidence";
 import type {
   WorkspacePublicationRequest,
@@ -255,6 +259,10 @@ export type RuntimeObjectContentStream = {
 export type CommandCallOptions = { timeoutMs?: number | null };
 
 export interface ExecutionHostTransport {
+  prepareMcp?(
+    envelope: CommandEnvelope<McpPreparationRequest>,
+    opts: CommandCallOptions,
+  ): Promise<McpPreparationReceipt>;
   health(opts?: { timeoutMs?: number }): Promise<HostHealth>;
   // Null means an older supervisor returned the sole bounded compatibility
   // signal (404); malformed documents are a typed wire failure, never legacy.

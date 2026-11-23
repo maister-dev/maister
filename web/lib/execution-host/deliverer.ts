@@ -121,6 +121,12 @@ export const COMMAND_POLICY: Readonly<Record<CommandKind, KindPolicy>> = {
     driverless: true,
     timeoutMs: 10_000,
   },
+  "mcp.prepare": {
+    maxAttempts: 3,
+    backoffBaseMs: 500,
+    driverless: false,
+    timeoutMs: 60_000,
+  },
   "workspace.adopt": {
     maxAttempts: 3,
     backoffBaseMs: 500,

@@ -1,3 +1,4 @@
+import type { McpDistribution, McpPreparationReceipt } from "../../runtime/mcp-distribution";
 import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
@@ -1186,6 +1187,7 @@ export async function resolveModelSuggestions(
 // reference never leaves the host. The exec-trust gate is enforced web-side
 // BEFORE this call.
 export type SupervisorMcpProbeRequest = {
+  distribution?: McpDistribution;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
@@ -2649,6 +2651,44 @@ export async function acknowledgeRuntimeEvents(input: {
       "supervisor returned a malformed runtime event acknowledgement",
     );
   }
+
+  return parsed.data;
+}
+
+export async function prepareMcpEnveloped(
+  envelope: WireEnvelope,
+  opts: CommandWireOptions = {},
+): Promise<McpPreparationReceipt> {
+  const res = await request<McpPreparationReceipt>({
+    method: "POST",
+    path: "/mcp/prepare",
+    body: envelope,
+    ctx: "prepareMcp",
+    fallbackCode: "EXECUTOR_UNAVAILABLE",
+    timeoutMs: opts.timeoutMs,
+  });
+  const parsed = z
+    .object({
+      hostId: z.string(),
+      commandId: z.string().uuid(),
+      assignmentEpoch: z.number().int().positive(),
+      artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
+      runtime: z.string(),
+      cacheHit: z.boolean(),
+    })
+    .strict()
+    .safeParse(res.body);
+
+  if (
+    !parsed.success ||
+    parsed.data.commandId !== envelope.command.id ||
+    parsed.data.hostId !== envelope.fence.hostKey ||
+    parsed.data.assignmentEpoch !== envelope.fence.assignmentEpoch
+  )
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "MCP preparation returned a mismatched receipt",
+    );
 
   return parsed.data;
 }

@@ -334,6 +334,7 @@ export type ExecutionHosts = {
   // paired with the admin client — the ONE composition every driver binds.
   executionFor(runId: string, opts?: BindRunOptions): Promise<ExecutionBinding>;
   local(): HostAdminClient;
+  preferred(): Promise<HostAdminClient>;
 };
 
 export type ExecutionHostsDeps = {
@@ -411,7 +412,36 @@ export function createExecutionHosts(
     assignment: ExecutionAssignment,
     host: ExecutionHost,
   ): BoundClient {
-    const transport = transportForExecutionHost(host, defaultHostTransport);
+    const hostTransport = transportForExecutionHost(host, defaultHostTransport);
+    const transport: ExecutionHostTransport = {
+      ...hostTransport,
+      async createSession(envelope, options) {
+        for (const server of envelope.payload.mcpServers ?? []) {
+          if (!server.distribution) continue;
+          const prepare = hostTransport.prepareMcp;
+          if (!prepare) {
+            throw new MaisterError("EXECUTOR_UNAVAILABLE", "Assigned supervisor lacks MCP preparation");
+          }
+          const payload = { ...server.distribution, refId: server.name };
+          const receipt = await immediate(
+            "mcp.prepare",
+            payload,
+            req => prepare(req, timeoutFor("mcp.prepare")),
+            {
+              resultSummary: result => ({
+                artifactDigest: result.artifactDigest,
+                hostId: result.hostId,
+                cacheHit: result.cacheHit,
+              }),
+            },
+          );
+          if (receipt.artifactDigest !== payload.artifactDigest) {
+            throw new MaisterError("ACP_PROTOCOL", "MCP preparation receipt references a different distribution");
+          }
+        }
+        return hostTransport.createSession(envelope, options);
+      },
+    };
     let current = assignment;
     const db = dbOf();
 
@@ -1408,6 +1438,9 @@ export function createExecutionHosts(
       };
     },
     local() {
+      return admin;
+    },
+    async preferred() {
       return admin;
     },
   };

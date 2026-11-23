@@ -29,6 +29,10 @@ import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
 import { EXECUTION_HOST_KEY_HEADER } from "../../runtime/execution-host-address";
+import {
+  isMcpDistribution,
+  type McpPreparationRequest,
+} from "../../runtime/mcp-distribution";
 
 import {
   reconcileRunSessionProcesses,
@@ -105,6 +109,7 @@ import {
   modelCatalogCache,
   type ModelCatalogCache,
 } from "./model-catalog/cache";
+import { prepareWorkloadMcp, workloadMcpServer } from "./mcp-workload";
 import { probeMcpServer } from "./mcp-probe";
 import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
@@ -360,6 +365,7 @@ function receiptAdmission(
     case "workspace.publication":
     case "runtime_object.reserve":
     case "runtime_object.upload":
+    case "mcp.prepare":
     case "stand.dispatch":
       return { kind: "new_work" };
     case "session.input":
@@ -3028,7 +3034,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               workspace.readOnlyCheckout || workspace.contextMounts?.length ||
               request.hooksConfig?.pathGuard),
           }) : undefined;
-          const mcpServers = workspaceSessionMcpServers(
+          const workspaceMcpServers = workspaceSessionMcpServers(
             hostState, request.executionWorkspaceId, request.mcpServers,
           );
           const sessionId = randomUUID();
@@ -3052,6 +3058,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             outputObjectIds.add(binding.objectId);
             outputEnvironmentNames.add(binding.envName);
           }
+          const mcpServers = await Promise.all(
+            (workspaceMcpServers ?? []).map((server) =>
+              workloadMcpServer(server, runtimeRoot, () => {
+                applyFence({
+                  state: hostState,
+                  fence: parsed.envelope.fence,
+                  logger: fenceLog,
+                });
+              }),
+            ),
+          );
           let spawned: Awaited<ReturnType<typeof spawnSession>>;
 
           try {
@@ -3881,9 +3898,76 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   // package/project stdio probe is an explicit admin "test connection" spawn (no
   // exec-trust axis at probe time — that gates RUN materialization, not this
   // one-shot handshake). Deferred-release teardown lives in probeMcpServer.
+  app.post("/mcp/prepare", async (req, reply) => {
+    const schema = z.custom<McpPreparationRequest>((value) => {
+      if (!value || typeof value !== "object") return false;
+      const { refId, ...distribution } = value as Record<string, unknown>;
+
+      return (
+        typeof refId === "string" &&
+        refId.length > 0 &&
+        refId.length <= 256 &&
+        isMcpDistribution(distribution)
+      );
+    });
+    const parsed = parseCommandBody(req.body, "mcp.prepare", schema, {
+      route: "POST /mcp/prepare",
+    });
+    const { refId, ...distribution } = parsed.payload;
+
+    await runCommand({
+      reply,
+      parsed,
+      kind: "mcp.prepare",
+      execute: async () => {
+        const assertCurrent = () => {
+          applyFence({
+            state: hostState,
+            fence: parsed.envelope.fence,
+            logger: fenceLog,
+          });
+        };
+        const prepared = await prepareWorkloadMcp(
+          distribution,
+          runtimeRoot,
+          assertCurrent,
+        );
+
+        logger.info(
+          {
+            refId,
+            digest: distribution.artifactDigest,
+            cacheHit: prepared.cacheHit,
+            commandId: parsed.envelope.command.id,
+          },
+          "assigned MCP preparation completed",
+        );
+
+        return {
+          status: 200,
+          body: {
+            hostId: parsed.envelope.fence.hostKey,
+            commandId: parsed.envelope.command.id,
+            assignmentEpoch: parsed.envelope.fence.assignmentEpoch,
+            artifactDigest: distribution.artifactDigest,
+            runtime: process.version,
+            cacheHit: prepared.cacheHit,
+          },
+        };
+      },
+    });
+  });
+
   app.post("/mcp-probe", async (req, reply) => {
     const probe = McpProbeRequestSchema.parse(req.body);
-    const result = await probeMcpServer(probe);
+    const target = probe.distribution
+      ? await workloadMcpServer(
+          { ...probe, name: "probe" },
+          runtimeRoot,
+          () => {},
+        )
+      : probe;
+    const result = await probeMcpServer(target);
 
     logger.info(
       {

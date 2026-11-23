@@ -118,7 +118,7 @@ paths:
   /mcp/prepare:
     post:
       operationId: prepareAssignedMcp
-      summary: (Designed) Prepare a selected pinned npm distribution on its assigned host
+      summary: Prepare a selected pinned npm distribution on its assigned host
       description: The registered control plane authenticates to the host over a mutually authenticated transport. The host validates its assignment fence and deployment policy before acquiring bytes.
       responses:
         "200":
@@ -156,101 +156,16 @@ paths:
                     maxLength: 256
                   cacheHit:
                     type: boolean
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - message
-                properties:
-                  code:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 10000
-        "403":
-          description: Action denied
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - message
-                properties:
-                  code:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 10000
         "409":
-          description: Revision, owner or replay conflict
+          description: Invalid envelope or descriptor, stale assignment, denied approval, unsupported package or runtime, or failed integrity.
           content:
             application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - message
-                properties:
-                  code:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 10000
-        "422":
-          description: Invalid content or answer
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - message
-                properties:
-                  code:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 10000
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
         "503":
-          description: Upstream unavailable
+          description: Host storage or the registry is unavailable.
           content:
             application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required:
-                  - code
-                  - message
-                properties:
-                  code:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                  message:
-                    type: string
-                    minLength: 1
-                    maxLength: 10000
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
       requestBody:
         required: true
         content:
@@ -278,6 +193,7 @@ paths:
                   required:
                     - refId
                     - registryName
+                    - packageName
                     - version
                     - integrity
                     - artifactDigest
@@ -288,29 +204,13 @@ paths:
                       type: string
                       minLength: 1
                       maxLength: 256
-                    registryName:
-                      type: string
-                      minLength: 1
-                      maxLength: 256
-                    version:
-                      type: string
-                      minLength: 1
-                      maxLength: 256
-                    integrity:
-                      type: string
-                      minLength: 1
-                      maxLength: 512
-                    artifactDigest:
-                      type: string
-                      pattern: ^[a-f0-9]{64}$
-                    executable:
-                      type: string
-                      minLength: 1
-                      maxLength: 256
-                    runtime:
-                      type: string
-                      minLength: 1
-                      maxLength: 256
+                    packageName: {type: string, minLength: 1, maxLength: 214}
+                    registryName: { type: string, maxLength: 255, pattern: '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' }
+                    version: { type: string, minLength: 1, maxLength: 128, description: Exact npm version }
+                    integrity: { type: string, pattern: '^sha512-[A-Za-z0-9+/]{86}==$' }
+                    artifactDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+                    executable: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' }
+                    runtime: { type: string, enum: [node] }
   /v1/repositories/{repositoryId}/refs:
     parameters:
       - { name: repositoryId, in: path, required: true, schema: { type: string } }
@@ -4083,6 +3983,18 @@ components:
         a literal containing `${X}` reaches the server unchanged. A value that
         starts with `env:` and fails the regex is refused `409 PRECONDITION`.
       example: "env:GITHUB_TOKEN"
+    McpDistribution:
+      type: object
+      additionalProperties: false
+      required: [registryName, packageName, version, integrity, executable, artifactDigest, runtime]
+      properties:
+        registryName: {type: string, minLength: 1, maxLength: 255}
+        packageName: {type: string, minLength: 1, maxLength: 214}
+        version: {type: string, description: Exact npm version}
+        integrity: {type: string, pattern: '^sha512-[A-Za-z0-9+/]{86}==$'}
+        executable: {type: string, minLength: 1, maxLength: 128}
+        artifactDigest: {type: string, pattern: '^[a-f0-9]{64}$'}
+        runtime: {type: string, enum: [node]}
     McpServerFields:
       type: object
       description: |
@@ -4092,6 +4004,8 @@ components:
         refuse `command`/`args`/`env`. `sse` is legacy — deprecated by MCP
         2025-03-26 and absent from the ACP v2 schema — and still accepted.
       properties:
+        distribution:
+          $ref: "#/components/schemas/McpDistribution"
         transport:
           type: string
           enum: [stdio, sse, http]
@@ -5131,6 +5045,10 @@ components:
         - runtime_output_buffer_capacity
         - runtime_output_frame_too_large
         - required_output_incomplete
+        - mcp_distribution_unsupported
+        - mcp_distribution_runtime
+        - mcp_distribution_untrusted
+        - mcp_distribution_integrity
         - context_exhausted
         - max_output_tokens
         - session_delete_exit_unconfirmed
@@ -5434,6 +5352,7 @@ components:
     CommandKind:
       type: string
       enum:
+        - mcp.prepare
         - workspace.adopt
         - workspace.observe_head
         - workspace.publication

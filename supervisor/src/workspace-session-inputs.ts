@@ -73,7 +73,8 @@ export function workspaceSessionMcpServers(
   if (!owned?.inputDigest) {
     if (
       servers?.some(
-        ({ transport, command }) => transport === "stdio" && !command,
+        ({ transport, command, distribution }) =>
+          transport === "stdio" && !command && !distribution,
       )
     )
       throw new SupervisorError(

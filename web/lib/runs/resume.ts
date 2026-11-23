@@ -34,6 +34,8 @@ import {
 } from "@/lib/scheduler";
 import {
   createExecutionHosts,
+  getLatestAssignment,
+  hostForAssignment,
   isFencedError,
   localHost,
   type ExecutionHosts,
@@ -227,18 +229,22 @@ export async function resumeRun(
     }
   }
 
-  // ADR-166: the resume is a new driver generation on the local host — resolve
+  // The checkpoint belongs to its previous host and workspace. Resolve
   // it BEFORE the claim so an unavailable host is a retryable refusal with no
   // claim taken (the row stays NeedsInputIdle; the response stays stored).
   const hosts = opts.executionHosts ?? createExecutionHosts({ db });
   let placementHost;
 
   try {
-    placementHost = await localHost({ db, transport: hosts.transport });
+    const prior = await getLatestAssignment(db, runId);
+
+    placementHost = prior
+      ? await hostForAssignment(db, prior, { transport: hosts.transport })
+      : await localHost({ db, transport: hosts.transport });
   } catch (err) {
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },
-      "resumeRun: local execution host unavailable — no claim taken, retryable",
+      "resumeRun: assigned execution host unavailable — no claim taken, retryable",
     );
 
     return {

@@ -1340,11 +1340,11 @@ Update the [supervisor HTTP](../api/supervisor.openapi.yaml),
 [Run SSE](../api/async/web-runs.asyncapi.yaml) contracts alongside the
 corresponding executable surfaces.
 
-### MCP placement (Designed)
+### MCP placement (Implemented)
 
 ```mermaid
 flowchart LR
-  A[Web A: current Run assignment] -->|Fenced prepare and probe| B[Assigned supervisor B]
+  A[Web A: current Run assignment] -->|Identity check, fenced prepare and dispatch| B[Assigned supervisor B]
   B -->|Verified cache or staged install| W[ACP workload B]
   W -->|Selected HTTPS MCP| H[Remote server]
   W -->|Turn credential in facade process| A
@@ -1355,8 +1355,15 @@ The workload uses the registered endpoint for its assignment. A local path on A 
 
 ## Expectations
 
-- **HST-01:** (Designed) Each tool probe and dispatch must execute on the current assigned host under the correct epoch.
-- **HST-02:** (Designed) A workload may start only a reviewed selected distribution whose digest, target runtime and trust are verified before use.
+- **HST-01:** (Implemented) Project readiness and operator probes resolve the preferred host. Run dispatch, runtime events, content, command receipts and checkpoint recovery use the registered endpoint of the durable assignment. The B/C qualification records all three tool responses, a stale-epoch refusal, a verified offline cache hit and a fresh installation after relocation.
+- **HST-02:** (Implemented) The first stdio distribution is a self-contained npm tarball. The supervisor verifies the registry publisher, exact release, archive and file bytes, JavaScript binary, license presence, dependency and hook restrictions, host OS, CPU and Node engine range. It keys the cache by the descriptor digest and host runtime. After an interrupted install, the next writer removes the dead process’s partial staging tree. A new session rechecks the current digest allowlist and cache contents.
+
+To reproduce the B/C gate on a machine with Docker and OpenSSL, build the production image from the checkout and run the qualification project. The fixture provisions PostgreSQL, two read-only supervisors, a synthetic npm registry, HTTP MCP and a scoped facade endpoint. Its ACP client issues real tool calls over an isolated network. Each receipt records the execution host and assignment, command, epoch, digest, cache result, tool inventory and child exit.
+
+```sh
+docker build --target production -t maister-mcp-qualification .
+MAISTER_MCP_QUALIFICATION_IMAGE=maister-mcp-qualification pnpm --filter maister-web exec vitest run --project qualification lib/execution-host/__tests__/assigned-host-mcp.qualification.test.ts
+```
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 

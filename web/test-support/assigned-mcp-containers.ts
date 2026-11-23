@@ -1,0 +1,258 @@
+import type { McpDistribution } from "../../runtime/mcp-distribution";
+
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
+
+const execute = promisify(execFile);
+
+async function docker(...args: string[]): Promise<string> {
+  return (
+    await execute("docker", args, { timeout: 120_000, maxBuffer: 5_000_000 })
+  ).stdout.trim();
+}
+
+/** All traffic stays on an internal network. The fresh certificate and fixture token have no external authority. */
+export async function withAssignedMcpHosts(
+  qualify: (lab: {
+    certFile: string;
+    keyFile: string;
+    descriptor: McpDistribution;
+    setOnline: (online: boolean) => Promise<void>;
+    counts: () => Promise<{
+      downloads: number;
+      httpCalls: number;
+      facadeCalls: number;
+    }>;
+    start: (key: string) => Promise<string>;
+    stop: (key: string) => Promise<void>;
+    receipt: (
+      key: string,
+    ) => Promise<{ host: string; inventory: string[]; stdioExited: boolean }>;
+  }) => Promise<void>,
+): Promise<void> {
+  const image = process.env.MAISTER_MCP_QUALIFICATION_IMAGE;
+
+  if (!image)
+    throw new Error(
+      "Set MAISTER_MCP_QUALIFICATION_IMAGE to the production image built from the checkout under qualification",
+    );
+  await docker("image", "inspect", image);
+  const id = "mcpq-" + randomUUID().slice(0, 10);
+  const dir = await mkdtemp(join(tmpdir(), id));
+  const certs = join(dir, "certs");
+  const clean: Array<() => Promise<unknown>> = [];
+
+  try {
+    await mkdir(certs);
+    await execute("openssl", [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-keyout",
+      join(certs, "key"),
+      "-out",
+      join(certs, "ca.pem"),
+      "-subj",
+      "/CN=qualification",
+      "-addext",
+      "subjectAltName=DNS:qual-web,DNS:registry.npmjs.org,IP:127.0.0.1",
+    ]);
+    await docker("network", "create", "--internal", id);
+    clean.push(() => docker("network", "rm", id));
+    const edge = id + "-loopback";
+
+    await docker("network", "create", edge);
+    clean.push(() => docker("network", "rm", edge));
+    const service = id + "-a";
+
+    await docker(
+      "run",
+      "-d",
+      "--name",
+      service,
+      "--hostname",
+      "qual-web",
+      "--network",
+      edge,
+      "-p",
+      "127.0.0.1::9071",
+      "-p",
+      "127.0.0.1::9072",
+      "--read-only",
+      "--tmpfs",
+      "/tmp",
+      "--user",
+      "0:0",
+      "-v",
+      certs + ":/certs:ro",
+      "--workdir",
+      "/app/supervisor",
+      "--entrypoint",
+      "node",
+      image,
+      "test/assigned-mcp/service.mjs",
+    );
+    clean.push(() => docker("rm", "-f", service));
+    await docker(
+      "network",
+      "connect",
+      "--alias",
+      "qual-web",
+      "--alias",
+      "registry.npmjs.org",
+      id,
+      service,
+    );
+    const api = async (path: string): Promise<string> =>
+      docker(
+        "exec",
+        "-e",
+        "NODE_EXTRA_CA_CERTS=/certs/ca.pem",
+        service,
+        "node",
+        "-e",
+        "fetch('https://qual-web/'+process.argv[1]).then(async r=>{if(!r.ok)throw Error(String(r.status));console.log(await r.text())})",
+        path,
+      );
+    let descriptor: McpDistribution | undefined;
+
+    for (let i = 0; i < 30; i++) {
+      try {
+        descriptor = JSON.parse(await api("descriptor")) as McpDistribution;
+        break;
+      } catch (error) {
+        if (i === 29) throw error;
+        await delay(150);
+      }
+    }
+    if (!descriptor) throw new Error("Fixture metadata unavailable");
+    const artifactDigest = descriptor.artifactDigest;
+    const name = (key: string) => id + "-" + key;
+
+    await qualify({
+      certFile: join(certs, "ca.pem"),
+      keyFile: join(certs, "key"),
+      descriptor,
+      setOnline: async (online) => {
+        await api(online ? "online" : "offline");
+      },
+      counts: async () => JSON.parse(await api("counters")),
+      start: async (key) => {
+        await docker(
+          "run",
+          "-d",
+          "--name",
+          name(key),
+          "--hostname",
+          key,
+          "--network",
+          id,
+          "--network-alias",
+          key,
+          "--read-only",
+          "--tmpfs",
+          "/tmp",
+          "--tmpfs",
+          "/state:uid=1001,gid=1001,mode=0700",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "-v",
+          join(certs, "ca.pem") + ":/ca.pem:ro",
+          "-e",
+          "MAISTER_WORKLOAD_API_BASE_URL=https://qual-web",
+          "-e",
+          "NODE_EXTRA_CA_CERTS=/ca.pem",
+          "-e",
+          "MAISTER_EXECUTION_HOST_KEY=" + key,
+          "-e",
+          "MAISTER_MCP_SECRET_HTTP=synthetic_http",
+          "-e",
+          "MAISTER_MCP_ALLOWED_DIGESTS=" + artifactDigest,
+          "-e",
+          "MAISTER_RUNTIME_ROOT=/state",
+          "-e",
+          "MAISTER_WORKSPACE_ROOTS=/state",
+          "-e",
+          "MAISTER_EXECUTION_HOST_STATE_DIR=/state/host",
+          "-e",
+          "MAISTER_ADAPTER_BINARY_CLAUDE=/app/supervisor/test/assigned-mcp/adapter.mjs",
+          "--workdir",
+          "/app/supervisor",
+          "--entrypoint",
+          "node",
+          image,
+          "--import",
+          "tsx",
+          "src/main.ts",
+        );
+        clean.push(() => docker("rm", "-f", name(key)));
+        const port = (
+          await docker(
+            "port",
+            service,
+            key === "supervisor-b" ? "9071/tcp" : "9072/tcp",
+          )
+        )
+          .split(":")
+          .at(-1);
+        const url = "https://127.0.0.1:" + port;
+
+        for (let i = 0; i < 100; i++) {
+          try {
+            if (
+              (await docker(
+                "exec",
+                service,
+                "node",
+                "-e",
+                "fetch('http://'+process.argv[1]+':7777/health').then(r=>console.log(r.ok)).catch(()=>process.exit(1))",
+                key,
+              )) === "true"
+            )
+              break;
+          } catch {
+            /* Startup precedes the first health response. */
+          }
+          if (i === 99)
+            throw new Error(
+              "Supervisor failed to start: " +
+                (await docker("logs", name(key))).slice(-1200),
+            );
+          await delay(120);
+        }
+        await docker("exec", name(key), "mkdir", "-p", "/state/work");
+
+        return url;
+      },
+      stop: async (key) => {
+        await docker("stop", "-t", "4", name(key));
+      },
+      receipt: async (key) =>
+        JSON.parse(
+          await docker(
+            "exec",
+            name(key),
+            "cat",
+            "/state/work/tool-receipt.json",
+          ),
+        ),
+    });
+  } finally {
+    try {
+      for (const release of clean.reverse()) await release();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+}

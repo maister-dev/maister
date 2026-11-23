@@ -232,19 +232,21 @@ IT-CAP-05 passed on populated PostgreSQL, including two project instances, stale
 
 ### Phase 4 — MCP preparation on the assigned execution host
 
+On two independent Linux containers, a real supervisor and ACP protocol peer called the synthetic HTTP MCP, pinned stdio MCP and bundled MAIster facade. B reused its cache offline. After B stopped, fresh C installed the pinned bytes and rejected epoch 1. The mTLS qualification recorded B epoch 1 receipts d34eba4b-97d3-46dc-88c7-4054a601b70e and d5ae983e-7f59-409c-8f60-86f2d7de53bc, then C epoch 2 receipt ad1818ce-4bb3-4a2a-b5ff-379c80572131. The A/B Playwright lane passed 6/6. The production image sha256:638fe8b37708ce0d6617a890d67b5372ff6da186d49513b34546daf1cb38de2f ran as UID 1001 with a read-only root, dropped capabilities and a writable state volume on Linux arm64. T17 remains open for a tool call against a real public MCP. Automatic approval review rejected the public ACP test because it could transmit project or prompt content. Static inspection of the public distribution and successful local protocol calls cover separate checks.
+
 For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](https://learn.microsoft.com/en-us/training/support/mcp) and confirm a compatible registry descriptor. For local stdio, derive the pinned package and transport from the [Registry package formats](https://modelcontextprotocol.io/registry/package-types). Record a real tool response from each supported distribution.
 
-- [ ] **T14. Route readiness, probes and facade launch by actual assignment.**
+- [x] **T14. Route readiness, probes and facade launch by actual assignment.**
   - **After** T02, T09.
   - Trace `web/lib/execution-host/{placement,resolver,client}.ts`, `web/lib/mcp/{probe-service,readiness-host}.ts`, `web/lib/agents/facade-launch.ts`, `web/lib/librarian/session-profile.ts` and `supervisor/src/{http-api,mcp-probe,acp-client}.ts`. Replace local-host assumptions at both selection and transport. Establish web A → supervisor B first. For relocation, use actual registered host-specific endpoints and assignments for B and C; implement the necessary routing on this boundary before qualifying multi-host selection. Run Streamable HTTP from the workload, including DNS, environment and binding checks.
   - **Acceptance** — a real remote tool response and stale-epoch refusal; web/host paths and localhost differ in the fixture.
   - **Diagnostics** — host ID, command ID, epoch, transport and sanitized diagnosis.
-- [ ] **T15. Prepare a reviewed npm/stdio distribution on demand.**
+- [x] **T15. Prepare a reviewed npm/stdio distribution on demand.**
   - **After** T04, T14.
   - Extend `web/lib/execution-host/contracts.ts`, `supervisor/src/{http-api,mcp-probe,acp-client}.ts` and a supervisor-owned preparation module. Resolve npm publisher association (`mcpName`), exact tarball and transitive integrity, executable, license and platform support. Restrict the initial format to reproducible runnable artifacts under the host execution policy. Acquire with least privilege, stage and verify, then atomically publish a cache entry keyed by full digest and runtime/OS/architecture. Keep secrets session-local. Hand an absolute, workload-visible executable to newSession/resumeSession.
   - **Acceptance** — offline reuse, two concurrent installations of one artifact, crash mid-install, missing runtime, digest mismatch, disabled trust and child cleanup.
   - **Diagnostics** — INFO installation receipt and hit/miss, WARN validation failure.
-- [ ] **T16. Deployment wiring for HTTP, stdio and the MAIster facade.**
+- [x] **T16. Deployment wiring for HTTP, stdio and the MAIster facade.**
   - **After** T14, T15.
   - Wire binaries/runtime and workload path in `Dockerfile` and the consuming package manifest/lockfile, writable cache/permissions in `compose.production.yml` and the active dev deployment, reachable `MAISTER_API_BASE_URL` and any new settings in `.env.example` and `docs/configuration.md`. Review `compose.yml` (DB-only dev), applicable compose overrides and `docs/getting-started.md` for host services. Deliver the bundled facade inside the remote workload; web and librarian must stop discovering a web-local executable for the remote path.
   - **Acceptance** — production read-only image plus declared cache volume, dev parity, scoped facade call to web, no credentials inherited by unrelated ACP processes, no unselected server started.
