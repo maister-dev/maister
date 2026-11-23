@@ -653,6 +653,15 @@ row is already `Done` with a deadline, which is what
 the worktree GC collects (`WORKTREE_TTL_RUN_STATUSES`). See
 [`run-results.md`](run-results.md) and [`workspaces.md`](workspaces.md).
 
+## Host-owned disposal Stage C (Designed)
+
+Acquire the current workspace operation claim before disposal. Use the
+retained host, handle and generation after assignment release. A preserved
+Git witness or a verified clean/empty resource must precede deletion.
+Persist the exact disposal receipt before finalizing the Web lifecycle.
+Keep pending, ambiguous and potentially dirty work discoverable in
+reconciliation. C-10 verifies the result against concurrent publication.
+
 ## Expectations
 
 - Reconcile is **allow-list `Running`-only**: a row whose `runs.status` is

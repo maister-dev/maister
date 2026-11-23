@@ -272,6 +272,16 @@ and delete acknowledgements lost across the restart converge through receipt
 recovery and the durable outbox, a late availability neither resurrects nor
 poisons, and an accepted-but-effectless delete is redelivered to completion.
 
+## Addressed workspace content Stage C (Designed)
+
+Resolve diff, log and command output references under the Run's saved
+workspace owner. Bind each sealed object to its source command and
+generation. Web derives receipt, object and range lookups from authorized
+owned records. Recheck the current content grant even for a previously
+authorized object ID. Keep existing range caps, integrity checks and
+attachment policy. C-09 proves the returned-byte digest and both the
+authorized and revoked read paths against the selected host.
+
 ## Expectations
 
 - **OBJ-01:** Manager contracts/catalogs expose opaque object IDs and typed metadata, never a host filesystem path.

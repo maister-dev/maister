@@ -435,6 +435,21 @@ promotion is unchanged. The full state machine and crash windows live in
 Status: **Implemented (ADR-141)** — `ai_rebase_merge` in `web/lib/runs/promote.ts`
 delegating to the shared sync resolver core (`web/lib/runs/sync-target.ts`).
 
+## Git and terminal operations on the selected host Stage C (Designed)
+
+Retain the selected workspace owner after execution assignment release.
+Web authorizes the operation and claims the existing lifecycle fence
+before the host mutates Git. Bind the target to the canonical configured
+remote/ref and expected prior SHA. Each host cache has its own private
+refs. The canonical target remains authoritative across hosts.
+
+On a publication timeout read back the actual target on the same host.
+If it equals the planned commit and the receipt's operation evidence
+matches, apply the completed publication once. A conflicting ref needs
+review. Unprovable effect retains the claim and prevents destructive
+cleanup. C-10 exercises a lost response after a real push, target
+divergence and competing preservation/deletion.
+
 ## Expectations
 
 - MAIster stores zero git provider secrets at rest; auth is host-credential

@@ -1,12 +1,12 @@
-# Copy-paste prompt: Stage C ownership cut and local multi-host execution
+# Stage C planning request — Run board tasks on a selected supervisor
 
-Use after the separate A/B stabilization plan has passed its acceptance gates. Planning may proceed earlier, but Stage C implementation must retain that hard dependency.
+Copy the block below into a planning session. It asks for an implementation plan for Stage C and a target architecture for the subsequent remote-host and workload-backend stages. [Project roadmap](../ROADMAP.md)
 
 ```text
 $aif-plan full
 
-Create an implementation-ready, SDD-driven plan for:
-Stage C — Host-Owned Repositories and Workspaces, followed by Local Multi-Host Execution.
+Write the plan in English. Link it to the roadmap milestone “Run board tasks on a selected supervisor”.
+Deliver a target architecture for the whole operator journey, and implementation tasks for Stage C.
 
 Testing = yes
 Logging = verbose
@@ -16,24 +16,37 @@ Objective
 
 Make the execution host the sole executor/owner of its repository caches,
 materialized workspaces, Git/CLI processes and execution filesystem effects.
-Then prove host registry, liveness/heartbeat, drain, capability matching,
-placement, leases/epochs and per-host capacity on at least two isolated local
-execution-host processes with different private state, runtime and repository roots.
+An operator selects a specific eligible supervisor for a project or board launch.
+Persist that choice and return the actual host and attempt in the Run view. The
+selected supervisor prepares the checkout, runs the agent and checks, and returns
+the result. Keep the default one-host installation simple. Plan a separately
+reviewable pilot with two trusted local supervisors and disjoint storage. The
+first delivery must work with one explicitly selected supervisor. Completing
+the pilot is required before advertising simultaneous multi-host support.
 
-Keep the default one-host installation simple and fully supported.
-Two local hosts are a correctness qualification target, not a production remote
-trust claim.
+Current baseline and prerequisite evidence
 
-Baseline and hard prerequisite
+Starting evidence on 2026-11-23: master at 271ec245d. Record the actual
+planning SHA and verify the following through normal entry points:
 
-Inspect current main and the actual current checkout. Previous audit baseline:
-33f9d34f4 over main 5b458457a94b689713491d158e751553d676be6a.
-Stage A baseline: 06aa7f7e137773cb31d55610148fe138f14c7be8.
+- web/lib/execution-host/placement.ts defaults to localHost(). The registrar,
+  the active local_direct DB constraint and the single MAISTER_SUPERVISOR_URL
+  resolve one host. Replacing its URL can retire the previous identity.
+- Web creates worktrees and runs CLI steps locally. Supervisor adoption checks
+  real paths and linked Git metadata. Inventory current preparation claims and
+  recovery in web/lib/agents/preparation-resource.ts and
+  docs/system-analytics/agent-preparation.md before designing remote effects.
+- Stage A/B already provides host identity, assignment epochs, command receipts,
+  durable event replay and runtime objects. The admin execution-host screen
+  already reports status. Reuse these contracts and the existing board launch.
+- Inspect feature/isolated-execution-host separately if available (reviewed at
+  4554e33ae). Check isolation, workload dispatch and Git protections by workload
+  class and actual caller. Mark reusable prerequisites and branch-only changes.
+  Qualification of a diagnostic command does not establish board Run execution.
 
 Read:
 - .ai-factory/reviews/stage-ab-execution-host-audit-2026-09-05.md
-- .ai-factory/reviews/stage-ab-stabilization-aif-plan-prompt.md and its resulting
-  implementation plan and verification record, if present
+- .ai-factory/plans/stage-ab-stabilization.md and .ai-factory/plans/codex-stage-ab-ci-r9.md
 - .ai-factory/plans/claude-stage-a-execution-host-plan-6d70f9.md
 - .ai-factory/plans/feature-stage-b-durable-execution-host-data-plane.md
 - ADR-023, ADR-166, ADR-167, current architecture and repository/workspace ADRs
@@ -48,7 +61,67 @@ new feature phase or assume checked boxes prove acceptance.
 Naming:
 - Stage B B2 was canonical manager projections/browser SSE, not Workspace/Git.
 - Stage C ownership cut must pass on one host before activating two-host placement.
-- Stage D retains trusted remote enrollment/auth/relay/secret-delivery work.
+- Stage D delivers trusted, easy enrollment and connectivity for physical hosts.
+  Include its contracts in the architecture now. Schedule its implementation separately.
+
+Target architecture and boundaries
+
+Trace these interactions in the plan with component ownership, a command/event
+sequence and a failure sequence. Identify what ships in Stage C, what Stage D
+must add and what a future workload backend can implement independently.
+Include one deployment diagram for the three topologies and a compact interaction
+table covering initiator, peer, identity, authorization, durable owner, payload
+and recovery on lost reply. Recommend one design for each boundary, record the
+trade-offs and name the existing MAIster contract to extend.
+
+1. Board -> Web -> placement. Web authorizes the user's project and host choice,
+   records the requested host and reserves an attempt on its persistent host ID.
+   Make the binding survive queueing, approval and retry. If a pinned host is
+   asleep, draining, full, revoked or incompatible, show why work is waiting
+   or refused. Moving work requires an authorized new placement and a viable
+   workspace. Keep personal developer hosts private until explicitly granted
+   to particular users/projects. Define who can pair, share, select and revoke.
+2. Web <-> supervisor. Route typed commands, receipts, cancellation, heartbeat,
+   events, replay and object reads by host identity across connection changes.
+   For Stage C use trusted local endpoints. For Stage D design the operator
+   experience from a clean laptop: install/start the supervisor, point it at
+   https://app.imaister.dev (an example Web origin), approve pairing in that
+   Web instance and see the host become available on the board. Show a proposed
+   CLI invocation, for example `maister supervisor connect --web https://app.imaister.dev`
+   (proposed syntax), with the corresponding UI and status/error states.
+   Explain installation, starting on login, and how the host owner
+   limits local capacity, pauses new tasks and disconnects the machine. Prefer an
+   outbound authenticated connection over HTTPS/WSS that works behind NAT
+   with no inbound laptop port or hand-maintained SSH tunnel. Specify short-lived
+   single-use pairing approval, instance and user binding, host key storage,
+   rotation, revoke/unpair, reconnect after sleep and command deduplication.
+   Distinguish transport authentication from permission to run a project.
+3. Supervisor -> Git source and execution backend. Fetch the authorized commit
+   into a private per-host repository cache, create the worktree locally and
+   mount approved inputs. A later Run requesting a new SHA must fetch it while
+   an active Run retains its own revision and edits. For a Web-local repository
+   specify an explicit authorized transfer of a verifiable snapshot or a clear
+   refusal with a way to supply a reachable Git source. Identify where private
+   Git/provider credentials live. Scope MCP access to the Run and the correct
+   Web origin; inspect web/lib/agents/facade-launch.ts and the API base URL
+   issued by web/lib/agents/launch.ts for manager-local executable/path assumptions.
+4. Execution backend -> supervisor -> Web. Define where workspace, processes,
+   limits, cancellation, exit, evidence and cleanup belong. Implement the host
+   process backend in Stage C using existing mechanisms. Show how a future
+   supervisor could execute ACP and checks in Kubernetes Pods/Jobs: map
+   host ID, assignment epoch and attempt to workload UID, storage lifetime,
+   scoped credentials, resource limits, log/artifact capture, cancellation and
+   reconciliation after a Pod or supervisor restart. Keep the Kubernetes API
+   behind the supervisor. A reconnecting laptop and a replaced Pod are distinct
+   lifecycle events. Kubernetes deployment and cloud provisioning are future work.
+
+Use the existing competitor research as design input and refresh any changed
+mechanisms against primary sources. Compare the direction of the connection,
+runtime identity, who owns the working tree, who can assign work, and what
+survives disconnection. For each comparison state the choice for MAIster:
+- Herdr's persistent session server and remote client attachment: https://herdr.dev/tui/docs/how-to-work/
+- Maestro's agent-to-SSH-remote selection: https://github.com/RunMaestro/Maestro/blob/main/docs/cli.md
+- Multica's per-machine daemon, runtimes and sharing: https://multica.ai/docs/daemon-runtimes
 
 Architecture constraints
 
@@ -129,10 +202,10 @@ retain one host affinity. Define read-only mounts and writer exclusion.
 
 2. Creation/admission and post-run operations
 
-Current addWorktree occurs before run-row commit. Define a durable reservation/
-operation identity before the host effect, then dispatch/result/application and
-orphan cleanup. Resolve whether the existing command ledger can reference the
-pre-admission owner without inventing a parallel side-effect ledger.
+Inspect when each normal, agent and recovery entry point reserves the Run and
+workspace relative to addWorktree. Reuse its durable preparation/operation
+identity before the host effect, then specify dispatch, result application and
+orphan cleanup. Resolve any pre-admission ownership gap in the existing ledger.
 
 Execution assignments are released before some Review/Done promotion/GC work.
 Reuse existing workspace lifecycle operation claims and command receipts with
@@ -193,10 +266,12 @@ secret enrollment/delivery. Specify adapter-home and ambient skill/config policy
 
 6. Registry, liveness, drain and placement after ownership-cut acceptance
 
-Remove the one-active-local-host/global-URL assumption through host-addressed
-transport resolution. Bootstrap one default host without enrollment/UI setup.
-Support a small validated static local-host configuration and an optional
-two-host qualification topology.
+Introduce host-addressed transport and explicit selection for the first
+selected-host Run. Bootstrap one default host without enrollment/UI setup.
+For the two-host pilot, configure two trusted endpoints with independent
+identities and remove the singleton storage constraint through a migration.
+Explain how staging and version negotiation prevent old singleton writers
+from retiring or misaddressing either host during upgrades.
 
 Define registry identity versus boot/incarnation, readiness versus liveness,
 draining versus unavailable/retired, capability snapshots and freshness.
@@ -244,7 +319,10 @@ Do not log source/prompt/evidence bodies, secrets or raw private paths.
 Keep the current UI functional: actionable unavailable/capacity/drain/recovery
 states, safe artifact links, and correct run/workspace status after asynchronous
 commands. Preserve EN/RU and current UI conventions where changed.
-A full host-administration product is not required.
+Stage C needs a board launch or project control to select an eligible host,
+the selected host on the Run, and a visible reason when it cannot start.
+Extend the current admin diagnostics with per-host status for the pilot.
+Design the later pairing, sharing and revoke UI in the remote-host stage.
 
 SDD and acceptance
 
@@ -260,9 +338,15 @@ strict types, SOLID/KISS/DRY, existing module conventions, phase-level commits.
 Prefer real Postgres, real Git repositories and real supervisor processes with
 deterministic ACP fixtures. Use unit tests only for pure protocol transformations.
 
-Two separate delivery gates are mandatory:
+Use separate acceptance gates. Identify the smallest shippable Stage C slice
+and the additional requirements for declaring the local pilot successful.
 
 G1: Ownership cut works on one host.
+- Launch a real project task from the board targeting a configured supervisor.
+  Verify its stable ID and assignment in the Run and on the host. Start with an
+  empty host cache, fetch the approved SHA, run ACP and a project check there,
+  then read the diff, evidence and terminal result in Web. Change the upstream
+  revision and prove a new Run uses the new pinned SHA.
 - Web has no OS access to host repository/worktree/runtime roots.
 - Launch/materialization, CLI/check, agent work, evidence, checkpoint, HITL
   resume/cancel/complete, diff/sync/promotion/archive/GC all work through contracts.
@@ -271,6 +355,10 @@ G1: Ownership cut works on one host.
 - Duplicate commands and lost ACKs do not repeat side effects or lose ownership.
 
 G2: Two isolated local hosts work after G1.
+- Pin one board Run to B while A continues to accept other work. Capture the
+  command/process owner for a representative feature build on B, resource
+  accounting there and its result in Web. Disconnect B after command acceptance,
+  reconnect it and verify one effect. A pinned Run must never build on A by accident.
 - Separate roots and SQLite identity/outbox stores; no shared repository/runtime
   filesystem and no web access to either private root.
 - Capability/capacity placement and shared-worktree affinity choose legal hosts.
@@ -280,15 +368,28 @@ G2: Two isolated local hosts work after G1.
 - No cross-host ACP resume claim; recovery uses explicit new-attempt boundaries.
 - Re-run G1 and A/B durability/deferred-release tests without regression.
 
-Evaluate dependency-ordered increments:
-C0 ownership inventory, target contracts, schema/ADR and test topology;
-C1 host-created repository/workspace materialization on one host;
-C2 host CLI/check and capability/context materialization;
-C3 host Git/checkpoint/sync/promotion/GC and post-run operation fencing;
-C4 bounded local adoption/cutover and G1;
-C5 host registry/liveness/drain/addressed transport;
-C6 capacity/placement/lease enforcement;
-C7 two-host qualification, G2 and final contract/analytics reconciliation.
+Future acceptance (design now, run in the corresponding delivery stage):
+- Remote developer host: Web and the existing supervisor run on A. A developer
+  connects a macOS laptop or Linux host B from a different network to the same
+  Web instance. An authorized user assigns a board task to B. B builds the pinned
+  revision on its own disk. Web receives live progress, diff and verified results.
+  Exercise denied project access, sleep/reconnect and revocation. Record the
+  instance, host identity and attempt that produced the evidence. A local pilot
+  cannot qualify this network and trust boundary.
+- Container backend: run one board task via a supervisor-managed Pod with the
+  same Web contract. Verify workspace continuity or explicit new-attempt recovery,
+  enforce resource limits, cancel and clean up. Specify this test in the design.
+
+Evaluate these dependency-ordered increments:
+ C0. Record the target architecture, trust boundaries, contracts and test topology.
+ C1. Materialize pinned repositories/workspaces on a selected host.
+ C2. Dispatch CLI/checks and materialize approved inputs there.
+ C3. Move Git, checkpoint, sync, promotion and cleanup under workspace ownership.
+ C4. Wire explicit board selection and host-addressed dispatch end to end,
+     migrate existing single-host data and qualify G1.
+ C5. Extend registry, liveness, drain and addressed transport to two local hosts.
+ C6. Enforce per-host capacity, affinity and leases.
+ C7. Qualify the local pilot (G2) and document remaining remote delivery work.
 
 Adjust this sequence based on actual dependencies. Keep workstreams and acceptance
 independently verifiable; no phase can depend on an undocumented later fix.
@@ -301,14 +402,13 @@ and an ADR with the next available number at implementation time.
 Include complete requirements-to-enforcement-to-test traceability, a risk register,
 two-phase side-effect failure tables and a coherent commit plan.
 
-Non-goals:
-remote trusted enrollment/authentication, Internet-facing relay, cloud provisioning,
-object-storage deployment, host administration UI, live cross-host ACP resume,
-multi-repository product orchestration, swarm/fleet coordination, long-term memory
-or self-improvement. Do not remove existing context-repository support merely
-because new multi-repository orchestration is out of scope.
+Keep public relay infrastructure, fleet provisioning, object storage deployment,
+live cross-host ACP migration and multi-repository orchestration outside Stage C.
+Preserve existing context-repository support.
 
-Output an implementation plan only. Do not modify production code or begin
-implementation. Distinguish as-built A/B, prerequisite fixes, Stage C work and
-deferred Stage D work throughout.
+Output one English implementation plan with the target architecture, a Stage C
+task/commit sequence, separately labelled pilot, and explicit handoffs for
+remote enrollment and a container backend. For each handoff give the contract
+provided by C, the open decision and the end-to-end acceptance test. Stop at
+the planning artifact. Live pairing and execution are future operator actions.
 ```

@@ -981,6 +981,17 @@ soft at 203 s, hard at ~251 s, one stall, nine `producer-pause-exceeded`
 checkpoints — and, once nine producers waited at hard, a supervisor pegged at
 100% CPU by the capacity cascade of EDGE-EVT-14, fixed on the same branch.
 
+## Addressed host streams Stage C (Designed)
+
+Use the existing host key and stream identity as the consumer scope for
+each configured endpoint. The consumer accepts a batch only from its
+verified host. It commits the cursor and projections before it sends the
+ACK to that same host. Keep restart evidence per boot. Host replacement
+cannot reuse the previous identity's cursor. Project workspace command
+evidence under the matching command ID, owner and epoch. A stopped stream
+on A cannot park B's consumer or advance B's frontier. C-13 exercises
+overlapping positions and wrong-host replay against two stores.
+
 ## Expectations
 
 - **EVT-01:** Postgres is canonical for browser and projector event reads, never supervisor memory or runtime files.

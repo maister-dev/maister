@@ -381,6 +381,24 @@ flowchart TD
 
 Per-cron current input and immutable claim/run retention are specified in [scheduled agent requests](scheduled-agent-requests.md). Protected request bodies are stored separately from viewer-safe trigger telemetry; existing admission, completion and permission policies remain authoritative.
 
+## Addressed placement Stage C (Designed)
+
+Use the authorized pinned host for each queued intent. Under the existing
+global admission lock, claim eligible host capacity before workspace writer
+claims. Maintain that lock order on each dispatch path. Count live claims for
+the physical host. A saturated, stale or draining host leaves the intent
+waiting with a bounded reason and preserves existing ordering among eligible
+queued intents.
+
+Issue and renew an addressed assignment lease using Web's clock. The host
+derives a conservative monotonic deadline and fences new effects locally.
+On lease expiry, fence further host commands and stop owned execution where
+the backend can enforce termination. A partition alone leaves ownership
+uncertain. Release writer capacity and allow a replacement only after a
+quiescence witness or verified enforced expiry. A late receipt can settle
+historical evidence under its original epoch. It cannot mutate a successor.
+The competing-worker and partition scenarios C-14 and C-15 own these proofs.
+
 ## Expectations
 
 - The tick route MUST be stateless; all idempotence comes from DB claims and

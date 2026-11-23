@@ -159,6 +159,24 @@ proves that condition; missing evidence is not that proof. Missing-baseline,
 qualification-source rejection and cleanup failures remain separate subsequent
 data. Retry is explicit after remediation; no historical diagnosis is invented.
 
+## Addressed preparation Stage C (Designed)
+
+Commit the real Run, assignment and existing preparation claim before the
+host request. The claim binds repository and workspace mode, pinned source,
+input digest and selected host. A preparing Run cannot start an ACP
+session. A repeated claimant finds the durable owner. Only a successful
+application under its assignment epoch and preparation generation advances
+the Run to execution.
+
+The manager resolves approved package, skill, instructions, capabilities,
+memory references and mounted context revisions. The supervisor verifies
+the captured digests, stages the inputs in a private directory and publishes
+the complete generation atomically. It resolves its own adapter, facade and
+credential profile. Revalidate grants before spawn, including the existing
+agent-memory and cross-project mount authorities. Retain the original inputs
+across replay and checkpoint resume. The launch-path and materialization
+integration scenarios C-05 and C-07 own the transaction and byte witnesses.
+
 ## Expectations
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))

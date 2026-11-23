@@ -384,6 +384,32 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 | Request drift or uncertain response | Reject drift before writes. Replay the exact request with the same key, or read its receipt. A different payload under the same key conflicts. |
 | Scheduling or external API | These use their existing request shapes. The browser disables Schedule until one-run choices are removed. |
 
+## Requested execution host Stage C (Designed)
+
+Add optional `executionHostId` to the task launch request, using the
+existing strict body and generated task-launch schema. The ID comes from
+authorized choices in the task or Flow preview response. The active actor,
+task and project come from the existing scoped admission path. The settings
+token covers the configuration used for the preview. Check current
+`launchRun`, host eligibility and project/source authority on acceptance
+and dispatch.
+
+Independent work resolves explicit selection, then project default, then
+instance default. Shared children inherit the root's host. Save the requested
+ID, effective ID and provenance on first acceptance. Include an explicit ID
+in the request digest. Replay with an omitted override uses the original
+saved selection even if the default has changed. A changed explicit ID
+under the same key returns 409. A pending pinned intent exposes a typed
+waiting/refusal reason through the existing Run refresh path. A replacement
+requires a new authorized intent and quiescence of any prior owner.
+
+The acceptance receipt can report the saved host before a Run exists.
+The assigned host and epoch appear when persisted by dispatch. A revoked
+grant stops new host effects through the existing cancellation and
+reconciliation path. Artifact access uses its own current read grants.
+Exercise equal and changed replay, stale preview, unauthorized selection,
+revocation and inherited selection in C-11.
+
 ## Expectations
 
 Before orchestrator rework rewinds or recreates a checkout, a short transaction

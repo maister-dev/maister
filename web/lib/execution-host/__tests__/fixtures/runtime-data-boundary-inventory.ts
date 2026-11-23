@@ -3391,6 +3391,7 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["readBlob", false],
     ["remoteBranchExists", false],
     ["remoteBranchHead", false],
+    ["inspectDeliveryBase", false],
     ["resolveBaseRef", false],
     ["resolveRefSha", false],
     ["restoreWorktreeToCommit", false],
