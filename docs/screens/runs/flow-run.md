@@ -96,10 +96,12 @@ evidence.
 - **Within:** node selection changes the result panel; Timeline/Evidence
   workbench tabs and the collapsed Files/Diff disclosure open
   [`workbench.md`](workbench.md); the right inspector opens
-  [`run-inspector.md`](run-inspector.md).
+  [`run-inspector.md`](run-inspector.md). The header's **Changes** link opens
+  and scrolls to the Diff tab for the scope shown in the summary.
 - **Deep links:** node, workbench, file, diff, inspector, and fullscreen Flow
   state follow the shared URL contract in [`workbench.md`](workbench.md).
-- **Exit:** back to the project board, promote/open PR/export/handoff actions,
+- **Exit:** **Back to board** in the top toolbar, promote/open PR/export/handoff
+  actions,
   or linked task details.
 
 ```mermaid
@@ -178,7 +180,7 @@ cards.
 
 ### UI completion contract (Implemented)
 
-The run shell adds a shared liveness pill for the existing SSE subscription.
+The header shows the live updates connection as a chip beside the run title.
 It announces `connecting`, `live`, `reconnecting`, and `disconnected` states
 with text and a manual reconnect action; this is presentation only and never
 changes execution state. The shell is the one subscription owner for child

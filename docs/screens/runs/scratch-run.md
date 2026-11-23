@@ -61,10 +61,12 @@ of a normal message.
 - **Primary landing:** conversation transcript.
 - **Within:** inspector tabs show run info, changes, and actions; secondary
   workbench tabs open Timeline/Evidence, while Files and Diff sit in one
-  collapsed-by-default disclosure.
+  collapsed-by-default disclosure. The header's **Changes** link opens and
+  scrolls to Diff.
 - **Deep links:** workbench, file, diff, inspector, and source/preview state
   follow the shared URL contract in [`workbench.md`](workbench.md).
-- **Exit:** project board, promoted branch/PR link, or archive/drop flow.
+- **Exit:** **Back to board** in the top toolbar, promoted branch/PR link, or
+  archive/drop flow.
 
 ```mermaid
 flowchart TD

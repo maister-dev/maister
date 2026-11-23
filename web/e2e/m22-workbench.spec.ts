@@ -485,10 +485,33 @@ test("run-diff renders the ADR-066 diff-view with line numbers + per-file +/− 
   page,
 }) => {
   const fx = loadM22Fixture();
+  const header = page.getByTestId("run-header").filter({ visible: true });
+  const changes = header.getByRole("link", { name: /^Changes:/ });
+  const disclosure = page.getByTestId("workbench-disclosure");
+  const diff = disclosure.getByTestId("run-diff");
 
-  await page.goto(`/runs/${fx.runId}?wb=diff`);
+  await page.goto(`/runs/${fx.runId}?inspector=closed`);
 
-  await expect(page.locator('[data-testid="run-diff"]')).toBeVisible();
+  await expect(
+    header.getByRole("link", { name: "Back to board" }),
+  ).toHaveAttribute("href", `/projects/${fx.projectSlug}`);
+  await expect(header.getByTestId("run-stream-liveness")).toBeVisible();
+  await expect(diff).toBeHidden();
+  await changes.click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("wb") === "diff" &&
+      url.searchParams.get("scope") === "run" &&
+      url.searchParams.get("inspector") === "closed",
+  );
+  await expect(disclosure.locator("> summary")).toBeInViewport();
+  await expect(diff).toBeVisible();
+
+  await disclosure.locator("> summary").click();
+  await expect(diff).toBeHidden();
+  await expect(page).not.toHaveURL(/[?&]wb=diff/);
+  await changes.click();
+  await expect(diff).toBeVisible();
 
   // The raw <pre> is replaced by the git-diff-view container (ADR-066). Default
   // mode is split.

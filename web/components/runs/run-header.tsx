@@ -1,9 +1,13 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import type { PromotionOperationInput } from "@/lib/runs/promotion-operation";
 
 import Link from "next/link";
 import clsx from "clsx";
-import { CurrencyDollarIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowLeftIcon,
+  CodeBracketSquareIcon,
+  CurrencyDollarIcon,
+} from "@heroicons/react/24/outline";
 
 import {
   PrStateChip,
@@ -15,6 +19,8 @@ import { RunHeaderPromotionAction } from "@/components/runs/run-header-promotion
 
 const keyRefChipClass =
   "rounded border border-line bg-ivory px-1.5 py-px font-mono text-[11px] font-bold tracking-[0.04em] text-ink-2";
+const headerLinkClass =
+  "inline-flex items-center gap-1.5 rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-4";
 
 export interface RunHeaderChangeSummary {
   fileCount: number;
@@ -50,6 +56,7 @@ export interface RunHeaderLabels {
 
 export interface RunHeaderProps {
   title: string;
+  liveness?: ReactNode;
   // Eyebrow above the title: `flow › current node` for flow runs.
   subtitle?: string;
   // KEY-N reference chip beside the status badge (null for scratch runs).
@@ -76,6 +83,7 @@ export interface RunHeaderProps {
   // get the chip's disabled affordance rather than a button that 403s.
   canReopen?: boolean;
   changeSummary?: RunHeaderChangeSummary | null;
+  changesHref?: string | null;
   // Derived run-scope budget warn signal (null = no badge).
   budgetStatus?: { warn: boolean; pct: number } | null;
   inspectorOpen: boolean;
@@ -113,6 +121,7 @@ function statusTone(status: string): string {
 
 export function RunHeader({
   title,
+  liveness,
   subtitle,
   keyRef,
   taskHref,
@@ -128,6 +137,7 @@ export function RunHeader({
   runId,
   canReopen,
   changeSummary,
+  changesHref,
   budgetStatus,
   inspectorOpen,
   hideChangeSummary,
@@ -137,7 +147,11 @@ export function RunHeader({
   onToggleInspector,
   inspectorDisabledReason,
 }: RunHeaderProps): ReactElement {
-  const changes = formatRunChangeSummary(changeSummary, labels);
+  const changes = `${labels.changes}: ${formatRunChangeSummary(changeSummary, labels)}`;
+  const changeSummaryProps = {
+    "data-dirty": changeSummary?.dirty ? "true" : "false",
+    "data-testid": "run-header-change-summary",
+  };
   const budgetBadge =
     budgetStatus?.warn && labels.budgetWarn
       ? labels.budgetWarn.replace("$pct", String(budgetStatus.pct))
@@ -145,19 +159,80 @@ export function RunHeader({
 
   return (
     <header
-      className="flex flex-col gap-3 border-b border-line pb-4 md:flex-row md:items-start md:justify-between"
+      className="flex flex-col gap-3 border-b border-line pb-4"
       data-testid="run-header"
     >
-      <div className="min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {projectHref && projectLabel ? (
           <Link
-            className="mb-1 inline-flex font-mono text-[11px] font-semibold text-mute transition-colors hover:text-ink"
+            className={clsx(headerLinkClass, "shrink-0")}
             data-testid="run-header-project-link"
             href={projectHref}
           >
+            <ArrowLeftIcon aria-hidden="true" className="size-3.5" />
             {projectLabel}
           </Link>
         ) : null}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {!hideChangeSummary ? (
+            changesHref && changeSummary && !changeSummary.unavailable ? (
+              <Link
+                {...changeSummaryProps}
+                className={headerLinkClass}
+                href={changesHref}
+              >
+                <CodeBracketSquareIcon
+                  aria-hidden="true"
+                  className="size-3.5"
+                />
+                {changes}
+              </Link>
+            ) : (
+              <span
+                {...changeSummaryProps}
+                className="px-2.5 py-1.5 font-mono text-[11px] text-mute"
+              >
+                {changes}
+              </span>
+            )
+          ) : null}
+          {reviewHref &&
+          promotionOperation &&
+          labels.promote &&
+          labels.promotionStarted &&
+          labels.targetDrift ? (
+            <RunHeaderPromotionAction
+              labels={{
+                promote: labels.promote,
+                started: labels.promotionStarted,
+                targetDrift: labels.targetDrift,
+              }}
+              operation={promotionOperation}
+              reviewHref={reviewHref}
+            />
+          ) : reviewHref && labels.review ? (
+            <Link
+              className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
+              data-testid="run-header-review"
+              href={reviewHref}
+            >
+              {labels.review}
+            </Link>
+          ) : null}
+          <button
+            aria-expanded={inspectorOpen}
+            className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
+            data-testid="run-header-inspector-toggle"
+            disabled={!!inspectorDisabledReason}
+            title={inspectorDisabledReason}
+            type="button"
+            onClick={onToggleInspector}
+          >
+            {inspectorOpen ? labels.closeInspector : labels.openInspector}
+          </button>
+        </div>
+      </div>
+      <div className="min-w-0">
         {subtitle ? (
           <p
             className="mb-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-mute"
@@ -230,9 +305,12 @@ export function RunHeader({
             />
           ) : null}
         </div>
-        <h1 className="m-0 truncate font-sans text-[22px] font-bold leading-tight text-ink md:text-[26px]">
-          {title}
-        </h1>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <h1 className="m-0 min-w-0 wrap-anywhere font-sans text-[22px] font-bold leading-tight text-ink md:text-[26px]">
+            {title}
+          </h1>
+          {liveness}
+        </div>
         {agentHistory ? (
           <Link
             className="mt-1 inline-block w-fit text-sm text-mute underline"
@@ -257,51 +335,6 @@ export function RunHeader({
             </div>
           </details>
         ) : null}
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {!hideChangeSummary ? (
-          <span
-            className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] text-ink-2"
-            data-dirty={changeSummary?.dirty ? "true" : "false"}
-            data-testid="run-header-change-summary"
-          >
-            {labels.changes}: {changes}
-          </span>
-        ) : null}
-        {reviewHref &&
-        promotionOperation &&
-        labels.promote &&
-        labels.promotionStarted &&
-        labels.targetDrift ? (
-          <RunHeaderPromotionAction
-            labels={{
-              promote: labels.promote,
-              started: labels.promotionStarted,
-              targetDrift: labels.targetDrift,
-            }}
-            operation={promotionOperation}
-            reviewHref={reviewHref}
-          />
-        ) : reviewHref && labels.review ? (
-          <Link
-            className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
-            data-testid="run-header-review"
-            href={reviewHref}
-          >
-            {labels.review}
-          </Link>
-        ) : null}
-        <button
-          aria-expanded={inspectorOpen}
-          className="rounded-[6px] border border-line bg-paper px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-2 hover:bg-ivory"
-          data-testid="run-header-inspector-toggle"
-          disabled={!!inspectorDisabledReason}
-          title={inspectorDisabledReason}
-          type="button"
-          onClick={onToggleInspector}
-        >
-          {inspectorOpen ? labels.closeInspector : labels.openInspector}
-        </button>
       </div>
     </header>
   );

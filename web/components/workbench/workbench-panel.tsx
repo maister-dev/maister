@@ -7,6 +7,10 @@ import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import {
+  buildRunHref,
+  RUN_WORKBENCH_CHANGES_ID,
+} from "@/lib/runs/run-query-state";
+import {
   WorkbenchTabs,
   WORKBENCH_TABS,
   type WorkbenchTab,
@@ -87,6 +91,7 @@ export interface WorkbenchPanelProps {
 interface WorkbenchDisclosureProps {
   children: ReactNode;
   label: string;
+  onClose: () => void;
   routeOpen: boolean;
   testId: string;
 }
@@ -94,6 +99,7 @@ interface WorkbenchDisclosureProps {
 function WorkbenchDisclosure({
   children,
   label,
+  onClose,
   routeOpen,
   testId,
 }: WorkbenchDisclosureProps): ReactNode {
@@ -109,10 +115,16 @@ function WorkbenchDisclosure({
 
   return (
     <details
-      className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-paper"
+      className="min-w-0 max-w-full scroll-mt-4 overflow-hidden rounded-[10px] border border-line bg-paper"
       data-testid={testId}
+      id={RUN_WORKBENCH_CHANGES_ID}
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+
+        setOpen(nextOpen);
+        if (!nextOpen && routeOpen) onClose();
+      }}
     >
       <summary
         aria-expanded={open}
@@ -168,6 +180,17 @@ export function WorkbenchPanel({
     collapsibleTabs,
   );
 
+  function clearWorkbenchSelection(): void {
+    const { hash } = window.location;
+    const href = buildRunHref(pathname, searchParams, { wb: null });
+
+    window.history.replaceState(
+      null,
+      "",
+      hash === `#${RUN_WORKBENCH_CHANGES_ID}` ? href : `${href}${hash}`,
+    );
+  }
+
   return (
     <div className="grid min-w-0 max-w-full gap-3">
       {regularTabs.length > 0 && activeRegular ? (
@@ -193,6 +216,7 @@ export function WorkbenchPanel({
           label={workbenchDisclosureLabel(tabLabels, collapsibleTabs)}
           routeOpen={activeCollapsible !== null}
           testId="workbench-disclosure"
+          onClose={clearWorkbenchSelection}
         >
           <WorkbenchTabs
             active={activeWorkbenchTab}

@@ -1317,6 +1317,7 @@ export default async function RunDetailLayout({
           ? "local"
           : null;
   const isCutoverHistory = detail.cutoverFailure !== null;
+  const hasWorkbench = !!flowGraphData || showAgentCenter || isCutoverHistory;
   // ADR-181 D2: the viewer's own set — the claim owner of an open rework claim
   // gets the git set; `detail.lifecycleActions` is the viewer-less projection.
   const viewerLifecycleActions = lifecycleActionsForViewer(detail, user.id);
@@ -1671,17 +1672,6 @@ export default async function RunDetailLayout({
       anchorRunId={detail.runId}
       initialChildPage={initialChildPage}
     >
-      <RunLiveRefresh
-        currentStepId={detail.currentStepId}
-        livenessLabels={{
-          disconnected: t("streamDisconnected"),
-          live: t("streamLive"),
-          reconnect: t("streamReconnect"),
-          reconnecting: t("streamReconnecting"),
-        }}
-        runId={detail.runId}
-        runStatus={detail.status}
-      />
       <RunShell
         agentHistory={
           detail.runKind === "agent" && detail.sourceAgentId
@@ -1696,6 +1686,9 @@ export default async function RunDetailLayout({
         branch={isOperational ? null : detail.branch}
         budgetStatus={detail.budgetStatus}
         canReopen={canAct}
+        changeScope={
+          hasWorkbench && !isOperational ? inspectorChangeScope : undefined
+        }
         changeSummary={isOperational ? null : changeSummary}
         hideChangeSummary={isOperational}
         inspector={
@@ -1760,6 +1753,19 @@ export default async function RunDetailLayout({
         }
         keyRef={detail.taskRef}
         labels={shellLabels}
+        liveness={
+          <RunLiveRefresh
+            currentStepId={detail.currentStepId}
+            livenessLabels={{
+              disconnected: t("headerUpdatesDisconnected"),
+              live: t("headerUpdatesLive"),
+              reconnect: t("streamReconnect"),
+              reconnecting: t("headerUpdatesConnecting"),
+            }}
+            runId={detail.runId}
+            runStatus={detail.status}
+          />
+        }
         outcome={
           <RunOutcome
             heading={t("outcomeHeading")}
@@ -2346,7 +2352,7 @@ export default async function RunDetailLayout({
             </section>
           ) : null}
 
-          {flowGraphData || showAgentCenter || isCutoverHistory ? (
+          {hasWorkbench ? (
             <section className="min-w-0 max-w-full" data-testid="run-workbench">
               <WorkbenchPanel
                 diff={
