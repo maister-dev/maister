@@ -14,6 +14,11 @@ describe("childProcessEnv (ADR-153)", () => {
     vi.stubEnv("LC_ALL", "en_US.UTF-8");
     vi.stubEnv("TMPDIR", "/tmp/maister-test");
     vi.stubEnv("SSH_AUTH_SOCK", "/tmp/maister-agent.sock");
+    vi.stubEnv("MAISTER_MAX_CONCURRENT_HEAVY_CHECKS", "2");
+    vi.stubEnv("MAISTER_BUILD_PROFILE", "cold");
+    vi.stubEnv("MAISTER_BUILD_MAX_WORKERS", "1");
+    vi.stubEnv("MAISTER_TEST_MAX_WORKERS", "2");
+    vi.stubEnv("MAISTER_HEAVY_CHECK_DIR", "/tmp/test-checks");
 
     const env = childProcessEnv();
 
@@ -24,6 +29,11 @@ describe("childProcessEnv (ADR-153)", () => {
     expect(env.LC_ALL).toBe("en_US.UTF-8");
     expect(env.TMPDIR).toBe("/tmp/maister-test");
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/maister-agent.sock");
+    expect(env.MAISTER_MAX_CONCURRENT_HEAVY_CHECKS).toBe("2");
+    expect(env.MAISTER_BUILD_PROFILE).toBe("cold");
+    expect(env.MAISTER_BUILD_MAX_WORKERS).toBe("1");
+    expect(env.MAISTER_TEST_MAX_WORKERS).toBe("2");
+    expect(env.MAISTER_HEAVY_CHECK_DIR).toBe("/tmp/test-checks");
   });
 
   it("injects caller extras on top of the filtered env", () => {

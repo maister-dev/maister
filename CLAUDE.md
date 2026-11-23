@@ -59,6 +59,11 @@ pnpm --filter maister-web lint
 
 Detailed code structure, conventions, HeroUI patterns: **`web/CLAUDE.md`**.
 
+On shared hosts, run validation through the project's package scripts so the
+configured concurrent-check budget applies. Pass focused test files to the
+script. For example, use `pnpm --filter maister-web test:unit <file>`.
+See [concurrent heavy checks](docs/configuration.md#concurrent-heavy-checks).
+
 ## Stack
 
 - **Framework**: Next.js 16+ App Router, server actions + RSC where it fits.

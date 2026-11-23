@@ -9,11 +9,16 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Child-only plumbing beyond the template allow-list. Both are host paths, not
-// secret values: TMPDIR keeps macOS children under /var/folders instead of the
-// /tmp symlink; SSH_AUTH_SOCK lets git-over-SSH in a flow command authenticate
-// through the agent socket without ever seeing key material.
-const CHILD_ONLY_ALLOW_PATTERNS: RegExp[] = [/^TMPDIR$/, /^SSH_AUTH_SOCK$/];
+// Host plumbing available to command processes, outside the template namespace.
+const CHILD_ONLY_ALLOW_PATTERNS: RegExp[] = [
+  /^TMPDIR$/,
+  /^SSH_AUTH_SOCK$/,
+  /^MAISTER_MAX_CONCURRENT_HEAVY_CHECKS$/,
+  /^MAISTER_HEAVY_CHECK_DIR$/,
+  /^MAISTER_BUILD_PROFILE$/,
+  /^MAISTER_BUILD_MAX_WORKERS$/,
+  /^MAISTER_TEST_MAX_WORKERS$/,
+];
 
 let warnedInherit = false;
 

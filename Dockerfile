@@ -59,6 +59,7 @@ COPY mcp/ ./mcp/
 COPY runtime/ ./runtime/
 COPY scripts/ ./scripts/
 ARG MAISTER_BUILD_MAX_WORKERS
+ARG MAISTER_BUILD_PROFILE=default
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter maister-web build
 
 # ---------- development: hot reload via pnpm dev / supervisor dev ----------

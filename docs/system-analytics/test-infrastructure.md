@@ -133,8 +133,9 @@ qualification remains separate.
 
 ## Validation on a shared host
 
-For a 4-vCPU host with approximately 8 GiB available to validation, run stages
-sequentially and allow only one validation invocation at a time. Start with two
+For a 4-vCPU host with approximately 8 GiB available to validation, set
+[`MAISTER_MAX_CONCURRENT_HEAVY_CHECKS=1`](../configuration.md#concurrent-heavy-checks)
+in the task environment to serialize marked commands across worktrees. Start with two
 unit workers and one database/browser/process worker. Configure the optional
 [worker limit](../configuration.md#test-worker-limit) on commands executed by
 the MAIster task; ordinary local invocations retain their defaults.

@@ -1162,6 +1162,44 @@ unset preserves Next's default. It does not cap Turbopack's native compilation
 threads or total build memory. `NODE_OPTIONS=--max-old-space-size=4096` separately
 limits each Node process's old-space heap.
 
+### Concurrent heavy checks
+
+For disposable worktrees, set `MAISTER_BUILD_PROFILE=cold` to skip writing
+Turbopack's production filesystem cache and run the required production
+TypeScript check after Next exits. Use `pnpm --filter maister-web build` to
+run both phases under one slot. The cold profile keeps source maps for
+diagnosing server errors during E2E tests. Use `cold-no-maps` to trade this
+diagnostic information for a lower peak. Unset or `default` uses Next's
+built-in type check and default caching. These settings leave dev mode intact.
+
+`MAISTER_MAX_CONCURRENT_HEAVY_CHECKS` sets the number of simultaneous marked
+validation commands across worktrees on an execution host. Use a positive
+integer, for example `1` on a 7 GiB stand. Leaving it unset preserves existing
+parallelism. A slot covers the command's lifetime, including normal E2E server
+shutdown. Each invocation's worker limits still apply.
+
+Project maintainers classify commands in their package scripts by prefixing
+the owning command with `sh ../scripts/heavy-check.sh`. Mark a command when
+its measured peak would leave insufficient headroom for another such check,
+or when it owns an expensive build, browser or database suite. In this repo
+the marked entries are web build, typecheck, unit, integration, qualification
+and E2E scripts (including their variants), and supervisor/MCP integration
+scripts. A file filter passed to a marked command keeps its classification.
+Internal fixture builds run under the enclosing test command's slot. Mark
+the outer owner once; acquiring another slot inside it can deadlock at limit
+one. Direct `pnpm exec` and custom shell commands participate only if wrapped.
+
+Set the same limit in the environment of all participating commands. For ACP
+sessions this is the supervisor/runner environment; for Flow CLI/check nodes
+it is the web service environment. An adapter with a filtered shell
+environment must pass the setting to the project command. Enabled mode uses
+Python 3 and POSIX file locks. Commands use a private directory owned by the
+execution user, by default `/tmp/maister-heavy-checks-<uid>`. For sandboxes
+with private temp directories, mount a common writable directory and set
+`MAISTER_HEAVY_CHECK_DIR` to its absolute path. All participants must see the
+same underlying lock files. Drain active checks before changing the limit or
+directory.
+
 ## Test-only isolation selector
 
 `MAISTER_TEST_ISOLATION` is read only by

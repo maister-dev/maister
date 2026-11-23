@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit && pnpm test:integration",
     "test:unit": "vitest run --project unit",
-    "test:integration": "pnpm build && vitest run --project integration",
+    "test:integration": "sh ../scripts/heavy-check.sh sh ../scripts/test-integration-with-mcp.sh",
     "test:watch": "vitest --project unit"
   },
   "dependencies": {

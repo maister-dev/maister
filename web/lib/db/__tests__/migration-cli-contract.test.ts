@@ -22,7 +22,9 @@ describe("database migration CLI contract", () => {
     expect(preflight).toContain("lib/db/migrate.ts");
     expect(preflight).toContain("lib/db/migrate-brain.ts");
     expect(wrapper).toContain("prepareE2eDatabase");
-    expect(packageJson.scripts["test:e2e"]).toBe("tsx e2e/run.ts");
+    expect(packageJson.scripts["test:e2e"]).toBe(
+      "sh ../scripts/heavy-check.sh node --import tsx e2e/run.ts",
+    );
     expect(packageJson.scripts["e2e:preflight"]).toBeUndefined();
   });
 

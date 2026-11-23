@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants.js";
 import createNextIntlPlugin from "next-intl/plugin";
 
 import { buildMaxWorkers } from "../scripts/validation-resources.mjs";
@@ -27,10 +28,12 @@ const nextConfig = {
     turbopackLazyDynamicImportsSSR: true,
     ...(buildWorkers === undefined ? {} : { cpus: buildWorkers }),
   },
-  // Test fixture builds run type checking in a separate validation lane.
+  // The production wrapper owns the separate tsc pass for cold builds.
   typescript: {
     tsconfigPath: "tsconfig.build.json",
-    ignoreBuildErrors: process.env.MAISTER_TEST_WEB_BUILD === "1",
+    ignoreBuildErrors:
+      process.env.MAISTER_TEST_WEB_BUILD === "1" ||
+      process.env.MAISTER_SEPARATE_BUILD_TYPECHECK === "1",
   },
   // These server dependencies already run in Node. Bundling their module graphs
   // again for instrumentation and every route inflates dev compilation memory.
@@ -50,4 +53,25 @@ const nextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+export default function configForPhase(phase) {
+  const profile = process.env.MAISTER_BUILD_PROFILE ?? "default";
+  if (phase !== PHASE_PRODUCTION_BUILD || profile === "default") {
+    return withNextIntl(nextConfig);
+  }
+  if (profile !== "cold" && profile !== "cold-no-maps") {
+    throw new RangeError(
+      "MAISTER_BUILD_PROFILE must be default, cold, or cold-no-maps",
+    );
+  }
+  return withNextIntl({
+    ...nextConfig,
+    experimental: {
+      ...nextConfig.experimental,
+      turbopackFileSystemCacheForBuild: false,
+      ...(profile === "cold-no-maps" && {
+        turbopackSourceMaps: false,
+        turbopackInputSourceMaps: false,
+      }),
+    },
+  });
+}
