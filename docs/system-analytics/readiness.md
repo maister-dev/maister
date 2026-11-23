@@ -270,8 +270,10 @@ owns this link when it already displays the rollup. Missing evidence retains
 its explanation and next action even when row details are unavailable.
 A question can point to its own check only when the server verifies the
 request's Run, attempt, gate and evaluation against available evidence.
-General links clear stale result selection; row links select the exact gate
-result. Permission envelopes stay server-side.
+General links clear stale result selection. A gate link identifies the exact
+evaluation in the URL. In the inspector, opening that URL directly, reloading
+it or traversing browser history expands the disclosure and focuses the
+matching authorized reason. Permission envelopes stay server-side.
 
 ## Expectations
 

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -16,28 +16,49 @@ interface FlowChecksLinkProps {
 function focusCheck(
   shell: Element,
   workbench: boolean,
-  rowId?: string,
+  checkId?: string,
 ): boolean {
   const selector =
-    rowId && workbench
+    checkId && workbench
       ? '[data-testid="selected-result"]'
       : '[data-testid="flow-verification"]';
   const entry = shell.querySelector<HTMLElement>(selector);
 
   if (!entry || !entry.getClientRects().length) return false;
-  if (rowId && workbench && entry.dataset.resultId !== `gate:${rowId}`)
-    return false;
-  if (entry instanceof HTMLDetailsElement) entry.open = true;
+  if (checkId && workbench && entry.dataset.resultId !== checkId) return false;
   const reason =
-    rowId && !workbench
+    checkId && !workbench
       ? entry.querySelector<HTMLElement>(
-          `[data-check-row="${CSS.escape(`gate:${rowId}`)}"]`,
+          `[data-check-row="${CSS.escape(checkId)}"]`,
         )
       : null;
 
+  if (checkId && !workbench && !reason) return false;
+  if (entry instanceof HTMLDetailsElement) entry.open = true;
   (reason ?? entry.querySelector<HTMLElement>("summary") ?? entry).focus();
 
   return true;
+}
+
+export function InspectorFlowChecks({
+  children,
+}: {
+  children: ReactNode;
+}): ReactElement {
+  const panel = useRef<HTMLDivElement>(null);
+  const target = useSearchParams().get("inspectorCheck");
+
+  useEffect(() => {
+    if (panel.current && target) {
+      focusCheck(
+        panel.current,
+        false,
+        target === "summary" ? undefined : target,
+      );
+    }
+  }, [target]);
+
+  return <div ref={panel}>{children}</div>;
 }
 
 export function FlowChecksLink({
@@ -49,6 +70,8 @@ export function FlowChecksLink({
   const search = useSearchParams();
   const pending = useRef<Element | null>(null);
   const destination = new URLSearchParams(search.toString());
+  const checkId = rowId ? `gate:${rowId}` : undefined;
+
   if (workbench) {
     destination.delete("kind");
     destination.delete("state");
@@ -59,16 +82,20 @@ export function FlowChecksLink({
     workbench
       ? {
           wb: "evidence",
-          evidenceItem: rowId ? `gate:${rowId}` : null,
+          evidenceItem: checkId ?? null,
           evidenceView: null,
         }
-      : { inspector: "open" },
+      : {
+          inspector: "open",
+          inspectorCheck: checkId ?? "summary",
+          evidenceItem: null,
+        },
   );
 
   useEffect(() => {
-    if (pending.current && focusCheck(pending.current, workbench, rowId))
+    if (pending.current && focusCheck(pending.current, workbench, checkId))
       pending.current = null;
-  }, [search, workbench, rowId]);
+  }, [search, workbench, checkId]);
 
   return (
     <a
@@ -86,9 +113,15 @@ export function FlowChecksLink({
         event.preventDefault();
         const shell = event.currentTarget.closest('[data-testid="run-shell"]');
 
-        if (window.location.pathname + window.location.search !== href)
-          window.history.pushState(null, "", href);
-        if (shell && !focusCheck(shell, workbench, rowId))
+        const changing =
+          window.location.pathname + window.location.search !== href;
+
+        if (changing) window.history.pushState(null, "", href);
+        if (
+          shell &&
+          (workbench || !changing) &&
+          !focusCheck(shell, workbench, checkId)
+        )
           pending.current = shell;
       }}
     >

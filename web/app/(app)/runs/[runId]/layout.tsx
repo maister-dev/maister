@@ -87,7 +87,10 @@ import {
   type RunInspectorFlowSummary,
   type RunInspectorLabels,
 } from "@/components/runs/run-inspector";
-import { FlowChecksLink } from "@/components/runs/flow-checks-link";
+import {
+  FlowChecksLink,
+  InspectorFlowChecks,
+} from "@/components/runs/flow-checks-link";
 import { ReadinessSummary } from "@/components/run/readiness-summary";
 import {
   ResolvedCapabilitySetPanel,
@@ -1850,7 +1853,9 @@ export default async function RunDetailLayout({
         hideChangeSummary={isOperational}
         inspector={
           <>
-            {hasWorkbench ? null : checksSummary}
+            {!hasWorkbench && checksSummary ? (
+              <InspectorFlowChecks>{checksSummary}</InspectorFlowChecks>
+            ) : null}
             {waitId ? (
               <RunWaitCard key={waitId} runId={detail.runId} waitId={waitId} />
             ) : null}

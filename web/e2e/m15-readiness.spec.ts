@@ -415,7 +415,8 @@ test("legacy Flow without a graph keeps its step control and verified request ch
   const { failedRunId } = loadM15Fixture();
   const runId = randomUUID(),
     attempt = randomUUID(),
-    evaluation = randomUUID();
+    evaluation = randomUUID(),
+    secondEvaluation = randomUUID();
   const envelope = {
     requestId: "request",
     supervisorSessionId: "session",
@@ -442,8 +443,8 @@ test("legacy Flow without a graph keeps its step control and verified request ch
       [attempt, runId],
     );
     await pool.query(
-      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES ($1,$2,$3,'approval','ai_judgment','blocking','failed')",
-      [evaluation, runId, attempt],
+      "INSERT INTO gate_results(id,run_id,node_attempt_id,gate_id,kind,mode,status) VALUES ($1,$2,$3,'approval','ai_judgment','blocking','failed'), ($4,$2,$3,'handover','ai_judgment','blocking','failed')",
+      [evaluation, runId, attempt, secondEvaluation],
     );
   });
   try {
@@ -464,8 +465,22 @@ test("legacy Flow without a graph keeps its step control and verified request ch
         runId,
       ]);
       await pool.query(
-        "INSERT INTO hitl_requests(id,run_id,step_id,kind,schema,prompt) VALUES ($1,$3,'approval','permission',$4,'Linked permission'), ($2,$3,'approval','permission','{}','Generic permission')",
-        [randomUUID(), randomUUID(), runId, envelope],
+        "INSERT INTO hitl_requests(id,run_id,step_id,kind,schema,prompt) VALUES ($1,$3,'approval','permission',$4,'Approval permission'), ($2,$3,'approval','permission','{}','Generic permission'), ($5,$3,'handover','permission',$6,'Handover permission')",
+        [
+          randomUUID(),
+          randomUUID(),
+          runId,
+          envelope,
+          randomUUID(),
+          {
+            ...envelope,
+            flowPrompt: {
+              ...envelope.flowPrompt,
+              gateId: "handover",
+              evaluationId: secondEvaluation,
+            },
+          },
+        ],
       );
     });
     await page.goto(`/runs/${runId}?inspector=closed`);
@@ -475,13 +490,32 @@ test("legacy Flow without a graph keeps its step control and verified request ch
         .filter({ hasText: "Generic permission" })
         .getByRole("link", { name: "View related Flow check" }),
     ).toHaveCount(0);
-    await cards
-      .filter({ hasText: "Linked permission" })
-      .getByRole("link", { name: "View related Flow check" })
-      .click();
-    await expect(
-      shell.locator(`[data-check-row="gate:${evaluation}"]`),
-    ).toBeFocused();
+    const checkLink = (prompt: string) =>
+      cards
+        .filter({ hasText: prompt })
+        .getByRole("link", { name: "View related Flow check" });
+    const approval = shell.locator(`[data-check-row="gate:${evaluation}"]`);
+    const handover = shell.locator(
+      `[data-check-row="gate:${secondEvaluation}"]`,
+    );
+    const handoverHref = await checkLink("Handover permission").getAttribute(
+      "href",
+    );
+
+    expect(handoverHref).toBeTruthy();
+    await checkLink("Approval permission").click();
+    await expect(approval).toBeFocused();
+    await checkLink("Handover permission").click();
+    await expect(handover).toBeFocused();
+    await page.goBack();
+    await expect(approval).toBeFocused();
+    await page.goForward();
+    await expect(handover).toBeFocused();
+    await page.goto("about:blank");
+    await page.goto(handoverHref!);
+    await expect(handover).toBeFocused();
+    await page.reload();
+    await expect(handover).toBeFocused();
     await expect(
       shell.getByRole("button", { name: "Stop current step" }),
     ).toHaveCount(0);
