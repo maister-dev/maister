@@ -8,7 +8,7 @@ import type {
 import type { PlatformMcpCapability } from "@/lib/capabilities/types";
 
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
   mkdir,
@@ -81,9 +81,7 @@ function parseCapabilityRevisionOverride(
 
 // First 40 hex chars of a simple sha256 of the source string — used as the
 // content-addressed identity for local sources that have no git history.
-async function localSourceRevision(source: string): Promise<string> {
-  const { createHash } = await import("node:crypto");
-
+function localSourceRevision(source: string): string {
   return createHash("sha256")
     .update(source, "utf8")
     .digest("hex")
@@ -455,7 +453,7 @@ export async function installCapabilityRevision(opts: {
       : source;
 
     resolvedRevision =
-      revisionOverride ?? (await localSourceRevision(absSource));
+      revisionOverride ?? localSourceRevision(absSource);
     target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
   } else {
     tmpDir = await mkdtemp(
@@ -555,7 +553,6 @@ export async function installCapabilityRevision(opts: {
     // Attempt to read a manifest file if present; store {} otherwise.
     // Capability bundles may not have a canonical manifest format yet —
     // the digest is over the resolved revision string for now.
-    const { createHash } = await import("node:crypto");
     const manifestDigest = createHash("sha256")
       .update(resolvedRevision, "utf8")
       .digest("hex");

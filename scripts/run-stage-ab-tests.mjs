@@ -74,6 +74,7 @@ export const laneSuites = {
     "test-support/__tests__/durable-workers-concurrency.integration.test.ts",
     // R9 S1 owns production restarts and therefore runs in the serial slice.
     "lib/scratch-runs/__tests__/dispatch-window.integration.test.ts",
+    "test-support/__tests__/capability-finalize.integration.test.ts",
   ],
 };
 // The package directory each slice runs in.
@@ -206,6 +207,9 @@ export const requiredIsolationCases = {
     "R4: stopping with nothing started resolves",
     "R5: a double start returns the same four handles",
     "R3: start refuses while the application is stopping"
+  ],
+  "test-support/__tests__/capability-finalize.integration.test.ts": [
+    "persists both capability digests through production registration"
   ],
   "test-support/__tests__/durable-workers-concurrency.integration.test.ts": [
     "D1: a live waiter and the durable worker on one command apply it exactly once",

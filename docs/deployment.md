@@ -58,6 +58,8 @@ pnpm install --frozen-lockfile
 pnpm --filter maister-web build          # builds the internal MCP facade, then the web app
 ```
 
+Build each web release in its own directory. Start the new process from the completed build and keep the previous release directory, including its entire `web/.next` tree, until the old process has drained. A running server can still load a server chunk on its first request for a feature.
+
 ## 3. Postgres (Docker)
 
 `compose.yml` defines only Postgres, published on `127.0.0.1:5432`:
