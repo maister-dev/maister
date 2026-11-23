@@ -93,3 +93,10 @@ Phase 1 GREEN: 16/16 focused assertions, one additional busy/refresh DOM scenari
 Phase 1 browser verification passed for step selection, keyboard help, refusal feedback, viewer permissions and parked restart. The full integration run is in progress.
 
 Phase 2 RED reproduced missing header slots (1 of 18), missing validated permission projection (1 of 4 PostgreSQL cases) and incorrect default summary placement (M15 browser). GREEN PostgreSQL passed 4/4, and both M15 browser journeys passed for the exact evidence row, graph navigation, quiet states and next actions.
+
+
+Phase 2 qualification:
+
+- META-1/2 — authenticated EN/RU runs at 1280 and 320 CSS px. Policy and Run stop share the desktop row. A long branch opens with the keyboard. Both stop controls remain readable at 320 px. Cancel restores focus with zero requests. Confirmation sends the empty Run-stop POST and a refusal is announced in the dialog. Viewer permissions and the separate parked HITL decision passed.
+- CHECK-1/2 — M15 follows the failed check through its exact row and provenance graph with an unrelated inspector setting and initially conflicting filters. The quiet states, independent summary after the optional evidence read fails, and a legacy inspector-only path passed.
+- CHECK-3 — real PostgreSQL rows prove the current evaluation, stale attempt, mismatched attempt, missing witness and ambiguity. The duplicate-valid-request case failed before ambiguity handling and passed afterwards. Both request cards remained usable and permission schemas stayed redacted. The five operation/read-model regression suites passed 68 tests.

@@ -316,7 +316,9 @@ export function RunHeader({
             />
           ) : null}
           {stopControl ? (
-            <div className="ml-auto shrink-0">{stopControl}</div>
+            <div className="ml-auto min-w-0 max-w-full shrink-0">
+              {stopControl}
+            </div>
           ) : null}
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">

@@ -126,6 +126,7 @@ describe("RunHeader — task-first header", () => {
       stopControl: "Stop run",
       branch: "feature/example",
     });
+
     expect(html).toContain("Unattended");
     expect(html).toContain("Stop run");
     expect(html).toMatch(/<summary[^>]*data-testid="run-header-branch"/);

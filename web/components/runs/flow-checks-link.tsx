@@ -23,6 +23,7 @@ function focusCheck(
       ? '[data-testid="selected-result"]'
       : '[data-testid="flow-verification"]';
   const entry = shell.querySelector<HTMLElement>(selector);
+
   if (!entry || !entry.getClientRects().length) return false;
   if (rowId && workbench && entry.dataset.resultId !== `gate:${rowId}`)
     return false;
@@ -33,7 +34,9 @@ function focusCheck(
           `[data-check-row="${CSS.escape(`gate:${rowId}`)}"]`,
         )
       : null;
+
   (reason ?? entry.querySelector<HTMLElement>("summary") ?? entry).focus();
+
   return true;
 }
 
@@ -45,9 +48,14 @@ export function FlowChecksLink({
   const pathname = usePathname();
   const search = useSearchParams();
   const pending = useRef<Element | null>(null);
+  const destination = new URLSearchParams(search.toString());
+  if (workbench) {
+    destination.delete("kind");
+    destination.delete("state");
+  }
   const href = buildRunHref(
     pathname,
-    search,
+    destination,
     workbench
       ? {
           wb: "evidence",
@@ -56,10 +64,12 @@ export function FlowChecksLink({
         }
       : { inspector: "open" },
   );
+
   useEffect(() => {
     if (pending.current && focusCheck(pending.current, workbench, rowId))
       pending.current = null;
   }, [search, workbench, rowId]);
+
   return (
     <a
       className="text-sm underline"
@@ -75,6 +85,7 @@ export function FlowChecksLink({
           return;
         event.preventDefault();
         const shell = event.currentTarget.closest('[data-testid="run-shell"]');
+
         if (window.location.pathname + window.location.search !== href)
           window.history.pushState(null, "", href);
         if (shell && !focusCheck(shell, workbench, rowId))

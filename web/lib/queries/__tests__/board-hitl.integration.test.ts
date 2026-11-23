@@ -354,6 +354,7 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
       ]);
     }
     const projected = (await getRunDetail("run-rd"))!.pendingHitls;
+
     expect(
       projected
         .filter((row) => row.verificationGateRowId)
@@ -361,6 +362,14 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     ).toEqual([["linked", "v2"]]);
     expect(projected.every((row) => row.schema === null)).toBe(true);
     expect(JSON.stringify(projected)).not.toContain("private-command");
+
+    await pool.query(
+      "INSERT INTO hitl_requests(id,run_id,step_id,kind,schema,prompt) SELECT 'ambiguous',run_id,step_id,kind,schema,prompt FROM hitl_requests WHERE id='linked'",
+    );
+    const duplicated = await getRunDetail("run-rd");
+    expect(
+      duplicated?.pendingHitls.some((row) => row.verificationGateRowId),
+    ).toBe(false);
 
     // T3.1: the run-detail header data carries task identity + flow ref.
     expect(detail?.taskTitle).toBe("Task task-rd");

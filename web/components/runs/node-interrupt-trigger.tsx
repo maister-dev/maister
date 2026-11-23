@@ -100,8 +100,8 @@ export function NodeInterruptTrigger({
       </Popover>
       {error ? (
         <p
-          role="alert"
           className="basis-full font-mono text-[12px] text-[#d9534f]"
+          role="alert"
         >
           {error}
         </p>

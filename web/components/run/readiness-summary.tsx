@@ -56,9 +56,9 @@ export function ReadinessSummary({
   if (reasons.length === 0)
     return (
       <div
-        tabIndex={-1}
         className={containerClass}
         data-testid="flow-verification"
+        tabIndex={-1}
       >
         {label}
       </div>
@@ -66,9 +66,9 @@ export function ReadinessSummary({
 
   return (
     <details
-      tabIndex={-1}
       className={containerClass}
       data-testid="flow-verification"
+      tabIndex={-1}
     >
       <summary className="cursor-pointer">{label}</summary>
       <div className="mt-4">
@@ -79,9 +79,9 @@ export function ReadinessSummary({
           {reasons.map((reason) => (
             <li
               key={reason.id}
-              tabIndex={-1}
-              data-check-row={reason.id}
               className="flex gap-2 text-[13px] leading-[1.4] text-body before:flex-none before:text-mute before:content-['•']"
+              data-check-row={reason.id}
+              tabIndex={-1}
             >
               <div className="min-w-0">
                 <p className="break-words">{reason.explanation}</p>

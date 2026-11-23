@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { NodeInterruptTrigger } from "@/components/runs/node-interrupt-trigger";
 
 const refresh = vi.hoisted(() => vi.fn());
+
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
@@ -15,8 +16,10 @@ it("disables the active request and refreshes only after the server accepts it",
   const response = Promise.withResolvers<Response>();
   const request = vi.fn(() => response.promise);
   const host = document.createElement("div");
+
   document.body.append(host);
   const root = createRoot(host);
+
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", request);
   try {
@@ -28,6 +31,7 @@ it("disables the active request and refreshes only after the server accepts it",
     const stop = host.querySelector<HTMLButtonElement>(
       'button[aria-label="interruptNode"]',
     )!;
+
     await act(() => stop.click());
     expect(stop.disabled).toBe(true);
     await act(() => stop.click());

@@ -1525,6 +1525,7 @@ export default async function RunDetailLayout({
     <NodeInterruptTrigger canAct={canAct} runId={runId} />
   ) : null;
   const currentStepHasHeader =
+    !!flowGraphData &&
     !isOperational &&
     flowResultDto.graph.kind === "ready" &&
     flowResultDto.graph.nodes.some((node) => node.id === detail.currentStepId);
@@ -1549,10 +1550,10 @@ export default async function RunDetailLayout({
     projectRolesForActions(["recoverRun"]).includes(role) ? (
       <WorkbenchLifecycleActions
         actions={["stop"]}
-        variant="detail"
-        stopLabel={t("headerStopRun")}
         runId={runId}
         runKind="flow"
+        stopLabel={t("headerStopRun")}
+        variant="detail"
       />
     ) : null;
   const gateRows = new Set(
@@ -1590,6 +1591,7 @@ export default async function RunDetailLayout({
           };
 
         const { status } = reason;
+
         return {
           id: `gate:${reason.rowId}`,
           explanation: tReadiness(`gateDetails.${status}.reason`, {
@@ -1603,8 +1605,8 @@ export default async function RunDetailLayout({
             gateRows.has(`gate:${reason.rowId}`) ? (
               <FlowChecksLink
                 workbench
-                rowId={reason.rowId}
                 label={tReadiness("viewGateEvidence", { id: reason.id })}
+                rowId={reason.rowId}
               />
             ) : null,
         };
@@ -1617,12 +1619,15 @@ export default async function RunDetailLayout({
     !!flowGraphData && !isOperational && flowResultDto.graph.kind === "ready";
   const attention =
     verification &&
-    ["failed", "stale", "blocked"].includes(verification.state) ? (
+    (verification.state === "failed" ||
+      verification.state === "stale" ||
+      verification.state === "blocked") ? (
       <FlowChecksLink
+        label={`${tReadiness("flowVerification")} · ${tReadiness(verification.state)}`}
         workbench={hasWorkbench}
-        label={`${tReadiness("flowVerification")} · ${tReadiness(verification.state as "failed" | "stale" | "blocked")}`}
       />
     ) : null;
+
   function requestCheck(rowId?: string): ReactNode {
     if (!rowId) return null;
     const reachable = hasWorkbench
@@ -1630,11 +1635,12 @@ export default async function RunDetailLayout({
       : verification?.reasons.some(
           (r) => r.kind === "gate" && r.rowId === rowId,
         );
+
     return reachable ? (
       <FlowChecksLink
-        workbench={hasWorkbench}
-        rowId={rowId}
         label={tReadiness("requestCheck")}
+        rowId={rowId}
+        workbench={hasWorkbench}
       />
     ) : null;
   }
@@ -1643,6 +1649,7 @@ export default async function RunDetailLayout({
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
         {flowGraphData && !isOperational ? (
           <FlowRunCenter
+            checksLink={reviewOwnsChecks ? null : attention}
             graphView={
               <FlowGraphViewSection
                 labels={flowGraphData.labels}
@@ -1662,7 +1669,6 @@ export default async function RunDetailLayout({
                 topology={flowGraphData.topology}
               />
             }
-            checksLink={reviewOwnsChecks ? null : attention}
             interruptControl={interruptControl}
             labels={flowRunCenterLabels}
             locale={locale}
@@ -1705,8 +1711,8 @@ export default async function RunDetailLayout({
               <section id="operation-result" tabIndex={-1}>
                 {operational && hasOperationalResult ? (
                   <OperationalRunResult
-                    isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
                     canAct={canAct}
+                    isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
                     outcome={operational}
                     runId={detail.runId}
                   />
@@ -1831,8 +1837,6 @@ export default async function RunDetailLayout({
               }
             : undefined
         }
-        policyBadge={projectFlow ? policyBadge : null}
-        stopControl={headerStop}
         branch={isOperational ? null : detail.branch}
         budgetStatus={detail.budgetStatus}
         canReopen={canAct}
@@ -1918,17 +1922,17 @@ export default async function RunDetailLayout({
           />
         }
         outcome={
-          <>
-            <RunOutcome
-              heading={t("outcomeHeading")}
-              next={nextAction}
-              noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
-              summary={outcomeSummary}
-            />
+          <RunOutcome
+            heading={t("outcomeHeading")}
+            next={nextAction}
+            noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
+            summary={outcomeSummary}
+          >
             {!hasFlowHeading && !reviewOwnsChecks ? attention : null}
             {currentStepHasHeader ? null : interruptControl}
-          </>
+          </RunOutcome>
         }
+        policyBadge={projectFlow ? policyBadge : null}
         prHasConflicts={detail.prHasConflicts}
         projectHref={`/projects/${detail.projectSlug}`}
         projectLabel={t("backToBoard")}
@@ -1941,6 +1945,7 @@ export default async function RunDetailLayout({
         }
         runId={detail.runId}
         status={detail.status}
+        stopControl={headerStop}
         subtitle={shellSubtitle}
         targetBranch={isOperational ? null : detail.targetBranch}
         taskHref={
@@ -2052,9 +2057,9 @@ export default async function RunDetailLayout({
 
           {runIntegrityLimit ? (
             <WorkspaceIntegrityNotice
+              isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
               limit={runIntegrityLimit}
               runId={runId}
-              isGlobalAdmin={hasActiveGlobalRole(user, "admin")}
             />
           ) : null}
 
@@ -2504,6 +2509,7 @@ export default async function RunDetailLayout({
               branchDeliveryAttempted={detail.branchDelivery?.attempted}
               branchDeliveryError={detail.branchDelivery?.error}
               canPromote={canAct}
+              checksLink={reviewOwnsChecks ? attention : null}
               deliveryPolicy={reviewData.deliveryPolicy}
               diff={reviewData.diff}
               displayParentRepoPath={displayParentRepoPath}
@@ -2515,7 +2521,6 @@ export default async function RunDetailLayout({
               prNumber={detail.prNumber}
               promotionMode={reviewData.promotionMode}
               prUrl={detail.prUrl}
-              checksLink={reviewOwnsChecks ? attention : null}
               readiness={reviewReadiness}
               reviewedTargetCommit={reviewData.reviewedTargetCommit}
               runBranch={detail.branch}

@@ -242,7 +242,7 @@ function EntryCard({
             {entry.nodeType}
           </span>
         </div>
-        <div className="flex flex-none items-center gap-1.5 font-mono text-[10px]">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10px]">
           <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-semibold tracking-[0.04em] text-mute">
             {labels.duration}: {formatDuration(entry.durationMs)}
           </span>

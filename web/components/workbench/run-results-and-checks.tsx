@@ -132,6 +132,13 @@ export function RunResultsAndChecksView({
           className="text-sm underline"
           href={href({
             evidenceView: evidenceView === "graph" ? "list" : "graph",
+            ...(evidenceView === "list" &&
+            selectedGraphItem &&
+            node &&
+            selectedGraphItem.meta.nodeId !== node &&
+            selectedGraphItem.id !== node
+              ? { node: null }
+              : {}),
             ...(selectedGraphItem || !selected ? {} : { evidenceItem: null }),
           })}
           scroll={false}

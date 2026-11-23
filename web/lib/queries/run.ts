@@ -182,6 +182,78 @@ export interface RunPendingHitl {
   dirtyResolution: "commit" | "discard" | "proceed" | null;
 }
 
+async function pendingGateLinks(
+  client: NodePgDatabase<typeof schema>,
+  runId: string,
+  hitlRows: readonly {
+    id: string;
+    kind: HitlRequest["kind"];
+    stepId: string | null;
+    rawSchema: unknown;
+  }[],
+): Promise<ReadonlyMap<string, string>> {
+  const gateSources = hitlRows.flatMap((hitl) => {
+    if (hitl.kind !== "permission") return [];
+    const envelope = flowPermissionEnvelopeSchema.safeParse(hitl.rawSchema);
+
+    if (!envelope.success) return [];
+    const source = gatePermissionSourceSchema.safeParse(
+      envelope.data.flowPrompt,
+    );
+
+    return source.success && hitl.stepId === source.data.gateId
+      ? [{ hitlId: hitl.id, source: source.data }]
+      : [];
+  });
+  const verifiedGateRows = new Map<string, string>();
+
+  if (!gateSources.length) return verifiedGateRows;
+  const evaluations = await client
+    .select({
+      id: gateResults.id,
+      attemptId: nodeAttempts.id,
+      gateId: gateResults.gateId,
+      kind: gateResults.kind,
+      ordinal: gateResults.promptOrdinal,
+    })
+    .from(gateResults)
+    .innerJoin(nodeAttempts, eq(gateResults.nodeAttemptId, nodeAttempts.id))
+    .where(
+      and(
+        eq(gateResults.runId, runId),
+        eq(nodeAttempts.runId, runId),
+        inArray(
+          gateResults.id,
+          gateSources.map(({ source }) => source.evaluationId),
+        ),
+        sql`not exists (select 1 from node_attempts newer where newer.run_id = ${nodeAttempts.runId} and newer.node_id = ${nodeAttempts.nodeId} and newer.attempt > ${nodeAttempts.attempt})`,
+        sql`not exists (select 1 from gate_results newer where newer.run_id = ${gateResults.runId} and newer.node_attempt_id = ${gateResults.nodeAttemptId} and newer.gate_id = ${gateResults.gateId} and (newer.created_at, newer.id) > (${gateResults.createdAt}, ${gateResults.id}))`,
+      ),
+    );
+  const byId = new Map(evaluations.map((row) => [row.id, row]));
+
+  const matching = gateSources.filter(({ source }) => {
+    const row = byId.get(source.evaluationId);
+
+    return (
+      row &&
+      row.attemptId === source.nodeAttemptId &&
+      row.gateId === source.gateId &&
+      row.ordinal === source.promptOrdinal &&
+      row.kind ===
+        (source.variant === "gate_ai" ? "ai_judgment" : "skill_check")
+    );
+  });
+  for (const [evaluationId, requests] of Map.groupBy(
+    matching,
+    ({ source }) => source.evaluationId,
+  )) {
+    if (requests.length === 1)
+      verifiedGateRows.set(requests[0].hitlId, evaluationId);
+  }
+  return verifiedGateRows;
+}
+
 function isPlanReviewParentHitl(hitl: RunPendingHitl): boolean {
   return (
     hitl.kind === "human" &&
@@ -681,55 +753,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .from(hitlRequests)
     .where(and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)))
     .orderBy(desc(hitlRequests.createdAt));
-  const gateSources = hitlRows.flatMap((hitl) => {
-    if (hitl.kind !== "permission") return [];
-    const envelope = flowPermissionEnvelopeSchema.safeParse(hitl.rawSchema);
-    if (!envelope.success) return [];
-    const source = gatePermissionSourceSchema.safeParse(
-      envelope.data.flowPrompt,
-    );
-    return source.success && hitl.stepId === source.data.gateId
-      ? [{ hitlId: hitl.id, source: source.data }]
-      : [];
-  });
-  const verifiedGateRows = new Map<string, string>();
-  if (gateSources.length) {
-    const evaluations = await client
-      .select({
-        id: gateResults.id,
-        attemptId: nodeAttempts.id,
-        gateId: gateResults.gateId,
-        kind: gateResults.kind,
-        ordinal: gateResults.promptOrdinal,
-      })
-      .from(gateResults)
-      .innerJoin(nodeAttempts, eq(gateResults.nodeAttemptId, nodeAttempts.id))
-      .where(
-        and(
-          eq(gateResults.runId, runId),
-          eq(nodeAttempts.runId, runId),
-          inArray(
-            gateResults.id,
-            gateSources.map(({ source }) => source.evaluationId),
-          ),
-          sql`not exists (select 1 from node_attempts newer where newer.run_id = ${nodeAttempts.runId} and newer.node_id = ${nodeAttempts.nodeId} and newer.attempt > ${nodeAttempts.attempt})`,
-          sql`not exists (select 1 from gate_results newer where newer.run_id = ${gateResults.runId} and newer.node_attempt_id = ${gateResults.nodeAttemptId} and newer.gate_id = ${gateResults.gateId} and (newer.created_at, newer.id) > (${gateResults.createdAt}, ${gateResults.id}))`,
-        ),
-      );
-    const byId = new Map(evaluations.map((row) => [row.id, row]));
-    for (const { hitlId, source } of gateSources) {
-      const row = byId.get(source.evaluationId);
-      if (
-        row &&
-        row.attemptId === source.nodeAttemptId &&
-        row.gateId === source.gateId &&
-        row.ordinal === source.promptOrdinal &&
-        row.kind ===
-          (source.variant === "gate_ai" ? "ai_judgment" : "skill_check")
-      )
-        verifiedGateRows.set(hitlId, row.id);
-    }
-  }
+  const verifiedGateRows = await pendingGateLinks(client, runId, hitlRows);
   const pendingHitlIds = hitlRows.map((hitl) => hitl.id);
   const pendingAssignmentRows =
     pendingHitlIds.length > 0

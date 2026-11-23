@@ -38,10 +38,13 @@
 //      data-theme recolor on theme toggle (NOT a raw <pre>).
 //   6. repo tab — /projects/<slug>?tab=repo renders the file-tree for an admin
 //      (member+) listing tracked repo files.
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { test, expect, type Page } from "@playwright/test";
+
+import { withE2EDb } from "./_seed/db";
 
 type M22Fixture = {
   projectSlug: string;
@@ -145,10 +148,12 @@ test("current-step help and interrupt belong to the selected step", async ({
   page,
 }) => {
   const fx = loadM22Fixture();
+
   await page.goto(`/runs/${fx.runId}?node=${fx.succeededNode}`);
   const shell = page.locator('[data-testid="run-shell"]:visible');
   const selected = shell.getByTestId("flow-run-selected-node");
   const action = selected.getByRole("button", { name: "Stop current step" });
+
   await expect(action).toHaveCount(0);
   await shell
     .getByTestId("flow-run-node-link")
@@ -159,6 +164,7 @@ test("current-step help and interrupt belong to the selected step", async ({
     name: "About stopping the current step",
   });
   let posts = 0;
+
   await page.route(`**/api/runs/${fx.runId}/node-interrupt`, async (route) => {
     posts++;
     expect(route.request().postDataJSON()).toEqual({});
@@ -511,6 +517,7 @@ test("a viewer project-member is denied the repo file route (member-gate)", asyn
     await page.goto(`/runs/${fx.runId}`);
     const shell = page.locator('[data-testid="run-shell"]:visible');
     const selected = shell.getByTestId("flow-run-selected-node");
+
     await expect(
       selected.getByRole("button", { name: "Stop current step" }),
     ).toBeDisabled();
@@ -668,70 +675,135 @@ test("project repo tab renders the file-tree of tracked repo files", async ({
   ).toBeVisible();
 });
 
-for (const [locale, policy, stop, step] of [
-  ["en", "Unattended", "Stop run", "Stop current step"],
-  ["ru", "Без контроля", "Остановить запуск", "Остановить текущий шаг"],
-] as const) {
-  test(`Flow run metadata and controls in ${locale}`, async ({
-    page,
-    baseURL,
-  }) => {
-    const fx = loadM22Fixture();
-    await page
-      .context()
-      .addCookies([{ name: "NEXT_LOCALE", value: locale, url: baseURL! }]);
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto(`/runs/${fx.runId}?inspector=closed`);
+test("a live cursor change moves interrupt eligibility while the selected node stays open", async ({
+  page,
+}) => {
+  const fx = loadM22Fixture();
+  const runId = randomUUID();
+  await withE2EDb((pool) =>
+    pool.query(
+      "INSERT INTO runs(id,project_id,flow_id,run_kind,status,flow_version,current_step_id) SELECT $1,project_id,flow_id,'flow','Running',flow_version,$3 FROM runs WHERE id=$2",
+      [runId, fx.runId, fx.currentNode],
+    ),
+  );
+  try {
+    await page.goto(`/runs/${runId}?node=${fx.currentNode}`);
     const shell = page.getByTestId("run-shell").filter({ visible: true });
-    const header = shell.locator("header").first();
-    const action = header.getByRole("button", { name: stop, exact: true });
-    const branch = header.getByTestId("run-header-branch");
-    await expect(header.getByTestId("execution-policy-badge")).toHaveText(
-      policy,
-    );
+    const action = shell
+      .getByTestId("flow-run-selected-node")
+      .getByRole("button", { name: "Stop current step" });
     await expect(action).toBeVisible();
-    const badge = await header
-      .getByTestId("execution-policy-badge")
-      .boundingBox();
-    const button = await action.boundingBox();
-    expect(
-      Math.abs(badge!.y + badge!.height / 2 - button!.y - button!.height / 2),
-    ).toBeLessThan(3);
-    expect(await branch.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
-      true,
+    await withE2EDb((pool) =>
+      pool.query("UPDATE runs SET current_step_id=$2 WHERE id=$1", [
+        runId,
+        fx.succeededNode,
+      ]),
     );
-    await branch.press("Enter");
-    await expect(branch.locator("..").locator("div")).toHaveText(
-      new RegExp(fx.branch),
-    );
-    await branch.press("Enter");
-    let posts = 0;
-    await page.route(`**/api/runs/${fx.runId}/stop`, async (route) => {
-      posts++;
-      expect(route.request().postDataJSON()).toEqual({});
-      await route.fulfill({ status: 409, json: { code: "CONFLICT" } });
-    });
-    await action.click();
-    await page.keyboard.press("Escape");
-    await expect(action).toBeFocused();
-    expect(posts).toBe(0);
-    await action.click();
-    await page
-      .getByRole("dialog")
-      .getByRole("button", {
-        name: locale === "en" ? "Confirm" : "Подтвердить",
-        exact: true,
-      })
+    await expect(action).toHaveCount(0);
+    await shell
+      .getByTestId("flow-run-node-link")
+      .filter({ hasText: "Plan" })
       .click();
-    await expect.poll(() => posts).toBe(1);
-    await page.keyboard.press("Escape");
-    await page.setViewportSize({ width: 320, height: 768 });
     await expect(action).toBeVisible();
-    await expect(
-      shell.getByRole("button", { name: step, exact: true }),
-    ).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(320);
-  });
-}
+  } finally {
+    await withE2EDb((pool) =>
+      pool.query("DELETE FROM runs WHERE id=$1", [runId]),
+    );
+  }
+});
+
+test.describe("touch and compact layout", () => {
+  test.use({ hasTouch: true });
+  for (const [locale, policy, stop, step] of [
+    ["en", "Unattended", "Stop run", "Stop current step"],
+    ["ru", "Без контроля", "Остановить запуск", "Остановить текущий шаг"],
+  ] as const) {
+    test(`Flow run metadata and controls in ${locale}`, async ({
+      page,
+      baseURL,
+    }) => {
+      const fx = loadM22Fixture();
+
+      await page
+        .context()
+        .addCookies([{ name: "NEXT_LOCALE", value: locale, url: baseURL! }]);
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.goto(`/runs/${fx.runId}?inspector=closed`);
+      const shell = page.getByTestId("run-shell").filter({ visible: true });
+      const header = shell.locator("header").first();
+      const action = header.getByRole("button", { name: stop, exact: true });
+      const branch = header.getByTestId("run-header-branch");
+
+      await expect(header.getByTestId("execution-policy-badge")).toHaveText(
+        policy,
+      );
+      await expect(action).toBeVisible();
+      await expect
+        .poll(() =>
+          header.evaluate((el) => {
+            const badge = el
+              .querySelector('[data-testid="execution-policy-badge"]')!
+              .getBoundingClientRect();
+            const button = el
+              .querySelector(
+                '[data-testid="workbench-lifecycle-actions"] button',
+              )!
+              .getBoundingClientRect();
+            return Math.abs(
+              badge.y + badge.height / 2 - button.y - button.height / 2,
+            );
+          }),
+        )
+        .toBeLessThan(3);
+      expect(
+        await branch.evaluate((el) => el.scrollWidth > el.clientWidth),
+      ).toBe(true);
+      await branch.press("Enter");
+      await expect(branch.locator("..").locator("div")).toHaveText(
+        new RegExp(fx.branch),
+      );
+      await branch.press("Enter");
+      let posts = 0;
+
+      await page.route(`**/api/runs/${fx.runId}/stop`, async (route) => {
+        posts++;
+        expect(route.request().postDataJSON()).toEqual({});
+        await route.fulfill({ status: 409, json: { code: "CONFLICT" } });
+      });
+      await action.click();
+      await page.keyboard.press("Escape");
+      await expect(action).toBeFocused();
+      expect(posts).toBe(0);
+      await action.click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", {
+          name: locale === "en" ? "Confirm" : "Подтвердить",
+          exact: true,
+        })
+        .click();
+      await expect(page.getByRole("dialog").getByRole("alert")).toBeVisible();
+      expect(posts).toBe(1);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.setViewportSize({ width: 320, height: 768 });
+      const help = shell.getByRole("button", {
+        name:
+          locale === "en"
+            ? "About stopping the current step"
+            : "Об остановке текущего шага",
+      });
+      await help.tap();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(help).toBeFocused();
+      await expect(action).toBeVisible();
+      await expect(
+        shell.getByRole("button", { name: step, exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(320);
+    });
+  }
+});
