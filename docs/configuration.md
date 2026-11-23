@@ -498,22 +498,32 @@ project file). Loader: `loadMaisterPackageManifest` (`CONFIG` on any reject).
 ```yaml
 schemaVersion: 1
 name: aif # MUST equal the packages[] consumer's expectations; capabilityRefId shape
-metadata: { title, summary, links, sources } # optional package frontmatter
+delivery: { version: 1, shareSkills: true }
+metadata: { title: AIF, summary: Development workflows }
 flows:
   - { id: aif-dev, path: flows/dev } # id MUST equal the flow.yaml `name` (CONFIG mismatch)
 capabilities:
   - { id: aif-bundle, path: capability }
 mcps:
-  [] # MCP server templates: {id, transport: stdio|http,
-  #  command?/args?/url?, env, headers?, bearerTokenEnv?, description?}
+  - id: prototype-preview
+    scope: package # package | project
+    transport: http
+    url: https://mcp.example.org/prototypes
 restrictions:
   [] # path-sets: {id, paths: [globs]} → ingested as
   #  flow-package-scoped restriction capability records on attach
 ```
 
 Rules: all `path` values are escape-guarded relative subpaths; ids unique per
-section. There is NO `version` field — the git tag is the only pin (ADR-021
-semantics).
+section. The Git revision pins the release. `delivery.version` selects the rules for
+distributing package capabilities.
+
+With `delivery.version: 1`, `shareSkills` defaults to `true`. Setting it to
+`false` limits that package’s skills to its own Flows and selected package
+agents. Set each MCP’s `scope` to `project` to offer it across project sessions.
+An omitted scope defaults to `package`. The project MCP Hub can override one
+attached server’s scope or restore the package setting. A legacy release
+without `delivery` keeps its existing defaults when attached. [Session inventory](system-analytics/capabilities.md#project-run-capability-inventory)
 
 **`mcps[]` values (Implemented — ADR-179).** `env` accepts either the legacy
 `string[]` of `env:NAME` entries — normalized at load to

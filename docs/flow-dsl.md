@@ -585,11 +585,12 @@ nodes:
   revision of the providing package behind the flow-launch enablement+trust
   gates (RD4); the effective definition's `triggers` must include `flow`,
   else `MaisterError("CONFIG")`.
-- **`mode: session` agents** — the catalog profile substitutes the inline
-  prompt: the agent's `.md` body becomes the system prompt, the node's
-  `action.prompt` is appended as the task block, and `capability_profile.mcps`
-  is combined with node `settings.mcps` where node settings remain the local
-  launch override.
+- **`mode: session` agents** use the agent persona as the system prompt and
+  the node’s `action.prompt` as the task. A saved prompt on the project agent
+  instance supplies the local persona. The node receives the agent’s selected
+  package skills and its effective MCPs, including project additions and shared
+  servers. Its `settings.mcps` can refine the local selection. Required MCPs
+  must pass preflight.
 - **`mode: subagent` agents** — the `.md` is materialized into the run
   worktree's `.claude/agents/<stem>.md` (the file STEM — a `:` in the
   filename is hostile to the convention) so the Claude session can
@@ -599,8 +600,10 @@ nodes:
 - **Runner** — flow-bound nodes keep the existing six-tier flow resolution
   chain; the agent's own `runner` binding participates only in standalone
   agent runs.
-- The binding executes inside the flow run's session — no separate agent-run
-  row is created in this stage.
+- The parent Flow Run owns each bound node’s logical ACP session. Sibling nodes
+  have separate conversation handles and capability homes. A checkpointed
+  question resumes the answering node’s own session; the Inbox and Run view
+  refer to the same human assignment. [Ordinary Flow questions](system-analytics/hitl.md)
 
 **Engine floor.** Declaring `settings.agent` requires
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
@@ -625,8 +628,9 @@ mode: session # required — session | subagent
 triggers: [manual, cron] # required, ≥1 — manual | cron | domain_event | webhook | flow
 risk_tier: read_only # required — read_only | standard | destructive
 flow: bugfix # (ADR-106) optional — a same-package flow id the agent drives
-capability_profile: # optional — strict standalone profile
-  mcps: [github, postgres] # only MCP refs; no skills/restrictions keys
+capability_profile:
+  skills: [code-review] # slugs in the agent's providing package
+  mcps: [github, postgres] # logical server references
 recommended: # optional — SEEDS the attach panel + per-project instance defaults
   runner: claude-code
   branch_base: develop # (ADR-106) seeds agents.branch_base (default: project main)
@@ -663,14 +667,13 @@ The agent persona / system prompt (the body; MUST be non-empty).
   pause) | `full` (also auto-pass `human` review). `onBudgetBreach`: `escalate` |
   `terminate` | `terminate_restorable`. Each is a closed enum — an out-of-enum
   value is refused `CONFIG`.
-- **`capability_profile`** (optional) — strict `{ mcps?: string[] }`. The `mcps`
-  list is id-shaped, bounded, deduplicated in first-seen order, resolved through
-  the platform/project MCP catalog, and exec-trust gated at launch. Unknown keys
-  such as `skills`, `mcp_servers`, or `restrictions` are refused with
-  `MaisterError("CONFIG")` during registration/resync; invalid definitions are
-  reported and no catalog row is written. Skills are delivered to standalone
-  package agents from the providing pinned package's manifest capability roots,
-  not through `capability_profile`.
+- **`capability_profile`** accepts `skills?: string[]` and `mcps?: string[]`.
+  Each list accepts up to 32 capability references and deduplicates them in
+  first-seen order. Omitting `skills` selects the providing package’s available
+  skills; `skills: []` selects none from that package. MCPs resolve through
+  current project bindings, trust and adapter compatibility checks. Studio
+  validates references when committing, cutting or publishing the package.
+  [Agent definitions and project instances](system-analytics/agents.md)
 
 **Cross-field rules** (Implemented): `mode=subagent` allows ONLY the `flow`
 trigger; `workspace_ref` is valid ONLY with `workspace=repo_read`; `triggers` must
@@ -2039,9 +2042,11 @@ flows:
 
 See [`system-analytics/run-results.md`](system-analytics/run-results.md).
 
-### Session-agent discovery (Designed)
+### Skill discovery for Flow nodes
 
-A graph binds a package agent through the existing session-agent setting. Each bound attempt gets its own logical session, including when the runner and named session match a sibling. Explicit node MCP requirements participate in preflight. Required skill dependencies belong to the owning package. [Inventory resolution](system-analytics/capabilities.md#project-run-capability-inventory)
+A Flow must ship the skills its authored prompts require. A child Flow uses its own
+package. Authors can reference a skill in a prompt with `@skill:<slug>`. Package
+and agent declarations determine what the node can discover. [Session inventory and precedence](system-analytics/capabilities.md#project-run-capability-inventory)
 
 ## Authored package files
 

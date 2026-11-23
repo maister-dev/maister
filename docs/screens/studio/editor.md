@@ -159,14 +159,11 @@ correctness and first-class kinds (behavior SSOT:
   raw-file view, dispatched by inferred kind. Platform agents live at
   package-root `maister-agents/`; subagents at `capability/<id>/agents/` (lenient
   schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
-  Platform-agent validation surfaces strict `capability_profile` issues inline:
-  only `{ mcps?: string[] }` is accepted, legacy `skills`, `mcp_servers`, or
-  `restrictions` keys are saved as invalid work-in-progress but hard-block the
-  top-bar Commit and Publish actions plus server-side commit/cut-version/publish.
-  The editor writes invalid JSON/schema values into the canonical artifact, so
-  the inline message and lifecycle gates never disagree about draft state.
-  Issue copy identifies the exact field path and keeps the compact structural
-  editor; this hardening adds no package-skill selector or new authoring IA.
+  The package agent editor offers skills and MCPs from the providing package.
+  The strict `capability_profile` accepts `skills` and `mcps` lists. Invalid
+  values and unknown keys such as `mcp_servers` or `restrictions` remain
+  editable in the draft. Studio names the offending field and blocks commit,
+  cut and publish until the author corrects it.
   **Canonical Create Flow (Implemented).** Studio Packages and Local Packages open
   one accessible dialog for package name (new package only), Flow ID, display
   title, `metadata.summary`, and `metadata.route_when`, with optional labels,
@@ -337,9 +334,19 @@ is authored as a first-class node — see
 - EN and RU labels exist for every new multiselect, string-list, and composer
   control.
 
-### Catalog selection (Designed)
+### Add a skill or MCP from a catalog
 
-Skills and MCPs each have an Add from catalog action with type-ahead search, keyboard selection and source-specific errors. Opening a result displays publisher, pin, destination and reviewed contents. Apply changes only the editable draft. The package agent editor can select skills and MCPs from the providing package. A Flow node chooses an agent and can refine its MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory)
+Open **Skills** or **MCPs** in a local package, choose **Add from catalog** and
+type a name or paste a supported source link. Results update as you type. Open
+a result to review its publisher, pinned revision, destination, file changes
+and notices. Applying the preview writes to the editable draft. Commit and cut
+a version to make it available for project adoption. **Update from source**
+compares later upstream changes with the previous import and local edits.
+
+The package sharing controls govern which other sessions receive its skills
+and MCPs. Select a package agent’s skills and MCP references in the agent
+editor. In the Flow node editor, bind the agent and configure required or
+additional MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory)
 
 ## States
 

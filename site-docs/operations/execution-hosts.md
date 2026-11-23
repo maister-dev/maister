@@ -1,6 +1,6 @@
 ---
 title: "Execution hosts"
-description: "Understand the current single-host supervisor boundary and the safe path toward multiple execution hosts."
+description: "Configure an assigned supervisor, its MCP cache and the route back to Web."
 ---
 
 An execution host is the supervisor boundary that owns ACP sessions, agent
@@ -10,11 +10,10 @@ path as ownership.
 
 ## Current topology
 
-The supported topology has one active trusted local execution host and loopback
-HTTP. Web and supervisor still share repository and worktree storage. Runtime
-events and artifact content cross the host API instead of requiring Web to read
-the supervisor's private runtime files. Placement across multiple simultaneous
-hosts and mid-turn migration are not supported.
+A default installation runs Web and one trusted supervisor on the same host.
+Operators can also map a supervisor key to a private remote endpoint. Web
+sends commands to the host recorded in the Run assignment. Each host needs
+the workspace and repository storage required by the Runs it accepts.
 
 The host contract already provides:
 
@@ -77,11 +76,15 @@ do not clear supervisor state to repair a stalled stream. Use the reported
 recovery action and retain diagnostics as described in
 [Troubleshooting](/operations/troubleshooting).
 
-## Path to multiple supervisors
+## Route a Run to a remote supervisor
 
-These boundaries are the prerequisite for a future pool of supervisor hosts.
-That stage must add remote transport, placement policy, host visibility, and
-attempt-boundary recovery without weakening fencing or evidence ownership.
+1. Give each supervisor a stable `MAISTER_EXECUTION_HOST_KEY` and its own persistent state. The production Compose profile `remote-supervisor` uses a read-only image and a writable supervisor volume. Provision the repository and workspace roots for that host.
+2. On Web, configure `MAISTER_EXECUTION_HOST_ENDPOINTS` as a JSON object mapping host keys to HTTPS origins, for example `{"design-b":"https://supervisor-b.internal"}`. Protect ingress with mutual TLS. Set `MAISTER_EXECUTION_HOST_TLS_CA_FILE`, `MAISTER_EXECUTION_HOST_TLS_CERT_FILE` and `MAISTER_EXECUTION_HOST_TLS_KEY_FILE` to the corresponding files on Web. A loopback endpoint may terminate an operator-managed authenticated tunnel.
+3. Set `MAISTER_EXECUTION_HOST_PREFERRED_KEY` on Web for new placements. Preserve the original supervisor state and workspace for interactive checkpoint resume. A new placement carries its own assignment epoch.
+4. On the supervisor, set `MAISTER_WORKLOAD_API_BASE_URL` to the Web API origin reachable from the workload. The built-in MAIster MCP uses this route for scoped operations such as asking a human.
 
-Until that stage ships, deploy one supervisor per MAIster control plane and
-follow the [single-host deployment guide](/operations/deployment).
+## Prepare the selected MCP servers
+
+HTTP MCP connections originate on the assigned workload. Check its DNS, egress and server-specific environment bindings. For npm/stdio, review the exact distribution in Studio and approve its descriptor digest in `MAISTER_MCP_ALLOWED_DIGESTS` on each eligible host. Keep `MAISTER_MCP_CACHE_DIR` on persistent, host-owned storage writable by the supervisor. The host validates the exact tarball and executable on first use and rechecks cached bytes and approval on reuse. A fresh host needs the registry connection for its first install.
+
+If preparation fails, inspect the host key, assignment epoch, command ID and digest in the supervisor receipt. Check the configured source, supported runtime and host approval before retrying. Bind per-server secrets via `env:MAISTER_MCP_SECRET_<NAME>` on the selected MCP. See [package sources and versions](/guides/package-sources-and-versions) for the import and adoption workflow.

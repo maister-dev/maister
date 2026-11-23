@@ -10,7 +10,7 @@ The author can import, edit and update pinned skill trees and reviewed MCP descr
 
 ## Settings
 
-- **Mode** Full, current branch and worktree. The implementation and commit checkpoints below are future work.
+- **Mode** Full, current branch and worktree. The task checkboxes record verified checkpoints.
 - **Testing** Spec-driven development with RED → GREEN → refactor for each behavior change. Focused integration, E2E and real-host acceptance. Prefer existing harnesses. Record observed artifacts, tool results and recovery behavior. Use focused unit tests for pure resolver, digest and compatibility cases.
 - **Logging** Standard structured diagnostics with optional DEBUG detail. Use INFO for transitions, WARN for retryable failures and policy refusals, ERROR for exhausted recovery. Carry operation, package, run, attempt and host identifiers where relevant. Redact credentials, headers, private endpoints, persona text, file bodies, questions and answers.
 - **Docs** Mandatory `$aif-docs` checkpoint for each changed contract with EN/RU public and UI parity.
@@ -21,7 +21,7 @@ Milestone: "none"
 
 Rationale: The user chose a branch-scoped delivery plan without a roadmap milestone.
 
-## Implementation baseline
+## Implementation baseline at `22df665aa`
 
 - Studio already supports package composition, local import, version cuts and project adoption. The public catalog connectors and source update path are planned.
 - The node-level `settings.skills` and `settings.enforcement.skills` retirement is **implemented locally** in the worktree. New authoring and cuts reject them, stored revisions retain their historical read/dispatch contract, and prompt skill mentions remain supported. The local `maister-plugins@b716f9bcc` audit covered 16 packages, 49 Flows and 275 nodes, with zero retired keys. The sibling author guide has its own working-tree edit. Previous focused verification passed 274 unit tests, 17 integration tests, 8 Playwright checks, typecheck and documentation checks. Preserve this completed work in the first implementation checkpoint.
@@ -232,7 +232,7 @@ IT-CAP-05 passed on populated PostgreSQL, including two project instances, stale
 
 ### Phase 4 — MCP preparation on the assigned execution host
 
-On two independent Linux containers, a real supervisor and ACP protocol peer called the synthetic HTTP MCP, pinned stdio MCP and bundled MAIster facade. B reused its cache offline. After B stopped, fresh C installed the pinned bytes and rejected epoch 1. The mTLS qualification recorded B epoch 1 receipts d34eba4b-97d3-46dc-88c7-4054a601b70e and d5ae983e-7f59-409c-8f60-86f2d7de53bc, then C epoch 2 receipt ad1818ce-4bb3-4a2a-b5ff-379c80572131. The A/B Playwright lane passed 6/6. The production image sha256:638fe8b37708ce0d6617a890d67b5372ff6da186d49513b34546daf1cb38de2f ran as UID 1001 with a read-only root, dropped capabilities and a writable state volume on Linux arm64. T17 remains open for a tool call against a real public MCP. Automatic approval review rejected the public ACP test because it could transmit project or prompt content. Static inspection of the public distribution and successful local protocol calls cover separate checks.
+On two independent Linux containers, a real supervisor and ACP protocol peer called the synthetic HTTP MCP, pinned stdio MCP and bundled MAIster facade. B reused its cache offline. After B stopped, fresh C installed the pinned bytes and rejected epoch 1. The mTLS qualification recorded B epoch 1 receipts d34eba4b-97d3-46dc-88c7-4054a601b70e and d5ae983e-7f59-409c-8f60-86f2d7de53bc, then C epoch 2 receipt ad1818ce-4bb3-4a2a-b5ff-379c80572131. The A/B Playwright lane passed 6/6. The production image sha256:638fe8b37708ce0d6617a890d67b5372ff6da186d49513b34546daf1cb38de2f ran as UID 1001 with a read-only root, dropped capabilities and a writable state volume on Linux arm64. Automatic approval review rejected the live ACP → public MCP test because it could transmit project or prompt content. A separate fixed request to Microsoft Learn passed from a clean client (see T25). To close T17, tie a public tool response to the assigned execution environment while keeping ACP traffic isolated.
 
 For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](https://learn.microsoft.com/en-us/training/support/mcp) and confirm a compatible registry descriptor. For local stdio, derive the pinned package and transport from the [Registry package formats](https://modelcontextprotocol.io/registry/package-types). Record a real tool response from each supported distribution.
 
@@ -308,6 +308,7 @@ IT-CAP-02 passed against two populated attachments and real Git working trees. I
   - **Diagnostics** — adoption source/target and reconciliation outcome.
 - [ ] **T25. Qualify a design Run alongside development.**
   - **After** T06, T13, T17, T20, T23, T24.
+  - **Observed** — On production Web build `UfQNLvfaTvOli4d9g21NE`, design Run `5d3c79bb-f6de-43fe-abed-b742b30a23f7` continued ACP session `5135fc36-3156-4fa2-bd00-2d170cd6adc0` after Inbox question `159649b8-9bd6-484e-9c3c-52eff4f98155` and wrote the linked checkout prototype. Coding Run `a6c8c0b3-1da0-459b-a32c-d20dc440b1d9` and standalone Run `4d13a912-7f3a-4b96-a489-bf926cd73323` reached Review with their expected positive and negative inventories. The design reference tool and ACP peer in this journey are local deterministic fixtures. Separately, a credential-free fixed `microsoft_docs_fetch` call to Microsoft Learn returned the public .NET introduction (HTTP 200, 9,905 bytes, SHA-256 `ef6523c7629b5d06137e20ba26ce589aae899dbff62617150ccc9d03231a218e`). This public probe sent only Microsoft's own documentation URL.
   - Use `web/e2e/`, existing execution-host and public package fixtures. With shared core and deliberately private design/development skill bundles, launch one Flow of each kind. The designer actually reads its selected companion, invokes a design MCP, asks about the checkout path, resumes from the Inbox answer and returns a clickable prototype or inspectable prototype artifact. The developer reads its own/core skill and receives no private design tools, native MCP config or stdio process. Verify a standalone agent’s reduced inventory, one instance addition, shared-scope override/reset, and no per-task package picker. Link T20’s private librarian and T17’s relocation evidence from the qualified build.
   - **Acceptance** — exact run IDs, package pins, ACP IDs, host identity, actual artifacts and tool/continuation receipts. Test a harmless tool on an approved real endpoint/product subject to available credentials; distinguish any substitute from qualification of the named product.
   - **Diagnostics** — evidence references and outcome.
@@ -351,7 +352,7 @@ For each behavior slice record its requirement ID, discovered test title, comman
 | Ask payload and live UI projections | `web/lib/services/agent-question-contract.ts`, `web/scripts/generate-ask-human-json.ts`, `runtime/ask-human-input.schema.json`, `mcp/src/tools.ts`, `docs/api/async/{librarian-stream,attention-stream,web-runs}.asyncapi.yaml`, `docs/screens/inbox.md` |
 | Durable metadata, changes and deployment | `web/lib/db/schema.ts`, Drizzle SQL/snapshots/journal, `docs/database-schema.md`, `docs/db/{capabilities-domain,agents-domain,hitl-domain,assignments-domain,librarian-domain,execution-hosts-domain}.md`, `docs/error-taxonomy.md`, `.env.example`, configuration and operator guide |
 
-Use Node 24 and the frozen pnpm workspace. Drive focused integration cases with real disposable Postgres, existing Playwright fixtures and a built facade. Verify new cases are collected by their assigned Vitest project with `pnpm --filter maister-web exec vitest list --project integration` or by Playwright test listing. Update the runner include patterns in the same phase if they are missing. Run each command separately. These are implementation gates; the pre-existing T03 evidence is the only completed behavioral gate.
+Use Node 24 and the frozen pnpm workspace. Drive focused integration cases with real disposable Postgres, existing Playwright fixtures and a built facade. Verify new cases are collected by their assigned Vitest project with `pnpm --filter maister-web exec vitest list --project integration` or by Playwright test listing. Update the runner include patterns in the same phase if they are missing. Run each command separately. See each phase for its observed verification.
 
 | Phase | Focused check or existing assertions to extend |
 | --- | --- |

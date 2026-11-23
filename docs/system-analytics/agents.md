@@ -409,17 +409,18 @@ sequenceDiagram
 
 ### (f) Per-node flow binding (Implemented)
 
-`agent: <id>` on an `ai_coding` node (engine ≥ 1.5.0) resolves the catalog profile
-at compile/launch; execution stays inside the flow run's session — no separate
-agent-run row. (Distinct from (c): there the AGENT declares its own flow; here a
-flow NODE binds one agent for that node.)
+`settings.agent` on an `ai_coding` node (engine ≥ 1.5.0) selects a
+package-qualified agent. The Flow Run owns the node attempt. A session-mode
+binding opens a logical ACP session and capability home specific to this
+node. Its persona and capability selection come from the Run’s captured
+package and project-agent profile. [Node settings and discovery](../flow-dsl.md#node-agent-binding-implemented)
 
 ```mermaid
 flowchart TD
     N[node settings agent: id] --> V{compile validation<br/>agent exists AND triggers includes flow?}
     V -- no --> C[CONFIG at save/launch]
     V -- yes --> M{mode}
-    M -- session --> S[substitute profile — agent body = system prompt,<br/>node prompt = task block, settings merged, node wins]
+    M -- session --> S[Private node session with effective persona,<br/>node task prompt and selected capabilities]
     M -- subagent --> K{runner capability_agent = claude?}
     K -- no --> EU[EXECUTOR_UNAVAILABLE before spawn]
     K -- yes --> W[lease-owned materialize .claude/agents/name.md into worktree]

@@ -107,6 +107,26 @@ upstream default branch directly.
 - Executable content untrusted: inspect the cut and grant trust explicitly.
 - Attachment collision: rename the fork's package, commit, and create a new cut.
 
+## Import skills and MCP servers
+
+In a local package, open **Skills** or **MCPs** and select **Add from catalog**. Search by name or paste a supported skills.sh or GitHub link. Choose a local name and capability root, review the pinned source, companion files and notices, then apply the changes. Commit the draft, cut a version and adopt it in the project. **Update from source** compares with the previously reviewed revision and lets you resolve file conflicts before saving. The package sharing controls determine which sessions may receive its skills and MCPs. An unsupported MCP preview identifies the configuration it needs, such as an authorization header. Secret values stay outside the package.
+
+Self-hosted Studio searches the approved Anthropic and Vercel skill repositories and the official MCP Registry. To use a different set of public repositories, set `MAISTER_STUDIO_CATALOG_REPOS` on Web to a JSON array, for example `[{"id":"anthropic-skills","repo":"anthropics/skills","kind":"skill"}]`. The array replaces the built-in repository list. For a repository of Registry-format MCP descriptors, use `"kind":"mcp"`. A skills.sh link must resolve to a skill in an approved repository. Host installation is described in [Execution hosts](/operations/execution-hosts).
+
+## Choose which sessions receive package resources
+
+A Flow Run captures the project’s attached package versions at launch. Each agent session sees its own selection from that capture. The person starting a task only needs to select the Flow.
+
+| Session | Skills | MCP servers |
+| --- | --- | --- |
+| Flow node without a package agent | The Flow’s package and shared skill packages | The Flow package’s servers or the node’s explicit selection, plus project-shared servers |
+| Flow node bound to a session agent | The agent’s selected skills, the Flow’s package when different, and other shared skill packages | The agent’s declared servers, project-instance additions and project-shared servers, subject to the node’s MCP settings |
+| Standalone project agent | The agent’s selection from its providing package | Its declared servers, project-instance additions and project-shared servers |
+
+Skill sharing is on by default. Leave it on for a common coding library. Turn it off for a design package whose skills belong in design sessions. Each new MCP declaration starts with package scope. Set project scope to supply that server to all eligible project sessions. A maintainer can override the scope in the project MCP Hub or restore the package setting.
+
+In the package agent editor, an omitted skill selection includes all skills in the providing package. An explicit empty selection includes zero. A Flow should ship every skill required by its authored prompts. The project still controls each MCP target’s binding, credentials and execution trust.
+
 ## Next steps
 
 - Register your own repository in [Package sources and versions](/guides/package-sources-and-versions).
@@ -115,7 +135,3 @@ upstream default branch directly.
 - Pass data with [structured results and Run context](/studio/structured-results-and-context).
 - Configure [MCP bindings](/administration/mcp-and-secrets).
 - Compare process outcomes in [Evaluation Lab](/evaluation/run-comparison).
-
-## Import skills and MCP servers
-
-In a local package, open **Skills** or **MCPs** and select **Add from catalog**. Search by name or paste a supported skills.sh or GitHub link. Choose a local name and capability root, review the pinned source, companion files and notices, then apply the changes. Commit the draft, cut a version and adopt it in the project. **Update from source** compares with the previously reviewed revision and lets you resolve file conflicts before saving. The package sharing controls determine which sessions may receive its skills and MCPs.
