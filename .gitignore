@@ -12,7 +12,7 @@
 
 # next.js
 /.next/
-/web/.next.build-lock/
+/web/.next.build-lock
 /out/
 
 # production
