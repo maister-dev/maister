@@ -811,6 +811,8 @@ export type SupervisorErrorDetails = {
     | "producer_update_invalid"
     | "producer_method_unsupported"
     | "producer_output_incomplete";
+  acpMethod?: string;
+  acpMessageKind?: "request" | "notification";
   rule?: WorkspaceRule;
   // `legacy_field`: the refused pre-ADR-166 path field, by name.
   field?: string;

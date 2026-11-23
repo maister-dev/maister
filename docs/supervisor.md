@@ -725,6 +725,14 @@ controls are in `command-receipts.integration.test.ts`; the owner settlement
 contract is [ADR-177](decisions/adr-177.md). No event payload, status or cause
 enum is added.
 
+The bounded ACP stream captures an unsupported message before rejecting it.
+The supervisor journal associates its method and JSON-RPC kind with the Run,
+session and exact create or prompt command. The method must be a bounded
+identifier. Journal entries and failure receipts omit the message parameters.
+Agent Run details show this metadata when their create or prompt receipt
+determines the terminal cause. The informational `auth/status_update`
+notification is supported during initialization, resume and active prompts.
+
 **Outbox admission by kind (Implemented — ADR-183).** Every receipt names one
 admission class — `new_work` (`session.prompt`, `workspace.adopt`,
 runtime-object reserve/upload), `producer` (`session.create`, which also

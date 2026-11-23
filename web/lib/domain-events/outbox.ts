@@ -15,6 +15,8 @@ import type { SpecialistAssignmentStatus } from "@/lib/specialist-assignments/ty
 import { sql } from "drizzle-orm";
 import pino from "pino";
 
+import { parseUnsupportedAcpMessage } from "../../../runtime/unsupported-acp-message";
+
 import { domainEvents } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { terminalCauseReason } from "@/lib/domain-events/taxonomy";
@@ -196,6 +198,7 @@ function tokenOnlyCause(
 
   return {
     ...(integrityLimit ? { integrityLimit } : {}),
+    ...parseUnsupportedAcpMessage(cause),
     code: cause.code,
     ...(reason === undefined ? {} : { reason }),
     source: cause.source,

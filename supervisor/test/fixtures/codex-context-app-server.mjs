@@ -36,6 +36,7 @@ for await (const line of lines) {
       });
       break;
     case "thread/start":
+    case "thread/resume":
     case "thread/read":
       respond({ thread, model, modelProvider: "fixture", reasoningEffort: "medium" });
       break;

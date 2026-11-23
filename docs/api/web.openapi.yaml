@@ -34065,6 +34065,15 @@ components:
         `errorCode`.
       properties:
         integrityLimit: { $ref: "#/components/schemas/WorkspaceIntegrityLimit" }
+        acpMethod:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*$'
+          description: Bounded method name retained from an unsupported ACP envelope.
+        acpMessageKind:
+          type: string
+          enum: [request, notification]
+          description: Kind of the unsupported ACP envelope that ended the run.
         code:
           type: string
           nullable: true

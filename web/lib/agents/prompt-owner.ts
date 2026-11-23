@@ -1,6 +1,7 @@
 import "server-only";
 
 import { promptContextFailureReason } from "../../../runtime/acp-context-failure";
+import { readUnsupportedAcpMessage } from "../../../runtime/unsupported-acp-message";
 
 import type {
   AgentTurn,
@@ -980,6 +981,10 @@ export const agentPromptOwner = definePromptOwnerAdapter(
       };
     }
     const terminal = agentTerminalOutcomeFor(succeeded, outcome);
+    const unsupportedAcpMessage =
+      outcome.state === "failed"
+        ? readUnsupportedAcpMessage(outcome.error)
+        : undefined;
 
     onProgress?.("finalization_integrity");
     const prepared = await prepareAgentRunFinalization(
@@ -1012,7 +1017,7 @@ export const agentPromptOwner = definePromptOwnerAdapter(
           ))
         )
           return supersedeAgentMessage(tx, ref, command.id);
-        application = await prepared.apply(tx);
+        application = await prepared.apply(tx, unsupportedAcpMessage);
         if (!application.finalized)
           throw new PromptOwnerDeferred("agent_finalization_pending");
         await acknowledgeAgentMessage(tx, ref, command.id);

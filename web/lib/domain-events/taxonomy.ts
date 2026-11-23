@@ -1,4 +1,9 @@
 import {
+  parseUnsupportedAcpMessage,
+  type UnsupportedAcpMessage,
+} from "../../../runtime/unsupported-acp-message";
+
+import {
   parseWorkspaceIntegrityLimit,
   type WorkspaceIntegrityLimit,
 } from "@/lib/agents/operational-diagnostics";
@@ -225,7 +230,8 @@ export type TerminalCause = Readonly<{
   reason?: string;
   source: TerminalCauseSource;
   integrityLimit?: WorkspaceIntegrityLimit;
-}>;
+}> &
+  Partial<UnsupportedAcpMessage>;
 
 // A token, bounded: `cascade/<token>` is the one two-part form.
 const CAUSE_REASON = /^[a-z][a-z0-9_]{0,63}(\/[a-z][a-z0-9_]{0,63})?$/;
@@ -348,6 +354,7 @@ export function parseTerminalCause(value: unknown): TerminalCause | null {
 
   return {
     ...(integrityLimit ? { integrityLimit } : {}),
+    ...parseUnsupportedAcpMessage(value),
     code: code as MaisterErrorCode | null,
     ...(token === undefined ? {} : { reason: token }),
     source: source as TerminalCauseSource,

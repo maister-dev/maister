@@ -3509,6 +3509,10 @@
       },
       "reasonLabel": "Reason",
       "unknownReason": "No further detail was recorded.",
+      "unsupportedAcpMessage": {
+        "request": "The adapter sent an unsupported ACP request",
+        "notification": "The adapter sent an unsupported ACP notification"
+      },
       "reasons": {
         "context_exhausted": "The agent ran out of context. Retry in a fresh session, choose a runner with a larger context window, or set this runner’s actual context window.",
         "max_output_tokens": "The response reached the agent’s output limit. Split the requested output into smaller parts.",
@@ -6750,6 +6754,8 @@
     "zeroWork": "Operation completed successfully; no new work.",
     "awaitingResult": "Waiting for the structured operation result.",
     "invalidResult": "The required result is missing or invalid. Inspect execution evidence before starting a new attempt.",
+    "executionFailed": "Execution ended before a result could be verified. Check why the run ended before starting a new attempt.",
+    "cleanupEvidenceLimit": "The diagnostic archive exceeded its size or history limit. The workspace is retained for diagnosis.",
     "validation": {
       "title": "Result validation",
       "field": "Field",

@@ -471,9 +471,13 @@ export async function spawnSession(
       logger.error(
         {
           sessionId,
-          commandId: record.activePromptCommandId,
+          runId: record.runId,
+          adapter: adapterRuntime.id,
+          commandId: record.activePromptCommandId ?? record.createdByCommandId,
           reason: error.details?.reason,
           outputFailure: error.details?.outputFailure,
+          acpMethod: error.details?.acpMethod,
+          acpMessageKind: error.details?.acpMessageKind,
         },
         "producer-output-incomplete",
       );

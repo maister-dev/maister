@@ -36,6 +36,7 @@ import {
 import { SupervisorError, type SupervisorErrorDetails } from "./types";
 import { createAcpToolCallContext } from "./acp-tool-call-context";
 import { acpContextUpdateType } from "../../runtime/acp-context";
+import { parseUnsupportedAcpMessage } from "../../runtime/unsupported-acp-message";
 
 export const MAX_ACP_FRAME_BYTES = 1_048_576;
 const MAX_PRODUCERS = 20;
@@ -154,6 +155,7 @@ async function acquireDecoder(): Promise<() => void> {
 
 function incomplete(
   outputFailure: NonNullable<SupervisorErrorDetails["outputFailure"]>,
+  envelope?: Pick<SupervisorErrorDetails, "acpMethod" | "acpMessageKind">,
 ): SupervisorError {
   return new SupervisorError(
     "ACP_PROTOCOL",
@@ -165,6 +167,7 @@ function incomplete(
             ? "runtime_output_frame_too_large"
             : "required_output_incomplete",
         outputFailure,
+        ...envelope,
       },
     },
   );
@@ -658,15 +661,24 @@ export function boundedAcpStream(input: {
             ) {
               await permission(message.id, message.params);
             } else if (message.method.startsWith("_")) {
-              // ACP extension traffic (codex-acp 1.x sends `_auth/status_update`
-              // right after initialize): hand it to the SDK, which ignores
+              // Hand extension traffic to the SDK, which ignores
               // unknown ext notifications and answers unknown ext requests with
               // method-not-found — it must not fail the producer.
               controller.enqueue(message);
 
               return;
-            } else {
-              throw incomplete("producer_method_unsupported");
+            } else if (
+              // Auth status is informational and already captured above.
+              message.method !== "auth/status_update" ||
+              "id" in message
+            ) {
+              throw incomplete(
+                "producer_method_unsupported",
+                parseUnsupportedAcpMessage({
+                  acpMessageKind: "id" in message ? "request" : "notification",
+                  acpMethod: message.method,
+                }),
+              );
             }
             message = null;
             // Release decoded output before the next iterator call gives the

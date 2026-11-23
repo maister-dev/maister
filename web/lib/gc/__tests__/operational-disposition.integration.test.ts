@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -54,6 +54,7 @@ import { startAgentSession } from "@/lib/agents/launch";
 import { operationalAgentRuntimePath } from "@/lib/agents/workspace-paths";
 import {
   agentProjectLinks,
+  domainEvents,
   executionAssignments,
   executionCommands,
   executionRuntimeObjects,
@@ -815,6 +816,66 @@ describe("operational disposition through existing lifecycle owners", () => {
         await expect(lstat(seeded.context.cwd)).rejects.toMatchObject({
           code: "ENOENT",
         });
+    },
+  );
+
+  it.each(["clean", "changed"] as const)(
+    "preserves only unexpected checkout evidence for a failed detached operation (%s)",
+    async (integrity) => {
+      const seeded = await seed("repo_read", "trigger");
+      const head = await git(seeded.context.repoPath, "rev-parse", "HEAD");
+
+      if (integrity === "changed")
+        await writeFile(
+          path.join(seeded.context.cwd, "unexpected"),
+          "evidence",
+        );
+      await finalizeAgentRun(seeded.runId, "Failed", {
+        db,
+        reason: "agent_session_create_failed",
+      });
+
+      const current = await row(seeded.runId);
+
+      expect(current).toMatchObject({
+        status: "Failed",
+        operationalTerminal: { integrity, successful: false },
+        operationalCleanup: { state: "released" },
+      });
+      if (integrity === "clean")
+        expect(current.operationalCleanup?.evidenceIds).toEqual([]);
+      else
+        expect(current.operationalCleanup?.evidenceIds).toEqual([
+          expect.any(String),
+          expect.any(String),
+        ]);
+      await expect(lstat(seeded.context.cwd)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(await git(seeded.context.repoPath, "rev-parse", "HEAD")).toBe(
+        head,
+      );
+      const events = await db
+        .select({ payload: domainEvents.payload })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.runId, seeded.runId),
+            eq(domainEvents.kind, "run.failed"),
+          ),
+        );
+
+      expect(events).toEqual([
+        {
+          payload: expect.objectContaining({
+            cause: {
+              code: null,
+              reason: "agent_session_create_failed",
+              source: "agent",
+            },
+          }),
+        },
+      ]);
     },
   );
 

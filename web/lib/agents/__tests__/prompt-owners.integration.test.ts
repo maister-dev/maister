@@ -53,6 +53,7 @@ import { MaisterError } from "@/lib/errors";
 import { reworkChildRun } from "@/lib/agents/launch";
 import { claimAgentResumeSlot, respondToHitl } from "@/lib/services/hitl";
 import { markCheckpointed } from "@/lib/runs/state-transitions";
+import { loadRunTerminalCause } from "@/lib/runs/terminal-cause";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 import { getCommandReceipt } from "@/lib/supervisor-client";
 import { queryRunTokens } from "@/lib/runs/cost-rollups";
@@ -211,6 +212,7 @@ async function seedAgent(input: {
   terminalBarrier?: string;
   stopReason?: string;
   failMessage?: string;
+  unsupportedAcpNotification?: boolean;
   contextFailure?: "claude-input" | "claude-output" | "codex-input";
   persistent?: boolean;
   permission?: boolean;
@@ -2987,7 +2989,7 @@ describe("Agent owned prompts through the production launcher", () => {
     }
   }, 60_000);
 
-  it.each(["live", "before_apply"] as const)(
+  it.each(["live", "before_apply", "unsupported_notification"] as const)(
     "owner-agent-message settles a failed retained create after %s",
     async (window) => {
       const runId = await seedAgent({ bytes: 0, persistent: true });
@@ -3008,7 +3010,12 @@ describe("Agent owned prompts through the production launcher", () => {
         .toBe("NeedsInputIdle");
       await db
         .update(runSessions)
-        .set({ acpSessionId: "fixture-missing-session" })
+        .set({
+          acpSessionId:
+            window === "unsupported_notification"
+              ? "fixture-unsupported-acp-notification"
+              : "fixture-missing-session",
+        })
         .where(eq(runSessions.runId, runId));
       const prompt = 'fixture-output:{"bytes":0,"text":"must never dispatch"}';
 
@@ -3055,9 +3062,47 @@ describe("Agent owned prompts through the production launcher", () => {
         );
 
       expect(creates).toHaveLength(2);
+      const failedCreate = creates.find(
+        (command) => command.state === "failed",
+      );
+
       expect(
         creates.filter((command) => command.state === "failed"),
       ).toHaveLength(1);
+      if (window === "unsupported_notification") {
+        const envelope = {
+          acpMethod: "fixture/unsupported_notification",
+          acpMessageKind: "notification",
+        };
+
+        expect(failedCreate?.lastError).toMatchObject({
+          code: "ACP_PROTOCOL",
+          details: {
+            outputFailure: "producer_method_unsupported",
+            ...envelope,
+          },
+        });
+        expect(await loadRunTerminalCause(db, runId, "Failed")).toEqual({
+          code: "ACP_PROTOCOL",
+          source: "agent",
+          reason: "agent_session_create_failed",
+          ...envelope,
+        });
+        const journal = await readFile(supervisor.logFile, "utf8");
+        const outputFailures = journal
+          .split("\n")
+          .filter((line) => line.includes('"msg":"producer-output-incomplete"'))
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+        expect(outputFailures).toContainEqual(
+          expect.objectContaining({
+            runId,
+            commandId: failedCreate?.id,
+            ...envelope,
+          }),
+        );
+        expect(journal).not.toContain("private-acp-fixture-content");
+      }
       expect(
         creates.every(
           (command) => command.createIntent?.sessionFallback === false,
@@ -4276,6 +4321,10 @@ describe("Agent owned prompts through the production launcher", () => {
       failMessage: "fixture adapter rejected the original prompt",
     },
     {
+      name: "unsupported ACP notification",
+      unsupportedAcpNotification: true,
+    },
+    {
       name: "persistent non-end-turn response",
       persistent: true,
       stopReason: "max_tokens",
@@ -4348,6 +4397,14 @@ describe("Agent owned prompts through the production launcher", () => {
       if (reason)
         expect(events[0].payload).toMatchObject({
           cause: { code: "ACP_PROTOCOL", reason },
+        });
+      if (fixture.unsupportedAcpNotification)
+        expect(await loadRunTerminalCause(db, runId, "Failed")).toEqual({
+          code: "ACP_PROTOCOL",
+          source: "agent",
+          reason: "agent_prompt_failed",
+          acpMethod: "fixture/unsupported_notification",
+          acpMessageKind: "notification",
         });
       const sessions = await createExecutionHosts({ db })
         .local()

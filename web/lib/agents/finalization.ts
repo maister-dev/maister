@@ -1,4 +1,6 @@
 import "server-only";
+
+import type { UnsupportedAcpMessage } from "../../../runtime/unsupported-acp-message";
 import type { ExecutionHosts } from "@/lib/execution-host";
 import type { AgentPreparationOwner } from "@/lib/agents/preparation-workspace";
 import type { RawNodeOutputPayload } from "@/lib/flows/graph/node-output";
@@ -289,7 +291,10 @@ export type AgentFinalizationApplication =
 
 export type PreparedAgentFinalization = Readonly<{
   /** DB-only; the caller may commit its command marker in the same transaction. */
-  apply: (tx: Db) => Promise<AgentFinalizationApplication>;
+  apply: (
+    tx: Db,
+    unsupportedAcpMessage?: UnsupportedAcpMessage,
+  ) => Promise<AgentFinalizationApplication>;
   /** Call only after the outer commit, using the pooled preparation connection. */
   afterCommit: (result: AgentFinalizationApplication) => Promise<void>;
 }>;
@@ -776,7 +781,10 @@ async function prepareAgentFinalization(
     }
   }
 
-  const apply = async (tx: Db): Promise<AgentFinalizationApplication> => {
+  const apply = async (
+    tx: Db,
+    unsupportedAcpMessage?: UnsupportedAcpMessage,
+  ): Promise<AgentFinalizationApplication> => {
     const [locked] = await tx
       .select({
         id: runs.id,
@@ -1436,20 +1444,35 @@ async function prepareAgentFinalization(
         const integrityLimit =
           opts.infrastructureFailure?.integrityLimit ??
           operationalTerminal?.integrityLimit;
+        const executionCause =
+          terminalDecision?.cause === "operational_execution_failed"
+            ? agentTerminalCause(
+                "Failed",
+                opts.causeReason ?? opts.reason,
+                null,
+              )
+            : null;
+        const cause =
+          executionCause?.code || executionCause?.reason
+            ? executionCause
+            : agentTerminalCause(
+                terminalDecision?.status ?? outcome,
+                terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
+                referenceDecision.kind === "invalid"
+                  ? referenceDecision.reason === "result_missing"
+                    ? "result_missing"
+                    : "result_invalid"
+                  : null,
+              );
 
         await emitDomainEvent({
           ...event,
           kind,
           cause: {
-            ...agentTerminalCause(
-              terminalDecision?.status ?? outcome,
-              terminalDecision?.cause ?? opts.causeReason ?? opts.reason,
-              referenceDecision.kind === "invalid"
-                ? referenceDecision.reason === "result_missing"
-                  ? "result_missing"
-                  : "result_invalid"
-                : null,
-            ),
+            ...cause,
+            ...(unsupportedAcpMessage
+              ? { ...unsupportedAcpMessage, code: "ACP_PROTOCOL" as const }
+              : {}),
             ...(integrityLimit ? { integrityLimit } : {}),
           },
         });
@@ -1512,7 +1535,11 @@ async function prepareAgentFinalization(
         }
       }
       log.info(
-        { runId, status: result.status },
+        {
+          runId,
+          status: result.status,
+          executionReason: terminalCauseReason(opts.causeReason ?? opts.reason),
+        },
         "operational-terminal-cleanup-armed",
       );
       const { disposeOperationalRun } =

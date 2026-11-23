@@ -17,6 +17,7 @@ import {
   isTerminalCauseStatus,
   parseTerminalCause,
   TERMINAL_CAUSE_KIND_FOR_STATUS,
+  TERMINAL_CAUSE_REASONS,
 } from "@/lib/domain-events/taxonomy";
 
 const log = pino({
@@ -77,7 +78,26 @@ export async function loadRunTerminalCause(
   const payload = (event.payload ?? {}) as Record<string, unknown>;
   const cause = parseTerminalCause(payload.cause);
 
-  if (cause) return cause;
+  if (cause) {
+    // Older operational failures stored the specific token alongside a broad cause.
+    if (
+      cause.source === "agent" &&
+      cause.code === null &&
+      cause.reason === "operational_execution_failed" &&
+      payload.agentKind === "operational"
+    ) {
+      const execution = legacyCause(payload);
+
+      if (
+        execution?.code ||
+        (execution?.reason &&
+          TERMINAL_CAUSE_REASONS.some((reason) => reason === execution.reason))
+      )
+        return { ...cause, code: execution.code, reason: execution.reason };
+    }
+
+    return cause;
+  }
   if (payload.cause !== undefined)
     log.warn({ runId, status }, "terminal-cause-unreadable");
 
