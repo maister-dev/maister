@@ -47,6 +47,7 @@ describe("parseAgentDefinition", () => {
               "  mcps: []\n  skills: " + JSON.stringify(skills),
             );
       const parsed = parseAgentDefinition("design:prototype", source);
+
       expect(parsed.capabilityProfile?.skills).toEqual(skills);
       expect(
         parseAgentDefinition(parsed.id, renderAgentDefinition(parsed)),

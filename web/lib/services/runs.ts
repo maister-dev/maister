@@ -1,5 +1,3 @@
-import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
-import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import "server-only";
 
 import type { PoolCapFence } from "@/lib/scheduler";
@@ -29,6 +27,8 @@ import pino from "pino";
 import { WORKSPACE_FLOW_ASSET_DIRECTORY } from "../../../runtime/workspace-input-policy";
 
 import { requireReadyDeclaredFlowRunner } from "@/lib/acp-runners/declared-flow-runner";
+import { capturePackageDelivery } from "@/lib/capabilities/capture-package-delivery";
+import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import { runnerAdmissionError } from "@/lib/flows/runner-admission-error";
 import { isAutomaticTaskLaunchDrain } from "@/lib/tasks/launch-capacity";
 import {
@@ -1972,6 +1972,7 @@ async function* executeFlowLaunch(
             )
             .map((r) => r.capabilityRefId),
         });
+
         if (delivery) resolvedCapabilitySet.delivery = delivery;
       }
 
@@ -2407,15 +2408,18 @@ async function* executeFlowLaunch(
                 node.id,
                 declared,
               );
+
               if (name === declared) return [];
               const runner = sessionResolutions.find(
                 (session) => session.sessionName === declared,
               );
+
               if (!runner)
                 throw new MaisterError(
                   "CONFIG",
                   `Agent node ${node.id} has no runner for session ${declared}`,
                 );
+
               return [{ ...runner, sessionName: name }];
             }),
           ].map((session) => ({

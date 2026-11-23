@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+import type { FlowDeliverySnapshot } from "./package-delivery";
+
 import { execFile } from "node:child_process";
 import { cp, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -10,11 +13,10 @@ import { sql } from "drizzle-orm";
 import pino from "pino";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { MaisterError } from "@/lib/errors";
-import type { SqlTransaction } from "@/lib/db/sql-types";
-import type { FlowDeliverySnapshot } from "./package-delivery";
 import { stagePackageSkillInputs } from "./package-skills";
 import { eligibleProjectImport } from "@/lib/project-dependencies/eligible-imports";
+
+import { MaisterError } from "@/lib/errors";
 import { atomicWriteText } from "@/lib/atomic";
 import {
   AGENT_MATERIALIZATION_ROOT_RELATIVE,
@@ -362,18 +364,22 @@ async function materializeBundleSet(
     ".maister/capabilities",
   );
   const materializedPaths: string[] = [];
+
   if (args.delivery) {
     const sources = [...args.bundles];
+
     for (const pin of args.delivery.packages) {
       const missing = pin.bundleIds.filter(
         (id) => !sources.some((s) => s.id === id),
       );
+
       if (!missing.length || !args.db) continue;
       const {
         rows: [install],
       } = await args.db.execute(
         sql`SELECT installed_path AS root FROM package_installs WHERE id=${pin.installId} AND resolved_revision=${pin.revision} AND package_status='Installed'`,
       );
+
       if (!install || typeof install.root !== "string")
         throw new MaisterError(
           "PRECONDITION",
@@ -381,6 +387,7 @@ async function materializeBundleSet(
         );
       for (const id of missing) {
         const member = pin.bundlePaths?.[id];
+
         if (
           !member ||
           member.split("/").some((c) => !c || c === "." || c === "..")
@@ -407,6 +414,7 @@ async function materializeBundleSet(
         worktreePath,
         trees: ["agents"],
       });
+
       materializedPaths.push(...copied.materializedPaths);
     }
     materializedPaths.push(
@@ -425,6 +433,7 @@ async function materializeBundleSet(
         installedPath: imp.installedPath,
         worktreePath,
       });
+
       materializedPaths.push(...copied.materializedPaths);
     }
   }

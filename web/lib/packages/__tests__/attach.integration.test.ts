@@ -7,6 +7,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1713,12 +1714,14 @@ describe("package mcps[] value model (ADR-179)", () => {
 
   it("IT-CAP-02 preserves explicit scope per attachment through adoption, reset and rollback", async () => {
     const root = await mkdtemp(join(tmpdir(), "scope-upgrade-"));
+
     dirsToClean.push(root);
     const release = async (version: string, declarations: string) => {
       await writeFile(
         join(root, "maister-package.yaml"),
         `schemaVersion: 1\nname: scope-pkg\n${declarations}\n`,
       );
+
       return installPackageRevision({
         source: root,
         version,
@@ -1746,6 +1749,7 @@ describe("package mcps[] value model (ADR-179)", () => {
         db,
       });
     const att = (await attach(first, "scope-first"))!;
+
     await attach(second, "scope-second");
     const base = {
       projectId: first,
@@ -1772,6 +1776,7 @@ describe("package mcps[] value model (ADR-179)", () => {
         db as unknown as Parameters<typeof setPackageMcpScope>[1],
       );
     const states = () => readPackageMcpScopes(db, first);
+
     expect(await states()).toMatchObject([
       { effective: "project", revision: 1 },
     ]);
@@ -1779,6 +1784,7 @@ describe("package mcps[] value model (ADR-179)", () => {
       mutate("package", 1, legacy.id),
       mutate("package", 1, legacy.id),
     ]);
+
     expect(written.filter((x) => x.status === "fulfilled")).toHaveLength(1);
     expect(written.filter((x) => x.status === "rejected")).toMatchObject([
       { reason: { code: "CONFLICT" } },
@@ -2289,18 +2295,24 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
   const releases: Record<string, string> = {};
   const sources: Record<string, string> = {};
   const attachments: Record<string, string> = {};
+
   for (const [name, share, skills] of [
     ["tool-core", true, ["shared", "collide"]],
     ["tool-design", false, ["private", "collide"]],
     ["tool-dev", false, ["build"]],
   ] as const) {
     const root = await mkdtemp(join(workspaceRoot, "delivery-"));
+
     sources[name] = root;
     for (const slug of skills) {
       const directory = join(root, "bundle", "skills", slug);
+
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, "SKILL.md"), "Read companion.md");
-      await writeFile(join(directory, "companion.md"), name);
+      if (name === "tool-design" && slug === "collide") {
+        await writeFile(join(root, "bundle", "reference.md"), name);
+        await symlink("../../reference.md", join(directory, "companion.md"));
+      } else await writeFile(join(directory, "companion.md"), name);
     }
     await writeFile(
       join(root, "maister-package.yaml"),
@@ -2326,6 +2338,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
       workspaceRoot,
       db,
     });
+
     releases[name] = install.id;
     attachments[name] = attached!.attachmentId;
   }
@@ -2353,6 +2366,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
   }))!;
   const build = resolvePackageSession(delivery, "build"),
     sketch = resolvePackageSession(delivery, "sketch");
+
   expect(build.mcps).toEqual(["tool-core-mcp", "tool-dev-mcp"]);
   expect(sketch.mcps).toEqual(["tool-core-mcp", "tool-design-mcp"]);
   expect(
@@ -2363,6 +2377,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
   );
   const cwd = await mkdtemp(join(workspaceRoot, "delivery-run-"));
   const runId = randomUUID();
+
   await materializeProjectBundlesIntoWorktree({
     db,
     runId,
@@ -2394,6 +2409,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     "collide",
   );
   const root = join(cwd, ".maister", "capabilities", runId);
+
   expect(
     await readFile(
       join(root, "attempt-a", "package-skills", "collide", "companion.md"),
@@ -2430,11 +2446,13 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     required: ["tool-design-mcp"],
     bindings: [],
   };
+
   expect((await resolveCurrentPackageSessionCatalog(db, action)).mcps).toEqual(
     sketch.mcps,
   );
   const designRoot = sources["tool-design"]!;
   const manifestPath = join(designRoot, "maister-package.yaml");
+
   await writeFile(
     manifestPath,
     (await readFile(manifestPath, "utf8")).replace(
@@ -2452,6 +2470,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     trustStatus: "trusted_by_policy",
     db,
   });
+
   await upgradeAttachment({
     projectId,
     projectSlug: "delivery",
@@ -2461,6 +2480,7 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
     db,
   });
   const afterAdoption = await resolveCurrentPackageSessionCatalog(db, action);
+
   expect(
     afterAdoption.catalog.find((c) => c.capabilityRefId === "tool-design-mcp")
       ?.material.url,
@@ -2517,6 +2537,30 @@ it("IT-CAP-03/04 captures attached packages and prepares different bound, unboun
       skills: build.skills,
     }),
   ).rejects.toThrow("Pinned skill bytes changed");
+  const [activeBundle] = await db
+    .select({ root: schema.capabilityImports.installedPath })
+    .from(schema.capabilityImports)
+    .where(eq(schema.capabilityImports.packageInstallId, upgraded.id));
+  const companion = join(
+    activeBundle!.root,
+    "skills",
+    "collide",
+    "companion.md",
+  );
+  const captureCurrent = () =>
+    capturePackageDelivery(db, {
+      projectId,
+      flowPackageInstallId: upgraded.id,
+      flowManifest: graph,
+      nonPackageMcpRefs: [],
+    });
+
+  await rm(companion);
+  await symlink(designRoot, companion);
+  await expect(captureCurrent()).rejects.toThrow("outside its pin");
+  await rm(companion);
+  await symlink(".", companion);
+  await expect(captureCurrent()).rejects.toThrow("directory cycle");
   await expect(stat(join(cwd, ".claude", "skills"))).rejects.toMatchObject({
     code: "ENOENT",
   });

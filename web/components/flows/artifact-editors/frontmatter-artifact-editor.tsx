@@ -503,7 +503,6 @@ export function FrontmatterArtifactEditor({
           />
         ) : (
           <SkillAgentFields
-            packageChoices={packageChoices}
             editAgentKind={(next) => {
               let updated = applyFrontmatterFieldEdit(
                 content,
@@ -559,6 +558,7 @@ export function FrontmatterArtifactEditor({
             fm={fm}
             kind={kind}
             labels={labels}
+            packageChoices={packageChoices}
             readOnly={readOnly}
           />
         )}
@@ -615,6 +615,7 @@ function SkillAgentFields({
   ): void => {
     if (!profile.success) return;
     const next = { ...profile.data, [field]: values };
+
     if (!values) delete next[field];
     editField("capability_profile", next);
     setPickerRevision((revision) => revision + 1);
@@ -796,8 +797,8 @@ function SkillAgentFields({
             <fieldset className="grid gap-2" disabled={readOnly}>
               <label className={labelClass}>
                 <input
-                  type="checkbox"
                   checked={profile.data.skills === undefined}
+                  type="checkbox"
                   onChange={(event) =>
                     editSelection(
                       "skills",
@@ -811,16 +812,16 @@ function SkillAgentFields({
                 <MultiSelectField
                   label={labels.agentProfileSkills}
                   options={packageChoices.skills}
-                  values={profile.data.skills}
                   readOnly={readOnly}
+                  values={profile.data.skills}
                   onValues={(values) => editSelection("skills", values)}
                 />
               )}
               <MultiSelectField
                 label={labels.agentProfileMcps}
                 options={packageChoices.mcps}
-                values={profile.data.mcps ?? []}
                 readOnly={readOnly}
+                values={profile.data.mcps ?? []}
                 onValues={(values) => editSelection("mcps", values)}
               />
             </fieldset>

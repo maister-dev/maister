@@ -106,10 +106,24 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       [["assignedTlsDispatcher", "node:fs.readFileSync", "read"]],
     ),
     ...classified(
+      "lib/local-packages/sync.ts",
+      "repository-worktree",
+      "Validate the merged draft declarations before advancing the upstream package revision.",
+      [
+        [
+          "deliveryMergeConflict",
+          "lib/packages/manifest.ts#loadMaisterPackageManifest",
+          "wrapper",
+        ],
+      ],
+    ),
+    ...classified(
       "../runtime/package-skill-tree.ts",
       "repository-worktree",
       "Digest the selected skill tree under the prepared package or session view.",
       [
+        ["confinedPackageSkillPath", "node:fs/promises.realpath", "stat"],
+        ["packageSkillSourceDigest", "node:fs/promises.realpath", "stat"],
         ["visit", "node:fs/promises.lstat", "stat"],
         ["visit", "node:fs/promises.readFile", "read"],
         ["visit", "node:fs/promises.readdir", "list"],
@@ -121,7 +135,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "Inspect the declared skill and MCP references in a local package before cutting the revision.",
       [
         ["assertPackageOperationalContracts", "node:fs/promises.lstat", "stat"],
-        ["assertPackageOperationalContracts", "node:fs/promises.readFile", "read"],
+        [
+          "assertPackageOperationalContracts",
+          "node:fs/promises.readFile",
+          "read",
+        ],
       ],
     ),
     ...classified(
@@ -129,7 +147,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Read the adopted package roots to pin the skill inventory at admission.",
       [
-        ["capturePackageDelivery", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        [
+          "capturePackageDelivery",
+          "../runtime/package-skill-tree.ts#packageSkillSourceDigest",
+          "wrapper",
+        ],
         ["capturePackageDelivery", "node:fs/promises.lstat", "stat"],
         ["capturePackageDelivery", "node:fs/promises.readdir", "list"],
       ],
@@ -139,7 +161,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Stage immutable inputs from attached packages for the Run checkout.",
       [
-        ["materializeBundleSet", "lib/capabilities/package-skills.ts#stagePackageSkillInputs", "wrapper"],
+        [
+          "materializeBundleSet",
+          "lib/capabilities/package-skills.ts#stagePackageSkillInputs",
+          "wrapper",
+        ],
       ],
     ),
     ...classified(
@@ -147,7 +173,11 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Write the effective capability profile into the owned Run or attempt workspace.",
       [
-        ["materializeCapabilityProfile", "lib/atomic.ts#atomicWriteJson", "wrapper"],
+        [
+          "materializeCapabilityProfile",
+          "lib/atomic.ts#atomicWriteJson",
+          "wrapper",
+        ],
       ],
     ),
     ...classified(
@@ -155,14 +185,28 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Copy and verify pinned package members under the selected checkout and publish the session discovery tree.",
       [
-        ["<object>.filter", "node:fs/promises.realpath", "stat"],
+        [
+          "<object>.filter",
+          "../runtime/package-skill-tree.ts#confinedPackageSkillPath",
+          "wrapper",
+        ],
+        ["stagePackageSkillInputs", "node:fs/promises.realpath", "stat"],
         ["<object>.materialize", "node:fs/promises.mkdtemp", "write"],
         ["<object>.materialize", "node:fs/promises.rename", "write"],
         ["<object>.materialize", "node:fs/promises.rm", "remove"],
-        ["materializePackageSessionSkills", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        [
+          "materializePackageSessionSkills",
+          "../runtime/package-skill-tree.ts#packageSkillTreeDigest",
+          "wrapper",
+        ],
         ["materializePackageSessionSkills", "node:fs/promises.cp", "write"],
+        ["materializePackageSessionSkills", "node:fs/promises.readdir", "list"],
         ["stagePackageSkillInputs", "node:fs/promises.cp", "write"],
-        ["witnessPackageSkillView", "../runtime/package-skill-tree.ts#packageSkillTreeDigest", "wrapper"],
+        [
+          "witnessPackageSkillView",
+          "../runtime/package-skill-tree.ts#packageSkillTreeDigest",
+          "wrapper",
+        ],
         ["witnessPackageSkillView", "node:fs/promises.readFile", "read"],
       ],
     ),
@@ -171,8 +215,16 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "repository-worktree",
       "Prepare the selected skill view for the current Run and node attempt.",
       [
-        ["materializeNodeCapabilities", "lib/capabilities/package-skills.ts#materializePackageSessionSkills", "wrapper"],
-        ["materializeNodeCapabilities", "lib/capabilities/package-skills.ts#witnessPackageSkillView", "wrapper"],
+        [
+          "materializeNodeCapabilities",
+          "lib/capabilities/package-skills.ts#materializePackageSessionSkills",
+          "wrapper",
+        ],
+        [
+          "materializeNodeCapabilities",
+          "lib/capabilities/package-skills.ts#witnessPackageSkillView",
+          "wrapper",
+        ],
       ],
     ),
     ...classified(
@@ -187,11 +239,19 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["previewCatalogImport", "node:fs/promises.mkdir", "write"],
         ["previewCatalogImport", "node:fs/promises.readdir", "list"],
         ["previewCatalogImport", "node:fs/promises.rm", "remove"],
-        ["readDraft", "lib/local-packages/paths.ts#resolveWithinWorkingDir", "wrapper"],
+        [
+          "readDraft",
+          "lib/local-packages/paths.ts#resolveWithinWorkingDir",
+          "wrapper",
+        ],
         ["readDraft", "node:fs/promises.lstat", "stat"],
         ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteJson", "wrapper"],
         ["reconcileCatalogApply", "lib/atomic.ts#atomicWriteText", "wrapper"],
-        ["reconcileCatalogApply", "lib/local-packages/paths.ts#resolveWithinWorkingDir", "wrapper"],
+        [
+          "reconcileCatalogApply",
+          "lib/local-packages/paths.ts#resolveWithinWorkingDir",
+          "wrapper",
+        ],
         ["reconcileCatalogApply", "node:fs/promises.rm", "remove"],
         ["walk", "node:fs.createReadStream", "read"],
         ["walk", "node:fs/promises.readdir", "list"],
@@ -3247,27 +3307,38 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
   ];
 
 export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
-  ...wrappers("lib/execution-host/remote-tls.ts", "manager-flow-state", [["assignedTlsDispatcher", false]]),
+  ...wrappers("lib/execution-host/remote-tls.ts", "manager-flow-state", [
+    ["assignedTlsDispatcher", false],
+  ]),
   ...wrappers("../runtime/package-skill-tree.ts", "repository-worktree", [
+    ["confinedPackageSkillPath", true],
+    ["packageSkillSourceDigest", true],
     ["packageSkillTreeDigest", true],
   ]),
   ...wrappers("lib/agents/effective.ts", "repository-worktree", [
     ["resolveCapturedProjectAgentDefinition", false],
   ]),
-  ...wrappers("lib/capabilities/capture-package-delivery.ts", "repository-worktree", [
-    ["capturePackageDelivery", false],
-  ]),
+  ...wrappers(
+    "lib/capabilities/capture-package-delivery.ts",
+    "repository-worktree",
+    [["capturePackageDelivery", false]],
+  ),
   ...wrappers("lib/capabilities/package-skills.ts", "repository-worktree", [
     ["materializePackageSessionSkills", true],
     ["stagePackageSkillInputs", true],
     ["witnessPackageSkillView", true],
   ]),
-  ...wrappers("lib/local-packages/catalog-operation.ts", "repository-worktree", [
-    ["applyCatalogPreview", false],
-    ["previewCatalogImport", false],
-    ["readCatalogOperation", false],
-    ["reconcileCatalogApply", false],
-  ]),
+  ...wrappers(
+    "lib/local-packages/catalog-operation.ts",
+    "repository-worktree",
+    [
+      ["applyCatalogPreview", false],
+      ["previewCatalogImport", false],
+      ["readCatalogOperation", false],
+      ["readCatalogRequestReceipt", false],
+      ["reconcileCatalogApply", false],
+    ],
+  ),
   ...wrappers("lib/db/canonical-sql.ts", "build-tooling", [
     ["readCommittedCanonicalSql", false],
   ]),

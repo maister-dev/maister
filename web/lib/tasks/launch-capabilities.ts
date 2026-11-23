@@ -143,6 +143,7 @@ export async function resolveTaskLaunchCapabilities(
           )
           .map((r) => r.capabilityRefId),
       });
+
   return {
     resolvedCapabilitySet: {
       ...buildResolvedCapabilitySet({

@@ -259,9 +259,12 @@ describe("FrontmatterArtifactEditor recommended.mention round-trip", () => {
       const element = Array.from(node.querySelectorAll("label"))
         .find((l) => l.textContent?.trim() === name)
         ?.querySelector("input");
+
       if (!element) throw new Error("Missing package picker option " + name);
+
       return element;
     };
+
     expect(check("Use all package skills").checked).toBe(true);
     act(() => check("Use all package skills").click());
     expect(
@@ -273,10 +276,12 @@ describe("FrontmatterArtifactEditor recommended.mention round-trip", () => {
       "test:reviewer",
       read(),
     ).capabilityProfile;
+
     expect(profile).toEqual({ skills: ["design"], mcps: ["github", "figma"] });
     const raw = node.querySelector<HTMLTextAreaElement>(
       '[data-testid="agent-capability-profile"]',
     )!;
+
     expect(raw.value).toContain("design");
     act(() => check("Use all package skills").click());
     expect(

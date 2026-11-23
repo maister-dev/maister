@@ -341,6 +341,7 @@ export function McpPanel({
                 value={row.origin === "override" ? row.effective : "inherit"}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
+
                   act("scope:" + row.refId, () =>
                     fetch(
                       `/api/projects/${encodeURIComponent(slug)}/packages/${encodeURIComponent(row.attachmentId)}/mcps/${encodeURIComponent(row.refId)}/scope`,

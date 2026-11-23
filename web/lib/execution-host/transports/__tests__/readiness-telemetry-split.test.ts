@@ -67,6 +67,7 @@ describe("readiness is decoupled from stream telemetry", () => {
 
   it("isolates the supervisor endpoint for concurrent assignment probes", async () => {
     const urls = supervisorWhoseTelemetryIsBroken();
+
     await Promise.all([
       createLocalDirectTransport({
         endpoint: "http://127.0.0.1:17771",

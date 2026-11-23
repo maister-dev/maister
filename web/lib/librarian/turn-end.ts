@@ -110,6 +110,7 @@ export async function finishLibrarianTurnInTransaction(
       .select({ id: runs.executionAssignmentId })
       .from(runs)
       .where(eq(runs.id, locked.conversation.runId ?? ""));
+
     if ((current?.id ?? null) !== input.assignmentId) return null;
   }
   let end = input.end;
@@ -132,14 +133,17 @@ export async function finishLibrarianTurnInTransaction(
     end.status === "completed" && locked.conversation.resetState === "none"
       ? await checkpointPrivateQuestions(tx, turn.id)
       : await closeUndeliveredQuestions(tx, turn.id);
+
   if (question) {
     const runId = locked.conversation.runId;
+
     if (!runId)
       throw new MaisterError(
         "CONFLICT",
         "Private question lost its owning Run",
       );
     const park = await applyLibrarianPark(tx, runId);
+
     if (!park.parked)
       throw new MaisterError(
         "CONFLICT",
@@ -159,6 +163,7 @@ export async function finishLibrarianTurnInTransaction(
       sourceProjectIds: await turnSourceProjectIds(tx, turn.id),
     });
     await revokeLibrarianTurnToken(turn.id, tx);
+
     return {
       turnId: turn.id,
       runId,

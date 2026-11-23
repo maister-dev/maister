@@ -373,6 +373,7 @@ export async function librarianMessageDtos(
     const projectKey = task ? keyByProjectId.get(task.projectId) : null;
 
     const card = row.cardId ? byCardId.get(row.cardId) : null;
+
     return librarianMessageDto(row, {
       masked,
       card:

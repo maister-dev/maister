@@ -1,10 +1,5 @@
 "use client";
 
-import {
-  packageProfileChoices,
-  type AgentPackageChoices,
-} from "@/lib/agents/package-profile-choices";
-
 import type {
   AuthoredFlowPackageFile,
   AuthoredFlowPackageFileKind,
@@ -20,6 +15,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeEditor } from "./code-editor";
 
+import {
+  packageProfileChoices,
+  type AgentPackageChoices,
+} from "@/lib/agents/package-profile-choices";
 import {
   type FrontmatterArtifactEditorLabels,
   FrontmatterArtifactEditor,
@@ -220,12 +219,12 @@ export function PackageFilesEditor({
           <div className="rounded-lg border border-line bg-ivory p-3">
             {selectedFile ? (
               <SelectedFileEditor
-                packageChoices={packageProfileChoices(effectiveFiles)}
                 disabled={disabled}
                 file={selectedFile}
                 kindLabels={kindLabels}
                 labels={labels}
                 mcpCatalog={mcpCatalog}
+                packageChoices={packageProfileChoices(effectiveFiles)}
                 onChangeContent={(next) =>
                   updateFiles(
                     replacePackageFileContent(
@@ -388,13 +387,13 @@ function SelectedFileEditor({
           {labels.content}
         </span>
         <ContentEditor
-          packageChoices={packageChoices}
           key={file.path}
           disabled={disabled}
           file={file}
           inferredKind={inferredKind}
           labels={labels}
           mcpCatalog={mcpCatalog}
+          packageChoices={packageChoices}
           onChangeContent={onChangeContent}
         />
       </div>
@@ -451,10 +450,10 @@ export function ContentEditor({
   ) {
     return (
       <FrontmatterArtifactEditor
-        packageChoices={packageChoices}
         content={file.content}
         kind={inferredKind}
         labels={labels.frontmatter}
+        packageChoices={packageChoices}
         readOnly={disabled}
         onChange={onChangeContent}
       />

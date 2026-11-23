@@ -1138,13 +1138,16 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
       );
     const before = await projectWorkCounts();
     const { turn } = await send(ownerId, "Design a second journey");
+
     await gate.entered;
     let questionId: string;
+
     try {
       const [current] = await db
         .select()
         .from(librarianTurns)
         .where(eq(librarianTurns.id, turn!.id));
+
       ({ questionId } = await openPrivateQuestion(
         current.tokenId!,
         {
@@ -1198,6 +1201,7 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
         ],
       },
     };
+
     await gate.entered;
     const [original] = rows<{ assignment_id: string }>(
       await db.execute(
@@ -1205,6 +1209,7 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
       ),
     );
     let id: string;
+
     try {
       const [turn] = await db
         .select()
@@ -1227,6 +1232,7 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
             body: JSON.stringify(body),
           }),
         );
+
       expect((await invoke("invalid", request)).status).toBe(401);
       expect((await invoke(token, { ...request, turnId })).status).toBe(422);
       expect(
@@ -1234,8 +1240,10 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
           .status,
       ).toBe(413);
       const response = await invoke(token, request);
+
       expect(response.status).toBe(202);
       const opened = await response.json();
+
       expect(opened.state).toBe("checkpoint_pending");
       id = opened.questionId;
       expect(
@@ -1276,6 +1284,7 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
       { page: "custom" },
       db as unknown as Db,
     );
+
     expect(accepted.state).toBe("accepted");
     expect(
       await answerPrivateQuestion(
@@ -1289,6 +1298,7 @@ describe("IT-ASK-02 private questions survive a suspended turn", () => {
       answerPrivateQuestion(owner, id, { page: "other" }, db as unknown as Db),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     const resumed = gatedPrompt();
+
     await admitNextLibrarianTurn(sent.message.conversationId, {
       db: db as unknown as Db,
       start,

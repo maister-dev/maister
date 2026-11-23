@@ -1,9 +1,9 @@
 import "server-only";
 
-import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import { and, desc, eq, exists } from "drizzle-orm";
 import pino from "pino";
 
+import { sessionNameForPackageNode } from "@/lib/capabilities/package-delivery";
 import * as schemaModule from "@/lib/db/schema";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -71,6 +71,7 @@ export async function resolveNodeResumeSessionId(
   );
   const isolated =
     run?.snapshot?.delivery?.bindings?.[input.nodeId]?.mode === "session";
+
   if (isolated && !attemptRows[0]) return null;
   const sessionRows = await db
     .select({ acpSessionId: runSessions.acpSessionId })

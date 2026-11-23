@@ -178,6 +178,7 @@ export async function decideLibrarianCard(
   db: Db = getDb(),
 ): Promise<LibrarianOperationResult> {
   const card = await loadOwnedCard(input.cardId, input.user.id, db);
+
   if (card.kind === "question")
     throw new MaisterError(
       "CONFLICT",

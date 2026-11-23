@@ -1,5 +1,10 @@
 import "server-only";
 
+import type {
+  FlowDeliverySnapshot,
+  PackageSkillWitness,
+} from "./package-delivery";
+
 import {
   cp,
   lstat,
@@ -12,24 +17,22 @@ import {
   rm,
 } from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import pino from "pino";
+
+import {
+  confinedPackageSkillPath,
+  packageSkillTreeDigest,
+  type PackageSkillView,
+} from "../../../runtime/package-skill-tree";
 
 import {
   agentMaterializationPathsForRun,
   assertSafeAgentMaterializationPath,
   materializeWithAgentLease,
 } from "@/lib/agents/materialization-manifest";
-import {
-  packageSkillTreeDigest,
-  type PackageSkillView,
-} from "../../../runtime/package-skill-tree";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
-import type {
-  FlowDeliverySnapshot,
-  PackageSkillWitness,
-} from "./package-delivery";
-import { createHash } from "node:crypto";
 import { SLUG_PATTERN } from "@/lib/capabilities/token-normalizer";
 import { MaisterError } from "@/lib/errors";
 
@@ -228,6 +231,7 @@ async function publishSkillProjection(
         path.relative(cwd, path.dirname(root)),
       );
       const staged = await mkdtemp(root + ".staging-");
+
       try {
         await copy(staged);
         await rename(staged, root);
@@ -314,37 +318,30 @@ export function stagePackageSkillInputs(args: {
     async (root) => {
       for (const id of args.delivery.packages.flatMap((p) => p.bundleIds)) {
         const bundle = args.bundles.find((b) => b.id === id);
+
         if (!bundle)
           throw new MaisterError(
             "PRECONDITION",
             `Pinned capability bundle ${id} is unavailable`,
           );
         const source = path.join(bundle.installedPath, "skills");
+
         if (!(await entryStat(source))) continue;
+        const bundleRoot = await realpath(bundle.installedPath);
+
         await cp(source, path.join(root, bundleKey(id)), {
           recursive: true,
           dereference: true,
           filter: async (file) => {
-            const target = await realpath(file);
-            const relative = path.relative(
-              await realpath(bundle.installedPath),
-              target,
-            );
-            if (
-              relative === ".." ||
-              relative.startsWith(".." + path.sep) ||
-              path.isAbsolute(relative)
-            )
-              throw new MaisterError(
-                "CONFIG",
-                "Package skill companion resolves outside its pin",
-              );
+            const target = await confinedPackageSkillPath(bundleRoot, file);
             const stat = await lstat(target);
+
             if (!stat.isFile() && !stat.isDirectory())
               throw new MaisterError(
                 "CONFIG",
                 "Package skill companion must be a regular file or directory",
               );
+
             return true;
           },
         });
@@ -374,6 +371,7 @@ export async function materializePackageSessionSkills(args: {
           (p) => p.installId === skill.installId,
         );
         const matches: string[] = [];
+
         for (const bundle of pin?.bundleIds ?? []) {
           const candidate = path.join(
             capabilityMaterializationRootPath(args.cwd, args.runId),
@@ -381,6 +379,7 @@ export async function materializePackageSessionSkills(args: {
             bundleKey(bundle),
             skill.slug,
           );
+
           if ((await entryStat(path.join(candidate, "SKILL.md")))?.isFile())
             matches.push(candidate);
         }
@@ -397,11 +396,13 @@ export async function materializePackageSessionSkills(args: {
           recursive: true,
           filter: async (file) => {
             const stat = await lstat(file);
+
             if (!stat.isFile() && !stat.isDirectory())
               throw new MaisterError(
                 "PRECONDITION",
                 "Pinned skill contains a replaced path",
               );
+
             return true;
           },
         });
@@ -414,6 +415,7 @@ export async function materializePackageSessionSkills(args: {
     "package-skills",
   );
   const names = (await readdir(root)).sort();
+
   if (
     JSON.stringify(names) !==
     JSON.stringify(args.skills.map((s) => s.slug).sort())
@@ -432,6 +434,7 @@ export async function materializePackageSessionSkills(args: {
         "PRECONDITION",
         `Pinned skill bytes changed: ${skill.packageName}:${skill.slug}`,
       );
+
   return paths;
 }
 

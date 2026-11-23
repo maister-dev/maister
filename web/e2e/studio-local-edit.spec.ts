@@ -995,6 +995,7 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
     .getByRole("checkbox", { name: "Share this MCP across project sessions" })
     .check();
   const saveMcp = page.getByTestId("composition-inline-save-top");
+
   await saveMcp.click();
   await expect(saveMcp).toBeDisabled();
   await page.getByTestId("local-editor-end-edit").click();

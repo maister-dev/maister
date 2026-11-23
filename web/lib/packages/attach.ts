@@ -1,5 +1,4 @@
 import "server-only";
-import { ATTACHMENT_ORIGIN, packageMcpMaterial } from "./mcp-material";
 
 import type { Db } from "@/lib/execution-host/db";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
@@ -20,6 +19,8 @@ import {
   publishMaterial,
 } from "@/lib/project-dependencies/material";
 import { materialLayoutDigest } from "@/lib/project-dependencies/content-digest";
+import { ATTACHMENT_ORIGIN, packageMcpMaterial } from "./mcp-material";
+
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
@@ -2036,6 +2037,7 @@ export async function workerUpgradeAttachment(
     await deleteMemberEnablements(tx, removedFlowIds);
 
     const survivingMcpRefs = manifestOf(next).spec.mcps.map((mcp) => mcp.id);
+
     await tx
       .delete(projectPackageMcpScopeOverrides)
       .where(

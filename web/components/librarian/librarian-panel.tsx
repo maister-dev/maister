@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactElement } from "react";
-import { LibrarianQuestion } from "./librarian-question";
 import type { TranscriptMessage } from "@/components/run-transcript/transcript-view";
 import type { LibrarianPanelMode } from "@/components/librarian/panel-mode";
 import type { LibrarianSubject } from "@/lib/librarian/types";
@@ -29,6 +28,8 @@ import clsx from "clsx";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { LibrarianQuestion } from "./librarian-question";
 
 import { useLibrarian } from "@/components/librarian/librarian-provider";
 import { ConfirmDialog } from "@/components/feedback/confirm-dialog";
@@ -893,6 +894,7 @@ function LibrarianPanelBody(): ReactElement {
                 }}
                 renderCustomMessage={(messageId) => {
                   const question = questions.get(messageId);
+
                   if (question)
                     return (
                       <LibrarianQuestion

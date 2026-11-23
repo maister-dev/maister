@@ -48,7 +48,9 @@ export function sessionNameForPackageNode(
   declaredName: string,
 ): string {
   const bound = delivery?.bindings[nodeId];
+
   if (bound?.mode !== "session") return declaredName;
+
   return (
     "bound-" +
     createHash("sha256")
@@ -74,10 +76,12 @@ export function resolvePackageSession(
   >();
   const sharedMcps = new Set<string>();
   const localMcps = new Set<string>(delivery.nonPackageMcpRefs);
+
   for (const pkg of delivery.packages) {
     const agentOwner = pkg.installId === bound?.installId;
     const flowOwner = pkg.name === delivery.flowPackageName;
     const rank = agentOwner ? 3 : flowOwner ? 2 : pkg.shareSkills ? 1 : 0;
+
     for (const ref of pkg.mcps) {
       if (ref.effective === "project") sharedMcps.add(ref.refId);
       if (!bound && flowOwner) localMcps.add(ref.refId);
@@ -87,6 +91,7 @@ export function resolvePackageSession(
       ? bound.skills
       : pkg.skills) {
       const existing = skills.get(slug);
+
       if (!existing || existing.rank < rank)
         skills.set(slug, { rank, pins: [pkg] });
       else if (existing.rank === rank) existing.pins.push(pkg);
@@ -103,6 +108,7 @@ export function resolvePackageSession(
           .join(", ")}`,
       );
     const pin = pins[0]!;
+
     return {
       slug,
       packageName: pin.name,
@@ -111,6 +117,7 @@ export function resolvePackageSession(
       ...(pin.skillDigests?.[slug] ? { digest: pin.skillDigests[slug] } : {}),
     };
   }).sort((a, b) => a.slug.localeCompare(b.slug));
+
   return {
     skills: selected,
     mcps: [...new Set([...(nodeMcps ?? localMcps), ...sharedMcps])].sort(),
@@ -131,6 +138,7 @@ export function assertPrivateBoundSessionNames(
     const sibling = nodes.find(
       (other) => other.id !== node.id && other.session === node.session,
     );
+
     if (sibling)
       throw new MaisterError(
         "CONFIG",
@@ -143,5 +151,6 @@ export function publicCapabilitySet<
   T extends { delivery?: FlowDeliverySnapshot },
 >(snapshot: T): Omit<T, "delivery"> {
   const { delivery: _delivery, ...visible } = snapshot;
+
   return visible;
 }

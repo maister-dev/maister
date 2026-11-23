@@ -176,6 +176,7 @@ export async function answerPrivateQuestion(
         details: { reason: "not_found" },
       });
     const sourceProjectIds = await turnSourceProjectIds(tx, turn.id);
+
     await recheckLibrarianProjects(
       tx,
       ownerId,

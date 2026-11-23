@@ -1,3 +1,5 @@
+import type { WorkspaceResolution } from "./workspace-registry";
+
 import { createHash } from "node:crypto";
 import {
   cp,
@@ -15,8 +17,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { packageSkillTreeDigest } from "../../runtime/package-skill-tree";
+
 import { SupervisorError, type StartSessionRequest } from "./types";
-import type { WorkspaceResolution } from "./workspace-registry";
 
 const adapters = {
   claude: {
@@ -53,11 +55,13 @@ const adapters = {
 
 async function verifiedSettings(file: string, digest: string): Promise<Buffer> {
   const bytes = await readFile(file);
+
   if (createHash("sha256").update(bytes).digest("hex") !== digest)
     throw new SupervisorError(
       "PRECONDITION",
       "The pinned agent adapter settings changed",
     );
+
   return bytes;
 }
 
@@ -67,6 +71,7 @@ export async function preparePackageSkillHome(
   workspace: WorkspaceResolution,
 ): Promise<Record<string, string>> {
   const view = request.packageSkillView;
+
   if (!view) return {};
   if (
     !request.nodeAttemptId ||
@@ -78,6 +83,7 @@ export async function preparePackageSkillHome(
       "Package skill discovery requires an exact Run and attempt",
     );
   const adapter = adapters[request.executor.agent];
+
   if (!adapter)
     throw new SupervisorError(
       "PRECONDITION",
@@ -91,6 +97,7 @@ export async function preparePackageSkillHome(
     workspace.runId,
     request.nodeAttemptId,
   );
+
   if ((await realpath(source)) !== source)
     throw new SupervisorError(
       "PRECONDITION",
@@ -109,10 +116,12 @@ export async function preparePackageSkillHome(
     )
     .digest("hex");
   const parent = path.join(await realpath(workspace.runDir), "adapter-homes");
+
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const home = path.join(parent, logicalOwner);
   const config = path.join(home, adapter.suffix);
   const target = path.join(config, "skills");
+
   try {
     await lstat(home);
     if (
@@ -128,13 +137,16 @@ export async function preparePackageSkillHome(
         path.join(config, "settings.json"),
         view.settingsDigest,
       );
+
     return { [adapter.key]: home };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const staged = await mkdtemp(path.join(parent, ".prepare-"));
+
   try {
     const stagedConfig = path.join(staged, adapter.suffix);
+
     await mkdir(stagedConfig, { recursive: true, mode: 0o700 });
     await cp(
       path.join(source, "package-skills"),
@@ -152,8 +164,10 @@ export async function preparePackageSkillHome(
     const globalHome = process.env[adapter.key]
       ? path.join(process.env[adapter.key]!, adapter.suffix)
       : path.join(homedir(), adapter.global);
+
     for (const file of adapter.credentials) {
       const original = path.join(globalHome, file);
+
       try {
         await lstat(original);
       } catch (error) {
@@ -181,5 +195,6 @@ export async function preparePackageSkillHome(
   } finally {
     await rm(staged, { recursive: true, force: true });
   }
+
   return { [adapter.key]: home };
 }

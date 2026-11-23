@@ -48,8 +48,12 @@ describe("scaffoldArtifact (ADR-116 P5)", () => {
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    expect(find(res.files, "capability/skills/arch/SKILL.md")).toContain("name: arch");
-    expect(find(res.files, "maister-package.yaml")).toContain("path: capability");
+    expect(find(res.files, "capability/skills/arch/SKILL.md")).toContain(
+      "name: arch",
+    );
+    expect(find(res.files, "maister-package.yaml")).toContain(
+      "path: capability",
+    );
     expect(res.navigate).toBe("/studio/edit/pkg1/skills/arch");
   });
 

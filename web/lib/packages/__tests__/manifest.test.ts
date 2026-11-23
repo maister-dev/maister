@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -44,6 +44,34 @@ restrictions:
 `;
 
 describe("loadMaisterPackageManifest", () => {
+  it("refuses missing declared agent refs at cut and names incompatible shared sessions", async () => {
+    const root = await packageRoot(
+      "schemaVersion: 1\nname: pack\ndelivery: {version: 1}\nflows: [{id: draw, path: flow}]\ncapabilities: [{id: library,path: bundle}]\nmcps: [{id: drawing}]\n",
+    );
+
+    await mkdir(join(root, "maister-agents"));
+    await mkdir(join(root, "flow"));
+    const role = join(root, "maister-agents", "artist.md");
+    const definition = (profile: string) =>
+      `---\nname: artist\ndescription: Art\nworkspace: repo_read\nworkspace_ref: trigger\nmode: session\ntriggers: [flow]\nrisk_tier: read_only\ncapability_profile: ${profile}\n---\nDraw`;
+
+    await writeFile(role, definition("{mcps: [unbound]}"));
+    await expect(loadMaisterPackageManifest(root)).rejects.toThrow(
+      /undeclared package MCP unbound/,
+    );
+    await writeFile(role, definition("{skills: [missing]}"));
+    await expect(loadMaisterPackageManifest(root)).rejects.toThrow(
+      /packaged skill: missing/,
+    );
+    await writeFile(role, definition("{skills: []}"));
+    await writeFile(
+      join(root, "flow", "flow.yaml"),
+      "nodes: [{id: sketch,session: main,settings: {agent: 'pack:artist'}},{id: build,session: main}]",
+    );
+    await expect(loadMaisterPackageManifest(root)).rejects.toThrow(
+      /sketch.*main.*build/,
+    );
+  });
   it("preserves the delivery version that distinguishes private and legacy MCP defaults", async () => {
     const root = await packageRoot(
       VALID.replace("name: aif", "name: aif\ndelivery: { version: 1 }").replace(

@@ -17,6 +17,7 @@ beforeAll(async () => {
     baseline,
   );
   const project = await seedProjectRow(database.db);
+
   await database.pool.query(
     "INSERT INTO package_installs(id,source_url,name,version_label,resolved_revision,manifest,manifest_digest,installed_path) VALUES('base','fixture','core','v1','pin','{}','digest','/fixture')",
   );
@@ -33,6 +34,7 @@ afterAll(async () => {
 it("preserves populated attachment pins and enforces sparse scoped override integrity on migration replay", async () => {
   await migrate(database.db, { migrationsFolder: "./lib/db/migrations" });
   const { pool } = database;
+
   expect(
     (
       await pool.query(
@@ -49,6 +51,7 @@ it("preserves populated attachment pins and enforces sparse scoped override inte
       "INSERT INTO project_package_mcp_scope_overrides(attachment_id,ref_id,scope) VALUES($1,'figma',$2)",
       [attachment, scope],
     );
+
   await expect(insert("absent", "package")).rejects.toMatchObject({
     code: "23503",
   });

@@ -1,18 +1,21 @@
+import type { AddressInfo } from "node:net";
+
 import { createServer } from "node:http";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { expect, it } from "vitest";
 
 import { packageSkillTreeDigest } from "../../../runtime/package-skill-tree";
+
 import {
   adoptDirectory,
   bootHost,
@@ -36,12 +39,14 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
   const endpoint = createServer(async (req, res) => {
     if (req.method !== "POST") {
       res.writeHead(405).end();
+
       return;
     }
     const server = new Server(
       { name: "package-witness", version: "1" },
       { capabilities: { tools: {} } },
     );
+
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
@@ -56,22 +61,26 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
     }));
     server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
       called.push(req.url + ":" + params.arguments?.value);
+
       return { content: [{ type: "text", text: "accepted" }] };
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
+
     await server.connect(transport);
     await transport.handleRequest(req, res);
     await server.close();
   });
+
   endpoint.listen(0, "127.0.0.1");
   await once(endpoint, "listening");
   try {
     const runId = "scoped-run",
       fence = fenceFor(host, runId);
     const cwd = path.join(root, "checkout");
+
     await adoptDirectory(host, fence, { dir: cwd });
     const inputs = await Promise.all(
       ["design", "build"].map(async (slug) => {
@@ -83,9 +92,11 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
           slug,
           "package-skills",
         );
+
         await mkdir(path.join(dir, slug), { recursive: true });
         await writeFile(path.join(dir, slug, "SKILL.md"), "Read companion.md");
         await writeFile(path.join(dir, slug, "companion.md"), slug);
+
         return {
           nodeAttemptId: slug,
           sessionName: "bound-" + slug,
@@ -106,6 +117,7 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
     const sessions = await Promise.all(
       inputs.map((input) => createSession(host, fence, input)),
     );
+
     expect(new Set(sessions.map((s) => s.acpSessionId)).size).toBe(2);
     expect(called.sort()).toEqual(["/build:build", "/design:design"]);
     const discoveries = (await readFile(log, "utf8"))
@@ -113,6 +125,7 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
       .split("\n")
       .map((line) => JSON.parse(line))
       .filter((entry) => entry.method === "native-discovery");
+
     expect(new Set(discoveries.map((d) => d.home)).size).toBe(2);
     expect(discoveries.map(({ skills, mcps }) => ({ skills, mcps }))).toEqual(
       expect.arrayContaining(
@@ -126,6 +139,7 @@ it("IT-CAP-04 sends distinct ACP IDs, progressive discovery companions and selec
       ...inputs[0],
       resumeSessionId: sessions[0]!.acpSessionId,
     });
+
     expect(resumed.acpSessionId).toBe(sessions[0]!.acpSessionId);
   } finally {
     await host.stop();

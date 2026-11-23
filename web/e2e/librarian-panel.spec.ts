@@ -286,6 +286,7 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
 }) => {
   await page.goto("/inbox");
   const res = await page.request.get("/api/librarian/conversation");
+
   expect(res.ok()).toBe(true);
   const { conversation, segment } = (await res.json()) as {
     conversation: { id: string };
@@ -294,6 +295,7 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
   const cardId = randomUUID(),
     turnId = randomUUID(),
     messageId = randomUUID();
+
   await withE2EDb(async (pool) => {
     await pool.query(
       `WITH t AS (
@@ -336,10 +338,12 @@ test("E2E-ASK-02 owner answers a private question from the transcript with the k
     const question = page
       .getByTestId("librarian-private-question")
       .filter({ hasText: "Which customer journey?" });
+
     await expect(question).toBeVisible();
     await question.getByRole("button", { name: "Checkout" }).focus();
     await page.keyboard.press("Enter");
     const input = question.getByRole("textbox", { name: /Journey/ });
+
     await expect(input).toHaveValue("Checkout");
     await input.fill("Custom mobile checkout");
     await question.getByRole("button", { name: "Send answer" }).focus();

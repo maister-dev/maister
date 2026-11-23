@@ -1624,9 +1624,11 @@ test("E2E-ASK-02 private MCP question resumes the same conversation after a supe
   const title = `Which journey ${key.slice(0, 8)}?`;
   const answer = "Custom mobile checkout";
   const expectedReply = `Journey continued ${key.slice(0, 8)}`;
+
   await page.goto("/");
   await page.getByTestId("librarian-trigger").click();
   const composer = page.getByTestId("librarian-composer");
+
   await composer.fill(
     scriptedTurn({
       calls: [
@@ -1657,18 +1659,21 @@ test("E2E-ASK-02 private MCP question resumes the same conversation after a supe
   const card = page
     .getByTestId("librarian-private-question")
     .filter({ hasText: title });
+
   await expect(card).toBeVisible({ timeout: 90_000 });
   await restartProcesses();
   await page.reload();
   await page.getByTestId("librarian-trigger").click();
   await expect(card.getByRole("button", { name: "Cart" })).toBeEnabled();
   const other = await context.newPage();
+
   try {
     await other.goto("/inbox");
     await other.getByTestId("librarian-trigger").click();
     const second = other
       .getByTestId("librarian-private-question")
       .filter({ hasText: title });
+
     await expect(second).toBeVisible();
     const id = (await card.getAttribute("aria-labelledby"))!.slice(
       "private-question-".length,
@@ -1677,6 +1682,7 @@ test("E2E-ASK-02 private MCP question resumes the same conversation after a supe
     const invalid = await other.request.post(path, {
       data: { answer: { journey: 123 } },
     });
+
     expect(invalid.status()).toBe(422);
     await card.getByRole("textbox", { name: /Journey/ }).fill(answer);
     await card.getByRole("button", { name: "Send answer" }).press("Enter");
@@ -1684,10 +1690,12 @@ test("E2E-ASK-02 private MCP question resumes the same conversation after a supe
     const repeated = await other.request.post(path, {
       data: { answer: { journey: answer } },
     });
+
     expect([200, 202]).toContain(repeated.status());
     const conflict = await other.request.post(path, {
       data: { answer: { journey: "Other" } },
     });
+
     expect(conflict.status()).toBe(409);
     await expect(second).toContainText("Answer delivered", { timeout: 90_000 });
     await expect(
@@ -1705,6 +1713,7 @@ test("E2E-ASK-02 private MCP question resumes the same conversation after a supe
           )
         ).rows[0],
     );
+
     expect(state).toMatchObject({ status: "completed", replies: 1 });
     expect(state.question_delivered_at).toBeTruthy();
   } finally {

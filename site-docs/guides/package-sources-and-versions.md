@@ -288,6 +288,11 @@ publish again. Publishing never force-pushes.
 
 ## Failure signals
 
+- Skill preparation can fail on an older installed revision if a companion
+  file links to a checkout outside its capability bundle or the target has
+  disappeared. Include the companion in the bundle as a regular file, or use
+  a relative link to a file inside the same bundle. Cut and install a new
+  revision, adopt it in the project, and start a new Run.
 - Refresh degraded: MAIster shows the last snapshot. Check the URL, the host
   credentials, and that `packages/*` exists on the default branch.
 - Version not listed: the tag is missing on the remote or does not start with

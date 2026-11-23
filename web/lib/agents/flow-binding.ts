@@ -1,12 +1,13 @@
 import "server-only";
 
+import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
+
 import { readFile } from "node:fs/promises";
 
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { resolveInstalledAgentDefinition } from "./effective";
-import type { FlowDeliverySnapshot } from "@/lib/capabilities/package-delivery";
 import { resolveCompanyFlowPersona } from "./company-flow-persona";
 
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
@@ -151,6 +152,7 @@ export async function resolveFlowBoundAgent(args: {
           (b) => b.agentId === args.agentId,
         )
       : undefined;
+
   if (pin && projectId) {
     const [attached] = await _db
       .select({ id: schemaModule.projectPackageAttachments.id })
@@ -164,6 +166,7 @@ export async function resolveFlowBoundAgent(args: {
           ),
         ),
       );
+
     if (!attached)
       throw new MaisterError(
         "PRECONDITION",
@@ -179,6 +182,7 @@ export async function resolveFlowBoundAgent(args: {
             eq(agentProjectLinks.agentId, args.agentId),
           ),
         );
+
       if (!link?.enabled)
         throw new MaisterError(
           "PRECONDITION",
@@ -202,6 +206,7 @@ export async function resolveFlowBoundAgent(args: {
       _db,
     ));
   const parsed = effective.parsed;
+
   if (pin && pin.definitionDigest !== agentDefinitionSha256(parsed))
     throw new MaisterError(
       "PRECONDITION",

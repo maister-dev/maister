@@ -1,10 +1,15 @@
-import { createHash } from "node:crypto";
-import { z } from "zod";
-import { canonicalCommandJson } from "../../../runtime/command-json";
-import { capabilityRefIdSchema } from "@/lib/config.schema";
 import type { CapabilityCatalogRecord } from "./types";
 import type { McpConfigOverlay } from "@/lib/db/schema";
+
+import { createHash } from "node:crypto";
+
+import { z } from "zod";
+
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import { pickMcpWinner, type McpBindingInput } from "./resolver";
+
+import { capabilityRefIdSchema } from "@/lib/config.schema";
 
 export const mcpTargetSchema = z
   .object({
@@ -17,6 +22,15 @@ export const mcpTargetSchema = z
   .strict();
 
 export type AgentMcpTarget = z.infer<typeof mcpTargetSchema>;
+
+/** PostgreSQL JSONB omits absent optional descriptor and overlay fields. Both admission and dispatch hash that representation. */
+function definedOptions(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  );
+}
 
 /** Resolve the same logical target as materialization, retaining a digest instead of deployment configuration. */
 export function agentMcpTargets(
@@ -54,8 +68,8 @@ export function agentMcpTargets(
           materialSha256: createHash("sha256")
             .update(
               canonicalCommandJson({
-                material,
-                overlay: overlays.get(refId) ?? {},
+                material: definedOptions(material),
+                overlay: definedOptions(overlays.get(refId) ?? {}),
               }),
             )
             .digest("hex"),

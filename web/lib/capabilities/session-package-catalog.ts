@@ -1,18 +1,6 @@
 import "server-only";
 
 import type { AgentMcpTarget } from "./mcp-targets";
-import { agentMcpTargets } from "./mcp-targets";
-import {
-  loadProjectMcpBindings,
-  loadProjectMcpOverlays,
-} from "@/lib/mcp/binding-service";
-import { sql } from "drizzle-orm";
-
-import {
-  loadSelectableCapabilities,
-  pinCatalogToSnapshot,
-  type McpBindingInput,
-} from "./resolver";
 import type { CapabilityCatalogRecord } from "./types";
 import type {
   FlowDeliverySnapshot,
@@ -20,6 +8,20 @@ import type {
 } from "./package-delivery";
 import type { SqlTransaction } from "@/lib/db/sql-types";
 import type { ResolvedCapabilitySet } from "@/lib/db/schema";
+
+import { sql } from "drizzle-orm";
+
+import {
+  loadSelectableCapabilities,
+  pinCatalogToSnapshot,
+  type McpBindingInput,
+} from "./resolver";
+import { agentMcpTargets } from "./mcp-targets";
+
+import {
+  loadProjectMcpBindings,
+  loadProjectMcpOverlays,
+} from "@/lib/mcp/binding-service";
 import { packageManifestMcpSchema } from "@/lib/config.schema";
 import { packageMcpMaterial } from "@/lib/packages/mcp-material";
 import { MaisterError } from "@/lib/errors";
@@ -34,12 +36,8 @@ export async function captureSessionMcpTargets(
     loadProjectMcpBindings(projectId, db),
     loadProjectMcpOverlays(projectId, db),
   ]);
-  const records = catalog
-    .filter((r) => r.kind === "mcp")
-    .map((r) => {
-      const { readiness: _readiness, ...material } = r.material;
-      return { ...r, material };
-    });
+  const records = catalog.filter((r) => r.kind === "mcp");
+
   return agentMcpTargets(
     records.map((r) => r.capabilityRefId),
     records,
@@ -77,6 +75,7 @@ export async function resolveCurrentPackageSessionCatalog(
       JOIN project_package_attachments a ON a.package_name=i.name AND a.project_id=${input.projectId}
      WHERE i.id=ANY(${sql.param(retained.map((p) => p.installId))}::text[]) AND i.package_status='Installed'
   `);
+
   for (const skill of input.skills) {
     if (
       !skill.installId.startsWith("import:") &&
@@ -94,11 +93,14 @@ export async function resolveCurrentPackageSessionCatalog(
   const catalog: CapabilityCatalogRecord[] = live.filter(
     (r) => r.kind !== "mcp",
   );
+
   for (const record of live.filter((r) => r.kind === "mcp")) {
     const ref = record.capabilityRefId;
     const witness = snapshot.mcps.find((m) => m.refId === ref);
+
     if (!witness) continue;
     const binding = input.bindings.find((b) => b.refId === ref);
+
     if (binding && !binding.enabled) continue;
     if (
       witness.boundTarget &&
@@ -117,16 +119,19 @@ export async function resolveCurrentPackageSessionCatalog(
       continue;
     }
     const pkg = retained.find((p) => p.mcps.some((m) => m.refId === ref));
+
     if (!pkg) continue;
     const row = rows.find(
       (r) =>
         r.id === pkg.installId &&
         ["trusted", "trusted_by_policy"].includes(String(r.trust)),
     );
+
     if (!row || !Array.isArray(row.mcps)) continue;
     const source = row.mcps
       .map((m) => packageManifestMcpSchema.parse(m))
       .find((m) => m.id === ref);
+
     if (!source || !source.transport) continue;
     catalog.push({
       ...record,
@@ -139,6 +144,7 @@ export async function resolveCurrentPackageSessionCatalog(
     if (!delivery.targets) return true;
     const before = delivery.targets.find((t) => t.refId === ref),
       current = now.find((t) => t.refId === ref);
+
     return (
       !!before &&
       !!current &&
@@ -154,11 +160,13 @@ export async function resolveCurrentPackageSessionCatalog(
       catalog.some((c) => c.kind === "mcp" && c.capabilityRefId === ref),
   );
   const withheld = input.selected.filter((ref) => !mcps.includes(ref));
+
   for (const ref of input.required)
     if (!mcps.includes(ref))
       throw new MaisterError(
         "PRECONDITION",
         `Required MCP ${ref} is unavailable under its captured target`,
       );
+
   return { catalog, mcps, withheld };
 }

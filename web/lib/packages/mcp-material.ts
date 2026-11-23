@@ -12,6 +12,7 @@ export function packageMcpMaterial(
     mcp.command === undefined &&
     mcp.url === undefined &&
     mcp.transport === undefined;
+
   return isRequirement
     ? {
         origin: ATTACHMENT_ORIGIN,
@@ -22,21 +23,25 @@ export function packageMcpMaterial(
         // requirement or a package TEMPLATE can finally name them.
         env,
         headers: {},
-        recommendedPlatformServerId: mcp.recommendedPlatformServerId,
+        ...(mcp.recommendedPlatformServerId !== undefined
+          ? { recommendedPlatformServerId: mcp.recommendedPlatformServerId }
+          : {}),
       }
     : {
         origin: ATTACHMENT_ORIGIN,
         packageInstallId: installId,
-        transport: mcp.transport,
-        command: mcp.command,
+        ...(mcp.transport !== undefined ? { transport: mcp.transport } : {}),
+        ...(mcp.command !== undefined ? { command: mcp.command } : {}),
         ...(mcp.distribution ? { distribution: mcp.distribution } : {}),
         args: mcp.args ?? [],
         env,
-        url: mcp.url,
+        ...(mcp.url !== undefined ? { url: mcp.url } : {}),
         // Rebuilt wholesale per ingestion, so a version that DROPS these
         // leaves no stale entry behind (SET/CLEAR symmetry).
         headers: { ...(mcp.headers ?? {}) },
         bearerTokenEnv: mcp.bearerTokenEnv ?? null,
-        recommendedPlatformServerId: mcp.recommendedPlatformServerId,
+        ...(mcp.recommendedPlatformServerId !== undefined
+          ? { recommendedPlatformServerId: mcp.recommendedPlatformServerId }
+          : {}),
       };
 }

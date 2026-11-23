@@ -104,6 +104,7 @@ export async function setPackageMcpScope(
     const current = declarations.find(
       (row) => row.attachmentId === attachmentId && row.refId === refId,
     );
+
     if (!current) return null;
 
     if (mutation.scope === null) {
@@ -128,6 +129,7 @@ export async function setPackageMcpScope(
         });
     }
     const revision = attachment.revision + 1;
+
     await tx
       .update(projectPackageAttachments)
       .set({ scopeRevision: revision })
@@ -135,13 +137,16 @@ export async function setPackageMcpScope(
     const updated = (await readPackageMcpScopes(tx, projectId)).find(
       (row) => row.attachmentId === attachmentId && row.refId === refId,
     );
+
     if (!updated)
       throw new MaisterError(
         "CONFLICT",
         "The updated scope no longer belongs to the attached release",
       );
+
     return updated;
   });
+
   if (result)
     log.info(
       {
@@ -153,5 +158,6 @@ export async function setPackageMcpScope(
       },
       "MCP sharing scope saved",
     );
+
   return result;
 }

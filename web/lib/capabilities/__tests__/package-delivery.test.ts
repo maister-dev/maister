@@ -1,10 +1,15 @@
+import type { CapabilityCatalogRecord } from "../types";
+
 import { describe, expect, it } from "vitest";
 
+import { agentMcpTargets } from "../mcp-targets";
 import {
   resolvePackageSession,
   sessionNameForPackageNode,
   type FlowDeliverySnapshot,
 } from "../package-delivery";
+
+import { packageMcpMaterial } from "@/lib/packages/mcp-material";
 
 const core = {
   name: "core",
@@ -62,6 +67,7 @@ describe("IT-CAP-03/04 package delivery", () => {
       "repo",
     ]);
     const scoped = resolvePackageSession(run, "sketch");
+
     expect(scoped.skills.find((s) => s.slug === "common")?.installId).toBe(
       "design1",
     );
@@ -103,4 +109,63 @@ describe("IT-CAP-03/04 package delivery", () => {
     );
     expect(sessionNameForPackageNode(run, "build", "main")).toBe("main");
   });
+});
+
+it("hashes executable HTTP and stdio targets with JSONB-equivalent optional metadata and overlays", () => {
+  const pins = [
+    packageMcpMaterial(
+      { id: "remote", transport: "http", url: "https://example.com/api" },
+      "cut",
+    ),
+    packageMcpMaterial(
+      { id: "local", transport: "stdio", command: "server", args: ["--once"] },
+      "cut",
+    ),
+  ];
+  const records: CapabilityCatalogRecord[] = pins.map((material, i) => ({
+    id: String(i),
+    projectId: "p",
+    capabilityRefId: i === 0 ? "remote" : "local",
+    kind: "mcp",
+    source: "flow-package",
+    material,
+    label: "MCP",
+    version: "1",
+    revision: "cut",
+    agents: ["claude"],
+    selectedByDefault: true,
+    selectable: true,
+    enforceability: "instructed",
+  }));
+  const refs = records.map((r) => r.capabilityRefId);
+  const serialized = agentMcpTargets(
+    refs,
+    records,
+    [],
+    new Map([["remote", { headerRemap: { TOKEN: "env:KEY" } }]]),
+  );
+  const assembled = agentMcpTargets(
+    refs,
+    records.map((r) => ({
+      ...r,
+      material: { ...r.material, recommendedPlatformServerId: undefined },
+    })),
+    [],
+    new Map([
+      ["remote", { headerRemap: { TOKEN: "env:KEY" }, urlOverride: undefined }],
+    ]),
+  );
+
+  expect(assembled).toEqual(serialized);
+  expect(serialized[0]!.materialSha256).not.toEqual(
+    serialized[1]!.materialSha256,
+  );
+  expect(assembled).not.toEqual(
+    agentMcpTargets(
+      refs,
+      records,
+      [],
+      new Map([["remote", { headerRemap: { TOKEN: "env:OTHER" } }]]),
+    ),
+  );
 });

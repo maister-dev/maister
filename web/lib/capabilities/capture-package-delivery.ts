@@ -1,14 +1,17 @@
 import "server-only";
 
+import type { SqlTransaction } from "@/lib/db/sql-types";
+
 import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
-import { packageManifestEntrySchema } from "@/lib/config.schema";
-import { packageSkillTreeDigest } from "../../../runtime/package-skill-tree";
-import { captureSessionMcpTargets } from "./session-package-catalog";
-import { loadSelectableCapabilities } from "./resolver";
+
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { packageSkillSourceDigest } from "../../../runtime/package-skill-tree";
+
+import { captureSessionMcpTargets } from "./session-package-catalog";
+import { loadSelectableCapabilities } from "./resolver";
 import {
   type BoundDeliveryPin,
   type FlowDeliverySnapshot,
@@ -16,6 +19,8 @@ import {
   resolvePackageSession,
   sessionNameForPackageNode,
 } from "./package-delivery";
+
+import { packageManifestEntrySchema } from "@/lib/config.schema";
 import { resolveInstalledAgentDefinition } from "@/lib/agents/effective";
 import { agentDefinitionSha256 } from "@/lib/agents/activity-snapshot";
 import {
@@ -23,7 +28,6 @@ import {
   readProjectAgentProfile,
 } from "@/lib/agents/project-instance-profile";
 import { readPackageMcpScopes } from "@/lib/packages/mcp-scope";
-import type { SqlTransaction } from "@/lib/db/sql-types";
 import { MaisterError } from "@/lib/errors";
 
 const inputNodes = z.object({
@@ -74,6 +78,7 @@ export async function capturePackageDelivery(
       JOIN package_installs i ON i.id=COALESCE(selected.id,a.package_install_id)
      WHERE a.project_id=${input.projectId} ORDER BY a.package_name
   `);
+
   if (!rows.length) return undefined;
   const packages: FlowDeliverySnapshot["packages"] = rows.map((row) => ({
     ...packageRow.parse(row),
@@ -84,18 +89,22 @@ export async function capturePackageDelivery(
     SELECT id,installed_path AS root,package_install_id AS "installId",resolved_revision AS revision,capability_ref_id AS name
       FROM capability_imports WHERE project_id=${input.projectId} AND package_status='Installed' ORDER BY id`);
   const bundles = bundleRows.map((r) => bundleRow.parse(r));
+
   for (const row of rows) {
     const pkg = packages.find((p) => p.installId === row.installId)!;
     const declared = z
       .array(packageManifestEntrySchema)
       .parse(row.declarations);
+
     pkg.bundlePaths = {};
     for (const declaration of declared) {
       let bundle = bundles.find(
         (b) => b.installId === pkg.installId && b.name === declaration.id,
       );
+
       if (!bundle) {
         const id = "pin:" + pkg.installId + ":" + declaration.id;
+
         bundle = {
           id,
           root: path.join(z.string().parse(row.root), declaration.path),
@@ -111,6 +120,7 @@ export async function capturePackageDelivery(
   }
   for (const b of bundles) {
     let pin = packages.find((p) => p.installId === b.installId);
+
     if (!pin && !b.installId) {
       pin = {
         name: "import:" + b.name,
@@ -127,6 +137,7 @@ export async function capturePackageDelivery(
     if (!pin) continue;
     const root = path.join(b.root, "skills");
     let entries;
+
     try {
       entries = await readdir(root, { withFileTypes: true });
     } catch (err) {
@@ -136,6 +147,7 @@ export async function capturePackageDelivery(
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const skill = path.join(root, entry.name);
+
       try {
         if (!(await lstat(path.join(skill, "SKILL.md"))).isFile()) continue;
       } catch (err) {
@@ -147,7 +159,10 @@ export async function capturePackageDelivery(
           "CONFIG",
           `Package ${pin.name} has multiple providers for skill ${entry.name}`,
         );
-      pin.skillDigests![entry.name] = await packageSkillTreeDigest(skill);
+      pin.skillDigests![entry.name] = await packageSkillSourceDigest(
+        skill,
+        b.root,
+      );
     }
   }
   for (const pkg of packages)
@@ -160,11 +175,14 @@ export async function capturePackageDelivery(
   );
   const nodes = inputNodes.parse(input.flowManifest).nodes;
   const bindings: Record<string, BoundDeliveryPin> = Object.create(null);
+
   for (const node of nodes) {
     const settings = z.object({ agent: z.string() }).safeParse(node.settings);
+
     if (!settings.success || node.type !== "ai_coding") continue;
     const agentId = settings.data.agent;
     const pkg = packages.find((p) => agentId.startsWith(p.name + ":"));
+
     if (!pkg)
       throw new MaisterError(
         "CONFIG",
@@ -177,6 +195,7 @@ export async function capturePackageDelivery(
     const { rows: links } = await db.execute(
       sql`SELECT l.enabled FROM agent_project_links l WHERE l.project_id=${input.projectId} AND l.agent_id=${agentId}`,
     );
+
     if (links[0]?.enabled === false)
       throw new MaisterError(
         "PRECONDITION",
@@ -186,6 +205,7 @@ export async function capturePackageDelivery(
       ? await readProjectAgentProfile(db, input.projectId, agentId)
       : null;
     const applied = applyProjectAgentProfile(definition.parsed, profile);
+
     bindings[node.id] = {
       agentId,
       installId: pkg.installId,
@@ -224,6 +244,7 @@ export async function capturePackageDelivery(
       ),
     ].sort(),
   };
+
   if (rows.some((row) => row.versioned === true))
     assertPrivateBoundSessionNames(
       nodes,
@@ -234,6 +255,7 @@ export async function capturePackageDelivery(
       ),
     );
   const declaredNames = new Set(nodes.map((n) => n.session ?? "default"));
+
   for (const n of nodes) {
     if (["ai_coding", "orchestrator", "judge"].includes(n.type))
       resolvePackageSession(result, n.id);
@@ -248,5 +270,6 @@ export async function capturePackageDelivery(
         "A declared session name conflicts with a bound agent's private session",
       );
   }
+
   return result;
 }
