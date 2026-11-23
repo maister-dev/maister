@@ -593,11 +593,94 @@ function validateCompanyBrainExamples() {
   return count;
 }
 
+export function validateStageCWorkspaceExamples(
+  profile = readYaml("docs/api/stage-c-workspace.schema.yaml"),
+  examples = readYaml("docs/api/stage-c-workspace-examples.yaml"),
+) {
+  const operations = profile["x-operations"];
+  const cases = examples.operationCases;
+  assertObject(profile, "x-operations", "Stage C schema");
+  assertObject(examples, "operationCases", "Stage C examples");
+  if (Object.keys(operations).length === 0 ||
+      !isDeepStrictEqual(Object.keys(operations).sort(), Object.keys(cases).sort())) {
+    throw new Error("Stage C examples must cover each operation exactly once");
+  }
+  const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  ajv.addSchema(profile);
+  const validate = (name, value, valid, context) => {
+    const check = ajv.getSchema(`${profile.$id}#/definitions/${name}`);
+    if (!check || check(value) !== valid) {
+      throw new Error(`${context}: ${name} example validity mismatch: ${ajv.errorsText(check?.errors)}`);
+    }
+  };
+  const web = readYaml("docs/api/web.openapi.yaml");
+  const supervisor = readYaml("docs/api/supervisor.openapi.yaml");
+  const seenRoutes = new Set();
+  for (const [id, operation] of Object.entries(operations)) {
+    const { method, path, status, extension, request, response, result } = operation;
+    const key = `${method} ${path}`;
+    if (seenRoutes.has(key)) throw new Error(`Stage C duplicate operation: ${key}`);
+    seenRoutes.add(key);
+    const isWeb = path.startsWith("/api/");
+    if (isWeb || extension) {
+      const existing = (isWeb ? web : supervisor).paths?.[path]?.[method.toLowerCase()];
+      if (!existing?.responses?.[String(status)]) {
+        throw new Error(`${id}: missing existing response ${key} ${status}`);
+      }
+    }
+    const example = cases[id];
+    if (request === null) {
+      if (example.request !== null) throw new Error(`${id}: unexpected request extension`);
+    } else {
+      validate(request, example.request, true, id);
+      validate(request, example.invalidRequest, false, id);
+    }
+    validate(response, example.response, true, id);
+    validate("Refusal", example.refusal?.body, true, id);
+    if (example.refusal.newEffects !== 0 ||
+        ![404, 409, 503].includes(example.refusal.status)) {
+      throw new Error(`${id}: missing effect-free refusal example`);
+    }
+    if (result) validate(result, example.result, true, id);
+    if (operation.replay) {
+      const replay = example.replay;
+      if (replay?.newEffects !== 0 ||
+          !isDeepStrictEqual(replay.request, example.request) ||
+          !isDeepStrictEqual(replay.response, example.response)) {
+        throw new Error(`${id}: replay must retain the original request and response`);
+      }
+    }
+    if (operation.replay === "sameCommand" &&
+        example.request.command.id !== example.response.commandId) {
+      throw new Error(`${id}: response must identify the accepted command`);
+    }
+  }
+  if (!Array.isArray(examples.conditionalCases) || examples.conditionalCases.length === 0) {
+    throw new Error("Stage C contract is missing conditional examples");
+  }
+  for (const example of examples.conditionalCases) {
+    validate(example.schema, example.value, example.valid, example.id);
+  }
+  const event = examples.eventExamples.terminalEvent;
+  const foreign = examples.eventExamples.wrongReceiptHost;
+  validate("WorkspaceTerminalEvent", event, true, "terminal event");
+  validate("WorkspaceTerminalEvent", foreign, true, "foreign receipt shape");
+  validate("WorkspaceTerminalEvent", examples.eventExamples.draftWithPrivatePath, false, "private path");
+  if (event.stream.hostKey !== event.receipt.owner.hostKey ||
+      event.stream.eventId !== event.receipt.eventId ||
+      foreign.stream.hostKey === foreign.receipt.owner.hostKey) {
+    throw new Error("Stage C receipt and stream identity fixtures do not exercise the host fence");
+  }
+  return seenRoutes.size;
+}
+
 export async function validateContracts({ log = true } = {}) {
   for (const file of OPENAPI_FILES) await validateOpenApi(file, { log });
   for (const file of ASYNCAPI_FILES) await validateAsyncApi(file, { log });
   const count = validateCompanyBrainExamples();
   if (log) console.log(`validate-contracts: ${count} Company Brain surface examples and schema parity ok`);
+  const stageCCount = validateStageCWorkspaceExamples();
+  if (log) console.log(`validate-contracts: ${stageCCount} Stage C designed operations and examples ok`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

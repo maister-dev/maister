@@ -935,6 +935,14 @@ owns capacity and lease transitions.
 
 ### Workspace protocol 1
 
+The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
+each operation's method, route, operation ID, stage-specific shape and
+terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)
+cover success, refusal, strict input and effect-free replay. Extensions
+describe the Stage C fragment of an existing route. The affected runtime
+tasks apply the whole request and authorization contract on the real
+Web and Fastify entry points.
+
 For mutating operations use the existing command header (`id`, `kind`,
 `issuedAt`) and the versioned payload. Use a tagged owner with either
 `assignment` (host key, Run ID, assignment ID and epoch) or

@@ -107,6 +107,18 @@ Generate SQL, journal, snapshot and schema together. Validate fresh and populate
 
 Already checkedAt does not establish actual dispatch or frozen input. Hold incomplete pre-dispatch v1 work; protect existing live sessions and refuse unrecoverable later prompts. Preserve active source references and all immutable assessment publication/content. Forward fix or separately authorized matched restore is the rollback policy; no down migration deletes live evidence.
 
+## Selected host admission snapshot (Designed, ADR-218)
+
+Stage C adds a nullable versioned selection to the intent. Historical
+receipts retain their original format. A new addressed intent persists
+requested host (nullable), effective host, provenance and approved source
+revision before dispatch. Selection resolves once using current authority.
+Explicit selection is part of the request digest. Omitted selection
+replays by the original receipt, even after default changes. The effective
+host is a retained FK. A changed selection under the same request key
+conflicts before new effects. Save actual placement against the separate
+assignment row and epoch when Web commits the preparing Run.
+
 ## Linked artifacts
 
 - [Launch contract](../system-analytics/task-launch-admission.md), [preparation contract](../system-analytics/agent-preparation.md).

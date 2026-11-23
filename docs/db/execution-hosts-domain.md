@@ -260,6 +260,45 @@ followed by host confirmation before compaction. Existing cascade FKs must not
 remove protected commands or import proofs. No in-place migration amendment is
 permitted; guarded forward corrections and a real run-delete race enforce this.
 
+## Stage C workspace ownership migration (Designed, ADR-218)
+
+The G1 PostgreSQL expand migration adds nullable host ownership to
+`workspaces` and permits absent legacy path columns on addressed rows.
+The existing `id` remains the logical workspace identity. The persisted
+form has the following constraints.
+
+| Form | Required fields and constraints |
+|---|---|
+| Legacy | Existing path and owner columns retain their original bytes and associations. Legacy path uniqueness remains over non-null values. Retirement does not remove associations. |
+| Addressed preparing | Stable host FK with restrictive deletion, logical workspace ID, preparation owner, pinned input digest and generation. Handle remains absent until the matching receipt applies. No new live path value. |
+| Addressed ready or retained | Same owner and generation plus supervisor handle. Unique live pair `(execution_host_id, execution_workspace_id)`. Shared children reference the root workspace row and its host, with no independent claim on the handle. |
+| Ambiguous legacy | Keep the original row and a reconciliation finding. Adoption, publication and disposal stay gated until ownership is independently verified. |
+
+Keep the existing unique active assignment per Run. An active execution
+command carries the current assignment and epoch. A terminal lifecycle
+command can retain an ended assignment as historical provenance, with
+admission and application fenced by the workspace operation claim,
+generation and operation number. An exclusive owner discriminator prevents
+accepting a workspace operation under a session-only command kind. Use
+restrictive owner references and apply result CAS before releasing the claim.
+
+The v18 SQLite store upgrades inside one transaction. Extend its workspace
+and command state to retain generation and operation claim high-water marks.
+Persist the accepted request digest before physical effects and seal the
+terminal receipt with its outbox event in one SQLite transaction. Preserve
+the original key, live handles, sequence, accepted/uncertain receipt states
+and retirement tombstones. Reopening an upgraded store resolves the
+same identities. A newer unsupported schema refuses on startup.
+
+G2 replaces the singleton active-host index after manager writers support
+addressed routing. Host key uniqueness remains global. The active default
+has at most one row. Operator descriptor IDs are unique and separate from
+boot identity. For both stores, expand compatible reads first, backfill
+verified owners under a writer fence, validate the data, then activate
+addressed writes. Drain and take coordinated database, state and workspace
+backups before crossing the incompatible-write boundary. Test both upgrade
+orders, interruption, restore and refusal of an incompatible writer.
+
 ## Linked artifacts
 
 - Decision: [ADR-166](../decisions.md#adr-166-local-execution-host-contract--durable-host-identity-epoch-fenced-assignments-command-ledger-opaque-adopted-workspaces).

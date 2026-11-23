@@ -13,6 +13,7 @@ import {
   validateAsyncApi,
   validateContracts,
   validateOpenApi,
+  validateStageCWorkspaceExamples,
 } from "./validate-contracts.mjs";
 
 async function withContractFile(extension, body, callback) {
@@ -56,6 +57,29 @@ test("rejects an AsyncAPI document that fails official meta-schema validation", 
 function readContract(file) {
   return YAML.parse(readFileSync(new URL(file, import.meta.url), "utf8"));
 }
+
+test("Stage C rejects an incomplete or effect-duplicating workspace replay fixture", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  const { stageCPrepare, ...rest } = examples.operationCases;
+  assert.throws(
+    () => validateStageCWorkspaceExamples(profile, { ...examples, operationCases: rest }),
+    /cover each operation/,
+  );
+  assert.throws(
+    () => validateStageCWorkspaceExamples(profile, {
+      ...examples,
+      operationCases: {
+        ...examples.operationCases,
+        stageCPrepare: {
+          ...stageCPrepare,
+          replay: { ...stageCPrepare.replay, newEffects: 1 },
+        },
+      },
+    }),
+    /stageCPrepare: replay must retain/,
+  );
+});
 
 async function withBrokenLibrarianStream(mutate, callback) {
   const document = readContract(

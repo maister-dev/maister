@@ -1,0 +1,857 @@
+operationCases:
+  stageCHostCapabilities:
+    request: null
+    response:
+      workspaceProtocol:
+        - 1
+    refusal:
+      status: 503
+      body:
+        code: EXECUTOR_UNAVAILABLE
+        message: The operation was refused.
+        details:
+          reason: workspace_protocol_unsupported
+      newEffects: 0
+  stageCRepositoryRefs:
+    request: {}
+    response:
+      refs:
+        - refs/heads/main
+      defaultRef: refs/heads/main
+      nextCursor: null
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+    invalidRequest:
+      hostUrl: http://localhost:9999
+  stageCResolveRevision:
+    request:
+      repositoryId: repo-main
+      ref: refs/heads/main
+    response:
+      repositoryId: repo-main
+      ref: refs/heads/main
+      commit: 0123456789abcdef0123456789abcdef01234567
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The operation was refused.
+        details:
+          reason: source_ref_unapproved
+      newEffects: 0
+    invalidRequest:
+      repositoryId: repo-main
+      ref: refs/heads/main
+      hostUrl: http://localhost:9999
+  stageCPrepare:
+    request: &a3
+      workspaceProtocol: 1
+      command: &a1
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.prepare
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: &a2
+        kind: assignment
+        hostKey: eh_host-one
+        runId: run-example
+        assignmentId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+        assignmentEpoch: 4
+      payload: &a50
+        mode: ownWorktree
+        repositoryId: repo-main
+        commit: 0123456789abcdef0123456789abcdef01234567
+        inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a1
+      owner: *a2
+      payload:
+        mode: ownWorktree
+        repositoryId: repo-main
+        commit: 0123456789abcdef0123456789abcdef01234567
+        inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        worktreePath: /private/repo
+    response: &a4
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      workspace: &a17
+        handle: ws_354c9b5edffe43f0b3a53ffd05b047ef
+        generation: 1
+        mode: ownWorktree
+        observedCommit: 0123456789abcdef0123456789abcdef01234567
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    refusal:
+      status: 409
+      body:
+        code: CONFLICT
+        message: The operation was refused.
+        details:
+          reason: command_digest_mismatch
+      newEffects: 0
+    replay:
+      request: *a3
+      response: *a4
+      newEffects: 0
+  stageCMaterialize:
+    request: &a7
+      workspaceProtocol: 1
+      command: &a5
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.materialize
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload:
+        generation: 1
+        manifestDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        objects: &a6
+          - &a10
+            objectId: obj_357
+            sha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a5
+      owner: *a2
+      payload:
+        generation: 1
+        manifestDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        objects: *a6
+        worktreePath: /private/repo
+    response: &a8
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      generation: 1
+      inputGeneration: 2
+      manifestDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: stale_workspace_generation
+      newEffects: 0
+    replay:
+      request: *a7
+      response: *a8
+      newEffects: 0
+  stageCRunWorkload:
+    request: &a11
+      workspaceProtocol: 1
+      command: &a9
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.run
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload:
+        generation: 1
+        workload: check
+        declarationId: build
+        inputGeneration: 2
+        inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a9
+      owner: *a2
+      payload:
+        generation: 1
+        workload: check
+        declarationId: build
+        inputGeneration: 2
+        inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        worktreePath: /private/repo
+    response: &a12
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      generation: 1
+      processOutcome: exited
+      exitCode: 0
+      signal: null
+      checkValidity: valid
+      outputState: sealed
+      objects: &a51
+        - *a10
+      quiescence: proved
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The operation was refused.
+        details:
+          reason: tool_not_declared
+      newEffects: 0
+    replay:
+      request: *a11
+      response: *a12
+      newEffects: 0
+  stageCCancelWorkload:
+    request: &a14
+      workspaceProtocol: 1
+      command: &a13
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.cancel
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload: &a16
+        generation: 1
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a13
+      owner: *a2
+      payload:
+        generation: 1
+        worktreePath: /private/repo
+    response: &a15
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      targetCommandId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+      quiescence: proved
+      objects:
+        - *a10
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: stale_assignment_epoch
+      newEffects: 0
+    replay:
+      request: *a14
+      response: *a15
+      newEffects: 0
+  stageCGetWorkspace:
+    request: *a16
+    response: *a17
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+    invalidRequest:
+      generation: 1
+      hostUrl: http://localhost:9999
+  stageCGetWorkspaceStatus:
+    request: *a16
+    response:
+      workspace: *a17
+      workingTree: clean
+      headState: branch
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: stale_workspace_generation
+      newEffects: 0
+    invalidRequest:
+      generation: 1
+      hostUrl: http://localhost:9999
+  stageCGetWorkspaceDiff:
+    request:
+      generation: 1
+      base: 0123456789abcdef0123456789abcdef01234567
+      head: 0123456789abcdef0123456789abcdef01234567
+    response: &a18
+      generation: 1
+      object: *a10
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+    invalidRequest:
+      generation: 1
+      base: 0123456789abcdef0123456789abcdef01234567
+      head: 0123456789abcdef0123456789abcdef01234567
+      hostUrl: http://localhost:9999
+  stageCGetWorkspaceLog:
+    request:
+      generation: 1
+      limit: 20
+    response: *a18
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+    invalidRequest:
+      generation: 1
+      limit: 20
+      hostUrl: http://localhost:9999
+  stageCCheckpoint:
+    request: &a20
+      workspaceProtocol: 1
+      command: &a19
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.checkpoint
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload: *a16
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a19
+      owner: *a2
+      payload:
+        generation: 1
+        worktreePath: /private/repo
+    response: &a21
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result: &a23
+      generation: 1
+      checkpointId: cp_123
+      tree: 0123456789abcdef0123456789abcdef01234567
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: stale_workspace_generation
+      newEffects: 0
+    replay:
+      request: *a20
+      response: *a21
+      newEffects: 0
+  stageCRestore:
+    request: &a24
+      workspaceProtocol: 1
+      command: &a22
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.restore
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload:
+        generation: 1
+        checkpointId: cp_123
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a22
+      owner: *a2
+      payload:
+        generation: 1
+        checkpointId: cp_123
+        worktreePath: /private/repo
+    response: &a25
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result: *a23
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The operation was refused.
+        details:
+          reason: workspace_rejected
+      newEffects: 0
+    replay:
+      request: *a24
+      response: *a25
+      newEffects: 0
+  stageCSync:
+    request: &a28
+      workspaceProtocol: 1
+      command: &a26
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.sync
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a2
+      payload:
+        generation: 1
+        expected: &a27
+          head: 0123456789abcdef0123456789abcdef01234567
+          remoteId: project-origin
+          targetRef: refs/heads/main
+          priorTarget: 0123456789abcdef0123456789abcdef01234567
+        strategy: merge
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a26
+      owner: *a2
+      payload:
+        generation: 1
+        expected: *a27
+        strategy: merge
+        worktreePath: /private/repo
+    response: &a29
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result: &a32
+      generation: 1
+      head: 0123456789abcdef0123456789abcdef01234567
+      priorTarget: 0123456789abcdef0123456789abcdef01234567
+      observedTarget: 0123456789abcdef0123456789abcdef01234567
+    refusal:
+      status: 409
+      body:
+        code: CONFLICT
+        message: The operation was refused.
+        details:
+          reason: target_ref_changed
+      newEffects: 0
+    replay:
+      request: *a28
+      response: *a29
+      newEffects: 0
+  stageCPublish:
+    request: &a33
+      workspaceProtocol: 1
+      command: &a30
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.publish
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: &a31
+        kind: workspaceOperation
+        hostKey: eh_host-one
+        workspaceHandle: ws_354c9b5edffe43f0b3a53ffd05b047ef
+        workspaceGeneration: 1
+        claimId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+        fence: 5
+      payload:
+        generation: 1
+        expected: *a27
+        publication: promote
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a30
+      owner: *a31
+      payload:
+        generation: 1
+        expected: *a27
+        publication: promote
+        worktreePath: /private/repo
+    response: &a34
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      publication: promote
+      git: *a32
+    refusal:
+      status: 409
+      body:
+        code: CONFLICT
+        message: The operation was refused.
+        details:
+          reason: target_ref_changed
+      newEffects: 0
+    replay:
+      request: *a33
+      response: *a34
+      newEffects: 0
+  stageCPreserve:
+    request: &a36
+      workspaceProtocol: 1
+      command: &a35
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.preserve
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a31
+      payload:
+        generation: 1
+        disposition: archive
+        quiescenceId: quiet-1
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a35
+      owner: *a31
+      payload:
+        generation: 1
+        disposition: archive
+        quiescenceId: quiet-1
+        worktreePath: /private/repo
+    response: &a37
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      generation: 1
+      dispositionId: retention-1
+      retainedCommit: 0123456789abcdef0123456789abcdef01234567
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: stale_workspace_claim
+      newEffects: 0
+    replay:
+      request: *a36
+      response: *a37
+      newEffects: 0
+  stageCRelease:
+    request: &a39
+      workspaceProtocol: 1
+      command: &a38
+        id: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+        kind: workspace.release
+        issuedAt: 2026-11-23T00:00:00Z
+      owner: *a31
+      payload: &a49
+        generation: 1
+        dispositionId: retention-1
+        quiescenceId: quiet-1
+    invalidRequest:
+      workspaceProtocol: 1
+      command: *a38
+      owner: *a31
+      payload:
+        generation: 1
+        dispositionId: retention-1
+        quiescenceId: quiet-1
+        worktreePath: /private/repo
+    response: &a40
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      state: accepted
+    result:
+      generation: 1
+      handle: ws_354c9b5edffe43f0b3a53ffd05b047ef
+      dispositionId: retention-1
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The operation was refused.
+        details:
+          reason: retained_disposition_required
+      newEffects: 0
+    replay:
+      request: *a39
+      response: *a40
+      newEffects: 0
+  stageCGetCommandReceipt:
+    request: null
+    response: &a47
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      requestSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      operationId: stageCPrepare
+      owner: *a2
+      phase: completed
+      eventId: 8cb7090e-13bb-434e-afda-bc9bd50824c0
+      resultSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    refusal:
+      status: 409
+      body:
+        code: FENCED
+        message: The operation was refused.
+        details:
+          reason: host_identity_mismatch
+      newEffects: 0
+  stageCGetRuntimeObjectContent:
+    request: null
+    response:
+      objectId: obj_357
+      start: 0
+      end: 7
+      total: 24
+      contentSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+  stageCTaskHostOptions:
+    request: null
+    response: &a41
+      executionHosts:
+        - id: host-b
+          label: Host B
+          availability: ready
+      defaultExecutionHostId: host-b
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+  stageCFlowHostOptions:
+    request: null
+    response: *a41
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+  stageCCreateIntent:
+    request: &a42
+      executionHostId: host-b
+    response: &a43
+      requestedHostId: host-b
+      effectiveHostId: host-b
+      provenance: explicit
+      assignment: null
+    refusal:
+      status: 409
+      body:
+        code: CONFLICT
+        message: The operation was refused.
+        details:
+          reason: selection_changed
+      newEffects: 0
+    invalidRequest:
+      executionHostId: host-b
+      hostUrl: http://localhost:9999
+    replay:
+      request: *a42
+      response: *a43
+      newEffects: 0
+  stageCCreateConcurrentIntents:
+    request: &a44
+      executionHostId: host-b
+    response: *a43
+    refusal:
+      status: 409
+      body:
+        code: PRECONDITION
+        message: The operation was refused.
+        details:
+          reason: host_ineligible
+      newEffects: 0
+    invalidRequest:
+      executionHostId: host-b
+      hostUrl: http://localhost:9999
+    replay:
+      request: *a44
+      response: *a43
+      newEffects: 0
+  stageCReadIntent:
+    request: null
+    response:
+      requestedHostId: host-b
+      effectiveHostId: host-b
+      provenance: explicit
+      assignment:
+        hostId: host-b
+        epoch: 4
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+  stageCReplaceIntent:
+    request: &a45 {}
+    response: &a46
+      requestedHostId: null
+      effectiveHostId: host-b
+      provenance: projectDefault
+      assignment: null
+    refusal:
+      status: 409
+      body:
+        code: CONFLICT
+        message: The operation was refused.
+        details:
+          reason: preview_stale
+      newEffects: 0
+    invalidRequest:
+      hostUrl: http://localhost:9999
+    replay:
+      request: *a45
+      response: *a46
+      newEffects: 0
+  stageCCancelIntent:
+    request: null
+    response: *a43
+    refusal:
+      status: 404
+      body:
+        code: NOT_FOUND
+        message: The operation was refused.
+        details:
+          reason: resource_not_found
+      newEffects: 0
+eventExamples:
+  terminalEvent:
+    version: 1
+    type: workspace.command.terminal
+    stream: &a48
+      hostKey: eh_host-one
+      streamId: runtime-origin-1
+      bootId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+      sequence: "9"
+      eventId: 8cb7090e-13bb-434e-afda-bc9bd50824c0
+    receipt: *a47
+  draftWithPrivatePath:
+    version: 1
+    type: workspace.command.terminal
+    stream: *a48
+    receipt:
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      requestSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      operationId: stageCPrepare
+      owner: *a2
+      phase: completed
+      eventId: 8cb7090e-13bb-434e-afda-bc9bd50824c0
+      resultSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      worktreePath: /private/repo
+  wrongReceiptHost:
+    version: 1
+    type: workspace.command.terminal
+    stream: *a48
+    receipt:
+      commandId: 3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a
+      requestSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      operationId: stageCPrepare
+      owner:
+        kind: assignment
+        hostKey: eh_host-two
+        runId: run-example
+        assignmentId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+        assignmentEpoch: 4
+      phase: completed
+      eventId: 8cb7090e-13bb-434e-afda-bc9bd50824c0
+      resultSha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+conditionalCases:
+  - id: prepare-shared-without-parent
+    schema: PreparePayload
+    valid: false
+    value:
+      mode: sharedWorktree
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  - id: empty-workspace-with-git-sha
+    schema: PreparePayload
+    valid: false
+    value:
+      mode: emptyDirectory
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      commit: 0123456789abcdef0123456789abcdef01234567
+  - id: legacy-directory-profile
+    schema: PreparePayload
+    valid: true
+    value:
+      mode: directory
+      directoryProfileId: approved-source
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  - id: bind-shared-workspace-generation
+    schema: PreparePayload
+    valid: true
+    value:
+      mode: sharedWorktree
+      parentHandle: ws_354c9b5edffe43f0b3a53ffd05b047ef
+      parentGeneration: 4
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  - id: read-only-source
+    schema: PreparePayload
+    valid: true
+    value:
+      mode: readOnlyCheckout
+      repositoryId: repo-main
+      commit: 0123456789abcdef0123456789abcdef01234567
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  - id: released-assignment-cannot-delete
+    schema: StageCReleaseRequest
+    valid: false
+    value:
+      workspaceProtocol: 1
+      command: *a38
+      owner: *a2
+      payload: *a49
+  - id: zero-epoch-refused
+    schema: AssignmentOwner
+    valid: false
+    value:
+      kind: assignment
+      hostKey: eh_host-one
+      runId: run-example
+      assignmentId: 1af90839-ca7d-45f7-bbb5-ef76f0e4aaa8
+      assignmentEpoch: 0
+  - id: empty-workspace
+    schema: PreparePayload
+    valid: true
+    value:
+      mode: emptyDirectory
+      inputDigest: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  - id: version-unknown
+    schema: StageCPrepareRequest
+    valid: false
+    value:
+      workspaceProtocol: 2
+      command: *a1
+      owner: *a2
+      payload: *a50
+  - id: malformed-git-sha
+    schema: GitObjectId
+    valid: false
+    value: main
+  - id: publication-private-url-refused
+    schema: PublishPayload
+    valid: false
+    value:
+      generation: 1
+      expected: *a27
+      publication: promote
+      remoteUrl: file:///private
+  - id: process-disposition-is-independent-of-check
+    schema: WorkloadResult
+    valid: true
+    value:
+      generation: 1
+      processOutcome: exited
+      exitCode: 0
+      signal: null
+      checkValidity: invalid
+      outputState: sealed
+      objects: *a51
+      quiescence: proved
+  - id: partial-output-on-timeout
+    schema: WorkloadResult
+    valid: true
+    value:
+      generation: 1
+      processOutcome: timedOut
+      exitCode: null
+      signal: SIGKILL
+      checkValidity: unavailable
+      outputState: truncated
+      objects: *a51
+      quiescence: proved
+  - id: intent-response-foreign-private-host-field
+    schema: HostSelectionReceipt
+    valid: false
+    value:
+      requestedHostId: host-b
+      effectiveHostId: host-b
+      provenance: explicit
+      assignment: null
+      endpoint: http://localhost:7777
+  - id: first-push-to-absent-target
+    schema: PublishPayload
+    valid: true
+    value:
+      generation: 1
+      publication: push
+      expected:
+        head: 0123456789abcdef0123456789abcdef01234567
+        remoteId: project-origin
+        targetRef: refs/heads/main
+        priorTarget: null
