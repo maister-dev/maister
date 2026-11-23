@@ -66,8 +66,8 @@ export const laneSuites = {
   isolation: [
     "test-support/__tests__/execution-ab-process-cleanup.integration.test.ts",
     "test-support/__tests__/execution-ab-partitions.integration.test.ts",
-    "test-support/__tests__/execution-ab-process-death.integration.test.ts",
     "test-support/__tests__/execution-ab-isolation.integration.test.ts",
+    "test-support/__tests__/execution-ab-process-death.integration.test.ts",
     // P0-2: the four durable workers in the production boot. Same shape as
     // AT-16 — `next build` plus two process trees — so the same serial slice.
     "test-support/__tests__/durable-workers-boot.integration.test.ts",
@@ -93,10 +93,10 @@ export function webShardFiles(files, shardIndex, shardCount) {
 export function isolationPartFiles(part) {
   assert(part === 1 || part === 2 || part === 3, "usage: isolation --part 1/3|2/3|3/3");
 
-  // Keep scratch restart scenarios on their own VM; the previous five-suite
-  // second part exceeded its 39-minute budget on hosted Intel runners.
-  return part === 1 ? laneSuites.isolation.slice(0, 2) :
-    part === 2 ? laneSuites.isolation.slice(2, 6) : laneSuites.isolation.slice(6);
+  // The process-death suite and cold build occupied 1,781 s of a 1,901 s
+  // hosted part budget (run 45222613398). Keep it alone on part 2.
+  return part === 1 ? laneSuites.isolation.slice(0, 3) :
+    part === 2 ? laneSuites.isolation.slice(3, 4) : laneSuites.isolation.slice(4);
 }
 
 export function isolationFiles(platform = process.platform) {

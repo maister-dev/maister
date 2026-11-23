@@ -62,9 +62,11 @@ test("CLI accepts only valid web shards and preserves unsharded slices", () => {
 test("isolation CI parts retain the complete disjoint whole-suite inventory", () => {
   const parts = [1, 2, 3].map((part) => parseLaneInvocation(["isolation", "--part", `${part}/3`], "darwin"));
 
-  assert.deepEqual(parts.map(({ files }) => files), [laneSuites.isolation.slice(0, 2), laneSuites.isolation.slice(2, 6), laneSuites.isolation.slice(6)]);
-  assert.deepEqual(parts.flatMap(({ files }) => files), laneSuites.isolation);
-  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [20, 23, 10]);
+  assert.deepEqual(parts[1].files, [
+    "test-support/__tests__/execution-ab-process-death.integration.test.ts",
+  ], "the measured long-running process death suite needs its own budget");
+  assert.deepEqual(parts.flatMap(({ files }) => files).sort(), [...laneSuites.isolation].sort());
+  assert.deepEqual(parts.map(({ files }) => files.flatMap((file) => isolationCaseTitles(file, "darwin")).length), [24, 7, 22]);
   assert.deepEqual(parseLaneInvocation(["isolation"], "darwin"), { slice: "isolation", files: laneSuites.isolation });
   for (const args of [["isolation", "--part", "0/3"], ["isolation", "--part", "4/3"],
     ["isolation", "--part", "1/2"], ["web", "--part", "1/3"], ["supervisor", "--part", "1/3"]])

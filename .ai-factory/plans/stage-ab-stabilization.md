@@ -932,6 +932,31 @@ S4 rollback: before 0134, keep sources and all import checkpoints; stop maintena
   browser lifecycle and the final S5.4/C11 audit remain open. No old hosted
   receipt is relabelled as acceptance of the corrective code.
 
+  **Current hosted regression (base `22df665aa`).** [CI run 45222613398](https://github.com/maister-dev/maister/actions/runs/45222613398)
+  passed preflight for part 2 and then returned 124 at the overall part
+  deadline. The reported build took 512 seconds and the process-death suite
+  took 1,269 seconds out of 1,901 seconds available. W06/W08 exceeded its
+  case budget while repeatedly booting the real stack. Part 2 published no
+  complete production result. Parts 1 and 3 passed 20 and 10 cases,
+  respectively. The combined gate remained red.
+
+  **Correction.** Keep the measured process-death suite on its own VM
+  and distribute the remaining whole suites across the existing parts
+  (24/7/22 cases). Preserve the same three preflights, 53 case names,
+  and job budgets. In W06/W08, account for the initial disposable stack
+  setup in its own hook. Preserve the 240-second case deadline, all real
+  restart boundaries and assertions. The original selector failed the
+  dedicated-part assertion. The corrected selector and evidence
+  validators passed all 41 tool tests. The three corrected production
+  parts passed 24/7/22 on Darwin arm64 with Node 24.15.0. Their Vitest
+  durations were 385.54, 152.40 and 269.71 seconds, respectively. D1,
+  D3 and W06/W08 passed in the corrected sequence. The raw reports are
+  under `/private/tmp/maister-ab-rebalanced`. A prior local repeat
+  crossed a Git commit and correctly failed the production build identity
+  check. The corrected three-part run kept the revision fixed.
+  Qualification of the revised hosted matrix requires a new combined
+  receipt for its exact SHA.
+
   The final corrective iteration also carries the unresolved Librarian
   Testcontainers initialization timeout into this gate: collect phase evidence
   before changing the probe contract. A generic 3-second client-init timeout
