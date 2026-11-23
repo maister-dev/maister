@@ -775,6 +775,22 @@ test("E2E-PKN-01 E2E-PKN-07 E2E-PKN-09: nested main anchors and parent fullscree
   await expect(
     page.getByTestId("flow-run-fullscreen").filter({ visible: true }),
   ).toBeFocused();
+
+  await page.goto(`/runs/${fixture.anchor}?flow=fullscreen&peek=`);
+  const graph = page
+    .getByTestId("flow-run-graph-view")
+    .filter({ visible: true });
+
+  await expect(
+    graph.getByRole("button", { name: "Close fullscreen" }),
+  ).toBeFocused();
+  await expect(peek(page)).toHaveCount(0);
+  await expect(graph).toHaveAttribute("aria-modal", "true");
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/flow=fullscreen/);
+  await expect(
+    page.getByTestId("flow-run-fullscreen").filter({ visible: true }),
+  ).toBeFocused();
 });
 
 test("E2E-PKN-04 E2E-PKN-10: an unsent parent HITL draft survives child navigation and missing-trigger closure", async ({

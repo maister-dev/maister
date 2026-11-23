@@ -31,7 +31,11 @@ import {
 } from "@/components/runs/node-transcript-panel";
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
 import { isLiveRunStatus } from "@/lib/runs/live-inspector";
-import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
+import {
+  buildRunHref,
+  parseRunQueryState,
+  readRunPeekQuery,
+} from "@/lib/runs/run-query-state";
 import {
   AttemptFailure,
   type AttemptFailureLabels,
@@ -443,7 +447,7 @@ export function FlowRunCenter({
   const position = useRef<{ x: number; y: number } | null>(null);
   const expanded =
     !!graphView && result.graph.kind === "ready" && state.flow === "fullscreen";
-  const active = expanded && !searchParams.get("peek");
+  const active = expanded && readRunPeekQuery(searchParams).selected === null;
   const close = (): void => {
     window.history.pushState(
       null,

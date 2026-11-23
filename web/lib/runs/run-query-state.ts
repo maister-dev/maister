@@ -247,7 +247,7 @@ export function readRunPeekQuery(input: RunSearchParamsInput): {
   const params = toRunSearchParams(input);
 
   return {
-    selected: params.get("peek"),
+    selected: params.get("peek") || null,
     view: enumOrNull(params.get("peekView"), [
       "conversation",
       "execution",
