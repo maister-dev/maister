@@ -63,20 +63,20 @@ The positive integration fixture pairs a persisted gate permission with its own 
 
 - [x] **1R — RED.** Establish the existing targeted baseline. Add STEP-1 and STEP-2 assertions before moving the trigger, including the rendered position, degraded target, help activation and failed request. Capture the first intended failure for each changed behavior.
 - [x] **1G — GREEN.** Pass the existing interrupt eligibility and actual Run cursor from `web/app/(app)/runs/[runId]/layout.tsx` into `web/components/runs/flow-run-center.tsx`. Reuse `node-interrupt-trigger.tsx` and the accessible info-button pattern in `context-usage-meter.tsx`. Keep the interrupt and the single degraded placement mutually exclusive. Remove the former bottom section and unused localized heading after checking all callers.
-- [ ] **1F — Refactor and verify.** Keep request handling with the trigger and placement with the Run view. Run the same failed assertions and the parked HITL regression. Check permission, help and request feedback in both locales.
+- [x] **1F — Refactor and verify.** Keep request handling with the trigger and placement with the Run view. Run the same failed assertions and the parked HITL regression. Check permission, help and request feedback in both locales.
 
 ### Phase 2. Run metadata and checks · depends on S0, integrates with phase 1
 
 - [x] **2R — RED.** Establish META-1/2, CHECK-1/2/3 tests from the matrix. Where a test already proves the domain result, extend its journey to the new entry point. Record expected placement, destination or read-model failures individually.
 - [x] **2G — GREEN, metadata.** Route the Flow badge and authorized stop through `run-shell.tsx` into `run-header.tsx`. Combine lifecycle eligibility with the existing project role mapping. Reuse the stop dialog/submission owner in `web/components/workbench/lifecycle-actions.tsx`; preserve the detail Git host and remaining actions. Handle a missing or long branch, the custom-policy marker, and the shared shell's other callers.
 - [x] **2H — GREEN, checks.** Place `ReadinessSummary` in the workbench evidence slot alongside `RunResultsAndChecksView`; implement CHECK-3 in the server read model before wiring its minimal result into the corresponding input card. Reuse `getFlowRunVerification`, `verification.rollup`, existing query helpers and the review block. Resolve the link destination from the rendered surfaces and evidence rows. Keep server-derived check meaning separate from placement.
-- [ ] **2F — Refactor and verify.** Consolidate repeated link/placement decisions only where they share the same contract. Run the same failing tests and the existing lifecycle, readiness and multi-request regressions. Verify that no client gained raw permission data or a new mutation path.
+- [x] **2F — Refactor and verify.** Consolidate repeated link/placement decisions only where they share the same contract. Run the same failing tests and the existing lifecycle, readiness and multi-request regressions. Verify that no client gained raw permission data or a new mutation path.
 
 ### Phase 3. Fullscreen graph · depends on S0, integrates with the Run shell
 
 - [x] **3R — RED.** Use the seeded authenticated browser setup and list the focused tests for each engine. The default `authed` project is Chromium; the knowledge Firefox project matches other specs. Add a scoped Firefox execution of the same scenario. Reproduce FULL-1 on baseline with a passing URL assertion followed by a failing canvas measurement. Establish FULL-2 history/layering assertions before their production changes.
 - [x] **3G — GREEN.** Make the existing `graphView` instance respond to the parsed fullscreen state; use the existing height input on `FlowGraphViewSection` and size the actual canvas. Use Run query helpers for entry/exit, including their existing peek-clearing behavior on entry. Keep graph status SSE-driven. Coordinate Escape, focus and scroll lock with child peek and the inspector so only the topmost layer owns them. Provide a localized close action and a focus destination on direct entry.
-- [ ] **3F — Refactor and verify.** Remove duplicate mode or overlay state if introduced. Re-run the same geometry and navigation scenarios in both engines, recording actual browser, viewport and bounds. Preserve existing graph/node navigation and the child-peek contract.
+- [x] **3F — Refactor and verify.** Remove duplicate mode or overlay state if introduced. Re-run the same geometry and navigation scenarios in both engines, recording actual browser, viewport and bounds. Preserve existing graph/node navigation and the child-peek contract.
 
 ## Evidence and completion gates
 
@@ -90,10 +90,9 @@ Phase 1 baseline: 15/15 focused tests passed. RED: selected cursor lacked its ac
 
 Phase 1 GREEN: 16/16 focused assertions, one additional busy/refresh DOM scenario, and web typecheck passed. Full unit run passed 9,309 tests; the additional DOM scenario ran separately.
 
-Phase 1 browser verification passed for step selection, keyboard help, refusal feedback, viewer permissions and parked restart. The full integration run is in progress.
+Phase 1 browser verification passed for step selection, keyboard help, refusal feedback, viewer permissions and parked restart.
 
 Phase 2 RED reproduced missing header slots (1 of 18), missing validated permission projection (1 of 4 PostgreSQL cases) and incorrect default summary placement (M15 browser). GREEN PostgreSQL passed 4/4, and both M15 browser journeys passed for the exact evidence row, graph navigation, quiet states and next actions.
-
 
 Phase 2 qualification:
 
@@ -104,3 +103,11 @@ Phase 2 qualification:
 Phase 3 RED reproduced the fullscreen URL with a 418 px canvas in Chromium and Firefox. Both also lacked a focused fullscreen close action after dismissing a child peek.
 
 Phase 3 GREEN: authenticated Chromium and Firefox each measured a 1440 × 1000 viewport surface at (0, 0). The same canvas grew from 1080 × 418 inline to 1436 × 946 below the controls. History, reload, Escape, click-to-close, focus, preserved scroll, and child-first Escape passed. The full affected Playwright selection passed 53/53 with zero skips or retries. Full web unit passed 9,311/9,311; web typecheck, docs, contract validation and lint passed.
+
+## Final acceptance
+
+The step trigger owns its single POST and feedback. The existing lifecycle control owns Run stop. The Run view chooses the relevant placement and destination. Fullscreen uses the existing graph instance and URL state. No action, authorization rule or UI preference required a new HTTP operation, stream event, column, migration or backfill. The OpenAPI change describes the existing interrupt authorization responses.
+
+The complete web integration project passed at `89727b06b` in four sequential Vitest shards. Their JSON reports matched all 734 files listed by Vitest exactly once. All 6,647 enabled tests passed. The project skipped its 11 opt-in load, external reference-package and context-provider cases. One agent host-pressure scenario passed on its configured retry. All 53 affected Playwright scenarios passed without retries.
+
+Earlier broad runs exposed queue fixtures that still targeted the old dispatch boundary, a PostgreSQL lock check with an insufficient observation window, and a crash test whose automatic restart could open a second permission before it observed the first crash. The fixture changes keep those outcomes deterministic while preserving the original assertions. The separate automatic-recovery and manual crash-boundary suites passed all 32 tests. Web typecheck, ESLint (zero errors), documentation and API contract validation passed.

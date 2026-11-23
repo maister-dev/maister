@@ -448,7 +448,7 @@ one on the clipboard. A non-fast-forward _Return_ renders the server's structure
 remediation — the exact command, the local/remote SHAs, and how far the branch
 has diverged — as copyable text rather than a generic error.
 
-**Project Flow detail controls (Designed).** The Run status row includes the
+**Project Flow detail controls (Implemented).** The Run status row includes the
 execution-policy badge and the authorized **Stop run** action. A long branch
 pair uses the remaining width and exposes its full value on demand. The row
 wraps on small screens. The selected-step header includes **Stop current

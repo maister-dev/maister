@@ -259,7 +259,7 @@ use their own lifecycle and result state. Agent code-delivery Review consumes
 the enforcement rollup for promotion controls. A historical execution error
 describes that attempt (UX-07A–C).
 
-### Run detail placement (Designed)
+### Run detail placement (Implemented)
 
 Results and checks owns the complete Flow verification summary. A Run without
 that workbench exposes it in the inspector. Ready, waiting, overridden, no

@@ -81,7 +81,7 @@ contract:
 | `inspector=<state>` | Run shell | Inspector open/collapsed or selected inspector tab, depending on implementation detail. |
 | `flow=fullscreen` | Flow result | Opens the live graph across the browser viewport. |
 
-**Fullscreen interaction (Designed).** The graph canvas expands with its
+**Fullscreen interaction (Implemented).** The graph canvas expands with its
 container. Direct links, reload and browser history restore the mode. Close
 or Escape returns to this Run with the selected node, query state and inline
 scroll position retained. Focus returns to the entry control. A child sheet

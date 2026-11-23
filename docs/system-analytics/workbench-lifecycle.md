@@ -340,7 +340,7 @@ exists. Both directions are matrix-tested. See [`branch-sync.md`](branch-sync.md
 
 ### Acceptance criteria (per-surface)
 
-- Project Flow detail places the authorized **Stop run** action in the Run metadata row (Designed). Other workbench surfaces retain their existing Stop controls.
+- Project Flow detail places the authorized **Stop run** action in the Run metadata row (Implemented). Other workbench surfaces retain their existing Stop controls.
 - A `Review`/terminal workbench with a present worktree shows **Archive**,
   **Drop**, and **Export**. The Export dialog contains snapshot commit and
   optional handoff branch controls.
