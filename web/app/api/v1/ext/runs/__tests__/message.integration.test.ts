@@ -44,14 +44,10 @@ let db: NodePgDatabase;
 let agentsRoot: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
-vi.mock("@/lib/scheduler", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
-
-  return {
-    ...actual,
-    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
-  };
-});
+// Newly delegated children queue here. The messaging cases explicitly drive their parked or live sessions.
+vi.mock("@/lib/scheduler/start-allocated-run", () => ({
+  startAllocatedRun: async () => ({ started: false, queuePosition: 1 }),
+}));
 
 // Supervisor seam: createSession returns a fake handle (spied so test 2 can
 // assert the resumeSessionId), sendPrompt is a no-op, and streamSession yields
@@ -763,8 +759,10 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
   it("(3b) the same key in DIFFERENT trees → both ok", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");
-    const { secret: secretA } = await seedOrchestratorRun(orchestrator);
-    const { secret: secretB } = await seedOrchestratorRun(orchestrator);
+    const { runId: rootA, secret: secretA } =
+      await seedOrchestratorRun(orchestrator);
+    const { runId: rootB, secret: secretB } =
+      await seedOrchestratorRun(orchestrator);
 
     const a = await delegatePost(
       jsonReq(DEL_URL, secretA, {
@@ -789,14 +787,24 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
 
     expect(a.status).toBe(202);
     expect(b.status).toBe(202);
+    const children = await pool.query<{ root_run_id: string; status: string }>(
+      `SELECT root_run_id, status FROM runs
+       WHERE root_run_id = ANY($1) AND addressable_key = 'reviewer' AND persistent
+       ORDER BY root_run_id`,
+      [[rootA, rootB]],
+    );
+
+    expect(children.rows).toEqual(
+      [rootA, rootB]
+        .sort()
+        .map((root) => ({ root_run_id: root, status: "Pending" })),
+    );
   });
 
   it("(4) delegate persistent=true with no addressableKey → CONFIG, no child", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");
-    const { secret } = await seedOrchestratorRun(orchestrator);
-
-    const before = await pool.query(`SELECT count(*)::int AS n FROM "runs"`);
+    const { runId, secret } = await seedOrchestratorRun(orchestrator);
 
     const res = await delegatePost(
       jsonReq(DEL_URL, secret, {
@@ -811,9 +819,12 @@ describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
     expect(res.status).toBe(422);
     expect(((await res.json()) as { code: string }).code).toBe("CONFIG");
 
-    const after = await pool.query(`SELECT count(*)::int AS n FROM "runs"`);
+    const children = await pool.query(
+      `SELECT id FROM runs WHERE parent_run_id = $1`,
+      [runId],
+    );
 
-    expect(after.rows[0].n).toBe(before.rows[0].n);
+    expect(children.rows).toEqual([]);
   });
 
   // sendAgentMessage's LIVE branch: a Running child gets the prompt delivered to
