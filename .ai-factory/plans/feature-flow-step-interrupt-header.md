@@ -111,3 +111,13 @@ The step trigger owns its single POST and feedback. The existing lifecycle contr
 The complete web integration project passed at `89727b06b` in four sequential Vitest shards. Their JSON reports matched all 734 files listed by Vitest exactly once. All 6,647 enabled tests passed. The project skipped its 11 opt-in load, external reference-package and context-provider cases. One agent host-pressure scenario passed on its configured retry. All 53 affected Playwright scenarios passed without retries.
 
 Earlier broad runs exposed queue fixtures that still targeted the old dispatch boundary, a PostgreSQL lock check with an insufficient observation window, and a crash test whose automatic restart could open a second permission before it observed the first crash. The fixture changes keep those outcomes deterministic while preserving the original assertions. The separate automatic-recovery and manual crash-boundary suites passed all 32 tests. Web typecheck, ESLint (zero errors), documentation and API contract validation passed.
+
+## Review fixes verified after merging master
+
+Master `22df665aa` is the second parent of `2ac3c7525`. The extended browser run at `b3bf1de36` passed all 56 tests across the five affected specs and the selected Firefox cases with zero retries or skips.
+
+- [x] META-1/2. A running Flow with Stop as its only lifecycle action shows one Stop run button in its header. Opening Git shows the active sync phase and target. The compact layout journey measures the status, policy and Stop button against the same row in EN and RU.
+- [x] CHECK-2/3. Two failed gates on an inspector-only Run have distinct destinations. Direct entry, reload and Back/Forward restore focus to the intended reason. A generic permission has no related-check link.
+- [x] FULL-1/2. Direct fullscreen entry with an empty child selection leaves the graph in charge of focus and Escape. A selected child owns the first Escape. Both browsers also verify the canvas expands and returns to its inline bounds.
+
+The repeatable cross-browser command is `pnpm --filter maister-web test:e2e:flow`. The merged tree also passed 126 focused Vitest tests, web, supervisor and MCP typechecks, the MCP build, ESLint on the affected files, documentation validation and API contract validation.
