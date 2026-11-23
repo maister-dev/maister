@@ -626,6 +626,8 @@ The reviewed company binding grants explicit installation reach as described in 
 
 ## Expectations
 
+- **CAP-05:** (Designed) Updating one active project link must affect only that instance on subsequent launches and preserve the adopted source.
+
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =
   `package_installs.name`); registration MUST scan
   `package_installs.installed_path/maister-agents/*.md`, project once per package,

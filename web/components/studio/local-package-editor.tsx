@@ -81,7 +81,6 @@ import {
   buildAgentGroupFromFiles,
   buildMcpOptions,
   buildRunnerGroup,
-  buildSkillOptions,
 } from "@/lib/flows/editor/reference-sources";
 import {
   overlayFlowBuffer,
@@ -702,10 +701,6 @@ export function LocalPackageEditor({
     () => buildPackageCapabilityCatalog(draftFiles, promptAdapter),
     [draftFiles, promptAdapter],
   );
-  const skillOptions = useMemo(
-    () => buildSkillOptions(draftFiles),
-    [draftFiles],
-  );
   const mcpOptions = useMemo(() => buildMcpOptions(mcpCatalog), [mcpCatalog]);
 
   // The deepest breadcrumb segment: the open flow's name (or skill id), or null
@@ -1148,7 +1143,6 @@ export function LocalPackageEditor({
               readinessReady={false}
               saveAction={saveAction}
               schemaFiles={schemaFiles}
-              skillOptions={skillOptions}
               topology={topology}
               onDirtyChange={setFlowEditorDirty}
               onSelectNode={handleNodeSelected}

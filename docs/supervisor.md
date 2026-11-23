@@ -1316,6 +1316,10 @@ their original digest with null v2 metadata; reopen never fabricates missing
 request or sequence identity. The public receipt v2 response and immutable
 command-output manifest remain under implementation.
 
+### Assigned-host MCP preparation (Designed)
+
+The assigned workload connects directly to its selected remote MCP endpoints, starts selected stdio servers from verified host-owned storage and connects its scoped MAIster facade to web. Probe and session startup must observe the same runtime and credentials. [Placement diagram](system-analytics/execution-hosts.md#mcp-placement-designed)
+
 ## Module layout
 
 ```

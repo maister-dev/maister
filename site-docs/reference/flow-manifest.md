@@ -7,6 +7,8 @@ description: "Define a versioned graph of agent, command, check, human, and orch
 defines metadata, compatibility, nodes, transitions, inputs, outputs, gates,
 and bounded rework.
 
+Ship the skills each Flow uses in its package. An agent prompt can reference a packaged skill using `@skill:<slug>`.
+
 ## Shape
 
 ```yaml

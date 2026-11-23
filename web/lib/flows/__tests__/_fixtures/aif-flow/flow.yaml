@@ -57,13 +57,11 @@ nodes:
     settings:
       tools:
         claude: [Read, Edit, Bash]
-      skills: [aif-implement]
       permissionMode: ask
       limits:
         maxDurationMinutes: 60
       enforcement:
         tools: instruct
-        skills: instruct
         permissionMode: instruct
     transitions:
       success: checks

@@ -1340,7 +1340,23 @@ Update the [supervisor HTTP](../api/supervisor.openapi.yaml),
 [Run SSE](../api/async/web-runs.asyncapi.yaml) contracts alongside the
 corresponding executable surfaces.
 
+### MCP placement (Designed)
+
+```mermaid
+flowchart LR
+  A[Web A: current Run assignment] -->|Fenced prepare and probe| B[Assigned supervisor B]
+  B -->|Verified cache or staged install| W[ACP workload B]
+  W -->|Selected HTTPS MCP| H[Remote server]
+  W -->|Turn credential in facade process| A
+  A -->|New assignment and epoch| C[Supervisor C with separate cache]
+```
+
+The workload uses the registered endpoint for its assignment. A local path on A never identifies an executable on B. Publish only after artifact and transitive inputs match the reviewed descriptor. Recheck current trust and fencing at launch. A clean host obtains and validates its own copy. A missing runtime or unavailable distribution leaves the required server unready with a typed reason.
+
 ## Expectations
+
+- **HST-01:** (Designed) Each tool probe and dispatch must execute on the current assigned host under the correct epoch.
+- **HST-02:** (Designed) A workload may start only a reviewed selected distribution whose digest, target runtime and trust are verified before use.
 
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 

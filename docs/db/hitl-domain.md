@@ -344,3 +344,7 @@ are queried by `(parent_hitl_request_id, created_at)` and are system-closed when
 the parent starts ordinary rework. A child response accepts exactly one
 top-level `optionId`; extra fields are rejected before the stored response can
 change.
+
+## Package and agent delivery (Designed)
+
+An ordinary Flow question belongs to its exact Run, attempt, turn and epoch. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)

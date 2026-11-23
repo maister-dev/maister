@@ -111,7 +111,6 @@ export interface FlowGraphEditorProps {
   schemaFiles?: { path: string; content: string }[];
   promptCatalog?: ProjectCapabilityCatalogEntry[];
   promptAdapter?: AdapterId;
-  skillOptions?: CapabilityOption[];
   mcpOptions?: CapabilityOption[];
   onWriteSchemaFile?: (path: string, content: string) => void;
   onChange?: (next: { manifest: FlowYamlV1; draftVersion: number }) => void;
@@ -414,7 +413,6 @@ export default function FlowGraphEditor({
   schemaFiles,
   promptCatalog,
   promptAdapter,
-  skillOptions,
   mcpOptions,
   onWriteSchemaFile,
   onChange,
@@ -879,7 +877,6 @@ export default function FlowGraphEditor({
                 promptVariableWarnings={promptAssists.variableWarnings}
                 schemaFiles={schemaFiles}
                 sessionNames={sessionNames}
-                skillOptions={skillOptions}
                 waitTargets={manifest.nodes.map(({ id }) => id)}
                 onChange={handleNodeFormChange}
                 onPresentationChange={handlePresentationChange}

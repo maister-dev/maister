@@ -811,7 +811,32 @@ deduplication and lineage use the resolved install ID. Element path confinement
 and the existing partial-copy behavior apply to that exact bundle (UX-01C).
 See the [Web API](../api/web.openapi.yaml).
 
+### Catalog provenance (Designed)
+
+Each imported skill tree or MCP declaration retains the reviewed upstream digest, publisher, license, exact revision, package-relative destination and applied digest through version cut. Update compares the previous imported bytes to both the working tree and the newly reviewed source. Adoption publishes the cut revision to one project. [Studio authoring](flow-studio.md#catalog-authoring-designed)
+
+#### Draft publication and recovery (Designed)
+
+```mermaid
+sequenceDiagram
+  participant E as Package editor
+  participant S as Studio
+  participant D as Draft store
+  E->>S: Preview approved source and exact pin
+  S-->>E: Preview ID, digest, draft base and changes
+  E->>S: Apply preview with expected base and request key
+  S->>D: Claim operation and editor lock
+  S->>D: Stage files, manifest and provenance
+  S->>D: Publish and verify complete tree digest
+  S->>D: Record completion and release lock
+  S-->>E: Applied draft digest
+```
+
+After interruption, verify the base and candidate digests under the same lock. Resume staged publication only for its owner. A matching published tree completes the pending receipt. A third digest reports a conflict and blocks cut until reconciliation.
+
 ## Expectations
+
+- **CAT-03:** (Designed) One apply operation must publish a complete reviewed tree and its manifest from the expected draft base.
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
   resolve under `localPackagesRoot()` and MUST NEVER appear in any client

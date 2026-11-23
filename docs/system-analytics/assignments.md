@@ -89,6 +89,8 @@ The existing human-work tables support explicit company ownership and current as
 
 ## Expectations
 
+- **ASK-03:** (Designed) Only a checkpointed ordinary Flow question may expose a human assignment, with one claim across Inbox and Run views.
+
 - Assignments are the read model for pending work; `runs.status` remains the
   scheduler and cap source.
 - `flow_roles[]` routes work but never authorizes it; route authorization still

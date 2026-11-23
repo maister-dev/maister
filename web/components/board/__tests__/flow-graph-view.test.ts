@@ -415,7 +415,7 @@ describe("FlowNodeBody — node tooltip preview", () => {
         "model: claude-sonnet-4-6",
         "permission: never",
         "workspace: isolated",
-        "skills: aif-review",
+        "restrictions: tests-only",
         "mcps: filesystem",
         "rework: fix",
       ].join("\n"),

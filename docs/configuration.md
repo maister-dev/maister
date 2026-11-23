@@ -772,7 +772,7 @@ separate authorization model.
    state until their explicit enable action.
 3. No duplicate flow IDs; no duplicate `capability_imports[].id`.
 4. **(Implemented)** Every Flow node settings capability reference
-   (`mcps[]`, `skills[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
+   (`mcps[]`, `restrictions[]`, `settingsProfile`, `tools.{claude|codex}`)
    must resolve to a project, Flow-shipped, or system capability record. An
    unknown ref, or a ref present in the registry but not supported by the
    resolved runner's `capability_agent`, throws
@@ -893,7 +893,7 @@ record, the time-limit watchdog, capability-reference resolution, agent-aware
 name mapping, and per-session native materialization (delivery channel:
 `<worktree>/.claude/settings.local.json` + ACP `newSession` `params.mcpServers`,
 ADR-044). `tools`/`mcps`/`hooks` are **enforced** at the supervisor ACP seam
-(`capability_guard`, [ADR-130](decisions.md#adr-130)); `skills`/`restrictions`/
+(`capability_guard`, [ADR-130](decisions.md#adr-130)); `restrictions`/
 `permissionMode` stay `instructed` permanently. Field-by-field semantics and
 the enforcement table: [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md)
 (see [ADR-031](decisions.md#adr-031)/[ADR-032](decisions.md#adr-032)).
@@ -909,7 +909,7 @@ and [`supervisor.md`](supervisor.md) — not restated here (R7).
 `judge` carries the same capability shape MINUS `runner_type`, `runner`,
 `settingsProfile`, `workspaceAccess`, and `artifactAccess` — those five are
 `ai_coding`-only. The shared subset is `model`, `thinkingEffort`, `mcps`,
-`tools`, `skills`, `permissionMode`, `limits`, `restrictions`, and
+`tools`, `permissionMode`, `limits`, `restrictions`, and
 `enforcement`. `.strict()` parsing rejects any of the five `ai_coding`-only
 fields on a `judge` node.
 
@@ -921,7 +921,6 @@ fields on a `judge` node.
 | `thinkingEffort`  | `low \| medium \| high`                                                                                                                   | Unknown value rejected.                                                                                                                                                                                                                                                 |
 | `mcps`            | `string[]`                                                                                                                                | Capability class. Registry resolution against `capability_records` at validate/launch is **Implemented (ADR-041)**.                                                                                                                                                     |
 | `tools`           | `{ claude?: string[]; codex?: string[] }`                                                                                                 | Per-agent tool map; malformed map rejected. Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                         |
-| `skills`          | `string[]`                                                                                                                                | Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                                                                     |
 | `settingsProfile` | `string`                                                                                                                                  | **`ai_coding` only.** Named `agent_definition` capability reference. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                  |
 | `workspaceAccess` | `read \| write \| none`                                                                                                                   | **`ai_coding` only.** Capability class.                                                                                                                                                                                                                                 |
 | `artifactAccess`  | `string[]`                                                                                                                                | **`ai_coding` only.** Artifact ids the node may read/write.                                                                                                                                                                                                             |
@@ -929,7 +928,7 @@ fields on a `judge` node.
 | `limits`          | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }`                                                                            | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only.                                                                                                                                                                   |
 | `restrictions`    | `string[]`                                                                                                                                | Capability class. Registry resolution is **Implemented (ADR-041)**.                                                                                                                                                                                                     |
 | `hooks`           | `{ disabled?: boolean; repetition?: { max: number > 0 }; noProgress?: { maxTurns: number > 0 }; pathGuard?: { allowedPaths: string[] } }` | **(Designed — ADR-108.)** Capability class. Per-tool-call guardrail rules enforced at the supervisor↔ACP seam; requires `compat.engine_min >= 1.8.0`. See [`flow-dsl.md`](flow-dsl.md) + [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md). |
-| `enforcement`     | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess?; hooks? }`                                                    | Per-class intent — see below.                                                                                                                                                                                                                                           |
+| `enforcement`     | `{ mcps?; tools?; restrictions?; permissionMode?; workspaceAccess?; hooks? }`                                                    | Per-class intent — see below.                                                                                                                                                                                                                                           |
 
 **`human` settings** (decision/role/takeover shape):
 
@@ -959,7 +958,7 @@ fields on a `judge` node.
 #### `enforcement` intent + the static enforceability table
 
 `settings.enforcement` declares, per capability class (`mcps`, `tools`,
-`skills`, `restrictions`, `permissionMode`, `workspaceAccess`, `hooks`), how
+`restrictions`, `permissionMode`, `workspaceAccess`, `hooks`), how
 strictly the class must hold:
 
 | Value      | Meaning                                                                    |

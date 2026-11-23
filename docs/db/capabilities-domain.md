@@ -80,7 +80,7 @@ reference exists here. Rows are upserted with SET/CLEAR semantics during project
 registration (`upsertCapabilitiesFromConfig`).
 
 - `capability_ref_id` — the stable id used in `maister.yaml` capability arrays
-  and in node `settings.mcps[]`, `settings.skills[]`, etc. Unique within
+  and in node `settings.mcps[]` and other registry references. Unique within
   `(project_id, source, kind)`.
 - **(Designed, ADR-129)** `material` (for `kind=mcp`) additionally carries: a
   package **requirement marker** (`origin` distinguishing a requirement from an
@@ -263,3 +263,7 @@ consolidated ERD; see [`erd.md`](erd.md) for the entity block.
 - Source (Implemented): migration `0019_m14_capability_materialization`.
 
 A registered standalone import has a [project dependency declaration](projects-domain.md) before its first materialized capability revision. The capability row owns trust and setup evidence for effective content. See [dependency installation](../system-analytics/project-dependency-installation.md).
+
+## Package and agent delivery (Designed)
+
+Release defaults and sparse overrides belong to the stable attachment and logical MCP reference. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)

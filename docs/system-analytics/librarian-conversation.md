@@ -218,6 +218,21 @@ abort-triggered stream exit (Implemented).
 - A `librarian.work` event prompts a fresh authorized read without advancing message replay. An older effect settling, expiry of a pending card and changed grants each invalidate the relevant projection.
 - **(Implemented) Bounded single-transaction card evaluation and eligible-set reuse.** `getLibrarianConversationView` computes `readEligibleConfirmationIds` once and passes the eligible pending card set into `getLinkedWork`, avoiding duplicate `prepareKnowledgeCard` work. Both `getLinkedWork` (including vault `governedEffectLink` lookups) and `readEligibleConfirmationIds` evaluate governed cards sequentially inside a single outer transaction with per-card `tx.transaction` savepoints to isolate `MaisterError` denials without bursting `pg.Pool` connections.
 
+### Inline question (Designed)
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending: commit card and checkpoint
+  Pending --> Accepted: owner answers
+  Accepted --> Delivered: original turn consumes answer
+  Pending --> Cleared: explicit reset
+  Accepted --> Cleared: reset before delivery
+  Delivered --> [*]
+  Cleared --> [*]
+```
+
+Closing a browser tab leaves the question open. On restart a worker reads the original conversation, segment, turn and receipt. Reset and delivery serialize on the conversation and turn. A successful delivery resumes exactly once. A reset invalidates any undelivered command. The private transcript read checks the active owner even for administrators.
+
 ## Expectations
 
 - **LCV-01:** Exactly one `librarian_conversations` row MUST exist per user and no route or tool may create a second, enforced by UNIQUE `librarian_conversations_user_uq` behind `getOrCreateConversation` (Implemented).

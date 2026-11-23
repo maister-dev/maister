@@ -26,7 +26,7 @@ import { MaisterError } from "@/lib/errors";
 import { isEngineCompatible } from "@/lib/flows/engine-version";
 import {
   parseExecutableStoredFlowManifest,
-  parseGraphOnlyFlowManifest,
+  parseRetainedGraphShape,
 } from "@/lib/flows/manifest-parser";
 
 /** Capture accepted configuration under current provider/role/user authority, without admitting execution. */
@@ -110,7 +110,7 @@ export async function captureCompanyFlowBinding(
     manifestLabel: "company coordinator Flow",
     code: "CONFIG" as const,
   };
-  const manifest = parseGraphOnlyFlowManifest(flow.manifest, manifestContext);
+  const manifest = parseRetainedGraphShape(flow.manifest, manifestContext);
 
   if (!companyFlowRoleMappingsMatch(manifest, input.roleMappings))
     throw new MaisterError(

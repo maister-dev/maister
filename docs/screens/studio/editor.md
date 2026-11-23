@@ -293,8 +293,7 @@ uses the same icon, hue, tooltip, handles, and compact node body.
 The properties panel replaces comma-separated text fields with structured
 controls; the persisted `flow.yaml` shapes are unchanged.
 
-- **MultiSelectField** — `skills` and `mcps` render as removable chips + an
-  add-combobox over a package-derived catalog (free-add allowed for forward
+- **MCP selector** — `mcps` renders a searchable project server list (free-add allowed for forward
   refs); `rework.workspacePolicies` is a fixed-enum multiselect (no free-add).
 - **StringListField** — `restrictions`, `roles`, `assignees`, `decisions`,
   `material_axes`, `rework.allowedTargets`, and `hooks.pathGuard.allowedPaths`
@@ -327,7 +326,7 @@ is authored as a first-class node — see
 
 **Acceptance criteria.**
 
-- Skills/mcps render as chips with an add affordance; workspace policies accept
+- MCPs render as chips with an add affordance; workspace policies accept
   only the three enum values; list fields add and remove rows.
 - The node prompt composer stores `@skill:<slug>`; an existing plain-text prompt
   renders unchanged until a token is inserted.
@@ -337,6 +336,10 @@ is authored as a first-class node — see
 - Read-only viewer mounts degrade to text/chips with no fetch.
 - EN and RU labels exist for every new multiselect, string-list, and composer
   control.
+
+### Catalog selection (Designed)
+
+Skills and MCPs each have an Add from catalog action with type-ahead search, keyboard selection and source-specific errors. Opening a result displays publisher, pin, destination and reviewed contents. Apply changes only the editable draft. The package agent editor can select skills and MCPs from the providing package. A Flow node chooses an agent and can refine its MCPs. [Effective inventories](../../system-analytics/capabilities.md#project-run-capability-inventory-designed)
 
 ## States
 

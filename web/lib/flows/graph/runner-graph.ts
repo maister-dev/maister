@@ -2277,6 +2277,7 @@ async function materializeNodeCapabilities(
         ? undefined
         : allNodeMcpRefs(settings.mcps)
       : [];
+  // Only retained revisions can supply an explicit node skill selection.
   const selectedSkillIds = declares && settings ? settings.skills : [];
   const selectedRuleIds: string[] = [];
   const selectedAgentDefinitionIds: string[] = [];

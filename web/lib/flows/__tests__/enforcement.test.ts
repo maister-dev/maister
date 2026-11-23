@@ -398,10 +398,14 @@ describe("evaluateNodeEnforcement — parsed-manifest sparse map", () => {
   });
 
   it("a data field with no enforcement entry (parsed) still defaults to instruct at evaluation", () => {
-    const settings = parsedAiCodingSettings({ skills: ["aif-implement"] });
+    const settings = parsedAiCodingSettings({
+      restrictions: ["no-global-installs"],
+    });
     const result = evaluateNodeEnforcement(settings, "claude");
 
-    expect(result.map((e: EnforcementEntry) => e.class)).toEqual(["skills"]);
+    expect(result.map((e: EnforcementEntry) => e.class)).toEqual([
+      "restrictions",
+    ]);
     expect(result[0].declared).toBe("instruct");
     expect(result[0].verdict).toBe("instructed");
   });

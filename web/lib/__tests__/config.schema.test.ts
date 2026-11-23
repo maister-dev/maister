@@ -178,7 +178,6 @@ describe("aiCodingSettingsSchema runner target", () => {
     const parsed = aiCodingSettingsSchema.parse({
       runner_type: "acp",
       runner: "claude-code",
-      skills: ["aif-implement"],
     });
 
     expect(parsed.runner_type).toBe("acp");
@@ -579,7 +578,6 @@ describe("aiCodingSettingsSchema (M11c)", () => {
         thinkingEffort: "high",
         mcps: ["github", "postgres"],
         tools: { claude: ["Read", "Edit"], codex: ["shell"] },
-        skills: ["aif-implement"],
         settingsProfile: "default",
         workspaceAccess: "write",
         artifactAccess: ["plan-summary"],
@@ -589,7 +587,6 @@ describe("aiCodingSettingsSchema (M11c)", () => {
         enforcement: {
           mcps: "strict",
           tools: "instruct",
-          skills: "off",
           restrictions: "strict",
           permissionMode: "instruct",
           workspaceAccess: "strict",
@@ -773,14 +770,12 @@ describe("judgeSettingsSchema (M11c)", () => {
         thinkingEffort: "medium",
         mcps: ["github"],
         tools: { claude: ["Read"] },
-        skills: ["aif-review"],
         restrictions: ["no-network"],
         permissionMode: "deny",
         limits: { maxDurationMinutes: 10 },
         enforcement: {
           mcps: "strict",
           tools: "instruct",
-          skills: "off",
           restrictions: "strict",
           permissionMode: "instruct",
           workspaceAccess: "instruct",

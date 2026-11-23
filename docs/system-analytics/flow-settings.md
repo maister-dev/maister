@@ -67,7 +67,7 @@ is unchanged by the typed-settings layer.
   command shape. Optional on every node type. Lives in the pinned
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](../db/runs-domain.md)).
 - **Capability class** — one of the seven capability-bearing settings subject to
-  the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
+  the `enforcement` intent: `mcps`, `tools`, `restrictions`,
   `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Implemented — ADR-108;
   see "Hook engine capability class" below).
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
@@ -150,15 +150,15 @@ false-enforce (ADR-032). The remaining four classes stay `instructed`, each for 
 > enforced` flip lands is owned by the enforcement-flip work (ADR-042); this note
 > changes no `ENFORCEABILITY_BY_AGENT` cell.
 
-| agent → class | `mcps` | `tools` | `skills` | `restrictions` | `permissionMode` | `workspaceAccess` |
-| ------------- | ------ | ------- | -------- | -------------- | ---------------- | ----------------- |
-| `claude`      | **enforced** | **enforced** | instructed | instructed | instructed | instructed |
-| `codex`       | **enforced** | **enforced** | instructed | instructed | instructed | instructed |
-| `gemini`      | **enforced** | **enforced** | instructed | instructed | instructed | instructed |
-| `opencode`    | **enforced** | **enforced** | instructed | instructed | instructed | instructed |
-| `mimo`        | **enforced** | **enforced** | instructed | instructed | instructed | instructed |
+| agent → class | `mcps` | `tools` | `restrictions` | `permissionMode` | `workspaceAccess` |
+| ------------- | ------ | ------- | -------------- | ---------------- | ----------------- |
+| `claude`      | **enforced** | **enforced** | instructed | instructed | instructed |
+| `codex`       | **enforced** | **enforced** | instructed | instructed | instructed |
+| `gemini`      | **enforced** | **enforced** | instructed | instructed | instructed |
+| `opencode`    | **enforced** | **enforced** | instructed | instructed | instructed |
+| `mimo`        | **enforced** | **enforced** | instructed | instructed | instructed |
 
-(`hooks` is a 7th class, also **`enforced`** for all five — see the hook-engine
+(`hooks` is a sixth class, also **`enforced`** for all five — see the hook-engine
 section below.)
 
 ```ts
@@ -169,7 +169,6 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
   claude: {
     mcps: "enforced",              // capability_guard MCP-server allow-list (evidence-gated at launch)
     tools: "enforced",             // capability_guard tool-name allow-list (evidence-gated at launch)
-    skills: "instructed",          // instructions / materialized files, not tool calls — not seam-interceptable
     restrictions: "instructed",    // path-based mustNotTouch deny-sets (mutation-check gate), not tool identity
     permissionMode: "instructed",  // claude-only defaultMode delivery, end-to-end constraint unverified (spike 0.10)
     workspaceAccess: "instructed", // not delivered to the seam on the flow path (no readOnlySession); follow-up
@@ -178,7 +177,6 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
   codex: {
     mcps: "enforced",
     tools: "enforced",
-    skills: "instructed",
     restrictions: "instructed",
     permissionMode: "instructed",
     workspaceAccess: "instructed",
@@ -273,7 +271,7 @@ node and for every capability-bearing setting on it with `enforcement: strict`:
 
 - **`MaisterError("CONFIG")`** — no agent in the table has the class `enforced`
   (the build cannot strictly enforce this class **at all**). With `tools`/`mcps`/`hooks`
-  now `enforced`, this is the refusal for a `strict` on `skills` / `restrictions` /
+  now `enforced`, this is the refusal for a `strict` on `restrictions` /
   `permissionMode` / `workspaceAccess` (no agent enforces them). Also the code for a
   `strict` `tools`/`mcps` with **no declared allow-set** (ADR-130).
 - **`MaisterError("EXECUTOR_UNAVAILABLE")`** — some agent has the class `enforced`

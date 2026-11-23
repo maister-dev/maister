@@ -54,7 +54,6 @@ export function buildFlowNodeTooltipsFromNodes(
       const rework = asRec(n.rework);
       const transitions = asRec(n.transitions);
       const gates = (asRec(n.pre_finish).gates as unknown[] | undefined) ?? [];
-      const skills = listLabel(settings.skills);
       const mcps = mcpLabel(settings.mcps);
       const reworkTargets = listLabel(rework.allowedTargets);
 
@@ -71,7 +70,6 @@ export function buildFlowNodeTooltipsFromNodes(
           str(settings.workspaceAccess)
             ? `workspace: ${str(settings.workspaceAccess)}`
             : null,
-          skills ? `skills: ${skills}` : null,
           mcps ? `mcps: ${mcps}` : null,
           countLabel(Object.keys(transitions).length, "transition"),
           countLabel(gates.length, "gate"),

@@ -123,7 +123,7 @@ HTTPS_AUTH | NOT_FOUND | NETWORK | UNKNOWN`. The classification logic +
 > **`CONFIG` new call sites (Designed):**
 >
 > - **Unknown/unsupported capability ref at validate or launch** — `loadProjectConfig()`
->   (carve-b: `validateNodeSettings` rejects any `settings.mcps[]`, `skills[]`,
+>   (carve-b: `validateNodeSettings` rejects any `settings.mcps[]`,
 >   `restrictions[]`, `settingsProfile`, or `tools` ref not present in the project
 >   `capability_records`, or present but with `agents` not including the selected
 >   executor agent). HTTP 400 from both the project-register and run-launch paths.

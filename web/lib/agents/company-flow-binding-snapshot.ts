@@ -25,7 +25,7 @@ import {
   knowledgeDeliveryKeySchema,
   knowledgeRevisionSchema,
 } from "@/lib/brain/knowledge-types";
-import { flowYamlV1Schema, type FlowYamlV1 } from "@/lib/config.schema";
+import { storedFlowYamlV1Schema, type FlowYamlV1 } from "@/lib/config.schema";
 import { databaseTimestamp } from "@/lib/db/timestamp";
 import { MaisterError } from "@/lib/errors";
 import { contentDigest } from "@/lib/evaluations/digest";
@@ -36,7 +36,7 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const operation = z.enum(["created", "updated", "detached"]);
 // Inspect the retained shape without injecting current parser defaults into historical bytes.
 const frozenManifestSchema = z.custom<FlowYamlV1>(
-  (value) => flowYamlV1Schema.safeParse(value).success,
+  (value) => storedFlowYamlV1Schema.safeParse(value).success,
 );
 
 export const companyFlowBindingSnapshotSchema = z

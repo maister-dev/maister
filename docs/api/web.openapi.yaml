@@ -188,6 +188,764 @@ tags:
       one durable conversation, its turns and cards, personal memory, reset and
       history deletion, the conversation SSE stream, and the admin enablement.
 paths:
+  /api/studio/local-packages/{id}/catalog/search:
+    get:
+      operationId: searchDraftCatalog
+      summary: (Designed) Search approved catalog sources for this editable draft
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - skill
+              - mcp
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        "200":
+          description: Results and availability per source
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - results
+                  - sources
+                  - nextCursor
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - sourceId
+                        - resultId
+                        - publisher
+                        - name
+                        - kind
+                      properties:
+                        sourceId:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        resultId:
+                          type: string
+                          minLength: 1
+                          maxLength: 1024
+                        publisher:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        kind:
+                          type: string
+                          enum:
+                            - skill
+                            - mcp
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - sourceId
+                        - state
+                      properties:
+                        sourceId:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        state:
+                          type: string
+                          enum:
+                            - available
+                            - rate_limited
+                            - unavailable
+                  nextCursor:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                    nullable: true
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "429":
+          description: Source rate limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: Upstream unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/studio/local-packages/{id}/catalog/preview:
+    post:
+      operationId: previewDraftCatalog
+      summary: (Designed) Review exact upstream bytes and draft destination
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Pinned preview
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - previewId
+                  - pin
+                  - digest
+                  - expectedDraftBase
+                  - notices
+                  - files
+                  - configuration
+                  - expiresAt
+                properties:
+                  previewId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  pin:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  digest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  expectedDraftBase:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  notices:
+                    type: array
+                    items:
+                      type: string
+                      minLength: 1
+                      maxLength: 2048
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - path
+                        - change
+                        - digest
+                      properties:
+                        path:
+                          type: string
+                          minLength: 1
+                          maxLength: 512
+                        change:
+                          type: string
+                          enum:
+                            - add
+                            - modify
+                            - remove
+                            - conflict
+                        digest:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                          nullable: true
+                  configuration:
+                    type: array
+                    items:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                  expiresAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "429":
+          description: Source rate limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "503":
+          description: Upstream unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"kind": "skill", "sourceId": "anthropic-skills", "selector": "frontend-design", "destination": "capability/skills/frontend-design"}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - kind
+                - sourceId
+                - selector
+                - destination
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - skill
+                    - mcp
+                sourceId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                selector:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                destination:
+                  type: string
+                  minLength: 1
+                  maxLength: 512
+                importId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+  /api/studio/local-packages/{id}/catalog/apply:
+    post:
+      operationId: applyDraftCatalog
+      summary: (Designed) Apply the reviewed preview under the draft lock
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Applied receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - operationId
+                  - state
+                properties:
+                  operationId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - pending
+                      - applied
+                      - failed
+                  draftDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+        "202":
+          description: Recoverable operation in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - operationId
+                  - state
+                properties:
+                  operationId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - pending
+                      - applied
+                      - failed
+                  draftDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "410":
+          description: Expired or closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"previewId": "preview-a", "expectedDraftBase": "1111111111111111111111111111111111111111111111111111111111111111", "requestKey": "apply-a"}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - previewId
+                - expectedDraftBase
+                - requestKey
+              properties:
+                previewId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                expectedDraftBase:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                resolutions:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - path
+                      - use
+                    properties:
+                      path:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                      use:
+                        type: string
+                        enum:
+                          - upstream
+                          - draft
+  /api/studio/local-packages/{id}/catalog/operations/{operationId}:
+    get:
+      operationId: readDraftCatalogOperation
+      summary: (Designed) Read the state of an authorized draft operation
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Current receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - operationId
+                  - state
+                properties:
+                  operationId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - pending
+                      - applied
+                      - failed
+                  draftDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+  /api/projects/{slug}/packages/{attachmentId}/mcps/{refId}/scope:
+    put:
+      operationId: setAttachmentMcpScope
+      summary: (Designed) Set or clear a release scope override
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: refId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Scope committed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - declared
+                  - effective
+                  - origin
+                  - revision
+                properties:
+                  declared:
+                    type: string
+                    enum:
+                      - project
+                      - package
+                  effective:
+                    type: string
+                    enum:
+                      - project
+                      - package
+                  origin:
+                    type: string
+                    enum:
+                      - package
+                      - override
+                  revision:
+                    type: integer
+                    minimum: 1
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"scope": null, "expectedInstallId": "install-a", "expectedRevision": 1}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - scope
+                - expectedInstallId
+                - expectedRevision
+              properties:
+                scope:
+                  type: string
+                  nullable: true
+                  enum:
+                    - package
+                    - project
+                    - null
+                expectedInstallId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                expectedRevision:
+                  type: integer
+                  minimum: 1
+  /api/librarian/cards/{cardId}/answer:
+    post:
+      operationId: answerLibrarianQuestion
+      summary: (Designed) Answer a private question in its active conversation
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        "200":
+          description: Delivery confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "202":
+          description: Accepted for delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "410":
+          description: Expired or closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaisterErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"answer": {"journey": "checkout"}}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - answer
+              properties:
+                answer:
+                  type: object
+                  additionalProperties: true
   /api/runs/{runId}/waits/{waitId}:
     get:
       operationId: getFlowWait
@@ -3780,7 +4538,22 @@ paths:
                 schedulesRevision:
                   type: integer
                   minimum: 1
-                  description: Required with schedules; exact revision CAS.
+                  description: Required with schedules or the Designed prompt/MCP instance fields. Exact link revision CAS.
+                expectedInstallId:
+                  type: string
+                  description: (Designed) Required when modifying promptOverride or additionalMcpRefs.
+                promptOverride:
+                  type: string
+                  nullable: true
+                  minLength: 1
+                  maxLength: 65536
+                  description: (Designed) Save local persona text, or send null to restore the adopted persona. Reject whitespace-only values.
+                additionalMcpRefs:
+                  type: array
+                  uniqueItems: true
+                  maxItems: 64
+                  items: {type: string, minLength: 1, maxLength: 256}
+                  description: (Designed) Replace only this link's additions from connected project MCPs.
                 schedules:
                   type: array
                   maxItems: 16
@@ -9914,6 +10687,11 @@ paths:
 
         Single user-facing HITL endpoint. The handler dispatches on the
         stored `hitl_requests.kind`:
+
+        - **ordinary Flow agent question** (Designed): claim an answer to the stored
+          form for the exact checkpointed attempt under current assignment authority.
+          Report 202 until delivered and 200 on confirmed receipt. Refuse a competing
+          answer with 409, invalid fields with 422, a closed undelivered owner with 410.
 
         - **permission**: two-phase atomic claim. Phase 1 stores
           `response = {optionId}` under a row-level lock and only if

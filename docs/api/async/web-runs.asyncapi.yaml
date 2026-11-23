@@ -18,6 +18,8 @@ info:
     `session.stream_ready` and `session.stream_timeout` are synthetic web-tier
     messages. They have no SSE `id` and never advance a durable replay cursor.
     New work has no legacy file-backed stream branch.
+    (Designed) Ordinary Flow questions use the existing Run change stream. Reconnect reads current open requests, attempts and accepted/delivered state under current Run authority. Events carry identifiers only for this transition.
+
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster

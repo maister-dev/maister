@@ -326,6 +326,7 @@ export function firstUnknownCapabilityRef(
     if (!capabilityRefIds.mcp.has(ref)) return { kind: "mcp", ref };
   }
 
+  // Pinned revisions can still declare node skill references.
   for (const ref of settings?.skills ?? []) {
     if (!capabilityRefIds.skill.has(ref)) return { kind: "skill", ref };
   }

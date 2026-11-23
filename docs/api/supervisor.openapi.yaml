@@ -115,6 +115,202 @@ tags:
       composition can address this socket. Nothing here takes a filesystem path
       or an active assignment.
 paths:
+  /mcp/prepare:
+    post:
+      operationId: prepareAssignedMcp
+      summary: (Designed) Prepare a selected pinned npm distribution on its assigned host
+      description: The registered control plane authenticates to the host over a mutually authenticated transport. The host validates its assignment fence and deployment policy before acquiring bytes.
+      responses:
+        "200":
+          description: Prepared receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - hostId
+                  - commandId
+                  - assignmentEpoch
+                  - artifactDigest
+                  - runtime
+                  - cacheHit
+                properties:
+                  hostId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  commandId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  assignmentEpoch:
+                    type: integer
+                    minimum: 1
+                  artifactDigest:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  runtime:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  cacheHit:
+                    type: boolean
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 10000
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 10000
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 10000
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 10000
+        "503":
+          description: Upstream unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - code
+                  - message
+                properties:
+                  code:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                  message:
+                    type: string
+                    minLength: 1
+                    maxLength: 10000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - command
+                - fence
+                - payload
+              properties:
+                command:
+                  type: object
+                  required: [id, kind, issuedAt]
+                  additionalProperties: false
+                  properties:
+                    id: {type: string, format: uuid}
+                    kind: {type: string, enum: [mcp.prepare]}
+                    issuedAt: {type: string, format: date-time}
+                fence: {$ref: "#/components/schemas/CommandFence"}
+                payload:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - refId
+                    - registryName
+                    - version
+                    - integrity
+                    - artifactDigest
+                    - executable
+                    - runtime
+                  properties:
+                    refId:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
+                    registryName:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
+                    version:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
+                    integrity:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                    artifactDigest:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+                    executable:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
+                    runtime:
+                      type: string
+                      minLength: 1
+                      maxLength: 256
   /v1/repositories/{repositoryId}/refs:
     parameters:
       - { name: repositoryId, in: path, required: true, schema: { type: string } }

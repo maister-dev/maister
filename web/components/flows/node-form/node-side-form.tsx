@@ -64,7 +64,6 @@ export type NodeSideFormLabels = {
   thinkingEffort: string;
   permissionMode: string;
   workspaceAccess: string;
-  skills: string;
   restrictions: string;
   mcps: string;
   delegation: string;
@@ -82,7 +81,6 @@ export type NodeSideFormLabels = {
     title: string;
     mcps: string;
     tools: string;
-    skills: string;
     restrictions: string;
     permissionMode: string;
     workspaceAccess: string;
@@ -405,7 +403,6 @@ export function NodeSideForm({
   promptAdapter,
   promptVariableCatalog,
   promptVariableWarnings,
-  skillOptions,
   mcpOptions,
   presentation,
   readOnly = false,
@@ -428,9 +425,8 @@ export function NodeSideForm({
   promptAdapter?: AdapterId;
   promptVariableCatalog?: readonly TemplateVariableEntry[];
   promptVariableWarnings?: readonly TemplateVariableUsageWarning[];
-  // Catalog options for the `skills` / `mcps` multiselects (free-add allowed);
+  // Catalog options for the MCP multiselect (free-add allowed);
   // absent → empty catalog (free-add still works in the editor).
-  skillOptions?: CapabilityOption[];
   mcpOptions?: CapabilityOption[];
   presentation?: NodePresentationStyle;
   // Read-only (package viewer T1.4): every field renders as a disabled/read-only
@@ -892,21 +888,6 @@ export function NodeSideForm({
               value={str(settings.permissionMode)}
               onChange={(v) => setSetting("permissionMode", v || undefined)}
             />
-            <McpSelect
-              allowFreeAdd
-              label={labels.skills}
-              labels={labels.multiSelect}
-              options={(skillOptions ?? []).map((o) => ({
-                value: o.value,
-                label: o.label,
-              }))}
-              readOnly={readOnly}
-              testid="node-skills"
-              values={strList(settings.skills)}
-              onChange={(next) =>
-                setSetting("skills", next.length ? next : undefined)
-              }
-            />
             <StringListField
               label={labels.restrictions}
               labels={labels.stringList}
@@ -938,7 +919,6 @@ export function NodeSideForm({
                 [
                   "mcps",
                   "tools",
-                  "skills",
                   "restrictions",
                   "permissionMode",
                   "workspaceAccess",

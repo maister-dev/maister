@@ -11,7 +11,7 @@ The author can import, edit and update pinned skill trees and reviewed MCP descr
 ## Settings
 
 - **Mode** Full, current branch and worktree. The implementation and commit checkpoints below are future work.
-- **Testing** Focused integration, E2E and real-host acceptance. Prefer existing harnesses. Record observed artifacts, tool results and recovery behavior. Use focused unit tests for pure resolver, digest and compatibility cases.
+- **Testing** Spec-driven development with RED → GREEN → refactor for each behavior change. Focused integration, E2E and real-host acceptance. Prefer existing harnesses. Record observed artifacts, tool results and recovery behavior. Use focused unit tests for pure resolver, digest and compatibility cases.
 - **Logging** Standard structured diagnostics with optional DEBUG detail. Use INFO for transitions, WARN for retryable failures and policy refusals, ERROR for exhausted recovery. Carry operation, package, run, attempt and host identifiers where relevant. Redact credentials, headers, private endpoints, persona text, file bodies, questions and answers.
 - **Docs** Mandatory `$aif-docs` checkpoint for each changed contract with EN/RU public and UI parity.
 
@@ -104,21 +104,60 @@ Use the existing `ai_coding` node binding (`settings.agent`, `mode: session`, ag
 
 Human waits release the live turn after a recoverable checkpoint. On failed persistence, cancel/close any opened transport request and release its lease; reconcile acknowledged checkpoint intents on restart. Cancellation, supersession, terminal execution and explicit dialog reset settle pending work. Preserve other attempts' sessions and credentials. Reuse durable events and the registered recovery workers. For new worker arms, implement a fair cursor or per-item attempt stamp, capped backoff per intent, fenced lease renewal and a poison-item terminal diagnosis. Test the real worker registration and a healthy item behind a failing item.
 
+## Specification and implementation sequence
+
+T01 and T02 deliver the first reviewable increment. Mark the proposed behavior **Designed** in its owning system analytics. Give each expectation a stable ID, an actor, a precondition, an observable result and a primary acceptance test from the matrix below. Update the analytics index. Use `flow-studio` and `local-packages` for source review and cut, `capabilities`, `mcp-management` and `agents` for resolution and adoption, `execution-hosts` for preparation, `librarian-conversation` for private turns, and `hitl` and `assignments` for attempt questions. Keep each rule in one domain and link its consumers. Include the scope decision table, a draft publish/recovery sequence, a web A → supervisor B/C deployment diagram and separate state diagrams for private and project questions. Document rejection, recovery owner and terminal state for each transition. Follow R3, R5/R5a and R6 in `docs/CLAUDE.md`.
+
+T02 closes when the domain expectations, OpenAPI 3.0.3, AsyncAPI 2.6.0, planned migration sequence, wire examples and test ownership agree. Record deferred choices explicitly. Before changing a specified behavior, revise its governing contract, acceptance row and affected examples together. At implementation, use the existing domain services, strictly typed schemas, pure resolution logic and narrow I/O boundaries. Keep one owner for precedence, authorization and each durable transition. Apply SOLID, KISS and DRY in the repository's functional style. Add an abstraction only for distinct callers or an actual boundary.
+
+### API and event decisions for T02
+
+The following are proposed wire contracts. T02 records the final paths, operation IDs, security schemes, request limits, examples and typed domain errors in the owning spec. Preserve the existing multipart Studio import, project agent PATCH response, legacy task ask and specialist response branches for their existing callers.
+
+| Operation and caller | Accepted request and observable response | Conflicts and recovery |
+| --- | --- | --- |
+| Studio editor searches with `GET /api/studio/local-packages/{id}/catalog/search` | `kind`, `q` and source-bound cursor. Return 200 with stable source/result IDs, publisher, next cursor and per-source availability. One unavailable source can coexist with valid results. | Reject a cursor from another query/source with 400. All sources rate-limited gives 429 with retry guidance. Total upstream unavailability gives 503. |
+| Editor previews with `POST …/{id}/catalog/preview` | Source/result or supported link, selected subtree/distribution, destination and optional existing import identity for an update. Return 200 with preview ID, exact upstream pin/digest, expected draft base, diff, notices and configuration requirements. | Reject unsupported/unapproved input before writes. Bind the preview to actor and draft. Recheck source approval and edit access at apply. |
+| Editor writes with `POST …/{id}/catalog/apply` | Preview ID, expected draft base, resolved file conflicts and request key. One operation owns tree plus manifest/provenance. Return 200 with applied draft receipt or 202 with operation ID during reconciliation. Supply a draft-authorized status read for that ID. | Same key and canonical payload reads the receipt after reauthorization, even after the apply advanced the base. Changed payload or stale base returns 409. Missing preview returns 404, expired preview 410. Never refetch a floating revision to complete an apply. |
+| Project maintainer sets `PUT /api/projects/{slug}/packages/{attachmentId}/mcps/{refId}/scope` | `scope` takes `package`, `project` or null to inherit. Require expected install and scope revision. Return 200 with declared/effective scope, its origin and revision. Re-reading the Hub supplies the current precondition. | Competing edit/adoption returns 409 with current revision to authorized editor. Unknown or removed ref gives 404. Replayed stale precondition cannot overwrite newer scope. |
+| Project maintainer edits existing `PATCH /api/projects/{slug}/agents/{agentId}` | For these new fields require `schedulesRevision` and expected providing install. `additionalMcpRefs` replaces only local additions, empty clears. `promptOverride` accepts text or null to restore inheritance. An omitted field preserves its value. Return existing 200 `{ok:true}`. Read effective origin, current revision and divergence via guarded GET. The diff requires definition-read access on both sides. | Resolve refs against connected MCPs in this project under the same CAS as adoption/link edits. Reject stale saves with 409, invalid new fields with the route's typed validation error, and missing attachment with 404. Keep inherited refs effective on clear. |
+| Assigned host prepares selected MCPs | Extend the authenticated command envelope with reviewed install descriptor, digest, host ID, epoch and target runtime. T02 specifies the prepare invocation and receipt schema alongside `POST /mcp-probe`, session create/resume and `GET /commands/{commandId}`. Receipt identifies distribution digest, host/runtime and readiness. HTTP endpoints require a workload probe only. | Same command and identity reuses its receipt. Stale epoch or changed payload gives 409. Never publish a late command into the new assignment. Missing runtime, unsupported distribution and failed integrity have distinct typed terminal reasons. |
+| Runtime invokes `ask_human` | Retain the task-scoped external endpoint. Specify separate credential-derived external operations for the librarian and ordinary Flow node. Accept request key, question and typed form/options. Return 201 with stable question ID when durably open, or 202 with pending checkpoint identity. Owner and recipient are server-derived. | An exact replay returns its current state. Another payload with the same key gives 409. A node question becomes actionable only after the matching checkpoint is recoverable. |
+| Human answers | Proposed `POST /api/librarian/cards/{cardId}/answer` for owner and existing `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` for the authorized project responder. Submit the schema-valid answer. Return 202 once claimed and queued, 200 after confirmed delivery, with request ID and current state. | Same answer returns the recorded state, different answer after claim gives 409, invalid form 422, superseded/reset/terminal undelivered owner 410. A current authorization check precedes receipt lookup/disclosure. |
+
+For each new operation define missing credentials (401), denied action on a visible resource (403) and hidden or mismatched resource (404) using the existing route's disclosure rules. Pin bounded retry, error code and response examples per operation. For streams specify channel, audience, event discriminator/version, cursor and reconnect snapshot. Publish only committed transitions. Two views of one question converge on the same ID and state. After a cursor gap the authorized read model reconstructs the outcome. Keep option text, prompt and answers out of general activity streams. Validate example bodies against the schema and exercise producer/consumer parity, including the generated MCP input and unchanged legacy callers.
+
+### Persistence and migration decisions for T02
+
+| Owning implementation | Storage contract and upgrade invariant |
+| --- | --- |
+| T05 · draft import | Persist exact source/base and reviewed destination in the package. Register a replayable operation under the existing Studio draft lock, using the recoverable operation pattern in `web/lib/local-packages/create-flow-operation.ts`. Compare tree and manifest digests before acknowledgment. A concurrent cut sees one complete revision. Legacy drafts with no origin remain editable. |
+| T07 · sharing | Persist sparse overrides keyed uniquely by stable `project_package_attachments.id` and logical MCP ref. Retain the release pin and revision as write preconditions. Adoption rebuilds derived MCP records, so preserve surviving overrides across that rebuild. Remove dropped refs transactionally, never transfer an override on rename by guesswork. Detach deletes the override. Reattach starts with inheritance. |
+| T08–T10, T13 · frozen profiles | Add a versioned profile to existing launch/materialization and attempt/session witnesses. Retain canonical package pins, selected refs/digests, persona source, node owner and assignment epoch. Version-gate readers of old snapshots. Preserve historical bytes, hashes, named-session rules and retry identity. Bind an attempt to its Run with existing composite identity. |
+| T11–T12 · project agent | Store additions and nullable prompt on the project/agent link or its owned child rows. Enforce unique scoped refs and validate membership at write/dispatch. Adding fields leaves old links inheriting their persona with zero additions. Coordinate attachment and link CAS under one lock order. Legacy field-only PATCH cannot erase newer fields. |
+| T14–T16 · host | Reuse execution command receipts and session incarnations for assignment and effect identity. The supervisor owns the verified artifact cache, atomic publish and cleanup. A cache hit never grants current trust. Share artifact bytes only. Keep environment, working directory and credentials isolated per session. |
+| T19 · private ask | Extend `librarian_cards` question kind, payload validator and SQL kind/status checks together. Bind to conversation, segment, owning turn and request key. Store accepted answer and delivery receipt separately. Uniqueness scopes replay to the turn. Preserve existing card kinds and reset semantics. Private questions create zero project assignment/HITL rows. |
+| T21–T23 · Flow ask | Extend `hitl_requests` shape checks and owner-specific unique indexes for ordinary agent questions. Link the exact Run/attempt, turn, assignment epoch and human assignment. Constrain origin-specific required and forbidden identifiers, including SQL NULL cases. Preserve existing task/retrigger and specialist shapes. First answer intent, claim and delivery command commit atomically. Record delivered state only on matching receipt. |
+
+In each owning task, specify exact columns/types, nullability, checks, uniqueness, composite FKs, indexes for user reads and worker claims, delete rules and deployment order **before** feature writes. Use the next available Drizzle SQL, snapshot and journal entries. For each migration run a fresh install and a populated pre-change upgrade via `web/test-support/migration-upgrade.ts` on disposable Postgres. Seed legacy and live owners, compare row counts, source pins and historical bytes, verify accepted and rejected direct inserts, rerun the migrator and check journal integrity. Use additive schema → compatible readers → writers. A legacy record without sufficient evidence stays on its specified legacy path. Define a write-enable/rollback point per slice. After new-format writes, allow rollback only to a reader that understands them or stop new writes and roll forward. Package rollback in T24 means adopting an older release. It never rewrites retained Run evidence.
+
+For T21 specify the aggregate Run status and slot ownership for parallel questions. The existing specialist path uses a Run-wide current step, released fence and idle status. A waiting node releases only its own live session/credential after checkpoint. Keep the Run runnable while a sibling can work. Enter human-wait idle only when the graph has no runnable or running work and a human wait remains. On answer, revalidate the original attempt and assignment, reacquire capacity and issue one continuation. A concurrent stop or replacement fences the old continuation. Test two pending nodes answered in reverse order and one independently completing sibling.
+
 ## Tasks
 
 Each task names the implementation owner, observable acceptance and diagnostic events. `After` lists prerequisite task IDs. The phase checks below apply to every implementation checkpoint.
 
 ### Phase 0 — Contracts and compatibility
 
-- [ ] **T01. Specify the three capability inventories.**
+- [x] **T01. Specify the three capability inventories.**
   - **After** none.
   - Update `docs/system-analytics/{flow-studio,local-packages,capabilities,mcp-management}.md`, `docs/flow-dsl.md` and `docs/screens/studio/editor.md`. Freeze the bound/unbound/standalone matrix, exact ref precedence, skill name collisions, sharing defaults, removal/reset, required MCP refusal and native discovery on each supported adapter. Record prompt/agent/package origin at launch. Keep per-task profiles and project-instance skill editing open.
   - **Acceptance** — a worked design/development/core example including cross-package agents, a disabled binding and a child Flow.
   - **Diagnostics** — specify DEBUG provenance and WARN refusal fields.
-- [ ] **T02. Specify storage, authorization, protocol and recovery.**
+- [x] **T02. Specify storage, authorization, protocol and recovery.**
   - **After** T01.
   - Update `docs/system-analytics/{hitl,execution-hosts,librarian-conversation}.md`, `docs/supervisor.md`, `docs/database-schema.md`, domain ERDs and the contract map below. Enumerate each allow-listed transition, status, question origin, recipient, reset, token scope, host failure and read surface. Reserve the next ADR/Drizzle numbers at implementation start (checkout head has ADR-217 and migration 0368). Recheck the journal before merging; regenerate snapshots and validate fresh DB, populated upgrade and repeat.
-  - **Acceptance** — a consistent reviewed design, API examples, migration/backfill strategy and deployment diagram before feature code.
+  - **Acceptance** — the specification gate above passes. Register a `studio-catalog` group with the existing requirement coverage validator and index `docs/system-analytics/studio-catalog-traceability.md`. Check forward and reverse task coverage, concrete Planned test IDs, both wire readers, deployment order and a populated upgrade fixture per storage owner.
   - **Diagnostics** — define audited operation/actor and host receipt fields.
 - [x] **T03. Retire node-local skills in new Flow authoring.**
   - **After** none.
@@ -135,7 +174,7 @@ Each task names the implementation owner, observable acceptance and diagnostic e
   - **Diagnostics** — DEBUG source ID, latency, digest, WARN refusal or retry.
 - [ ] **T05. Preview, apply and update exact reviewed bytes.**
   - **After** T04.
-  - Extend `web/lib/local-packages/{import,lock,working-dir-save,versions,sync-merge}.ts` and `web/app/api/studio/local-packages/[id]/import/route.ts`. Serialize atomic writes with save/cut/commit, persist upstream base and notices, detect modified/removed files and local collisions on update. An interrupted import must expose either its complete old tree or complete new tree to cut.
+  - Extend `web/lib/local-packages/{import,lock,working-dir-save,versions,sync-merge}.ts` and companion catalog routes beside `web/app/api/studio/local-packages/[id]/import/route.ts`. Serialize atomic writes with save/cut/commit, persist upstream base and notices, detect modified/removed files and local collisions on update. An interrupted import must expose either its complete old tree or complete new tree to cut.
   - **Acceptance** — stale preview, cross-user replay, parallel cut, local edit conflict, idempotent reapply and three crash windows. Verify a fetched fixture with an install script produces no execution effect.
   - **Diagnostics** — INFO applied revision, DEBUG byte/file counts, WARN stale/conflict.
 - [ ] **T06. Integrate search-as-you-type and source review into Studio.**
@@ -147,12 +186,12 @@ Each task names the implementation owner, observable acceptance and diagnostic e
 ### Phase 2 — Package scope, agent authoring and effective inventories
 
 - [ ] **T07. Persist sharing defaults, overrides and adoption.**
-  - **After** T02, T06.
+  - **After** T02.
   - Extend `web/lib/config.schema.ts`, `web/lib/packages/{install,attach,manifest}.ts`, `web/lib/db/schema.ts`, the project attachment routes and MCP Hub. Store overrides by stable project attachment plus ref across adoption; attach currently rebuilds capability records. Support both override directions and reset. Maintain required-only slots and independent target binding/trust.
   - **Acceptance** — SET/CLEAR/re-add, two projects on different pins, old attachments, dropped/new refs, explicit equal-to-default overrides, and stale concurrent adoption.
   - **Diagnostics** — INFO adoption/override revision and source, WARN version conflict.
 - [ ] **T08. Add skill and MCP selection to package agent definitions.**
-  - **After** T01, T06.
+  - **After** T02.
   - Extend `web/lib/agents/{definition,effective,frozen-definition}.ts` and `web/components/flows/artifact-editors/frontmatter-artifact-editor.tsx`. Add optional skill refs beside MCPs, keep omitted/empty distinct in round trips, resolve package IDs and check at cut. Preserve old frozen hashes and signed bytes.
   - **Acceptance** — picker/raw editor parity, missing ref diagnostics and old/new/explicit-empty definitions on standalone and bound paths.
   - **Diagnostics** — DEBUG profile schema version and validated counts, WARN invalid refs.
@@ -205,7 +244,7 @@ For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](h
   - **Acceptance** — production read-only image plus declared cache volume, dev parity, scoped facade call to web, no credentials inherited by unrelated ACP processes, no unselected server started.
   - **Diagnostics** — sanitized readiness capabilities and effective host runtime.
 - [ ] **T17. Qualify install and relocation with real tool calls.**
-  - **After** T10, T13, T14, T15, T16.
+  - **After** T16.
   - Extend `web/e2e/execution-ab-content.spec.ts`, `web/lib/mcp/__tests__/probe-service.integration.test.ts` and `supervisor/src/__tests__/mcp-probe.test.ts`.
   - **Acceptance** — On B, exercise a public HTTP endpoint and pinned stdio artifact, repeat stdio offline, then run on clean C with B unavailable. Call the built-in facade back to A. Inspect exact host assignment, distribution receipt, agent-visible server list, tool result and process cleanup. Gate the multi-host claim on two actual distinct execution environments; local transport doubles remain regression evidence.
   - **Diagnostics** — INFO test run, host, cache digest and actual tool identity, excluding payload secrets.
@@ -250,12 +289,12 @@ For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](h
 
 - [ ] **T24. Exercise adoption, conflicts and rollback.**
   - **After** T05, T07, T09, T12, T13.
-  - Extend `web/lib/local-packages/{versions,sync-merge}.ts`, `web/lib/packages/attach.ts` and matching integration suites. Adopt revisions in two projects, diff scope/skill/prompt changes, preserve unrelated local edits and explicitly resolve incompatible renames. Exercise migration with legacy installations, live Runs and recorded approvals; refuse ambiguous reconciliation with actionable IDs.
+  - Extend `web/lib/local-packages/{versions,sync-merge}.ts`, `web/lib/packages/attach.ts` and matching integration suites. Adopt revisions in two projects, diff scope/skill/prompt changes, preserve unrelated local edits and explicitly resolve incompatible renames. Use the migration-tested legacy installation from T07 with a live Run and recorded approvals. Refuse ambiguous reconciliation with actionable IDs.
   - **Acceptance** — set/clear/re-add, rollback, same pinned history, incompatible source guard, package detach and old-version consumers.
   - **Diagnostics** — adoption source/target and reconciliation outcome.
 - [ ] **T25. Qualify a design Run alongside development.**
-  - **After** T13, T17, T20, T23, T24.
-  - Use `web/e2e/`, existing execution-host and public package fixtures. With shared core and deliberately private design/development skill bundles, launch one Flow of each kind. The designer actually reads its selected companion, invokes a design MCP, asks about the checkout path, resumes from the Inbox answer and returns a clickable prototype or inspectable prototype artifact. The developer reads its own/core skill and receives no private design tools, native MCP config or stdio process. Verify a standalone agent’s reduced inventory, one instance addition, shared-scope override/reset, and no per-task package picker. Repeat the librarian path privately.
+  - **After** T06, T13, T17, T20, T23, T24.
+  - Use `web/e2e/`, existing execution-host and public package fixtures. With shared core and deliberately private design/development skill bundles, launch one Flow of each kind. The designer actually reads its selected companion, invokes a design MCP, asks about the checkout path, resumes from the Inbox answer and returns a clickable prototype or inspectable prototype artifact. The developer reads its own/core skill and receives no private design tools, native MCP config or stdio process. Verify a standalone agent’s reduced inventory, one instance addition, shared-scope override/reset, and no per-task package picker. Link T20’s private librarian and T17’s relocation evidence from the qualified build.
   - **Acceptance** — exact run IDs, package pins, ACP IDs, host identity, actual artifacts and tool/continuation receipts. Test a harmless tool on an approved real endpoint/product subject to available credentials; distinguish any substitute from qualification of the named product.
   - **Diagnostics** — evidence references and outcome.
 - [ ] **T26. Finish shipping contracts and operator guidance.**
@@ -263,6 +302,30 @@ For a first HTTP smoke test, qualify the public [Microsoft Learn MCP endpoint](h
   - Complete the contract map, phased `$aif-docs` checks, public EN/RU instructions and diagnostics for self-hosted catalog setup, install/runtime trust, host relocation, unsupported sources/transports, prompt diff and answer recovery. Cross-check diagrams, schema journal, generated tools and public examples against the accepted build.
   - **Acceptance** — runnable examples and all validation gates below, with actual availability labeled.
   - **Diagnostics** — no new runtime events; verify documented diagnostics against captured events.
+
+## Acceptance ownership and RED → GREEN → refactor
+
+The IDs below seed the domain specifications and traceability matrix. The primary test owns the observable behavior. Add parameter cases to that test for the listed boundaries. Another layer earns a case only if it observes a different failure, such as SQL rejecting an invalid owner, the browser discarding a stale response, or an actual remote ACP tool call.
+
+| Requirement | Tasks | Primary test and acceptance |
+| --- | --- | --- |
+| CAT-01 · trusted search | T04 | IT-CAT-01 resolves approved repo subtrees and registry descriptors to a pin, preserves notices, distinguishes empty results, rate limit and unavailable source, and rejects unsafe redirects or oversized/unrepresentable content before any write. |
+| CAT-02 · authoring | T05, T06 | E2E-CAT-02 searches A→B→clear with reordered replies, then imports, edits and cuts a skill and MCP. A second project reads the exact companion bytes and executable declaration. |
+| CAT-03 · atomic update | T05 | IT-CAT-03 races apply against cut and restarts at each publish boundary. Exact replay yields one complete revision. Changed local files, changed request payload and revoked approval cannot silently publish. |
+| CAP-01 · node skills retirement | T03 | Reuse T03's existing legacy-read, new-cut and designer regression cases and package audit. New authors cannot set node skills. Old Runs read the original revision. |
+| CAP-02 · scope and adoption | T07, T24 | IT-CAP-02 upgrades two populated attachments, sets both override directions, resets, removes and reattaches. Distinct projects keep independent scopes and the old Run still reads the same pin. |
+| CAP-03 · per-session inventory | T08, T09 | IT-CAP-03 captures Flow package plus shared core, standalone providing package only, agent omitted/all versus empty/none, and exact selected MCPs, including zero. Ref collisions, child Flow routing, required-ref refusal and revoked targets have deterministic outcomes. |
+| CAP-04 · isolation | T10 | IT-CAP-04 observes distinct bound ACP sessions and homes on adjacent/parallel nodes, survives same-attempt resume and rejects named-session crossover. Verify adapter-native discovery as well as the prompt index. |
+| CAP-05 · instance | T11, T12, T13 | IT-CAP-05 saves local MCPs and persona on one of two links, rejects stale writes, exercises manual, triggered and bound dispatch, and reads back the same frozen retry. E2E-CAP-05 alone owns keyboard access to icon, tooltip, diff, save and restore. |
+| HST-01 · assignment | T14, T16, T17 | E2E-HST-01 calls HTTP, stdio and scoped facade from B, then from clean C with B down. Capture actual host/epoch, tool response, selected server list and process exit. Test stale assignment refusal at the command boundary. |
+| HST-02 · installation | T15 | IT-HST-02 races two installers, interrupts staging, verifies digest/runtime mismatch refusal, reuses offline bytes and observes cleanup. An unselected server has zero preparations and starts. |
+| ASK-01 · caller | T18 | IT-ASK-01 exercises each generated input against its actual facade and route. Current credential selects owner. Forged locators and expired authority have no durable effect. Existing task and specialist shapes retain their semantics. |
+| ASK-02 · librarian | T19, T20 | IT-ASK-02 submits across restart/reset and obtains one reply on the original private turn. E2E-ASK-02 owns inline options/custom answer, keyboard, reload and live completion. Another user and project Inbox cannot read it. |
+| ASK-03 · ordinary Flow question | T21, T22 | IT-ASK-03 parks two attempts independently, exposes only checkpointed questions and permits eligible responders. Inbox and Run details show one assignment and agree across reconnect. Claim races yield one accepted answer. |
+| ASK-04 · continuation | T23 | IT-ASK-04 loses the delivery acknowledgment, restarts the host and reconciles one continuation on the owned checkpoint. Answer in reverse node order, cancel, replace or revoke and observe graph, slot and credential state for each sibling. |
+| CAP-06 · end-to-end release | T25, T26 | E2E-CAP-06 routes a prototype and a coding task with shared core and private design capabilities, captures a design artifact after Inbox continuation, checks standalone inventory and links release-build host and librarian receipts. |
+
+For each behavior slice record its requirement ID, discovered test title, command and revision. **RED** runs the smallest case through the normal entry point on the pre-change behavior and records the expected assertion failure. Fix setup or discovery errors first. **GREEN** adds the minimum production change and verifies the observable outcome. **Refactor** simplifies the implementation with the owner test and its sibling consumers green. For compatibility that is already green, retain the existing test as a regression witness and use the newly introduced boundary for RED. Migrations exercise the same sequence against populated Postgres. Avoid trivial getters, snapshot-only assertions, duplicate mock suites and repeated copies of the same E2E. Mark each row Implemented only when its owner tests pass and evidence is tied to the candidate.
 
 ## Contract map and phase gates
 
@@ -284,9 +347,9 @@ Use Node 24 and the frozen pnpm workspace. Drive focused integration cases with 
 | 3 | `pnpm --filter maister-web exec vitest run --project integration lib/agents/__tests__/project-links.integration.test.ts`. Extend agent panel/diff and standalone manual/triggered E2E assertions for origin, access and local text. |
 | 4 | `pnpm --filter maister-web test:e2e:execution-ab` plus T17's real host call evidence. Extend probe-service integration and supervisor MCP probe fixtures to assert selected host and workload rather than the local admin transport. |
 | 5–6 | `pnpm --filter maister-web exec vitest run --project integration lib/services/__tests__/agent-question.integration.test.ts lib/specialist-assignments/__tests__/project-source-recovery.integration.test.ts lib/librarian/__tests__/turn.integration.test.ts`. Add ordinary-node parallel waits and restart cases beside the specialist fixtures. Run `pnpm --filter maister-web test:e2e e2e/librarian-panel.spec.ts` plus the new Inbox/Run scenario. |
-| 7 | Repeat the design/development, standalone and two-host gates from T17/T25. Run `pnpm --filter maister-web typecheck`, `pnpm --filter @maister/supervisor typecheck`, `pnpm validate:contracts`, `pnpm validate:docs:all` and `pnpm --filter @maister/site-docs validate`. |
+| 7 | Collect T17, T20 and T25 receipts from the release candidate. Rerun any gate whose inputs or build changed. Run `pnpm --filter maister-web typecheck`, `pnpm --filter @maister/supervisor typecheck`, `pnpm validate:contracts`, `pnpm validate:docs:all` and `pnpm --filter @maister/site-docs validate`. |
 
-For each behavior-changing phase, run the web unit and integration scripts (`pnpm --filter maister-web test:unit`, `pnpm --filter maister-web test:integration`) and corresponding supervisor scripts when touched. Keep owner suites green, fix changed expectations in the same phase and identify pre-existing failures by test name against the pinned baseline. Record explicit follow-up for any independently established harness blocker. Review each checkpoint for sibling callers, authorization bypass on reads/writes, deferred cleanup, incompatible legacy rows and missing positive-path evidence.
+For each behavior-changing phase, run the web unit and integration scripts (`pnpm --filter maister-web test:unit`, `pnpm --filter maister-web test:integration`) and corresponding supervisor scripts when touched. Keep owner suites green, fix changed expectations in the same phase and identify pre-existing failures by test name against the pinned baseline. A baseline comparison helps diagnose failures. Release requires all applicable suites and acceptance gates green on the shipping build, including interop, migrations, lint, typecheck, contracts and public docs. Repair harness failures, collect missing real-host evidence and rerun affected gates before release. A skipped required case, a changed assertion that weakens its contract, or an unavailable runner leaves its gate open. Review each checkpoint for sibling callers, authorization bypass on reads/writes, deferred cleanup, incompatible legacy rows and missing positive-path evidence.
 
 ## Commit Plan
 

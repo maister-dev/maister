@@ -435,3 +435,7 @@ the first attempt hits it and reads the existing result, and reconciling an
   [`projects-domain.md`](projects-domain.md) ·
   [`integrations-domain.md`](integrations-domain.md) ·
   [`domain-events.md`](domain-events.md) — the shared tables
+
+## Package and agent delivery (Designed)
+
+A private question belongs to one conversation segment and turn. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)

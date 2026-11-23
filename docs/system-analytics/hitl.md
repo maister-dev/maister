@@ -814,7 +814,28 @@ fields:
     default: false
 ```
 
+### Ordinary Flow attempt questions (Designed)
+
+```mermaid
+stateDiagram-v2
+  [*] --> CheckpointPending
+  CheckpointPending --> Open: exact attempt parked
+  Open --> AnswerAccepted: current recipient claims answer
+  AnswerAccepted --> Delivered: owned resume receipt
+  AnswerAccepted --> AnswerAccepted: reconcile uncertain command
+  CheckpointPending --> Closed: stop or supersession
+  Open --> Closed: stop or supersession
+  AnswerAccepted --> Closed: proved undelivered and cancelled
+  Delivered --> [*]
+  Closed --> [*]
+```
+
+Lock Run, attempt and question in that order. Persist the continuation command with the claim. A competing different answer conflicts. Reconcile an unknown outcome through its command receipt before retry. Only the affected attempt releases its credential and slot. Keep the aggregate Run running while a sibling can progress. Re-admit a resumable attempt through the normal capacity check. Delivery alone cannot complete the graph node.
+
 ## Expectations
+
+- **ASK-01:** (Designed) The current execution credential must determine the owner and allowed question origin on every ask.
+- **ASK-04:** (Designed) An accepted answer may resume only its original recoverable attempt after checking current authority and assignment.
 
 - HITL kind is exactly `permission | form | human | infra_recovery |
 budget_breach | hook_trip | node_interrupt` (on `hitl_requests.kind`); the three

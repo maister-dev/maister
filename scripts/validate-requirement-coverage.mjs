@@ -29,6 +29,15 @@ export const repoRoot = resolve(here, "..");
 const analyticsRoot = join(repoRoot, "docs", "system-analytics");
 
 export const COVERAGE_GROUPS = {
+  "studio-catalog": {
+    label: "Studio catalog and session delivery",
+    planPath: ".ai-factory/plans/feature-studio-catalog-imports.md",
+    documents: ["flow-studio.md", "local-packages.md", "capabilities.md", "mcp-management.md", "agents.md", "execution-hosts.md", "hitl.md", "librarian-surface.md", "assignments.md"],
+    prefixes: ["CAT", "CAP", "HST", "ASK"],
+    matrixPath: "docs/system-analytics/studio-catalog-traceability.md",
+    implementationPhases: /^T(?:0[3-9]|1\d|2[0-6])$/,
+    testRoots: ["web", "supervisor", "mcp"],
+  },
   "company-brain-specialists": {
     label: "Company Brain and specialists",
     planPath: ".ai-factory/plans/codex-company-brain-specialist-assignments.md",

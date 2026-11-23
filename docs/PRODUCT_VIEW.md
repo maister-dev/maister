@@ -114,7 +114,7 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
 | Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
 | Coordinate work across projects | Ask the personal librarian to find, prepare, launch, and follow up on visible work, with explicit confirmation for human-only actions. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
-| Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
+| Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, roles, restrictions, and rework paths. |
 | Reach agreement on risky plans | Run several read-only draft agents through an engine-owned consensus node, see why they agree or disagree, and resolve unresolved disagreements through HITL. |
 | Trust what an AI session can touch | Know which skills, MCPs, tools, settings, env profiles, and restrictions were materialized, enforced, instructed, refused, and cleaned up for a node or long-living session. |
 | Inspect readiness evidence | See which artifacts prove the run is ready, which are stale, and which node or human decision produced them. |
@@ -173,7 +173,7 @@ Project -> Flow package -> Task / Evaluation Study / Scratch run -> External ope
   blocks unauthorized actions; assignment roles additionally explain ownership
   and audit.
 - Scoped capability materialization is required for AI-node safety: node/session
-  settings reference named MCPs, tools, skills, agent settings, env profiles,
+  settings reference named MCPs, tools, agent settings, env profiles,
   and restrictions; the runner materializes only those capabilities for the
   one-node session or long-living session, snapshots what was
   enforced/instructed/unsupported/refused, then removes or restores them after

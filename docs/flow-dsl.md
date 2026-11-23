@@ -50,7 +50,7 @@ launch setup/probes, repository `diff`/`commit_set` outputs, repository plan
 review and pre-finish gates before admission. Human review uses
 explicit `human`/`form` nodes, and output validation uses the existing required
 result contract. The initial native path refuses package/node `mcps`, node
-`skills`, `restrictions`, `tools`, `settingsProfile`, `artifactAccess`,
+`restrictions`, `tools`, `settingsProfile`, `artifactAccess`,
 `enforcement`, `hooks`, implicit AI/coordinator finish review and
 permission-mode overrides. Current reviewed professional policy supplies the
 exact native knowledge MCP-only surface. Role and runner policies still require
@@ -125,7 +125,6 @@ nodes:
       runner: claude-code
       thinkingEffort: high
       mcps: [github, filesystem]
-      skills: [aif-implement, aif-best-practices]
       settingsProfile: codex-default-step
       tools:
         codex: [shell, apply_patch]
@@ -267,14 +266,16 @@ carries no decision. See [`system-analytics/hitl.md`](system-analytics/hitl.md).
 
 Node-specific settings are intentionally first-class product configuration:
 AI-coding nodes constrain ACP runner targets, agent definitions, MCP servers, tools,
-skills, thinking effort, permissions, workspace access, and limits. Human nodes
+thinking effort, permissions, workspace access, and limits. Human nodes
 constrain project roles, allowed decisions, manual takeover, further tracks,
 SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
 commands, environment policy, artifact inputs/outputs, timeout, and failure
 classification.
 
-**Per-class `enforcement` intent.** Each of the seven capability classes —
-`mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess`,
+Package the skills a Flow uses alongside it. Agent prompts can refer to those skills directly.
+
+**Per-class `enforcement` intent.** Each of the six capability classes —
+`mcps`, `tools`, `restrictions`, `permissionMode`, `workspaceAccess`,
 `hooks` (the last Designed — ADR-108) —
 carries an optional `enforcement` intent of `strict | instruct | off`, default
 `instruct`, declared in `settings.enforcement`. At launch, MAIster evaluates each
@@ -290,7 +291,7 @@ closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
 
-**`hooks` capability class (Designed — ADR-108).** A seventh capability class
+**`hooks` capability class (Designed — ADR-108).** The capability class
 `hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
 seam — `repetition` (consecutive-identical-call cap), `noProgress`
 (completed operations without new evidence), and `pathGuard.allowedPaths` (an opt-in writable set).
@@ -305,7 +306,7 @@ liveness breakers auto-arm (caps 5 / 15 from `MAISTER_HOOK_*`) unless the node s
 [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).
 
 **Capability materialization (Implemented) — registry-resolved refs and native materialization.**
-Every `settings.mcps[]`, `settings.skills[]`, `settings.restrictions[]`,
+Every `settings.mcps[]`, `settings.restrictions[]`,
 `settings.settingsProfile`, and `settings.tools.{claude|codex}[]` entry is
 validated at project-load and run-launch time against the project capability
 registry (`capability_records`). An unknown ref, or a ref present in the
@@ -389,10 +390,10 @@ mid-session require a declared session boundary"). This is enforced by comparing
 
 The runner enforces the resolved profile at the AI session scope. For a
 per-node session, the profile is effectively node-scoped: before the node
-starts, the runner materializes only that node's allowed skills, MCP config,
+starts, the runner materializes the node's MCP config,
 adapter `settings.json` or equivalent settings file, environment profile, and
 tool restrictions, then removes/restores them when the node ends. For a
-long-living ACP session, skills, MCPs, settings, and tool restrictions are
+long-living ACP session, MCPs, settings, and tool restrictions are
 session-wide: every AI node inside that session must share the same resolved
 capability profile. If a later node needs different capabilities, the Flow must
 declare a new session boundary unless the adapter supports explicit safe profile
@@ -463,7 +464,7 @@ passthrough NAME → `env:NAME` map; never secret literals). Any runner slot —
 `runner_profiles` values, `sessions[].runner`, node `settings.runner`
 (`ai_coding` / `orchestrator` / `judge`), and consensus participant/synthesizer
 `runner` — accepts a **profile-ref string** OR an inline **object**. Node
-capability settings (mcps / skills / restrictions / tools / enforcement / hooks)
+capability settings (mcps / restrictions / tools / enforcement / hooks)
 stay on the node, unchanged.
 
 A flow groups nodes into **sessions** — one ACP process + one continuous
@@ -717,7 +718,7 @@ nodes:
   agent-executed node.
 - **Capability settings** — an `orchestrator` node **inherits the `ai_coding`
   capability settings shape** (`runner`, `model`, `thinkingEffort`, `mcps`,
-  `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, `enforcement`,
+  `tools`, `permissionMode`, `limits`, `restrictions`, `enforcement`,
   …); the same registry resolution and per-class `enforcement` intent
   apply.
 - **`delegation` sub-block** (optional) — `max_fanout` and `max_depth` (the
@@ -2037,6 +2038,10 @@ flows:
 - Requires the parent flow's `compat.engine_min >= 3.7.0`.
 
 See [`system-analytics/run-results.md`](system-analytics/run-results.md).
+
+### Session-agent discovery (Designed)
+
+A graph binds a package agent through the existing session-agent setting. Each bound attempt gets its own logical session, including when the runner and named session match a sibling. Explicit node MCP requirements participate in preflight. Required skill dependencies belong to the owning package. [Inventory resolution](system-analytics/capabilities.md#project-run-capability-inventory-designed)
 
 ## Authored package files
 

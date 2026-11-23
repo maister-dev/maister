@@ -124,7 +124,7 @@ nodes:
 }
 
 // A package whose flow exercises the structured node-form controls (TE.3): an
-// ai_coding node (skills McpSelect picker + `/`-autosuggest action.prompt) and a
+// ai_coding node (`/`-autosuggest action.prompt) and a
 // human node (roles StringListField), plus a bundled skill so `/` has a catalog.
 function buildStructuredControlsPackageRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), "maister-e2e-struct-"));
@@ -615,7 +615,7 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   ).toBeVisible();
 });
 
-test("local editor structured controls: skills multiselect, /-autosuggest prompt, roles string-list, assistant composer", async ({
+test("local editor structured controls: /-autosuggest prompt, roles string-list, assistant composer", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -638,7 +638,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   const flowYamlInput = page.locator('input[name="flowYaml"]');
   const packageFilesInput = page.locator('input[name="packageFilesJson"]');
 
-  // --- ai_coding node: skills multiselect + /-autosuggest prompt composer ---
+  // --- ai_coding node: /-autosuggest prompt composer ---
   await selectGraphNode(page, "code");
 
   // (a/c) the action.prompt is the capability composer, not a plain textarea
@@ -671,31 +671,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(variableMenu).toHaveCSS("overflow-y", "auto");
   await page.getByTestId("capability-variable-button").click();
 
-  // (c) skills picker: free-add a value, then remove it.
-  //
-  // The node form's `skills` (and `mcps`) field is an `McpSelect`, which
-  // REPLACED the MultiSelectField this block was written against — its own
-  // source says "type-to-filter parity with the old MultiSelectField". It has
-  // no `-chip`: a selected value is the option button itself, rendered
-  // `aria-pressed` and toggled off by clicking it again. The old
-  // `node-skills-chip` assertions therefore waited on a node that cannot
-  // exist, while the free-add underneath them had in fact worked — the page
-  // snapshot showed `button "extra-skill" [pressed]` the whole time.
-  await page.getByTestId("node-skills-input").fill("extra-skill");
-  await page.getByTestId("node-skills-free-add").click();
-
-  const freeAdded = page.getByTestId("node-skills-option-extra-skill");
-
-  await expect(freeAdded).toHaveAttribute("aria-pressed", "true");
-  await expect(flowYamlInput).toHaveValue(/extra-skill/);
-  // Same control removes it — `onClick={() => toggle(option.value)}`. A
-  // free-added value has no catalog entry, so it is only rendered while it is
-  // SELECTED ("selected values with no catalog entry are free-added
-  // forward-refs"); deselecting drops the button entirely rather than leaving
-  // it unpressed.
-  await freeAdded.click();
-  await expect(freeAdded).toHaveCount(0);
-  await expect(flowYamlInput).not.toHaveValue(/extra-skill/);
+  await expect(page.getByTestId("node-skills")).toHaveCount(0);
 
   // (c) insert a skill chip via `/` autosuggest → stores a canonical token
   await promptEditor.click();
@@ -715,7 +691,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await promptEditor.click();
   await promptEditor.focus();
   await promptEditor.pressSequentially(" /aif-plan ", { delay: 25 });
-  await page.getByTestId("node-skills-input").click();
+  await page.getByTestId("node-mcps-input").click();
   await expect(flowYamlInput).toHaveValue(/@skill:aif-plan/);
 
   // `{{` autosuggest inserts definite required variables as bare template refs.

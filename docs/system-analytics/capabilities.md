@@ -32,7 +32,7 @@ into **materialized, scoped, and — where proven — enforced** runtime boundar
 It owns four things: (1) the **project capability registry** —
 `capability_records` populated from `maister.yaml` plus git-pinned
 `capability_imports`; (2) **resolution** of a node's abstract capability refs
-(`mcps:[github]`, `tools:[edit]`, `skills:[…]`, `restrictions:[…]`,
+(`mcps:[github]`, `tools:[edit]`, `restrictions:[…]`,
 `settingsProfile`) against that registry into a deterministic per-agent profile;
 (3) **native materialization** of concrete adapter config —
 `<worktree>/.claude/settings.local.json` (tools/permissionMode) written **before**
@@ -104,7 +104,7 @@ sources, cross-project capability promotion, codex enforced mapping
   Mirrors the existing `enforcement_snapshot` column; NOT an `artifact_instances`
   kind. See [`../db/runs-domain.md`](../db/runs-domain.md).
 - **Enforcement class** (Designed for the flip; defined by ADR-031). One of the
-  six capability-bearing classes `mcps, tools, skills, restrictions,
+  capability-bearing classes `mcps, tools, restrictions,
   permissionMode, workspaceAccess`, each carrying an `enforcement` intent
   `strict | instruct | off`.
 
@@ -337,8 +337,7 @@ materialization target"; this section states only what this domain requires.
 - **Scratch policy = broad (FR-C3).** For scratch runs, materialize **all**
   enabled+trusted+runner-supported skills + subagents as **files** (lazy-loaded
   by the agent — do NOT inline instructions into the prompt); **MCP stays
-  selected/defaults** (each stdio MCP is a process). Flow runs keep their existing
-  per-node selection unchanged.
+  selected/defaults** (each stdio MCP is a process). Flow packages supply their skill files. Flow nodes can declare MCP requirements.
 - **Standalone package-agent materialization uses the pinned package.** A
   standalone `run_kind='agent'` session materializes every skill-kind capability
   from the same project-pinned package install that supplied the effective
@@ -364,12 +363,33 @@ materialization target"; this section states only what this domain requires.
   [flow-settings.md](flow-settings.md)); the supervisor still forwards the
   assembled prompt unchanged.
 
+### Project Run capability inventory (Designed)
+
+At admission the Run captures every attached package revision. Preparation may copy all these trees to host-owned storage once. A session receives only the discovery roots selected below. Each Flow must ship skills that its authored prompts require. A child Flow resolves its own package from its launch capture.
+
+| Consumer | Discoverable package skills | MCP candidates before current binding, trust and adapter checks |
+| --- | --- | --- |
+| Unbound Flow node | Owning Flow package plus packages with skill sharing enabled | Owning package defaults or the node's explicit required/additional selection, plus project-shared refs |
+| Session-agent node | Agent package selection, different owning Flow package and other shared libraries | Agent declaration, effective project-link additions and project-shared refs. Explicit node selection can narrow optional local refs. Refusing a required agent ref fails preflight. |
+| Standalone project agent | Agent package selection | Agent declaration, project-link additions and project-shared refs |
+
+Omitted agent skill selection includes the entire agent package. An empty list suppresses that package's entire contribution, even if it shares skills. Deduplicate identical package-qualified content. For equal slugs prefer selected agent content, then the owning Flow, then a unique shared library. Two distinct equally ranked shared providers fail preflight with both source IDs. Native MCP configuration and ACP must receive the same deduplicated server set. A required unavailable binding fails before session creation. An additional unavailable ref carries the existing withheld reason.
+
+A project with `core` (shared), `design` (private, Figma scoped to package) and `development` (private) pins all three. A development node sees development and core skills and no Figma. A design Flow binding a designer from design sees the selected design skills plus core. A child development Flow invoked from design receives development and core. A standalone designer with an empty skill list sees zero package skills. Disabling Figma stops a node requiring Figma and withholds it from a node where it is optional. A release or override change during execution leaves the captured selection intact. Recheck current authorization at dispatch and resume.
+
+Claude and Gemini currently discover from cwd. Give bound attempts isolated discovery views for those adapters. Codex, OpenCode and MiMo receive dedicated composed homes. Each adapter must see the exact same selected package inventory as the progressive-disclosure prompt. Preserve ambient user settings according to existing adapter policy and ensure package-installed content cannot re-enter via a sibling home or cwd. Record Run, owner, package pins, profile digest and withheld reasons in structured diagnostics.
+
 ## Expectations
+
+- **CAP-01:** New Flow authoring must reject retired node skill settings and retain the pinned legacy read path.
+- **CAP-03:** (Designed) Each session must receive its frozen effective inventory from the Run capture according to the project Run inventory table.
+- **CAP-04:** (Designed) Each bound node must own an isolated ACP session and adapter discovery view across interruption.
+- **CAP-06:** (Designed) Project routing must allow a design and a development Run in the same project without either session receiving private resources of the other package.
 
 These are the steady-state invariants the materialization code MUST satisfy
 (Designed — they hold once that work lands, not before).
 
-- A node-settings capability ref (`mcps/skills/restrictions/settingsProfile/tools`)
+- A node-settings capability ref (`mcps/restrictions/settingsProfile/tools`)
   that names no `capability_records` row in the project registry MUST be refused
   with `MaisterError("CONFIG")` at BOTH project-register and run-launch, using the
   same ref-id map builder (closes the `config.ts:745` carve-b stub).

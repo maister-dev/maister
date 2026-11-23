@@ -152,6 +152,296 @@ tags:
       proposal and confirmation cards, explicit personal memory, and search
       over the owner's own conversation history.
 paths:
+  /api/v1/ext/librarian/human-asks:
+    post:
+      operationId: createPrivateTurnQuestion
+      summary: (Designed) Open a question for the credential-owned execution
+      security:
+        - librarianTurnToken: []
+      parameters: []
+      responses:
+        "200":
+          description: Replayed question
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "201":
+          description: Durably open
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "202":
+          description: Checkpoint pending
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "410":
+          description: Expired or closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"requestKey": "question-1", "question": "Which journey should the prototype cover?", "schema": {"schemaVersion": 1, "fields": [{"name": "journey", "type": "string", "label": "Journey", "required": true}]}}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - requestKey
+                - question
+                - schema
+              properties:
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                schema:
+                  $ref: "#/components/schemas/FormSchemaV1"
+  /api/v1/ext/flow-node/human-asks:
+    post:
+      operationId: createFlowAttemptQuestion
+      summary: (Designed) Open a question for the credential-owned execution
+      security:
+        - projectToken: []
+      parameters: []
+      responses:
+        "200":
+          description: Replayed question
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "201":
+          description: Durably open
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "202":
+          description: Checkpoint pending
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - questionId
+                  - state
+                properties:
+                  questionId:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                  state:
+                    type: string
+                    enum:
+                      - checkpoint_pending
+                      - open
+                      - accepted
+                      - delivered
+                      - closed
+                      - failed
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "403":
+          description: Action denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "404":
+          description: Resource unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "409":
+          description: Revision, owner or replay conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "410":
+          description: Expired or closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+        "422":
+          description: Invalid content or answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtErrorBody"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: {"requestKey": "question-1", "question": "Which journey should the prototype cover?", "schema": {"schemaVersion": 1, "fields": [{"name": "journey", "type": "string", "label": "Journey", "required": true}]}}
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - requestKey
+                - question
+                - schema
+              properties:
+                requestKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+                schema:
+                  $ref: "#/components/schemas/FormSchemaV1"
   /api/v1/ext/runs/{runId}/waits/{waitId}/signal:
     post:
       operationId: deliverFlowWaitSignal

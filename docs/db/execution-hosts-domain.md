@@ -369,3 +369,7 @@ new epoch at admission. The only added released-epoch Git read is the
 head observation against the exact wait workspace binding.
 
 See the [storage contract](../database-schema.md#flow-waits-publication-and-autonomous-decisions-designed).
+
+## Package and agent delivery (Designed)
+
+The current assignment and a verified host receipt identify each preparation effect. [Migration sequence and constraints](../database-schema.md#studio-delivery-migration-sequence-designed)

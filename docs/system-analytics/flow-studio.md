@@ -184,7 +184,14 @@ sequenceDiagram
     W-->>Op: run started (immutable)
 ```
 
+### Catalog authoring (Designed)
+
+Search approved sources as the editor types and discard superseded replies, including after clear. Choosing a result opens an exact-revision preview. Apply writes the selected tree, notices or MCP descriptor into the locked draft. Authors choose package skill sharing (initially on), individual MCP sharing (initially off) and package-agent skill/MCP references. A check at cut rejects dangling references. [Run inventory and examples](capabilities.md#project-run-capability-inventory-designed)
+
 ## Expectations
+
+- **CAT-01:** (Designed) Eligible editors must be able to resolve approved sources to a pinned reviewable result.
+- **CAT-02:** (Designed) Only the result for the current query may be displayed after a later query or clear.
 
 The following bullets are copied verbatim from SDD §7.1 (RFC-2119 spirit, each
 testable):
@@ -500,8 +507,7 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
   `skills/<slug>/SKILL.md` files (`buildPackageCapabilityCatalog`). The composer
   stores canonical `@skill:<slug>` tokens; the existing runtime normalizer adapts
   them per adapter (claude `/`, codex `$`) — no runtime change.
-- **Structured node-form controls.** Catalog `string[]` fields (`skills`,
-  `mcps`) and the fixed-enum `rework.workspacePolicies` use a chips + add
+- **Structured node-form controls.** The MCP selector (`mcps`) and the fixed-enum `rework.workspacePolicies` use a chips + add
   `MultiSelectField`; free-text list fields (`restrictions`, `roles`,
   `assignees`, `decisions`, `material_axes`, `rework.allowedTargets`,
   `hooks.pathGuard.allowedPaths`) use a row-list `StringListField`. The persisted
@@ -520,7 +526,7 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
    an existing plain-text prompt MUST render byte-identically until the user
    inserts a token.
 4. Node-form controls MUST emit manifests that still parse under
-   `flowYamlV1Schema` (`skills`/`mcps` as `string[]`, `workspacePolicies` as the
+   `flowYamlV1Schema` (MCP references, `workspacePolicies` as the
    enum array, list fields as `string[]`); an empty list MUST omit the field.
 5. Read-only viewer mounts (no catalog/options) MUST degrade to read-only text /
    chips with no fetch — byte-identical to the prior render.

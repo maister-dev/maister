@@ -259,6 +259,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-217](#adr-217-evidence-gated-autonomous-completion) | Evidence-gated autonomous completion | Implemented | 2026-11-20 |
 | [ADR-218](#adr-218-recoverable-installation-of-project-dependencies) | Recoverable installation of project dependencies | Accepted | 2026-11-23 |
 | [ADR-219](#adr-219-selected-supervisor-workspace-ownership) | Selected supervisor workspace ownership | Accepted | 2026-11-23 |
+| [ADR-222](#adr-222-package-capability-delivery) | Package capability delivery | Accepted | 2026-11-24 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2502,5 +2503,14 @@ Full record: [`decisions/adr-218.md`](decisions/adr-218.md)
 **Date:** 2026-11-23
 
 Full record: [`decisions/adr-219.md`](decisions/adr-219.md)
+
+---
+
+### ADR-222: Package capability delivery
+
+**Status:** Accepted
+**Date:** 2026-11-24
+
+Full record: [`decisions/adr-222.md`](decisions/adr-222.md)
 
 ---
