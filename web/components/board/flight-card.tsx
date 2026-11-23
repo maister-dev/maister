@@ -16,10 +16,7 @@ import {
   PrStateChip,
   type PrStateChipLabels,
 } from "@/components/pr-state-chip";
-import {
-  WorkStageChip,
-  type WorkStageLabels,
-} from "@/components/work/work-stage-chip";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import {
   TaskDecomposition,
   type TaskDecompositionLabels,
@@ -47,7 +44,6 @@ export interface FlightCardLabels {
   prLink: (number: number | null, state: FlightCardData["prState"]) => string;
   // ADR-170: the whole `workStage` namespace, so the label lookup happens
   // once here rather than as a switch at every render site.
-  workStage: WorkStageLabels;
   runsCount: (count: number) => string;
   launch: string;
   launchUnavailable: string;
@@ -62,7 +58,6 @@ export interface FlightCardLabels {
   waitingOnChildren: string;
   waitingForCondition: string;
   // ADR-112: "needs review" chip for a flagged task (held for a human).
-  flagged: string;
   openRun: string;
   activeNodeStatus: Record<ActiveNodeState, string>;
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
@@ -305,17 +300,6 @@ export function FlightCard({
             {labels.activeNodeStatus[card.activeNode.state]}
           </span>
         ) : null}
-        {card.triageStatus === "flagged" ? (
-          <span
-            className={clsx(
-              BADGE,
-              "border-amber-line bg-amber-soft text-amber",
-            )}
-            data-testid="flight-card-flagged"
-          >
-            {labels.flagged}
-          </span>
-        ) : null}
         {card.refused ? (
           <span
             aria-label={labels.settingsRefused}
@@ -378,16 +362,7 @@ export function FlightCard({
             ⚡ auto
           </span>
         ) : null}
-        {/* Reopen is `promoteRun` (member) while this board is `readBoard`
-            (viewer): withholding the runId selects the chip's disabled
-            affordance instead of offering a viewer a guaranteed 403. */}
-        <WorkStageChip
-          blocked={card.workStageBlocked}
-          labels={labels.workStage}
-          progress={null}
-          promotedKind={card.workStagePromotedKind}
-          stage={card.workStage}
-        />
+        <TaskStatusChip status={card.displayStatus.key} />
         {card.prUrl ? (
           <a
             className={clsx(
@@ -461,7 +436,7 @@ export function FlightCard({
         </div>
       ) : null}
 
-      {canAct ? (
+      {canAct && card.taskStatus !== "Done" && card.taskStatus !== "Abandoned" ? (
         <div
           className={clsx(
             "relative z-10 flex items-center gap-2 border-t border-dashed border-line-soft pt-2",

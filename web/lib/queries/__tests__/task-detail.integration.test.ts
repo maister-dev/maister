@@ -281,6 +281,8 @@ describe("getTaskDetail — result model (D10)", () => {
 
     const detail = (await getTaskDetail("proj-cap", 501, "u-1"))!;
 
+    expect(detail.displayStatus).toEqual({ key: "done", label: "Done", tone: "success" });
+
     expect(detail.resolvingRunId).toBe("d10-merged");
     expect(detail.task.source).toEqual({
       kind: "github",

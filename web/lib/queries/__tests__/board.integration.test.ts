@@ -13,6 +13,7 @@
 // assertions presuppose the impl). Existing board tests are untouched.
 
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 
 import { type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,8 @@ import {
   startMainPostgresTestDb,
   type StartedPostgresTestDb,
 } from "@/test-support/pg-container";
+
+import { operationalContractFixture } from "@/test-support/operational-agent";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -229,7 +232,7 @@ async function seedReviewRun(opts: {
 
 async function flightCard(projectId: string, runId: string) {
   const board = await getBoardData(projectId);
-  const flight = board.columns.OnReview.flight;
+  const flight = (board.columns.in_review?.flight ?? []);
 
   return flight.find((c) => c.runId === runId);
 }
@@ -1049,7 +1052,7 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
       await seedDecomposition();
 
     const board = await getBoardData(projectId);
-    const parent = board.columns.Backlog.backlog.find(
+    const parent = Object.values(board.columns).flatMap((column) => column.backlog).find(
       (c) => c.taskId === parentTaskId,
     );
 
@@ -1134,7 +1137,7 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
     });
 
     const board = await getBoardData(projectId);
-    const parent = board.columns.Backlog.backlog.find(
+    const parent = Object.values(board.columns).flatMap((column) => column.backlog).find(
       (c) => c.taskId === parentTaskId,
     );
     const sibling = parent?.childTasks.find((c) => c.taskId === siblingTaskId);
@@ -1150,11 +1153,84 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
 
     const board = await getBoardData(projectId);
     // childNoRunId is itself a leaf task — no parent_of children.
-    const leaf = board.columns.Backlog.backlog.find(
+    const leaf = Object.values(board.columns).flatMap((column) => column.backlog).find(
       (c) => c.taskId === childNoRunId,
     );
 
     expect(leaf).toBeDefined();
     expect(leaf?.childTasks).toEqual([]);
   });
+});
+
+describe("task status read projection", () => {
+  it("uses only the authorized task IDs and deterministically picks the latest Flow", async () => {
+    const { projectId } = await seedReviewRun({});
+    const { projectId: otherProjectId } = await seedReviewRun({});
+    const [{ id: taskId, flowId }] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.projectId, projectId));
+    const [{ id: unrelatedTaskId }] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.projectId, otherProjectId));
+    const startedAt = new Date("2100-01-01T00:00:00.000Z");
+    const endedAt = new Date("2100-01-01T00:01:00.000Z");
+    const baseRun = { projectId, taskId, flowId, startedAt, endedAt, flowVersion: "v1.0.0" };
+
+    await db.insert(schema.runs).values([
+      { ...baseRun, id: "00000000-0000-4000-8000-000000000001", status: "Done" },
+      { ...baseRun, id: "00000000-0000-4000-8000-000000000002", status: "Failed" },
+      {
+        ...baseRun,
+        id: randomUUID(),
+        runKind: "agent",
+        agentKind: "operational",
+        agentWorkspace: "repo_read",
+        flowId: null,
+        flowVersion: "agent",
+        endedAt: null,
+        resultContract: operationalContractFixture("repo_read"),
+        taskQualificationSnapshot: {
+          version: 1,
+          role: "qualifier",
+          taskId,
+          target: "main",
+          sha: "a".repeat(40),
+        },
+        startedAt: endedAt,
+        status: "Pending",
+      },
+    ]);
+
+    const { getTaskDisplayStatuses } = await import("@/lib/tasks/task-display-status-queries");
+    const statuses = await getTaskDisplayStatuses([taskId], testDatabase.db);
+
+    expect(statuses.get(taskId)).toEqual({ key: "ready", label: "Ready", tone: "success" });
+    expect(statuses.has(unrelatedTaskId)).toBe(false);
+  });
+});
+
+it("counts configured Incoming tasks without placing them in a Board column", async () => {
+  const { projectId } = await seedReviewRun({});
+  const [{ flowId }] = await db.select().from(schema.tasks)
+    .where(eq(schema.tasks.projectId, projectId));
+  const incomingId = randomUUID();
+
+  await db.insert(schema.tasks).values({
+    id: incomingId,
+    projectId,
+    number: 2,
+    title: "Configured incoming request",
+    prompt: "p",
+    flowId,
+    status: "Backlog",
+    stage: "Backlog",
+    qualificationMode: "required",
+  });
+
+  const board = await getBoardData(projectId);
+  const cards = Object.values(board.columns).flatMap((column) => [
+    ...column.backlog,
+    ...column.flight,
+  ]);
+
+  expect(cards.map((card) => card.taskId)).not.toContain(incomingId);
+  expect(board).toMatchObject({ incomingCount: 1, totalTasks: 1 });
 });

@@ -115,6 +115,17 @@ function terminalTaskStage(status: Task["status"]): WorkStage | null {
     : null;
 }
 
+export function workStageOfRun(
+  status: RunStatusValue,
+  workspaceRemoved: boolean,
+): WorkStage {
+  if (workspaceRemoved && (status === "Review" || status === "Crashed")) {
+    return "Ready";
+  }
+
+  return STAGE_BY_RUN_STATUS[status];
+}
+
 function stageOf(input: DeriveWorkStageInput): WorkStage {
   const { runStatus, workspaceRemoved, triageStatus, taskStatus } = input;
 
@@ -128,11 +139,7 @@ function stageOf(input: DeriveWorkStageInput): WorkStage {
   // A user-removed workspace turns a parked Review/Crashed result into
   // historical evidence, so the task must not stay in a lane it cannot be
   // relaunched from. Mirrors the board's existing rule.
-  if (workspaceRemoved && (runStatus === "Review" || runStatus === "Crashed")) {
-    return "Ready";
-  }
-
-  return STAGE_BY_RUN_STATUS[runStatus];
+  return workStageOfRun(runStatus, workspaceRemoved);
 }
 
 // ADR-170 D3: `promotion_state` carries five values, of which only 'none' and

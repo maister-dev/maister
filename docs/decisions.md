@@ -257,6 +257,7 @@ validate:docs` enforces stub ↔ body equality and the file bijection.
 | [ADR-215](#adr-215-acp-context-observations-and-overflow-recovery) | ACP context observations and overflow recovery | Accepted | 2026-11-20 |
 | [ADR-216](#adr-216-durable-flow-waits) | Durable Flow waits | Implemented | 2026-11-20 |
 | [ADR-217](#adr-217-evidence-gated-autonomous-completion) | Evidence-gated autonomous completion | Implemented | 2026-11-20 |
+| [ADR-218](#adr-218-shared-human-facing-task-status) | Shared human-facing task status | Accepted | 2026-11-23 |
 | [ADR-197](#adr-197-explicit-fenced-agent-retry-admission) | Explicit fenced agent retry admission | Accepted | 2026-10-30 |
 | [ADR-196](#adr-196-agent-activity-history-and-grouped-incidents) | Agent activity history and grouped incidents | Accepted | 2026-10-30 |
 
@@ -2482,5 +2483,14 @@ Full record: [`decisions/adr-216.md`](decisions/adr-216.md)
 **Date:** 2026-11-20
 
 Full record: [`decisions/adr-217.md`](decisions/adr-217.md)
+
+---
+
+### ADR-218: Shared human-facing task status
+
+**Status:** Accepted
+**Date:** 2026-11-23
+
+Full record: [`decisions/adr-218.md`](decisions/adr-218.md)
 
 ---

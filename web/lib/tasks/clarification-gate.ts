@@ -2,10 +2,15 @@ import "server-only";
 
 import type { Db } from "@/lib/execution-host/db";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import { taskClarifications } from "@/lib/db/schema";
+
+export function openBlockingClarificationPredicate(): SQL {
+  return sql`(${taskClarifications.originKind}='user' AND
+    ${taskClarifications.status}='open' AND ${taskClarifications.blocking}=true)`;
+}
 
 export async function countOpenBlockingClarifications(
   taskId: string,
@@ -17,9 +22,7 @@ export async function countOpenBlockingClarifications(
     .where(
       and(
         eq(taskClarifications.taskId, taskId),
-        eq(taskClarifications.originKind, "user"),
-        eq(taskClarifications.status, "open"),
-        eq(taskClarifications.blocking, true),
+        openBlockingClarificationPredicate(),
       ),
     );
 
@@ -40,9 +43,7 @@ export async function countOpenBlockingClarificationsByTask(
     .where(
       and(
         inArray(taskClarifications.taskId, taskIds),
-        eq(taskClarifications.originKind, "user"),
-        eq(taskClarifications.status, "open"),
-        eq(taskClarifications.blocking, true),
+        openBlockingClarificationPredicate(),
       ),
     )
     .groupBy(taskClarifications.taskId);

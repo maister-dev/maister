@@ -61,7 +61,7 @@ async function task(flowId: string | null): Promise<string> {
   return id;
 }
 
-it("keeps configured missing, negative and stale assessments visible as work without changing their triage findings", async () => {
+it("keeps configured missing, negative and stale assessments actionable in Work and lists them under Incoming", async () => {
   const missing = await task(fixture.flowId);
   const negative = await task(fixture.flowId);
   const stale = await task(fixture.flowId);
@@ -122,8 +122,15 @@ it("keeps configured missing, negative and stale assessments visible as work wit
     column.backlog.map((card) => card.taskId),
   );
 
-  expect(boardIds).toEqual(expect.arrayContaining([missing, negative, stale]));
-  expect(boardIds).not.toContain(unconfigured);
+  for (const incoming of [missing, negative, stale, unconfigured]) {
+    expect(boardIds).not.toContain(incoming);
+  }
+  expect(board.incomingCount).toBe(4);
+  const filtered = await getIncomingRequests(fixture.projectId, 1, "needs_review");
+
+  expect(filtered.items.map(({ id, displayStatus }) => ({ id, displayStatus }))).toEqual([
+    { id: negative, displayStatus: { key: "incoming", label: "Incoming", tone: "neutral" } },
+  ]);
   expect(work.rows.map((row) => row.taskId)).toEqual(
     expect.arrayContaining([missing, negative, stale]),
   );
@@ -178,7 +185,7 @@ it("admits only the displayed input to backlog, independently of routing and aut
   expect(await incoming()).not.toContain(taskId);
   expect(await count()).toBe(before + 1);
   expect(
-    (await getBoardData(fixture.projectId)).columns.Backlog.backlog.map(
+    ((await getBoardData(fixture.projectId)).columns.backlog?.backlog ?? []).map(
       (card) => card.taskId,
     ),
   ).toContain(taskId);
@@ -224,4 +231,21 @@ it("admits only the displayed input to backlog, independently of routing and aut
   await expect(admitTaskToBacklog(db, access, request)).rejects.toMatchObject({
     code: "CONFLICT",
   });
+});
+
+it("counts the full authorized Incoming partition across pages", async () => {
+  const starting = (await getBoardData(fixture.projectId)).incomingCount;
+
+  for (let index = 0; index < 27; index++) {
+    await task(fixture.flowId);
+  }
+
+  const [board, page] = await Promise.all([
+    getBoardData(fixture.projectId),
+    getIncomingRequests(fixture.projectId, 1),
+  ]);
+
+  expect(board.incomingCount).toBe(starting + 27);
+  expect(page.items).toHaveLength(25);
+  expect(page.hasMore).toBe(true);
 });

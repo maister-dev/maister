@@ -102,7 +102,7 @@ async function getArtifacts(runId: string): Promise<any[]> {
 async function flightCard(projectId: string, runId: string) {
   const board = await getBoardData(projectId);
 
-  return board.columns.OnReview.flight.find((c) => c.runId === runId);
+  return (board.columns.in_review?.flight ?? []).find((c) => c.runId === runId);
 }
 
 // Record attempt-1's impl-diff (current, requiredFor review+merge), supersede

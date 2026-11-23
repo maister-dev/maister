@@ -34,25 +34,6 @@ const labels: FlightCardLabels = {
   },
   readyToPromote: "Ready to promote",
   autoPromoted: (lane: string) => `Auto-promoted via the ${lane} lane`,
-  workStage: {
-    Triage: "Triage",
-    Held: "Held",
-    Ready: "Ready",
-    Queued: "Queued",
-    Executing: "Executing",
-    WaitingOnHuman: "Waiting on a human",
-    Review: "Review",
-    Crashed: "Crashed",
-    Promoted: "Promoted",
-    Abandoned: "Abandoned",
-    blocked: "Blocked",
-    promotedResult: "Result published",
-    runNeedsInput: "live session",
-    runNeedsInputIdle: "checkpointed",
-    runHumanWorking: "manual takeover",
-    runRunning: "running",
-    runWaitingOnChildren: "waiting on children",
-  },
   prLink: (number, state) => `PR #${number} · ${state ?? "not checked"}`,
   prChip: {
     open: "PR open",
@@ -67,7 +48,7 @@ const labels: FlightCardLabels = {
   unconfigured: "no flow",
   needsAttention: "Needs you",
   awaitingClarification: "Awaiting clarification",
-  flagged: "Needs review",
+
   waitingOnChildren: "Waiting on children",
   waitingForCondition: "Waiting for a Flow condition",
   openRun: "Open run",
@@ -101,6 +82,8 @@ const labels: FlightCardLabels = {
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
   return {
     taskId: "task-1",
+    taskStatus: "InFlight",
+    displayStatus: { key: "in_progress", label: "In progress", tone: "accent" },
     number: 1,
     keyRef: "TST-1",
     title: "Bump docs",

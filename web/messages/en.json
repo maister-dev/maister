@@ -1,4 +1,18 @@
 {
+  "taskDisplayStatus": {
+    "abandoned": "Abandoned",
+    "done": "Done",
+    "queued": "Queued",
+    "in_progress": "In progress",
+    "waiting_on_human": "Waiting on human",
+    "in_review": "In review",
+    "crashed": "Crashed",
+    "incoming": "Incoming",
+    "blocked": "Blocked",
+    "needs_review": "Needs review",
+    "ready": "Ready",
+    "backlog": "Backlog"
+  },
   "transcriptUser": {
     "show": "Show fully ({count} chars)",
     "collapse": "Collapse",
@@ -1882,7 +1896,7 @@
     "priorityUrgent": "urgent",
     "queuePause": "Pause in queue",
     "queueResume": "Resume in queue",
-    "queuePaused": "paused",
+    "queuePaused": "Queue paused",
     "launchQueuePaused": "The task queue is paused. Resume it before launching."
   },
   "hitl": {

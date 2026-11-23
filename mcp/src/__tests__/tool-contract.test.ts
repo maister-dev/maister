@@ -139,6 +139,10 @@ type OpenApiDoc = {
         requestBody?: {
           content?: Record<string, { schema?: JsonSchema }>;
         };
+        responses?: Record<
+          string,
+          { content?: Record<string, { schema?: JsonSchema }> }
+        >;
       }
     >
   >;
@@ -146,6 +150,63 @@ type OpenApiDoc = {
 };
 
 const openapi = parse(readFileSync(OPENAPI_PATH, "utf8")) as OpenApiDoc;
+
+describe("shared task display status response contract", () => {
+  it("declares a closed status shape with stable vocabulary", () => {
+    expect(openapi.components?.schemas?.TaskDisplayStatus).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["key", "label", "tone"],
+      properties: {
+        key: {
+          type: "string",
+          enum: [
+            "abandoned", "done", "queued", "in_progress", "waiting_on_human",
+            "in_review", "crashed", "incoming", "blocked", "needs_review",
+            "ready", "backlog",
+          ],
+        },
+        label: { type: "string" },
+        tone: {
+          type: "string",
+          enum: ["neutral", "accent", "warning", "danger", "success"],
+        },
+      },
+    });
+  });
+
+  it.each([
+    ["TaskDTO", true],
+    ["ExtTaskSearchHit", true],
+    ["ExtWorkRow", true],
+    ["InstallationTaskSummary", true],
+    ["ExtDecisionItem", false],
+  ] as const)("shares the status shape on %s", (name, required) => {
+    const schema = openapi.components?.schemas?.[name];
+
+    expect(schema?.properties?.displayStatus).toEqual({
+      $ref: "#/components/schemas/TaskDisplayStatus",
+    });
+    expect(schema?.required?.includes("displayStatus") ?? false).toBe(required);
+  });
+
+  it.each([
+    ["/projects/{slug}/tasks", "ExtProjectTaskList", "InstallationTaskPage"],
+    ["/projects/{slug}/tasks/{taskId}", "TaskDTO", "InstallationTaskSummary"],
+    ["/projects/{slug}/tasks/by-source", "TaskDTO"],
+    ["/tasks/search", "ExtTaskSearchPage"],
+    ["/work", "ExtWorkPage"],
+    ["/decisions", "ExtDecisionItem", "AgentIncidentGroup"],
+  ])("connects %s to the documented DTOs", (path, ...names) => {
+    const response = openapi.paths[`/api/v1/ext${path}`]?.get?.responses?.["200"]
+      ?.content?.["application/json"]?.schema;
+    const schema = JSON.stringify(response);
+
+    for (const name of names) {
+      expect(schema).toContain(`#/components/schemas/${name}"`);
+    }
+  });
+});
 
 // Resolve a single-file local `$ref` ("#/components/schemas/Foo"). The ext spec
 // uses only local refs; a foreign ref would surface here as an undefined walk.

@@ -141,7 +141,7 @@ describe("getBoardData — HumanWorking takeover surface (integration)", () => {
     const board = await getBoardData(projectId);
 
     // The HumanWorking run lands in the in-flight (InProduction) column.
-    const flight = board.columns.InProduction.flight;
+    const flight = (board.columns.waiting_on_human?.flight ?? []);
     const card = flight.find((c) => c.runId === runId);
 
     expect(card).toBeDefined();
@@ -164,7 +164,7 @@ describe("getBoardData — HumanWorking takeover surface (integration)", () => {
     });
 
     const board = await getBoardData(projectId);
-    const card = board.columns.InProduction.flight.find(
+    const card = (board.columns.waiting_on_human?.flight ?? []).find(
       (c) => c.runId === runId,
     );
 

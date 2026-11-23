@@ -2,7 +2,7 @@ import "server-only";
 
 import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
-import type { BoardColumn, CrashAction } from "@/lib/board";
+import type { CrashAction } from "@/lib/board";
 import type { RunStatus } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
@@ -20,6 +20,11 @@ import {
   type WorkStage,
 } from "@/lib/work/stage";
 import { incomingWorkPredicate } from "@/lib/tasks/qualification-predicates";
+import { deriveTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusKey } from "@/lib/tasks/task-display-status";
+import type { Task } from "@/lib/db/schema";
+
+import { getIncomingCount } from "@/lib/queries/incoming";
+import { taskDisplayLatestFlow, taskDisplayStatusColumns } from "@/lib/tasks/task-display-status-queries";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
@@ -103,6 +108,8 @@ export interface ChildTaskRef {
 
 export interface BacklogCard {
   taskId: string;
+  taskStatus: Task["status"];
+  displayStatus: TaskDisplayStatus;
   number: number;
   keyRef: string;
   title: string;
@@ -167,6 +174,8 @@ export interface ParentTaskRef {
 
 export interface FlightCard {
   taskId: string;
+  taskStatus: Task["status"];
+  displayStatus: TaskDisplayStatus;
   number: number;
   keyRef: string;
   title: string;
@@ -246,7 +255,7 @@ export interface FlightCard {
 }
 
 export interface BoardColumnData {
-  column: BoardColumn;
+  column: TaskDisplayStatusKey;
   backlog: BacklogCard[];
   flight: FlightCard[];
   total: number;
@@ -262,7 +271,8 @@ export interface BoardRelationCandidate {
 }
 
 export interface BoardData {
-  columns: Record<BoardColumn, BoardColumnData>;
+  columns: Partial<Record<TaskDisplayStatusKey, BoardColumnData>>;
+  incomingCount: number;
   relationCandidates: BoardRelationCandidate[];
   totalTasks: number;
   inProd: number;
@@ -353,18 +363,16 @@ function priorityFor(index: number): CardPriority {
   return "low";
 }
 
-function emptyColumn(column: BoardColumn): BoardColumnData {
-  return { column, backlog: [], flight: [], total: 0 };
-}
-
 export async function getBoardData(projectId: string): Promise<BoardData> {
   const now = new Date();
   const client = db();
 
   // M34: leftJoin — a flowless simple-intent task still shows on the board
   // (it classifies as `unconfigured` until triage fills the flow).
+  const latestFlow = taskDisplayLatestFlow(client);
   const taskRows = await client
     .select({
+      ...taskDisplayStatusColumns(latestFlow),
       taskId: tasks.id,
       number: tasks.number,
       title: tasks.title,
@@ -378,8 +386,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       enabledRevisionEngineMin: flowRevisions.engineMin,
       enabledRevisionEngineMax: flowRevisions.engineMax,
       flowId: tasks.flowId,
-      triageStatus: tasks.triageStatus,
-      triageFlagOrigin: tasks.triageFlagOrigin,
       priority: tasks.priority,
       queuePaused: tasks.queuePaused,
       triageConfidence: tasks.triageConfidence,
@@ -391,28 +397,23 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     })
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
+    .leftJoinLateral(latestFlow, sql`true`)
     .leftJoin(flowRevisions, eq(flowRevisions.id, flows.enabledRevisionId))
     .where(
       and(
         eq(tasks.projectId, projectId),
-        sql`(${tasks.flowId} IS NOT NULL OR NOT ${incomingWorkPredicate()})`,
+        sql`NOT ${incomingWorkPredicate()}`,
       ),
     )
     .orderBy(desc(tasks.createdAt));
 
-  const columns: Record<BoardColumn, BoardColumnData> = {
-    Backlog: emptyColumn("Backlog"),
-    Prepare: emptyColumn("Prepare"),
-    InProduction: emptyColumn("InProduction"),
-    OnReview: emptyColumn("OnReview"),
-    InDelivery: emptyColumn("InDelivery"),
-    Crashed: emptyColumn("Crashed"),
-    Done: emptyColumn("Done"),
-  };
+  const incomingCount = await getIncomingCount(projectId, client);
+  const columns: BoardData["columns"] = {};
 
   if (taskRows.length === 0) {
     return {
       columns,
+      incomingCount,
       relationCandidates: [],
       totalTasks: 0,
       inProd: 0,
@@ -492,7 +493,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       })
       .from(runs)
       .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, childTaskIds)))
-      .orderBy(desc(runs.startedAt));
+      .orderBy(desc(runs.startedAt), desc(runs.id));
 
     for (const row of childRunRows) {
       if (!row.taskId || childLatestStatus.has(row.taskId)) continue;
@@ -587,7 +588,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .from(runs)
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, taskIds)))
-    .orderBy(desc(runs.startedAt));
+    .orderBy(desc(runs.startedAt), desc(runs.id));
 
   const latestRunByTask = new Map<string, (typeof runRows)[number]>();
 
@@ -729,6 +730,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   });
 
   let backlogPos = 0;
+  let inProd = 0;
+  let backlog = 0;
   let merged7d = 0;
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -740,12 +743,26 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runStatus: run?.status ?? null,
       workspaceRemoved: run?.removedAt != null,
     });
-    const bucket = columns[column];
+    const displayStatus = deriveTaskDisplayStatus({
+      ...task,
+      workspaceRemoved: task.removedAt !== null,
+    });
 
+    const bucket = columns[displayStatus.key] ??= {
+      column: displayStatus.key,
+      backlog: [],
+      flight: [],
+      total: 0,
+    };
+    const statusFields = { taskStatus: task.status, displayStatus };
+
+    if (column === "InProduction") inProd += 1;
+    if (column === "Backlog") backlog += 1;
     bucket.total += 1;
 
     if (run === null || column === "Backlog" || column === "Prepare") {
-      bucket.backlog.push({
+      const card: BacklogCard = {
+        ...statusFields,
         taskId: task.taskId,
         number: task.number,
         keyRef: `${projectTaskKey}-${task.number}`,
@@ -793,7 +810,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
                 ),
               }
             : null,
-      });
+      };
+
+      bucket.backlog.push(card);
       backlogPos += 1;
       continue;
     }
@@ -829,7 +848,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       workStagePromotedKind: derivedWorkStage.promotedKind,
     };
 
-    bucket.flight.push({
+    const card: FlightCard = {
+      ...statusFields,
       taskId: task.taskId,
       number: task.number,
       keyRef: `${projectTaskKey}-${task.number}`,
@@ -896,7 +916,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       blockedBy: openBlockers.get(task.taskId) ?? [],
       childTasks: childTasksByTask.get(task.taskId) ?? [],
       parentTask: parentTaskByTask.get(task.taskId) ?? null,
-    });
+    };
+
+    bucket.flight.push(card);
 
     if (
       run.status === "Done" &&
@@ -909,10 +931,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
   return {
     columns,
+    incomingCount,
     relationCandidates,
     totalTasks: taskRows.length,
-    inProd: columns.InProduction.total,
-    backlog: columns.Backlog.total,
+    inProd,
+    backlog,
     merged7d,
   };
 }

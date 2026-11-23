@@ -44,6 +44,7 @@ import RunDiff from "@/components/workbench/run-diff";
 import { LazyDisclosure } from "@/components/tasks/lazy-disclosure";
 import { TaskResultCard } from "@/components/tasks/task-result-card";
 import { TaskRunArtifactView } from "@/components/tasks/task-run-artifact";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import { TaskSourceChip } from "@/components/tasks/task-source-chip";
 import { TaskSourceDetach } from "@/components/tasks/task-source-detach";
 import { LocalTime } from "@/components/ui/local-time";
@@ -669,11 +670,7 @@ export default async function TaskDetailPage({
           </a>
         );
       case "abandoned":
-        return (
-          <span className="font-mono text-[11px] text-mute">
-            {t("status.Abandoned")}
-          </span>
-        );
+        return null;
       case "queue":
         return (
           <TaskQueueControls
@@ -733,11 +730,7 @@ export default async function TaskDetailPage({
             <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-ink">
               {detail.keyRef}
             </span>
-            <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
-              {qualification?.backlogAdmission === "available"
-                ? tQualification("incomingTask")
-                : t(`status.${detail.task.status}`)}
-            </span>
+            <TaskStatusChip status={detail.displayStatus.key} />
             {detail.task.source ? (
               <TaskSourceChip
                 kindLabel={
@@ -762,16 +755,6 @@ export default async function TaskDetailPage({
                 slug={slug}
                 taskNumber={detail.task.number}
               />
-            ) : null}
-            {detail.task.triageStatus === "triaged" ? (
-              <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
-                {t("triaged")}
-              </span>
-            ) : null}
-            {detail.task.triageStatus === "flagged" ? (
-              <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-amber">
-                {t("flagged")}
-              </span>
             ) : null}
             {detail.task.triageConfidence != null ? (
               <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em] text-mute">
@@ -998,9 +981,7 @@ export default async function TaskDetailPage({
         >
           <summary className="cursor-pointer text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
             {t("qualificationTitle")}
-            {qualification.decision
-              ? ` · ${tQualification(`decision.${qualification.decision}`)}`
-              : ""}
+
           </summary>
           <div className="mt-2">
             <TaskQualificationControl

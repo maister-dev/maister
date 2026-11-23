@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -424,6 +424,11 @@ export async function removeTaskRelation(
 // M37 (ADR-098): (T requires Y) is SUCCESS-GATED — Y blocks T unless Y is Done
 // (Failed/Abandoned keep T blocked, unlike depends_on), so an auto-DAG only
 // releases a dependent on a successful dependency.
+export function taskRelationBlockerPredicate(kind: SQLWrapper, status: SQLWrapper): SQL {
+  return sql`((${kind}='requires' AND ${status}<>'Done')
+    OR (${kind} IN ('blocks','depends_on') AND ${status} IN ('Backlog','InFlight')))`;
+}
+
 export async function getOpenRelationBlockers(
   taskIds: string[],
   db?: Db,
@@ -448,7 +453,7 @@ export async function getOpenRelationBlockers(
       and(
         eq(taskRelations.kind, "blocks"),
         inArray(taskRelations.toTaskId, taskIds),
-        or(eq(tasks.status, "Backlog"), eq(tasks.status, "InFlight")),
+        taskRelationBlockerPredicate(taskRelations.kind, tasks.status),
       ),
     )) as Array<{
     taskId: string;
@@ -471,7 +476,7 @@ export async function getOpenRelationBlockers(
       and(
         eq(taskRelations.kind, "depends_on"),
         inArray(taskRelations.fromTaskId, taskIds),
-        or(eq(tasks.status, "Backlog"), eq(tasks.status, "InFlight")),
+        taskRelationBlockerPredicate(taskRelations.kind, tasks.status),
       ),
     )) as Array<{
     taskId: string;
@@ -497,7 +502,7 @@ export async function getOpenRelationBlockers(
       and(
         eq(taskRelations.kind, "requires"),
         inArray(taskRelations.fromTaskId, taskIds),
-        ne(tasks.status, "Done"),
+        taskRelationBlockerPredicate(taskRelations.kind, tasks.status),
       ),
     )) as Array<{
     taskId: string;

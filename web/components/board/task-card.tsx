@@ -15,6 +15,7 @@ import {
 } from "@/components/board/task-card-editing";
 import { TaskDecomposition } from "@/components/board/task-decomposition";
 import { TaskQueueControls } from "@/components/board/task-queue-controls";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 export interface TaskCardProps {
@@ -30,8 +31,6 @@ export interface TaskCardProps {
   delegatedByLabel: string;
   delegatedRelaunchHint?: string;
   unconfiguredLabel: string;
-  triagedLabel: string;
-  flaggedLabel: string;
   awaitingClarificationLabel: string;
   runsCountLabel: (count: number) => string;
   decompositionLabels: TaskDecompositionLabels;
@@ -66,8 +65,6 @@ export function TaskCard({
   delegatedByLabel,
   delegatedRelaunchHint,
   unconfiguredLabel,
-  triagedLabel,
-  flaggedLabel,
   awaitingClarificationLabel,
   runsCountLabel,
   decompositionLabels,
@@ -193,16 +190,7 @@ export function TaskCard({
       ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
         <div className="min-w-0 flex-1 font-mono text-[10px] tracking-[0.02em] text-mute">
-          {card.triageStatus === "triaged" ? (
-            <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-accent-4">
-              {triagedLabel}
-            </span>
-          ) : null}
-          {card.triageStatus === "flagged" ? (
-            <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber">
-              {flaggedLabel}
-            </span>
-          ) : null}
+          <TaskStatusChip status={card.displayStatus.key} />
           {card.awaitingClarification ? (
             <span
               className="ml-1 rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber"
@@ -211,7 +199,7 @@ export function TaskCard({
               {awaitingClarificationLabel}
             </span>
           ) : null}
-          {launchDisabledReason ? (
+          {launchDisabledReason && card.taskStatus !== "Done" && card.taskStatus !== "Abandoned" ? (
             <span
               className="block break-words text-[9px] leading-[1.35] text-amber"
               data-testid="task-card-launch-unavailable-reason"
@@ -231,7 +219,7 @@ export function TaskCard({
             </span>
           ) : null}
         </div>
-        {canAct ? (
+        {canAct && card.taskStatus !== "Done" && card.taskStatus !== "Abandoned" ? (
           <LaunchPopover
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}

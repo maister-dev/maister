@@ -11,6 +11,8 @@ HITL/decisions DTOs remain project-only. See the
 
 ## Purpose
 
+A decision linked to an authorized task uses its current [human-facing task status](tasks.md#human-facing-task-status-designed). The decision kind and its referenced run retain their event meaning.
+
 The **attention plane**: the two canonical counters a reader is shown
 (`decisions` and `updates`), the cross-project decision queue behind the first of
 them, the cross-project activity feed and per-user read cursor behind the second,

@@ -1,4 +1,18 @@
 {
+  "taskDisplayStatus": {
+    "abandoned": "Оставлена",
+    "done": "Готово",
+    "queued": "В очереди",
+    "in_progress": "В работе",
+    "waiting_on_human": "Ожидает человека",
+    "in_review": "На проверке",
+    "crashed": "Авария",
+    "incoming": "Входящая",
+    "blocked": "Заблокирована",
+    "needs_review": "Требует проверки",
+    "ready": "Готова к запуску",
+    "backlog": "Бэклог"
+  },
   "transcriptUser": {
     "show": "Показать полностью ({count} символов)",
     "collapse": "Свернуть",
@@ -1882,7 +1896,7 @@
     "priorityUrgent": "срочный",
     "queuePause": "Приостановить в очереди",
     "queueResume": "Возобновить в очереди",
-    "queuePaused": "на паузе",
+    "queuePaused": "Очередь на паузе",
     "launchQueuePaused": "Очередь задачи приостановлена. Возобновите её перед запуском."
   },
   "hitl": {

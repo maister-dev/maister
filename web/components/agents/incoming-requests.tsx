@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
+
 import {
   getIncomingRequests,
   type IncomingFilter,
@@ -78,6 +80,7 @@ export async function IncomingRequests({
               >
                 {taskKey}-{item.number} · {item.title}
               </Link>
+              <TaskStatusChip status={item.displayStatus.key} />
               <p className="text-sm text-mute">
                 {t(`decision.${item.qualification.decision ?? "unassessed"}`)} ·{" "}
                 {t(`freshness.${item.qualification.freshness}`)}

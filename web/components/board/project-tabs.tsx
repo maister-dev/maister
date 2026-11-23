@@ -25,6 +25,7 @@ export interface ProjectTabsProps {
   slug: string;
   active: ProjectTab;
   boardCount: number;
+  incomingCount: number;
   showBrain: boolean;
 }
 
@@ -50,6 +51,7 @@ export async function ProjectTabs({
   slug,
   active,
   boardCount,
+  incomingCount,
   showBrain,
 }: ProjectTabsProps): Promise<ReactElement> {
   const t = await getTranslations("nav");
@@ -88,7 +90,7 @@ export async function ProjectTabs({
     label: label[tab],
     href: hrefFor(tab),
     scroll: false,
-    count: tab === "board" ? boardCount : undefined,
+    count: tab === "board" ? boardCount : tab === "incoming" ? incomingCount : undefined,
   }));
 
   return (

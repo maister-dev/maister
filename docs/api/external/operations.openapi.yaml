@@ -4175,6 +4175,7 @@ paths:
                         projectId: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
                         projectSlug: demo
                         taskKey: DEMO-14
+                        displayStatus: { key: waiting_on_human, label: Waiting on human, tone: warning }
                         runId: 6ba7b810-9dad-41d1-80b4-00c04fd430c8
                         hitlRequestId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
                         title: Review deployment plan
@@ -4185,6 +4186,7 @@ paths:
                         projectId: 3f2504e0-4f89-41d3-9a0c-0305e82c3301
                         projectSlug: demo
                         taskKey: DEMO-9
+                        displayStatus: { key: crashed, label: Crashed, tone: danger }
                         runId: 1c4a9f22-5f0e-4c31-9f4a-2c7d1b6e8a03
                         hitlRequestId: null
                         title: Backfill the pricing table
@@ -13604,6 +13606,24 @@ components:
               type: string
         createdAt: { type: string, format: date-time }
 
+    TaskDisplayStatus:
+      type: object
+      description: Current human-facing status derived by the server from authorized task facts.
+      additionalProperties: false
+      required: [key, label, tone]
+      properties:
+        key:
+          type: string
+          enum: [abandoned, done, queued, in_progress, waiting_on_human, in_review, crashed, incoming, blocked, needs_review, ready, backlog]
+        label:
+          type: string
+          minLength: 1
+          description: English label from the shared status catalog.
+        tone:
+          type: string
+          enum: [neutral, accent, warning, danger, success]
+      example: { key: incoming, label: Incoming, tone: neutral }
+
     TaskDTO:
       type: object
       description: |
@@ -13614,12 +13634,14 @@ components:
         - title
         - prompt
         - status
+        - displayStatus
         - stage
         - flowId
         - attemptNumber
         - createdByUserId
         - createdAt
       properties:
+        displayStatus: { $ref: "#/components/schemas/TaskDisplayStatus" }
         qualification:
           $ref: "#/components/schemas/TaskQualificationSummary"
         source:
@@ -14802,7 +14824,8 @@ components:
       type: object
       description: |
         (ADR-169, Implemented) One entry in the owner's cross-project decision
-        queue. Every field is an explicit DTO projection: this item NEVER
+        queue. displayStatus describes the current authorized task and is
+        omitted for taskless decisions. Every field is an explicit DTO projection: this item NEVER
         includes `acp_session_id`, a supervisor session id, an absolute worktree
         path, a diff body, token material, or an internal cost handle.
       required:
@@ -14820,6 +14843,7 @@ components:
           createdAt,
         ]
       properties:
+        displayStatus: { $ref: "#/components/schemas/TaskDisplayStatus" }
         kind:
           type: string
           enum: [hitl, promotable, crashed, flagged, clarification, operational]
@@ -16530,9 +16554,11 @@ components:
         nextCursor: { type: string, minLength: 1, maxLength: 2048, nullable: true }
     InstallationTaskSummary:
       type: object
+      description: Compact task metadata for installations with the readBoard grant.
       additionalProperties: false
-      required: [id, projectId, slug, number, title, status]
+      required: [id, projectId, slug, number, title, status, displayStatus]
       properties:
+        displayStatus: { $ref: "#/components/schemas/TaskDisplayStatus" }
         id: { type: string, format: uuid }
         projectId: { type: string, minLength: 1 }
         slug: { type: string, minLength: 1, description: Owning project slug. }
@@ -16649,6 +16675,7 @@ components:
           taskKey,
           title,
           status,
+          displayStatus,
           projectId,
           projectSlug,
           projectName,
@@ -16657,6 +16684,7 @@ components:
           createdAt,
         ]
       properties:
+        displayStatus: { $ref: "#/components/schemas/TaskDisplayStatus" }
         taskId:
           type: string
           format: uuid
@@ -16731,6 +16759,7 @@ components:
           projectSlug,
           projectName,
           stage,
+          displayStatus,
           blocked,
           clarificationPending,
           promotedKind,
@@ -16743,6 +16772,7 @@ components:
           lastActivityAt,
         ]
       properties:
+        displayStatus: { $ref: "#/components/schemas/TaskDisplayStatus" }
         taskId:
           type: string
           format: uuid

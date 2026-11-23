@@ -68,6 +68,7 @@ export default async function ProjectEvaluationsPage({
       <ProjectTabs
         active="evaluations"
         boardCount={board.totalTasks}
+        incomingCount={board.incomingCount}
         showBrain={showBrain}
         slug={slug}
       />

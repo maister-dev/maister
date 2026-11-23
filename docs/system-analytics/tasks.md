@@ -769,3 +769,43 @@ See [the governing contract](execution-policy.md).
 qualified automation, derived-child authority and frozen execution. This task
 lifecycle page does not redefine those gates. Historical v1 receipts remain
 history/continuation evidence; they do not grant a new v2 launch.
+
+## Human-facing task status (Designed)
+
+The task read model derives `displayStatus` from the current authorized task
+facts. The first applicable row determines the task status on every surface.
+
+| Facts in priority order | Key | English label | Tone |
+| --- | --- | --- | --- |
+| Task is Abandoned | `abandoned` | Abandoned | neutral |
+| Task is Done | `done` | Done | success |
+| Latest Flow is Pending | `queued` | Queued | neutral |
+| Latest Flow is Running, Waiting or WaitingOnChildren | `in_progress` | In progress | accent |
+| Latest Flow awaits human input or claim completion | `waiting_on_human` | Waiting on human | warning |
+| Latest Flow is Review with an intact workspace | `in_review` | In review | accent |
+| Latest Flow is Crashed with an intact workspace | `crashed` | Crashed | danger |
+| Task is InFlight and no Flow row is visible | `in_progress` | In progress | accent |
+| Latest Flow is Done | `done` | Done | success |
+| Task matches `incomingWorkPredicate()` | `incoming` | Incoming | neutral |
+| Task has an open blocking dependency or clarification | `blocked` | Blocked | warning |
+| Task has an effective manual triage hold or outstanding required qualification without current manual admission | `needs_review` | Needs review | warning |
+| Task has a configured Flow | `ready` | Ready | success |
+| Remaining live task | `backlog` | Backlog | neutral |
+
+The read adapter selects Flow runs by `started_at DESC, id DESC`. Failed and
+abandoned attempts and Review or Crashed runs with removed workspaces fall
+through to the pre-execution checks. The Incoming predicate uses current
+accepted readiness or a manual admission for the same input revision. Stale
+and unpublished assessments cannot satisfy readiness. A same-input manual
+admission clears the qualification hold while explicit triage holds retain
+their existing effect.
+
+All task-facing readers MUST use the shared resolver and catalog. Board
+columns group by status key, and the Incoming tab count uses the full
+authorized Incoming partition. Work grouping, stage deep links and raw
+stage fields retain their workflow semantics. Attention status reflects the
+current linked task, even when the decision refers to an older run.
+
+The projection uses existing authorization, audit and failure logging.
+Launch and recovery actions retain their own authorization and live
+preconditions. See [ADR-218](../decisions/adr-218.md).

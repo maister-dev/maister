@@ -493,6 +493,7 @@ export default async function ProjectBoardPage({
       <ProjectTabs
         active={tab}
         boardCount={board.totalTasks}
+        incomingCount={board.incomingCount}
         showBrain={brainIndexingAvailable}
         slug={slug}
       />

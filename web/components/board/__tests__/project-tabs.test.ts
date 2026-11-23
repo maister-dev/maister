@@ -16,11 +16,13 @@ describe("ProjectTabs", () => {
       slug: "demo",
       active: "board",
       boardCount: 7,
+      incomingCount: 19,
       showBrain: true,
     })) as ReactElement<{ children: ReactElement<TabsProps> }>;
     const tabs = projectTabs.props.children;
 
     expect(tabs.props.items).not.toHaveLength(0);
+    expect(tabs.props.items.find((item) => item.key === "incoming")?.count).toBe(19);
     expect(tabs.props.items.every((item) => item.scroll === false)).toBe(true);
   });
 
@@ -30,6 +32,7 @@ describe("ProjectTabs", () => {
         slug: "demo",
         active: "brain",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: true,
       }),
     );
@@ -44,6 +47,7 @@ describe("ProjectTabs", () => {
         slug: "proj",
         active: "board",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: true,
       }),
     );
@@ -58,6 +62,7 @@ describe("ProjectTabs", () => {
         slug: "proj",
         active: "evaluations",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: true,
       }),
     );
@@ -74,6 +79,7 @@ describe("ProjectTabs", () => {
         slug: "proj",
         active: "board",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: true,
       }),
     );
@@ -87,6 +93,7 @@ describe("ProjectTabs", () => {
         slug: "demo",
         active: "board",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: false,
       }),
     );
@@ -101,6 +108,7 @@ describe("ProjectTabs", () => {
         slug: "proj",
         active: "automations",
         boardCount: 7,
+        incomingCount: 19,
         showBrain: false,
       }),
     );

@@ -124,7 +124,7 @@ function backlogCard(
   board: Awaited<ReturnType<typeof getBoardData>>,
   taskId: string,
 ) {
-  const card = board.columns.Backlog.backlog.find((c) => c.taskId === taskId);
+  const card = Object.values(board.columns).flatMap((column) => column.backlog).find((c) => c.taskId === taskId);
 
   expect(card).toBeDefined();
 
@@ -146,6 +146,7 @@ describe("Backlog card — the latest parked run's git menu", () => {
 
       const card = backlogCard(await getBoardData(projectId), taskId);
 
+      expect(card.displayStatus.key).toBe("ready");
       expect(card.latestRun).toMatchObject({
         id: runId,
         kind: "flow",

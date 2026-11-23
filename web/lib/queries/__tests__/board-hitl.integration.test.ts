@@ -227,7 +227,7 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     });
 
     const data = await getBoardData("proj-1");
-    const card = data.columns.InProduction.flight.find(
+    const card = (data.columns.waiting_on_human?.flight ?? []).find(
       (c) => c.runId === "run-1",
     );
 
@@ -270,7 +270,7 @@ describe("getBoardData — NeedsInput flight card (inline HITL projection remove
     );
 
     const data = await getBoardData("proj-agent-question");
-    const card = data.columns.Backlog.backlog.find(
+    const card = Object.values(data.columns).flatMap((column) => column.backlog).find(
       (item) => item.taskId === "task-agent-question",
     );
 

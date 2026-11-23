@@ -6,6 +6,8 @@
 
 ## Purpose
 
+Qualification remains assessment evidence in the shared [human-facing task status](tasks.md#human-facing-task-status-designed). Incoming membership uses the existing admission predicate.
+
 A current `ready` assessment admits an incoming request to the backlog automatically.
 A project editor can also choose **Add to backlog** on the task. This takes one
 click, including for `needs_information`, `needs_review`, `not_actionable` and

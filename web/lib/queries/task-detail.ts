@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
 import type { TriageFlagOrigin } from "@/lib/tasks/manual-launch-hold";
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
@@ -7,6 +8,7 @@ import type { TaskPriority } from "@/lib/tasks/criticality";
 import type { RunTiming } from "@/lib/runs/run-timing";
 import type { TaskSource } from "@/lib/tasks/external-source/model";
 
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -195,6 +197,7 @@ export type TaskRelationCandidate = {
 };
 
 export type TaskDetailData = {
+  displayStatus: TaskDisplayStatus;
   project: { id: string; slug: string; name: string; taskKey: string };
   task: {
     id: string;
@@ -334,7 +337,10 @@ export async function getTaskDetail(
   if (!resolved) return null;
 
   const taskId = resolved.task.id;
-  const taskExtras = await taskExtrasOf(db, taskId);
+  const [taskExtras, statuses] = await Promise.all([
+    taskExtrasOf(db, taskId),
+    getTaskDisplayStatuses([taskId]),
+  ]);
   const clarificationContext = await getTaskClarificationProjection(
     db,
     taskId,
@@ -531,6 +537,7 @@ export async function getTaskDetail(
   };
 
   return {
+    displayStatus: requireTaskDisplayStatus(statuses, taskId),
     project: {
       id: resolved.project.id,
       slug: resolved.project.slug,

@@ -2,7 +2,11 @@ import type { FlightCard as FlightCardData } from "@/lib/queries/board";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
 
 import {
   FlightCard,
@@ -29,25 +33,6 @@ const labels: FlightCardLabels = {
     overridden: "Overridden",
   },
   readyToPromote: "Ready to promote",
-  workStage: {
-    Triage: "Triage",
-    Held: "Held",
-    Ready: "Ready",
-    Queued: "Queued",
-    Executing: "Executing",
-    WaitingOnHuman: "Waiting on a human",
-    Review: "Review",
-    Crashed: "Crashed",
-    Promoted: "Promoted",
-    Abandoned: "Abandoned",
-    blocked: "Blocked",
-    promotedResult: "Result published",
-    runNeedsInput: "live session",
-    runNeedsInputIdle: "checkpointed",
-    runHumanWorking: "manual takeover",
-    runRunning: "running",
-    runWaitingOnChildren: "waiting on children",
-  },
   prLink: (number, state) => `PR #${number} · ${state ?? "not checked"}`,
   prChip: {
     open: "PR open",
@@ -68,6 +53,8 @@ const labels: FlightCardLabels = {
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
   return {
     taskId: "task-1",
+    taskStatus: "InFlight",
+    displayStatus: { key: "in_progress", label: "In progress", tone: "accent" },
     number: 1,
     keyRef: "TST-1",
     title: "Fix the thing",

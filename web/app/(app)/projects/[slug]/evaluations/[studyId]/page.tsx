@@ -137,6 +137,7 @@ export default async function StudyDetailPage({
       <ProjectTabs
         active="evaluations"
         boardCount={board.totalTasks}
+        incomingCount={board.incomingCount}
         showBrain={showBrain}
         slug={slug}
       />

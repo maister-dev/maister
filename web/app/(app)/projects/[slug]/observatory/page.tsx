@@ -107,6 +107,7 @@ export default async function ProjectObservatoryPage({
       <ProjectTabs
         active="observatory"
         boardCount={board.totalTasks}
+        incomingCount={board.incomingCount}
         showBrain={brainIndexingAvailable}
         slug={slug}
       />

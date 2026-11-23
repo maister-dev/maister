@@ -1,5 +1,5 @@
-import type { BoardColumn } from "@/lib/board";
 import type {
+  BacklogCard,
   BoardData,
   BoardFlowIncompatibility,
   FlightCard as FlightCardData,
@@ -16,7 +16,8 @@ import clsx from "clsx";
 import { FlightCard } from "@/components/board/flight-card";
 import { boardTaskGate } from "@/components/board/board-task-gate";
 import { TaskCard } from "@/components/board/task-card";
-import { buildWorkStageLabels } from "@/lib/work/work-row-labels";
+import { TaskStatusChip } from "@/components/tasks/task-status-chip";
+import type { TaskDisplayStatusKey } from "@/lib/tasks/task-display-status";
 import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
 
 export interface BoardProps {
@@ -26,49 +27,19 @@ export interface BoardProps {
   platformStatus: PlatformStatus;
 }
 
-const STAGE_KEY: Record<BoardColumn, string> = {
-  Backlog: "backlog",
-  Prepare: "prepare",
-  InProduction: "production",
-  OnReview: "review",
-  InDelivery: "delivery",
-  Crashed: "crashed",
-  Done: "done",
-};
-
-const STAGE_DOT: Record<BoardColumn, string> = {
-  Backlog:
-    "bg-[repeating-linear-gradient(45deg,var(--mute-2)_0_2px,transparent_2px_3px)] !rounded-[2px]",
-  Prepare: "bg-accent-2",
-  InProduction:
-    "bg-accent-4 shadow-[0_0_0_0_var(--accent-4)] animate-[pulse-dot_2.2s_ease-out_infinite]",
-  OnReview: "bg-amber",
-  InDelivery: "bg-accent-3",
-  // M19: full Crashed-column styling is Phase 5; minimal entry keeps the
-  // exhaustive Record typecheck-green.
-  Crashed: "bg-red-500",
-  Done: "bg-accent-4 opacity-[0.45]",
-};
-
-const COLUMN_ORDER: readonly BoardColumn[] = [
-  "Backlog",
-  "Prepare",
-  "InProduction",
-  "OnReview",
-  "InDelivery",
-  "Crashed",
-  "Done",
+const COLUMN_ORDER: readonly TaskDisplayStatusKey[] = [
+  "backlog",
+  "blocked",
+  "needs_review",
+  "ready",
+  "queued",
+  "in_progress",
+  "waiting_on_human",
+  "in_review",
+  "crashed",
+  "done",
+  "abandoned",
 ];
-
-const COLUMN_LABEL: Record<BoardColumn, string> = {
-  Backlog: "colBacklog",
-  Prepare: "colPrepare",
-  InProduction: "colProduction",
-  OnReview: "colReview",
-  InDelivery: "colDelivery",
-  Crashed: "colCrashed",
-  Done: "colDone",
-};
 
 export async function Board({
   data,
@@ -82,7 +53,6 @@ export async function Board({
   const tRun = await getTranslations("run");
   const tRunStatus = await getTranslations("run.runStatus");
   const tGit = await getTranslations("workbenchGit");
-  const tWorkStage = await getTranslations("workStage");
   const tReadiness = await getTranslations("readiness");
   const runStatusLabels = Object.fromEntries(
     RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
@@ -122,7 +92,6 @@ export async function Board({
     readyToPromote: t("readyToPromote"),
     autoPromoted: (lane: string) => t("autoPromoted", { lane }),
     // ADR-140 PR-state chip labels — sourced from the shared `run` namespace.
-    workStage: buildWorkStageLabels(tWorkStage),
     prLink: (number: number | null, state: FlightCardData["prState"]) =>
       tGit("prChip", {
         number: number ?? "?",
@@ -141,7 +110,6 @@ export async function Board({
     unconfigured: t("unconfigured"),
     needsAttention: t("needsAttention"),
     awaitingClarification: t("awaitingClarification"),
-    flagged: t("flagged"),
     waitingOnChildren: t("waitingOnChildren"),
     waitingForCondition: t("waitingForCondition"),
     openRun: t("openRun"),
@@ -182,7 +150,7 @@ export async function Board({
     "Crashed",
   ]);
   const flightLaunchDisabledReason = (
-    card: BoardData["columns"][BoardColumn]["flight"][number],
+    card: FlightCardData,
   ): string | undefined => {
     if (launchDisabledReason) return launchDisabledReason;
     if (!launchableLatestRunStatuses.has(card.runStatus)) {
@@ -209,9 +177,10 @@ export async function Board({
     return flowIncompatibilityReason(card.flowIncompatibility);
   };
   const backlogLaunchDisabledReason = (
-    card: BoardData["columns"][BoardColumn]["backlog"][number],
+    card: BacklogCard,
   ): string | undefined => {
     if (launchDisabledReason) return launchDisabledReason;
+    if (card.taskStatus === "InFlight" && card.runCount === 0) return t("launchBusy");
     const gate = boardTaskGate({
       triageStatus: card.triageStatus,
       triageFlagOrigin: card.triageFlagOrigin,
@@ -245,6 +214,8 @@ export async function Board({
       {COLUMN_ORDER.map((col) => {
         const column = data.columns[col];
 
+        if (!column) return null;
+
         return (
           <div
             key={col}
@@ -253,7 +224,7 @@ export async function Board({
               "[[data-layout=swimlanes]_&]:min-h-0 [[data-layout=swimlanes]_&]:w-auto [[data-layout=swimlanes]_&]:flex-1 [[data-layout=swimlanes]_&]:flex-row",
               "[[data-layout=list]_&]:min-h-0 [[data-layout=list]_&]:w-auto [[data-layout=list]_&]:flex-1",
             )}
-            data-stage={STAGE_KEY[col]}
+            data-stage={col}
           >
             <header
               className={clsx(
@@ -262,13 +233,7 @@ export async function Board({
               )}
             >
               <h3 className="m-0 inline-flex items-center gap-2.5 font-sans text-sm font-bold tracking-[-0.01em] text-ink">
-                <span
-                  className={clsx(
-                    "h-2 w-2 flex-none rounded-full",
-                    STAGE_DOT[col],
-                  )}
-                />
-                {t(COLUMN_LABEL[col])}
+                <TaskStatusChip status={col} />
                 <span className="rounded-full border border-line bg-paper px-[7px] py-0.5 font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2">
                   {column.total}
                 </span>
@@ -304,7 +269,6 @@ export async function Board({
                           })
                         : undefined
                     }
-                    flaggedLabel={t("flagged")}
                     launchDisabledLabel={
                       card.blockedBy.length > 0 && !launchDisabledReason
                         ? t("launchBlockedShort")
@@ -318,7 +282,6 @@ export async function Board({
                     relationCandidates={data.relationCandidates}
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
-                    triagedLabel={t("triaged")}
                     unconfiguredLabel={t("unconfigured")}
                   />
                 </div>
@@ -337,11 +300,7 @@ export async function Board({
                   />
                 </div>
               ))}
-              {column.total === 0 ? (
-                <div className="m-1.5 rounded-[10px] border-[1.5px] border-dashed border-line px-3.5 py-[22px] text-center font-mono text-[10.5px] leading-[1.5] tracking-[0.03em] text-mute-2">
-                  —
-                </div>
-              ) : null}
+
             </div>
           </div>
         );

@@ -4,6 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
+
 vi.mock("@/components/board/launch-popover", () => ({
   LaunchPopover: () => null,
 }));
@@ -25,6 +29,8 @@ import { TaskCard } from "@/components/board/task-card";
 
 const card: BacklogCard = {
   taskId: "task-1",
+  taskStatus: "Backlog",
+  displayStatus: { key: "ready", label: "Ready", tone: "success" },
   number: 7,
   keyRef: "MAI-7",
   title: "Incompatible Flow task",
@@ -85,7 +91,6 @@ describe("TaskCard launch incompatibility", () => {
           },
           title: () => "Children",
         },
-        flaggedLabel: "Flagged",
         awaitingClarificationLabel: "Awaiting clarification",
         launchDisabledLabel: "Launch unavailable",
         launchDisabledReason: reason,
@@ -103,7 +108,6 @@ describe("TaskCard launch incompatibility", () => {
         relationCandidates: [],
         runsCountLabel: (count) => `${count} runs`,
         slug: "maister",
-        triagedLabel: "Triaged",
         unconfiguredLabel: "Unconfigured",
       }),
     );
@@ -141,7 +145,6 @@ describe("TaskCard launch incompatibility", () => {
           },
           title: () => "Children",
         },
-        flaggedLabel: "Flagged",
         awaitingClarificationLabel: "Awaiting clarification",
         launchDisabledLabel: "Launch unavailable",
         launchLabel: "Launch",
@@ -158,7 +161,6 @@ describe("TaskCard launch incompatibility", () => {
         relationCandidates: [],
         runsCountLabel: (count) => `${count} runs`,
         slug: "maister",
-        triagedLabel: "Triaged",
         unconfiguredLabel: "Unconfigured",
       }),
     );

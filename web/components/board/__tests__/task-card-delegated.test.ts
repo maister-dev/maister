@@ -4,6 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
+
 vi.mock("@/components/board/launch-popover", () => ({
   LaunchPopover: () => null,
 }));
@@ -32,6 +36,8 @@ import { TaskCard } from "@/components/board/task-card";
 function card(over: Partial<BacklogCard> = {}): BacklogCard {
   return {
     taskId: "task-1",
+    taskStatus: "Backlog",
+    displayStatus: { key: "ready", label: "Ready", tone: "success" },
     number: 7,
     keyRef: "MAI-7",
     title: "Fix collect 500",
@@ -90,7 +96,6 @@ function render(c: BacklogCard, canAct = true): string {
       delegatedByLabel: "delegated by",
       delegatedRelaunchHint:
         "Delegated child of MAI-3 — a launch from this card starts a run outside its orchestrator's tree.",
-      flaggedLabel: "Flagged",
       launchDisabledLabel: "Launch unavailable",
       launchLabel: "Launch",
       queueControlsLabels: {
@@ -106,7 +111,6 @@ function render(c: BacklogCard, canAct = true): string {
       relationCandidates: [],
       runsCountLabel: (count) => `${count} runs`,
       slug: "maister",
-      triagedLabel: "Triaged",
       unconfiguredLabel: "Unconfigured",
     }),
   );

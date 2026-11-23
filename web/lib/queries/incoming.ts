@@ -2,6 +2,10 @@ import "server-only";
 
 import { and, desc, eq, sql } from "drizzle-orm";
 
+import type { Db } from "@/lib/execution-host/db";
+import type { TaskDisplayStatus } from "@/lib/tasks/task-display-status";
+
+import { getTaskDisplayStatuses, requireTaskDisplayStatus } from "@/lib/tasks/task-display-status-queries";
 import { getDb } from "@/lib/db/client";
 import { tasks, taskQualifications } from "@/lib/db/schema";
 import { incomingWorkPredicate } from "@/lib/tasks/qualification-predicates";
@@ -18,7 +22,17 @@ export type IncomingRequest = {
   number: number;
   title: string;
   qualification: TaskQualificationSummary;
+  displayStatus: TaskDisplayStatus;
 };
+export async function getIncomingCount(projectId: string, db: Db = getDb()): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), incomingWorkPredicate()));
+
+  return result.total;
+}
+
 export async function getIncomingRequests(
   projectId: string,
   page: number,
@@ -55,10 +69,11 @@ export async function getIncomingRequests(
     .orderBy(desc(tasks.createdAt), desc(tasks.id))
     .limit(26)
     .offset((page - 1) * 25);
-  const summaries = await getTaskQualificationSummaries(
-    db,
-    rows.slice(0, 25).map((row) => row.id),
-  );
+  const taskIds = rows.slice(0, 25).map((row) => row.id);
+  const [summaries, statuses] = await Promise.all([
+    getTaskQualificationSummaries(db, taskIds),
+    getTaskDisplayStatuses(taskIds, db),
+  ]);
 
   return {
     items: rows.slice(0, 25).map((row) => {
@@ -70,7 +85,7 @@ export async function getIncomingRequests(
           "Incoming qualification is unavailable",
         );
 
-      return { ...row, qualification };
+      return { ...row, qualification, displayStatus: requireTaskDisplayStatus(statuses, row.id) };
     }),
     hasMore: rows.length > 25,
   };

@@ -2,6 +2,8 @@
 
 ## Purpose
 
+Use the shared [human-facing task status](tasks.md#human-facing-task-status-designed) for task labels. Work stages retain workflow grouping, progress and deep-link semantics.
+
 The derived **work-stage vocabulary** — one comparable answer to "where is this
 piece of work" for every task in the portfolio, whether or not it has ever
 launched a run — and the cross-project work table that renders it. The domain

@@ -158,6 +158,7 @@ runtime-data mount; Stage C owns remote repository/workspace placement.
 | `web/lib/agents/company-run-read-access.ts` | Current company reader/source and human lifecycle action authority, independent of execution eligibility |
 | `web/lib/waits/store.ts` | Transactional Flow wait state, signal receipts, and versioned deadline extensions |
 | `web/lib/runs/stop.ts` | Native Run stop owner dispatch and current company cancellation through shared operational finalization |
+| `web/lib/tasks/task-display-status.ts` | Read-time canonical task status and semantic tones for project screens, attention, and external task reads |
 | `web/lib/tasks/qualification.ts` | Versioned request assessments and authoritative admission |
 | `web/components/agents/` | Project agent history, grouped incidents, retries and qualification controls |
 | `web/lib/agents/launch-contract.ts` | Immutable agent kind, definition and operational completion snapshots |
