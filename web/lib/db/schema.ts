@@ -6107,6 +6107,7 @@ export const RUN_SYNC_PHASES = [
   "agent_running",
   "verifying",
   "pushing",
+  "already_in_target",
   "succeeded",
   "failed",
   "aborted",
@@ -6118,6 +6119,7 @@ export type RunSyncPhase = (typeof RUN_SYNC_PHASES)[number];
 // exact array was re-listed in five modules (sync-target, sync-recovery,
 // sync-panel-data, reconcile, keepalive-sweeper) with no shared definition.
 export const RUN_SYNC_TERMINAL_PHASES = [
+  "already_in_target",
   "succeeded",
   "failed",
   "aborted",

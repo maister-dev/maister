@@ -39,6 +39,7 @@ import {
 import { useLatestRef } from "@/lib/use-latest-ref";
 
 export interface WorkbenchLifecycleActionsProps {
+  syncAttempt?: ReactElement | null;
   runId: string;
   runKind: RunKind;
   actions: WorkbenchLifecycleActionId[];
@@ -439,11 +440,13 @@ function DetailGitHost({
   runKind,
   label,
   syncDefaults,
+  syncAttempt,
 }: {
   runId: string;
   runKind: RunKind;
   label: string;
   syncDefaults: WorkbenchGitSyncDefaults | null;
+  syncAttempt: ReactElement | null;
 }): ReactElement {
   const searchParams = useSearchParams();
   const urlSection = searchParams?.get("git") ?? null;
@@ -485,6 +488,7 @@ function DetailGitHost({
             refreshTick={eventCount}
             runId={runId}
             runKind={runKind}
+            syncAttempt={syncAttempt}
             syncDefaults={syncDefaults}
           />
         </div>
@@ -506,6 +510,7 @@ export function WorkbenchLifecycleActions({
   runLabel,
   workspaceAvailable = false,
   syncDefaults = null,
+  syncAttempt = null,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
   const tg = useTranslations("workbenchGit");
@@ -533,7 +538,7 @@ export function WorkbenchLifecycleActions({
 
   // The `menu` variant always offers at least "Open run", so it renders even
   // with no lifecycle actions; other variants hide when there is nothing to do.
-  if (variant !== "menu" && actions.length === 0) return null;
+  if (variant !== "menu" && actions.length === 0 && !syncAttempt) return null;
 
   // ADR-181 D17: the archive/drop confirmation shows what exists on no remote.
   // Best effort: a failed read just leaves the plain confirmation.
@@ -753,11 +758,12 @@ export function WorkbenchLifecycleActions({
           </button>
         );
       })}
-      {variant === "detail" && gitActions.length > 0 ? (
+      {variant === "detail" && (gitActions.length > 0 || syncAttempt) ? (
         <DetailGitHost
           label={tg("title")}
           runId={runId}
           runKind={runKind}
+          syncAttempt={syncAttempt}
           syncDefaults={syncDefaults}
         />
       ) : null}

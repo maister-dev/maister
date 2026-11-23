@@ -34807,7 +34807,8 @@ components:
           description: The `run_sync_attempts` row id for this attempt.
         outcome:
           type: string
-          enum: [noop, synced, conflict, agent_launched]
+          enum: [noop, synced, conflict, agent_launched, already_in_target]
+          description: "`already_in_target` means integrating the run changes would leave the target unchanged; no branch was pushed."
         behind:
           type: integer
           description: |

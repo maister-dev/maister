@@ -50,6 +50,7 @@ export type { WorkbenchGitSyncDefaults };
 // component owns the read, the one mutation shape and the shared chrome.
 
 export interface WorkbenchGitPanelProps {
+  syncAttempt?: ReactElement | null;
   runId: string;
   runKind: RunKind;
   // A changing value (the run's SSE tick) re-reads git-state, debounced.
@@ -81,6 +82,8 @@ const KNOWN_REASONS = new Set([
   "pr_missing",
   "pr_closed",
   "merged_pr_behind",
+  "already_in_target",
+  "publication_base_changed",
   "target_drift",
   "review_only_field",
   "no_reattach_source",
@@ -157,6 +160,7 @@ export function WorkbenchGitPanel({
   refreshTick = 0,
   initialSection = null,
   syncDefaults = null,
+  syncAttempt = null,
 }: WorkbenchGitPanelProps): ReactElement {
   const t = useTranslations("workbenchGit");
   const tl = useTranslations("workbenchLifecycle");
@@ -409,6 +413,8 @@ export function WorkbenchGitPanel({
           </span>
         ) : null}
       </header>
+
+      {syncAttempt}
 
       {state && state.warnings.length > 0 ? (
         <p

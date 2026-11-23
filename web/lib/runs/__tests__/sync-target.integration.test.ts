@@ -410,6 +410,45 @@ describe("assertSyncEligible", () => {
 });
 
 describe("syncRunTarget — mechanical outcomes", () => {
+  it("records an already-delivered patch without rewriting or pushing the PR branch", async () => {
+    const { remote, parent, baseSha } = await initRepoWithRemote();
+    const branch = "sync/already-delivered";
+    const wt = await addRunWorktree(parent, branch);
+    const before = await headSha(wt);
+
+    await git(wt, ["push", "-u", "origin", branch]);
+    await advanceOriginMain(remote, "feature.txt", "feature\n");
+    await advanceOriginMain(remote);
+    const { projectId, flowId } = await seedGraph(parent);
+    const { runId } = await seedRun({
+      projectId,
+      flowId,
+      worktreePath: wt,
+      branch,
+      parentRepoPath: parent,
+      baseCommit: baseSha,
+    });
+
+    const out = await syncRunTarget({ runId, actor: actor(), db, push: true });
+
+    expect(out).toMatchObject({
+      outcome: "already_in_target",
+      behind: 2,
+      pushed: false,
+    });
+    expect(await headSha(wt)).toBe(before);
+    expect((await git(remote, ["rev-parse", branch])).stdout.trim()).toBe(
+      before,
+    );
+    expect((await attemptRows(runId))[0]).toMatchObject({
+      phase: "already_in_target",
+      headShaBefore: before,
+      headShaAfter: before,
+      targetSha: (await git(remote, ["rev-parse", "main"])).stdout.trim(),
+      pushed: false,
+    });
+  });
+
   it("(a) clean rebase behind>0 → synced, base moved, drift cleared", async () => {
     const { remote, parent, baseSha } = await initRepoWithRemote();
     const wt = await addRunWorktree(parent, "sync/a");
@@ -1482,6 +1521,12 @@ describe("verifySyncGate", () => {
 
     expect(res.ok).toBe(false);
     expect((res as { reason: string }).reason).toContain("erased");
+
+    // An empty commit cannot make the erased patch safe to publish.
+    await git(wt, ["commit", "--allow-empty", "-m", "empty resolution"]);
+    await expect(
+      verifySyncGate(wt, targetSha, "sync/gate-skipped"),
+    ).resolves.toMatchObject({ ok: false });
   });
 
   it("REJECTS a detached HEAD — the push would not carry the verified commit", async () => {

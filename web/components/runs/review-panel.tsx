@@ -336,6 +336,17 @@ export function ReviewPanel({
         details?: { reason?: string };
       } | null;
 
+      const reason = data?.details?.reason;
+
+      if (
+        reason === "already_in_target" ||
+        reason === "publication_base_changed"
+      ) {
+        setError(tGit(reason));
+
+        return;
+      }
+
       if (publishesBranch) {
         setError(data?.message ?? t(resolveUiErrorMessageKey(data?.code)));
 
@@ -366,8 +377,6 @@ export function ReviewPanel({
 
         return;
       }
-
-      const reason = data?.details?.reason;
 
       if (
         data?.code === "CONFLICT" &&

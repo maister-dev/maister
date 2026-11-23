@@ -24,10 +24,12 @@ import {
 import {
   branchExists,
   headCommit,
+  inspectDeliveryBase,
   promoteLocalMerge,
   pushBranch,
   remoteBranchHead,
   resolveBaseCommit,
+  resolveBaseRef,
   squashRunBranch,
 } from "@/lib/worktree";
 
@@ -177,13 +179,19 @@ vi.mock("@/lib/runs/pr-adapter", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
+  currentBranchName: vi.fn(async () => dbState.tables.workspaces[0]?.branch),
   deliveryCommitStats: vi.fn(async () => ({
     files: 0,
     additions: 0,
     deletions: 0,
   })),
   findTargetMergeByRunId: vi.fn(async () => null),
+  fetchRemote: vi.fn(async () => undefined),
   headCommit: vi.fn(async () => "source-head-000"),
+  inspectDeliveryBase: vi.fn(async () => ({
+    base: "actual-base",
+    alreadyInTarget: false,
+  })),
   // ADR-181 D4: no upstream yet → the template names the PR branch; no remote
   // head yet → the lease expects the ref absent.
   branchUpstream: vi.fn(async () => null),
@@ -192,7 +200,7 @@ vi.mock("@/lib/worktree", () => ({
   promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
-  resolveBaseRef: vi.fn(async () => "base0000"),
+  resolveBaseRef: vi.fn(async () => "actual-base"),
   squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
 }));
 
@@ -311,6 +319,10 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
+  vi.mocked(resolveBaseRef).mockReset().mockResolvedValue("actual-base");
+  vi.mocked(inspectDeliveryBase)
+    .mockReset()
+    .mockResolvedValue({ base: "actual-base", alreadyInTarget: false });
   vi.mocked(squashRunBranch)
     .mockReset()
     .mockResolvedValue({ squashed: false, collapsed: 0 });
@@ -953,6 +965,48 @@ describe("promoteRun — transient failures → EXECUTOR_UNAVAILABLE (503), no p
 // =============================================================================
 
 describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
+  it("skips squash, push, and PR mutation when the changes are already in target", async () => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(inspectDeliveryBase).mockResolvedValueOnce({
+      base: "actual-base",
+      alreadyInTarget: true,
+    });
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION",
+      details: { reason: "already_in_target" },
+    });
+    expect(squashRunBranch).not.toHaveBeenCalled();
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(createOrUpdatePr).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("failed");
+  });
+
+  it("refuses to push a rewritten head whose base changed", async () => {
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(resolveBaseRef).mockResolvedValueOnce("old-launch-base");
+
+    await expect(
+      callPromote(runId, {
+        mode: "pull_request",
+        reviewedTargetCommit: "tip00000",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "publication_base_changed" },
+    });
+    expect(pushBranch).not.toHaveBeenCalled();
+  });
+
   it("squashes base..HEAD before the push and force-updates the PR branch", async () => {
     const runId = seedGithubFlowRun();
 
@@ -968,11 +1022,11 @@ describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
       reviewedTargetCommit: "tip00000",
     })) as { ok: boolean };
 
-    // History collapsed against the snapshotted base, BEFORE the push.
+    // History collapsed against the actual merge base, BEFORE the push.
     expect(squashRunBranch).toHaveBeenCalledWith(
       expect.objectContaining({
         worktreePath: "/wt/flow-1",
-        baseCommit: "base0000",
+        baseCommit: "actual-base",
       }),
     );
     const squashOrder = vi.mocked(squashRunBranch).mock.invocationCallOrder[0];

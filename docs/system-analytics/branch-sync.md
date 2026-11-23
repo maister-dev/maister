@@ -58,6 +58,7 @@ The attempt `phase` machine (durable, written **before** each side effect):
 stateDiagram-v2
     [*] --> starting
     starting --> rebasing
+    starting --> already_in_target: candidate integration leaves the target unchanged
     rebasing --> succeeded: clean + verified + pushed (mechanical)
     rebasing --> agent_running: conflict + agent=true
     rebasing --> aborted: conflict + agent=false (restore pre-sync SHA)<br/>or ANY pre-session refusal with agent=true (cap, runner, fence, CAS)

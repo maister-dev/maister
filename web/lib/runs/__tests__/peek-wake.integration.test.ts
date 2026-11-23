@@ -332,6 +332,31 @@ it("IT-PKD-08: result validity, Flow facts and shared workspace removal produce 
       [result],
     );
     await vi.waitFor(() => expect(hints).toHaveLength(6));
+    const sync = randomUUID();
+
+    await database.pool.query(
+      "INSERT INTO run_sync_attempts(id,run_id,workspace_id,attempt,strategy,mode) VALUES($1,$2,$3,1,'rebase','mechanical')",
+      [sync, root, workspace],
+    );
+    await vi.waitFor(() => expect(hints).toHaveLength(7));
+    await database.pool.query(
+      "UPDATE run_sync_attempts SET phase='verifying',error_message='private sync detail' WHERE id=$1",
+      [sync],
+    );
+    await vi.waitFor(() => expect(hints).toHaveLength(8));
+    expect(hints.slice(-2)).toEqual([
+      expect.objectContaining({
+        source: "run_sync_attempts",
+        topic: "summary",
+        runId: root,
+      }),
+      expect.objectContaining({
+        source: "run_sync_attempts",
+        topic: "summary",
+        runId: root,
+      }),
+    ]);
+    expect(JSON.stringify(hints)).not.toContain("private sync detail");
     expect(JSON.stringify(hints)).not.toContain("payload");
     expect(JSON.stringify(hints)).not.toContain("/private/");
   } finally {

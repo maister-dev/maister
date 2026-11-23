@@ -1,15 +1,64 @@
 import "server-only";
 
-import { and, desc, eq, notInArray } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { loadRunnerCatalog } from "@/lib/acp-runners/catalog";
 import { getDb } from "@/lib/db/client";
-import * as schemaModule from "@/lib/db/schema";
-import { RUN_SYNC_TERMINAL_PHASES } from "@/lib/db/schema";
+import { RUN_SYNC_TERMINAL_PHASES, runSyncAttempts } from "@/lib/db/schema";
 import { aheadBehindCounts } from "@/lib/worktree";
 
-// FIXME(any): dual drizzle-orm peer-dep variants.
-const { runSyncAttempts } = schemaModule as unknown as Record<string, any>;
+type RunSyncAttemptFields = Pick<
+  typeof runSyncAttempts.$inferSelect,
+  | "id"
+  | "attempt"
+  | "strategy"
+  | "phase"
+  | "targetRef"
+  | "targetSha"
+  | "headShaBefore"
+  | "headShaAfter"
+  | "sessionName"
+  | "runnerId"
+  | "conflictedFiles"
+  | "pushed"
+  | "errorCode"
+>;
+
+export type RunSyncAttemptView = RunSyncAttemptFields & { settled: boolean };
+
+export async function loadLatestRunSyncAttempt(
+  runId: string,
+): Promise<RunSyncAttemptView | null> {
+  const [latest] = await getDb()
+    .select({
+      id: runSyncAttempts.id,
+      attempt: runSyncAttempts.attempt,
+      strategy: runSyncAttempts.strategy,
+      phase: runSyncAttempts.phase,
+      targetRef: runSyncAttempts.targetRef,
+      targetSha: runSyncAttempts.targetSha,
+      headShaBefore: runSyncAttempts.headShaBefore,
+      headShaAfter: runSyncAttempts.headShaAfter,
+      sessionName: runSyncAttempts.sessionName,
+      runnerId: runSyncAttempts.runnerId,
+      conflictedFiles: runSyncAttempts.conflictedFiles,
+      pushed: runSyncAttempts.pushed,
+      errorCode: runSyncAttempts.errorCode,
+    })
+    .from(runSyncAttempts)
+    .where(eq(runSyncAttempts.runId, runId))
+    .orderBy(desc(runSyncAttempts.attempt))
+    .limit(1);
+
+  return latest
+    ? {
+        ...latest,
+        settled: RUN_SYNC_TERMINAL_PHASES.some(
+          (phase) => phase === latest.phase,
+        ),
+      }
+    : null;
+}
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -29,11 +78,11 @@ export type RunSyncPanelData = {
 // the live in-progress phase off the latest attempt. A git failure degrades
 // to null (the chip hides; the panel still offers the update).
 export async function buildRunSyncPanelData(input: {
-  runId: string;
   parentRepoPath: string;
   branch: string;
   targetBranch: string;
   syncRunnerId: string | null;
+  inProgress: RunSyncPanelData["sync"]["inProgress"];
   db?: Db;
 }): Promise<RunSyncPanelData> {
   const db = (input.db ?? getDb()) as Db;
@@ -58,26 +107,12 @@ export async function buildRunSyncPanelData(input: {
       label: `${entry.adapter} · ${entry.model}`,
     }));
 
-  const activeRows = await db
-    .select({ phase: runSyncAttempts.phase })
-    .from(runSyncAttempts)
-    .where(
-      and(
-        eq(runSyncAttempts.runId, input.runId),
-        notInArray(runSyncAttempts.phase, [...RUN_SYNC_TERMINAL_PHASES]),
-      ),
-    )
-    .orderBy(desc(runSyncAttempts.attempt))
-    .limit(1);
-
-  const inProgress = activeRows[0] ? { phase: activeRows[0].phase } : null;
-
   return {
     aheadBehind,
     sync: {
       runnerOptions,
       defaultRunnerId: input.syncRunnerId,
-      inProgress,
+      inProgress: input.inProgress,
     },
   };
 }

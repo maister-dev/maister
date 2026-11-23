@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import type { SyncRunOutcome } from "@/lib/runs/sync-target";
 
 import { ArrowPathIcon, ArrowUpTrayIcon } from "@heroicons/react/24/outline";
 import { useState } from "react";
@@ -23,13 +24,7 @@ type UpdateOnto = "target" | "base" | "published";
 const UPDATE_ONTO: readonly UpdateOnto[] = ["target", "base", "published"];
 
 // `POST /sync`'s 200/202 body (`SyncRunResponse`).
-type UpdateResult = {
-  attemptId: string;
-  outcome: "noop" | "synced" | "conflict" | "agent_launched";
-  behind: number;
-  pushed: boolean;
-  conflictedFiles: string[];
-};
+type UpdateResult = SyncRunOutcome;
 
 // The update's seeds the page already knows: the project strategy default and,
 // for the Review-only AI resolver, the runner choice (ADR-141).
@@ -37,6 +32,7 @@ export type WorkbenchGitSyncDefaults = {
   strategy: "rebase" | "merge";
   runnerOptions: { id: string; label: string }[];
   defaultRunnerId: string | null;
+  latestAttemptId?: string;
 };
 
 // ADR-181 D9: update onto base, target or the publication; a conflict leaves
@@ -80,6 +76,7 @@ export function GitUpdateSection({
   // replacing — the push leases exactly it, so commits that landed since are
   // refused again, naming the new head.
   function send(body: Record<string, unknown>, expectedRemoteHead?: string) {
+    setUpdateResult(null);
     void mutate<UpdateResult>(
       "update",
       "sync",
@@ -87,7 +84,7 @@ export function GitUpdateSection({
       (result) => {
         setUpdateResult(result);
 
-        return result?.outcome !== "conflict";
+        return result?.outcome === "synced";
       },
     ).then((failure) => {
       setDiverged(
@@ -242,7 +239,8 @@ export function GitUpdateSection({
           onClick: update,
         })}
       </div>
-      {updateResult ? (
+      {updateResult &&
+      updateResult.attemptId !== syncDefaults?.latestAttemptId ? (
         <div
           className="flex flex-col gap-1 font-mono text-[10px] text-ink-2"
           data-testid="git-panel-update-result"

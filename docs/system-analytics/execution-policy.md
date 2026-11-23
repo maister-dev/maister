@@ -245,7 +245,11 @@ field-by-field instead of returning 5xx.
 - `commits` squash MUST be tree-preserving: the post-rewrite `HEAD^{tree}` SHA
   equals the pre-rewrite SHA, else the branch reverts to its original HEAD and
   promotion proceeds on the unmodified history (`keep_all`). A botched history
-  NEVER promotes. The squash runs pre-promotion for merge, rebase-merge, AND
+  NEVER promotes. The squash uses the merge base of the candidate and the
+  selected target. The launch base remains unchanged. PR promotion checks the
+  fetched remote target for an already integrated candidate and verifies the
+  merge base of the resulting commit before push. The squash runs
+  pre-promotion for merge, rebase-merge, AND
   pull-request strategies (a PR branch is force-updated with `--force-with-lease`
   whenever the commit policy squashes — derived from the immutable policy, NOT a
   per-attempt squash result, so a reclaim after a transient push failure still

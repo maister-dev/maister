@@ -14388,8 +14388,8 @@ components:
             result exists only once the attempt row has been minted.
         outcome:
           type: string
-          enum: [noop, synced, conflict, agent_launched]
-          description: "`noop` = already up to date; `synced` = clean mechanical sync; `conflict` = aborted (agent=false); `agent_launched` = resolver session started."
+          enum: [noop, synced, conflict, agent_launched, already_in_target]
+          description: "`noop` = already up to date; `synced` = clean mechanical sync; `conflict` = aborted (agent=false); `agent_launched` = resolver session started; `already_in_target` = integrating the run changes would leave the target unchanged and no branch was pushed."
         behind:
           type: integer
           description: |

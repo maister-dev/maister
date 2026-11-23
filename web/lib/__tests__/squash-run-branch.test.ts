@@ -6,7 +6,11 @@ import { promisify } from "node:util";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { remoteOnlyCommitCount, squashRunBranch } from "@/lib/worktree";
+import {
+  inspectDeliveryBase,
+  remoteOnlyCommitCount,
+  squashRunBranch,
+} from "@/lib/worktree";
 
 const exec = promisify(execFile);
 
@@ -43,6 +47,60 @@ afterEach(async () => {
 });
 
 describe("squashRunBranch (C2 — squash-on-promote, tree-preserving)", () => {
+  it("keeps the rebased target as parent and squashes only the run's commits", async () => {
+    await commit("upstream.txt", "upstream\n", "target moved");
+    const target = await git(["rev-parse", "HEAD"]);
+
+    await git(["checkout", "-qb", "run"]);
+    await commit("a.txt", "one\n", "first run commit");
+    await commit("b.txt", "two\n", "second run commit");
+
+    const delivery = await inspectDeliveryBase({
+      worktreePath: repo,
+      head: await git(["rev-parse", "HEAD"]),
+      target,
+    });
+
+    expect(delivery).toEqual({ base: target, alreadyInTarget: false });
+    await squashRunBranch({
+      worktreePath: repo,
+      baseCommit: delivery.base,
+      message: "maister squashed",
+    });
+
+    expect(await git(["rev-parse", "HEAD^1"])).toBe(target);
+    expect(await git(["diff", "--name-only", `${target}...HEAD`])).toBe(
+      "a.txt\nb.txt",
+    );
+  });
+
+  it("recognizes a stale squash whose entire patch is present in a newer target", async () => {
+    const launchBase = await git(["rev-parse", "HEAD"]);
+
+    await commit("upstream.txt", "upstream\n", "target moved");
+    await commit("feature.txt", "feature\n", "task landed outside the PR");
+    const targetBefore = await git(["rev-parse", "HEAD"]);
+
+    await commit("another.txt", "new\n", "target moved again");
+    const target = await git(["rev-parse", "HEAD"]);
+
+    await git(["checkout", "-qb", "stale-pr", targetBefore]);
+    await squashRunBranch({
+      worktreePath: repo,
+      baseCommit: launchBase,
+      message: "stale squash",
+    });
+    const head = await git(["rev-parse", "HEAD"]);
+
+    expect(await git(["diff", "--name-only", `${target}...HEAD`])).toBe(
+      "feature.txt\nupstream.txt",
+    );
+    expect(
+      await inspectDeliveryBase({ worktreePath: repo, head, target }),
+    ).toEqual({ base: launchBase, alreadyInTarget: true });
+    expect(await git(["rev-parse", "HEAD"])).toBe(head);
+  });
+
   it("collapses N commits into one while preserving the tree byte-for-byte", async () => {
     const base = await git(["rev-parse", "HEAD"]);
 

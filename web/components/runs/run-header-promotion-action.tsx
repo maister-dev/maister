@@ -45,6 +45,10 @@ export function RunHeaderPromotionAction({
   function refusalMessage(
     data: Parameters<typeof githubPrErrorText>[0],
   ): string {
+    const reason = data?.details?.reason;
+
+    if (reason === "already_in_target" || reason === "publication_base_changed")
+      return tGit(reason);
     if (isPublicationDivergedResponse(data)) return t("publicationDiverged");
     if (isPublicationPushRejectedResponse(data))
       return t("publicationPushRejected");

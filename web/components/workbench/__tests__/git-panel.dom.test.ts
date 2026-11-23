@@ -45,6 +45,7 @@ vi.mock("@/components/feedback/feedback-provider", () => ({
   useFeedback: () => ({ success: feedbackSuccess, error: feedbackError }),
 }));
 
+import { RunSyncAttempt } from "@/components/runs/run-sync-attempt";
 import { WorkbenchGitPanel } from "@/components/workbench/git-panel";
 
 type FetchCall = { url: string; method: string; body: unknown };
@@ -905,6 +906,52 @@ describe("WorkbenchGitPanel — Update", () => {
     expect(result.textContent).toContain("conf.txt");
     expect(result.textContent).toContain("src/app.ts");
     expect(feedbackSuccess).not.toHaveBeenCalled();
+  });
+
+  it("replaces the immediate update response with the retained outcome without a success toast", async () => {
+    states = [gitState({ dirty: CLEAN })];
+    mutation = () => json({ ...SYNCED, outcome: "already_in_target" });
+    const { rerender } = render();
+
+    await settle();
+    await click(must("git-panel-action-update"));
+
+    expect(must("git-panel-update-result").textContent).toContain(
+      "update.outcome.already_in_target",
+    );
+    expect(feedbackSuccess).not.toHaveBeenCalled();
+
+    rerender({
+      syncDefaults: {
+        strategy: "rebase",
+        runnerOptions: [],
+        defaultRunnerId: null,
+        latestAttemptId: SYNCED.attemptId,
+      },
+      syncAttempt: createElement(RunSyncAttempt, {
+        attempt: {
+          id: SYNCED.attemptId,
+          attempt: 1,
+          phase: "already_in_target",
+          strategy: "rebase",
+          settled: true,
+          targetRef: "main",
+          targetSha: null,
+          headShaBefore: "a".repeat(40),
+          headShaAfter: "a".repeat(40),
+          pushed: false,
+          sessionName: null,
+          runnerId: null,
+          conflictedFiles: null,
+          errorCode: null,
+        },
+      }),
+    });
+
+    expect(byTestId("git-panel-update-result")).toBeNull();
+    expect(must("git-panel").textContent).toContain(
+      "syncAttempt.phase.already_in_target",
+    );
   });
 
   // D3/Q3: the one network read exists to say the publication moved on the

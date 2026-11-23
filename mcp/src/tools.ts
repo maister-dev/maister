@@ -1224,7 +1224,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   run_sync: {
     description:
-      "Sync a Review run's branch onto its promotion target (rebase by default, or merge), force-with-lease pushing when the branch is published. On conflict with agent=true (the default) an AI resolver session is launched; with agent=false the conflicted state is aborted. Returns { runId, attemptId, outcome, behind, pushed } where outcome is noop | synced | conflict | agent_launched.",
+      "Sync a Review run's branch onto its promotion target (rebase by default, or merge), force-with-lease pushing when the branch is published. On conflict with agent=true (the default) an AI resolver session is launched; with agent=false the conflicted state is aborted. Returns { runId, attemptId, outcome, behind, pushed } where outcome is noop | synced | conflict | agent_launched | already_in_target. The already_in_target outcome skips the push.",
     inputSchema: {
       type: "object",
       properties: {

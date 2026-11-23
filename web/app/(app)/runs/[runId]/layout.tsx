@@ -165,7 +165,11 @@ import {
   resolveBaseRef,
   statusPorcelain,
 } from "@/lib/worktree";
-import { buildRunSyncPanelData } from "@/lib/runs/sync-panel-data";
+import { RunSyncAttempt } from "@/components/runs/run-sync-attempt";
+import {
+  buildRunSyncPanelData,
+  loadLatestRunSyncAttempt,
+} from "@/lib/runs/sync-panel-data";
 import { gitPanelHref } from "@/lib/workbench-git/panel-link";
 import {
   deliveryPolicyFromLegacyPromotionMode,
@@ -830,6 +834,10 @@ export default async function RunDetailLayout({
   let reviewReadiness = null;
   let syncPanel: Awaited<ReturnType<typeof buildRunSyncPanelData>> | null =
     null;
+  const syncAttempt =
+    !isOperational && (detail.runKind === "flow" || detail.runKind === "agent")
+      ? await loadLatestRunSyncAttempt(detail.runId)
+      : null;
 
   if (showReview) {
     try {
@@ -875,11 +883,14 @@ export default async function RunDetailLayout({
       reviewData.targetBranch
     ) {
       syncPanel = await buildRunSyncPanelData({
-        runId: detail.runId,
         parentRepoPath: detail.parentRepoPath,
         branch: detail.branch,
         targetBranch: reviewData.targetBranch,
         syncRunnerId: detail.syncRunnerId,
+        inProgress:
+          syncAttempt && !syncAttempt.settled
+            ? { phase: syncAttempt.phase }
+            : null,
       });
     }
   }
@@ -1868,15 +1879,21 @@ export default async function RunDetailLayout({
             />
           ) : null}
 
-          {viewerLifecycleActions.length > 0 ? (
+          {viewerLifecycleActions.length > 0 || (canAct && syncAttempt) ? (
             <WorkbenchLifecycleActions
               actions={viewerLifecycleActions}
               runId={detail.runId}
               runKind={detail.runKind}
+              syncAttempt={
+                canAct && syncAttempt ? (
+                  <RunSyncAttempt attempt={syncAttempt} />
+                ) : null
+              }
               syncDefaults={{
                 strategy: detail.syncStrategyDefault,
                 runnerOptions: syncPanel?.sync.runnerOptions ?? [],
                 defaultRunnerId: syncPanel?.sync.defaultRunnerId ?? null,
+                latestAttemptId: syncAttempt?.id,
               }}
               variant="detail"
               workspaceAvailable={
@@ -2406,12 +2423,17 @@ export default async function RunDetailLayout({
                 tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
                 tabs={isOperational ? ["timeline", "evidence"] : undefined}
                 timeline={
-                  <RunTimeline
-                    assignmentEvents={timeline.assignmentEvents}
-                    entries={timeline.entries as TimelineEntry[]}
-                    labels={timelineLabels}
-                    locale={locale}
-                  />
+                  <>
+                    {syncAttempt ? (
+                      <RunSyncAttempt timeline attempt={syncAttempt} />
+                    ) : null}
+                    <RunTimeline
+                      assignmentEvents={timeline.assignmentEvents}
+                      entries={timeline.entries as TimelineEntry[]}
+                      labels={timelineLabels}
+                      locale={locale}
+                    />
+                  </>
                 }
               />
             </section>

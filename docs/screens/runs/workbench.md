@@ -107,6 +107,9 @@ large code-review surfaces sit in one expandable block.
 
 1. **Timeline** - chronological run ledger: node attempts, assignments, HITL,
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
+   It shares the latest branch sync attempt with the Git panel. The attempt
+   shows its current phase and retains the target, before/after commits,
+   resolver session reference, and push outcome when available.
 2. **Evidence** - artifact graph, logs, reports, AI judgments, human notes,
    commit sets, checkpoints, previews, plans, payload states, and filters.
    Evidence explains why a run is ready or blocked. The consensus node adds a

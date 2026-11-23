@@ -82,12 +82,14 @@ import {
   aheadBehindCounts,
   currentBranchName,
   abortSyncOperation,
+  diffNameStatus,
   fetchRemote,
   ffUpdateLocalBranch,
   forceWithLeasePush,
   getRemoteUrl,
   hasConflictMarkers,
   headCommit,
+  inspectDeliveryBase,
   localBranchHead,
   mergeFromRef,
   rebaseOntoRef,
@@ -127,7 +129,8 @@ export type SyncActor = {
 
 export type SyncRunOutcome = {
   attemptId: string;
-  outcome: "noop" | "synced" | "conflict" | "agent_launched";
+  outcome:
+    "noop" | "synced" | "conflict" | "agent_launched" | "already_in_target";
   behind: number;
   pushed: boolean;
   // ADR-181 D9: the paths a mechanical conflict stopped on — non-empty only for
@@ -319,7 +322,17 @@ export async function verifySyncGate(
   // force-push would erase the user's committed work from the branch and its PR.
   // The one exception is the run's own publication: when the branch carried no
   // commit of its own past it, landing on it IS the update.
-  if (ahead === 0 && !opts.allowIdentical) {
+  if (
+    !opts.allowIdentical &&
+    (ahead === 0 ||
+      (
+        await diffNameStatus({
+          worktreePath: worktree,
+          baseRef: targetSha,
+          branch,
+        })
+      ).length === 0)
+  ) {
     return {
       ok: false,
       reason:
@@ -621,6 +634,9 @@ async function settleAttempt(
   args: {
     runId: string;
     headMoved: boolean;
+    phase?: "succeeded" | "already_in_target";
+    headShaBefore?: string;
+    targetSha?: string;
     headShaAfter?: string;
     pushed?: boolean;
     // ADR-181 D4: where the push landed, recorded in the SAME transaction as
@@ -642,12 +658,19 @@ async function settleAttempt(
   // refuses every future sync on the workspace until an unrelated lifecycle op
   // steals it.
   await db.transaction(async (tx: Db) => {
-    const won = await setAttemptPhase(tx, claim.attemptId, "succeeded", {
-      ...(args.headShaAfter !== undefined
-        ? { headShaAfter: args.headShaAfter }
-        : {}),
-      ...(args.pushed !== undefined ? { pushed: args.pushed } : {}),
-    });
+    const won = await setAttemptPhase(
+      tx,
+      claim.attemptId,
+      args.phase ?? "succeeded",
+      {
+        ...(args.headShaBefore ? { headShaBefore: args.headShaBefore } : {}),
+        ...(args.targetSha ? { targetSha: args.targetSha } : {}),
+        ...(args.headShaAfter !== undefined
+          ? { headShaAfter: args.headShaAfter }
+          : {}),
+        ...(args.pushed !== undefined ? { pushed: args.pushed } : {}),
+      },
+    );
 
     // Losing means the run went terminal under us. Recording `succeeded` would
     // resurrect a ledger abandon deliberately closed, and stamping
@@ -1185,8 +1208,62 @@ export async function syncRunTarget(
       branch,
     );
 
+    const [headShaBefore, targetSha] = await Promise.all([
+      headCommit({ worktreePath: worktree }),
+      syncRefHead(repo, syncRef),
+    ]);
+
+    if (!targetSha)
+      throw new MaisterError(
+        "PRECONDITION",
+        `Sync target ${syncRef.label} disappeared`,
+      );
+
+    if (
+      !flowConflict &&
+      (behind > 0 || published) &&
+      (input.onto ?? "target") === "target"
+    ) {
+      const delivery = await inspectDeliveryBase({
+        worktreePath: worktree,
+        head: headShaBefore,
+        target: targetSha,
+      });
+
+      if (delivery.alreadyInTarget) {
+        await settleAttempt(db, claim, {
+          runId,
+          headMoved: false,
+          phase: "already_in_target",
+          headShaBefore,
+          headShaAfter: headShaBefore,
+          targetSha,
+          now,
+        });
+        log.info(
+          { runId, attemptId: claim.attemptId, headShaBefore, targetSha },
+          "sync skipped: changes already in target",
+        );
+
+        return {
+          attemptId: claim.attemptId,
+          outcome: "already_in_target",
+          behind,
+          pushed: false,
+          conflictedFiles: [],
+        };
+      }
+    }
+
     if (behind === 0) {
-      await settleAttempt(db, claim, { runId, headMoved: false, now });
+      await settleAttempt(db, claim, {
+        runId,
+        headMoved: false,
+        headShaBefore,
+        headShaAfter: headShaBefore,
+        targetSha,
+        now,
+      });
       log.info(
         { runId, attemptId: claim.attemptId },
         "sync no-op — already up to date",
@@ -1202,8 +1279,6 @@ export async function syncRunTarget(
     }
 
     // 6. Apply.
-    const headShaBefore = await headCommit({ worktreePath: worktree });
-
     if (flowConflict && headShaBefore !== flowConflict.publication.sourceHead) {
       await abortAttempt(db, claim);
       throw new MaisterError(
@@ -1212,12 +1287,15 @@ export async function syncRunTarget(
       );
     }
 
-    await advancePhaseOrCancel(db, claim, runId, "rebasing", { headShaBefore });
+    await advancePhaseOrCancel(db, claim, runId, "rebasing", {
+      headShaBefore,
+      targetSha,
+    });
 
     const applied =
       strategy === "merge"
-        ? await mergeFromRef(worktree, syncRef.ref)
-        : await rebaseOntoRef(worktree, syncRef.ref);
+        ? await mergeFromRef(worktree, targetSha)
+        : await rebaseOntoRef(worktree, targetSha);
 
     // 8. Conflict. The AI resolver launches by DEFAULT in `Review` against the
     //    LEFT-in-place conflicted rebase (contract default agent-on); otherwise
@@ -1343,13 +1421,9 @@ export async function syncRunTarget(
 
     // 7. Clean apply → verify gate → decide push → succeed.
     await advancePhaseOrCancel(db, claim, runId, "verifying");
-    const targetSha = await syncRefHead(repo, syncRef);
-    const gate = await verifySyncGate(
-      worktree,
-      targetSha ?? syncRef.ref,
-      branch,
-      { allowIdentical: syncRef.kind === "published" && aheadBefore === 0 },
-    );
+    const gate = await verifySyncGate(worktree, targetSha, branch, {
+      allowIdentical: syncRef.kind === "published" && aheadBefore === 0,
+    });
 
     if (!gate.ok) {
       // Defensively unreachable after a clean rebase (clean tree, no markers,
@@ -1389,7 +1463,7 @@ export async function syncRunTarget(
 
       // The LAST cancellation checkpoint before the only irreversible act in the
       // whole sync.
-      await advancePhaseOrCancel(db, claim, runId, "pushing");
+      await advancePhaseOrCancel(db, claim, runId, "pushing", { headShaAfter });
       await assertNativeProjectPublication(() => db, await loadRun(db, runId));
       const push = await pushWithLease(
         worktree,
@@ -1728,6 +1802,7 @@ async function prepareSyncResolver(
           phase: "agent_running",
           runnerId: resolution.runnerId,
           sessionName,
+          conflictedFiles,
           agentRunningSince: now(),
           updatedAt: new Date(),
         })
@@ -1889,11 +1964,17 @@ async function driveSyncResolver(
 
   try {
     // Verify gate (REUSE Task 9).
-    await advancePhaseOrCancel(db, claim, runId, "verifying");
     targetSha = await localBranchHead({
       projectRepoPath: repo,
       branch: targetBranch,
     });
+    await advancePhaseOrCancel(
+      db,
+      claim,
+      runId,
+      "verifying",
+      targetSha ? { targetSha } : {},
+    );
     const gate = await verifySyncGate(
       worktree,
       targetSha ?? targetBranch,

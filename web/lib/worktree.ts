@@ -3632,6 +3632,51 @@ export type ResolveBaseRefArgs = {
   mainBranch: string;
 };
 
+/** Compare pinned commits without changing the index, branch, or working tree. */
+export async function inspectDeliveryBase(args: {
+  worktreePath: string;
+  head: string;
+  target: string;
+}): Promise<{ base: string; alreadyInTarget: boolean }> {
+  const repo = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const head = validate(gitCommitSchema, args.head, "head");
+  const target = validate(gitCommitSchema, args.target, "target");
+  const base = await resolveBaseRef({
+    worktreePath: repo,
+    branch: head,
+    mainBranch: target,
+  });
+
+  if (base === head) return { base, alreadyInTarget: true };
+
+  const [headTree, targetTree] = await Promise.all(
+    [head, target].map(async (sha) =>
+      (
+        await runGit(repo, ["rev-parse", "--verify", `${sha}^{tree}`])
+      ).stdout.trim(),
+    ),
+  );
+
+  if (headTree === targetTree) return { base, alreadyInTarget: true };
+  if (base === target) return { base, alreadyInTarget: false };
+
+  try {
+    const merged = await runGit(repo, [
+      "merge-tree",
+      "--write-tree",
+      "--no-messages",
+      target,
+      head,
+    ]);
+
+    return { base, alreadyInTarget: merged.stdout.trim() === targetTree };
+  } catch (err) {
+    if ((err as { code?: unknown }).code === 1)
+      return { base, alreadyInTarget: false };
+    throw err;
+  }
+}
+
 export async function resolveBaseRef(
   args: ResolveBaseRefArgs,
 ): Promise<string> {

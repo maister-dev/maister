@@ -29,6 +29,7 @@ const hintSchema = z
       "agent_continuation_episodes",
       "run_waits",
       "run_autonomous_decisions",
+      "run_sync_attempts",
     ]),
     topic: z.enum(["summary", "execution", "transcript"]),
     runId: z.string().min(1).max(256),
@@ -160,9 +161,9 @@ async function startListener(): Promise<void> {
       triggers: number;
     }>(`SELECT
       (SELECT count(*)::int FROM pg_indexes WHERE schemaname='public' AND indexname=ANY(ARRAY['run_messages_peek_node_order_idx','run_messages_peek_run_order_idx','runs_peek_parent_launch_idx'])) AS indexes,
-      (SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal AND tgenabled <> 'D' AND tgname=ANY(ARRAY['runs_peek_hint','run_results_peek_hint','workspaces_peek_hint','execution_events_peek_hint','node_attempts_peek_hint','run_messages_peek_hint'])) AS triggers`);
+      (SELECT count(*)::int FROM pg_trigger WHERE NOT tgisinternal AND tgenabled <> 'D' AND tgname=ANY(ARRAY['runs_peek_hint','run_results_peek_hint','workspaces_peek_hint','execution_events_peek_hint','node_attempts_peek_hint','run_messages_peek_hint','run_sync_attempts_peek_hint'])) AS triggers`);
 
-    if (catalog.rows[0]?.indexes !== 3 || catalog.rows[0]?.triggers !== 6)
+    if (catalog.rows[0]?.indexes !== 3 || catalog.rows[0]?.triggers !== 7)
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
         "Peek database upgrade is incomplete",

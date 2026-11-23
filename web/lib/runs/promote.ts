@@ -60,17 +60,21 @@ import {
 import {
   branchExists,
   branchUpstream,
+  currentBranchName,
   deliveryCommitStats,
   deliveryHistoryStats,
+  fetchRemote,
   findEvidenceBoundMerge,
   findTargetMergeByRunId,
   headCommit,
+  inspectDeliveryBase,
   listRemotes,
   promoteLocalMerge,
   promoteRebaseMerge,
   pushBranch,
   remoteBranchHead,
   resolveBaseCommit,
+  resolveBaseRef,
   squashRunBranch,
   statusPorcelain,
 } from "@/lib/worktree";
@@ -665,6 +669,7 @@ function squashesRunHistory(claim: FlowClaim): boolean {
 async function squashForCommitPolicy(
   claim: FlowClaim,
   runId: string,
+  baseCommit: string,
 ): Promise<void> {
   if (!squashesRunHistory(claim)) return;
   const commitPolicy = commitsFromSnapshot(claim.run.executionPolicy);
@@ -672,7 +677,7 @@ async function squashForCommitPolicy(
   try {
     const squash = await squashRunBranch({
       worktreePath: claim.workspace.worktreePath,
-      baseCommit: claim.baseCommit as string,
+      baseCommit,
       message: `maister: run ${runId} (history squashed for promote)`,
     });
 
@@ -1170,8 +1175,6 @@ async function promoteWorkspaceRun(
     });
   }
 
-  if (!claim.autonomous) await squashForCommitPolicy(claim, runId);
-
   let commit: string;
   const targetBefore = await resolveBaseCommit({
     projectRepoPath: claim.workspace.parentRepoPath,
@@ -1180,6 +1183,15 @@ async function promoteWorkspaceRun(
   let diffStat: { files: number; additions: number; deletions: number };
 
   try {
+    if (!claim.autonomous && squashesRunHistory(claim)) {
+      const base = await resolveBaseRef({
+        worktreePath: claim.workspace.worktreePath,
+        branch: "HEAD",
+        mainBranch: targetBefore,
+      });
+
+      await squashForCommitPolicy(claim, runId, base);
+    }
     const mergeMode =
       claim.promotionMode === "rebase_merge" ? "rebase_merge" : "local_merge";
 
@@ -2014,13 +2026,50 @@ async function promotePullRequestSideEffect(args: {
       parentRepoPath: claim.workspace.parentRepoPath,
     });
 
+    const { parentRepoPath, worktreePath } = claim.workspace;
+
+    await fetchRemote({ projectRepoPath: parentRepoPath, name: "origin" });
+    const [head, target, checkedOutBranch] = await Promise.all([
+      headCommit({ worktreePath }),
+      resolveBaseCommit({
+        projectRepoPath: parentRepoPath,
+        baseRef: `refs/remotes/origin/${claim.resolvedTarget}`,
+      }),
+      currentBranchName(worktreePath),
+    ]);
+
+    if (checkedOutBranch !== claim.workspace.branch) {
+      throw new MaisterError(
+        "PRECONDITION",
+        "The worktree does not have the run branch checked out",
+        {
+          details: { reason: "workspace_git_identity_invalid" },
+        },
+      );
+    }
+    const delivery = await inspectDeliveryBase({ worktreePath, head, target });
+
+    if (delivery.alreadyInTarget) {
+      log.info(
+        { runId, head, target },
+        "PR publication skipped: changes already in target",
+      );
+      throw new MaisterError(
+        "PRECONDITION",
+        "Changes are already in the target branch",
+        {
+          details: { reason: "already_in_target" },
+        },
+      );
+    }
+
     // Check credentials and the published history before rewriting the branch.
     // Use the immutable policy for the lease even when a retry has no squash left.
     const forcedPr = squashesRunHistory(claim)
       ? await guardForcedPrPush(db, claim, runId, project)
       : null;
 
-    await squashForCommitPolicy(claim, runId);
+    await squashForCommitPolicy(claim, runId, delivery.base);
 
     // ADR-181 D4/D11: the PR branch is the PUBLIC name — the same core the run
     // git panel's publish uses, so a promotion and a panel publish → open PR →
@@ -2030,6 +2079,22 @@ async function promotePullRequestSideEffect(args: {
       (await publicBranchForPromotion(db, claim, project));
 
     // Push then open/update the PR. Transport failures leave the claim retryable.
+    const sourceHead = await headCommit({ worktreePath });
+    const publicationBase = await resolveBaseRef({
+      worktreePath,
+      branch: sourceHead,
+      mainBranch: target,
+    });
+
+    if (publicationBase !== delivery.base) {
+      throw new MaisterError(
+        "CONFLICT",
+        "The PR base changed during preparation",
+        {
+          details: { reason: "publication_base_changed" },
+        },
+      );
+    }
     await assertNativeProjectPublication(() => db, claim.run);
     await pushBranch({
       projectRepoPath: claim.workspace.parentRepoPath,
@@ -2050,10 +2115,6 @@ async function promotePullRequestSideEffect(args: {
       at: new Date(),
       fence: { kind: "promotion", attemptId: claim.attemptId },
     });
-    const sourceHead = await headCommit({
-      worktreePath: claim.workspace.worktreePath,
-    });
-
     // A promotion opens a ready PR; a draft is the panel's Open PR choice.
     const pr = await adapter.createOrUpdatePr({
       repoPath: claim.workspace.parentRepoPath,
