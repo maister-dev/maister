@@ -299,7 +299,9 @@ IT-ASK-03/04 exercised parallel waits, reverse-order answers, lost acknowledgeme
 
 ### Phase 7 — Adoption and qualification
 
-- [ ] **T24. Exercise adoption, conflicts and rollback.**
+IT-CAP-02 passed against two populated attachments and real Git working trees. It covered both override directions, reset, detach, reattach and prior Run pins. A clean textual merge that would rename a referenced MCP stops adoption with the affected package and agent IDs. Repair preserves unrelated local persona edits. The seven adoption, conflict and rollback scenarios passed.
+
+- [x] **T24. Exercise adoption, conflicts and rollback.**
   - **After** T05, T07, T09, T12, T13.
   - Extend `web/lib/local-packages/{versions,sync-merge}.ts`, `web/lib/packages/attach.ts` and matching integration suites. Adopt revisions in two projects, diff scope/skill/prompt changes, preserve unrelated local edits and explicitly resolve incompatible renames. Use the migration-tested legacy installation from T07 with a live Run and recorded approvals. Refuse ambiguous reconciliation with actionable IDs.
   - **Acceptance** — set/clear/re-add, rollback, same pinned history, incompatible source guard, package detach and old-version consumers.

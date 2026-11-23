@@ -334,13 +334,25 @@ declared:
   `agent-unsupported-transport`, so an untrusted server withheld for trust is
   never relabelled by a later pass.
 
-### Package scope (Designed)
+### Package scope
 
-Each new declaration defaults to package scope. The attachment adopts the release setting. A maintainer can explicitly force project or package scope, or clear the override to inherit. Keep an explicit override when a later release happens to match it. Removing an MCP from an agent link removes only the local addition. Disabling a runtime target takes precedence over sharing. Legacy packages retain their original delivery semantics until adoption of a versioned declaration. [Session inventory](capabilities.md#project-run-capability-inventory)
+With `delivery.version: 1`, each new MCP defaults to `package` scope. The
+project attachment inherits the release setting. In the project MCP Hub a
+maintainer can choose `project` or `package` for an individual reference, or
+restore inheritance. An explicit override follows a surviving reference across
+adoption, including when the new package setting happens to match it. Adoption
+removes overrides for refs the release dropped. The attachment revision
+protects concurrent adoption and scope edits.
+
+A project agent instance can add connected MCPs and remove those local
+additions. Inherited package declarations remain in its profile. Disabling a
+runtime binding withholds the server or fails a required dependency. Legacy
+releases retain their established Flow scope, and their implicit project
+visibility alone supplies no extra MCPs to standalone agents. [Session inventory](capabilities.md#project-run-capability-inventory)
 
 ## Expectations
 
-- **CAP-02:** (Designed) A surviving MCP override must belong to exactly one project attachment and logical ref across adoption.
+- **CAP-02:** (Implemented) A surviving MCP override must belong to exactly one project attachment and logical ref across adoption.
 
 1. A `project_mcp_bindings` row MUST be unique on `(project_id, ref_id)`; an enabled binding's target MUST win over `SOURCE_PRECEDENCE`, and a disabled binding MUST make the ref unresolvable in that project. (Implemented)
 2. An **absent** binding MUST leave resolution exactly as today (grandfather) — zero behavior change for any project without bindings. (Implemented)

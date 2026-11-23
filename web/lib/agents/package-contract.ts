@@ -3,12 +3,13 @@ import "server-only";
 import type { ParsedAgentDefinition } from "@/lib/agents/definition";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
 
-import { parseDocument } from "yaml";
-import { z } from "zod";
-import { assertPrivateBoundSessionNames } from "@/lib/capabilities/package-delivery";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { parseDocument } from "yaml";
+import { z } from "zod";
+
+import { assertPrivateBoundSessionNames } from "@/lib/capabilities/package-delivery";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
   TASK_QUALIFICATION_ENGINE_MIN,
@@ -110,6 +111,7 @@ export async function assertPackageOperationalContracts(
       );
   }
   const sessionAgents = new Set<string>();
+
   for (const source of await readPackageAgentSources(root)) {
     const split = splitFrontmatter(source.content);
 
@@ -141,11 +143,20 @@ export async function assertPackageOperationalContracts(
     assertOperationalAgentCompatibility(definition, manifest.compat);
     if (manifest.delivery) {
       const declaredMcps = new Set(manifest.mcps.map((mcp) => mcp.id));
+
       for (const ref of definition.capabilityProfile?.mcps ?? []) {
         if (!declaredMcps.has(ref))
           throw new MaisterError(
             "CONFIG",
             `Agent ${definition.id} references undeclared package MCP ${ref}`,
+            {
+              details: {
+                reason: "package_agent_reference",
+                agentId: definition.id,
+                file: `maister-agents/${source.stem}.md`,
+                ref,
+              },
+            },
           );
       }
     }
@@ -153,10 +164,12 @@ export async function assertPackageOperationalContracts(
       const matches = await Promise.all(
         manifest.capabilities.map(async (bundle) => {
           const entry = join(root, bundle.path, "skills", skill, "SKILL.md");
+
           try {
             const directory = await lstat(
               join(root, bundle.path, "skills", skill),
             );
+
             return directory.isDirectory() && (await lstat(entry)).isFile();
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT")
@@ -165,10 +178,19 @@ export async function assertPackageOperationalContracts(
           }
         }),
       );
+
       if (matches.filter(Boolean).length !== 1)
         throw new MaisterError(
           "CONFIG",
           `Agent ${definition.id} must select one unambiguous packaged skill: ${skill}`,
+          {
+            details: {
+              reason: "package_agent_reference",
+              agentId: definition.id,
+              file: `maister-agents/${source.stem}.md`,
+              ref: skill,
+            },
+          },
         );
     }
   }
@@ -176,6 +198,7 @@ export async function assertPackageOperationalContracts(
     for (const flow of manifest.flows) {
       const file = join(root, flow.path, "flow.yaml");
       const doc = parseDocument(await readFile(file, "utf8"));
+
       if (doc.errors.length)
         throw new MaisterError(
           "CONFIG",
@@ -192,6 +215,7 @@ export async function assertPackageOperationalContracts(
           ),
         })
         .safeParse(doc.toJS());
+
       if (!parsed.success) continue;
       const bound = new Set(
         parsed.data.nodes
@@ -199,10 +223,12 @@ export async function assertPackageOperationalContracts(
             const settings = z
               .object({ agent: z.string() })
               .safeParse(n.settings);
+
             return settings.success && sessionAgents.has(settings.data.agent);
           })
           .map((n) => n.id),
       );
+
       assertPrivateBoundSessionNames(parsed.data.nodes, bound);
     }
 }

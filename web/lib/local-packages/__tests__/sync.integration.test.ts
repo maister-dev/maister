@@ -510,3 +510,66 @@ describe("upstream sync (integration)", () => {
     expect(after.syncState).toBeNull();
   });
 });
+
+it("T24 keeps a local agent prompt and requires an explicit choice on an upstream MCP rename", async () => {
+  const source = await mkdtemp(join(homeDir, "source-profile-"));
+  const manifestPath = join(source, "maister-package.yaml");
+  const manifest = (ref: string) =>
+    `schemaVersion: 1\nname: profile-sync\ndelivery: {version: 1}\nmcps: [{id: ${ref}}]\n`;
+
+  await writeFile(manifestPath, manifest("original"));
+  const base = await installPackageRevision({
+    source,
+    version: "local",
+    trustStatus: "trusted_by_policy",
+    db,
+  });
+  const { localPackageId } = await forkPackageToLocal({
+    sourceInstallId: base.id,
+    sourceRef: "profile-sync",
+    createdBy: userId,
+    forceNew: true,
+    db,
+  });
+  const sessionId = "sync-role-" + randomUUID();
+
+  await acquireLock(localPackageId, userId, sessionId, db);
+  const pkg = await reload(localPackageId);
+  const file = "maister-agents/designer.md";
+  const role = (ref: string) =>
+    `---\nname: designer\ndescription: Design\nworkspace: repo_read\nworkspace_ref: trigger\nmode: session\ntriggers: [flow]\nrisk_tier: read_only\ncapability_profile: {skills: [], mcps: [${ref}]}\n---\nPreserve this locally written client brief.\n`;
+
+  await writeWorkingDirFile(pkg, file, role("original"));
+  await gitCommitWorkingDir(
+    pkg.workingDir,
+    "Keep a project-specific authoring brief",
+  );
+  await writeFile(manifestPath, manifest("design"));
+  const next = await installPackageRevision({
+    source,
+    version: "local",
+    trustStatus: "trusted_by_policy",
+    db,
+  });
+  const input = { localPackageId, sessionId, db };
+  const conflict = await syncFromUpstream({
+    ...input,
+    targetInstallId: next.id,
+  });
+
+  expect(conflict).toMatchObject({
+    outcome: "conflicted",
+    conflictedFiles: [file],
+  });
+  expect((await reload(localPackageId)).sourceInstallId).toBe(base.id);
+  await expect(resolveSync(input)).rejects.toMatchObject({
+    code: "PRECONDITION",
+    details: { file, ref: "original" },
+  });
+  await writeWorkingDirFile(pkg, file, role("design"));
+  expect((await resolveSync(input)).outcome).toBe("completed");
+  expect((await reload(localPackageId)).sourceInstallId).toBe(next.id);
+  expect(await readFile(join(pkg.workingDir, file), "utf8")).toBe(
+    role("design"),
+  );
+});

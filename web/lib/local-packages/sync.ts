@@ -25,6 +25,7 @@ import { mergeTrees } from "./sync-merge";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { loadMaisterPackageManifest } from "@/lib/packages/manifest";
 import { MaisterError } from "@/lib/errors";
 import { diffWorkingTree } from "@/lib/worktree";
 
@@ -81,6 +82,39 @@ async function workingTreeDirtyPaths(workingDir: string): Promise<string[]> {
   const wt = await diffWorkingTree(workingDir);
 
   return wt.nameStatus.map((entry) => entry.path);
+}
+
+/** A textually clean merge can disconnect a locally authored agent from a renamed upstream capability. */
+async function deliveryMergeConflict(
+  workingDir: string,
+  changed: readonly string[],
+): Promise<MaisterError | null> {
+  if (
+    !changed.some(
+      (file) =>
+        file === "maister-package.yaml" ||
+        file.startsWith("maister-agents/") ||
+        file.includes("/skills/"),
+    )
+  )
+    return null;
+  try {
+    await loadMaisterPackageManifest(workingDir);
+
+    return null;
+  } catch (error) {
+    if (!(error instanceof MaisterError) || error.code !== "CONFIG")
+      throw error;
+
+    return new MaisterError("PRECONDITION", error.message, {
+      cause: error,
+      details: {
+        file: "maister-package.yaml",
+        ...error.details,
+        reason: "package_sync_contract_conflict",
+      },
+    });
+  }
 }
 
 export async function syncFromUpstream(opts: {
@@ -185,11 +219,19 @@ export async function syncFromUpstream(opts: {
       markerLabel: `upstream ${targetRef}`,
     });
 
-    if (merged.conflictedFiles.length > 0) {
+    const semanticConflict =
+      merged.conflictedFiles.length === 0
+        ? await deliveryMergeConflict(pkg.workingDir, merged.cleanFiles)
+        : null;
+    const conflictedFiles = semanticConflict
+      ? [String(semanticConflict.details?.file)]
+      : merged.conflictedFiles;
+
+    if (conflictedFiles.length > 0) {
       await d
         .update(lp)
         .set({
-          syncState: { ...syncState, conflictedFiles: merged.conflictedFiles },
+          syncState: { ...syncState, conflictedFiles },
           updatedAt: new Date(),
         })
         .where(eq(lp.id, pkg.id));
@@ -198,7 +240,13 @@ export async function syncFromUpstream(opts: {
         {
           id: pkg.id,
           targetRef,
-          conflicts: merged.conflictedFiles.length,
+          ...(semanticConflict
+            ? {
+                ref: semanticConflict.details?.ref,
+                file: semanticConflict.details?.file,
+              }
+            : {}),
+          conflicts: conflictedFiles.length,
           clean: merged.cleanFiles.length,
         },
         "upstream sync conflicted",
@@ -206,7 +254,7 @@ export async function syncFromUpstream(opts: {
 
       return {
         outcome: "conflicted",
-        conflictedFiles: merged.conflictedFiles,
+        conflictedFiles,
         targetInstallId: opts.targetInstallId,
         targetRef,
       };
@@ -318,6 +366,12 @@ export async function resolveSync(opts: {
       }
     }
 
+    const semanticConflict = await deliveryMergeConflict(
+      pkg.workingDir,
+      scanPaths,
+    );
+
+    if (semanticConflict) throw semanticConflict;
     if (dirtyPaths.length > 0) {
       await gitCommitWorkingDir(
         pkg.workingDir,
