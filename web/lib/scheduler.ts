@@ -1356,7 +1356,7 @@ export async function promoteNextPending(
                     status: "Running",
                     startedAt: now,
                     resumeStartedAt: now,
-                    // ADR-176 D4: the THIRD claim-marker write site. A queued
+                    // ADR-176 D4: the scheduler's claim-marker write. A queued
                     // recover promoted here starts a fresh intent, so its
                     // per-run budget resets in the same transaction.
                     ...CRASH_RECOVER_BUDGET_RESET,

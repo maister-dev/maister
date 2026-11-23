@@ -196,13 +196,12 @@ The board is a horizontally scrollable set of columns:
   `agent_summon_suppressed` timeline event. A **successful** summon gets no
   extra row — the run itself is the evidence.
 - **Flight cards** show active or latest runs, readiness, assignment/takeover
-  state, HITL hints, and lifecycle actions. When PR lifecycle tracking ships
-  (Implemented, ADR-140), a card in `Done` / `InDelivery` / `OnReview` also shows a
-  **PR-state chip** (`open` / `merged` / `closed`) derived from the latest run's
-  workspace `pr_state`; a conflicted PR (`pr_has_conflicts`) renders a distinct
-  conflicts affordance with a **Reopen** action (`Done → Review`, ADR-141). Chip
-  and action copy come from the `board` / `run` namespaces in
-  `web/components/board/flight-card.tsx`; behavior lives in
+  state, HITL hints, and lifecycle actions. A recorded PR appears as a direct
+  provider link with its number and tracked state. For a completed run with an
+  open, merged, or as-yet unchecked PR, the card keeps workspace lifecycle
+  controls and the run link. Commit, discard, publish, and open-PR actions are
+  available in the run Git panel. A conflicted PR retains its **Reopen** action
+  (`Done → Review`, ADR-141). Lifecycle behavior lives in
   [`../../system-analytics/branch-sync.md`](../../system-analytics/branch-sync.md).
 - **Relation blockers** disable launch when a task is blocked by open
   `blocks`, `depends_on`, or success-gated `requires` edges.
@@ -314,7 +313,7 @@ to server-stored mode. The board never renders a stale question as answerable.
   and the project-scoped scheduled-launch routes; recurring APIs and the
   Project Settings → Agents PATCH remain authoritative for their row types.
 - PR-state chip + reopen (Implemented, ADR-140/141): the board read model
-  (`web/lib/queries/board.ts`) carries `prState` / `prHasConflicts` from the
+  (`web/lib/queries/board.ts`) carries PR identity, state, and conflicts from the
   latest run's workspace, and the Reopen affordance posts to
   `POST /api/runs/{runId}/reopen`.
 - Project Integrations tokens: `GET/POST /api/projects/{slug}/tokens` and

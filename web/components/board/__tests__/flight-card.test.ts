@@ -62,6 +62,7 @@ const labels: FlightCardLabels = {
     runRunning: "running",
     runWaitingOnChildren: "waiting on children",
   },
+  prLink: (number, state) => `PR #${number} · ${state ?? "not checked"}`,
   prChip: {
     open: "PR open",
     merged: "PR merged",
@@ -134,6 +135,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
+    prUrl: null,
     prState: null,
     prHasConflicts: null,
     autoPromotedLane: null,
@@ -300,6 +302,38 @@ describe("FlightCard — workbench lifecycle actions", () => {
     expect(html).toContain("workbenchLifecycle.action.archive");
     expect(html).toContain("workbenchLifecycle.action.drop");
     expect(html).toContain("workbenchLifecycle.action.exportBranch");
+  });
+
+  it.each([
+    [null, "not checked"],
+    ["open", "open"],
+    ["merged", "merged"],
+  ] as const)("links a completed run's recorded PR (%s)", (prState, state) => {
+    const prUrl = "https://github.com/example/project/pull/55";
+    const html = render(
+      baseCard({
+        status: "done",
+        prNumber: 55,
+        prUrl,
+        prState,
+        lifecycleActions: [
+          "archive",
+          "drop",
+          "snapshotCommit",
+          "discardChanges",
+          "exportBranch",
+          "openPr",
+        ],
+      }),
+    );
+
+    expect(html).toContain(`href="${prUrl}"`);
+    expect(html).toContain(`PR #55 · ${state}`);
+    expect(html).toContain("workbenchLifecycle.action.archive");
+    expect(html).toContain("workbenchLifecycle.action.drop");
+    expect(html).not.toContain("?git=publish");
+    expect(html).not.toContain("?git=pr");
+    expect(html).not.toContain("?git=tree");
   });
 });
 

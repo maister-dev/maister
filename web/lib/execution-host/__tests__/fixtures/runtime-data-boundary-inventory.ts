@@ -1584,11 +1584,9 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
       "manager-flow-state",
       "flow-engine state the manager owns: installed package content, authored packages, run inputs/outputs under .maister/<slug>/runs",
       [
-        ["git", "node:child_process.execFile", "spawn", "git"],
         ["captureWorkspaceTree", "node:fs/promises.mkdtemp", "write"],
         ["captureWorkspaceTree", "node:fs/promises.copyFile", "write"],
         ["captureWorkspaceTree", "node:fs/promises.rm", "remove"],
-        ["deleteChatCheckpoint", "node:child_process.execFile", "spawn", "git"],
       ],
     ),
     ...classified(
@@ -2215,6 +2213,12 @@ export const filesystemOwnershipInventory: readonly FilesystemOwnershipEntry[] =
         ["escalateNodeInterrupt", "node:fs/promises.unlink", "remove"],
         ["escalateNodeInterrupt", "lib/atomic.ts#atomicWriteJson", "wrapper"],
       ],
+    ),
+    ...classified(
+      "lib/runs/node-restart-checkpoint.ts",
+      "repository-worktree",
+      "Compare the physical Git root to the retained run worktree before previewing or restoring a failed node checkpoint.",
+      [["inspectWorktree", "node:fs/promises.realpath", "stat"]],
     ),
     ...classified(
       "../runtime/pull-request.ts",
@@ -3181,11 +3185,8 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
     ["runReviewHuman", false],
   ]),
   ...wrappers("lib/flows/graph/workspace-checkpoint.ts", "manager-flow-state", [
-    ["applyWorkspacePolicy", false],
     ["captureCheckpoint", false],
     ["captureWorkspaceTree", false],
-    ["deleteChatCheckpoint", false],
-    ["deleteRunCheckpointRefs", false],
   ]),
   ...wrappers("lib/flows/lifecycle.ts", "manager-flow-state", [
     ["removeRevision", false],
@@ -3335,6 +3336,10 @@ export const filesystemWrapperInventory: readonly FilesystemWrapperEntry[] = [
   ...wrappers("lib/runs/node-interrupt.ts", "manager-flow-state", [
     ["escalateNodeInterrupt", false],
     ["parkNodeForHostPressure", false],
+  ]),
+  ...wrappers("lib/runs/node-restart-checkpoint.ts", "repository-worktree", [
+    ["applyNodeRestartCheckpoint", false],
+    ["loadNodeRestartCheckpointPreview", false],
   ]),
   ...wrappers("lib/runs/pr-adapter.ts", "repository-worktree", [
     ["getPrState", false],

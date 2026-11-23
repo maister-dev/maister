@@ -203,9 +203,7 @@ describe("runPrStateScanJob", () => {
 
     expect(closedWs.prState).toBe("closed");
 
-    // An open PR writes no state — pr_state stays as-is (NULL here), keeping the
-    // row a candidate; the conflicts edge is what flips pr_has_conflicts.
-    expect(conflictWs.prState).toBeNull();
+    expect(conflictWs.prState).toBe("open");
     expect(conflictWs.prHasConflicts).toBe(true);
 
     const events = await webhooks(projectId);

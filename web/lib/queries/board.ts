@@ -219,9 +219,9 @@ export interface FlightCard {
   // M18 (T4.4): a flow run at `Review` whose unified readiness verdict is
   // "ready" — the operator can promote it. Done cards read false.
   readyToPromote: boolean;
-  // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
-  // only); null when no PR has been recorded.
+  // Provider identity recorded on the latest run's workspace.
   prNumber: number | null;
+  prUrl: string | null;
   // ADR-140 PR lifecycle: provider PR state + conflict flag from the workspace
   // row, driving the PR-state chip on Done/InDelivery/OnReview cards. Null until
   // the pr_state_scan records them.
@@ -889,6 +889,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         run.status === "Review" &&
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
+      prUrl: run.prUrl ?? null,
       prState: run.prState ?? null,
       prHasConflicts: run.prHasConflicts ?? null,
       autoPromotedLane: run.promotionLane ?? null,

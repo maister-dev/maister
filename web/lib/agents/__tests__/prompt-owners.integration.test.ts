@@ -3892,17 +3892,17 @@ describe("Agent owned prompts through the production launcher", () => {
     const prompt = commands.find(
       (command) => command.kind === "session.prompt",
     );
-    const deletes = commands.filter(
-      (command) => command.kind === "session.delete",
-    );
+    const teardownBeforeRecovery = commands
+      .filter((command) => command.kind === "session.delete")
+      .map(({ id }) => ({ id }));
 
     expect(prompt).toMatchObject({
       state: "succeeded",
       completionAppliedAt: null,
     });
-    // This ACP fixture exits itself. Recovery must reuse its canonical exit
-    // rather than issue a new teardown against the already ended execution.
-    expect(deletes).toHaveLength(0);
+    // The launcher can issue teardown before the supervisor's end-turn exit
+    // is projected. Recovery must preserve that command without adding one.
+    expect(teardownBeforeRecovery.length).toBeLessThanOrEqual(1);
     await db
       .update(executionCommands)
       .set({
@@ -3939,7 +3939,7 @@ describe("Agent owned prompts through the production launcher", () => {
             eq(executionCommands.kind, "session.delete"),
           ),
         ),
-    ).toEqual([]);
+    ).toEqual(teardownBeforeRecovery);
   }, 90_000);
 
   it("owner-agent-initial exhausted preparation failure settles Failed and preserves its original diagnostic", async () => {
