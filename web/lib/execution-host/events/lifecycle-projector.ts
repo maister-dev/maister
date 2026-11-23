@@ -3,6 +3,8 @@ import "server-only";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { and, asc, eq, exists, inArray, ne, or, sql } from "drizzle-orm";
 import pino from "pino";
@@ -27,6 +29,7 @@ import {
   executionAssignments,
   executionCommands,
   executionEvents,
+  executionProjectionBackfills,
   runSessionIncarnations,
   runSessions,
   runs,
@@ -38,6 +41,42 @@ const log = pino({
   name: "lifecycle-projector",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+const CRASH_REPAIR_TAG = "0369_reconcile_skipped_session_crashes";
+const CRASH_REPAIR_MARKER = `${CRASH_REPAIR_TAG}:post-cutover`;
+
+// Run after the old Web writers have stopped. Migration 0369 can otherwise
+// miss an event whose legacy lifecycle cursor advances during deployment.
+export async function reconcileSkippedSessionCrashes(db: Db): Promise<number> {
+  const count = await db.transaction(async (tx) => {
+    const marker = await tx
+      .insert(executionProjectionBackfills)
+      .values({
+        consumerName: CRASH_REPAIR_MARKER,
+        completedAt: sql`clock_timestamp()`,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (marker.length === 0) return null;
+    const migration = await readFile(
+      join(process.cwd(), "lib", "db", "migrations", `${CRASH_REPAIR_TAG}.sql`),
+      "utf8",
+    );
+    const repaired = await tx.execute(sql.raw(migration));
+
+    return repaired.rowCount ?? 0;
+  });
+
+  if (count !== null) {
+    log.info(
+      { migration: CRASH_REPAIR_TAG, repaired: count },
+      "[FIX] Reconciled skipped lifecycle crashes after Web cutover",
+    );
+  }
+
+  return count ?? 0;
+}
 
 export const canonicalLifecycleProjector: ExecutionEventProjector = {
   consumerName: CANONICAL_PROJECTION_CONSUMERS.lifecycle,

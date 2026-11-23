@@ -449,9 +449,17 @@ cd /opt/maister && git pull
 pnpm install --frozen-lockfile
 pnpm --filter maister-web build          # rebuilds the internal MCP facade and the web app
 set -a; . /etc/maister/maister.env; set +a
+sudo systemctl stop maister-web
 pnpm --filter maister-web db:migrate
-sudo systemctl restart maister-supervisor maister-web
+sudo systemctl restart maister-supervisor
+sudo systemctl start maister-web
 ```
+
+Stop every Web replica on the database before the execution-plane cutover.
+On its first boot after migration `0369`, the new Web rechecks the exact
+released-session crashes before it starts its projectors. This also repairs
+crashes an old Web projector skipped between migration and shutdown. The
+repair and its completion marker commit together.
 
 Run the MCP contract check from the smoke test before starting new agent runs.
 

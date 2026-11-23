@@ -13,7 +13,11 @@ import {
 } from "@/lib/execution-host/events/projector";
 import { depositPromptReceipt } from "@/lib/execution-host/prompt-evidence";
 import { projectCanonicalPromptCommands } from "@/lib/execution-host/events/prompt-projector";
-import { projectCanonicalSessionLifecycle } from "@/lib/execution-host/events/lifecycle-projector";
+import {
+  canonicalLifecycleProjector,
+  projectCanonicalSessionLifecycle,
+  reconcileSkippedSessionCrashes,
+} from "@/lib/execution-host/events/lifecycle-projector";
 import { projectCanonicalRuntimeObjects } from "@/lib/execution-host/events/runtime-object-projector";
 import { streamCanonicalSessionEvents } from "@/lib/execution-host/events/session-stream";
 import { appendManagerRunStreamEvent } from "@/lib/runs/run-stream-event";
@@ -1194,7 +1198,15 @@ describe("runtime event ingestion", () => {
     expect(exitedIncarnation.rows).toEqual([{ state: "exited", ended: true }]);
   });
 
-  it("admits a concurrent substep session under its own logical name, and a reused name supersedes the older incarnation instead of wedging the stream", async () => {
+  const crashProjectionScenarios = [
+    "live projector",
+    "0369 before old cursor advance",
+  ] as const;
+
+  async function verifyReleasedSessionCrash(
+    mode: (typeof crashProjectionScenarios)[number],
+  ): Promise<void> {
+    const oldWriter = mode === "0369 before old cursor advance";
     const overlapRunId = randomUUID();
     const overlapHostId = randomUUID();
     const overlapAssignmentId = randomUUID();
@@ -1247,7 +1259,11 @@ describe("runtime event ingestion", () => {
       eventType: "session.created",
       occurredAt: "2026-09-15T00:00:00.000Z",
       payloadSchema: "maister.session.created.v1",
-      payload: { sessionName, adapter: "claude", acpSessionId: hostSessionId },
+      payload: {
+        sessionName,
+        adapter: "claude",
+        acpSessionId: hostSessionId,
+      },
     });
     const project = () =>
       projectCanonicalSessionLifecycle({
@@ -1388,12 +1404,36 @@ describe("runtime event ingestion", () => {
         assignmentEpoch: 2,
       },
     });
-    expect(await project()).toMatchObject({ projected: 2, poisoned: false });
+    if (oldWriter) {
+      await applyMainMigration(
+        testDatabase.db,
+        "0369_reconcile_skipped_session_crashes",
+      );
+      expect(
+        await projectExecutionEvents({
+          db: testDatabase.db,
+          runId: overlapRunId,
+          projector: {
+            ...canonicalLifecycleProjector,
+            project: async (tx, event) => {
+              if (event.id !== crashed.eventId) {
+                await canonicalLifecycleProjector.project(tx, event);
+              }
+            },
+          },
+        }),
+      ).toMatchObject({ projected: 2, poisoned: false });
+    } else {
+      expect(await project()).toMatchObject({
+        projected: 2,
+        poisoned: false,
+      });
+    }
     expect(await incarnations()).toEqual(
       expect.arrayContaining([
         {
           host_session_id: collidingSessionId,
-          state: "crashed",
+          state: oldWriter ? "lost" : "crashed",
           session_name: "default",
         },
         {
@@ -1418,45 +1458,72 @@ describe("runtime event ingestion", () => {
         },
       }),
     ).toMatchObject({ disposition: "stale_epoch" });
-    await testDatabase.pool.query(
-      `update run_session_incarnations set state = 'lost',
-         terminal_reason = '{"reason":"assignment_superseded"}'::jsonb
-       where host_session_id = $1`,
-      [collidingSessionId],
-    );
-    await testDatabase.pool.query(
-      `update execution_events set run_session_incarnation_id = null where id = $1`,
-      [crashed.eventId],
-    );
+    if (!oldWriter) {
+      await testDatabase.pool.query(
+        `update run_session_incarnations set state = 'lost',
+       terminal_reason = '{"reason":"assignment_superseded"}'::jsonb
+     where host_session_id = $1`,
+        [collidingSessionId],
+      );
+      await testDatabase.pool.query(
+        `update execution_events set run_session_incarnation_id = null where id = $1`,
+        [crashed.eventId],
+      );
+    }
     const readEvidence = () =>
       testDatabase.pool.query(
         `select i.state, i.terminal_reason, i.id = e.run_session_incarnation_id as bound
-       from run_session_incarnations i join execution_events e on e.id = $1
-       where i.host_session_id = $2`,
+     from run_session_incarnations i join execution_events e on e.id = $1
+     where i.host_session_id = $2`,
         [crashed.eventId, collidingSessionId],
       );
     const readUntouched = () =>
       testDatabase.pool.query(
         `select * from run_session_incarnations where host_session_id in ($1, $2)
-       order by host_session_id`,
+     order by host_session_id`,
         [successorSessionId, substepSessionId],
       );
     const untouchedBeforeRepair = await readUntouched();
 
-    await applyMainMigration(
-      testDatabase.db,
-      "0369_reconcile_skipped_session_crashes",
-    );
+    if (oldWriter) {
+      expect((await readEvidence()).rows).toEqual([
+        {
+          state: "lost",
+          terminal_reason: { reason: "assignment_superseded" },
+          bound: null,
+        },
+      ]);
+      expect(await project()).toMatchObject({
+        projected: 0,
+        poisoned: false,
+      });
+      const attempts = await Promise.all([
+        reconcileSkippedSessionCrashes(testDatabase.db),
+        reconcileSkippedSessionCrashes(testDatabase.db),
+      ]);
+
+      expect(attempts.sort()).toEqual([0, 1]);
+    } else {
+      await applyMainMigration(
+        testDatabase.db,
+        "0369_reconcile_skipped_session_crashes",
+      );
+      await applyMainMigration(
+        testDatabase.db,
+        "0369_reconcile_skipped_session_crashes",
+      );
+    }
     expect((await readEvidence()).rows).toEqual([
       { state: "crashed", terminal_reason: crashed.payload, bound: true },
     ]);
-    await applyMainMigration(
-      testDatabase.db,
-      "0369_reconcile_skipped_session_crashes",
-    );
     expect((await readUntouched()).rows).toEqual(untouchedBeforeRepair.rows);
     expect(await project()).toMatchObject({ projected: 0, poisoned: false });
-  });
+  }
+
+  it.each(crashProjectionScenarios)(
+    "keeps logical sessions distinct and settles the exact released crash (%s)",
+    verifyReleasedSessionCrash,
+  );
 
   it("accepts a late terminal event for its exact released-assignment command while quarantining unrelated stale events", async () => {
     const lateRunId = randomUUID();
