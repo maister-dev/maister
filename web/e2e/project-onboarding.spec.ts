@@ -301,8 +301,21 @@ test("E2E-CPC-03: RU stale review, lost receipt reload, explicit push failure an
       projectId,
     ]);
   });
+  const staleResponse = page.waitForResponse(
+    (value) =>
+      value.url().endsWith(`/api/projects/${slug}/persist-config`) &&
+      value.request().method() === "POST",
+  );
+
   await dialog.getByTestId("config-persist-confirm").click();
-  await expect(dialog.getByRole("alert")).toContainText("изменились");
+  const stale = await staleResponse;
+
+  expect(stale.status()).toBe(409);
+  expect(await stale.json()).toMatchObject({
+    code: "CONFLICT",
+    details: { reason: "stale_preview" },
+  });
+  await expect(dialog.getByRole("status")).toContainText("изменились");
   await expect(dialog.getByTestId("config-persist-confirm")).toHaveCount(0);
   await dialog.getByTestId("config-persist-refresh").click();
   await dialog
