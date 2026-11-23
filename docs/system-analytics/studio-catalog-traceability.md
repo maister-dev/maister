@@ -1,6 +1,6 @@
 # Studio catalog and session delivery acceptance
 
-Each domain owns its expectation. Planned test IDs identify the test that must demonstrate it on the release candidate.
+Each domain owns its expectation. The primary test identifies the observable behavior used to close the requirement.
 
 | ID | Contract | Tasks | Primary test | Status |
 | --- | --- | --- | --- | --- |
@@ -19,3 +19,5 @@ Each domain owns its expectation. Planned test IDs identify the test that must d
 | ASK-03 | Only a checkpointed ordinary Flow question may expose a human assignment, with one claim across Inbox and Run views. | T21, T22 | IT-ASK-03 | Implemented |
 | ASK-04 | An accepted answer may resume only its original recoverable attempt after checking current authority and assignment. | T23 | IT-ASK-04 | Implemented |
 | CAP-06 | Project routing must allow a design and a development Run in the same project without either session receiving private resources of the other package. | T25, T26 | E2E-CAP-06 | Planned |
+
+HST-01 has production-image receipts for private HTTP, installed stdio and the platform facade on two independent assigned supervisors. A separate control-host probe reached the public Microsoft Learn MCP. The public tool call from the assigned hosts remains open. CAP-06 passed the three-Run scenario with a local reference MCP, including the Inbox continuation and clickable prototype. Its release status follows the outstanding host gate. The [branch plan](../../.ai-factory/plans/feature-studio-catalog-imports.md) records the run IDs, image digest and receipts.

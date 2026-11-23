@@ -1365,6 +1365,8 @@ docker build --target production -t maister-mcp-qualification .
 MAISTER_MCP_QUALIFICATION_IMAGE=maister-mcp-qualification pnpm --filter maister-web exec vitest run --project qualification lib/execution-host/__tests__/assigned-host-mcp.qualification.test.ts
 ```
 
+The separate public protocol check from the control host returned HTTP 200 and a 9,905-byte response from Microsoft Learn MCP for the fixed public .NET introduction. This receipt covers the upstream endpoint. The B/C receipts cover assigned-host ACP calls on the private network. A public-endpoint call originating on B or C remains unqualified.
+
 ### Operational preparation recovery (Designed, [ADR-214](../decisions/adr-214.md))
 
 - **APR-03:** Negative dispatch proof is scoped to Run, host, assignment and epoch. Under the same Run and assignment locks as command admission, a current create or prompt command, incarnation or ambiguous current handle requires the dispatched execution path. Command retirement does not remove the dispatch witness. A teardown command is admitted under the exact current owner and settlement claim when applicable.
