@@ -417,6 +417,20 @@ describe("version-adopt launch (integration)", () => {
       .from(schema.packageInstalls)
       .where(eq(schema.packageInstalls.id, newPin));
 
+    const [requested] = await db
+      .select()
+      .from(schema.projectDependencyDeclarations)
+      .where(
+        eq(
+          schema.projectDependencyDeclarations.effectiveAttachmentId,
+          attachmentId,
+        ),
+      );
+    expect(requested.desired).toEqual({
+      source: minted.sourceUrl,
+      version: minted.versionLabel,
+    });
+    expect(requested.effectiveRevision).toBe(minted.resolvedRevision);
     expect(minted.sourceLocalPackageId).toBe(pkg.id);
     expect(minted.sourceCommitSha).toBe(await gitHeadSha(pkg.workingDir));
   });

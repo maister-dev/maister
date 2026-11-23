@@ -1,9 +1,10 @@
 import "server-only";
 
+import type { CapabilityRefIdsInput } from "@/lib/config";
 import type { MaisterPackageManifest } from "@/lib/config.schema";
 
 import { createHash, randomUUID } from "node:crypto";
-import { cp, readdir, rm, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +12,10 @@ import { pathToFileURL } from "node:url";
 import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
+import {
+  materialConflict,
+  publishMaterial,
+} from "@/lib/project-dependencies/material";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import { parseAgentDefinition, qualifyAgentId } from "@/lib/agents/definition";
 import {
@@ -21,6 +26,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
+  localDirectoryContentDigest,
   installFlowPlugin,
   installRevision,
   repairPackageRootSchemaCache,
@@ -39,6 +45,16 @@ import { redactUrl } from "@/lib/repo-source";
 import { assertAttachedQualificationAgentsPolicy } from "@/lib/agents/qualification-policy";
 import { readPackageAgentSources } from "@/lib/agents/package-contract";
 import { lockPackageRunBlockers } from "@/lib/packages/run-pins";
+
+import {
+  assertPackageMemberOwnership,
+  lockDependencyProject,
+  recordManualPackage,
+  removePackageDeclaration,
+  type DependencyTransaction,
+} from "@/lib/project-dependencies/package-writes";
+import { assertCapabilityMemberOwnership, reconcileDependencyCatalog } from "@/lib/project-dependencies/catalog";
+import { withSetupDatabase } from "@/lib/project-dependencies/setup";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see flows.ts).
 const {
@@ -69,6 +85,7 @@ export type PackageInstallManifest = {
   // Install coordinate (packages[] `path` subdir) — needed by the
   // maister.yaml write-back to reproduce the pin.
   sourceSubpath?: string;
+  contentWitness?: string;
 };
 
 function packageCachePath(name: string, resolvedRevision: string): string {
@@ -167,11 +184,12 @@ export async function installPackageRevision(opts: {
   // local package is cut, so a project's attached cut can detect a newer cut.
   sourceLocalPackageId?: string;
   sourceCommitSha?: string;
+  onResolve?: (revision: string) => Promise<void>;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
 }): Promise<InstallPackageRevisionResult> {
-  const db = opts.db ?? getDb();
+  const database = opts.db ?? getDb();
   const resolved = await resolvePackageSource({
     source: opts.source,
     version: opts.version,
@@ -213,210 +231,245 @@ export async function installPackageRevision(opts: {
       }
     }
 
-    const [existing] = await db
-      .select()
-      .from(packageInstalls)
-      .where(
-        and(
-          eq(packageInstalls.sourceUrl, opts.source),
-          eq(packageInstalls.name, name),
-          eq(packageInstalls.resolvedRevision, resolved.resolvedRevision),
-        ),
+    await opts.onResolve?.(resolved.resolvedRevision);
+    const hashMaterial = (dir: string) =>
+      localDirectoryContentDigest(dir, new Set([".git"]));
+    const witness = await hashMaterial(resolved.pkgRoot);
+    const cachePath = packageCachePath(name, resolved.resolvedRevision);
+    return await database.transaction(async (db: any) => {
+      await db.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${cachePath}, 0))`,
       );
+      const physicalOwners = await db
+        .select()
+        .from(packageInstalls)
+        .where(eq(packageInstalls.installedPath, cachePath));
+      for (const owner of physicalOwners) {
+        const prior = manifestOf(owner);
+        if (
+          owner.resolvedRevision !== resolved.resolvedRevision ||
+          (prior.contentWitness && prior.contentWitness !== witness)
+        )
+          materialConflict();
+        if (
+          !prior.contentWitness &&
+          (prior.sourceSubpath !== opts.path ||
+            owner.sourceUrl !== opts.source) &&
+          (await hashMaterial(cachePath)) !== witness
+        )
+          materialConflict();
+      }
+      const [existing] = await db
+        .select()
+        .from(packageInstalls)
+        .where(
+          and(
+            eq(packageInstalls.sourceUrl, opts.source),
+            eq(packageInstalls.name, name),
+            eq(packageInstalls.resolvedRevision, resolved.resolvedRevision),
+          ),
+        );
 
-    if (
-      existing &&
-      existing.packageStatus === "Installed" &&
-      (await pathExists(join(existing.installedPath, "maister-package.yaml")))
-    ) {
-      const existingManifest = manifestOf(existing);
-      const resolvedSchemaDir = join(resolved.pkgRoot, "schemas");
+      if (
+        existing &&
+        existing.packageStatus === "Installed" &&
+        (await pathExists(join(existing.installedPath, "maister-package.yaml")))
+      ) {
+        const existingManifest = manifestOf(existing);
+        const resolvedSchemaDir = join(resolved.pkgRoot, "schemas");
 
-      // Older installed package revisions predate package-root schema
-      // materialization. Re-enter each immutable member install against the
-      // freshly resolved source, then restore the package cache's shared
-      // schemas before callers reuse the package revision.
-      for (const flow of existingManifest.spec.flows) {
+        // Older installed package revisions predate package-root schema
+        // materialization. Re-enter each immutable member install against the
+        // freshly resolved source, then restore the package cache's shared
+        // schemas before callers reuse the package revision.
+        for (const flow of existingManifest.spec.flows) {
+          await installRevision({
+            source: join(existing.installedPath, flow.path),
+            version: existing.versionLabel.replaceAll("/", "-"),
+            flowId: flow.id,
+            resolvedRevisionOverride: existing.resolvedRevision,
+            sharedSchemaDir: resolvedSchemaDir,
+            resultProfiles: existingManifest.spec.result_profiles,
+            db,
+            signal: opts.signal,
+          });
+        }
+        await repairPackageRootSchemaCache({
+          sourceSchemaDir: resolvedSchemaDir,
+          cachedSchemaDir: join(existing.installedPath, "schemas"),
+        });
+
+        log.info(
+          {
+            id: existing.id,
+            name,
+            revision: resolved.resolvedRevision.slice(0, 12),
+          },
+          "package revision already installed — reused",
+        );
+
+        return {
+          id: existing.id,
+          name,
+          versionLabel: existing.versionLabel,
+          resolvedRevision: existing.resolvedRevision,
+          reused: true,
+          manifest: manifestOf(existing),
+        };
+      }
+
+      const id = existing?.id ?? randomUUID();
+      // The "local" sentinel resolves to the content-digest label so local
+      // versions are self-identifying (ADR-088: local-<digest12>).
+      const versionLabel =
+        opts.version === "local"
+          ? `local-${resolved.resolvedRevision.slice(0, 12)}`
+          : opts.version;
+
+      const inventory = await collectInventory(
+        resolved.pkgRoot,
+        resolved.manifest,
+      );
+      const manifestJson: PackageInstallManifest = {
+        spec: resolved.manifest,
+        inventory,
+        contentWitness: witness,
+        ...(opts.path !== undefined ? { sourceSubpath: opts.path } : {}),
+      };
+      const manifestDigest = createHash("sha256")
+        .update(JSON.stringify(resolved.manifest))
+        .digest("hex");
+
+      if (!existing) {
+        await db.insert(packageInstalls).values({
+          id,
+          sourceUrl: opts.source,
+          name,
+          versionLabel,
+          resolvedRevision: resolved.resolvedRevision,
+          manifest: manifestJson,
+          manifestDigest,
+          installedPath: cachePath,
+          packageStatus: "Installing",
+          trustStatus: opts.trustStatus ?? "untrusted",
+          sourceLocalPackageId: opts.sourceLocalPackageId ?? null,
+          sourceCommitSha: opts.sourceCommitSha ?? null,
+        });
+      } else {
+        await db
+          .update(packageInstalls)
+          .set({ packageStatus: "Installing", updatedAt: new Date() })
+          .where(eq(packageInstalls.id, id));
+      }
+
+      await publishMaterial({
+        revision:resolved.resolvedRevision,
+        source: resolved.pkgRoot,
+        target: cachePath,
+        digest: witness,
+        hash: hashMaterial,
+      });
+
+      // Pre-install member flow revisions (global, immutable, shared cache) so
+      // per-project attach only wires enablement rows.
+      for (const flow of resolved.manifest.flows) {
         await installRevision({
-          source: join(existing.installedPath, flow.path),
-          version: existing.versionLabel.replaceAll("/", "-"),
+          source: join(cachePath, flow.path),
+          version: resolved.versionLabel,
           flowId: flow.id,
-          resolvedRevisionOverride: existing.resolvedRevision,
-          sharedSchemaDir: resolvedSchemaDir,
-          resultProfiles: existingManifest.spec.result_profiles,
+          resolvedRevisionOverride: resolved.resolvedRevision,
+          sharedSchemaDir: join(cachePath, "schemas"),
+          resultProfiles: resolved.manifest.result_profiles,
           db,
           signal: opts.signal,
         });
       }
-      await repairPackageRootSchemaCache({
-        sourceSchemaDir: resolvedSchemaDir,
-        cachedSchemaDir: join(existing.installedPath, "schemas"),
-      });
+
+      await db
+        .update(packageInstalls)
+        .set({
+          packageStatus: "Installed",
+          manifest: manifestJson,
+          manifestDigest,
+          installedPath: cachePath,
+          updatedAt: new Date(),
+        })
+        .where(eq(packageInstalls.id, id));
+
+      // ADR-106: platform agents ship at the package ROOT (`maister-agents/`) —
+      // register them AFTER the member flow installs, keyed by package name.
+      // Best-effort: a broken agent file is reported in the summary, never fails
+      // the surrounding install (a later resync re-projects the catalog anyway).
+      try {
+        const { registerPackageAgents, resyncAgents } =
+          await import("@/lib/agents/registry");
+        const agentSummary = await registerPackageAgents(id, db);
+
+        if (agentSummary.invalid.length > 0) {
+          log.warn(
+            { id, name, invalid: agentSummary.invalid },
+            "package shipped invalid agent definitions",
+          );
+        }
+
+        // ADR-106: registerPackageAgents wrote THIS install's rows, which may be an
+        // OLDER revision than another already-Installed revision of the same package
+        // name. Re-assert newest-per-name so a re-install of an older revision can't
+        // regress the catalog projection until the next boot/admin resync.
+        await resyncAgents(db);
+      } catch (err) {
+        log.warn(
+          { id, name, err: err instanceof Error ? err.message : String(err) },
+          "agent registration after package install failed",
+        );
+      }
+
+      // ADR-143 D6/D7: project every `evaluationMethods[]` entry into
+      // `evaluation_method_revisions` (INERT parse/hash, activation stays
+      // disabled). Best-effort: an invalid method is projected report-only, never
+      // fails the surrounding install.
+      try {
+        const { registerPackageMethods } =
+          await import("@/lib/evaluations/methods-registry");
+        const methodSummary = await registerPackageMethods(id, db);
+
+        if (methodSummary.invalid.length > 0) {
+          log.warn(
+            { id, name, invalid: methodSummary.invalid },
+            "package shipped invalid evaluation methods",
+          );
+        }
+      } catch (err) {
+        log.warn(
+          { id, name, err: err instanceof Error ? err.message : String(err) },
+          "evaluation method projection after package install failed",
+        );
+      }
 
       log.info(
         {
-          id: existing.id,
+          id,
           name,
+          source: redactUrl(opts.source),
           revision: resolved.resolvedRevision.slice(0, 12),
+          flows: resolved.manifest.flows.length,
+          inventory: {
+            skills: inventory.skills.length,
+            agents: inventory.agents.length,
+          },
         },
-        "package revision already installed — reused",
+        "package revision installed",
       );
 
       return {
-        id: existing.id,
-        name,
-        versionLabel: existing.versionLabel,
-        resolvedRevision: existing.resolvedRevision,
-        reused: true,
-        manifest: manifestOf(existing),
-      };
-    }
-
-    const id = existing?.id ?? randomUUID();
-    // The "local" sentinel resolves to the content-digest label so local
-    // versions are self-identifying (ADR-088: local-<digest12>).
-    const versionLabel =
-      opts.version === "local"
-        ? `local-${resolved.resolvedRevision.slice(0, 12)}`
-        : opts.version;
-    const cachePath = packageCachePath(name, resolved.resolvedRevision);
-    const inventory = await collectInventory(
-      resolved.pkgRoot,
-      resolved.manifest,
-    );
-    const manifestJson: PackageInstallManifest = {
-      spec: resolved.manifest,
-      inventory,
-      ...(opts.path !== undefined ? { sourceSubpath: opts.path } : {}),
-    };
-    const manifestDigest = createHash("sha256")
-      .update(JSON.stringify(resolved.manifest))
-      .digest("hex");
-
-    if (!existing) {
-      await db.insert(packageInstalls).values({
         id,
-        sourceUrl: opts.source,
         name,
         versionLabel,
         resolvedRevision: resolved.resolvedRevision,
+        reused: false,
         manifest: manifestJson,
-        manifestDigest,
-        installedPath: cachePath,
-        packageStatus: "Installing",
-        trustStatus: opts.trustStatus ?? "untrusted",
-        sourceLocalPackageId: opts.sourceLocalPackageId ?? null,
-        sourceCommitSha: opts.sourceCommitSha ?? null,
-      });
-    } else {
-      await db
-        .update(packageInstalls)
-        .set({ packageStatus: "Installing", updatedAt: new Date() })
-        .where(eq(packageInstalls.id, id));
-    }
-
-    await rm(cachePath, { recursive: true, force: true });
-    await cp(resolved.pkgRoot, cachePath, { recursive: true });
-
-    // Pre-install member flow revisions (global, immutable, shared cache) so
-    // per-project attach only wires enablement rows.
-    for (const flow of resolved.manifest.flows) {
-      await installRevision({
-        source: join(cachePath, flow.path),
-        version: resolved.versionLabel,
-        flowId: flow.id,
-        resolvedRevisionOverride: resolved.resolvedRevision,
-        sharedSchemaDir: join(cachePath, "schemas"),
-        resultProfiles: resolved.manifest.result_profiles,
-        db,
-        signal: opts.signal,
-      });
-    }
-
-    await db
-      .update(packageInstalls)
-      .set({
-        packageStatus: "Installed",
-        manifest: manifestJson,
-        manifestDigest,
-        installedPath: cachePath,
-        updatedAt: new Date(),
-      })
-      .where(eq(packageInstalls.id, id));
-
-    // ADR-106: platform agents ship at the package ROOT (`maister-agents/`) —
-    // register them AFTER the member flow installs, keyed by package name.
-    // Best-effort: a broken agent file is reported in the summary, never fails
-    // the surrounding install (a later resync re-projects the catalog anyway).
-    try {
-      const { registerPackageAgents, resyncAgents } =
-        await import("@/lib/agents/registry");
-      const agentSummary = await registerPackageAgents(id, db);
-
-      if (agentSummary.invalid.length > 0) {
-        log.warn(
-          { id, name, invalid: agentSummary.invalid },
-          "package shipped invalid agent definitions",
-        );
-      }
-
-      // ADR-106: registerPackageAgents wrote THIS install's rows, which may be an
-      // OLDER revision than another already-Installed revision of the same package
-      // name. Re-assert newest-per-name so a re-install of an older revision can't
-      // regress the catalog projection until the next boot/admin resync.
-      await resyncAgents(db);
-    } catch (err) {
-      log.warn(
-        { id, name, err: err instanceof Error ? err.message : String(err) },
-        "agent registration after package install failed",
-      );
-    }
-
-    // ADR-143 D6/D7: project every `evaluationMethods[]` entry into
-    // `evaluation_method_revisions` (INERT parse/hash, activation stays
-    // disabled). Best-effort: an invalid method is projected report-only, never
-    // fails the surrounding install.
-    try {
-      const { registerPackageMethods } =
-        await import("@/lib/evaluations/methods-registry");
-      const methodSummary = await registerPackageMethods(id, db);
-
-      if (methodSummary.invalid.length > 0) {
-        log.warn(
-          { id, name, invalid: methodSummary.invalid },
-          "package shipped invalid evaluation methods",
-        );
-      }
-    } catch (err) {
-      log.warn(
-        { id, name, err: err instanceof Error ? err.message : String(err) },
-        "evaluation method projection after package install failed",
-      );
-    }
-
-    log.info(
-      {
-        id,
-        name,
-        source: redactUrl(opts.source),
-        revision: resolved.resolvedRevision.slice(0, 12),
-        flows: resolved.manifest.flows.length,
-        inventory: {
-          skills: inventory.skills.length,
-          agents: inventory.agents.length,
-        },
-      },
-      "package revision installed",
-    );
-
-    return {
-      id,
-      name,
-      versionLabel,
-      resolvedRevision: resolved.resolvedRevision,
-      reused: false,
-      manifest: manifestJson,
-    };
+      };
+    });
   } catch (err) {
     log.warn(
       { source: redactUrl(opts.source), err: (err as Error).message },
@@ -721,6 +774,7 @@ async function wireMembers(
     projectSlug: string;
     workspaceRoot?: string;
     roleRefs?: readonly string[];
+    capabilityRefIds?: CapabilityRefIdsInput;
     install: any;
     readinessByRef?: ReadinessByRef;
     signal?: AbortSignal;
@@ -740,6 +794,7 @@ async function wireMembers(
         flowId: flow.id,
         workspaceRoot: opts.workspaceRoot,
         roleRefs: opts.roleRefs,
+        capabilityRefIds: opts.capabilityRefIds,
         resolvedRevisionOverride: opts.install.resolvedRevision,
         sharedSchemaDir: join(opts.install.installedPath, "schemas"),
         resultProfiles: manifest.spec.result_profiles,
@@ -757,6 +812,7 @@ async function wireMembers(
       source: pathToFileURL(join(opts.install.installedPath, cap.path)).href,
       version: opts.install.versionLabel.replaceAll("/", "-"),
       capabilityRefId: cap.id,
+      trustStatusOverride: opts.install.trustStatus,
       projectId: opts.projectId,
       resolvedRevisionOverride: opts.install.resolvedRevision,
       db: tx,
@@ -808,7 +864,19 @@ async function runPendingCapabilitySetups(
 
   for (const row of rows) {
     if (row.setupStatus === "pending") {
-      await runCapabilityRevisionSetup({ importRowId: row.id, db, signal });
+      const outcome = await runCapabilityRevisionSetup({
+        importRowId: row.id,
+        db,
+        signal,
+      });
+      if (outcome.setupStatus === "failed")
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          "Package capability setup failed",
+          {
+            details: { reason: "setup_failed", memberRef: row.capabilityRefId },
+          },
+        );
     }
   }
 }
@@ -823,16 +891,52 @@ export type AttachResult = {
 // Crash windows: install-done/attach-uncommitted → orphan install (GC);
 // committed/yaml-not-written → caller's write-back heals on the next
 // mutation (see yaml-writeback.ts).
-export async function attachPackage(opts: {
+type AttachPackageOptions = {
   projectId: string;
   projectSlug: string;
   packageInstallId: string;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
+  capabilityRefIds?: CapabilityRefIdsInput;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
-}): Promise<AttachResult | null> {
+};
+
+type RecordAttachment = (
+  tx: DependencyTransaction,
+  attachmentId: string,
+  install: Parameters<typeof recordManualPackage>[3],
+) => Promise<void>;
+
+async function applyManualPackageMutation<T>(
+  db: ReturnType<typeof getDb>,
+  projectId: string,
+  mutate: (tx: DependencyTransaction) => Promise<T>,
+): Promise<T> {
+  return withSetupDatabase(db, () =>
+    db.transaction(async (tx) => {
+      const result = await mutate(tx);
+      if (result) await reconcileDependencyCatalog(tx, projectId);
+      return result;
+    }),
+  );
+}
+
+export function attachPackage(
+  opts: AttachPackageOptions,
+): Promise<AttachResult | null> {
+  return applyManualPackageMutation(opts.db ?? getDb(), opts.projectId, (tx) =>
+    workerAttachPackage({ ...opts, db: tx }, (tx, attachmentId, install) =>
+      recordManualPackage(tx, opts.projectId, attachmentId, install),
+    ),
+  );
+}
+
+export async function workerAttachPackage(
+  opts: AttachPackageOptions,
+  recordActual: RecordAttachment,
+): Promise<AttachResult | null> {
   const db = opts.db ?? getDb();
   const [install] = await db
     .select()
@@ -854,6 +958,7 @@ export async function attachPackage(opts: {
   const readinessByRef = await packageReadinessByRef(install);
 
   const attached: AttachResult = await db.transaction(async (tx: any) => {
+    await lockDependencyProject(tx, opts.projectId);
     // Name pre-guard (ADR-132 §c): a fork's cut shares its upstream's
     // package name, so (projectId, packageName) would collide — and a whole-
     // package fork also collides on flow ids, so the flow guard below would
@@ -884,25 +989,8 @@ export async function attachPackage(opts: {
       );
     }
 
-    // Pre-guard: a manifest flow id colliding with an EXISTING standalone
-    // flow of this project would hit flows_project_ref_uq mid-group —
-    // refuse deterministically instead (CONFLICT, no partial group).
-    const colliding = await tx
-      .select({ id: flows.id, flowRefId: flows.flowRefId })
-      .from(flows)
-      .where(
-        and(
-          eq(flows.projectId, opts.projectId),
-          inArray(flows.flowRefId, flowIds),
-        ),
-      );
-
-    if (colliding.length > 0) {
-      throw new MaisterError(
-        "CONFLICT",
-        `flow id(s) ${colliding.map((c: any) => `"${c.flowRefId}"`).join(", ")} already exist in this project`,
-      );
-    }
+    await assertPackageMemberOwnership(tx, opts.projectId, flowIds);
+    await assertCapabilityMemberOwnership(tx, opts.projectId, manifest.spec.capabilities.map(member => member.id));
 
     const inserted = await tx
       .insert(projectPackageAttachments)
@@ -922,11 +1010,13 @@ export async function attachPackage(opts: {
       );
     }
 
+    await recordActual(tx, inserted[0].id, install);
     const wired = await wireMembers(tx, {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
       workspaceRoot: opts.workspaceRoot,
       roleRefs: opts.roleRefs,
+      capabilityRefIds: opts.capabilityRefIds,
       install,
       readinessByRef,
       signal: opts.signal,
@@ -1069,6 +1159,7 @@ export async function detachPackage(opts: {
     .where(eq(packageInstalls.id, att.packageInstallId));
 
   await db.transaction(async (tx: any) => {
+    await lockDependencyProject(tx, opts.projectId);
     await lockAttachment(tx, att.id, att.packageInstallId);
     const memberFlows = await tx
       .select({ id: flows.id, enabledRevisionId: flows.enabledRevisionId })
@@ -1106,6 +1197,7 @@ export async function detachPackage(opts: {
         { details: { reason: "package_run_pinned", blockers } },
       );
     }
+    await removePackageDeclaration(tx, att.id);
     if (install) await deleteIngestionRecords(tx, opts.projectId, install);
     await tx
       .delete(capabilityImports)
@@ -1119,6 +1211,7 @@ export async function detachPackage(opts: {
     await tx
       .delete(projectPackageAttachments)
       .where(eq(projectPackageAttachments.id, att.id));
+    await reconcileDependencyCatalog(tx, opts.projectId);
   });
 
   log.info(
@@ -1136,7 +1229,9 @@ export async function detachPackage(opts: {
 // Upgrade: flips the group to another installed revision of the SAME package
 // name in one transaction. In-flight runs keep their pinned revisions; flows
 // removed from the new manifest lose their enablement rows.
-export async function upgradeAttachment(opts: {
+type UpgradeAttachmentOptions = {
+  roleRefs?: readonly string[];
+  capabilityRefIds?: CapabilityRefIdsInput;
   projectId: string;
   projectSlug: string;
   attachmentId: string;
@@ -1145,7 +1240,22 @@ export async function upgradeAttachment(opts: {
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
-}): Promise<{ upgraded: boolean } | null> {
+};
+
+export function upgradeAttachment(
+  opts: UpgradeAttachmentOptions,
+): Promise<{ upgraded: boolean } | null> {
+  return applyManualPackageMutation(opts.db ?? getDb(), opts.projectId, (tx) =>
+    workerUpgradeAttachment({ ...opts, db: tx }, (tx, attachmentId, install) =>
+      recordManualPackage(tx, opts.projectId, attachmentId, install),
+    ),
+  );
+}
+
+export async function workerUpgradeAttachment(
+  opts: UpgradeAttachmentOptions,
+  recordActual: RecordAttachment,
+): Promise<{ upgraded: boolean } | null> {
   const db = opts.db ?? getDb();
   const att = await loadAttachment(db, opts.projectId, opts.attachmentId);
 
@@ -1193,7 +1303,16 @@ export async function upgradeAttachment(opts: {
     );
 
   await db.transaction(async (tx: any) => {
+    await lockDependencyProject(tx, opts.projectId);
     await lockAttachment(tx, att.id, att.packageInstallId);
+    await assertPackageMemberOwnership(
+      tx,
+      opts.projectId,
+      manifestOf(next).spec.flows.map((flow) => flow.id),
+      att.packageInstallId,
+    );
+    await assertCapabilityMemberOwnership(tx, opts.projectId, manifestOf(next).spec.capabilities.map(member => member.id), att.packageInstallId);
+    await recordActual(tx, att.id, next);
     await assertAttachedQualificationAgentsPolicy(
       tx,
       opts.projectId,
@@ -1216,6 +1335,8 @@ export async function upgradeAttachment(opts: {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
       workspaceRoot: opts.workspaceRoot,
+      roleRefs: opts.roleRefs,
+      capabilityRefIds: opts.capabilityRefIds,
       install: next,
       readinessByRef,
       signal: opts.signal,
@@ -1332,13 +1453,31 @@ export async function trustPackageRevision(opts: {
     .where(eq(capabilityImports.packageInstallId, install.id));
 
   for (const row of capRows) {
-    if (row.setupStatus === "pending") {
-      await runCapabilityRevisionSetup({
+    if (row.setupStatus === "pending" || row.setupStatus === "failed") {
+      const outcome = await runCapabilityRevisionSetup({
         importRowId: row.id,
         db,
         signal: opts.signal,
       });
+      if (outcome.setupStatus === "failed") {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          "A trusted package capability failed setup.",
+          {
+            details: { reason: "setup_failed", memberRef: row.capabilityRefId },
+          },
+        );
+      }
     }
+  }
+
+  const affectedProjects = new Set<string>(
+    capRows.map((row: { projectId: string }) => row.projectId),
+  );
+  for (const projectId of affectedProjects) {
+    await db.transaction((tx: DependencyTransaction) =>
+      reconcileDependencyCatalog(tx, projectId),
+    );
   }
 
   if (flowIds.length > 0) {
@@ -1355,20 +1494,30 @@ export async function trustPackageRevision(opts: {
     const readyRevisionIds: string[] = [];
 
     for (const rev of revRows) {
-      const setupStatus =
-        rev.setupStatus === "pending"
-          ? await runRevisionSetup({
-              revisionId: rev.id,
-              installedPath: rev.installedPath,
-              db,
-              signal: opts.signal,
-            })
-          : rev.setupStatus;
+      const rerun =
+        rev.setupStatus === "pending" || rev.setupStatus === "failed";
+      const setupStatus = rerun
+        ? await runRevisionSetup({
+            revisionId: rev.id,
+            installedPath: rev.installedPath,
+            db,
+            signal: opts.signal,
+          })
+        : rev.setupStatus;
 
+      if (setupStatus === "failed") {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          "A trusted package Flow failed setup.",
+          {
+            details: { reason: "setup_failed", memberRef: rev.flowRefId },
+          },
+        );
+      }
       if (
         !requiresExplicitNativeFindingsEnablement(rev.manifest) &&
         isReadyFlowRevision({
-          packageStatus: rev.packageStatus,
+          packageStatus: rerun ? "Installed" : rev.packageStatus,
           setupStatus,
         })
       ) {
@@ -1386,6 +1535,9 @@ export async function trustPackageRevision(opts: {
             eq(flows.trustStatus, "trusted"),
             eq(flows.enablementState, "Installed"),
             inArray(flows.enabledRevisionId, readyRevisionIds),
+            sql`NOT EXISTS (SELECT 1 FROM flow_runner_remaps remap
+              WHERE remap.project_id = ${flows.projectId} AND remap.flow_revision_id = ${flows.enabledRevisionId}
+              AND remap.status = 'Pending')`,
           ),
         );
     }

@@ -5,7 +5,7 @@ import type { FlowRevisionExecTrust } from "@/lib/db/schema";
 import type { TrustStatus } from "@/lib/flows/trust";
 
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   cp,
   lstat,
@@ -29,6 +29,10 @@ import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
+import { dependencyCloneFailure } from "@/lib/project-dependencies/failure";
+import { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
+export { localDirectoryContentDigest } from "@/lib/project-dependencies/content-digest";
+import { runMaterialSetup } from "@/lib/project-dependencies/setup";
 import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
 import {
   loadFlowManifest,
@@ -76,7 +80,7 @@ const log = pino({
 });
 
 const CLONE_TIMEOUT_MS = 120_000;
-const SETUP_SH_TIMEOUT_MS = 60_000;
+
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 
 // First 40 hex chars of the local package sha256 — content-addresses all local
@@ -108,7 +112,10 @@ function parseRevisionOverride(
   return parsed.data;
 }
 
-const inFlightInstalls = new Map<string, Promise<InstallResult>>();
+const inFlightInstalls = new WeakMap<
+  InstallFlowPluginArgs,
+  { trust: TrustStatus | undefined; promise: Promise<InstallResult> }
+>();
 
 export type InstallFlowPluginArgs = {
   source: string;
@@ -116,6 +123,7 @@ export type InstallFlowPluginArgs = {
   projectId: string;
   projectSlug: string;
   flowId: string;
+  preparedRevision?: InstalledRevision;
   workspaceRoot?: string;
   roleRefs?: readonly string[];
   // Project capability registry (block + capability_imports), built by the
@@ -555,67 +563,6 @@ export async function ensureSymlink(opts: {
   await symlink(target, linkPath);
 }
 
-const SETUP_DONE_SENTINEL = ".maister-setup-done";
-
-// Low-level setup.sh runner. NEVER call this from the install path — it
-// executes arbitrary package code and must only run once trust is established
-// (see runRevisionSetup). Returns the resulting setup_status; a non-zero exit
-// returns "failed" (the caller marks the revision Failed).
-async function runSetupSh(opts: {
-  target: string;
-  signal?: AbortSignal;
-}): Promise<"not_required" | "done" | "failed"> {
-  const setupPath = join(opts.target, "setup.sh");
-
-  if (!(await pathExists(setupPath))) {
-    log.debug({ target: opts.target }, "no setup.sh, skipping");
-
-    return "not_required";
-  }
-
-  const sentinelPath = join(opts.target, SETUP_DONE_SENTINEL);
-
-  if (await pathExists(sentinelPath)) {
-    log.debug(
-      { target: opts.target, sentinelPath },
-      "setup.sh sentinel present, skipping (once-only semantic)",
-    );
-
-    return "done";
-  }
-
-  log.info({ setupPath }, "running setup.sh");
-
-  try {
-    const { stdout, stderr } = await execFileAsync("bash", [setupPath], {
-      cwd: opts.target,
-      signal: buildExecSignal(opts.signal, SETUP_SH_TIMEOUT_MS),
-      maxBuffer: EXEC_MAX_BUFFER,
-    });
-
-    log.debug({ stdout, stderr, setupPath }, "setup.sh done");
-    await writeFile(sentinelPath, new Date().toISOString(), "utf8");
-
-    return "done";
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException & { stderr?: string };
-
-    if (e.name === "AbortError") {
-      log.info({ setupPath }, "setup.sh aborted by signal");
-
-      throw wrapInstall(`setup.sh aborted for ${setupPath}`, err);
-    }
-
-    log.warn(
-      { err: e.message, stderr: e.stderr, setupPath },
-      "setup.sh non-zero exit; revision marked setup_status=failed",
-    );
-
-    return "failed";
-  }
-}
-
-// Capture the upstream git commit SHA inside an already-cloned directory.
 export async function gitRevParseHead(opts: {
   dir: string;
   source: string;
@@ -686,75 +633,6 @@ export async function isLocalDirectorySource(
   } catch {
     return { kind: "git" };
   }
-}
-
-export async function localDirectoryContentDigest(
-  sourceDir: string,
-): Promise<string> {
-  const root = resolvePath(sourceDir);
-  const entries = await listLocalDirectoryDigestEntries(root);
-  const hash = createHash("sha256");
-
-  for (const entry of entries) {
-    hash.update(entry.kind);
-    hash.update("\0");
-    hash.update(entry.relativePath);
-    hash.update("\0");
-    hash.update(entry.content);
-    hash.update("\0");
-  }
-
-  return hash.digest("hex");
-}
-
-type LocalDirectoryDigestEntry = {
-  kind: "file" | "symlink";
-  relativePath: string;
-  content: string;
-};
-
-async function listLocalDirectoryDigestEntries(
-  root: string,
-): Promise<LocalDirectoryDigestEntry[]> {
-  const entries: LocalDirectoryDigestEntry[] = [];
-
-  async function walk(dir: string): Promise<void> {
-    const dirEntries = await readdir(dir, { withFileTypes: true });
-
-    for (const entry of dirEntries) {
-      const absolutePath = join(dir, entry.name);
-      const relativePath = path
-        .relative(root, absolutePath)
-        .split(path.sep)
-        .join("/");
-
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        entries.push({
-          kind: "symlink",
-          relativePath,
-          content: await readlink(absolutePath),
-        });
-        continue;
-      }
-      if (entry.isFile()) {
-        const content = await readFile(absolutePath);
-
-        entries.push({
-          kind: "file",
-          relativePath,
-          content: content.toString("base64"),
-        });
-      }
-    }
-  }
-
-  await walk(root);
-
-  return entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
 async function loadManifestOrThrow(
@@ -1151,7 +1029,10 @@ export async function runRevisionSetup(opts: {
   signal?: AbortSignal;
 }): Promise<"not_required" | "done" | "failed"> {
   const db = opts.db ?? getDb();
-  const setupStatus = await runSetupSh({
+  const setupStatus = await runMaterialSetup({
+    kind:"flow",
+    db,
+    revision: opts.revisionId,
     target: opts.installedPath,
     signal: opts.signal,
   });
@@ -1160,7 +1041,7 @@ export async function runRevisionSetup(opts: {
     .update(flowRevisions)
     .set({
       setupStatus,
-      ...(setupStatus === "failed" ? { packageStatus: "Failed" } : {}),
+      packageStatus: setupStatus === "failed" ? "Failed" : "Installed",
     })
     .where(eq(flowRevisions.id, opts.revisionId));
 
@@ -1246,18 +1127,20 @@ async function installFlowPluginImpl(
   const workspaceRoot = args.workspaceRoot ?? process.cwd();
   const db = args.db ?? getDb();
 
-  const rev = await installRevision({
-    source,
-    version,
-    flowId,
-    roleRefs,
-    db,
-    signal,
-    capabilityRefIds: args.capabilityRefIds,
-    resolvedRevisionOverride: args.resolvedRevisionOverride,
-    sharedSchemaDir: args.sharedSchemaDir,
-    resultProfiles: args.resultProfiles,
-  });
+  const rev =
+    args.preparedRevision ??
+    (await installRevision({
+      source,
+      version,
+      flowId,
+      roleRefs,
+      db,
+      signal,
+      capabilityRefIds: args.capabilityRefIds,
+      resolvedRevisionOverride: args.resolvedRevisionOverride,
+      sharedSchemaDir: args.sharedSchemaDir,
+      resultProfiles: args.resultProfiles,
+    }));
 
   const trustStatus = trustStatusOverride ?? resolveTrust(source);
 
@@ -1372,25 +1255,17 @@ export async function installFlowPlugin(
 ): Promise<InstallResult> {
   validateBoundary(args);
 
-  // Dedup key includes projectId so concurrent installs of the same flow tag
-  // to DIFFERENT projects each run their own per-project pipeline.
-  const dedupKey = `${args.projectId}::${args.flowId}@${args.version}`;
-  const existing = inFlightInstalls.get(dedupKey);
-
-  if (existing) {
-    log.debug({ dedupKey }, "join in-flight install");
-
-    return existing;
-  }
-
+  // Only identical calls may share file, trust, cancellation and transaction ownership.
+  const existing = inFlightInstalls.get(args);
+  if (existing && existing.trust === trustStatusOverride)
+    return existing.promise;
   const promise = installFlowPluginImpl(args, trustStatusOverride).finally(
     () => {
-      inFlightInstalls.delete(dedupKey);
+      if (inFlightInstalls.get(args)?.promise === promise)
+        inFlightInstalls.delete(args);
     },
   );
-
-  inFlightInstalls.set(dedupKey, promise);
-
+  inFlightInstalls.set(args, { trust: trustStatusOverride, promise });
   return promise;
 }
 
