@@ -260,6 +260,7 @@ function render(
       createElement(FlowRunCenter, {
         result: buildFlowRunResultDto(input(over)),
         labels: LABELS,
+        interruptControl: createElement("button", {}, "Interrupt active step"),
         locale,
         graphView: createElement(
           "div",
@@ -272,6 +273,17 @@ function render(
 }
 
 describe("FlowRunCenter", () => {
+  it("offers the interrupt only for the selected Run cursor", () => {
+    query = new URLSearchParams("node=implement");
+    expect(render()).toContain("Interrupt active step");
+    query = new URLSearchParams("node=review");
+    expect(render()).not.toContain("Interrupt active step");
+    query = new URLSearchParams("node=implement");
+    expect(
+      render({ run: { ...input().run, currentStepId: "missing" } }),
+    ).not.toContain("Interrupt active step");
+  });
+
   it("defaults to the current node", () => {
     query = new URLSearchParams();
     const result = buildFlowRunResultDto(input());

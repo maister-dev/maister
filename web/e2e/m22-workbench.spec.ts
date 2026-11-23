@@ -141,6 +141,43 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
   ).toBeVisible();
 });
 
+test("current-step help and interrupt belong to the selected step", async ({
+  page,
+}) => {
+  const fx = loadM22Fixture();
+  await page.goto(`/runs/${fx.runId}?node=${fx.succeededNode}`);
+  const shell = page.locator('[data-testid="run-shell"]:visible');
+  const selected = shell.getByTestId("flow-run-selected-node");
+  const action = selected.getByRole("button", { name: "Stop current step" });
+  await expect(action).toHaveCount(0);
+  await shell
+    .getByTestId("flow-run-node-link")
+    .filter({ hasText: "Implement" })
+    .click();
+  await expect(action).toBeVisible();
+  const help = selected.getByRole("button", {
+    name: "About stopping the current step",
+  });
+  let posts = 0;
+  await page.route(`**/api/runs/${fx.runId}/node-interrupt`, async (route) => {
+    posts++;
+    expect(route.request().postDataJSON()).toEqual({});
+    await route.fulfill({
+      status: 409,
+      json: { code: "CONFLICT", message: "changed" },
+    });
+  });
+  await help.focus();
+  await help.press("Enter");
+  await expect(page.getByRole("dialog")).toContainText(/only the current/i);
+  await page.keyboard.press("Escape");
+  await expect(help).toBeFocused();
+  expect(posts).toBe(0);
+  await action.click();
+  await expect(selected.getByRole("alert")).toBeVisible();
+  expect(posts).toBe(1);
+});
+
 test("run shell inspector toggles and workbench exposes evidence and timeline tabs", async ({
   page,
 }) => {
@@ -470,6 +507,16 @@ test("a viewer project-member is denied the repo file route (member-gate)", asyn
 
   try {
     await loginAs(page, fx.viewerEmail, fx.viewerPassword);
+
+    await page.goto(`/runs/${fx.runId}`);
+    const shell = page.locator('[data-testid="run-shell"]:visible');
+    const selected = shell.getByTestId("flow-run-selected-node");
+    await expect(
+      selected.getByRole("button", { name: "Stop current step" }),
+    ).toBeDisabled();
+    await expect(
+      selected.getByRole("button", { name: "About stopping the current step" }),
+    ).toBeEnabled();
 
     // readRepoFiles requires `member`; a viewer project member is below it → 403
     // (the admin/owner, exercised by the other tests, is NOT denied).

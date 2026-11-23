@@ -411,12 +411,14 @@ export function FlowRunCenter({
   labels,
   locale,
   graphView,
+  interruptControl,
   restartTarget,
 }: {
   result: FlowRunResultDto;
   labels: FlowRunCenterLabels;
   locale: string;
   graphView?: ReactNode;
+  interruptControl?: ReactNode;
   restartTarget?: {
     id: string;
     nodeId: string;
@@ -531,11 +533,16 @@ export function FlowRunCenter({
                     {selected.displayLabel}
                   </h3>
                 </div>
-                {selected.current ? (
-                  <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-amber">
-                    {labels.currentNode}
-                  </span>
-                ) : null}
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                  {selected.current ? (
+                    <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-amber">
+                      {labels.currentNode}
+                    </span>
+                  ) : null}
+                  {selected.id === result.run.currentStepId
+                    ? interruptControl
+                    : null}
+                </div>
                 {restartTarget?.nodeId === selected.id ? (
                   <RunRecoverActions
                     canRecover

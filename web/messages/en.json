@@ -3667,7 +3667,7 @@
     "targetLabel": "Target node",
     "targetRecommended": "{node} (recommended)",
     "default": "default",
-    "interruptControlTitle": "Current step controls",
+    "interruptHelpLabel": "About stopping the current step",
     "interruptNode": "Stop current step",
     "interruptNodeHelp": "Stops only the current Flow step. The run and workspace stay available so you can choose how to continue."
   },

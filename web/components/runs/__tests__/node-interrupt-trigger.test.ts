@@ -27,6 +27,7 @@ describe("NodeInterruptTrigger", () => {
     expect(html).toContain("nodeInterrupt.interruptNode");
     expect(html).toContain("nodeInterrupt.interruptNodeHelp");
     expect(html).toContain("aria-describedby=");
+    expect(html).toContain('aria-label="nodeInterrupt.interruptHelpLabel"');
   });
 
   it("uses explicit English and Russian copy", () => {

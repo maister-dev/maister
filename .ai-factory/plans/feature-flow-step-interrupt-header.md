@@ -61,8 +61,8 @@ The positive integration fixture pairs a persisted gate permission with its own 
 
 ### Phase 1. Current-step control · depends on S0
 
-- [ ] **1R — RED.** Establish the existing targeted baseline. Add STEP-1 and STEP-2 assertions before moving the trigger, including the rendered position, degraded target, help activation and failed request. Capture the first intended failure for each changed behavior.
-- [ ] **1G — GREEN.** Pass the existing interrupt eligibility and actual Run cursor from `web/app/(app)/runs/[runId]/layout.tsx` into `web/components/runs/flow-run-center.tsx`. Reuse `node-interrupt-trigger.tsx` and the accessible info-button pattern in `context-usage-meter.tsx`. Keep the interrupt and the single degraded placement mutually exclusive. Remove the former bottom section and unused localized heading after checking all callers.
+- [x] **1R — RED.** Establish the existing targeted baseline. Add STEP-1 and STEP-2 assertions before moving the trigger, including the rendered position, degraded target, help activation and failed request. Capture the first intended failure for each changed behavior.
+- [x] **1G — GREEN.** Pass the existing interrupt eligibility and actual Run cursor from `web/app/(app)/runs/[runId]/layout.tsx` into `web/components/runs/flow-run-center.tsx`. Reuse `node-interrupt-trigger.tsx` and the accessible info-button pattern in `context-usage-meter.tsx`. Keep the interrupt and the single degraded placement mutually exclusive. Remove the former bottom section and unused localized heading after checking all callers.
 - [ ] **1F — Refactor and verify.** Keep request handling with the trigger and placement with the Run view. Run the same failed assertions and the parked HITL regression. Check permission, help and request feedback in both locales.
 
 ### Phase 2. Run metadata and checks · depends on S0, integrates with phase 1
@@ -85,3 +85,7 @@ The positive integration fixture pairs a persisted gate permission with its own 
 - Verify test discovery in the web Vitest `unit` and `integration` projects and with Playwright `--list` for each selected authenticated engine. Use the repository Node/pnpm toolchain, isolated test PostgreSQL and the existing seeded E2E harness. Phase acceptance requires the focused tests, `pnpm --filter maister-web typecheck`, `pnpm --filter maister-web test:unit` and `pnpm --filter maister-web test:integration` green. Keep pre-existing failures identifiable from baseline. A failing or unexecuted required check keeps the phase open.
 - At final verification run web lint, `pnpm validate:docs`, `pnpm validate:contracts` and the complete affected browser specs. Check the diff against the API/DB impact decision. Record test counts and RED/GREEN evidence against every acceptance ID, and mark the governing screen/analytics text Implemented only when its checks pass.
 - Local commit checkpoints: specification contract (S0), current-step control (1F), metadata and contextual checks (2F), fullscreen and browser qualification (3F). Each behavior checkpoint includes its regression coverage.
+
+Phase 1 baseline: 15/15 focused tests passed. RED: selected cursor lacked its action, and the independent help trigger was absent (2 failed, 14 passed).
+
+Phase 1 GREEN: 16/16 focused assertions, one additional busy/refresh DOM scenario, and web typecheck passed. Full unit run passed 9,309 tests; the additional DOM scenario ran separately.

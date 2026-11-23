@@ -3667,7 +3667,7 @@
     "targetLabel": "Целевой шаг",
     "targetRecommended": "{node} (рекомендуется)",
     "default": "по умолчанию",
-    "interruptControlTitle": "Управление текущим шагом",
+    "interruptHelpLabel": "Об остановке текущего шага",
     "interruptNode": "Остановить текущий шаг",
     "interruptNodeHelp": "Остановит только текущий шаг Flow. Запуск и рабочая копия сохранятся — затем можно выбрать, как продолжить."
   },

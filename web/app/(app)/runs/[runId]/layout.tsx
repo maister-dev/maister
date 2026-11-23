@@ -524,7 +524,6 @@ export default async function RunDetailLayout({
   const tReadiness = await getTranslations("readiness");
   const tWorkbench = await getTranslations("workbench");
   const tLifecycle = await getTranslations("workbenchLifecycle");
-  const tNodeInterrupt = await getTranslations("nodeInterrupt");
 
   const evidenceLabels: EvidenceGraphLabels = {
     title: tEvidence("title"),
@@ -1521,6 +1520,13 @@ export default async function RunDetailLayout({
     !detail.archived
       ? await loadFailedNodeRestartTarget(getDb(), runId)
       : null;
+  const interruptControl = canInterruptNode ? (
+    <NodeInterruptTrigger canAct={canAct} runId={runId} />
+  ) : null;
+  const currentStepHasHeader =
+    !isOperational &&
+    flowResultDto.graph.kind === "ready" &&
+    flowResultDto.graph.nodes.some((node) => node.id === detail.currentStepId);
   const primaryResult =
     flowGraphData || showAgentCenter ? (
       <section className="min-w-0 max-w-full" data-testid="run-primary-result">
@@ -1545,6 +1551,7 @@ export default async function RunDetailLayout({
                 topology={flowGraphData.topology}
               />
             }
+            interruptControl={interruptControl}
             labels={flowRunCenterLabels}
             locale={locale}
             restartTarget={
@@ -1796,12 +1803,15 @@ export default async function RunDetailLayout({
           />
         }
         outcome={
-          <RunOutcome
-            heading={t("outcomeHeading")}
-            next={nextAction}
-            noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
-            summary={outcomeSummary}
-          />
+          <>
+            <RunOutcome
+              heading={t("outcomeHeading")}
+              next={nextAction}
+              noAction={t(canAct ? "outcomeNoAction" : "outcomeReadOnly")}
+              summary={outcomeSummary}
+            />
+            {currentStepHasHeader ? null : interruptControl}
+          </>
         }
         prHasConflicts={detail.prHasConflicts}
         projectHref={`/projects/${detail.projectSlug}`}
@@ -2328,15 +2338,6 @@ export default async function RunDetailLayout({
               stays for a takeover claim — they are told apart by
               `continuation.claim`, which is non-null only for the ADR-160
               provenance. */}
-          {canInterruptNode ? (
-            <section className="mt-6 rounded-[14px] border border-line bg-ivory p-5">
-              <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
-                {tNodeInterrupt("interruptControlTitle")}
-              </h2>
-              <NodeInterruptTrigger canAct={canAct} runId={detail.runId} />
-            </section>
-          ) : null}
-
           {isHumanWorking && detail.continuation.claim === null ? (
             <section
               className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5"
