@@ -180,6 +180,14 @@ incarnation and settings digest. Closed preparations that never bound a Run remo
 only a verified owned capture; a bound Run retains its assets for its existing
 lifecycle owner. Partial or changed captures remain fail-closed for diagnosis.
 
+For a materialized Flow Run with a versioned package inventory, the first
+dispatch compares the Run's capability snapshot with the accepted intent and
+verifies the checkout receipt. A later package attachment or adoption applies
+to future launches. The original package grant, independent project capability
+records, MCP bindings and standalone import trust remain current-authority
+checks. An older intent without the bound authority digest uses its original
+full catalog and content checks.
+
 Task-launch digest and capture readers normalize filesystem failures to typed
 preconditions: `launch_flow_assets_changed`, `launch_capabilities_changed` or
 `launch_agent_package_changed`. The pinned/captured agent-definition reader uses

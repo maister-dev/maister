@@ -2,14 +2,25 @@ import type { TaskLaunchReceipt } from "@/lib/tasks/launch-types";
 import type { Db } from "@/lib/execution-host/db";
 
 import { randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { eq, inArray, sql } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 
 import {
   flows,
+  capabilityRecords,
+  projectMcpBindings,
   flowRevisions,
   tasks,
   taskLaunchIntents,
@@ -60,6 +71,12 @@ import {
   launchRunStaged,
   launchAcceptedTaskRun,
 } from "@/lib/services/runs";
+import {
+  attachPackage,
+  installPackageRevision,
+  upgradeAttachment,
+} from "@/lib/packages/attach";
+import { prepareTaskLaunchFirstDispatch } from "@/lib/tasks/launch-first-dispatch";
 import { taskLaunchReceipt } from "@/lib/tasks/launch-receipt";
 import {
   seedAgentDefinition,
@@ -2141,4 +2158,144 @@ it("LA04 freezes the actual revision manifest between preview, acceptance and ru
         .where(eq(taskLaunchIntents.id, accepted.intentId))
     )[0].state,
   ).toBe("queued");
+});
+
+it("CAP-03 dispatches the same materialized Run after an attachment and an adoption while preserving independent authority", async () => {
+  vi.stubEnv("MAISTER_WORKTREES_ROOT", `${root}/worktrees`);
+  vi.stubEnv("MAISTER_RUNTIME_ROOT", `${root}/runtime`);
+  const db = database.db;
+  const project = {
+    db,
+    projectId: fixture.projectId,
+    projectSlug: fixture.projectId,
+    workspaceRoot: root,
+  };
+
+  async function install(name: string, version: string) {
+    const source = path.join(root, name + "-" + version);
+    const skill = path.join(source, "bundle", "skills", name);
+
+    await mkdir(skill, { recursive: true });
+    await writeFile(path.join(skill, "SKILL.md"), name + " " + version);
+    await writeFile(
+      path.join(source, "maister-package.yaml"),
+      `schemaVersion: 1\nname: ${name}\ndelivery: {version: 1}\ncapabilities: [{id: ${name}-lib, path: bundle}]\n`,
+    );
+
+    return installPackageRevision({
+      source,
+      version,
+      trustStatus: "trusted",
+      db,
+    });
+  }
+  const home = vi.spyOn(os, "homedir").mockReturnValue(root);
+
+  onTestFinished(() => {
+    home.mockRestore();
+    vi.unstubAllEnvs();
+  });
+  const [target] = await db
+    .insert(capabilityRecords)
+    .values({
+      id: randomUUID(),
+      projectId: fixture.projectId,
+      capabilityRefId: "issue-list",
+      kind: "mcp",
+      label: "Issue list",
+      source: "project",
+      agents: ["codex"],
+      material: { transport: "http", url: "https://issues.example.org/mcp" },
+    })
+    .returning();
+  const [binding] = await db
+    .insert(projectMcpBindings)
+    .values({
+      id: randomUUID(),
+      projectId: fixture.projectId,
+      refId: target.capabilityRefId,
+      targetKind: "project",
+      targetId: target.id,
+    })
+    .returning();
+  const original = await install("selected-library", "v1");
+  const attachment = await attachPackage({
+    ...project,
+    packageInstallId: original.id,
+  });
+  const row = await task();
+  const accepted = await acceptInteractiveTaskLaunch(
+    db,
+    await interactiveTaskLaunchPrincipal(),
+    {
+      taskId: row.id,
+      expectedTaskRevision: row.revision,
+      expectedSettingsToken: await taskLaunchSettingsToken(db, row.id),
+      autoPromote: false,
+    },
+    randomUUID(),
+  );
+  const bound = await prepareTaskLaunchIntent(db, accepted.intentId);
+
+  expect(bound.state).toBe("run_bound");
+  const runId = bound.runId!;
+  const read = async () =>
+    (await db.select().from(runs).where(eq(runs.id, runId)))[0];
+  const frozen = (await read()).resolvedCapabilitySet;
+
+  expect(frozen?.delivery?.packages).toContainEqual(
+    expect.objectContaining({
+      installId: original.id,
+      skills: ["selected-library"],
+    }),
+  );
+
+  const added = await install("later-library", "v1");
+
+  await attachPackage({ ...project, packageInstallId: added.id });
+  const replacement = await install("selected-library", "v2");
+
+  await upgradeAttachment({
+    ...project,
+    attachmentId: attachment!.attachmentId,
+    packageInstallId: replacement.id,
+  });
+  await db
+    .update(projectMcpBindings)
+    .set({ enabled: false })
+    .where(eq(projectMcpBindings.id, binding.id));
+  await expect(prepareTaskLaunchFirstDispatch(db, runId)).rejects.toMatchObject(
+    { details: { reason: "launch_capabilities_changed" } },
+  );
+  await db
+    .update(projectMcpBindings)
+    .set({ enabled: true })
+    .where(eq(projectMcpBindings.id, binding.id));
+  await db
+    .update(capabilityRecords)
+    .set({
+      material: { ...target.material, url: "https://changed.example.org/mcp" },
+    })
+    .where(eq(capabilityRecords.id, target.id));
+  await expect(prepareTaskLaunchFirstDispatch(db, runId)).rejects.toMatchObject(
+    { details: { reason: "launch_capabilities_changed" } },
+  );
+  await db
+    .update(capabilityRecords)
+    .set({ material: target.material })
+    .where(eq(capabilityRecords.id, target.id));
+  await dispatchBoundTaskLaunchIntent(db, accepted.intentId);
+  const [decision] = await db
+    .select()
+    .from(taskLaunchIntents)
+    .where(eq(taskLaunchIntents.id, accepted.intentId));
+
+  expect({
+    committed: !!decision.dispatchCommittedAt,
+    reason: decision.reason,
+  }).toEqual({ committed: true, reason: null });
+  await expect
+    .poll(async () => (await read()).status, { timeout: 10_000 })
+    .toBe("Review");
+  expect((await read()).resolvedCapabilitySet).toEqual(frozen);
 });

@@ -253,6 +253,7 @@ export type TaskLaunchSettingsV2Snapshot = Omit<
     autonomousCompletionGrant?: CompletionGrant;
     resolvedCapabilitySet: ResolvedCapabilitySet | null;
     capabilityResolutionDigest: string;
+    boundCapabilityAuthorityDigest?: string;
     brainContext?: boolean | null;
     packageVersions?: Readonly<Record<string, "keep" | "try_once">>;
     capabilityBundles?: ReadonlyArray<
