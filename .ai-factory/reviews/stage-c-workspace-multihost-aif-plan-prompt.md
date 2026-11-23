@@ -53,15 +53,16 @@ Read:
 - actual source, routes/actions/jobs, tests, Drizzle schema, migrations,
   journal/snapshots, OpenAPI/AsyncAPI, system analytics and deployment files.
 
-A/B stabilization is a separately executable prerequisite. Revalidate R01–R17
-against the current checkout and require closure or concrete counterevidence
-before Stage C production implementation. Do not hide A/B bugs inside a large
-new feature phase or assume checked boxes prove acceptance.
+A/B stabilization has its own release candidate. Revalidate R01–R17 and
+require S5.4/C11 before Stage C rollout to a deployed instance. Continue
+Stage C implementation, migration tests on isolated stores and browser
+qualification locally while that release gate is open.
 
 Naming:
 - Stage B B2 was canonical manager projections/browser SSE, not Workspace/Git.
 - Stage C ownership cut must pass on one host before activating two-host placement.
-- Stage D delivers trusted, easy enrollment and connectivity for physical hosts.
+- Stage D delivers authenticated enrollment and outbound connectivity for
+  developer hosts outside the trusted network.
   Include its contracts in the architecture now. Schedule its implementation separately.
 
 Target architecture and boundaries
@@ -354,19 +355,24 @@ G1: Ownership cut works on one host.
 - Post-run Git/GC works after execution assignment release.
 - Duplicate commands and lost ACKs do not repeat side effects or lose ownership.
 
-G2: Two isolated local hosts work after G1.
+G2: Two isolated supervisors work on one development machine after local G1.
 - Pin one board Run to B while A continues to accept other work. Capture the
   command/process owner for a representative feature build on B, resource
   accounting there and its result in Web. Disconnect B after command acceptance,
   reconnect it and verify one effect. A pinned Run must never build on A by accident.
-- Separate roots and SQLite identity/outbox stores; no shared repository/runtime
-  filesystem and no web access to either private root.
+- Use separate network namespaces, process identities, volume mounts and
+  SQLite identity/outbox stores. Web and the peer supervisor cannot access
+  either host's private repository/runtime files directly.
 - Capability/capacity placement and shared-worktree affinity choose legal hosts.
 - Concurrent admissions cannot exceed capacity or create two workspace writers.
 - Drain, stale heartbeat, partition, host restart and web restart behave as specified.
 - Heartbeat timeout keeps the original writer claim. Late ACKs and old epochs cannot mutate current state or repeat effects.
 - No cross-host ACP resume claim; recovery uses explicit new-attempt boundaries.
 - Re-run G1 and A/B durability/deferred-release tests without regression.
+
+Repeat G2 later on two physical machines on the trusted network. Exercise the
+real service deployment, network path, independent machine reboot and durable
+reconnection. Report physical-host support only after that evidence.
 
 Future acceptance (design now, run in the corresponding delivery stage):
 - Remote developer host: Web and the existing supervisor run on A. A developer

@@ -1,6 +1,6 @@
 # Run board tasks on a selected supervisor
 
-Branch `feature/stage-c-selected-supervisor` · Base `22df665aa` on local `master` · 2026-11-23 · Full-mode implementation plan. C0 specification and baseline work is in progress. The A/B production prerequisite is open.
+Branch `feature/stage-c-selected-supervisor` · Base `22df665aa` on local `master` · 2026-11-23 · Full-mode implementation plan. C0 is specified. Local implementation and A/B release qualification can proceed independently.
 
 ## Settings
 
@@ -16,7 +16,7 @@ Web currently resolves one global supervisor URL. The registrar can retire its p
 
 Normal Flow launch creates a worktree in `web/lib/services/runs.ts` before placement. Scratch creation in `web/lib/scratch-runs/service.ts` and agent launch in `web/lib/agents/launch.ts` have distinct paths. Operational agents already have fenced preparation, generation and canonical resource identity. Supervisor adoption validates the manager-supplied real Git paths. Web runs bash for CLI/gates, resolves the MCP executable against its own installation, and still reads Git for review. The isolation branch reviewed at `4554e33ae` has scoped workload dispatch and local Git hardening. Its diagnostic/requirement-probe support and Linux isolation receipts qualify those paths only. Recheck divergence and port the relevant contracts with their tests.
 
-Recorded A/B progress is **44/45**. S5.2/CI-R9d has a historical hosted receipt. S5.3 has local Linux distinct-user browser and binary transport evidence. The corrected 53-case Darwin isolation inventory passes locally. S5.4/C11 needs same-revision hosted release evidence before Stage C migration and production implementation. [Stabilization status](stage-ab-stabilization.md#s5--isolated-lifecycle-qualification-and-final-consistency) · [Isolation qualification](s53a-linux-isolation.md) · [Original findings](../reviews/stage-ab-execution-host-audit-2026-09-05.md)
+Recorded A/B progress is **44/45**. S5.2/CI-R9d has a historical hosted receipt. S5.3 has local Linux distinct-user browser and binary transport evidence. The corrected 53-case Darwin isolation inventory passes locally. S5.4/C11 requires same-revision hosted release evidence. This gates Stage C rollout to a deployed instance. Local implementation, migrations on disposable or restored test stores, and G1/G2 browser qualification can proceed now. Retain the A/B release candidate and its evidence independently of Stage C branch work. [Stabilization status](stage-ab-stabilization.md#s5--isolated-lifecycle-qualification-and-final-consistency) · [Isolation qualification](s53a-linux-isolation.md) · [Original findings](../reviews/stage-ab-execution-host-audit-2026-09-05.md)
 
 The production Chrome smoke accepts `--chrome --second-supervisor` after the
 image tag. It runs two Supervisor processes on ports 7777 and 7778 with
@@ -25,6 +25,18 @@ While both were healthy, the board admitted the Run on configured endpoint A.
 The admin page and active assignment showed only A. A retained seven command
 receipts for that Run and B retained zero. This establishes the singleton
 placement baseline before T12. The probe uses a resumable ACP fixture.
+In the extended Chrome probe, B ran in a second container with its own
+network namespace and private filesystem. Disconnecting B's network
+left A reachable. Reconnecting B returned the same host and boot IDs.
+Evidence: `/private/tmp/maister-stage-c-isolated-endpoints-chrome.log`.
+
+Use one production Web and two real supervisor processes on the development
+machine for G2. Give each supervisor a separate network namespace, store,
+process identity and private repository/workspace/runtime volumes. Web reaches
+each over its own configured HTTP endpoint. Explicitly deny private volume
+access from Web and the other supervisor. A per-endpoint network fault must
+leave the other peer and Web available. Use the same addressed routing and
+workspace protocol that the trusted two-machine configuration will use.
 
 | A/B findings | Release evidence to attach at C0 |
 |---|---|
@@ -62,7 +74,7 @@ Transport locates a supervisor. The supervisor's execution backend creates workl
 
 **Normal sequence.** Web validates the selection, commits the reservation and frozen input, dispatches materialization to B, applies B's observed SHA/handle, then releases the agent or check to run. E2E evidence includes the host-reported execution identity. Web streams progress to the board and uses the saved workspace owner for review even after assignment release.
 
-**Failure sequence.** B accepts a command and loses its connection. Web records uncertain delivery and holds exclusive ownership. On reconnect B proves its identity/incarnation and replays the receipt and event cursor. If B restarted, inventory and the persisted journal determine completed, interrupted or indeterminate state. A later epoch on A cannot by itself stop B. Require confirmed quiescence or an enforced expiring host-side fence before admitting another writer. Recovery of preserved content starts a new attempt with verified input.
+**Failure sequence.** B accepts a command and loses its connection. Web records uncertain delivery and holds exclusive ownership. On reconnect B proves its identity/incarnation and replays the receipt and event cursor. If B restarted, inventory and the persisted journal determine completed, interrupted or indeterminate state. Require positive quiescence from the owning host before admitting another writer. Recovery of preserved content starts a new attempt with verified input.
 
 ```mermaid
 sequenceDiagram
@@ -188,8 +200,8 @@ Log structured IDs, generation, outcome, measured size/duration and typed refusa
 
 - [x] **T01 · Platform / prerequisites.** Reconcile R01–R17 and the two remaining stabilization gates above against current release evidence. Establish baseline for local launch, resume, cancellation and review. Produce a per-function ownership inventory of the paths named in the planning request, including scripts, route/actions, scheduler, package discovery and human takeover. For each record authority, caller, effect, desired owner and compatibility read path. Build the distinct-user fixture. Prove the OS denies a direct private-root read by Web and permits the supervisor. Capture the current board-to-build failure under that fixture for the later G1 test. Record bounded denial reasons.
 - [x] **T02 · Architecture / contracts (after T01 inventory).** Deliver the C0 specification baseline above. In the owning analytics document for each requirement, record preconditions, transition, authority, persisted effects, refusal and repair for each reachable mode. Cross-link its API operation/event, DB invariant and primary test. Close open decisions on endpoint names, ownership tags, version negotiation and bounds. Check examples against current routes and consumers. Assign ADR and migration numbers against the merge tip. Exit C0 when every row is specified and its failing behavior can be exercised.
-- [ ] **T03 · Web storage / PostgreSQL (after T02 and A/B production gate).** Implement the G1 PostgreSQL expansion and compatibility cutover specified above. Use a populated pre-upgrade fixture containing a running task, retired host, retained Review, ambiguous legacy owner and queued intent. Check constraints, recoverability, actionable refusals and preservation of immutable bytes. T12 owns the second-host constraint replacement.
-- [ ] **T03S · Host storage / SQLite (after T02 and A/B production gate).** Implement and exercise the SQLite upgrade contract against real files, including interrupted migration and a newer unsupported store. Confirm fresh and upgraded stores accept the same protocol and recover the same command outcome. **Checkpoint 1** requires T03 and T03S plus the C0 specifications and independent topology fixture.
+- [ ] **T03 · Web storage / PostgreSQL (after T02).** Implement the G1 PostgreSQL expansion and compatibility cutover specified above. Use a populated pre-upgrade fixture containing a running task, retired host, retained Review, ambiguous legacy owner and queued intent. Check constraints, recoverability, actionable refusals and preservation of immutable bytes. T12 owns the second-host constraint replacement.
+- [ ] **T03S · Host storage / SQLite (after T02).** Implement and exercise the SQLite upgrade contract against real files, including interrupted migration and a newer unsupported store. Confirm fresh and upgraded stores accept the same protocol and recover the same command outcome. **Checkpoint 1** requires T03 and T03S plus the C0 specifications and independent topology fixture.
 
 ### C1–C2 — host owns the work
 
@@ -199,16 +211,16 @@ Log structured IDs, generation, outcome, measured size/duration and typed refusa
 - [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
-### C3–C4 — review, board and single-host release
+### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 - [ ] **T10 · Board / explicit selection (after T05, using the T02 launch contract).** Extend `tasks/launch-{schema,authority,dispatch-claim,capacity,receipt}.ts`, task-launch intent endpoints and `components/board/use-task-launch-intent.ts`. Add project default GET/PATCH with `editSettings`, preference CAS and current operator eligibility checks. Validate overrides against project/user grants. Include selection and provenance in intent digest and persisted queue/approval/retry payload. Display requested versus actual host and typed wait reason via existing SSE; extend the admin execution-host screen and EN/RU accessibly. Exercise allowed and forbidden hosts, stale picker, a queued retry after project default changes, and permitted default-only launch. Log actor, authorized host ID and outcome.
-- [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** ship one selected-host end-to-end path.
+- [ ] **T11 · Delivery / G1 (after T07, T09 and T10).** Exercise T04 addressed dispatch from board through post-Run operations. Document same-host upgrade, drain, backup of manager plus host stores and rollback compatibility. Wire config in service env samples/systemd, Dockerfile and supported Compose overlays, keeping Postgres-only compose usable. Qualify G1 below using real Postgres/Git, two OS identities and the production browser fixture. Correct any remaining manager path access found by the deny test. Log build/agent owner, host/epoch and resource use. **Checkpoint 3:** one selected-host end-to-end path works locally.
 
 ### C5–C7 — separately shippable two-host pilot
 
-- [ ] **T12 · Registry / transport (after G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.
+- [ ] **T12 · Registry / transport (after local G1).** Extend T04 to two configured endpoints. Activate the G2 PostgreSQL constraint change after draining incompatible registrars. Bind each descriptor to its observed key and distinguish restart from replacement. Update registrar, resolver, client, default transport, event-plane activation, admin status and recovery. Keep one legacy default and require compatible Web writers before enabling a second entry. Start independent event consumers/cursors/ACKs per host. Hold a projector after ingest and confirm its host still receives the ACK. Then prove identical command IDs or cursors cannot cross identities and an unreachable A leaves B usable. Log per-host negotiation, lag, drain and last seen.
 - [ ] **T13 · Scheduler / quiescence (after T12).** Reserve host capacity atomically in addition to the global limit; enforce adapter/project/host eligibility and shared-root affinity. Integrate pressure, bounded retries and stale-owner fencing with the existing scheduler. Interrupt during acceptance, heartbeat timeout and cancellation; prove two distinct launches cannot exceed a single slot, old host effects cannot race a new owner, and pinned work never silently relocates. Expose waiting reason and operator recovery. Log reservation, last observed health and quiescence witness.
 - [ ] **T14 · Pilot / G2 (after T12–13).** Qualify the two-host matrix below and reconcile actual wire/schema versions, admin guide, metrics, test topology, deployment and error taxonomy. Validate migration/journal against latest master and reject rollback to a singleton writer while a second host owns work. Document shutdown/drain and coordinated restore. Release the pilot only for configurations matching its evidence. **Checkpoint 4:** two-host placement and recovery.
 
@@ -217,7 +229,7 @@ Log structured IDs, generation, outcome, measured size/duration and typed refusa
 | Tasks | Reviewable commit intent | Release decision |
 |---|---|---|
 | C0 design and baseline evidence | `docs(execution-host): specify selected supervisor ownership` | Record independently reviewable design and evidence while the A/B production prerequisite is open |
-| T01–T03, T03S | `feat(execution-host): persist host-bound workspace reservations` | Land compatible contracts, migration and adoption fixtures after prerequisite qualification |
+| T01–T03, T03S | `feat(execution-host): persist host-bound workspace reservations` | Verify both migration and adoption contracts locally before proceeding |
 | T04–T07 including T05H | `feat(supervisor): prepare pinned workspaces and execute project checks` | Exercise through the existing single-host path under separate OS identities |
 | T08–11 | `feat(board): run and review work on the selected supervisor` | G1 evidence before enabling selected-host operation |
 | T12–14 | `feat(execution-host): qualify placement across trusted local supervisors` | Opt-in G2 pilot with two independent stores and upgrade/rollback evidence |
@@ -248,13 +260,30 @@ The analytics column names the owning document in `docs/system-analytics/`. The 
 
 Use existing suites such as `migration-0130-execution-hosts.integration.test.ts` as migration patterns, `launch-intent.integration.test.ts` for intake, `preparation-ownership.integration.test.ts` for ownership races, `command-receipts.integration.test.ts` for replay, and `sync-target.integration.test.ts` for publication. Run deterministic failure injection at the owning transaction/process boundary. Reuse the G1/G2 browser paths for end-to-end wiring. Add a unit test only for a pure transformation with a distinct failure that these integration scenarios cannot isolate. A parser pass alone cannot qualify a side effect.
 
-### Release evidence
+### Local engineering acceptance
 
 **G1.** Web lacks OS access to repository, worktree and runtime roots. From the board choose the configured supervisor, fetch a pinned private test repository from an empty cache, execute an ACP edit and project check, then verify the host-produced diff and structured result through Web. Repeat at a new upstream SHA. Exercise HITL, cancel, checkpoint/restore, post-Review promotion and archive/GC. Verify mandatory type-check and actual build child on the selected host for a representative Next task. Keep approvals/effects on disposable test resources. Use the T05H lost-ACK evidence for the matching build and protocol revision. Scope qualification by OS, Node version, adapter and whether the adapter was real or a fixture.
 
 **G2.** Two trusted endpoints, independent SQLite identities and physically disjoint repository/runtime storage, one panel, populated history. Pin project/Run to B; keep independent work on A. Collect host/boot ID, PID/process group or cgroup and build result on B; verify no build on A for that Run. Disconnect B after its command is accepted. Complete independent work on A while B is offline. Reconnect B and verify one effect and one applied result for the pinned Run. Include the same-revision T12/T13 evidence for simultaneous claims, pressure, drain, stale epoch, process restarts and preservation of dirty work. A test that only inspects an assignment row cannot pass this gate.
 
-At each checkpoint record requirement IDs, exact revision, commands, OS/Node, adapter identity, test counts and RED/GREEN/refactor results. Run the affected package suites and typechecks, `pnpm validate:contracts` and `pnpm validate:docs:all`. For storage changes include real migration, journal and ERD checks. At G1 and G2 run all mandatory Web/supervisor unit and integration lanes, the supported CI matrix, production build and the matching browser topology on the release candidate. G2 also reruns G1 and the A/B durability/deferred-release lanes. A baseline can diagnose a failure. Any failing, skipped required, or unexecuted mandatory check keeps the gate open. Promote spec status to Implemented only for the behaviors and topologies with passing evidence.
+At each checkpoint record requirement IDs, exact revision, commands, OS/Node,
+adapter identity, test counts and RED/GREEN/refactor results. Run the affected
+package suites and typechecks, `pnpm validate:contracts` and
+`pnpm validate:docs:all`. For storage changes include real migration, journal
+and ERD checks. G1/G2 run the production build and matching Chrome topology.
+G2 also reruns G1 and the affected A/B durability/deferred-release lanes.
+An unexecuted required local check keeps that local checkpoint open.
+
+### Release and physical-host evidence
+
+Before rollout require S5.4/C11 and the supported hosted release matrix on the
+candidate. Before declaring support for two physical hosts, run the same G2
+browser scenario on two separate machines on a trusted routable network.
+Exercise the deployed services and actual DNS/firewall/proxy path. Power off
+or reboot B while A completes independent work, then verify B's identity,
+storage and exact result after reconnect. Record each machine's platform,
+build, service identity and topology with the receipt. Stage D separately owns
+outbound authenticated enrollment for laptops and hosts outside that network.
 
 **Contract and deployment checklist.** Update `docs/api/web.openapi.yaml` for board/host reads and selection, `docs/api/supervisor.openapi.yaml` for commands/queries, `docs/api/async/execution-host-events.asyncapi.yaml` and Run SSE contracts for wire changes, `docs/error-taxonomy.md` for reasons. Update DB schema/ERD and Drizzle snapshots/journal, `docs/system-analytics/execution-hosts.md`, execution/workspace/Git analytics, `docs/supervisor.md`, configuration, deployment, operator guides and EN/RU public docs. Document bootstrap in `.env.example`, `deploy/maister.env.example`, `supervisor/.env.sample` and the actual launch units. Test server and local development installs before declaring both supported.
 

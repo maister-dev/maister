@@ -51,6 +51,7 @@ const db = await startMainAndBrainPostgresTestDb({
   databaseName: "s53_split_uid",
 });
 let container: string | undefined;
+let peerContainer: string | undefined;
 let browser: Browser | undefined;
 let networkCreated = false;
 let stage = "provision";
@@ -93,8 +94,13 @@ try {
     uid: string,
     args: string[],
     options: string[] = [],
+    target = appContainer,
   ): Promise<string> =>
-    docker(["exec", "--user", uid, ...options, appContainer, ...args]);
+    docker(["exec", "--user", uid, ...options, target, ...args]);
+  const adapterScript = `#!/bin/sh
+while [ -n "${"$"}MOCK_ACP_S53_START_GATE" ] && [ ! -f "${"$"}MOCK_ACP_S53_START_GATE" ]; do sleep 0.1; done
+exec node /app/supervisor/test/fixtures/mock-acp-adapter-resumable.mjs "$@"
+`;
   await inContainer("0", [
     "sh",
     "-ec",
@@ -105,10 +111,7 @@ try {
     install -d -o 1002 -g 1001 -m 0700 /s53/host /s53/host/home /s53/host/journal
     install -d -o 1001 -g 1001 -m 2770 /s53/shared /s53/shared/worktrees
     cat > /s53/fixture <<'EOF'
-#!/bin/sh
-while [ -n "${"$"}MOCK_ACP_S53_START_GATE" ] && [ ! -f "${"$"}MOCK_ACP_S53_START_GATE" ]; do sleep 0.1; done
-exec node /app/supervisor/test/fixtures/mock-acp-adapter-resumable.mjs "$@"
-EOF
+${adapterScript}EOF
     chmod 0755 /s53/fixture
   `,
   ]);
@@ -202,7 +205,14 @@ EOF
       port,
       user,
       workspaceRoot,
-    }: { root: string; port: number; user: string; workspaceRoot: string },
+      target,
+    }: {
+      root: string;
+      port: number;
+      user: string;
+      workspaceRoot: string;
+      target: string;
+    },
   ): Promise<string> =>
     docker([
       "exec",
@@ -228,26 +238,28 @@ EOF
       "MOCK_ACP_STATE_DIR=" + root + "/journal",
       "--env",
       "MAISTER_HEARTBEAT_INTERVAL_MS=1000",
-      appContainer,
+      target,
       "sh",
       "-ec",
       'umask 002; echo "$$" > "$MAISTER_RUNTIME_ROOT/pid"; exec node --import tsx src/main.ts >> "$MAISTER_RUNTIME_ROOT/boot.log" 2>&1',
     ]);
 
   type HostIdentity = { hostKey: string; bootId: string };
-  const readHost = async (port = 7777): Promise<HostIdentity | null> => {
+  const readHost = async (
+    endpoint = "http://127.0.0.1:7777",
+  ): Promise<HostIdentity | null> => {
     const observed = await inContainer("1001:1001", [
       "node",
       "--input-type=module",
       "-e",
       `try {
-        const result = await fetch("http://127.0.0.1:" + process.argv[1] + "/health", { signal: AbortSignal.timeout(1000) });
+        const result = await fetch(process.argv[1] + "/health", { signal: AbortSignal.timeout(1000) });
         console.log(JSON.stringify(result.ok ? (await result.json()).host : null));
       } catch (error) {
         if (!(error instanceof TypeError) && error.name !== "TimeoutError") throw error;
         console.log("null");
       }`,
-      String(port),
+      endpoint,
     ]);
 
     return JSON.parse(observed) as HostIdentity | null;
@@ -258,13 +270,34 @@ EOF
     port: 7777,
     user: "1002:1001",
     workspaceRoot: "/s53/shared",
+    target: appContainer,
   };
-  const secondary = {
-    root: "/s53/host-b",
-    port: 7778,
-    user: "1003:1001",
-    workspaceRoot: "/s53/host-b/workspaces",
-  };
+  if (useSecondSupervisor) {
+    peerContainer = await docker([
+      "create",
+      "--network",
+      network,
+      "--network-alias",
+      "s53-host-b",
+      "--user",
+      "0",
+      "--entrypoint",
+      "/bin/sleep",
+      image,
+      "infinity",
+    ]);
+    await docker(["start", peerContainer]);
+  }
+  const secondary = peerContainer
+    ? {
+        root: "/s53/host-b",
+        port: 7778,
+        user: "1003:1001",
+        workspaceRoot: "/s53/host-b/workspaces",
+        target: peerContainer,
+      }
+    : null;
+  const peerEndpoint = "http://s53-host-b:7778";
   const gate = primary.root + "/release-adapter";
   await startSupervisor(
     [
@@ -281,59 +314,73 @@ EOF
     "initial supervisor identity",
   );
   let secondHost: HostIdentity | null = null;
-  if (useSecondSupervisor) {
-    await inContainer("0", [
-      "useradd",
-      "-u",
-      "1003",
-      "-g",
-      "1001",
-      "-d",
-      secondary.root + "/home",
-      "-s",
-      "/usr/sbin/nologin",
-      "maister-s53-host-b",
-    ]);
-    await inContainer("0", [
-      "install",
-      "-d",
-      "-o",
-      "1003",
-      "-g",
-      "1001",
-      "-m",
-      "0700",
-      secondary.root,
-      secondary.root + "/home",
-      secondary.root + "/journal",
-      secondary.workspaceRoot,
-    ]);
+  if (secondary) {
+    await inContainer(
+      "0",
+      [
+        "sh",
+        "-ec",
+        `
+      useradd -u 1003 -g 1001 -d /s53/host-b/home -s /usr/sbin/nologin maister-s53-host-b
+      install -d -m 0755 /s53
+      install -d -o 1003 -g 1001 -m 0700 /s53/host-b /s53/host-b/home /s53/host-b/journal /s53/host-b/workspaces
+      cat > /s53/fixture <<'EOF'
+${adapterScript}EOF
+      chmod 0755 /s53/fixture
+    `,
+      ],
+      [],
+      secondary.target,
+    );
     await startSupervisor([], secondary);
     secondHost = await poll(
-      () => readHost(secondary.port),
+      () => readHost(peerEndpoint),
       30_000,
       "second supervisor identity",
     );
     assert.notEqual(secondHost.hostKey, initialHost.hostKey);
     assert.notEqual(secondHost.bootId, initialHost.bootId);
     assert.equal(
-      await inContainer("0", [
-        "sh",
-        "-ec",
-        'ps -o uid= -p "$(cat /s53/host-b/pid)" | tr -d " "',
-      ]),
+      await inContainer(
+        "0",
+        ["sh", "-ec", 'ps -o uid= -p "$(cat /s53/host-b/pid)" | tr -d " "'],
+        [],
+        secondary.target,
+      ),
       "1003",
     );
     await inContainer("1001:1001", [
       "sh",
       "-ec",
-      "test ! -r /s53/host-b/state/state.sqlite && test ! -x /s53/host-b/workspaces",
+      "test ! -e /s53/host-b && test ! -r /s53/host-b/state/state.sqlite",
     ]);
+    await inContainer(
+      secondary.user,
+      [
+        "sh",
+        "-ec",
+        "test -r /s53/host-b/state/state.sqlite && test ! -e /s53/host",
+      ],
+      [],
+      secondary.target,
+    );
+    const aNamespace = await inContainer(primary.user, [
+      "readlink",
+      "/proc/self/ns/net",
+    ]);
+    const bNamespace = await inContainer(
+      secondary.user,
+      ["readlink", "/proc/self/ns/net"],
+      [],
+      secondary.target,
+    );
+    assert.notEqual(aNamespace, bNamespace);
     note("two-supervisors-ready", {
       primary: initialHost,
       secondary: secondHost,
       supervisorUids: [1002, 1003],
       ports: [primary.port, secondary.port],
+      separateNetworkNamespaces: true,
     });
   }
 
@@ -514,7 +561,7 @@ EOF
   await expect(allow).toBeVisible();
   note("board-launch-and-live-permission", { runId });
 
-  if (secondHost) {
+  if (secondHost && secondary) {
     const { rows: active } = await db.pool.query<{ host_key: string }>(
       `select h.host_key from execution_assignments a
        join execution_hosts h on h.id=a.execution_host_id
@@ -526,22 +573,35 @@ EOF
       "select host_key from execution_hosts where retired_at is null",
     );
     assert.deepEqual(registered, [{ host_key: initialHost.hostKey }]);
-    const receiptCount = ({ root, user }: { root: string; user: string }) =>
-      inContainer(user, [
-        "node",
-        "--disable-warning=ExperimentalWarning",
-        "--input-type=module",
-        "-e",
-        `import {DatabaseSync} from "node:sqlite";
+    const receiptCount = ({
+      root,
+      user,
+      target,
+    }: {
+      root: string;
+      user: string;
+      target: string;
+    }) =>
+      inContainer(
+        user,
+        [
+          "node",
+          "--disable-warning=ExperimentalWarning",
+          "--input-type=module",
+          "-e",
+          `import {DatabaseSync} from "node:sqlite";
        const db = new DatabaseSync(process.argv[1] + "/state/state.sqlite", {readOnly:true});
        console.log(db.prepare("select count(*) AS n from command_receipts where run_id=?").get(process.argv[2]).n);`,
-        root,
-        runId,
-      ]);
+          root,
+          runId,
+        ],
+        [],
+        target,
+      );
     const primaryReceipts = Number(await receiptCount(primary));
     assert(primaryReceipts > 0);
     assert.equal(await receiptCount(secondary), "0");
-    assert.deepEqual(await readHost(secondary.port), secondHost);
+    assert.deepEqual(await readHost(peerEndpoint), secondHost);
     const admin = await context.newPage();
     try {
       await admin.goto("/admin/execution-host");
@@ -562,6 +622,26 @@ EOF
       assignedHost: initialHost.hostKey,
       primaryReceipts,
       secondaryReceipts: 0,
+    });
+    await docker(["network", "disconnect", network, secondary.target]);
+    assert.equal(await readHost(peerEndpoint), null);
+    assert.deepEqual(await readHost(), initialHost);
+    await docker([
+      "network",
+      "connect",
+      "--alias",
+      "s53-host-b",
+      network,
+      secondary.target,
+    ]);
+    const reconnected = await poll(
+      () => readHost(peerEndpoint),
+      30_000,
+      "second supervisor reconnect",
+    );
+    assert.deepEqual(reconnected, secondHost);
+    note("independent-supervisor-network-partition", {
+      retainedPeer: secondHost,
     });
   }
   await db.pool.query(
@@ -776,9 +856,17 @@ EOF
     await browser?.close();
   } finally {
     try {
-      if (container) {
-        await docker(["stop", "--time", "2", container]);
-        await docker(["rm", container]);
+      const cleanup = [container, peerContainer].filter(
+        (id): id is string => id !== undefined,
+      );
+      const results = await Promise.allSettled(
+        cleanup.map(async (id) => {
+          await docker(["stop", "--time", "2", id]);
+          await docker(["rm", id]);
+        }),
+      );
+      for (const result of results) {
+        if (result.status === "rejected") throw result.reason;
       }
     } finally {
       try {
