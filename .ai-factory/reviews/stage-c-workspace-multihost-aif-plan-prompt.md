@@ -282,10 +282,10 @@ fairness and atomic capacity reservation. Include concurrent manager workers,
 capacity release, shared workspace affinity, capability loss and drain:
 no new placement while draining; preserve existing permitted work.
 
-Activate explicit assignment lease/renewal/expiry semantics as required for safe
-local multi-host execution. Specify clock assumptions, host self-fencing,
-partitions, late renewal/result, manager restart and prevention of two concurrent
-owners. “Host did not answer” alone does not prove its side effect stopped.
+Pin the Run and its writer claim across stale heartbeat, partitions, and Web
+or Supervisor restart. Before releasing ownership for an explicit retry,
+require positive quiescence from the owning host for the exact assignment epoch
+and its outstanding process and command obligations.
 
 For host loss, define wait/operator/recovery decisions and new-attempt boundaries.
 No cross-host live ACP or mid-turn session resume. Do not auto-migrate a dirty
@@ -312,7 +312,7 @@ additional manual setup. Optional two-host tests use disjoint volumes/identities
 
 Specify bounded structured metrics/logs for materialization/Git/CLI latency and
 bytes, cache hits, orphan workspaces, operation retries/unknown outcomes,
-lease renewal/expiry/stale rejection, host heartbeat age, drain progress,
+quiescence witness, stale rejection, host heartbeat age, drain progress,
 placement decisions/queue age, per-host capacity, GC preservation and failures.
 
 Do not log source/prompt/evidence bodies, secrets or raw private paths.
@@ -364,7 +364,7 @@ G2: Two isolated local hosts work after G1.
 - Capability/capacity placement and shared-worktree affinity choose legal hosts.
 - Concurrent admissions cannot exceed capacity or create two workspace writers.
 - Drain, stale heartbeat, partition, host restart and web restart behave as specified.
-- Lease expiry/late ACK/old epoch cannot mutate current state or repeat effects.
+- Heartbeat timeout keeps the original writer claim. Late ACKs and old epochs cannot mutate current state or repeat effects.
 - No cross-host ACP resume claim; recovery uses explicit new-attempt boundaries.
 - Re-run G1 and A/B durability/deferred-release tests without regression.
 
@@ -388,7 +388,7 @@ Evaluate these dependency-ordered increments:
  C4. Wire explicit board selection and host-addressed dispatch end to end,
      migrate existing single-host data and qualify G1.
  C5. Extend registry, liveness, drain and addressed transport to two local hosts.
- C6. Enforce per-host capacity, affinity and leases.
+ C6. Enforce per-host capacity, affinity and positive quiescence before retry.
  C7. Qualify the local pilot (G2) and document remaining remote delivery work.
 
 Adjust this sequence based on actual dependencies. Keep workstreams and acceptance

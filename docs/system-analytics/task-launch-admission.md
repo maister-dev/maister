@@ -386,29 +386,48 @@ No historic assessment/run receipt is rewritten. Writer floor fences v2 and inte
 
 ## Requested execution host Stage C (Designed)
 
-Add optional `executionHostId` to the task launch request, using the
-existing strict body and generated task-launch schema. The ID comes from
-authorized choices in the task or Flow preview response. The active actor,
-task and project come from the existing scoped admission path. The settings
-token covers the configuration used for the preview. Check current
-`launchRun`, host eligibility and project/source authority on acceptance
-and dispatch.
+Operator-managed descriptors define which host IDs each project may use.
+A project admin with `editSettings` reads and updates its default through
+GET/PATCH `/api/projects/{slug}/settings/execution-host`. The request accepts
+an eligible host ID or null to inherit the instance default. Authenticate and
+authorize before parsing. GET returns a quoted ETag combining the project's
+preference revision and eligibility revision. PATCH compares the exact
+`If-Match` and current eligibility in its write transaction, then increments
+the preference revision. Missing, malformed or stale revision returns
+409 `CONFLICT` with `settings_revision_mismatch`. An ineligible ID returns
+409 `PRECONDITION` with `host_ineligible`. Neither refusal updates settings.
+The panel never receives peer URLs, host keys or transport credentials.
+
+Task and Flow previews expose authorized choices. Bind the settings token
+to the actor, project, task and target revision, current input/settings
+digests, default preference revision, eligibility revision and effective host.
+A new acceptance using a stale token refreshes preview before any write.
+Check current `launchRun`, eligibility and source authority at acceptance and
+again before dispatch.
 
 Independent work resolves explicit selection, then project default, then
-instance default. Shared children inherit the root's host. Save the requested
-ID, effective ID and provenance on first acceptance. Include an explicit ID
-in the request digest. Replay with an omitted override uses the original
-saved selection even if the default has changed. A changed explicit ID
-under the same key returns 409. A pending pinned intent exposes a typed
-waiting/refusal reason through the existing Run refresh path. A replacement
-requires a new authorized intent and quiescence of any prior owner.
+instance default. Shared children inherit the root's host and cannot override
+it. A known offline/draining choice stays pinned and shows its typed wait
+reason. An ineligible saved default is held for correction. Save the
+requested ID, effective ID and provenance on first acceptance. Include an
+explicit ID in the request digest. Exact replay under current read authority
+uses the saved selection and receipt even if preview or defaults changed.
+A different explicit ID under the same key returns 409. Launch, force,
+concurrent and replacement flows use the same selection and preview rules.
+Replacement uses a new intent key and requires quiescence of any prior owner.
+Revocation before dispatch holds the intent. A live revoked assignment can
+only reconcile or stop under its existing ownership and action authority.
 
-The acceptance receipt can report the saved host before a Run exists.
-The assigned host and epoch appear when persisted by dispatch. A revoked
-grant stops new host effects through the existing cancellation and
-reconciliation path. Artifact access uses its own current read grants.
-Exercise equal and changed replay, stale preview, unauthorized selection,
-revocation and inherited selection in C-11.
+The picker shows the source of the suggested default before submission, keeps
+the saved choice while an intent is pending and exposes the actual host and
+epoch after dispatch. Use existing SSE refresh for pending reasons and actual
+placement. Keep a single keyboard focus path through the picker and Launch
+dialog. Escape closes the open picker before the dialog. Cancel and submission
+return focus to the launching control or its stable replacement. Expose
+offline, stale preview and revoked permission reasons in EN/RU and announce
+relevant changes without duplicating status messages. C-11 verifies settings
+CAS and authority, stale refresh, exact replay, retained pins, shared-root
+inheritance and the keyboard journey.
 
 ## Expectations
 

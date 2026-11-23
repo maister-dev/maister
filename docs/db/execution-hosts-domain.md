@@ -92,7 +92,7 @@ erDiagram
         text placement_reason "CHECK: launch|resume|recover|wait_resume|rework_return|gate_chat|sync_resolver|scratch_recover|node_interrupt|legacy_backfill"
         text execution_workspace_id "nullable; host-scoped opaque ws_<uuid> handle"
         timestamptz workspace_adopted_at "nullable"
-        timestamptz lease_expires_at "nullable; reserved for Stage C, always NULL in Stage A"
+        timestamptz lease_expires_at "nullable; reserved for future execution leases, unused through G2"
         text superseded_by_id FK "execution_assignments(id) SET NULL"
         text released_reason "nullable"
         timestamptz created_at "DEFAULT now()"

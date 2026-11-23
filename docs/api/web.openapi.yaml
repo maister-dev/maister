@@ -1,4 +1,5 @@
 openapi: 3.0.3
+x-designed-stage-c-workspace-profile: stage-c-workspace.schema.yaml
 info:
   title: MAIster Web HTTP API
   version: "0.12.0"

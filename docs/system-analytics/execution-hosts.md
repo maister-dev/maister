@@ -926,6 +926,13 @@ opening a receipt or accepting a command. A reboot with the same key retains
 the descriptor and recovers commands against the same store. A different
 key marks the descriptor unavailable and requires operator review.
 
+Selecting workspace protocol 1 implies support for host envelope version 2
+on the same stream. A supervisor-first upgrade stays on the existing event
+shape until a versioned workspace command is accepted. After any such
+acceptance, all Web consumers of that stream must support version 2.
+Incompatible rollback requires an approved compatible restore or roll-forward
+with retained evidence.
+
 Stage C endpoints are operator-controlled and confined to the trusted
 deployment network. Redirects and caller-supplied endpoint addresses are
 refused. The user sees ID, label and permitted readiness information.
@@ -948,31 +955,45 @@ For mutating operations use the existing command header (`id`, `kind`,
 `assignment` (host key, Run ID, assignment ID and epoch) or
 `workspaceOperation` (host key, workspace handle, generation, operation
 claim ID and fence). Use the workspace owner only for the approved
-retained-workspace lifecycle. The URL or stored owner selects the object.
-An ID in the request body can narrow the selected resource by equality.
-Digest the immutable validated owner and payload with the existing
-canonical command digest. Each replay rechecks the calling authority.
+retained-workspace lifecycle. The versioned `/v1` routes have independent responses. Existing adoption,
+publication, release and command receipt callers keep their legacy paths.
+
+Resolve the target from the operation, URI and validated owner fence before
+acceptance. Require equality between the address and any handle or generation
+in the owner or payload. Compute lowercase SHA-256 of the RFC 8785 JSON for
+`{workspaceProtocol, operationId, hostKey, target, command, owner, payload}`.
+The trusted host key comes from negotiation and must match the owner. Preserve
+the original command ID, kind and issuedAt. The resolved target is
+`{kind:"prepare"}` for preparation (source and parent are in payload),
+`{kind:"workspace",handle,generation}` for existing workspaces or
+`{kind:"cancelWorkload",handle,generation,targetCommandId}` for cancellation.
+A changed target under an existing ID returns `command_digest_mismatch`.
+Recheck authority for every retry. An authorized exact replay returns the
+original 202 and the receipt URI in `Location` while the receipt is retained,
+even after the outcome is terminal. Preserve the original receipt across
+Web/host restarts, and use the existing retirement fence after reconciliation.
 
 | Operation | Input and authorization | Success and primary refusal |
 |---|---|---|
-| `GET /repositories/{repositoryId}/refs` | Verified host key, repository scope derived from the authorized project and an optional opaque cursor. Host reads the approved Git source under its configured profile. | 200 with at most 100 approved branch names, default ref and optional next cursor. Invalid or foreign cursor refuses without disclosing refs. The board launch preview uses this operation when it needs host-owned branch metadata. |
-| `POST /repositories/resolve-revision` | `repositoryId`, authorized ref and expected host key from Web. Host uses its approved source profile and performs a read-only observation. | 200 with repository ID, full commit and observed ref. Missing or ambiguous source returns 409 `PRECONDITION`. |
-| `POST /workspaces/prepare` | `workspace.prepare` with assignment owner. Mode, full commit where applicable, approved repository ID, owned parent handle where applicable and immutable input digest. | 202 with command ID and accepted state. The terminal receipt supplies handle, generation, actual commit and input digest. An unavailable commit returns a terminal refusal with no ready handle. |
-| `POST /workspaces/{id}/materialization` | `workspace.materialize` with assignment owner, current generation, manifest digest and sealed input references. | 202. Successful terminal receipt names the published input generation and digest. A mismatched digest or unreleased input source refuses before publication. |
-| `POST /workspaces/{id}/commands` | Assignment owner and workspace generation. Payload discriminant `setup`, `cli`, `check` or `requirementProbe` selects a strict operation declaration from the frozen input. | 202. Completion contains exit code/signal, cancellation state, structured check validity and output references. An undeclared operation refuses before spawn. |
-| `POST /workspaces/{id}/commands/{commandId}/cancel` | New command ID, owner, generation and target command from URL. | 202. Terminal cancellation records stopped or uncertain ownership and sealed partial output where available. A replay returns the original receipt. |
-| `GET /workspaces/{id}`, `GET /workspaces/{id}/status`, `GET /workspaces/{id}/diff`, `GET /workspaces/{id}/log` | Verified host and bound generation plus any bounded revision/range. The status projection includes observed HEAD. | 200 with metadata or sealed object reference. Refuse missing/wrong owner without supplying its content. Keep the existing `POST /workspaces/{id}/head` for the fenced ADR-216 wait witness. |
-| `POST /workspaces/{id}/checkpoint`, `POST /workspaces/{id}/restore` | `workspace.checkpoint` or `workspace.restore` on the current generation. Restore names a checkpoint bound to that physical workspace. | 202. Terminal receipt supplies the captured or restored Git tree witness. A stale generation refuses. ACP continues on the existing session checkpoint API. |
-| `POST /workspaces/{id}/sync`, `POST /workspaces/{id}/publication` | Typed Git operation, verified workspace owner, expected workspace HEAD, canonical target ref and prior target SHA. | 202 for asynchronous effects. Terminal receipt includes the prior and observed target. Ref divergence requires review before retry. |
-| `POST /workspaces/{id}/preserve`, `DELETE /workspaces/{id}` | Current workspace-operation owner and expected generation. Release also requires the recorded disposition and quiescence proof. | 202 for the addressed lifecycle operation. Terminal receipt supplies a preserved commit/reference or exact release witness. Unknown ownership or incomplete preservation keeps the workspace. |
-| `GET /commands/{commandId}` and `GET /runtime-objects/{objectId}/content` | Verified addressed host and authorized durable owner. Web derives object ID and range from authorized response scope. | Existing receipt and range APIs. Project only the exact result and returned-byte digest. |
+| `GET /v1/repositories/{repositoryId}/refs` | Verified host key, repository scope derived from the authorized project and an optional opaque cursor. Host reads the approved Git source under its configured profile. | 200 with at most 100 approved branch names, default ref and optional next cursor. Invalid or foreign cursor refuses without disclosing refs. The board launch preview uses this operation when it needs host-owned branch metadata. |
+| `POST /v1/repositories/resolve-revision` | `repositoryId`, authorized ref and expected host key from Web. Host uses its approved source profile and performs a read-only observation. | 200 with repository ID, full commit and observed ref. Missing or ambiguous source returns 409 `PRECONDITION`. |
+| `POST /v1/workspaces/prepare` | `workspace.prepare` with assignment owner. Mode, full commit where applicable, approved repository ID, owned parent handle where applicable and immutable input digest. | 202 with command ID and accepted state. The terminal receipt supplies handle, generation, actual commit and input digest. An unavailable commit returns a terminal refusal with no ready handle. |
+| `POST /v1/workspaces/{id}/materialization` | `workspace.materialize` with assignment owner, current generation, manifest digest and sealed input references. | 202. Successful terminal receipt names the published input generation and digest. A mismatched digest or unreleased input source refuses before publication. |
+| `POST /v1/workspaces/{id}/commands` | Assignment owner and workspace generation. Payload discriminant `setup`, `cli`, `check` or `requirementProbe` selects a strict operation declaration from the frozen input. | 202. Completion contains exit code/signal, cancellation state, structured check validity and output references. An undeclared operation refuses before spawn. |
+| `POST /v1/workspaces/{id}/commands/{commandId}/cancel` | New command ID, owner, generation and target command from URL. | 202. Terminal cancellation records stopped or uncertain ownership and sealed partial output where available. A replay returns the original receipt. |
+| `GET /v1/workspaces/{id}`, `GET /v1/workspaces/{id}/status`, `GET /v1/workspaces/{id}/diff`, `GET /v1/workspaces/{id}/log` | Verified host and bound generation plus any bounded revision/range. The status projection includes observed HEAD. | 200 with metadata or sealed object reference. Refuse missing/wrong owner without supplying its content. Keep the existing `POST /workspaces/{id}/head` for the fenced ADR-216 wait witness. |
+| `POST /v1/workspaces/{id}/checkpoint`, `POST /v1/workspaces/{id}/restore` | `workspace.checkpoint` or `workspace.restore` on the current generation. Restore names a checkpoint bound to that physical workspace. | 202. Terminal receipt supplies the captured or restored Git tree witness. A stale generation refuses. ACP continues on the existing session checkpoint API. |
+| `POST /v1/workspaces/{id}/sync`, `POST /v1/workspaces/{id}/publication` | Typed Git operation, verified workspace owner, expected workspace HEAD, canonical target ref and prior target SHA. | 202 for asynchronous effects. Terminal receipt includes the prior and observed target. Ref divergence requires review before retry. |
+| `POST /v1/workspaces/{id}/preserve`, `DELETE /v1/workspaces/{id}` | Current workspace-operation owner and expected generation. Release also requires the recorded disposition and quiescence proof. | 202 for the addressed lifecycle operation. Terminal receipt supplies a preserved commit/reference or exact release witness. Unknown ownership or incomplete preservation keeps the workspace. |
+| `GET /v1/commands/{commandId}` and `GET /runtime-objects/{objectId}/content` | Verified addressed host and authorized durable owner. Web derives object ID and range from authorized response scope. | 200 with the addressed receipt. The current range API remains in use for content bytes and returned-byte digest. |
 
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for
-the repository's hash algorithm. CLI defaults to 300 seconds with a
-3,600-second default ceiling, 30-second termination grace and 4 MiB
-captured-output bound. Requirement probes keep their 10-second and 1 MiB
+the repository's hash algorithm. Fully qualified branch refs must pass
+`git check-ref-format` under the approved source/target policy. CLI defaults
+to 300 seconds with a 3,600-second ceiling, 30-second termination grace and
+4 MiB captured-output bound. Requirement probes keep their 10-second and 1 MiB
 bounds. The host applies and advertises effective limits. Use the existing
 runtime-object limits for sealed
 bytes and artifact content ranges. Command records retain the existing
@@ -984,7 +1005,17 @@ For example, assignment epoch 4 can submit `workspace.prepare` for Run
 `0123456789abcdef0123456789abcdef01234567`. The host returns
 `{"commandId":"3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a","state":"accepted"}`.
 After a lost response the same command is read by ID on that host. The
-terminal receipt returns the original workspace handle and actual commit.
+receipt reports `accepted` and the original 202 before settlement. A
+`completed` receipt returns the operation-specific result, including the
+original workspace handle and actual commit for preparation. A `rejected`
+receipt returns a typed refusal. An `indeterminate` receipt preserves ownership
+and returns the reconciliation condition. Keep that receipt as the original
+command's immutable terminal witness. Recovery records authorized readback or
+quiescence as separate evidence and never repeats the original side effect.
+All three terminal variants include
+the stream ID, event ID and SHA-256 of the canonical object containing exactly
+one of `result`, `refusal` or `condition`. Apply an owner result only after its
+receipt agrees with the committed canonical event.
 Submitting the same ID with a changed commit yields 409 `CONFLICT`
 (`command_digest_mismatch`) with zero new checkout. Submitting epoch 3
 against the existing fence yields 409 `FENCED` (`stale_assignment_epoch`).
@@ -1053,7 +1084,7 @@ corresponding executable surfaces.
   commit in the same transaction as the acknowledgement. Enforced by: the
   ledger ack takes a transaction; test L2.
 - **E-EH-08** — `POST /sessions` and every `/sessions/{id}/*` route MUST
-  accept only `executionWorkspaceId`; `POST /workspaces/adopt` is the only
+  accept only `executionWorkspaceId`; `POST /v1/workspaces/adopt` is the only
   route accepting a path and MUST validate it per the kind matrix. Enforced
   by: Zod strict schemas; tests W5, Z1–Z3, T1. (Strict since the T5.1 flip;
   the transitional bare-body acceptance is gone.)

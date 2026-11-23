@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +10,9 @@ import SwaggerParser from "@apidevtools/swagger-parser";
 import { DiagnosticSeverity, Parser } from "@asyncapi/parser";
 import { parse } from "yaml";
 import Ajv from "ajv";
+import addFormats from "ajv-formats";
+
+import { canonicalCommandJson } from "../runtime/command-json.ts";
 
 const OPENAPI_FILES = [
   "docs/api/external/operations.openapi.yaml",
@@ -593,6 +597,51 @@ function validateCompanyBrainExamples() {
   return count;
 }
 
+// Reviewed C-02 through C-11 transport surface. Keeping this inventory
+// independent prevents deleting both an operation and its example silently.
+const STAGE_C_REQUIRED_OPERATIONS = [
+  "stageCHostCapabilities", "stageCRepositoryRefs", "stageCResolveRevision",
+  "stageCPrepare", "stageCMaterialize", "stageCRunWorkload", "stageCCancelWorkload",
+  "stageCGetWorkspace", "stageCGetWorkspaceStatus", "stageCGetWorkspaceDiff",
+  "stageCGetWorkspaceLog", "stageCCheckpoint", "stageCRestore", "stageCSync",
+  "stageCPublish", "stageCPreserve", "stageCRelease", "stageCGetCommandReceipt",
+  "stageCGetRuntimeObjectContent", "stageCTaskHostOptions", "stageCFlowHostOptions",
+  "stageCCreateIntent", "stageCCreateConcurrentIntents", "stageCReadIntent",
+  "stageCReplaceIntent", "stageCCancelIntent",
+  "stageCReadProjectHostSettings", "stageCUpdateProjectHostSettings",
+].sort();
+const STAGE_C_REFUSALS = {
+  invalid_request: [400, "INVALID_REQUEST"],
+  request_too_large: [413, "INVALID_REQUEST"],
+  workspace_protocol_unsupported: [503, "EXECUTOR_UNAVAILABLE"],
+  host_identity_mismatch: [409, "FENCED"],
+  stale_assignment_epoch: [409, "FENCED"],
+  stale_workspace_generation: [409, "FENCED"],
+  stale_workspace_claim: [409, "FENCED"],
+  resource_not_found: [404, "NOT_FOUND"],
+  source_commit_unavailable: [409, "PRECONDITION"],
+  source_ref_unapproved: [409, "PRECONDITION"],
+  workspace_rejected: [409, "PRECONDITION"],
+  tool_not_declared: [409, "PRECONDITION"],
+  command_digest_mismatch: [409, "CONFLICT"],
+  retained_disposition_required: [409, "PRECONDITION"],
+  target_ref_changed: [409, "CONFLICT"],
+  selection_changed: [409, "CONFLICT"],
+  host_ineligible: [409, "PRECONDITION"],
+  preview_stale: [409, "CONFLICT"],
+  settings_revision_mismatch: [409, "CONFLICT"],
+  authentication_required: [401, "UNAUTHENTICATED"],
+  insufficient_project_role: [403, "UNAUTHORIZED"],
+};
+
+function canonicalSha256(value) {
+  return createHash("sha256").update(canonicalCommandJson(value)).digest("hex");
+}
+
+function stageCRequestDigest(operationId, request, target) {
+  return canonicalSha256({ operationId, hostKey: request.owner.hostKey, target, ...request });
+}
+
 export function validateStageCWorkspaceExamples(
   profile = readYaml("docs/api/stage-c-workspace.schema.yaml"),
   examples = readYaml("docs/api/stage-c-workspace-examples.yaml"),
@@ -601,16 +650,27 @@ export function validateStageCWorkspaceExamples(
   const cases = examples.operationCases;
   assertObject(profile, "x-operations", "Stage C schema");
   assertObject(examples, "operationCases", "Stage C examples");
-  if (Object.keys(operations).length === 0 ||
-      !isDeepStrictEqual(Object.keys(operations).sort(), Object.keys(cases).sort())) {
+  if (!isDeepStrictEqual(Object.keys(operations).sort(), STAGE_C_REQUIRED_OPERATIONS)) {
+    throw new Error("Stage C profile is missing required operations or declares an unknown operation");
+  }
+  if (!isDeepStrictEqual(Object.keys(operations).sort(), Object.keys(cases).sort())) {
     throw new Error("Stage C examples must cover each operation exactly once");
   }
-  const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  const ajv = new Ajv({ strict: false, allErrors: true });
+  addFormats(ajv, ["date-time"]);
   ajv.addSchema(profile);
   const validate = (name, value, valid, context) => {
     const check = ajv.getSchema(`${profile.$id}#/definitions/${name}`);
     if (!check || check(value) !== valid) {
       throw new Error(`${context}: ${name} example validity mismatch: ${ajv.errorsText(check?.errors)}`);
+    }
+  };
+  const validateRefusal = (refusal, id) => {
+    validate("Refusal", refusal?.body, true, id);
+    const { code, details } = refusal.body;
+    if (refusal.newEffects !== 0 ||
+        !isDeepStrictEqual([refusal.status, code], STAGE_C_REFUSALS[details.reason])) {
+      throw new Error(`${id}: invalid refusal status, code and reason or recorded effects`);
     }
   };
   const web = readYaml("docs/api/web.openapi.yaml");
@@ -622,11 +682,15 @@ export function validateStageCWorkspaceExamples(
     if (seenRoutes.has(key)) throw new Error(`Stage C duplicate operation: ${key}`);
     seenRoutes.add(key);
     const isWeb = path.startsWith("/api/");
-    if (isWeb || extension) {
+    if (extension) {
       const existing = (isWeb ? web : supervisor).paths?.[path]?.[method.toLowerCase()];
       if (!existing?.responses?.[String(status)]) {
         throw new Error(`${id}: missing existing response ${key} ${status}`);
       }
+    } else if (supervisor.paths?.[path]?.[method.toLowerCase()] ||
+               web.paths?.[path]?.[method.toLowerCase()] ||
+               (!isWeb && !path.startsWith("/v1/"))) {
+      throw new Error(`${id}: new Stage C route must be versioned and distinct from legacy operations`);
     }
     const example = cases[id];
     if (request === null) {
@@ -636,11 +700,7 @@ export function validateStageCWorkspaceExamples(
       validate(request, example.invalidRequest, false, id);
     }
     validate(response, example.response, true, id);
-    validate("Refusal", example.refusal?.body, true, id);
-    if (example.refusal.newEffects !== 0 ||
-        ![404, 409, 503].includes(example.refusal.status)) {
-      throw new Error(`${id}: missing effect-free refusal example`);
-    }
+    validateRefusal(example.refusal, id);
     if (result) validate(result, example.result, true, id);
     if (operation.replay) {
       const replay = example.replay;
@@ -650,10 +710,51 @@ export function validateStageCWorkspaceExamples(
         throw new Error(`${id}: replay must retain the original request and response`);
       }
     }
-    if (operation.replay === "sameCommand" &&
-        example.request.command.id !== example.response.commandId) {
-      throw new Error(`${id}: response must identify the accepted command`);
+    if (operation.replay === "sameCommand") {
+      validate("CommandTarget", example.target, true, id);
+      const kind = path.includes("{commandId}") ? "cancelWorkload" :
+        path.includes("{id}") ? "workspace" : "prepare";
+      const location = `/v1/commands/${example.request.command.id}`;
+      if (example.location !== location || example.replay.location !== location ||
+          example.target.kind !== kind ||
+          example.target.generation !== example.request.payload.generation ||
+          (example.request.owner.kind === "workspaceOperation" &&
+            example.target.handle !== example.request.owner.workspaceHandle) ||
+          !isDeepStrictEqual(example.target, example.replay.target) ||
+          example.request.command.id !== example.response.commandId ||
+          stageCRequestDigest(id, example.request, example.target) !== example.requestSha256) {
+        throw new Error(`${id}: replay must retain the exact command and resolved target`);
+      }
     }
+  }
+  const readSettings = cases.stageCReadProjectHostSettings;
+  const updatedSettings = cases.stageCUpdateProjectHostSettings;
+  const projectSettingsETag = (settings) =>
+    `"${settings.preferenceRevision}:${settings.eligibilityRevision}"`;
+  for (const entry of [readSettings, updatedSettings]) {
+    validate("ProjectHostSettingsETag", entry.etag, true, "settings ETag");
+    if (entry.etag !== projectSettingsETag(entry.response))
+      throw new Error("Stage C settings revision and ETag disagree");
+  }
+  validate("ProjectHostSettingsETag", updatedSettings.ifMatch, true, "settings If-Match");
+  if (updatedSettings.ifMatch !== readSettings.etag ||
+      updatedSettings.response.preferenceRevision !== readSettings.response.preferenceRevision + 1 ||
+      updatedSettings.response.eligibilityRevision !== readSettings.response.eligibilityRevision ||
+      updatedSettings.response.defaultExecutionHostId !== updatedSettings.request.defaultExecutionHostId) {
+    throw new Error("Stage C settings update must advance the exact preference revision");
+  }
+  validateRefusal(examples.requestRefusals.malformed, "malformed request");
+  validateRefusal(examples.requestRefusals.oversized, "oversized request");
+  const differentCancel = examples.conflictExamples.differentCancelTarget;
+  const originalCancel = cases.stageCCancelWorkload;
+  validate("CommandTarget", differentCancel.target, true, "changed cancellation target");
+  validateRefusal(differentCancel.refusal, "changed cancellation target");
+  const { targetCommandId, ...workspace } = differentCancel.target;
+  if (targetCommandId === originalCancel.target.targetCommandId ||
+      !isDeepStrictEqual({ ...workspace, targetCommandId: originalCancel.target.targetCommandId }, originalCancel.target) ||
+      differentCancel.refusal.body.details.reason !== "command_digest_mismatch" ||
+      stageCRequestDigest("stageCCancelWorkload", originalCancel.request, differentCancel.target) === originalCancel.requestSha256) {
+    throw new Error("Stage C changed cancellation target must conflict on the original command ID");
   }
   if (!Array.isArray(examples.conditionalCases) || examples.conditionalCases.length === 0) {
     throw new Error("Stage C contract is missing conditional examples");
@@ -661,15 +762,41 @@ export function validateStageCWorkspaceExamples(
   for (const example of examples.conditionalCases) {
     validate(example.schema, example.value, example.valid, example.id);
   }
-  const event = examples.eventExamples.terminalEvent;
-  const foreign = examples.eventExamples.wrongReceiptHost;
+  const completed = cases.stageCGetCommandReceipt.response;
+  const prepare = cases.stageCPrepare;
+  const { accepted, rejected, indeterminate } = examples.receiptExamples;
+  for (const [phase, receipt] of Object.entries({ accepted, completed, rejected, indeterminate })) {
+    validate("WorkspaceCommandReceipt", receipt, true, phase);
+    if (receipt.phase !== phase ||
+        receipt.operationId !== "stageCPrepare" ||
+        receipt.commandId !== prepare.request.command.id ||
+        receipt.requestSha256 !== prepare.requestSha256 ||
+        !isDeepStrictEqual(receipt.owner, prepare.request.owner) ||
+        !isDeepStrictEqual(receipt.target, prepare.target)) {
+      throw new Error(`Stage C ${phase} receipt must correlate to the accepted request`);
+    }
+  }
+  const outcomes = [
+    [completed, { result: completed.result }],
+    [rejected, { refusal: rejected.refusal }],
+    [indeterminate, { condition: indeterminate.condition }],
+  ];
+  if (!isDeepStrictEqual(accepted.acceptance, prepare.response) ||
+      !isDeepStrictEqual(completed.result, prepare.result) ||
+      outcomes.some(([receipt, outcome]) => receipt.outcomeSha256 !== canonicalSha256(outcome))) {
+    throw new Error("Stage C receipt must preserve original acceptance and exact terminal outcomes");
+  }
+  const { terminalEvent: event, wrongReceiptHost: foreign, draftWithPrivatePath } = examples.eventExamples;
   validate("WorkspaceTerminalEvent", event, true, "terminal event");
   validate("WorkspaceTerminalEvent", foreign, true, "foreign receipt shape");
-  validate("WorkspaceTerminalEvent", examples.eventExamples.draftWithPrivatePath, false, "private path");
-  if (event.stream.hostKey !== event.receipt.owner.hostKey ||
-      event.stream.eventId !== event.receipt.eventId ||
-      foreign.stream.hostKey === foreign.receipt.owner.hostKey) {
-    throw new Error("Stage C receipt and stream identity fixtures do not exercise the host fence");
+  validate("WorkspaceTerminalEvent", draftWithPrivatePath, false, "private path");
+  const { result: _result, streamId, eventId, ...expectedPayload } = completed;
+  if (event.hostKey !== completed.owner.hostKey ||
+      event.streamId !== streamId || event.eventId !== eventId ||
+      BigInt(event.sequence) > 9223372036854775807n ||
+      !isDeepStrictEqual(event.payload, expectedPayload) ||
+      foreign.hostKey === foreign.payload.owner.hostKey) {
+    throw new Error("Stage C receipt and canonical stream evidence must agree");
   }
   return seenRoutes.size;
 }

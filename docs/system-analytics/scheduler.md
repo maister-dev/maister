@@ -390,13 +390,17 @@ the physical host. A saturated, stale or draining host leaves the intent
 waiting with a bounded reason and preserves existing ordering among eligible
 queued intents.
 
-Issue and renew an addressed assignment lease using Web's clock. The host
-derives a conservative monotonic deadline and fences new effects locally.
-On lease expiry, fence further host commands and stop owned execution where
-the backend can enforce termination. A partition alone leaves ownership
-uncertain. Release writer capacity and allow a replacement only after a
-quiescence witness or verified enforced expiry. A late receipt can settle
-historical evidence under its original epoch. It cannot mutate a successor.
+A stale heartbeat or partition refuses new placement on the affected host.
+The current assignment, workspace writer claim and consumed capacity remain
+owned. G2 does not issue time-based execution authority. Process restart,
+elapsed time and an empty volatile inventory do not prove quiescence.
+Replacement requires a positive owning-host witness for the exact host,
+assignment epoch and process group with no outstanding effects. The
+owning host reconstructs this evidence from its durable command and process
+journal after restart. Then Web releases capacity under CAS and an authorized
+retry can reserve the next epoch. Dirty work stays pinned and can only be
+reused under verified workspace ownership. A late receipt can settle historical
+evidence under its original epoch. It cannot mutate a successor.
 The competing-worker and partition scenarios C-14 and C-15 own these proofs.
 
 ## Expectations

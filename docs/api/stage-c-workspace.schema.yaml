@@ -14,7 +14,7 @@ x-operations:
   stageCRepositoryRefs:
     {
       method: GET,
-      path: "/repositories/{repositoryId}/refs",
+      path: "/v1/repositories/{repositoryId}/refs",
       request: RefQuery,
       response: RefPage,
       status: 200
@@ -22,14 +22,14 @@ x-operations:
   stageCResolveRevision:
     {
       method: POST,
-      path: /repositories/resolve-revision,
+      path: /v1/repositories/resolve-revision,
       request: SourceQuery,
       response: SourceRevision,
       status: 200
     }
   stageCPrepare:
     method: POST
-    path: /workspaces/prepare
+    path: /v1/workspaces/prepare
     request: StageCPrepareRequest
     response: CommandAccepted
     status: 202
@@ -37,7 +37,7 @@ x-operations:
     replay: sameCommand
   stageCMaterialize:
     method: POST
-    path: /workspaces/{id}/materialization
+    path: /v1/workspaces/{id}/materialization
     request: StageCMaterializeRequest
     response: CommandAccepted
     status: 202
@@ -45,7 +45,7 @@ x-operations:
     replay: sameCommand
   stageCRunWorkload:
     method: POST
-    path: /workspaces/{id}/commands
+    path: /v1/workspaces/{id}/commands
     request: StageCRunWorkloadRequest
     response: CommandAccepted
     status: 202
@@ -53,26 +53,26 @@ x-operations:
     replay: sameCommand
   stageCCancelWorkload:
     method: POST
-    path: /workspaces/{id}/commands/{commandId}/cancel
+    path: /v1/workspaces/{id}/commands/{commandId}/cancel
     request: StageCCancelWorkloadRequest
     response: CommandAccepted
     status: 202
     result: CancelResult
     replay: sameCommand
-  stageCGetWorkspace: { method: GET, path: "/workspaces/{id}", request: WorkspaceQuery, response: WorkspaceRecord, status: 200 }
+  stageCGetWorkspace: { method: GET, path: "/v1/workspaces/{id}", request: WorkspaceQuery, response: WorkspaceRecord, status: 200 }
   stageCGetWorkspaceStatus:
     {
       method: GET,
-      path: "/workspaces/{id}/status",
+      path: "/v1/workspaces/{id}/status",
       request: WorkspaceQuery,
       response: WorkspaceStatus,
       status: 200
     }
-  stageCGetWorkspaceDiff: { method: GET, path: "/workspaces/{id}/diff", request: DiffQuery, response: ObjectReference, status: 200 }
-  stageCGetWorkspaceLog: { method: GET, path: "/workspaces/{id}/log", request: LogQuery, response: ObjectReference, status: 200 }
+  stageCGetWorkspaceDiff: { method: GET, path: "/v1/workspaces/{id}/diff", request: DiffQuery, response: ObjectReference, status: 200 }
+  stageCGetWorkspaceLog: { method: GET, path: "/v1/workspaces/{id}/log", request: LogQuery, response: ObjectReference, status: 200 }
   stageCCheckpoint:
     method: POST
-    path: /workspaces/{id}/checkpoint
+    path: /v1/workspaces/{id}/checkpoint
     request: StageCCheckpointRequest
     response: CommandAccepted
     status: 202
@@ -80,7 +80,7 @@ x-operations:
     replay: sameCommand
   stageCRestore:
     method: POST
-    path: /workspaces/{id}/restore
+    path: /v1/workspaces/{id}/restore
     request: StageCRestoreRequest
     response: CommandAccepted
     status: 202
@@ -88,7 +88,7 @@ x-operations:
     replay: sameCommand
   stageCSync:
     method: POST
-    path: /workspaces/{id}/sync
+    path: /v1/workspaces/{id}/sync
     request: StageCSyncRequest
     response: CommandAccepted
     status: 202
@@ -96,7 +96,7 @@ x-operations:
     replay: sameCommand
   stageCPublish:
     method: POST
-    path: /workspaces/{id}/publication
+    path: /v1/workspaces/{id}/publication
     request: StageCPublishRequest
     response: CommandAccepted
     status: 202
@@ -104,7 +104,7 @@ x-operations:
     replay: sameCommand
   stageCPreserve:
     method: POST
-    path: /workspaces/{id}/preserve
+    path: /v1/workspaces/{id}/preserve
     request: StageCPreserveRequest
     response: CommandAccepted
     status: 202
@@ -112,7 +112,7 @@ x-operations:
     replay: sameCommand
   stageCRelease:
     method: DELETE
-    path: /workspaces/{id}
+    path: /v1/workspaces/{id}
     request: StageCReleaseRequest
     response: CommandAccepted
     status: 202
@@ -120,11 +120,10 @@ x-operations:
     replay: sameCommand
   stageCGetCommandReceipt:
     method: GET
-    path: /commands/{commandId}
+    path: /v1/commands/{commandId}
     request: null
-    response: ReceiptEvidence
+    response: WorkspaceCommandReceipt
     status: 200
-    extension: true
   stageCGetRuntimeObjectContent:
     method: GET
     path: /runtime-objects/{objectId}/content
@@ -185,6 +184,19 @@ x-operations:
     response: HostSelectionReceipt
     status: 200
     extension: true
+  stageCReadProjectHostSettings:
+    method: GET
+    path: /api/projects/{slug}/settings/execution-host
+    request: null
+    response: ProjectHostSettings
+    status: 200
+  stageCUpdateProjectHostSettings:
+    method: PATCH
+    path: /api/projects/{slug}/settings/execution-host
+    request: ProjectHostPreference
+    response: ProjectHostSettings
+    status: 200
+    ifMatch: ProjectHostSettingsETag
 definitions:
   OpaqueId: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" }
   HostKey: { type: string, minLength: 8, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
@@ -222,6 +234,30 @@ definitions:
       workspaceGeneration: *a1
       claimId: *a2
       fence: *a1
+  ProjectHostPreference:
+    type: object
+    additionalProperties: false
+    required: [ defaultExecutionHostId ]
+    properties:
+      defaultExecutionHostId:
+        anyOf:
+          - *a3
+          - { type: "null" }
+  ProjectHostSettings:
+    type: object
+    additionalProperties: false
+    required: [ defaultExecutionHostId, preferenceRevision, eligibilityRevision ]
+    properties:
+      defaultExecutionHostId:
+        anyOf:
+          - *a3
+          - { type: "null" }
+      preferenceRevision: *a1
+      eligibilityRevision: { $ref: "#/definitions/Digest" }
+  ProjectHostSettingsETag:
+    description: Quoted composite revision for GET/response ETag and PATCH If-Match.
+    type: string
+    pattern: '^"[1-9][0-9]{0,15}:[a-f0-9]{64}"$'
   HostChoice:
     type: object
     additionalProperties: false
@@ -629,7 +665,10 @@ definitions:
             target_ref_changed,
             selection_changed,
             host_ineligible,
-            preview_stale
+            preview_stale,
+            settings_revision_mismatch,
+            authentication_required,
+            insufficient_project_role
           ]
   Refusal:
     type: object
@@ -637,46 +676,103 @@ definitions:
     required: [ code, message, details ]
     properties:
       code:
-        enum: [ INVALID_REQUEST, EXECUTOR_UNAVAILABLE, FENCED, NOT_FOUND, PRECONDITION, CONFLICT ]
+        enum: [ INVALID_REQUEST, EXECUTOR_UNAVAILABLE, FENCED, NOT_FOUND, PRECONDITION, CONFLICT, UNAUTHENTICATED, UNAUTHORIZED ]
       message: { type: string, minLength: 1, maxLength: 256 }
       details: { $ref: "#/definitions/RefusalDetails" }
-  ReceiptEvidence:
+  CommandTarget:
+    oneOf:
+      - type: object
+        additionalProperties: false
+        required: [ kind ]
+        properties:
+          kind: { const: prepare }
+      - type: object
+        additionalProperties: false
+        required: [ kind, handle, generation ]
+        properties:
+          kind: { const: workspace }
+          handle: *a5
+          generation: *a1
+      - type: object
+        additionalProperties: false
+        required: [ kind, handle, generation, targetCommandId ]
+        properties:
+          kind: { const: cancelWorkload }
+          handle: *a5
+          generation: *a1
+          targetCommandId: *a2
+  WorkspaceCommandReceipt:
+    description: The command ID from the URI and the verified owner scope must match. Completed results are selected by operationId.
     type: object
     additionalProperties: false
-    required: [ commandId, requestSha256, operationId, owner, phase, eventId, resultSha256 ]
+    required: [ commandId, requestSha256, operationId, owner, target, phase ]
     properties:
       commandId: *a2
       requestSha256: *a6
-      operationId: *a3
-      owner:
+      operationId: &stageCCommandOperation
+        enum: [stageCPrepare, stageCMaterialize, stageCRunWorkload, stageCCancelWorkload, stageCCheckpoint, stageCRestore, stageCSync, stageCPublish, stageCPreserve, stageCRelease]
+      owner: &stageCOwner
         oneOf:
           - { $ref: "#/definitions/AssignmentOwner" }
           - { $ref: "#/definitions/WorkspaceOperationOwner" }
-      phase:
-        enum: [ completed, rejected, indeterminate ]
+      target: { $ref: "#/definitions/CommandTarget" }
+      phase: { enum: [ accepted, completed, rejected, indeterminate ] }
+      status: { const: 202 }
+      acceptance: { $ref: "#/definitions/CommandAccepted" }
+      streamId: *a2
       eventId: *a2
-      resultSha256: *a6
-  HostEventIdentity:
-    type: object
-    additionalProperties: false
-    required: [ hostKey, streamId, bootId, sequence, eventId ]
-    properties:
-      hostKey: { $ref: "#/definitions/HostKey" }
-      streamId: *a3
-      bootId: *a2
-      sequence: { type: string, minLength: 1, maxLength: 19, pattern: "^[1-9][0-9]*$" }
-      eventId: *a2
+      outcomeSha256: *a6
+      result: { type: object }
+      refusal: { $ref: "#/definitions/Refusal" }
+      condition:
+        enum: [ effect_unconfirmed, quiescence_unconfirmed ]
+    oneOf:
+      - properties: { phase: { const: accepted }, streamId: false, eventId: false, outcomeSha256: false, result: false, refusal: false, condition: false }
+        required: [ status, acceptance ]
+      - properties: { phase: { const: completed }, status: false, acceptance: false, refusal: false, condition: false }
+        required: [ streamId, eventId, outcomeSha256, result ]
+        oneOf:
+          - properties: { operationId: { const: stageCPrepare }, result: { $ref: "#/definitions/WorkspacePrepared" } }
+          - properties: { operationId: { const: stageCMaterialize }, result: { $ref: "#/definitions/MaterializedInputs" } }
+          - properties: { operationId: { const: stageCRunWorkload }, result: { $ref: "#/definitions/WorkloadResult" } }
+          - properties: { operationId: { const: stageCCancelWorkload }, result: { $ref: "#/definitions/CancelResult" } }
+          - properties: { operationId: { const: stageCCheckpoint }, result: { $ref: "#/definitions/GitCheckpoint" } }
+          - properties: { operationId: { const: stageCRestore }, result: { $ref: "#/definitions/GitCheckpoint" } }
+          - properties: { operationId: { const: stageCSync }, result: { $ref: "#/definitions/GitResult" } }
+          - properties: { operationId: { const: stageCPublish }, result: { $ref: "#/definitions/PublicationResult" } }
+          - properties: { operationId: { const: stageCPreserve }, result: { $ref: "#/definitions/Preserved" } }
+          - properties: { operationId: { const: stageCRelease }, result: { $ref: "#/definitions/Released" } }
+      - properties: { phase: { const: rejected }, status: false, acceptance: false, result: false, condition: false }
+        required: [ streamId, eventId, outcomeSha256, refusal ]
+      - properties: { phase: { const: indeterminate }, status: false, acceptance: false, result: false, refusal: false }
+        required: [ streamId, eventId, outcomeSha256, condition ]
   WorkspaceTerminalEvent:
+    description: Designed flat envelope on the shared host stream. Event ID uses existing URL-namespace UUIDv5 derivation. Maximum sequence is 9223372036854775807.
     type: object
     additionalProperties: false
-    required: [ version, type, stream, receipt ]
+    required: [ envelopeVersion, eventId, hostKey, hostBootId, streamId, sequence, eventType, occurredAt, payloadSchema, payload ]
     properties:
-      version:
-        enum: [ 1 ]
-      type:
-        enum: [ workspace.command.terminal ]
-      stream: { $ref: "#/definitions/HostEventIdentity" }
-      receipt: { $ref: "#/definitions/ReceiptEvidence" }
+      envelopeVersion: { const: 2 }
+      eventId: *a2
+      hostKey: { $ref: "#/definitions/HostKey" }
+      hostBootId: *a2
+      streamId: *a2
+      sequence: { type: string, pattern: "^(0|[1-9][0-9]{0,18})$" }
+      eventType: { const: workspace.command.terminal }
+      occurredAt: { type: string, format: date-time }
+      payloadSchema: { const: maister.workspace.command.terminal.v1 }
+      payload:
+        type: object
+        additionalProperties: false
+        required: [ commandId, requestSha256, operationId, owner, target, phase, outcomeSha256 ]
+        properties:
+          commandId: *a2
+          requestSha256: *a6
+          operationId: *stageCCommandOperation
+          owner: *stageCOwner
+          target: { $ref: "#/definitions/CommandTarget" }
+          phase: { enum: [ completed, rejected, indeterminate ] }
+          outcomeSha256: *a6
   GitRef: { type: string, minLength: 1, maxLength: 256, pattern: "^refs/heads/[^\\s\\x00-\\x1f]+$" }
   StageCPrepareRequest:
     type: object

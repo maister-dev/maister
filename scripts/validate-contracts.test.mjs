@@ -81,6 +81,76 @@ test("Stage C rejects an incomplete or effect-duplicating workspace replay fixtu
   );
 });
 
+test("Stage C rejects dropping a required operation from both inputs", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  delete profile["x-operations"].stageCPrepare;
+  delete examples.operationCases.stageCPrepare;
+
+  assert.throws(() => validateStageCWorkspaceExamples(profile, examples), /required operations/);
+});
+
+test("Stage C rejects a malformed command time even when replay agrees", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  const prepare = examples.operationCases.stageCPrepare;
+  prepare.request = structuredClone(prepare.request);
+  prepare.request.command.issuedAt = "2026-02-30T12:00:00Z";
+  prepare.replay.request = structuredClone(prepare.request);
+
+  assert.throws(() => validateStageCWorkspaceExamples(profile, examples), /date-time/);
+});
+
+test("Stage C refuses a mismatched status, code and reason", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  examples.operationCases.stageCPrepare.refusal = {
+    status: 404,
+    body: {
+      code: "EXECUTOR_UNAVAILABLE",
+      message: "Wrong refusal",
+      details: { reason: "request_too_large" },
+    },
+    newEffects: 0,
+  };
+
+  assert.throws(() => validateStageCWorkspaceExamples(profile, examples), /refusal status, code and reason/);
+});
+
+test("Stage C preserves the legacy workspace lookup while introducing the addressed route", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  profile["x-operations"].stageCGetWorkspace.path = "/workspaces/{id}";
+
+  assert.throws(
+    () => validateStageCWorkspaceExamples(profile, examples),
+    /distinct from legacy operations/,
+  );
+});
+
+test("Stage C cancellation replay binds the command ID in the URL", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  examples.operationCases.stageCCancelWorkload.replay.target =
+    examples.conflictExamples.differentCancelTarget.target;
+
+  assert.throws(
+    () => validateStageCWorkspaceExamples(profile, examples),
+    /exact command and resolved target/,
+  );
+});
+
+test("Stage C refuses a terminal checkout receipt without its exact result", () => {
+  const profile = readContract("../docs/api/stage-c-workspace.schema.yaml");
+  const examples = readContract("../docs/api/stage-c-workspace-examples.yaml");
+  delete examples.operationCases.stageCGetCommandReceipt.response.result;
+
+  assert.throws(
+    () => validateStageCWorkspaceExamples(profile, examples),
+    /WorkspaceCommandReceipt example validity mismatch/,
+  );
+});
+
 async function withBrokenLibrarianStream(mutate, callback) {
   const document = readContract(
     "../docs/api/async/librarian-stream.asyncapi.yaml",
