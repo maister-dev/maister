@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { singleValue, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
@@ -197,6 +197,13 @@ nodes:
   return repo;
 }
 
+function visibleComposition(page: Page): Locator {
+  return page
+    .getByRole("main")
+    .getByTestId("package-composition")
+    .filter({ visible: true });
+}
+
 async function installPackageFromRepo(
   page: Page,
   repo: string,
@@ -208,12 +215,20 @@ async function installPackageFromRepo(
 
   await dialog.getByRole("radio", { name: "Local directory" }).click();
   await dialog.getByLabel("Absolute directory path").fill(repo);
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/admin/package-sources",
+  );
+
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText(repo)).toBeVisible();
-  await page
-    .locator("tr", { hasText: repo })
-    .getByRole("button", { name: "Refresh", exact: true })
-    .click();
+  const sourceReceipt = await created;
+
+  expect(sourceReceipt.status(), await sourceReceipt.text()).toBe(201);
+  const source = page.getByRole("row").filter({ hasText: repo });
+
+  await expect(source).toBeVisible({ timeout: 30_000 });
+  await source.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByText(tag, { exact: true })).toBeVisible({
     timeout: 30_000,
   });
@@ -335,7 +350,7 @@ test("canonical Studio wizard creates a package Flow and adds another Flow in th
 
   expect(packageId).toBeTruthy();
   await page.goto(`/studio/edit/${packageId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  await expect(visibleComposition(page)).toBeVisible();
   await page.getByTestId("composition-create-flow-open").click();
 
   const add = page.getByTestId("create-flow-dialog");
@@ -521,7 +536,7 @@ test("fork an installed package to local → land in the /studio/edit editor", a
 
   expect(editId).toBeTruthy();
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  await expect(visibleComposition(page)).toBeVisible();
   await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
 
   // The manifest form is reached by OPENING the manifest, not by landing.
@@ -604,14 +619,21 @@ test("local editor reference pickers save runner, agent, free-text agent, and sc
   await saveViaTopBar(page, editId as string);
 
   await page.goto(`/studio/edit/${editId}`);
-  await expect(page.getByTestId("package-composition")).toBeVisible();
+  const composition = visibleComposition(page);
+
+  await expect(composition).toBeVisible();
   // The composition lands on the Flows tab; the package file list lives on the
   // Files tab, and that tree starts with every folder COLLAPSED — so the saved
   // schema needs both the tab and its folder opened before it is on screen.
-  await page.getByRole("tab", { name: /^Files/u }).click();
-  await page.getByRole("button", { name: "schemas", exact: true }).click();
+  await composition.getByRole("tab", { name: /^Files/u }).click();
+  await composition
+    .getByRole("button", { name: "schemas", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "review-intake.json", exact: true }),
+    composition.getByRole("button", {
+      name: "review-intake.json",
+      exact: true,
+    }),
   ).toBeVisible();
 });
 
