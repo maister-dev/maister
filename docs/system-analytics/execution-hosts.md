@@ -916,6 +916,14 @@ maps C-01 through C-15 to their executable witnesses and release gates.
 
 ### Host identity and protocol
 
+The single-host addressed compatibility path is enabled by setting
+`MAISTER_SELECTED_EXECUTION_HOST_KEY` beside `MAISTER_SUPERVISOR_URL` in
+Web. The URL is a trusted HTTP(S) origin. The persisted assignment must name
+the configured host key. Web checks fresh health and the existing durable
+data-plane capability before binding. The supervisor checks the expected
+host header before running its route handler. Same-key reboot refreshes the
+existing host row and leaves receipt recovery on the original store.
+
 The operator configures an endpoint and stable host key. Web resolves the
 saved host ID to that descriptor and verifies the key and
 `workspaceProtocol: [1]` capability through the existing `GET /health` and

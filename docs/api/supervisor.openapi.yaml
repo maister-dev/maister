@@ -40,6 +40,12 @@ info:
     pre-ADR-166 path field (`runId`, `projectSlug`, `worktreePath`,
     `repoPath`, `confineRoot`, `contextMounts`) is
     `409 PRECONDITION {reason: legacy_field, field}`.
+    A Web instance configured with a selected execution host pins its requests
+    using `X-Maister-Execution-Host-Key` after health discovery. A mismatched
+    key returns `409 EXECUTOR_UNAVAILABLE {reason: host_identity_mismatch}`
+    before reading a receipt or accepting a command. This header is optional
+    for existing local callers and is an identity check within the trusted
+    deployment network.
     Before admitting any executable command, the host confirms retirement of
     retained lower-epoch processes. An unconfirmed retirement returns
     `503 EXECUTOR_UNAVAILABLE` with `session_eviction_exit_unconfirmed`, retains

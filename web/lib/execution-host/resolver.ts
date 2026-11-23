@@ -10,6 +10,7 @@ import pino, { type Logger } from "pino";
 import { getHostById } from "./hosts";
 import { ensureLocalExecutionDataPlane } from "./event-plane";
 import { ensureLocalExecutionHost } from "./registrar";
+import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { MaisterError } from "@/lib/errors";
@@ -176,6 +177,33 @@ export async function hostForAssignment(
       assignmentHostKey: host.hostKey,
       observedHostKey: null,
     });
+  }
+
+  const selected = configuredSelectedExecutionEndpoint();
+
+  if (selected) {
+    if (selected.hostKey !== host.hostKey) {
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id,
+        assignmentHostKey: host.hostKey,
+        observedHostKey: selected.hostKey,
+      });
+    }
+
+    // A memoized readiness check cannot attest the peer receiving a command
+    // or a receipt read. A restart updates the stored boot on the same row.
+    const observed = await ensureLocalExecutionHost({ ...opts, db });
+
+    if (observed.status !== "registered") throw hostUnavailableError(observed);
+    if (observed.host.id !== host.id) {
+      throw hostIdentityMismatchError({
+        assignmentId: assignment.id,
+        assignmentHostKey: host.hostKey,
+        observedHostKey: observed.host.hostKey,
+      });
+    }
+
+    return observed.host;
   }
 
   let live: ExecutionHost | null = null;

@@ -40,6 +40,10 @@ import {
   type CommandReceiptV2,
 } from "../../runtime/command-evidence";
 import {
+  EXECUTION_HOST_KEY_HEADER,
+  EXECUTION_HOST_KEY_PATTERN,
+} from "../../runtime/execution-host-address";
+import {
   MAX_OBJECT_RESPONSE_BYTES,
   parseObjectContentLength,
 } from "../../runtime/object-integrity";
@@ -52,6 +56,7 @@ import {
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { contextMountsToWire } from "@/lib/context-mounts/types";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import {
   DEFAULT_EVENT_STREAM_LAG_AGE_MS,
   isHostBacklogLagEligible,
@@ -304,7 +309,7 @@ export type SupervisorModelCatalog = {
 // reads as ready; the registrar (lib/execution-host) REQUIRES it to register.
 export const ExecutionHostIdentitySchema = z
   .object({
-    hostKey: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+    hostKey: z.string().regex(EXECUTION_HOST_KEY_PATTERN),
     bootId: z.string().guid(),
     protocolVersion: z.literal(1),
   })
@@ -672,6 +677,8 @@ export type SupervisorEvent =
     };
 
 function baseUrl(): string {
+  const selected = configuredSelectedExecutionEndpoint();
+  if (selected) return selected.url;
   const configured = process.env.MAISTER_SUPERVISOR_URL;
 
   if (configured) return configured;
@@ -692,6 +699,32 @@ function baseUrl(): string {
   }
 
   return DEFAULT_BASE_URL;
+}
+
+function supervisorAddressOptions(headers?: Record<string, string>): {
+  headers?: Record<string, string>;
+  redirect?: "error";
+} {
+  const endpoint = configuredSelectedExecutionEndpoint();
+
+  if (!endpoint) return { headers };
+
+  return {
+    headers: { ...headers, [EXECUTION_HOST_KEY_HEADER]: endpoint.hostKey },
+    redirect: "error",
+  };
+}
+
+function fetchSupervisor(
+  url: string,
+  init: Omit<RequestInit, "headers"> & {
+    headers?: Record<string, string>;
+  } = {},
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    ...supervisorAddressOptions(init.headers),
+  });
 }
 
 const KNOWN_SUPERVISOR_CODES: ReadonlySet<MaisterErrorCode> = new Set([
@@ -795,7 +828,9 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
 
 async function fetchLongLivedSupervisor(
   url: string,
-  init: Omit<UndiciRequestInit, "dispatcher">,
+  init: Omit<UndiciRequestInit, "dispatcher" | "headers"> & {
+    headers?: Record<string, string>;
+  },
   ctx: string,
 ): Promise<Response> {
   logger.debug(
@@ -805,6 +840,7 @@ async function fetchLongLivedSupervisor(
 
   return (await undiciFetch(url, {
     ...init,
+    ...supervisorAddressOptions(init.headers),
     dispatcher: longLivedDispatcher,
   })) as unknown as Response;
 }
@@ -840,6 +876,7 @@ export async function checkSupervisorHealth(
 
   try {
     res = await fetch(url, {
+      redirect: configuredSelectedExecutionEndpoint() ? "error" : undefined,
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -875,9 +912,15 @@ export async function checkSupervisorHealth(
   const parsed = SupervisorHealthSchema.safeParse(body);
 
   if (!parsed.success) {
+    const incompatible =
+      configuredSelectedExecutionEndpoint() &&
+      parsed.error.issues.some(
+        ({ path }) => path[0] === "host" && path[1] === "protocolVersion",
+      );
+
     return {
       kind: "unavailable",
-      reason: "malformed",
+      reason: incompatible ? "workspace_protocol_unsupported" : "malformed",
       message: parsed.error.message,
     };
   }
@@ -917,7 +960,7 @@ export async function checkSupervisorDiagnostics(
   logger.debug({ url }, "checkSupervisorDiagnostics");
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
@@ -983,7 +1026,7 @@ export async function checkSupervisorEnvRefs(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       cache: "no-store",
       headers: { "content-type": "application/json" },
@@ -1021,7 +1064,7 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
   let res: Response;
 
   try {
-    res = await fetch(url);
+    res = await fetchSupervisor(url);
   } catch (err) {
     throw networkErrorToMaister(err, "listSessions");
   }
@@ -1099,7 +1142,7 @@ export async function resolveModelSuggestions(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...draft, force: opts?.force ?? false }),
@@ -1145,7 +1188,7 @@ export async function probeMcpViaSupervisor(
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetchSupervisor(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(req),
@@ -1489,7 +1532,7 @@ async function request<T>(spec: WireRequest): Promise<WireResponse<T>> {
     try {
       res = spec.longLived
         ? await fetchLongLivedSupervisor(url, init, spec.ctx)
-        : await fetch(url, { ...init, cache: "no-store" });
+        : await fetchSupervisor(url, { ...init, cache: "no-store" });
     } catch (err) {
       throw networkErrorToMaister(err, spec.ctx);
     }
@@ -1989,7 +2032,7 @@ async function runtimeObjectBinaryResponse(input: {
   try {
     request = new UndiciRequest(`${baseUrl()}${input.path}`, {
       method: input.method,
-      headers: input.headers,
+      ...supervisorAddressOptions(input.headers),
       body: input.bytes,
       cache: "no-store",
       signal: combineSignals(input.signal, controller.signal),

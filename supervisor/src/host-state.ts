@@ -10,6 +10,8 @@ import {
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { EXECUTION_HOST_KEY_PATTERN } from "../../runtime/execution-host-address";
+
 import { reuseSqliteStatements } from "./sqlite-statements";
 import {
   readHostProcessContext,
@@ -94,7 +96,7 @@ import {
 // the per-run fence high-water, adopted-workspace handles, and command
 // receipts. The web tier never reads it.
 
-export const HOST_KEY_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+export const HOST_KEY_PATTERN = EXECUTION_HOST_KEY_PATTERN;
 export const HOST_STATE_FILE = "state.sqlite";
 // The compacted body of a retired receipt: disposition stays in `phase` /
 // `http_status`, so the tombstone needs no payload of its own.

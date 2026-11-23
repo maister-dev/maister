@@ -28,6 +28,7 @@ import { safeDownloadHeaders } from "../../runtime/safe-download";
 import { objectDigest, objectEtag } from "../../runtime/object-integrity";
 import { safeErrorCauseChain } from "../../runtime/safe-error-cause";
 import { GIT_OBJECT_ID } from "../../runtime/wait-head";
+import { EXECUTION_HOST_KEY_HEADER } from "../../runtime/execution-host-address";
 
 import {
   reconcileRunSessionProcesses,
@@ -656,6 +657,18 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
   if (!hostState) {
     throw new Error("registerRoutes requires an execution-host state store");
   }
+
+  app.addHook("onRequest", async (req, reply) => {
+    const expected = req.headers[EXECUTION_HOST_KEY_HEADER];
+
+    if (expected !== undefined && expected !== hostState.hostKey) {
+      await reply.status(409).send({
+        code: "EXECUTOR_UNAVAILABLE",
+        message: "addressed request belongs to a different execution host",
+        details: { reason: "host_identity_mismatch" },
+      });
+    }
+  });
 
   app.addContentTypeParser("application/octet-stream", (_request, body, done) =>
     done(null, body),

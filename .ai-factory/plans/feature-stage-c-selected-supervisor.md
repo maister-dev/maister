@@ -221,7 +221,19 @@ and its real HTTP command outcomes are qualified in T04–T05H.
 
 ### C1–C2 — host owns the work
 
-- [ ] **T04 · Transport / one addressed host (after T03 and T03S).** Extend registrar, resolver and client to resolve the persisted ID to the configured endpoint and check the observed stable host key and protocol before sending an effect. Keep assignment recovery addressed to the same identity across boots. Substitute a different real supervisor at that endpoint and verify zero mutation requests, preparations or children there. Exercise a same-key restart and a capability mismatch. T12 extends this working path to two descriptors.
+- [x] **T04 · Transport / one addressed host (after T03 and T03S).** Extend registrar, resolver and client to resolve the persisted ID to the configured endpoint and check the observed stable host key and protocol before sending an effect. Keep assignment recovery addressed to the same identity across boots. Substitute a different real supervisor at that endpoint and verify zero mutation requests, preparations or children there. Exercise a same-key restart and a capability mismatch. T12 extends this working path to two descriptors.
+
+  **C-04 evidence.** RED at `91893f602` reached command delivery against
+  the replaced endpoint via a cached identity. GREEN on Darwin arm64,
+  Node 24.15.0 used two real supervisor processes and one proxy endpoint.
+  The incompatible outer version, missing durable capability, and wrong
+  host key admitted no mutation. A wrong peer also refused a receipt read
+  after a valid binding. Reopening the same SQLite store returned the exact
+  receipt and retained the assignment under a new boot. The Web registrar
+  and adoption integration suites passed 18 cases, and the supervisor
+  capability, receipt and identity suites passed 51. Both typechecks,
+  contracts and documentation validation passed. T05H negotiates the
+  separate workspace protocol when its addressed command is available.
 - [ ] **T05 · Web / reservation before effects (after T04).** Convert Flow, agent and scratch creation in `web/lib/services/runs.ts`, `web/lib/agents/launch.ts`, `web/lib/scratch-runs/service.ts` and `web/lib/execution-host/adoption.ts` using the reservation sequence above. Reuse preparation-resource, ownership and workspace claims. Stop the worker after commit and before delivery. The same durable command remains recoverable, no ACP session is eligible, and a retried intent finds exactly one admitted Run. Exercise a transaction rollback and verify no host request.
 - [ ] **T05H · Supervisor / checkout and recovery (after T05).** Implement fetch-at-SHA, preparation and Web result application against the reserved owner. Verify Git origin, SHA, canonical root and workspace mode. Serialize cache writes and workspace writers, and guard the apply with owner/epoch/generation CAS. Drop the reply after real Git preparation, restart Web and prove one incarnation and one applied result. A moved ref, unavailable SHA, failed DB apply, alias or child affinity conflict cannot overwrite the first Run’s dirty work. Exercise plain, shared, read-only and empty modes through their actual entry points.
 - [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.

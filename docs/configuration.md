@@ -1341,6 +1341,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 > | `MAISTER_IMPORT_MAX_ENTRIES` | no | `2000` | **(ADR-096.)** Max file count per import batch; over → `PRECONDITION` pre-write. `importMaxEntries()`. Host/service-env only. |
 > | `MAISTER_IMPORT_MAX_FILE_BYTES` | no | `10485760` (10 MiB) | **(ADR-096.)** Per-file size cap within an import batch; over → `PRECONDITION` pre-write. `importMaxFileBytes()`. Host/service-env only. |
 > | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
+> | `MAISTER_SELECTED_EXECUTION_HOST_KEY` | no | — | Web pins the configured supervisor by the stable key reported in health. Set `MAISTER_SUPERVISOR_URL` to its trusted HTTP(S) origin. |
 > | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |
 > | `MAISTER_RUNTIME_ROOT` | no | supervisor `cwd` | Root under which `.maister/<slug>/runs/...` is written |
 > | `MAISTER_HEARTBEAT_INTERVAL_MS` | no | `5000` | Supervisor orphan-child detection |

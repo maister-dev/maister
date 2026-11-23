@@ -16,6 +16,8 @@ import {
   touchLocalHost,
 } from "./hosts";
 import { defaultTransport } from "./default-transport";
+import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
+import { HOST_IDENTITY_MISMATCH_REASON } from "./types";
 
 import { getDb } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/pg-error";
@@ -164,6 +166,7 @@ export async function ensureLocalExecutionHost(
 ): Promise<RegistrationResult> {
   const db = opts.db ?? getDb();
   const transport = opts.transport ?? defaultTransport();
+  const selected = configuredSelectedExecutionEndpoint();
   const logger = opts.logger ?? defaultLog;
   const now = opts.now ?? (() => new Date());
   const health = await transport.health({
@@ -176,8 +179,25 @@ export async function ensureLocalExecutionHost(
   if (!health.identity) {
     return markUnavailable(
       db,
-      "no_identity",
+      selected ? "workspace_protocol_unsupported" : "no_identity",
       "supervisor /health carries no execution-host identity (pre-ADR-166 supervisor)",
+      now(),
+      logger,
+    );
+  }
+  if (selected && selected.hostKey !== health.identity.hostKey) {
+    logger.debug(
+      {
+        expectedHostKey: selected.hostKey,
+        observedHostKey: health.identity.hostKey,
+      },
+      "execution-host-endpoint-identity-mismatch",
+    );
+
+    return markUnavailable(
+      db,
+      HOST_IDENTITY_MISMATCH_REASON,
+      "selected supervisor endpoint is announcing a different host key",
       now(),
       logger,
     );
@@ -192,10 +212,24 @@ export async function ensureLocalExecutionHost(
   } catch (error) {
     return markUnavailable(
       db,
-      "capabilities_invalid",
+      selected ? "workspace_protocol_unsupported" : "capabilities_invalid",
       error instanceof Error
         ? `supervisor capability discovery failed: ${error.message}`
         : "supervisor capability discovery failed",
+      now(),
+      logger,
+    );
+  }
+  if (
+    selected &&
+    (!dataPlane?.eventStream ||
+      !dataPlane.asyncPrompt ||
+      !dataPlane.runtimeObjects)
+  ) {
+    return markUnavailable(
+      db,
+      "workspace_protocol_unsupported",
+      "selected supervisor lacks the durable execution data plane",
       now(),
       logger,
     );
