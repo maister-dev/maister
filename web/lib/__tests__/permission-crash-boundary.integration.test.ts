@@ -1499,11 +1499,16 @@ describe("an answer to a dead session never fails the run (G1, D-G2)", () => {
 
 describe("the host restarts under a pending permission (G0 (ii), last: it recycles the host)", () => {
   it("(ii) flow: turn_lost → Crashed, recoverable, row closed by crashRunningRun", async () => {
-    // This case observes settlement before a separate recovery worker may
-    // resume the run and park it at a new permission. Keep owner application
-    // and lifecycle projection running during the supervisor restart.
-    await durable[1].stop();
-    const { runId, flow } = await flowOnPermission("flow-restart");
+    const { runId, flow, hitl } = await flowOnPermission("flow-restart");
+    const [original] = await db
+      .select({ id: schema.executionCommands.id })
+      .from(schema.executionCommands)
+      .where(
+        and(
+          eq(schema.executionCommands.runId, runId),
+          eq(schema.executionCommands.kind, "session.prompt"),
+        ),
+      );
 
     // This case observes the operator's recoverable crash. The command-recovery
     // suite covers automatic restart, which can open a second permission first.
@@ -1516,22 +1521,52 @@ describe("the host restarts under a pending permission (G0 (ii), last: it recycl
     resetResolverForTests();
     await recoverExecutionCommands({ db, graceMs: 0 });
     await runReconcileSweep({ db });
-    await settled(runId, "flow-restart");
     await flow;
-    const state = await boundaryState(runId);
 
-    // The incarnation's projected state races the restart's own lifecycle
-    // events; every other column is the pin.
-    expect({ ...state, incarnations: undefined }).toEqual({
-      ...FLOW_SESSION_CRASHED,
-      incarnations: undefined,
-      prompt: {
-        state: "failed",
-        errorCode: "PRECONDITION",
-        reason: "turn_lost",
-        application: "applied",
-      },
+    // A continuation worker may already have admitted the same Run for recovery.
+    // The original crash event, prompt command and permission row retain its outcome.
+    await expect.poll(() => crashReason(runId)).toBe("turn-lost");
+    const [lost] = await db
+      .select()
+      .from(schema.executionCommands)
+      .where(eq(schema.executionCommands.id, original.id));
+
+    expect(lost).toMatchObject({
+      state: "failed",
+      applicationState: "applied",
+      lastError: { code: "PRECONDITION" },
     });
-    expect(await crashReason(runId)).toBe("turn-lost");
+    const error = lost.lastError as {
+      details?: { reason?: string };
+      reason?: string;
+    };
+
+    expect(error.details?.reason ?? error.reason).toBe("turn_lost");
+
+    const nextPermission = await waitFor(async () => {
+      const rows = await hitlRows(runId);
+
+      return rows.length === 2 &&
+        rows[0].id === hitl.id &&
+        rows[0].respondedAt &&
+        !rows[1].respondedAt &&
+        (await runRow(runId)).status === "NeedsInput"
+        ? rows[1]
+        : null;
+    }, "flow-restart: automatic recovery raises a new permission");
+
+    expect([hitl.stepId, nextPermission.stepId]).toEqual([
+      "implement",
+      "implement",
+    ]);
+    expect(nextPermission.id).not.toBe(hitl.id);
+    expect((await boundaryState(runId)).terminalEvents).toEqual([
+      "run.crashed",
+    ]);
+    const response = await answer(runId, nextPermission.id);
+
+    expect(response.ok).toBe(true);
+    await settled(runId, "flow-restart: answered recovery finishes");
+    expect((await runRow(runId)).status).toBe("Review");
   }, 240_000);
 });
