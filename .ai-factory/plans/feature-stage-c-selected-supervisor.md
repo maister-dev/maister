@@ -18,6 +18,17 @@ Normal Flow launch creates a worktree in `web/lib/services/runs.ts` before place
 
 Recorded A/B progress is **44/45**. S5.2/CI-R9d has a historical hosted receipt. S5.3 has local Linux distinct-user browser and binary transport evidence. The corrected 53-case Darwin isolation inventory passes locally. S5.4/C11 requires same-revision hosted release evidence. This gates Stage C rollout to a deployed instance. Local implementation, migrations on disposable or restored test stores, and G1/G2 browser qualification can proceed now. Retain the A/B release candidate and its evidence independently of Stage C branch work. [Stabilization status](stage-ab-stabilization.md#s5--isolated-lifecycle-qualification-and-final-consistency) · [Isolation qualification](s53a-linux-isolation.md) · [Original findings](../reviews/stage-ab-execution-host-audit-2026-09-05.md)
 
+The local A/B Web durability lane on archived `2777ff1ea` passed all 727
+tests in 46 suites on Darwin arm64 and Node 24.15.0. Its exit sweep reported
+zero leaks. The earlier RED reproduced a production helper querying a
+new column while the fixture was deliberately at migration 0159. The
+historical fixture now uses the earlier schema directly and retains its
+0160 migration and assertions. The supervisor durability lane passed
+148 tests in ten suites on archived `8b9ac8932` under the same runtime.
+Logs: `/private/tmp/maister-stage-c-ab-web-2777ff1ea.log` and
+`/private/tmp/maister-stage-c-ab-supervisor-8b9ac8932.log`.
+The G2 candidate still requires its own durability runs.
+
 The production Chrome smoke accepts `--chrome --second-supervisor` after the
 image tag. It runs two Supervisor processes on ports 7777 and 7778 with
 different Linux UIDs, host keys, boot IDs, SQLite stores and workspace roots.
