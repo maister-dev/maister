@@ -998,6 +998,27 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
   expect(bytes.toString()).toContain("+new untracked work\n");
   expect(git(workspace.realPath, "ls-files", "--", "new-file.txt")).toBe("");
   expect(bytes.toString()).not.toContain(root);
+  const binaryName = "binary\tasset.bin";
+  await writeFile(join(workspace.realPath, binaryName), Buffer.from([0, 255, 3]));
+  const review = await addressedRequest(rebooted,
+    `${workspaceQuery}/diff?generation=1&format=review&base=${commit}`,
+  );
+  expect(review.status).toBe(200);
+  const reviewRef = await review.json() as { object: { objectId: string; sha256: string } };
+  const reviewRead = await addressedRequest(rebooted,
+    `/runtime-objects/${reviewRef.object.objectId}/content`,
+  );
+  const reviewBytes = Buffer.from(await reviewRead.arrayBuffer());
+  expect(createHash("sha256").update(reviewBytes).digest("hex")).toBe(reviewRef.object.sha256);
+  expect(JSON.parse(reviewBytes.toString())).toMatchObject({
+    baseCommit: commit,
+    patch: expect.stringContaining("+new untracked work\n"),
+    files: expect.arrayContaining([
+      { path: "new-file.txt", status: "A", additions: 1, deletions: 0, binary: false },
+      { path: binaryName, status: "A", additions: 0, deletions: 0, binary: true },
+    ]),
+  });
+  expect(git(workspace.realPath, "ls-files", "--", binaryName)).toBe("");
   const newer = git(repository, "rev-parse", "HEAD");
   const unrelated = await addressedRequest(
     rebooted,

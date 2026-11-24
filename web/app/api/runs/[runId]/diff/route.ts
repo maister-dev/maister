@@ -5,9 +5,6 @@ import type { workspaces as workspaceTable } from "@/lib/db/schema";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
-import { z } from "zod";
-
-import { WORKSPACE_GIT_CHECKPOINT_PREFIX } from "../../../../../../runtime/workspace-prepare";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
@@ -21,7 +18,10 @@ import {
 } from "@/lib/diff/prepare";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { readAddressedWorkspaceStatus } from "@/lib/execution-host/workspace-preparation";
-import { readAddressedWorkspacePatch } from "@/lib/execution-host/workspace-review";
+import {
+  addressedCheckpointId,
+  readAddressedWorkspacePatch,
+} from "@/lib/execution-host/workspace-review";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,
@@ -31,7 +31,10 @@ import {
   RUN_DIFF_SCOPES,
   type RunDiffScope,
 } from "@/lib/runs/diff-scopes";
-import { readReviewSource } from "@/lib/runs/review-source";
+import {
+  readAddressedReviewSource,
+  readReviewSource,
+} from "@/lib/runs/review-source";
 import {
   type DiffFileEntry,
   diffNameStatus,
@@ -252,19 +255,13 @@ async function addressedDiffResponse(
   const { runId, workspace, scope, priorReviewTipSha, signal } = input;
   const { projectId } = workspace;
   await requireProjectAction(projectId, "readRepoFiles");
-  const checkpoint = z
-    .uuid()
-    .safeParse(
-      input.lastNodeRef?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX)
-        ? input.lastNodeRef.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length)
-        : undefined,
-    );
+  const checkpoint = addressedCheckpointId(input.lastNodeRef);
   const scopes: ScopeAvailability = {
     run: { available: workspace.baseCommit !== null },
     uncommitted: { available: true },
     "since-last-review": { available: priorReviewTipSha !== null },
-    review: { available: false, reason: "workspace_review_source_unavailable" },
-    "last-node": checkpoint.success
+    review: { available: workspace.baseCommit !== null },
+    "last-node": checkpoint
       ? { available: true }
       : { available: false, reason: "workspace_checkpoint_unavailable" },
   };
@@ -286,23 +283,30 @@ async function addressedDiffResponse(
       : scope === "since-last-review"
         ? priorReviewTipSha
         : workspace.baseCommit;
-  const checkpointId =
-    scope === "last-node" && checkpoint.success ? checkpoint.data : null;
+  const checkpointId = scope === "last-node" ? checkpoint : null;
   if (!base && !checkpointId)
     throw new MaisterError(
       "PRECONDITION",
       "The selected supervisor has no verified base commit",
     );
-  const { patch, baseCommit: checkpointCommit } =
-    await readAddressedWorkspacePatch({
-      db,
-      workspace,
-      range: checkpointId ? { checkpointId } : { base: base ?? undefined },
-      signal,
-    });
-  const diff = filterDiffByPath(patch, (path, oldPath) =>
-    isReviewableChangeEntry({ path, oldPath }),
-  );
+  const review =
+    scope === "review"
+      ? await readAddressedReviewSource({ db, workspace, signal })
+      : null;
+  const source = review
+    ? { baseCommit: review.baseCommit, diff: review.diff }
+    : await readAddressedWorkspacePatch({
+        db,
+        workspace,
+        range: checkpointId ? { checkpointId } : { base: base ?? undefined },
+        signal,
+      }).then(({ patch, baseCommit }) => ({
+        baseCommit: baseCommit ?? base,
+        diff: filterDiffByPath(patch, (path, oldPath) =>
+          isReviewableChangeEntry({ path, oldPath }),
+        ),
+      }));
+  const { baseCommit, diff } = source;
   const { prepared, renderUnavailableReason } = await prepareDiffForResponse({
     runId,
     scope,
@@ -320,10 +324,10 @@ async function addressedDiffResponse(
     runId,
     scope,
     scopes,
-    baseCommit: checkpointCommit ?? base,
+    baseCommit,
     sourceBranch: workspace.branch,
     targetBranch: input.targetBranch,
-    reviewSourceFingerprint: null,
+    reviewSourceFingerprint: review?.fingerprint ?? null,
     diff,
     truncated: prepared.truncated,
     files: prepared.files,

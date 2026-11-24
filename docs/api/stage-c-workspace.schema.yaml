@@ -336,10 +336,20 @@ definitions:
       base: &a4 { $ref: "#/definitions/GitObjectId" }
       head: *a4
       checkpointId: *a2
+      format:
+        const: review
+        description: Seal the patch and native Git file statistics in a WorkspaceGitReview JSON object. Requires base or checkpointId.
     not:
       anyOf:
         - required: [checkpointId, base]
         - required: [checkpointId, head]
+        - required: [format, head]
+        - allOf:
+            - required: [format]
+            - not:
+                anyOf:
+                  - required: [base]
+                  - required: [checkpointId]
   LogQuery:
     description: Page of history reachable from the observed HEAD in topological order. The cursor is scoped to the stable host, handle, generation and HEAD. A page over 65536 bytes is refused.
     type: object
@@ -695,6 +705,26 @@ definitions:
       generation: *a1
       checkpointId: *a2
       tree: *a4
+  WorkspaceGitReview:
+    type: object
+    additionalProperties: false
+    required: [baseCommit, patch, files]
+    properties:
+      baseCommit: *a4
+      patch: { type: string }
+      files:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [path, status, additions, deletions, binary]
+          properties:
+            path: { type: string, minLength: 1 }
+            oldPath: { type: string, minLength: 1 }
+            status: { enum: [A, C, D, M, R, T] }
+            additions: { type: integer, minimum: 0 }
+            deletions: { type: integer, minimum: 0 }
+            binary: { type: boolean }
   GitResult:
     type: object
     additionalProperties: false

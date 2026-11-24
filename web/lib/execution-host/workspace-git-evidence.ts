@@ -9,6 +9,8 @@ import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
 import {
   WORKSPACE_LOG_MAX_BYTES,
   WORKSPACE_LOG_OBJECT_NAME,
+  WORKSPACE_REVIEW_MAX_BYTES,
+  WORKSPACE_REVIEW_OBJECT_NAME,
 } from "../../../runtime/workspace-prepare";
 
 import { executionAssignments, workspaces } from "@/lib/db/schema";
@@ -21,6 +23,7 @@ const workspaceDiff = workspaceIdentity
   .extend({
     base: z.string().regex(GIT_OBJECT_ID),
     head: z.string().regex(GIT_OBJECT_ID).nullable(),
+    format: z.literal("review").optional(),
   })
   .strict();
 const workspaceLog = workspaceIdentity
@@ -58,9 +61,18 @@ export function workspaceGitEvidence(
     return parsed.success
       ? {
           ...parsed.data,
-          logicalName: "workspace-diff.patch",
-          mimeType: "text/x-diff",
-          maxBytes: 64 * 1024,
+          logicalName:
+            parsed.data.format === "review"
+              ? WORKSPACE_REVIEW_OBJECT_NAME
+              : "workspace-diff.patch",
+          mimeType:
+            parsed.data.format === "review"
+              ? "application/json"
+              : "text/x-diff",
+          maxBytes:
+            parsed.data.format === "review"
+              ? WORKSPACE_REVIEW_MAX_BYTES
+              : 64 * 1024,
         }
       : null;
   }

@@ -1,10 +1,15 @@
 import "server-only";
 
 import type { DiffFileEntry } from "@/lib/worktree";
+import type { Db } from "@/lib/execution-host/db";
+import type { workspaces } from "@/lib/db/schema";
+import type { WorkspaceGitReviewFile } from "../../../runtime/workspace-prepare";
 
 import { createHash } from "node:crypto";
 
 import { filterDiffByPath } from "@/lib/diff/prepare";
+import { MaisterError } from "@/lib/errors";
+import { readAddressedWorkspaceReviewSnapshot } from "@/lib/execution-host/workspace-review";
 import {
   filterReviewableChangeEntries,
   isReviewableChangeEntry,
@@ -25,6 +30,37 @@ export interface ReviewSource {
   nameStatus: DiffFileEntry[];
   truncated: boolean;
   fingerprint: string;
+}
+
+export async function readAddressedReviewSource(
+  input: Readonly<{
+    db: Db;
+    workspace: typeof workspaces.$inferSelect;
+    signal: AbortSignal;
+  }>,
+): Promise<ReviewSource & { files: WorkspaceGitReviewFile[] }> {
+  const { baseCommit } = input.workspace;
+  if (!baseCommit)
+    throw new MaisterError(
+      "PRECONDITION",
+      "The selected workspace has no pinned review base",
+    );
+  const raw = await readAddressedWorkspaceReviewSnapshot({
+    ...input,
+    range: { base: baseCommit },
+  });
+  const files = filterReviewableChangeEntries(raw.files);
+  const diff = filterDiffByPath(raw.patch, (path, oldPath) =>
+    isReviewableChangeEntry({ path, oldPath }),
+  );
+  const source = { baseCommit, diff, nameStatus: files, truncated: false };
+
+  return {
+    scope: "review",
+    ...source,
+    files,
+    fingerprint: reviewSourceFingerprint(source),
+  };
 }
 
 function canonicalNameStatus(

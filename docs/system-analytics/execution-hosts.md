@@ -1092,6 +1092,13 @@ and generation, then seals a diff against the current working tree. That read
 remains available after the Run releases capacity and requires current Web
 repository disclosure authority.
 
+For Review and Change Summary, the selected supervisor stages one temporary
+index and obtains the patch, name status and counts from that index. It seals
+them together as at most 64 KiB of JSON. Web verifies the object digest and
+the requested base. Review Diff and Change Summary apply the existing
+reviewable-file filter and compute the same source fingerprint. Git's
+NUL-delimited statistics preserve exact file names and binary-file state.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

@@ -31,6 +31,7 @@ export async function sealWorkspaceOutput(
             generation: number;
             base: string;
             head: string | null;
+            format?: "review";
           };
         }
       | {

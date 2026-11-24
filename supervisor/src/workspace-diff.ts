@@ -8,10 +8,16 @@ import type { RuntimeObjectRegistry } from "./runtime-objects";
 
 import { realpath } from "node:fs/promises";
 
+import {
+  WORKSPACE_REVIEW_MAX_BYTES,
+  WORKSPACE_REVIEW_OBJECT_NAME,
+} from "../../runtime/workspace-prepare";
+
 import { SupervisorError } from "./types";
 import { sealWorkspaceOutput } from "./workspace-output-object";
 import { resolveOwnedCheckpoint } from "./workspace-git-checkpoint";
 import { withPreparedGitIndex } from "./workspace-git-index";
+import { readWorkspaceReviewSnapshot } from "./workspace-review-snapshot";
 import {
   executeWorkspaceGit,
   executeWorkspaceGitBytes,
@@ -27,6 +33,16 @@ function diffRefusal(): SupervisorError {
     "The requested diff range is unavailable on this workspace generation",
     {
       details: { reason: "workspace_diff_range_invalid" },
+    },
+  );
+}
+
+function oversizedDiff(): SupervisorError {
+  return new SupervisorError(
+    "PRECONDITION",
+    "The workspace diff exceeds the 64 KiB review limit",
+    {
+      details: { reason: "workspace_diff_too_large" },
     },
   );
 }
@@ -115,9 +131,16 @@ export async function sealWorkspaceDiff(
       ...(query.head ? [query.head] : []),
       "--",
     ];
-    bytes = query.head
-      ? await executeWorkspaceGitBytes(args)
-      : await readWorkingTreePatch(workspace, git, args);
+    if (query.format === "review") {
+      bytes = Buffer.from(
+        JSON.stringify(await readWorkspaceReviewSnapshot(workspace, git, base)),
+      );
+      if (bytes.byteLength > WORKSPACE_REVIEW_MAX_BYTES) throw oversizedDiff();
+    } else {
+      bytes = query.head
+        ? await executeWorkspaceGitBytes(args)
+        : await readWorkingTreePatch(workspace, git, args);
+    }
     const verified = await observePreparedGitHead(workspace);
     const currentFence = state.getFence(workspace.runId);
     if (
@@ -130,16 +153,15 @@ export async function sealWorkspaceDiff(
       throw diffRefusal();
   } catch (error) {
     if (
+      error instanceof SupervisorError &&
+      error.details?.reason === "workspace_diff_too_large"
+    )
+      throw error;
+    if (
       (error as NodeJS.ErrnoException).code ===
       "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
     )
-      throw new SupervisorError(
-        "PRECONDITION",
-        "The workspace diff exceeds the 64 KiB review limit",
-        {
-          details: { reason: "workspace_diff_too_large" },
-        },
-      );
+      throw oversizedDiff();
     throw diffRefusal();
   }
 
@@ -151,8 +173,11 @@ export async function sealWorkspaceDiff(
       assignmentEpoch: fence.epoch,
     },
     {
-      logicalName: "workspace-diff.patch",
-      mimeType: "text/x-diff",
+      logicalName:
+        query.format === "review"
+          ? WORKSPACE_REVIEW_OBJECT_NAME
+          : "workspace-diff.patch",
+      mimeType: query.format === "review" ? "application/json" : "text/x-diff",
       bytes,
       source: {
         workspaceGitDiff: {
@@ -160,6 +185,7 @@ export async function sealWorkspaceDiff(
           generation,
           base,
           head: query.head ?? null,
+          ...(query.format ? { format: query.format } : {}),
         },
       },
     },

@@ -52,7 +52,23 @@ export type WorkspaceDiffQuery = Readonly<{
   base?: string;
   head?: string;
   checkpointId?: string;
+  format?: "review";
 }>;
+export type WorkspaceGitReviewFile = Readonly<{
+  path: string;
+  oldPath?: string;
+  status: "A" | "C" | "D" | "M" | "R" | "T";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}>;
+export type WorkspaceGitReview = Readonly<{
+  baseCommit: string;
+  patch: string;
+  files: WorkspaceGitReviewFile[];
+}>;
+export const WORKSPACE_REVIEW_OBJECT_NAME = "workspace-review.json";
+export const WORKSPACE_REVIEW_MAX_BYTES = 64 * 1024;
 export type WorkspaceLogQuery = Readonly<{
   generation: number;
   cursor?: string;

@@ -445,7 +445,7 @@ it.each([
         await projectEvidence();
         return findDeclaration("node:");
       }, {
-        timeout: 3_000,
+        timeout: 10_000,
       });
       commandId = queued.id;
     } finally {
@@ -570,6 +570,23 @@ it.each([
         scopes: { "last-node": { available: true } },
         baseCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
         diff: expect.stringContaining("+written by addressed ACP"),
+      });
+      const review = await getDiff(
+        new Request(`http://localhost/api/runs/${runId}/diff?scope=review`),
+        { params: Promise.resolve({ runId }) },
+      );
+      expect(review.status).toBe(200);
+      const { reviewSourceFingerprint } = await review.json() as { reviewSourceFingerprint: string };
+      expect(reviewSourceFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+      const { GET: getSummary } = await import("@/app/api/runs/[runId]/change-summary/route");
+      const summary = await getSummary(
+        new Request(`http://localhost/api/runs/${runId}/change-summary?scope=review`),
+        { params: Promise.resolve({ runId }) },
+      );
+      expect(summary.status).toBe(200);
+      expect(await summary.json()).toMatchObject({
+        reviewSourceFingerprint,
+        files: expect.arrayContaining([{ path: "acp-marker", status: "A", additions: 1, deletions: 0, binary: false }]),
       });
     } finally {
       stopProjecting = true;

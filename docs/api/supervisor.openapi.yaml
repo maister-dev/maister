@@ -315,6 +315,7 @@ paths:
         - { name: base, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
         - { name: head, in: query, schema: { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' } }
         - { name: checkpointId, in: query, schema: { type: string, format: uuid }, description: Exclusive of base and head. }
+        - { name: format, in: query, schema: { type: string, enum: [review] }, description: "Seals the patch and native Git file statistics together. Requires base or checkpointId and excludes head." }
       responses:
         "200": { description: Generation and sealed patch reference. A checkpoint request also returns the verified checkpoint commit. }
         "400": { description: Invalid generation or diff parameters. }
