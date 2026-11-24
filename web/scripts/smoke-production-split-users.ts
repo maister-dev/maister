@@ -21,6 +21,7 @@ assert(
 const useChrome = process.argv.includes("--chrome");
 const useSecondSupervisor = process.argv.includes("--second-supervisor");
 const addressedBuild = process.argv.includes("--addressed-build");
+const addressedStopTaskTitle = "Stop an accepted private workload";
 
 type SeededTarget = {
   projectId: string;
@@ -28,6 +29,7 @@ type SeededTarget = {
   taskId: string;
   repoPath: string;
   baseCommit?: string;
+  stopTaskId?: string;
 };
 
 function fixtureOutput(stdout: string, marker: string): string {
@@ -136,7 +138,7 @@ ${adapterScript}EOF
     import {join} from "node:path";
     import {eq} from "drizzle-orm";
     import {closeDb,getDb} from "./lib/db/client.ts";
-    import {flowRevisions,platformAcpRunners,projects} from "./lib/db/schema.ts";
+    import {flowRevisions,platformAcpRunners,projects,tasks} from "./lib/db/schema.ts";
     import {testPlatformRunnerRow} from "./lib/__tests__/runner-fixtures.ts";
     import {seedAdmin,seedPlatformRunner,seedProjectRepo,seedFlowTask} from "./test-support/durable-workers-seed.ts";
     const db = getDb();
@@ -145,6 +147,7 @@ ${adapterScript}EOF
     const project = await seedProjectRepo(db,${JSON.stringify(addressedBuild ? "/s53/host" : "/s53/shared")});
     let baseCommit;
     let manifest;
+    let stopTaskId;
     if (${addressedBuild}) {
       await db.update(platformAcpRunners).set(testPlatformRunnerRow(runnerId,"codex")).where(eq(platformAcpRunners.id,runnerId));
       await db.update(projects).set({deliveryPolicyDefault:{strategy:"publish_branch",push:"on_success",trigger:"manual",targetBranch:"main"}}).where(eq(projects.id,project.projectId));
@@ -181,8 +184,19 @@ printf '%s\\n' '{"build":"passed","typecheck":"passed"}' > "$MAISTER_OUTPUT_FILE
       const [revision]=await db.select({path:flowRevisions.installedPath}).from(flowRevisions).where(eq(flowRevisions.id,task.flowRevisionId));
       await mkdir(join(revision.path,"schemas"),{recursive:true});
       await writeFile(join(revision.path,"schemas","build.json"),JSON.stringify({schemaVersion:1,fields:[{name:"build",type:"string",required:true},{name:"typecheck",type:"string",required:true}]}));
+      const stopTask = await seedFlowTask(db,{projectId:project.projectId,installedPath:"/s53/shared",terminalDelayMs:0,manifest:{
+        schemaVersion:1,name:"addressed-stop",nodes:[{
+          id:"live",type:"cli",settings:{timeoutMs:180000},
+          action:{command:${JSON.stringify(`set -eu
+printf '%s %s\\n' "$$" "$(ps -o pgid= -p "$$" | tr -d ' ')" > stop-witness.txt
+while :; do sleep 1; done`)}},
+          transitions:{success:"done"}
+        }]
+      }});
+      stopTaskId = stopTask.taskId;
+      await db.update(tasks).set({title:${JSON.stringify(addressedStopTaskTitle)}}).where(eq(tasks.id,stopTaskId));
     }
-    console.log("S53_SEED:"+JSON.stringify({...project,...task,baseCommit}));
+    console.log("S53_SEED:"+JSON.stringify({...project,...task,baseCommit,stopTaskId}));
     await closeDb();
   `;
   const seedOut = await docker(
@@ -648,6 +662,34 @@ ${adapterScript}EOF
       hostId: selectedHost.id,
       baseCommit: witness.baseCommit,
     });
+    const ownedCheckoutForRun = async (
+      runId: string,
+    ): Promise<{
+      handle: string;
+      path: string;
+      repository: string;
+    } | null> => {
+      const { rows } = await db.pool.query<{ handle: string | null }>(
+        "select execution_workspace_id as handle from workspaces where run_id=$1",
+        [runId],
+      );
+      const handle = rows[0]?.handle;
+      if (!handle) return null;
+      const checkout = JSON.parse(
+        await inContainer(primary.user, [
+          "node",
+          "--input-type=module",
+          "-e",
+          `import { DatabaseSync } from "node:sqlite";
+           const db = new DatabaseSync(process.argv[1], { readOnly: true });
+           console.log(JSON.stringify(db.prepare("select real_path as path, repo_path as repository from workspaces where id=? and released_at is null").get(process.argv[2]) ?? null));`,
+          primary.root + "/state/state.sqlite",
+          handle,
+        ]),
+      ) as { path: string; repository: string } | null;
+
+      return checkout ? { ...checkout, handle } : null;
+    };
     const verifyBuild = async (
       taskId: string,
       expectedCommit: string,
@@ -797,9 +839,15 @@ ${adapterScript}EOF
     await expect(
       reviewPanel.getByText("acp-marker", { exact: true }).first(),
     ).toBeVisible();
-    const reviewedDiff = await api(`/api/runs/${second.runId}/diff?scope=uncommitted`);
+    const reviewedDiff = await api(
+      `/api/runs/${second.runId}/diff?scope=uncommitted`,
+    );
     assert.equal(reviewedDiff.status, 200, await reviewedDiff.clone().text());
-    assert.equal((await reviewedDiff.json()).diff, "", "the build left uncommitted files");
+    assert.equal(
+      (await reviewedDiff.json()).diff,
+      "",
+      "the build left uncommitted files",
+    );
     const publicationResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname ===
@@ -833,24 +881,8 @@ ${adapterScript}EOF
       outcome.commit,
     );
     await expect(page.getByTestId("run-header-status")).toContainText(/done/i);
-    const {
-      rows: [{ handle }],
-    } = await db.pool.query<{ handle: string }>(
-      "select execution_workspace_id as handle from workspaces where run_id=$1",
-      [second.runId],
-    );
-    const ownedCheckout = JSON.parse(
-      await inContainer(primary.user, [
-        "node",
-        "--input-type=module",
-        "-e",
-        `import { DatabaseSync } from "node:sqlite";
-         const db = new DatabaseSync(process.argv[1], { readOnly: true });
-         console.log(JSON.stringify(db.prepare("select real_path as path, repo_path as repository from workspaces where id=? and released_at is null").get(process.argv[2])));`,
-        primary.root + "/state/state.sqlite",
-        handle,
-      ]),
-    ) as { path: string; repository: string };
+    const ownedCheckout = await ownedCheckoutForRun(second.runId);
+    assert(ownedCheckout, "the published Run did not retain its checkout");
     const archiveFile = "operator-note.txt";
     const archiveContent = "Retain work created after publication";
     await inContainer(primary.user, [
@@ -908,6 +940,90 @@ ${adapterScript}EOF
       publishedCommit: outcome.commit,
       publishedBranch: outcome.publication.remoteBranch,
       archivedCommit: disposition.archived_commit,
+    });
+    assert(witness.stopTaskId);
+    const stoppedRunId = await launchFromBoard(
+      witness.stopTaskId,
+      selectedHost,
+      addressedStopTaskTitle,
+    );
+    const activeWorkload = await poll(
+      async () => {
+        const checkout = await ownedCheckoutForRun(stoppedRunId);
+        if (!checkout) return null;
+        const observed = await inContainer(primary.user, [
+          "sh",
+          "-ec",
+          'if test -s "$1"; then cat "$1"; fi',
+          "sh",
+          checkout.path + "/stop-witness.txt",
+        ]);
+        return observed ? { ...checkout, observed } : null;
+      },
+      30_000,
+      "selected supervisor started the cancellable workload",
+    );
+    const [pid, processGroup] = activeWorkload.observed
+      .split(/\s+/)
+      .map(Number);
+    assert(Number.isSafeInteger(pid) && pid > 1);
+    assert(Number.isSafeInteger(processGroup) && processGroup > 1);
+    await inContainer(primary.user, ["kill", "-0", String(pid)]);
+    await page.goto(`/runs/${stoppedRunId}`);
+    await page
+      .getByRole("main")
+      .getByTestId("workbench-lifecycle-actions")
+      .getByRole("button", { name: "Stop", exact: true })
+      .click();
+    const stopResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/runs/${stoppedRunId}/stop` &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Confirm", exact: true })
+      .click();
+    const stopped = await stopResponse;
+    assert.equal(stopped.status(), 200, await stopped.text());
+    await expect(page.getByTestId("run-header-status")).toContainText(
+      /review/i,
+    );
+    const {
+      rows: [cancelled],
+    } = await db.pool.query<{
+      execution_host_id: string;
+      quiescence: string;
+      state: string;
+    }>(
+      `select execution_host_id, result->>'quiescence' as quiescence, state
+       from execution_commands where run_id=$1 and kind='workspace.cancel'`,
+      [stoppedRunId],
+    );
+    assert.deepEqual(cancelled, {
+      execution_host_id: selectedHost.id,
+      quiescence: "proved",
+      state: "succeeded",
+    });
+    await inContainer(primary.user, [
+      "sh",
+      "-ec",
+      "ps -eo pgid=,stat= | awk -v group=\"$1\" '$1==group && $2!~/^Z/ { alive=1 } END { exit alive }'",
+      "sh",
+      String(processGroup),
+    ]);
+    assert.equal(
+      await inContainer(primary.user, [
+        "cat",
+        activeWorkload.path + "/stop-witness.txt",
+      ]),
+      activeWorkload.observed,
+    );
+    note("addressed-stop-retired-process-group", {
+      runId: stoppedRunId,
+      hostId: selectedHost.id,
+      pid,
+      processGroup,
     });
   } else {
     const runStatus = page.getByRole("main").getByTestId("run-header-status");

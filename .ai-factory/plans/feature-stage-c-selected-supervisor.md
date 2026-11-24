@@ -757,6 +757,15 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   independent; it had no assignment in this run. This receipt covers manual
   publication and archive in C-12. The remaining G1 cases still apply.
 
+  **C-12 browser Stop slice.** Production image `c64c42e77`
+  (`sha256:27acb63e46a03c1db129d8ce36a69cb9ae02ca838ffec3b3d4c822a1668cbc77`)
+  repeated both Next builds, reviewed publication and manual archive. A third
+  browser launch started a real shell group on the same selected supervisor.
+  The running shell wrote its PID and group into the owned worktree. Clicking
+  Stop applied a cancellation receipt with proved retirement, returned the
+  Run to Review and retained the exact witness bytes. Linux process
+  inventory found no remaining live member of that group.
+
   The deployment and supervisor samples now describe the verified private
   root, repository approval and stable-key pin. The PostgreSQL-only
   production Compose configuration and full documentation validator pass.
