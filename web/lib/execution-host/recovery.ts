@@ -534,13 +534,16 @@ export async function recoverExecutionCommands(
 
       return;
     }
-    if (ageMs(row, at) < graceMs) {
+    const addressedWorkspaceCommand =
+      row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
+      row.kind === "workspace.run" || row.kind === "workspace.cancel";
+    const unattempted = row.state === "queued" && row.attempts === 0;
+    if (ageMs(row, at) < graceMs && !(addressedWorkspaceCommand && unattempted)) {
       summary.skippedInFlight += 1;
 
       return;
     }
-    if (row.kind === "workspace.prepare" || row.kind === "workspace.materialize" ||
-        row.kind === "workspace.run" || row.kind === "workspace.cancel") {
+    if (addressedWorkspaceCommand) {
       if (row.nextAttemptAt && row.nextAttemptAt > at) {
         summary.skippedInFlight += 1;
 

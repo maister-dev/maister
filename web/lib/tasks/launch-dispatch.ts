@@ -34,6 +34,8 @@ import {
   startAgentSession,
 } from "@/lib/agents/launch";
 import { runs, taskLaunchIntents, workspaces } from "@/lib/db/schema";
+import { advanceAddressedWorkspaceAdmission } from "@/lib/execution-host/workspace-dispatch";
+import { workspacePreparationReadySql } from "@/lib/execution-host/workspace-preparation";
 import { acquireRepositoryMutationFence } from "@/lib/project-config-persistence/repository-lock";
 import { withoutGitOwnership } from "@/lib/project-config-persistence/git-process";
 import { launchAcceptedTaskRun } from "@/lib/services/runs";
@@ -284,9 +286,17 @@ async function startBoundTaskLaunch(db: Db, intentId: string): Promise<void> {
     if (bound?.status !== "Pending") return;
   }
   const [workspace] = await db
-    .select({ ownershipKind: workspaces.ownershipKind })
+    .select({
+      ownershipKind: workspaces.ownershipKind,
+      ready: sql<boolean>`${workspacePreparationReadySql(sql`${intent.runId}`)}`,
+    })
     .from(workspaces)
     .where(eq(workspaces.runId, intent.runId));
+  if (workspace?.ownershipKind === "host_owned" && !workspace.ready) {
+    await advanceAddressedWorkspaceAdmission(db, intent.runId);
+
+    return;
+  }
   const fence = workspace?.ownershipKind !== "host_owned" && intent.preparationIdentity.parentRepoPath
     ? await acquireRepositoryMutationFence(
         intent.preparationIdentity.parentRepoPath,

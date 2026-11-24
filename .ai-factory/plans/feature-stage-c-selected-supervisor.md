@@ -399,6 +399,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   and the full docs validator. Setup, rendered templates and operator
   cancellation remain open.
 
+  Production Chrome on `92ef552bf` selected and bound the private-repository
+  Run but timed out awaiting Review. The fresh prepare command skipped the
+  first scheduler sweep as in-flight, and the bound worker repeatedly tried
+  to admit the Run while preparation was incomplete. The accepted-launch
+  and Flow drivers now deliver new commands through the normal ledger claim.
+  The scheduler checks preparation readiness before attempting admission.
+  The real board fixture and driver-restart scenario pass without invoking
+  manual command recovery for fresh prepare/materialize/action/check.
+  Command-recovery and launch-intent integration suites also pass (47
+  focused cases across the runs). The in-flight recovery grace and receipt
+  application still govern any uncertain delivery.
+
 ### C3–C4 — review, board and single-host qualification
 
 - [ ] **T08 · Git / review (after T07 provides sealed evidence and T05H provides owned handles).** Move status/diff/log, mutation detection, Git checkpoint and restore behind the handle. Cover `flows/graph/workspace-checkpoint.ts`, `artifact-content.ts`, board diff readers and human takeover. Scope read authorization to the content returned. Verify dirty and detached states, bounded diff ranges, authorized read and denied cross-project read. Preserve ACP checkpoint separately. Log expected/actual commit and evidence ID.

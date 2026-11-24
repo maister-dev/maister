@@ -22,6 +22,7 @@ import {
   readRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
 import { WorkspaceWorkloadResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import { dispatchQueuedWorkspaceCommand } from "@/lib/execution-host/workspace-dispatch";
 import { reserveWorkspaceWorkload } from "@/lib/execution-host/workspace-workloads";
 
 const log = pino({
@@ -153,6 +154,17 @@ export async function runAddressedCliWorkload(
   });
   const deadline = AbortSignal.timeout(input.timeoutMs + 30_000);
   const signal = driver ? AbortSignal.any([deadline, driver.signal]) : deadline;
+  if (admitted.state === "queued") {
+    try {
+      await dispatchQueuedWorkspaceCommand(db, { runId, commandId: admitted.id });
+    } catch (error) {
+      if (!(error instanceof MaisterError) || error.code !== "EXECUTOR_UNAVAILABLE") throw error;
+      log.warn(
+        { runId, commandId: admitted.id, reason: error.details?.reason },
+        "workspace workload delivery awaits recovery",
+      );
+    }
+  }
   while (!signal.aborted) {
     const settled = await getCommand(db, admitted.id);
     if (

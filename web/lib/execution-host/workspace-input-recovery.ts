@@ -26,6 +26,7 @@ export async function recoverWorkspaceInputCaptures(
   db: Db,
   transport: ExecutionHostTransport,
   reportError: (runId: string, error: unknown) => void,
+  onlyRunId?: string,
 ): Promise<void> {
   const ready = await db
     .select({
@@ -51,6 +52,7 @@ export async function recoverWorkspaceInputCaptures(
     )
     .where(
       and(
+        onlyRunId ? eq(workspaces.runId, onlyRunId) : undefined,
         eq(runs.status, "Pending"),
         eq(workspaces.ownershipKind, "host_owned"),
         eq(executionAssignments.state, "active"),
@@ -104,6 +106,7 @@ export async function recoverWorkspaceInputCaptures(
 export async function recoverWorkspaceRequirementProbes(
   db: Db,
   reportError: (runId: string, error: unknown) => void,
+  onlyRunId?: string,
 ): Promise<void> {
   const next = nextWorkspaceRequirementProbeSql(
     sql`${executionAssignments.id}`,
@@ -133,6 +136,7 @@ export async function recoverWorkspaceRequirementProbes(
     )
     .where(
       and(
+        onlyRunId ? eq(workspaces.runId, onlyRunId) : undefined,
         eq(runs.status, "Pending"),
         eq(workspaces.ownershipKind, "host_owned"),
         eq(executionAssignments.state, "active"),

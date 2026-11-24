@@ -32,6 +32,7 @@ import { findStalledEventStreams } from "../events/stream-health";
 import { mintPlacement } from "../placement";
 import { buildEnvelope } from "../ledger";
 import { recoverExecutionCommands } from "../recovery";
+import { advanceAddressedWorkspaceAdmission } from "../workspace-dispatch";
 import { ensureLocalExecutionHost } from "../registrar";
 import { createLocalDirectTransport } from "../transports/local-direct";
 import {
@@ -333,15 +334,11 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
       { timeout: 10_000 },
     );
   };
-  expect(
-    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
-  ).toMatchObject({ errors: [], redelivered: 1 });
+  await advanceAddressedWorkspaceAdmission(db, runId);
   const [prepare] = await listCommandsForRun(db, runId);
   expect(prepare.kind).toBe("workspace.prepare");
   await applyCommand(prepare.id);
-  expect(
-    await recoverExecutionCommands({ db, transport, graceMs: 0 }),
-  ).toMatchObject({ errors: [], redelivered: 1 });
+  await advanceAddressedWorkspaceAdmission(db, runId);
   const materialization = (await listCommandsForRun(db, runId)).find(
     ({ kind }) => kind === "workspace.materialize",
   );
@@ -386,20 +383,17 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
         timeout: 3_000,
       });
       if (declaration === "node:") expect(queued.id).toBe(commandId);
-      expect(
-        await recoverExecutionCommands({ db, transport, graceMs: 0 }),
-      ).toMatchObject({ errors: [], redelivered: 1 });
       await applyCommand(queued.id);
     }
+    await vi.waitFor(async () => {
+      await projectCanonicalRuntimeObjects({ db, runId });
+      expect(
+        await db.select({ status: runs.status }).from(runs).where(eq(runs.id, runId)),
+      ).toEqual([{ status: "Review" }]);
+    }, { timeout: 10_000 });
   } finally {
     expect(await driving).toEqual({ state: "returned" });
   }
-  expect(
-    await db
-      .select({ status: runs.status })
-      .from(runs)
-      .where(eq(runs.id, runId)),
-  ).toEqual([{ status: "Review" }]);
   expect(
     await db
       .select({ status: nodeAttempts.status, stdout: nodeAttempts.stdout })
@@ -889,13 +883,6 @@ async function assertAddressedRequirement({
     (result) => ({ result }),
     (error: unknown) => ({ error }),
   );
-  const workDelivery = await recoverExecutionCommands({
-    db,
-    transport,
-    graceMs: 0,
-  });
-  expect(workDelivery.errors).toEqual([]);
-  expect(workDelivery.redelivered).toBe(1);
   const workEvents = await consumeRuntimeEventStreamOnce({
     db,
     executionHostId: host.id,

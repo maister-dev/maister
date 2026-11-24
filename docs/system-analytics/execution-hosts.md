@@ -1005,6 +1005,14 @@ verifies the manifest and file digests and gives the process its own copy.
 CLI templates that render different command bytes, Git mutation assertions
 and workspace rewind policies still require their respective host contracts.
 
+The accepted-launch worker advances new prepare, materialize and requirement
+commands for the bound Run as their preceding evidence is applied. The Flow
+driver sends a newly reserved action or gate through the same ledger claim.
+Both paths leave commands with uncertain delivery to the recovery sweep.
+Fresh, unattempted workspace commands are eligible for sweep delivery without
+waiting for the in-flight grace period. Admission remains gated on the applied
+materialization and requirement results.
+
 The [versioned schema profile](../api/stage-c-workspace.schema.yaml) fixes
 each operation's method, route, operation ID, stage-specific shape and
 terminal result. [Executable examples](../api/stage-c-workspace-examples.yaml)
