@@ -477,8 +477,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   B's token. The real board preview returned the registered host name and
   the existing launch idempotency and project-preference CAS suites stayed
   green. Passed 64 board tests, 31 integrations, Web typecheck, contracts
-  and docs. The T11 Chrome run below verifies keyboard selection. SSE
-  display of requested versus actual placement remains open.
+  and docs. The T11 Chrome run below verifies keyboard selection.
+
+  The board now reads the requested and first-dispatch host separately via
+  the existing attention stream. RED omitted actual placement from the
+  authorized intent GET after a real addressed Run reached Review. GREEN
+  returned its exact dispatch host and epoch after release. The board test
+  observed the pending state and then the named assignment after an SSE
+  tick. Passed 31 integrations and 18 board interactions.
 
   A confirmed preparation refusal now holds the bound intent with an
   actionable EN/RU reason and keeps the original receipt and host identity.
@@ -502,8 +508,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   default changed again, rejected changed explicit selections under the same
   request key, and rechecked eligibility before dispatch. Passed 28 local
   integration and 24 route cases, Web typecheck, contracts and docs/ERD.
-  The board picker,
-  shared-root inheritance and actual placement over SSE remain open.
+  Multi-host shared-root inheritance remains open.
 
   The authenticated board preview uses the selected supervisor's approved
   repository ref page. RED tried to list branches in Web's missing checkout.

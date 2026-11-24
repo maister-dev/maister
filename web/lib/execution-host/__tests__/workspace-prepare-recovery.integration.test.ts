@@ -511,6 +511,20 @@ it.each([
       state: "succeeded",
       attempts: 1,
     });
+    const { GET: getIntent } = await import("@/app/api/task-launch-intents/[intentId]/route");
+    const receipt = await getIntent(
+      new Request(`http://localhost/api/task-launch-intents/${bound.intentId}`),
+      { params: Promise.resolve({ intentId: bound.intentId }) },
+    );
+    expect(receipt.status).toBe(200);
+    expect(await receipt.json()).toMatchObject({
+      runStatus: "Review",
+      executionHostSelection: { requestedExecutionHostId: host.id, effectiveExecutionHostId: host.id },
+      executionHostPlacement: {
+        savedDisplayName: host.displayName,
+        actual: { executionHostId: host.id, displayName: host.displayName, assignmentEpoch: 1 },
+      },
+    });
   },
   90_000,
 );

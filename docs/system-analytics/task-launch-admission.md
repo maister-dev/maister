@@ -459,7 +459,10 @@ only reconcile or stop under its existing ownership and action authority.
 The picker shows the source of the suggested default before submission, keeps
 the saved choice while an intent is pending and exposes the actual host and
 epoch after dispatch. Use existing SSE refresh for pending reasons and actual
-placement. Keep a single keyboard focus path through the picker and Launch
+placement. The intent read resolves the display name from the saved host ID.
+It reports actual placement only from the exact assignment and epoch in the
+Run's first-dispatch receipt, including after that assignment is released.
+Keep a single keyboard focus path through the picker and Launch
 dialog. Escape closes the open picker before the dialog. Cancel and submission
 return focus to the launching control or its stable replacement. Expose
 offline, stale preview and revoked permission reasons in EN/RU and announce

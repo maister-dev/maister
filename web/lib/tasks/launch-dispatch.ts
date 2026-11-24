@@ -20,7 +20,7 @@ import {
   acceptedTaskLaunchExecution,
   assertTaskLaunchBoundWorkspace,
 } from "./launch-execution";
-import { taskLaunchReceipt } from "./launch-receipt";
+import { readTaskLaunchReceipt } from "./launch-receipt";
 import { emitTaskLaunchChanged } from "./launch-events";
 import {
   lockTaskLaunchReservation,
@@ -63,15 +63,7 @@ async function currentReceipt(
     .where(eq(taskLaunchIntents.id, intentId));
 
   if (!intent) throw launchRefusal("launch_not_found", "PRECONDITION");
-  const receipt = taskLaunchReceipt(intent);
-
-  if (!intent.runId) return receipt;
-  const [run] = await db
-    .select({ status: runs.status })
-    .from(runs)
-    .where(eq(runs.id, intent.runId));
-
-  return { ...receipt, ...(run ? { runStatus: run.status } : {}) };
+  return readTaskLaunchReceipt(db, intent);
 }
 
 /** Fences a failed current owner; a stale callback never mutates its successor. */

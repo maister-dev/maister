@@ -27724,6 +27724,22 @@ components:
       properties:
         executionHostSelection:
           $ref: "#/components/schemas/TaskLaunchHostSelection"
+        executionHostPlacement:
+          type: object
+          additionalProperties: false
+          required: [savedDisplayName, actual]
+          description: Authorized readback for an addressed intent. The actual host and epoch come from the committed first dispatch and remain readable after release.
+          properties:
+            savedDisplayName: { type: string, nullable: true }
+            actual:
+              type: object
+              nullable: true
+              additionalProperties: false
+              required: [executionHostId, displayName, assignmentEpoch]
+              properties:
+                executionHostId: { type: string, minLength: 1, maxLength: 256 }
+                displayName: { type: string, minLength: 1 }
+                assignmentEpoch: { type: integer, minimum: 1, maximum: 2147483647 }
         schemaVersion:
           type: integer
           enum:

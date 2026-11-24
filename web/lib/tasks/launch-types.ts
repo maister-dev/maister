@@ -266,6 +266,14 @@ export type TaskLaunchReceipt = Readonly<{
   queuePosition?: number;
   queueReason?: string;
   executionHostSelection?: TaskLaunchHostSelection;
+  executionHostPlacement?: Readonly<{
+    savedDisplayName: string | null;
+    actual: Readonly<{
+      executionHostId: string;
+      displayName: string;
+      assignmentEpoch: number;
+    }> | null;
+  }>;
   snapshot: Readonly<{
     kind: "flow" | "agent";
     workspace: "none" | "repo_read" | "worktree";
