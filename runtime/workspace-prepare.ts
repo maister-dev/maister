@@ -65,6 +65,8 @@ export type WorkspaceLogPage = Readonly<{
 export const WORKSPACE_LOG_OBJECT_NAME = "workspace-log.json";
 export const WORKSPACE_LOG_MAX_BYTES = 64 * 1024;
 export const WORKSPACE_LOG_MAX_PAGE_SIZE = 100;
+export const WORKSPACE_TEMPLATE_CONTEXT_NAME = "workload-template-context.json";
+export const WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES = 128 * 1024;
 export type WorkspaceEvidenceObject = Readonly<{
   generation: number;
   object: WorkspaceInputObject;
@@ -121,6 +123,7 @@ export type WorkspaceWorkloadRequest = Readonly<{
     declarationId: string;
     inputGeneration: number;
     inputDigest: string;
+    templateContext?: WorkspaceInputObject;
   }>;
 }>;
 export type WorkspaceWorkloadResult = Readonly<{

@@ -13,75 +13,16 @@ import type { AssignmentObjectiveInput } from "@/lib/specialist-assignments/type
 
 import pino from "pino";
 
+import { flowTemplateEnvironment } from "../../../runtime/flow-template-environment";
+
+export { DEFAULT_ALLOW_PATTERNS } from "../../../runtime/flow-template-environment";
+
 const log = pino({
   name: "flow-context",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
 export const DEFAULT_OUTPUT_TRUNCATION = 8 * 1024;
-
-const DENY_PATTERNS: RegExp[] = [
-  /TOKEN/i,
-  /KEY/i,
-  /SECRET/i,
-  /PASSWORD/i,
-  /AUTH/i,
-  /^ANTHROPIC_/i,
-  /^OPENAI_/i,
-  /^DB_URL$/i,
-  /^MAISTER_SUPERVISOR_URL$/i,
-  /CREDENTIAL/i,
-  /PRIVATE/i,
-];
-
-// Shared with the child-process env seam (child-env.ts, ADR-153): the same
-// allow-list governs what {{ env.* }} exposes to templates AND what a spawned
-// cli/check/probe child inherits from the web process.
-export const DEFAULT_ALLOW_PATTERNS: RegExp[] = [
-  /^LANG$/,
-  /^LC_/,
-  /^TZ$/,
-  /^PATH$/,
-  /^HOME$/,
-  /^USER$/,
-  /^SHELL$/,
-  /^TERM$/,
-];
-
-function isDenied(key: string): boolean {
-  for (const p of DENY_PATTERNS) {
-    if (p.test(key)) return true;
-  }
-
-  return false;
-}
-
-function isAllowed(key: string, extra: RegExp[]): boolean {
-  for (const p of DEFAULT_ALLOW_PATTERNS) {
-    if (p.test(key)) return true;
-  }
-  for (const p of extra) {
-    if (p.test(key)) return true;
-  }
-
-  return false;
-}
-
-function buildEnv(
-  source: Record<string, string | undefined>,
-  envWhitelist: RegExp[],
-): Record<string, string> {
-  const out: Record<string, string> = {};
-
-  for (const [k, v] of Object.entries(source)) {
-    if (v === undefined) continue;
-    if (isDenied(k)) continue;
-    if (!isAllowed(k, envWhitelist)) continue;
-    out[k] = v;
-  }
-
-  return out;
-}
 
 function truncateOutput(s: string | null, cap: number): string {
   if (s === null) return "";
@@ -204,7 +145,7 @@ export type BuildCompanyContextArgs = SharedContextArgs & {
 
 function buildSharedContext(args: SharedContextArgs): SharedContext {
   const cap = args.outputTruncationBytes ?? DEFAULT_OUTPUT_TRUNCATION;
-  const env = buildEnv(args.envSource ?? process.env, args.envWhitelist ?? []);
+  const env = flowTemplateEnvironment(args.envSource ?? process.env, args.envWhitelist);
 
   log.debug(
     {

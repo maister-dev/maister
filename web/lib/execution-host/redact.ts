@@ -59,8 +59,12 @@ const PAYLOAD_PROJECTION: Readonly<Record<CommandKind, Projection>> = {
       ? payload.objects.map((value) => pickScalars(asObject(value), ["objectId", "sha256"]))
       : [],
   }),
-  "workspace.run": (payload) =>
-    pickScalars(payload, ["generation", "workload", "declarationId", "inputGeneration", "inputDigest"]),
+  "workspace.run": (payload) => ({
+    ...pickScalars(payload, ["generation", "workload", "declarationId", "inputGeneration", "inputDigest"]),
+    ...(payload.templateContext === undefined ? {} : {
+      templateContext: pickScalars(asObject(payload.templateContext), ["objectId", "sha256"]),
+    }),
+  }),
   "workspace.cancel": (payload) => pickScalars(payload, ["generation", "targetCommandId"]),
   "workspace.adopt": (p) => ({
     ...pickScalars(p, ["runId", "projectSlug", "kind"]),

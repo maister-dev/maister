@@ -8,6 +8,13 @@ import type { StepResult } from "./types";
 
 import pino from "pino";
 
+import {
+  WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES,
+  WORKSPACE_TEMPLATE_CONTEXT_NAME,
+  workspaceEvidenceDigest,
+} from "../../../runtime/workspace-prepare";
+import { canonicalCommandJson } from "../../../runtime/command-json";
+
 import { readSealedCliOutput } from "./graph/node-output";
 import {
   assertFlowDriverClaim,
@@ -16,14 +23,24 @@ import {
 
 import { MaisterError } from "@/lib/errors";
 import { getCommand } from "@/lib/execution-host/commands";
+import { createExecutionHosts } from "@/lib/execution-host";
 import { runEventWakeBus } from "@/lib/execution-host/events/run-wake";
 import {
   getRuntimeObjectForRun,
+  deterministicRuntimeObjectId,
+  publishRuntimeObject,
   readRuntimeObjectContent,
 } from "@/lib/execution-host/runtime-objects";
-import { WorkspaceWorkloadResultSchema } from "@/lib/execution-host/workspace-prepare-schema";
+import {
+  WorkspaceWorkloadPayloadSchema,
+  WorkspaceWorkloadResultSchema,
+} from "@/lib/execution-host/workspace-prepare-schema";
 import { dispatchQueuedWorkspaceCommand } from "@/lib/execution-host/workspace-dispatch";
-import { reserveWorkspaceWorkload } from "@/lib/execution-host/workspace-workloads";
+import {
+  reserveWorkspaceWorkload,
+  workspaceWorkloadCommandId,
+} from "@/lib/execution-host/workspace-workloads";
+import { assertWorkspaceRunAuthority } from "@/lib/execution-host/workspace-input-authority";
 
 const log = pino({
   name: "addressed-workload",
@@ -70,6 +87,57 @@ export class FlowWorkloadContinuationPending extends MaisterError {
 }
 
 type CliOutput = Pick<StepResult, "stdout" | "stderr" | "originalOutput">;
+
+async function sealTemplateContext(
+  work: AddressedCliWorkload,
+  runId: string,
+  values: Readonly<Record<string, unknown>>,
+): Promise<WorkspaceInputObject> {
+  let content: unknown;
+  let bytes: Buffer;
+  try {
+    content = JSON.parse(
+      JSON.stringify({ version: 1, declarationId: work.declarationId, values }),
+    );
+    bytes = Buffer.from(canonicalCommandJson(content));
+  } catch {
+    throw new MaisterError(
+      "CONFIG",
+      "The addressed workload template context must be JSON",
+      {
+        details: { reason: "workspace_template_context_invalid" },
+      },
+    );
+  }
+  if (bytes.byteLength > WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES)
+    throw new MaisterError(
+      "CONFIG",
+      "The addressed workload template context exceeds 128 KiB",
+      {
+        details: { reason: "workspace_template_context_invalid" },
+      },
+    );
+  await assertWorkspaceRunAuthority(work.db, runId);
+  const client = await createExecutionHosts({ db: work.db }).forAssignment({
+    id: work.assignmentId,
+  });
+  const sha256 = workspaceEvidenceDigest(content);
+  const published = await publishRuntimeObject({
+    client,
+    objectId: deterministicRuntimeObjectId({
+      runId,
+      sourceKey: `workspace-template:${work.assignmentId}:${work.operationKey}`,
+      sha256,
+    }),
+    kind: "capability_profile",
+    logicalName: WORKSPACE_TEMPLATE_CONTEXT_NAME,
+    mimeType: "application/json",
+    retentionClass: "run",
+    bytes,
+  });
+
+  return { objectId: published.objectId, sha256 };
+}
 
 async function readWorkloadOutputs(
   db: Db,
@@ -139,15 +207,31 @@ export async function runAddressedCliWorkload(
   input: Readonly<{
     runId: string;
     timeoutMs: number;
+    templateValues?: Readonly<Record<string, unknown>>;
     driver?: Readonly<{ claim: FlowDriverClaim; signal: AbortSignal }>;
   }>,
 ): Promise<StepResult> {
   const { db } = work;
   const { runId, driver } = input;
   const startedAt = Date.now();
+  if (driver?.signal.aborted) throw new FlowDriverClaimLost(driver.claim);
+  const existing = input.templateValues
+    ? await getCommand(db, workspaceWorkloadCommandId({ ...work, runId }))
+    : null;
+  const templateContext = existing
+    ? WorkspaceWorkloadPayloadSchema.parse(existing.payload).templateContext
+    : input.templateValues
+      ? await sealTemplateContext(work, runId, input.templateValues)
+      : undefined;
+  if (input.templateValues && !templateContext)
+    throw new MaisterError(
+      "CONFLICT",
+      "The addressed workload has no retained template context",
+    );
   const admitted = await reserveWorkspaceWorkload(db, {
     ...work,
     runId,
+    templateContext,
     ...(driver
       ? { assertDriver: (tx: Db) => assertFlowDriverClaim(tx, driver.claim) }
       : {}),
@@ -156,9 +240,16 @@ export async function runAddressedCliWorkload(
   const signal = driver ? AbortSignal.any([deadline, driver.signal]) : deadline;
   if (admitted.state === "queued") {
     try {
-      await dispatchQueuedWorkspaceCommand(db, { runId, commandId: admitted.id });
+      await dispatchQueuedWorkspaceCommand(db, {
+        runId,
+        commandId: admitted.id,
+      });
     } catch (error) {
-      if (!(error instanceof MaisterError) || error.code !== "EXECUTOR_UNAVAILABLE") throw error;
+      if (
+        !(error instanceof MaisterError) ||
+        error.code !== "EXECUTOR_UNAVAILABLE"
+      )
+        throw error;
       log.warn(
         { runId, commandId: admitted.id, reason: error.details?.reason },
         "workspace workload delivery awaits recovery",
@@ -167,6 +258,21 @@ export async function runAddressedCliWorkload(
   }
   while (!signal.aborted) {
     const settled = await getCommand(db, admitted.id);
+    const refusal = settled?.lastError?.details;
+    if (
+      settled?.state === "failed" &&
+      typeof refusal === "object" &&
+      refusal !== null &&
+      "reason" in refusal &&
+      refusal.reason === "workspace_template_context_invalid"
+    )
+      throw new MaisterError(
+        "CONFIG",
+        "The selected supervisor could not render the declared workload",
+        {
+          details: { reason: "workspace_template_context_invalid" },
+        },
+      );
     if (
       !settled ||
       settled.state === "failed" ||

@@ -212,7 +212,7 @@ it.each([
         fields: [{ name: "verified", type: "boolean", required: true }],
       }),
     );
-    const command = '"$MAISTER_FLOW_DIR/scripts/check.sh"';
+    const command = 'test "{{ task.title }}" = "Addressed task" && test "{{ env.LANG }}" = "C" && "$MAISTER_FLOW_DIR/scripts/check.sh"';
     const manifest = {
       schemaVersion: 1,
       name: "addressed-graph",
@@ -274,10 +274,12 @@ it.each([
     vi.stubEnv("DB_URL", database.databaseUrl);
     vi.stubEnv("MAISTER_RUNTIME_ROOT", join(root, "web"));
     vi.stubEnv("MAISTER_WORKTREES_ROOT", join(root, "web-worktrees"));
+    vi.stubEnv("LANG", "en_US.UTF-8");
     supervisor = await startRealSupervisor({
       fixture: "mock-acp-lifecycle.mjs",
       fixtureAdapters: [adapter],
       env: {
+        LANG: "C",
         MAISTER_WORKSPACE_REPOSITORIES: JSON.stringify({ [projectId]: source }),
         ...(adapter === "claude" && runner.model
           ? { MAISTER_FIXTURE_EXPECT_NATIVE_MODEL: runner.model }

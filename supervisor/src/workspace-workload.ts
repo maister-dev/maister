@@ -21,7 +21,11 @@ import {
   WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH,
   WORKSPACE_WORKLOAD_MAX_DECLARATIONS,
   WORKSPACE_WORKLOAD_MAX_TIMEOUT_MS,
+  WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES,
+  WORKSPACE_TEMPLATE_CONTEXT_NAME,
 } from "../../runtime/workspace-prepare";
+import { flowTemplateEnvironment } from "../../runtime/flow-template-environment";
+import { renderStrict } from "../../runtime/flow-template-render";
 import { inspectProcessGroup } from "../../runtime/process-group";
 
 import { SupervisorError } from "./types";
@@ -55,6 +59,79 @@ const declarationsSchema = z
       .strict(),
   )
   .max(WORKSPACE_WORKLOAD_MAX_DECLARATIONS);
+
+const templateContextSchema = z
+  .object({
+    version: z.literal(1),
+    declarationId: z.string(),
+    values: z
+      .record(z.string(), z.json())
+      .refine((values) => !Object.hasOwn(values, "env")),
+  })
+  .strict();
+
+/** The host executes only its retained template with a sealed, assignment-bound view. */
+async function resolveWorkloadCommand(
+  objects: RuntimeObjectRegistry,
+  request: WorkspaceWorkloadRequest,
+  template: string,
+): Promise<string> {
+  const { owner, payload } = request;
+  const reference = payload.templateContext;
+  const needsContext =
+    ["cli", "check"].includes(payload.workload) && template.includes("{{");
+  if (!needsContext && reference === undefined) return template;
+  const invalid = () =>
+    new SupervisorError(
+      "PRECONDITION",
+      "Workspace template context is invalid or unavailable",
+      {
+        details: { reason: "workspace_template_context_invalid" },
+      },
+    );
+  if (!needsContext || !reference) throw invalid();
+
+  const { metadata } = await objects.resolvePromptReference({
+    runId: owner.runId,
+    assignmentId: owner.assignmentId,
+    assignmentEpoch: owner.assignmentEpoch,
+    objectId: reference.objectId,
+    expectedKind: "capability_profile",
+  });
+  if (
+    metadata.logicalName !== WORKSPACE_TEMPLATE_CONTEXT_NAME ||
+    metadata.mimeType !== "application/json" ||
+    metadata.sha256 !== reference.sha256 ||
+    metadata.sizeBytes == null ||
+    metadata.sizeBytes > WORKSPACE_TEMPLATE_CONTEXT_MAX_BYTES
+  )
+    throw invalid();
+
+  const { stream } = await objects.read(reference.objectId);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const bytes = Buffer.concat(chunks);
+  if (createHash("sha256").update(bytes).digest("hex") !== reference.sha256)
+    throw invalid();
+  try {
+    const context = templateContextSchema.parse(
+      JSON.parse(bytes.toString("utf8")),
+    );
+    if (context.declarationId !== payload.declarationId) throw invalid();
+    const command = renderStrict(
+      template,
+      { ...context.values, env: flowTemplateEnvironment(process.env) },
+      {
+        maxLength: WORKSPACE_WORKLOAD_MAX_COMMAND_LENGTH,
+      },
+    );
+    if (command.length === 0 || command.includes("\0")) throw invalid();
+
+    return command;
+  } catch {
+    throw invalid();
+  }
+}
 
 async function readDeclaredResult(
   path: string,
@@ -197,6 +274,11 @@ export async function runWorkspaceWorkload(
       "PRECONDITION",
       "Flow package assets are scoped to node actions",
     );
+  const command = await resolveWorkloadCommand(
+    input.objects,
+    request,
+    declaration.command,
+  );
   assertOwner();
   let processGroup: number | undefined;
   let outputDirectory: string | undefined;
@@ -230,7 +312,7 @@ export async function runWorkspaceWorkload(
         : undefined;
     result = await executeWorkspaceWorkloadProcess({
       cwd: workspace.realPath,
-      command: declaration.command,
+      command,
       timeoutMs: declaration.timeoutMs,
       signal: input.signal,
       outputFile,

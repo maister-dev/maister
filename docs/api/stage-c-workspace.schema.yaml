@@ -505,6 +505,9 @@ definitions:
       declarationId: *a3
       inputGeneration: *a1
       inputDigest: *a6
+      templateContext:
+        description: Optional assignment-bound context for a templated CLI or check. Its sealed JSON records version 1, declarationId and values without env. The host resolves the template from its retained declaration using its own permitted environment.
+        allOf: [{ $ref: "#/definitions/InputObject" }]
   WorkspaceWorkloadDeclarations:
     description: Optional sealed workload-declarations.json input. The Flow reservation freezes node actions, command-check gates and requirement probes from the admitted revision. The supervisor uses a declaration only when the request selects its exact generation plus ID and workload. Maximum encoded size is 262144 bytes.
     type: array

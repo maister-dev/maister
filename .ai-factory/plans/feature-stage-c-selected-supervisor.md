@@ -355,6 +355,17 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   for bounded OS proof and retains the uncertain fence if proof is still
   missing. Passed 12 real supervisor workspace and process ownership cases.
 
+  **C-08 templated workload checkpoint.** RED refused a board Flow command
+  containing task and environment tokens. A first replay attempt also showed
+  that recomputing the context after driver replacement changed the command
+  digest. GREEN retained the original sealed context reference, rendered the
+  frozen declaration with the host's allow-listed environment and reused the
+  command after driver replacement. The same graph consumed the JSON result
+  and reached Review. A separate real-host check refused an oversized render
+  before its effect marker appeared. Passed 31 Web and 10 supervisor
+  integrations, 44 template/context tests, both typechecks, contracts and
+  docs/ERD.
+
   The selected supervisor also captures a declared `MAISTER_OUTPUT_FILE`
   as a bounded, digest-verified runtime object. The real Web/host fixture
   read the result through the graph output parser and verified the separate

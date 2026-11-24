@@ -17,6 +17,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { EXECUTION_HOST_KEY_HEADER } from "../../../runtime/execution-host-address";
 import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
+import { WORKSPACE_TEMPLATE_CONTEXT_NAME } from "../../../runtime/workspace-prepare";
 import type {
   PreparedWorkspace,
   WorkspacePrepareInput,
@@ -43,6 +44,7 @@ async function sealInput(
   owner: WorkspacePrepareReceipt["owner"],
   kind: "capability_profile" | "capability_instructions",
   content: string,
+  logicalName = kind === "capability_profile" ? "workspace-inputs.json" : "instructions.md",
 ): Promise<{ objectId: string; sha256: string }> {
   const objectId = randomUUID();
   const sha256 = createHash("sha256").update(content).digest("hex");
@@ -57,10 +59,7 @@ async function sealInput(
     envelope("runtime_object.reserve", fence, {
       objectId,
       kind,
-      logicalName:
-        kind === "capability_profile"
-          ? "workspace-inputs.json"
-          : "instructions.md",
+      logicalName,
       mimeType:
         kind === "capability_profile" ? "application/json" : "text/markdown",
       sizeBytes: Buffer.byteLength(content),
@@ -169,6 +168,12 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
         workload: "check",
         command: "printf 'partial stdout'; : > .fixture-ready; sleep 15",
         timeoutMs: 20_000,
+      },
+      {
+        id: "templated-check",
+        workload: "check",
+        command: `printf '%s' '{{ task.title }}-{{ env.UNRELATED_MCP_TOKEN ?? "filtered" }}'; : > .template-started`,
+        timeoutMs: 5_000,
       },
       {
         id: "timed-check",
@@ -430,6 +435,39 @@ it("C-07/C-08 materializes sealed inputs and executes bounded addressed workload
     `/runtime-objects/${checked.objects[0].objectId}/content`,
   );
   expect(await checkOutput.text()).toBe('"local check"');
+  const templateContext = await sealInput(
+    host,
+    prepared.owner,
+    "capability_profile",
+    JSON.stringify({
+      version: 1,
+      declarationId: "templated-check",
+      values: { task: { title: "a".repeat(40_000) } },
+    }),
+    WORKSPACE_TEMPLATE_CONTEXT_NAME,
+  );
+  const rejectedCheck = randomUUID();
+  expect((await addressedRequest(host, `/v1/workspaces/${handle}/commands`, {
+    workspaceProtocol: 1,
+    command: { id: rejectedCheck, kind: "workspace.run", issuedAt: new Date().toISOString() },
+    owner: prepared.owner,
+    payload: {
+      generation,
+      workload: "check",
+      declarationId: "templated-check",
+      inputGeneration: 1,
+      inputDigest: manifest.sha256,
+      templateContext,
+    },
+  })).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(host, `/v1/commands/${rejectedCheck}`);
+    expect(await receipt.json()).toMatchObject({
+      phase: "rejected",
+      refusal: { details: { reason: "workspace_template_context_invalid" } },
+    });
+  });
+  await expect(stat(join(workspace.path, ".template-started"))).rejects.toMatchObject({ code: "ENOENT" });
   const longId = randomUUID();
   const runPayload = {
     generation,

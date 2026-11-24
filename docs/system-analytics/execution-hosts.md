@@ -1076,6 +1076,14 @@ after capacity has been released. The Web Run history endpoint checks current
 Run, repository content and knowledge disclosure authority before requesting
 history and rechecks it after verifying the sealed page.
 
+For a templated CLI action or command check, Web seals the operation's JSON
+context up to 128 KiB and reserves the object ID and digest with the immutable
+workload. The context excludes Web's environment. The supervisor verifies the
+object, assignment epoch and declaration, resolves the frozen template using
+its own allow-listed environment and bounds rendering before spawning Bash.
+Retries reuse the original context from the command ledger. Missing, invalid
+and oversized template inputs refuse before process registration.
+
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for

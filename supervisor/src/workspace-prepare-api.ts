@@ -157,6 +157,7 @@ const workloadSchema = z
         declarationId: opaqueId,
         inputGeneration: generation,
         inputDigest: sha256,
+        templateContext: z.object({ objectId: z.string().uuid(), sha256 }).strict().optional(),
       })
       .strict(),
   })

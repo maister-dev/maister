@@ -245,31 +245,25 @@ export async function runCliStep(
     );
   }
 
-  const resolved = renderStrict(
-    step.command,
-    ctx.context as unknown as Record<string, unknown>,
-    { traceLog: log },
-  );
   if (ctx.workload) {
-    if (resolved !== step.command)
-      throw new MaisterError(
-        "CONFIG",
-        "The addressed workload requires a sealed rendered command",
-        {
-          details: { reason: "workspace_command_inputs_unavailable" },
-        },
-      );
-
+    const { env: _managerEnvironment, ...templateValues } = ctx.context;
     const result = await runAddressedCliWorkload(ctx.workload, {
       runId: ctx.runId,
       timeoutMs,
       driver: ctx.driver,
+      ...(step.command.includes("{{") ? { templateValues } : {}),
     });
 
     return ctx.attempt !== undefined && result.originalOutput === undefined
       ? { ...result, originalOutput: { kind: "absent" } }
       : result;
   }
+
+  const resolved = renderStrict(
+    step.command,
+    ctx.context as unknown as Record<string, unknown>,
+    { traceLog: log },
+  );
 
   log.info(
     {

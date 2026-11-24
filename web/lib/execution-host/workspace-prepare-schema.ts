@@ -220,6 +220,7 @@ export const WorkspaceWorkloadPayloadSchema = z
     declarationId: opaqueId,
     inputGeneration: generation,
     inputDigest: digest,
+    templateContext: z.object({ objectId: z.string().uuid(), sha256: digest }).strict().optional(),
   })
   .strict();
 export const WorkspaceCancelWorkloadPayloadSchema = z

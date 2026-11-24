@@ -973,6 +973,7 @@ and grants no delivery authority.
 | `workspace_log_cursor_invalid` | The page cursor is malformed or belongs to a different host, workspace generation or HEAD. Start from the first page. |
 | `workspace_log_too_large` | The Git history page exceeds 64 KiB. Use a smaller page size. |
 | `workspace_log_pending` | Web has no applied runtime-object evidence for the addressed history page yet. |
+| `workspace_template_context_invalid` | The sealed values or template cannot be verified or rendered within the workload budget. No process is started. |
 | `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
 | `addressed_native_settings_unavailable` | The addressed Flow node needs an adapter settings file. The current supervisor capability preparation stops before creating an ACP session. |
 | `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |

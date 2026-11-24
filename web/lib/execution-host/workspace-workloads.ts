@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { WorkspaceWorkloadKind } from "../../../runtime/workspace-prepare";
+import type { WorkspaceInputObject, WorkspaceWorkloadKind } from "../../../runtime/workspace-prepare";
 import type { Db } from "./db";
 import type { ExecutionCommand } from "@/lib/db/schema";
 
@@ -37,6 +37,7 @@ export async function reserveWorkspaceWorkload(
     operationKey: string;
     declarationId: string;
     workload: WorkspaceWorkloadKind;
+    templateContext?: WorkspaceInputObject;
     assertDriver?: (tx: Db) => Promise<void>;
   }>,
 ): Promise<ExecutionCommand> {
@@ -118,12 +119,9 @@ export async function reserveWorkspaceWorkload(
       generation: owned.generation,
       inputGeneration: owned.inputGeneration,
       inputDigest,
+      ...(input.templateContext ? { templateContext: input.templateContext } : {}),
     };
-    const commandId = deterministicRuntimeObjectId({
-      runId: input.runId,
-      sourceKey: `workspace-workload:${assignment.id}:${input.operationKey}`,
-      sha256: workspaceEvidenceDigest("workspace-workload-v1"),
-    });
+    const commandId = workspaceWorkloadCommandId(input);
     const [existing] = await tx
       .select()
       .from(executionCommands)
@@ -153,5 +151,17 @@ export async function reserveWorkspaceWorkload(
     });
 
     return row;
+  });
+}
+
+export function workspaceWorkloadCommandId(input: Readonly<{
+  runId: string;
+  assignmentId: string;
+  operationKey: string;
+}>): string {
+  return deterministicRuntimeObjectId({
+    runId: input.runId,
+    sourceKey: `workspace-workload:${input.assignmentId}:${input.operationKey}`,
+    sha256: workspaceEvidenceDigest("workspace-workload-v1"),
   });
 }
