@@ -119,6 +119,8 @@ describe("reviewed Studio import", () => {
       source,
       "capability/skills/design",
     );
+
+    expect(preview).toHaveProperty("runnerCompatibility", null);
     const request = {
       previewId: preview.previewId,
       expectedDraftBase: preview.expectedDraftBase,
@@ -410,6 +412,27 @@ it("IT-CAT-01 reviews immutable npm metadata and rejects lifecycle hooks, missin
       registryName: name,
       integrity: metadata.dist.integrity,
       artifactDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    },
+  });
+  draft = path.join(
+    await mkdtemp(path.join(tmpdir(), "maister-catalog-")),
+    "worktree",
+  );
+  await mkdir(draft);
+  await writeFile(
+    path.join(draft, "maister-package.yaml"),
+    "schemaVersion: 1\nname: demo\nflows: []\n",
+  );
+  await expect(
+    previewCatalogImport(
+      { workingDir: draft, packageId: "draft", actorId: "editor" },
+      result,
+      "mcps/design.yaml",
+    ),
+  ).resolves.toMatchObject({
+    runnerCompatibility: {
+      transport: "stdio",
+      compatibleAdapters: ["claude", "codex", "gemini", "opencode", "mimo"],
     },
   });
   for (const unsupported of [

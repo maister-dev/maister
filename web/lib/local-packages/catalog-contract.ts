@@ -1,3 +1,5 @@
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+
 import { z } from "zod";
 
 const bounded = z.string().min(1).max(256);
@@ -70,6 +72,10 @@ export type CatalogPreview = {
   affectedRefs: string[];
   notices: string[];
   configuration: string[];
+  runnerCompatibility: {
+    transport: "stdio" | "http";
+    compatibleAdapters: AdapterId[];
+  } | null;
   expiresAt: string;
   publisher: string;
   sourceUrl: string;

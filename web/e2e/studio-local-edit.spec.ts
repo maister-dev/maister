@@ -998,9 +998,26 @@ test("E2E-CAT-02 reviews a skill and MCP from empty tabs, cuts edited bytes and 
     }
     await search.fill("design");
     await panel.getByRole("button", { name: "design · fixture" }).click();
-    await expect(page.getByTestId("catalog-preview")).toContainText(
+    const preview = page.getByTestId("catalog-preview");
+
+    await expect(preview).toContainText(
       kind === "skills" ? "companion.md" : "https://example.com/mcp",
     );
+    if (kind === "mcps") {
+      await expect(
+        preview.getByText("Compatible runner adapters"),
+      ).toBeVisible();
+      await expect(preview).toContainText(
+        "claude, codex, gemini, opencode, mimo",
+      );
+      await expect(preview).toContainText(
+        "Transport support only. Launch still checks runner readiness and MCP approval.",
+      );
+    } else {
+      await expect(preview.getByText("Compatible runner adapters")).toHaveCount(
+        0,
+      );
+    }
     const applied = page.waitForResponse((r) =>
       r.url().endsWith("/catalog/apply"),
     );

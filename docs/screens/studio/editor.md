@@ -343,6 +343,9 @@ and notices. Applying the preview writes to the editable draft. Commit and cut
 a version to make it available for project adoption. **Update from source**
 compares later upstream changes with the previous import and local edits.
 
+An MCP preview lists the runner adapters that support the reviewed transport.
+Launch still checks readiness and trust for the selected runner and host.
+
 The package sharing controls govern which other sessions receive its skills
 and MCPs. Select a package agent’s skills and MCP references in the agent
 editor. In the Flow node editor, bind the agent and configure required or

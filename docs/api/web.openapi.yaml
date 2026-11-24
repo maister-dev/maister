@@ -338,7 +338,7 @@ paths:
     post:
       operationId: previewDraftCatalog
       summary: Review exact upstream bytes and draft destination
-      description: Requires the catalog search permissions and current draft edit lock. Preview resolves only approved sources and binds the exact pin, destination and draft base to the editor.
+      description: Requires the catalog search permissions and current draft edit lock. Preview resolves only approved sources and binds the exact pin, destination and draft base to the editor. MCP previews list compatible runner adapters for the reviewed transport. Launch checks runner readiness and MCP approval independently.
       security:
         - sessionCookie: []
       parameters:
@@ -354,7 +354,7 @@ paths:
           description: Pinned preview
           content:
             application/json:
-              example: {"previewId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "importId": "1111111111111111111111111111111111111111111111111111111111111111", "publisher": "anthropics", "sourceUrl": "https://github.com/anthropics/skills/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/skills/frontend-design", "destination": "capability/skills/frontend-design", "pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "digest": "1111111111111111111111111111111111111111111111111111111111111111", "expectedDraftBase": "2222222222222222222222222222222222222222222222222222222222222222", "notices": [], "files": [], "affectedRefs": [], "configuration": [], "expiresAt": "2026-11-24T12:15:00Z"}
+              example: {"previewId": "8aa18df0-2ff0-496f-8b88-72a95b1556ab", "importId": "1111111111111111111111111111111111111111111111111111111111111111", "publisher": "com.example", "sourceUrl": "https://registry.modelcontextprotocol.io/v0.1/servers/com.example%2Fdesign/versions/1.0.0", "destination": "mcps/design.yaml", "pin": "1.0.0", "digest": "1111111111111111111111111111111111111111111111111111111111111111", "expectedDraftBase": "2222222222222222222222222222222222222222222222222222222222222222", "notices": [], "files": [], "affectedRefs": [], "configuration": ["Streamable HTTP", "https://example.com/mcp"], "runnerCompatibility": {"transport": "http", "compatibleAdapters": ["claude", "codex", "gemini", "opencode", "mimo"]}, "expiresAt": "2026-11-24T12:15:00Z"}
               schema:
                 type: object
                 additionalProperties: false
@@ -371,6 +371,7 @@ paths:
                   - files
                   - affectedRefs
                   - configuration
+                  - runnerCompatibility
                   - expiresAt
                 properties:
                   importId: {type: string, pattern: "^[a-f0-9]{64}$"}
@@ -435,6 +436,18 @@ paths:
                       type: string
                       minLength: 1
                       maxLength: 512
+                  runnerCompatibility:
+                    type: object
+                    nullable: true
+                    additionalProperties: false
+                    description: Null for a skill. MCP compatibility is based on the declared adapter transport support.
+                    required: [transport, compatibleAdapters]
+                    properties:
+                      transport: {type: string, enum: [stdio, http]}
+                      compatibleAdapters:
+                        type: array
+                        uniqueItems: true
+                        items: {type: string, enum: [claude, codex, gemini, opencode, mimo]}
                   expiresAt:
                     type: string
                     format: date-time

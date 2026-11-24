@@ -31,6 +31,10 @@ import {
   resolveWithinWorkingDir,
 } from "./paths";
 
+import {
+  ADAPTER_IDS,
+  mcpTransportsForAdapter,
+} from "@/lib/acp-runners/adapter-support";
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 
 type Owner = { workingDir: string; actorId: string; packageId: string };
@@ -261,6 +265,7 @@ export async function previewCatalogImport(
   let nextManifest: string;
   const blobs: Record<string, string> = Object.create(null);
   let allowedPath: (p: string) => boolean;
+  let runnerCompatibility: CatalogPreview["runnerCompatibility"] = null;
 
   if (source.kind === "skill") {
     const match = /^(.+)\/skills\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,126})$/.exec(
@@ -293,8 +298,19 @@ export async function previewCatalogImport(
       destination,
     );
 
-    if (!match || !source.mcp)
-      throw new CatalogError(422, "Choose an MCP reference in mcps/");
+    if (!match) throw new CatalogError(422, "Choose an MCP reference in mcps/");
+    const declaration = source.mcp;
+
+    if (!declaration?.transport)
+      throw new CatalogError(422, "Reviewed MCP transport is missing");
+    const { transport } = declaration;
+
+    runnerCompatibility = {
+      transport,
+      compatibleAdapters: ADAPTER_IDS.filter((adapter) =>
+        mcpTransportsForAdapter(adapter).includes(transport),
+      ),
+    };
     const { doc } = catalogManifest(manifest);
     const existing =
       (doc.toJS() as { mcps?: Array<Record<string, unknown>> }).mcps ?? [];
@@ -303,7 +319,7 @@ export async function previewCatalogImport(
     if (current && !prior)
       throw new CatalogError(409, "MCP reference already exists");
     const mcp = {
-      ...source.mcp,
+      ...declaration,
       id: match[1],
       ...(current?.scope ? { scope: current.scope } : {}),
     };
@@ -407,6 +423,7 @@ export async function previewCatalogImport(
     files,
     notices: source.notices,
     configuration: source.configuration,
+    runnerCompatibility,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     publisher: source.publisher,
     sourceUrl: source.sourceUrl,
@@ -422,6 +439,7 @@ export async function previewCatalogImport(
       digest,
       fileCount: files.length,
       previewId: result.previewId,
+      runnerCompatibility,
     },
     "Catalog source reviewed",
   );

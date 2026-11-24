@@ -437,6 +437,17 @@ export function CatalogImportPanel({
           {preview.configuration.length ? (
             <p>{preview.configuration.join(" · ")}</p>
           ) : null}
+          {preview.runnerCompatibility ? (
+            <div>
+              <p className="font-medium">{t("compatibleAdapters")}</p>
+              <p>
+                {preview.runnerCompatibility.compatibleAdapters.length
+                  ? preview.runnerCompatibility.compatibleAdapters.join(", ")
+                  : t("noCompatibleAdapters")}
+              </p>
+              <p className="text-ink-2">{t("runnerCompatibilityNote")}</p>
+            </div>
+          ) : null}
           {preview.affectedRefs?.length ? (
             <p>
               {t("affectedRefs")}: {preview.affectedRefs.join(", ")}
