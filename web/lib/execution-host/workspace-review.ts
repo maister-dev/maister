@@ -88,8 +88,8 @@ export function addressedCheckpointId(
 /** Read the exact sealed object after its source event has passed catalogue projection. */
 export async function readAddressedWorkspacePatch(
   input: WorkspaceReview &
-    Readonly<{ range: Omit<WorkspaceDiffQuery, "generation"> }>,
-): Promise<{ patch: string; baseCommit?: string }> {
+    Readonly<{ range: Omit<WorkspaceDiffQuery, "generation" | "format"> }>,
+): Promise<{ patch: string; baseCommit?: string; reference: WorkspaceInputObject; sizeBytes: number }> {
   input.signal.throwIfAborted();
   const { object: reference, baseCommit } = await readAddressedWorkspaceDiff(
     input.db,
@@ -101,14 +101,14 @@ export async function readAddressedWorkspacePatch(
       "ACP_PROTOCOL",
       "The selected supervisor did not identify the patch's base checkpoint",
     );
-  const patch = await readWorkspaceReviewText(input, reference, {
+  const { text: patch, sizeBytes } = await readWorkspaceReviewText(input, reference, {
     logicalName: "workspace-diff.patch",
     mimeType: "text/x-diff",
     maxBytes: 64 * 1024,
     pendingReason: "workspace_diff_pending",
   });
 
-  return { patch, baseCommit };
+  return { patch, baseCommit, reference, sizeBytes };
 }
 
 export async function readAddressedWorkspaceHistory(
@@ -121,7 +121,7 @@ export async function readAddressedWorkspaceHistory(
     input.workspace,
     input.page,
   );
-  const text = await readWorkspaceReviewText(input, reference, {
+  const { text } = await readWorkspaceReviewText(input, reference, {
     logicalName: WORKSPACE_LOG_OBJECT_NAME,
     mimeType: "application/json",
     maxBytes: WORKSPACE_LOG_MAX_BYTES,
@@ -150,7 +150,7 @@ export async function readAddressedWorkspaceReviewSnapshot(
       format: "review",
     },
   );
-  const text = await readWorkspaceReviewText(input, reference, {
+  const { text } = await readWorkspaceReviewText(input, reference, {
     logicalName: WORKSPACE_REVIEW_OBJECT_NAME,
     mimeType: "application/json",
     maxBytes: WORKSPACE_REVIEW_MAX_BYTES,
@@ -186,7 +186,7 @@ async function readWorkspaceReviewText(
     maxBytes: number;
     pendingReason: string;
   }>,
-): Promise<string> {
+): Promise<{ text: string; sizeBytes: number }> {
   const { db, workspace } = input;
   const runId = workspace.runId;
   const signal = AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
@@ -218,7 +218,7 @@ async function readWorkspaceReviewText(
         signal,
       });
 
-      return new TextDecoder().decode(content.bytes);
+      return { text: new TextDecoder().decode(content.bytes), sizeBytes: Number(object.sizeBytes) };
     }
     await runEventWakeBus.wait(runId, 2_000, signal);
   }

@@ -59,6 +59,7 @@ import { dispatchBoundTaskLaunchIntent } from "@/lib/tasks/launch-dispatch";
 import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
 import {
+  artifactInstances,
   flows,
   flowRevisions,
   gateResults,
@@ -218,7 +219,7 @@ it.each([
     const manifest = {
       schemaVersion: 1,
       name: "addressed-graph",
-      compat: { engine_min: "1.1.0" },
+      compat: { engine_min: "1.2.0" },
       nodes: [
         {
           id: "edit",
@@ -242,7 +243,10 @@ it.each([
           id: "work",
           type: "cli",
           action: { command },
-          output: { result: { schema: "./result.json", required: true } },
+          output: {
+            result: { schema: "./result.json", required: true },
+            produces: [{ id: "delta", kind: "diff", requiredFor: ["review"] }],
+          },
           pre_finish: {
             gates: [
               {
@@ -447,7 +451,7 @@ it.each([
         await projectEvidence();
         return findDeclaration("node:");
       }, {
-        timeout: 10_000,
+        timeout: 20_000,
       });
       commandId = queued.id;
     } finally {
@@ -543,6 +547,15 @@ it.each([
       state: "succeeded",
       attempts: 1,
     });
+    const [delta] = await db.select().from(artifactInstances).where(and(
+      eq(artifactInstances.runId, runId), eq(artifactInstances.artifactDefId, "delta"),
+    ));
+    expect(delta).toMatchObject({ kind: "diff", validity: "current", hash: expect.stringMatching(/^[a-f0-9]{64}$/), locator: { kind: "execution-object" } });
+    if (delta.locator.kind !== "execution-object") throw new Error("diff is not a retained object");
+    const capturedDiff = await readRuntimeObjectContent({ db, runId, objectId: delta.locator.objectId });
+    expect(capturedDiff.object.sha256).toBe(delta.hash);
+    expect(delta.sizeBytes).toBe(capturedDiff.content.bytes.byteLength);
+    expect(Buffer.from(capturedDiff.content.bytes).toString()).toContain("+from owning host");
     const { GET: getIntent } = await import("@/app/api/task-launch-intents/[intentId]/route");
     const receipt = await getIntent(
       new Request(`http://localhost/api/task-launch-intents/${bound.intentId}`),

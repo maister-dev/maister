@@ -1105,6 +1105,12 @@ Addressed mutation gates capture a pre-attempt checkpoint and evaluate
 snapshots to have the same tree ID. Rename evidence includes both paths.
 A missing or changed snapshot blocks the gate under the existing check policy.
 
+An addressed node's declared diff artifact seals the patch against the
+Run's pinned base. The existing artifact ledger stores its execution-object
+ID, SHA-256 and byte length. A resumed driver reuses the current artifact
+from that attempt. The existing artifact stream applies Run and repository
+content authorization to downloads and bounded previews.
+
 For a templated CLI action or command check, Web seals the operation's JSON
 context up to 128 KiB and reserves the object ID and digest with the immutable
 workload. The context excludes Web's environment. The supervisor verifies the

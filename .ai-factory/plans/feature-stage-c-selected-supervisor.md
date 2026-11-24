@@ -545,6 +545,13 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   the CLI node. The graph reaches Review and its last-node diff shows the
   current node's change. Passed the board integration and 25 mutation cases.
 
+  **C-09 declared diff artifact.** RED failed the required diff output at
+  the legacy local-filesystem guard. GREEN the addressed producer stores the
+  verified object ID, digest and byte count with the existing artifact
+  validity rules. A completed board Run reads the exact patch after releasing
+  capacity and verifies the object and artifact digests agree. Commit-set
+  output and default artifact production still need equivalent coverage.
+
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 
   The production split-user sweep reproduced a `path.resolve(null)` failure
