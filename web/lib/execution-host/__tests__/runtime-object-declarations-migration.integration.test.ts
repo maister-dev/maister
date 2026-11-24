@@ -1,14 +1,9 @@
-import type { Db } from "../db";
-
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { mintAssignment } from "../assignments";
 import { redactPayload } from "../redact";
 
-import { executionCommands, executionHosts } from "@/lib/db/schema";
 import {
   seedLocalHost,
   seedProjectRow,
@@ -34,23 +29,26 @@ afterAll(async () => {
 });
 
 it("backfills only the original provable declaration without inventing one from a seal or a later request", async () => {
-  const db = database.db as unknown as Db;
   const project = await seedProjectRow(database.db);
   const runId = await seedRun(database.db, { projectId: project.id });
-  const seeded = await seedLocalHost(database.db);
-  const [host] = await db
-    .select()
-    .from(executionHosts)
-    .where(eq(executionHosts.id, seeded.id));
-  const assignment = await db.transaction((tx) =>
-    mintAssignment(tx, { runId, hostId: host.id, reason: "launch" }),
+  const host = await seedLocalHost(database.db);
+  const assignment = { id: randomUUID(), epoch: 1 };
+
+  // Write records in their 0159 shape. Current ledger writers require columns
+  // introduced by later migrations.
+  await database.pool.query(
+    `INSERT INTO execution_assignments
+      (id, run_id, execution_host_id, epoch, state, placement_reason)
+      VALUES ($1, $2, $3, $4, 'active', 'launch')`,
+    [assignment.id, runId, host.id, assignment.epoch],
+  );
+  await database.pool.query(
+    "UPDATE runs SET execution_assignment_id = $1 WHERE id = $2",
+    [assignment.id, runId],
   );
   // Exact, compacted, producer-only, changed expiry, ambiguous first timestamp,
   // and an exact ephemeral declaration exercise independent proof boundaries.
   const objectIds = Array.from({ length: 6 }, () => randomUUID());
-  // RAW SQL naming only the ledger's own insert columns: this database stops at
-  // 0159, and a Drizzle insert names every column the CURRENT schema declares
-  // (0177 `settled_from` does not exist here yet).
   const reserveCommand = async (
     objectId: string,
     payload: Record<string, unknown>,
@@ -130,10 +128,10 @@ it("backfills only the original provable declaration without inventing one from 
       new Date(index === 4 ? "2026-09-08T12:00:00Z" : "2026-09-08T12:00:01Z"),
     );
     if (index === 1)
-      await db
-        .update(executionCommands)
-        .set({ payload: {} })
-        .where(eq(executionCommands.id, originalId));
+      await database.pool.query(
+        "UPDATE execution_commands SET payload = '{}'::jsonb WHERE id = $1",
+        [originalId],
+      );
   }
   const before = await database.pool.query(
     "SELECT id, state, size_bytes, sha256, sealed_at FROM execution_runtime_objects ORDER BY id",
