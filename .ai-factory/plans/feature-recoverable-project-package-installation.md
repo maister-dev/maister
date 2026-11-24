@@ -1,8 +1,11 @@
 # Recoverable project package installation
 
-Branch: `feature/recoverable-project-package-installation`  
-Created: 2026-11-23  
-Baseline: `22df665aa`  
+Branch: `feature/recoverable-project-package-installation`
+
+Created: 2026-11-23
+
+Baseline: `22df665aa`
+
 Status: implemented and locally qualified on 2026-11-24. All 12 tasks and all 11 acceptance criteria passed.
 
 ## Outcome
@@ -199,7 +202,7 @@ The following tests exercise the approved contract through its normal entry poin
 | AC10 | `e2e/{project-registration,project-onboarding,package-management}.spec.ts` — 12 Chromium cases including failed sibling, reload, failed retry, RU repair, successful installation and the Git diff. |
 | AC11 | `test-support/__tests__/capability-finalize.integration.test.ts` — two correct persisted digests in a production build. The disposable baseline failed on the withheld lazy crypto chunk from module 70729. |
 
-## Final local qualification
+## Local qualification before review
 
 Application and test revision `18b691666a23df6c76928c6e2ef57c071155eb31`. Platform: macOS arm64, Node 24.22.3, PostgreSQL 16 and local Git origins. All 11 acceptance IDs have passing executable evidence in the table above. The three Chromium files passed 12/12 and the production restart/finalization rerun passed 11/11 on the same application sources. Later commits changed test fixtures only.
 
@@ -219,3 +222,24 @@ The full web integration inventory passed **6,682/6,682** tests: 5,901 in the re
 At the tested revision, `pnpm --filter maister-web test:unit` passed 9,316/9,316 tests in 901 files. Web typecheck and ESLint completed (zero errors, 580 warnings). `pnpm validate:contracts`, `pnpm validate:docs:all`, public Mintlify validation and the public broken-link/anchor check all passed.
 
 The incident reproduction used a disposable local release. The deployment-time cause of the missing chunk on the original stand remains unverified.
+
+## Review corrections on the merge with local master
+
+- [x] **AC01, AC02.** Preserve registration and real migrated attachments. Verify the 0368 upgrade with an IPv4-embedded IPv6 source, old import selections and the exact original 0370 migration receipt. Unknown receipts still fail the boot check.
+- [x] **AC03, AC06.** Check current authority and unexpired database leases after fetch, after waiting for a cache lock, at setup dispatch and at settlement. Test revocation before any global publication and before the project attachment switches. Apply the management guard to the server-rendered diagnostics.
+- [x] **AC04.** Snapshot mutable sources, check published package roots and extracted members, and preserve the original script digest separately from the stable physical setup identity. Test process interruption, ambiguous legacy receipts, superseded reservations, independent targets and physical invocation counts.
+- [x] **AC05.** Use the same effective, trusted, setup-ready imports for catalog selection, launch capture and actual worktree files. Preserve explicit disabled legacy choices. Enforce an unresolved declared Flow runner until it becomes ready or an operator changes the binding.
+- [x] **AC07.** Prepare and settle eligible Flow and capability members before native, Studio or host-CLI replacement. A failed or superseded replacement leaves the working attachment and pinned Run intact.
+- [x] **AC08, AC09.** Decode local file URLs consistently. Check the current effective local revision at Git confirmation and retain the separate commit and push receipts. Verify both caller and remote refs using real Git.
+- [x] **AC10.** Return field-specific pin validation in EN/RU and expose accepted trust plus unfinished setup as a link to the specific declaration. Exercise reloaded settings with a known failure and with an interrupted shell.
+- [x] **AC11.** Retain the production-build capability-finalization regression for both standalone and package-member hashes.
+
+The integration with local `master` preserved both the queued Run allocation fixture and the dependency-aware delegation and retry assertions. The four integration files covering that merge passed 60/60. A joined 19-file PostgreSQL and real-Git run covering AC01–AC09 passed 189/189 after the final native Flow lifecycle correction. The Chromium job at `ebaf239f1` passed 14/14, including the known-failure and interrupted-setup journeys from Trust through reload to recovery. Each journey counted the initial and explicitly requested shell invocations.
+
+### Verification of the reviewed changes
+
+The full web unit suite passed 9,320 cases across 902 files at `ac5cd0b5c`. Its application code is identical to `ebaf239f1`. Web typecheck, API contracts, the generated 233-table ERD, documentation checks and ESLint passed. ESLint reported 581 warnings and zero errors. All 38 isolation selector, evidence and CI workflow contract tests passed after registering the new graceful-stop regression.
+
+The ordinary integration inventory covered 5,926 distinct cases across 685 files. The local reference package at `b716f9bcc07651961b9b15d273e87c8bf21c66d9` passed its seven cases. Two groups were repeated after application edits. For the orchestration timing regression, the complete 27-case file passed after waiting for both the parked state and release of the recovering driver's claim. The repaired file replaces its earlier result once in the inventory. The A/B web lane passed 726 cases in 46 files during the review fixes. These broad results were collected across local phase commits.
+
+The final `test:integration:isolation` invocation at `ebaf239f1` passed all 56 cases across eight files, validated the exact case inventory and completed cleanup (invocation `4402b51a-51b4-4fee-898a-8f063b7c2c75`). The SIGTERM scenario observed the real service release its held claim during shutdown. Both expected capability digests were stored through production registration. The three non-overlapping web integration lanes cover 6,708 passing cases in total. All eleven acceptance criteria have local executable evidence. Qualification ran on macOS arm64 with Node 24.22.3, PostgreSQL and local Git. Hosted CI and the original stand are outside these receipts.
