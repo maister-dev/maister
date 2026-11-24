@@ -447,8 +447,8 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   above 64 KiB. The existing Web route projected the sealed object and
   returned the patch after current repository authorization. A foreign Run
   could not address the object. Revoking membership while the second request
-  awaited projection caused a 403 with zero diff bytes returned. Log,
-  checkpoint/restore and the review/promotion source witness remain open.
+  awaited projection caused a 403 with zero diff bytes returned.
+  Checkpoint/restore and the review/promotion source witness remain open.
   Passed 38 Web integrations, 16 route cases, 24 supervisor integrations,
   both typechecks, contracts and docs/ERD validation.
 
@@ -460,6 +460,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   patch after release and still refuses a foreign Run and a revoked reader.
   Passed three focused integrations, 48 ingress and object-lifecycle
   cases, and Web typecheck.
+
+  **C-09 history checkpoint.** RED returned 404 from the addressed log
+  operation for an owned two-commit checkout. GREEN followed two sealed
+  pages, verified content digests, refused cursors after a HEAD change or
+  on another handle, and refused a page above 64 KiB. The Web Run endpoint
+  returned projected history after assignment release and refused a reader
+  whose repository grant had been revoked. Passed one focused supervisor
+  and four Web integrations, both typechecks, contracts and docs/ERD.
 
 - [ ] **T09 · Git / terminal lifecycle (after T08).** Migrate `runs/sync-target.ts`, `runs/promote.ts`, workbench lifecycle and GC preserve/reconciler. Manager authorizes promotion to a named canonical remote/ref and expected SHA. Host records actual publication under a workspace operation fence even after Run assignment release. Cover conflicting remote tip, lost push response, concurrent cleanup and preservation before delete. Log operation claim, verified ref and disposal receipt.
 

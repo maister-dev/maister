@@ -52,6 +52,19 @@ export type WorkspaceDiffQuery = Readonly<{
   base?: string;
   head?: string;
 }>;
+export type WorkspaceLogQuery = Readonly<{
+  generation: number;
+  cursor?: string;
+  limit?: number;
+}>;
+export type WorkspaceLogPage = Readonly<{
+  head: string;
+  commits: readonly Readonly<{ commit: string; committedAt: string; subject: string }>[];
+  nextCursor: string | null;
+}>;
+export const WORKSPACE_LOG_OBJECT_NAME = "workspace-log.json";
+export const WORKSPACE_LOG_MAX_BYTES = 64 * 1024;
+export const WORKSPACE_LOG_MAX_PAGE_SIZE = 100;
 export type WorkspaceEvidenceObject = Readonly<{
   generation: number;
   object: WorkspaceInputObject;

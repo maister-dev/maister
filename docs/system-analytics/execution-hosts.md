@@ -1066,6 +1066,16 @@ Web/host restarts, and use the existing retirement fence after reconciliation.
 | `POST /v1/workspaces/{id}/preserve`, `DELETE /v1/workspaces/{id}` | Current workspace-operation owner and expected generation. Release also requires the recorded disposition and quiescence proof. | 202 for the addressed lifecycle operation. Terminal receipt supplies a preserved commit/reference or exact release witness. Unknown ownership or incomplete preservation keeps the workspace. |
 | `GET /v1/commands/{commandId}` and `GET /runtime-objects/{objectId}/content` | Verified addressed host and authorized durable owner. Web derives object ID and range from authorized response scope. | 200 with the addressed receipt. The current range API remains in use for content bytes and returned-byte digest. |
 
+The addressed Git log reads the exact observed HEAD in topological order and
+returns 20 commits by default, with a maximum of 100 per page and 64 KiB of
+sealed JSON. Its cursor is scoped to the stable host key, workspace handle,
+generation and HEAD. A changed HEAD or a cursor from a different workspace
+requires a fresh first page. The canonical runtime-object consumer verifies
+the retained assignment and workspace before applying the log evidence, even
+after capacity has been released. The Web Run history endpoint checks current
+Run, repository content and knowledge disclosure authority before requesting
+history and rechecks it after verifying the sealed page.
+
 JSON commands are limited to 1 MiB and each strict variant explicitly
 accepts its input fields. IDs use the existing bounded host key, Run ID
 and UUID validators. A commit is a complete lowercase Git object ID for

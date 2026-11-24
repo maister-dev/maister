@@ -336,13 +336,14 @@ definitions:
       base: &a4 { $ref: "#/definitions/GitObjectId" }
       head: *a4
   LogQuery:
+    description: Page of history reachable from the observed HEAD in topological order. The cursor is scoped to the stable host, handle, generation and HEAD. A page over 65536 bytes is refused.
     type: object
     additionalProperties: false
     required: [ generation ]
     properties:
       generation: *a1
       cursor: { type: string, minLength: 1, maxLength: 512 }
-      limit: { type: integer, minimum: 1, maximum: 100 }
+      limit: { type: integer, minimum: 1, maximum: 100, default: 20 }
   RefQuery:
     type: object
     additionalProperties: false

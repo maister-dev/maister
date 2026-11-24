@@ -2,34 +2,115 @@ import "server-only";
 
 import type { Db } from "./db";
 import type { workspaces } from "@/lib/db/schema";
-import type { WorkspaceDiffQuery } from "../../../runtime/workspace-prepare";
+import type {
+  WorkspaceDiffQuery,
+  WorkspaceInputObject,
+  WorkspaceLogPage,
+  WorkspaceLogQuery,
+} from "../../../runtime/workspace-prepare";
+
+import { z } from "zod";
+
+import { GIT_OBJECT_ID } from "../../../runtime/wait-head";
+import {
+  WORKSPACE_LOG_MAX_BYTES,
+  WORKSPACE_LOG_MAX_PAGE_SIZE,
+  WORKSPACE_LOG_OBJECT_NAME,
+} from "../../../runtime/workspace-prepare";
 
 import { runEventWakeBus } from "./events/run-wake";
 import {
   getRuntimeObjectForRun,
   readRuntimeObjectContent,
 } from "./runtime-objects";
-import { readAddressedWorkspaceDiff } from "./workspace-preparation";
+import {
+  readAddressedWorkspaceDiff,
+  readAddressedWorkspaceLog,
+} from "./workspace-preparation";
 
 import { MaisterError } from "@/lib/errors";
 
+type WorkspaceReview = Readonly<{
+  db: Db;
+  workspace: typeof workspaces.$inferSelect;
+  signal: AbortSignal;
+}>;
+
+const logPage = z
+  .object({
+    head: z.string().regex(GIT_OBJECT_ID),
+    commits: z
+      .array(
+        z
+          .object({
+            commit: z.string().regex(GIT_OBJECT_ID),
+            committedAt: z.string().datetime({ offset: true }),
+            subject: z.string(),
+          })
+          .strict(),
+      )
+      .max(WORKSPACE_LOG_MAX_PAGE_SIZE),
+    nextCursor: z.string().min(1).max(512).nullable(),
+  })
+  .strict();
+
 /** Read the exact sealed object after its source event has passed catalogue projection. */
 export async function readAddressedWorkspacePatch(
-  input: Readonly<{
-    db: Db;
-    workspace: typeof workspaces.$inferSelect;
-    range: Omit<WorkspaceDiffQuery, "generation">;
-    signal: AbortSignal;
+  input: WorkspaceReview &
+    Readonly<{ range: Omit<WorkspaceDiffQuery, "generation"> }>,
+): Promise<string> {
+  input.signal.throwIfAborted();
+  const { object: reference } = await readAddressedWorkspaceDiff(
+    input.db,
+    input.workspace,
+    input.range,
+  );
+  return readWorkspaceReviewText(input, reference, {
+    logicalName: "workspace-diff.patch",
+    mimeType: "text/x-diff",
+    maxBytes: 64 * 1024,
+    pendingReason: "workspace_diff_pending",
+  });
+}
+
+export async function readAddressedWorkspaceHistory(
+  input: WorkspaceReview &
+    Readonly<{ page: Omit<WorkspaceLogQuery, "generation"> }>,
+): Promise<WorkspaceLogPage> {
+  input.signal.throwIfAborted();
+  const { object: reference } = await readAddressedWorkspaceLog(
+    input.db,
+    input.workspace,
+    input.page,
+  );
+  const text = await readWorkspaceReviewText(input, reference, {
+    logicalName: WORKSPACE_LOG_OBJECT_NAME,
+    mimeType: "application/json",
+    maxBytes: WORKSPACE_LOG_MAX_BYTES,
+    pendingReason: "workspace_log_pending",
+  });
+  try {
+    return logPage.parse(JSON.parse(text));
+  } catch {
+    throw new MaisterError(
+      "ACP_PROTOCOL",
+      "The selected supervisor returned invalid Git history",
+    );
+  }
+}
+
+async function readWorkspaceReviewText(
+  input: WorkspaceReview,
+  reference: WorkspaceInputObject,
+  expected: Readonly<{
+    logicalName: string;
+    mimeType: string;
+    maxBytes: number;
+    pendingReason: string;
   }>,
 ): Promise<string> {
   const { db, workspace } = input;
   const runId = workspace.runId;
-  input.signal.throwIfAborted();
-  const { object: reference } = await readAddressedWorkspaceDiff(
-    db,
-    workspace,
-    input.range,
-  );
   const signal = AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
   while (!signal.aborted) {
     const record = await getRuntimeObjectForRun({
@@ -42,15 +123,15 @@ export async function readAddressedWorkspacePatch(
       if (
         object.executionHostId !== workspace.executionHostId ||
         object.sha256 !== reference.sha256 ||
-        object.mimeType !== "text/x-diff" ||
-        object.logicalName !== "workspace-diff.patch" ||
+        object.mimeType !== expected.mimeType ||
+        object.logicalName !== expected.logicalName ||
         object.kind !== "diagnostic" ||
         object.sizeBytes === null ||
-        object.sizeBytes > 64 * 1024
+        object.sizeBytes > expected.maxBytes
       )
         throw new MaisterError(
           "ACP_PROTOCOL",
-          "The sealed diff does not match the addressed workspace reference",
+          "The sealed evidence does not match the addressed workspace reference",
         );
       const { content } = await readRuntimeObjectContent({
         db,
@@ -66,9 +147,9 @@ export async function readAddressedWorkspacePatch(
 
   throw new MaisterError(
     "EXECUTOR_UNAVAILABLE",
-    "The selected host's diff has not been applied",
+    "The selected host's evidence has not been applied",
     {
-      details: { reason: "workspace_diff_pending" },
+      details: { reason: expected.pendingReason },
     },
   );
 }

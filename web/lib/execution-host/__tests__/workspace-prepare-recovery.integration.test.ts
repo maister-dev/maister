@@ -1168,6 +1168,21 @@ async function assertAddressedRequirement({
     baseCommit: commit,
     diff: expect.stringContaining("+changed on the selected host\n"),
   });
+  const gitLog = (await import("@/app/api/runs/[runId]/git-log/route")).GET;
+  const requestLog = () => gitLog(
+    new Request(`${web.origin}/api/runs/${runId}/git-log?limit=1`),
+    { params: Promise.resolve({ runId }) },
+  );
+  const allowedLog = requestLog();
+  await readDiffEvent();
+  await projectCanonicalRuntimeObjects({ db, runId });
+  const historyResponse = await allowedLog;
+  expect(historyResponse.status).toBe(200);
+  expect(await historyResponse.json()).toMatchObject({
+    head: commit,
+    commits: [{ commit }],
+    nextCursor: expect.any(String),
+  });
   const [{ objectId }] = (
     await database.pool.query<{ objectId: string }>(
       `SELECT id AS "objectId" FROM execution_runtime_objects WHERE run_id=$1 AND logical_name='workspace-diff.patch' AND mime_type='text/x-diff' AND state='available'`,
@@ -1192,6 +1207,7 @@ async function assertAddressedRequirement({
   try {
     await projectCanonicalRuntimeObjects({ db, runId });
     expect((await revokedDiff).status).toBe(403);
+    expect((await requestLog()).status).toBe(403);
   } finally {
     await database.pool.query(
       "UPDATE project_members SET role='member' WHERE project_id=$1 AND user_id=$2",

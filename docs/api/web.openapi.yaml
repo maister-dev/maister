@@ -12608,6 +12608,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/git-log:
+    get:
+      tags: [runs]
+      operationId: readRunWorkspaceGitLog
+      summary: Read Git history from a retained addressed Run workspace
+      description: Requires current Run read and repository content grants. The server derives the workspace owner from the Run, verifies the sealed page and rechecks authority before returning its bytes.
+      parameters:
+        - { name: runId, in: path, required: true, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: One topologically ordered page from the verified HEAD.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [head, commits, nextCursor]
+                properties:
+                  head: &workspaceLogCommitId { type: string, pattern: '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' }
+                  commits:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [commit, committedAt, subject]
+                      properties:
+                        commit: *workspaceLogCommitId
+                        committedAt: { type: string, format: date-time }
+                        subject: { type: string }
+                  nextCursor: { type: string, minLength: 1, maxLength: 512, nullable: true }
+        "400": { description: Invalid page parameters. }
+        "401": { description: Authentication required. }
+        "403": { description: Current Run or repository access refused. }
+        "404": { description: No retained addressed workspace for the Run. }
+        "409": { description: "Cursor, ownership or history bound refused." }
+        "503": { description: The selected host or its projected evidence is unavailable. }
   /api/runs/{runId}/git-state:
     get:
       tags: [runs]

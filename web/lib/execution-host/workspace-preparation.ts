@@ -4,6 +4,7 @@ import type {
   WorkspacePrepareInput,
   WorkspaceStatus,
   WorkspaceDiffQuery,
+  WorkspaceLogQuery,
   WorkspaceEvidenceObject,
   WorkspaceSourceRefPage,
   WorkspaceRevisionObservation,
@@ -193,6 +194,22 @@ export async function readAddressedWorkspaceDiff(
   );
 
   return transport.getWorkspaceDiff(handle, { ...range, generation });
+}
+
+/** The caller authorizes repository content access before requesting history. */
+export async function readAddressedWorkspaceLog(
+  db: Db,
+  workspace: RetainedWorkspaceRead,
+  page: Omit<WorkspaceLogQuery, "generation">,
+  transport = defaultTransport(),
+): Promise<WorkspaceEvidenceObject> {
+  if (!transport.getWorkspaceLog)
+    throw new MaisterError("EXECUTOR_UNAVAILABLE", "Transport cannot capture workspace history", {
+      details: { reason: "workspace_protocol_unsupported" },
+    });
+  const { handle, generation } = await resolveAddressedWorkspaceRead(db, workspace, transport);
+
+  return transport.getWorkspaceLog(handle, { ...page, generation });
 }
 
 /** Reserve the logical workspace and command in the transaction that places the Run. */

@@ -32,6 +32,13 @@ export async function sealWorkspaceOutput(
             base: string;
             head: string | null;
           };
+        }
+      | {
+          workspaceGitLog: {
+            handle: string;
+            generation: number;
+            head: string;
+          };
         };
   }>,
 ): Promise<WorkspaceInputObject> {

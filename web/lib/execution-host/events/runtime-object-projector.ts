@@ -16,7 +16,7 @@ import {
   type RuntimeObjectBinding,
 } from "../runtime-object-evidence";
 import { hasNativeOutputCommand } from "../runtime-object-intent";
-import { hasRetainedWorkspaceDiffOwner } from "../workspace-diff-owner";
+import { carriesWorkspaceGitEvidence, hasRetainedWorkspaceGitOwner, workspaceGitEvidence } from "../workspace-git-evidence";
 
 import { CANONICAL_PROJECTION_CONSUMERS } from "./projection-consumers";
 import { runEventWakeBus } from "./run-wake";
@@ -46,7 +46,7 @@ export const canonicalRuntimeObjectProjector: ExecutionEventProjector = {
   afterCommit(events) {
     for (const event of events)
       if (
-        event.payload?.workspaceGitDiff !== undefined ||
+        carriesWorkspaceGitEvidence(event.payload ?? {}) ||
         event.payload?.workspaceWorkloadCommandId !== undefined
       )
         runEventWakeBus.wake(event.runId);
@@ -329,30 +329,33 @@ async function applyRuntimeObjectEvent(
     return;
   }
   if (event.eventType === "runtime_object.available") {
-    if (event.payload?.workspaceGitDiff !== undefined) {
+    if (carriesWorkspaceGitEvidence(event.payload ?? {})) {
+      const evidence = workspaceGitEvidence(event.payload ?? {});
       const binding = sealForEvent(event);
       if (
-        event.hostSessionId ||
+        !evidence || event.hostSessionId ||
         !event.executionHostId ||
         !event.executionAssignmentId ||
         event.assignmentEpoch === null ||
         binding.kind !== "diagnostic" ||
-        binding.logicalName !== "workspace-diff.patch" ||
-        binding.mimeType !== "text/x-diff" ||
+        binding.logicalName !== evidence.logicalName ||
+        binding.mimeType !== evidence.mimeType ||
         binding.sizeBytes === null ||
-        binding.sizeBytes > 64 * 1024
+        binding.sizeBytes > evidence.maxBytes ||
+        event.payload?.workspaceWorkloadCommandId !== undefined
       )
-        throw permanent("Workspace diff output has invalid identity");
-      const owned = await hasRetainedWorkspaceDiffOwner(tx, {
+        throw permanent("Workspace Git evidence has invalid identity");
+      const owned = await hasRetainedWorkspaceGitOwner(tx, {
         runId: event.runId,
         executionHostId: event.executionHostId,
         assignmentId: event.executionAssignmentId,
         assignmentEpoch: event.assignmentEpoch,
-        range: event.payload.workspaceGitDiff,
+        handle: evidence.handle,
+        generation: evidence.generation,
       });
       if (!owned)
         throw permanent(
-          "Workspace diff output has no matching workspace and assignment",
+          "Workspace Git evidence has no matching workspace and assignment",
         );
       await catalogueContentIntent(tx, event);
     }

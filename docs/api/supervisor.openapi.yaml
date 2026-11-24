@@ -254,6 +254,40 @@ paths:
               schema: { type: string }
         "400": { description: Invalid cancellation request. }
         "409": { description: Retained workload or assignment does not match this cancellation. }
+  /v1/workspaces/{id}/log:
+    get:
+      tags: [execution-host]
+      operationId: stageCGetWorkspaceLog
+      summary: Seal a bounded Git history page from the owned workspace
+      description: The cursor is scoped to the stable host identity, workspace, generation and observed HEAD. The result references a sealed UTF-8 JSON diagnostic up to 64 KiB.
+      x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/LogQuery
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }
+        - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }
+        - { name: generation, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: Exact generation and sealed log reference.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [generation, object]
+                properties:
+                  generation: { type: integer, minimum: 1 }
+                  object:
+                    type: object
+                    additionalProperties: false
+                    required: [objectId, sha256]
+                    properties:
+                      objectId: { type: string, format: uuid }
+                      sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        "400": { description: Invalid generation or pagination bounds. }
+        "404": { description: No retained workspace on this host. }
+        "409": { description: "Host, generation or cursor mismatch, unavailable Git history, or a page above 64 KiB." }
   /v1/commands/{commandId}:
     parameters:
       - { name: commandId, in: path, required: true, schema: { type: string, format: uuid } }

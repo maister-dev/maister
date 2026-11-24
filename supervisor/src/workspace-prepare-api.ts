@@ -25,6 +25,7 @@ import {
   isWorkspaceGenerationTarget,
   isWorkspaceCancelTarget,
   WORKSPACE_CANCEL_OPERATION,
+  WORKSPACE_LOG_MAX_PAGE_SIZE,
   WORKSPACE_MATERIALIZE_OPERATION,
   WORKSPACE_PREPARE_OPERATION,
   WORKSPACE_PREPARE_TARGET,
@@ -41,6 +42,7 @@ import { isSupervisorError, SupervisorError } from "./types";
 import { materializeWorkspaceInputs } from "./workspace-input-materialization";
 import { inspectWorkspace } from "./workspace-status";
 import { sealWorkspaceDiff } from "./workspace-diff";
+import { sealWorkspaceLog } from "./workspace-log";
 import {
   recoverWorkspaceWorkload,
   runWorkspaceWorkload,
@@ -108,6 +110,10 @@ const workspaceQuery = z.object({
 const diffQuery = workspaceQuery.extend({
   base: z.string().regex(GIT_OBJECT_ID).optional(),
   head: z.string().regex(GIT_OBJECT_ID).optional(),
+});
+const logQuery = workspaceQuery.extend({
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.string().regex(/^[1-9][0-9]{0,2}$/).transform(Number).pipe(z.number().max(WORKSPACE_LOG_MAX_PAGE_SIZE)).optional(),
 });
 const materializeSchema = z
   .object({
@@ -529,6 +535,15 @@ export function registerWorkspacePreparation(args: {
         details: { reason: "invalid_request" },
       });
     const result = await sealWorkspaceDiff({ state, objects, events }, { ...parsed.data, handle: handle.data });
+
+    return result ?? reply.status(404).send(missingWorkspace);
+  });
+  app.get<StatusRequest>("/v1/workspaces/:id/log", async (req, reply) => {
+    const handle = workspaceHandle.safeParse(req.params.id);
+    const parsed = logQuery.safeParse(req.query);
+    if (!handle.success || !parsed.success)
+      return reply.status(400).send(refusal("PRECONDITION", "invalid_request", "Git log requires a handle, generation and valid page options"));
+    const result = await sealWorkspaceLog({ state, objects, events }, { ...parsed.data, handle: handle.data });
 
     return result ?? reply.status(404).send(missingWorkspace);
   });

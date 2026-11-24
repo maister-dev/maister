@@ -722,6 +722,8 @@ export const REASON_TOKENS = [
   "workspace_input_changed",
   "workspace_diff_range_invalid",
   "workspace_diff_too_large",
+  "workspace_log_cursor_invalid",
+  "workspace_log_too_large",
   "tool_not_declared",
   "workspace_protocol_unsupported",
   "legacy_field",

@@ -2,7 +2,7 @@ import "server-only";
 
 import type { NoProgressDiagnostics } from "@/lib/runs/no-progress-diagnostics";
 import type { WorkspaceRevisionObservation, WorkspaceSourceRefPage } from "../../runtime/workspace-prepare";
-import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
+import type { WorkspaceCommandReceipt, WorkspaceCommandRequest, WorkspaceDiffQuery, WorkspaceEvidenceObject, WorkspaceLogQuery, WorkspaceMaterializeRequest, WorkspacePrepareRequest, WorkspaceStatus, WorkspaceWorkloadRequest, WorkspaceCancelWorkloadRequest } from "../../runtime/workspace-prepare";
 import type {
   WorkspacePublicationRequest,
   WorkspacePublicationSnapshot,
@@ -2015,16 +2015,30 @@ export async function getWorkspaceDiff(handle: string, input: WorkspaceDiffQuery
     ...(input.base ? { base: input.base } : {}),
     ...(input.head ? { head: input.head } : {}),
   });
+  return getWorkspaceEvidence(handle, "diff", query, input.generation);
+}
+
+export async function getWorkspaceLog(handle: string, input: WorkspaceLogQuery): Promise<WorkspaceEvidenceObject> {
+  const query = new URLSearchParams({
+    generation: String(input.generation),
+    ...(input.cursor ? { cursor: input.cursor } : {}),
+    ...(input.limit !== undefined ? { limit: String(input.limit) } : {}),
+  });
+
+  return getWorkspaceEvidence(handle, "log", query, input.generation);
+}
+
+async function getWorkspaceEvidence(handle: string, resource: "diff" | "log", query: URLSearchParams, generation: number): Promise<WorkspaceEvidenceObject> {
   const res = await request<unknown>({
     method: "GET",
-    path: `/v1/workspaces/${encodeURIComponent(handle)}/diff?${query}`,
-    ctx: "getWorkspaceDiff",
+    path: `/v1/workspaces/${encodeURIComponent(handle)}/${resource}?${query}`,
+    ctx: `getWorkspaceEvidence/${resource}`,
     fallbackCode: "ACP_PROTOCOL",
     timeoutMs: ADMIN_READ_TIMEOUT_MS,
   });
   const evidence = WorkspaceEvidenceObjectSchema.safeParse(res.body);
-  if (res.status !== 200 || !evidence.success || evidence.data.generation !== input.generation)
-    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace diff reference");
+  if (res.status !== 200 || !evidence.success || evidence.data.generation !== generation)
+    throw new MaisterError("ACP_PROTOCOL", "Selected host returned an invalid workspace evidence reference");
 
   return evidence.data;
 }

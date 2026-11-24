@@ -885,6 +885,66 @@ it("C-06 observes an approved Git ref and replays pinned workspace preparation a
     receipt.result.workspace.handle,
   );
   expect(await readFile(path, "utf8")).toBe("dirty first workspace\n");
+
+  const logPath = `/v1/workspaces/${second.result.workspace.handle}/log?generation=1&limit=1`;
+  async function readLogPage(url: string) {
+    const response = await addressedRequest(rebooted, url);
+    expect(response.status).toBe(200);
+    const reference = (await response.json()) as {
+      generation: number;
+      object: { objectId: string; sha256: string };
+    };
+    expect(reference.generation).toBe(1);
+    const content = await addressedRequest(
+      rebooted,
+      `/runtime-objects/${reference.object.objectId}/content`,
+    );
+    expect(content.status).toBe(200);
+    const bytes = Buffer.from(await content.arrayBuffer());
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      reference.object.sha256,
+    );
+
+    return JSON.parse(bytes.toString("utf8")) as { nextCursor: string | null };
+  }
+
+  const firstLogPage = await readLogPage(logPath);
+  expect(firstLogPage).toMatchObject({
+    head: freshCommit,
+    commits: [{ commit: freshCommit, subject: "second" }],
+    nextCursor: expect.any(String),
+  });
+  if (firstLogPage.nextCursor === null)
+    throw new Error("expected a second Git log page");
+  const cursor = encodeURIComponent(firstLogPage.nextCursor);
+  expect(await readLogPage(`${logPath}&cursor=${cursor}`)).toMatchObject({
+    head: freshCommit,
+    commits: [{ commit, subject: "first" }],
+    nextCursor: null,
+  });
+  const foreignLogPage = await addressedRequest(
+    rebooted,
+    `${workspaceQuery}/log?generation=1&cursor=${cursor}`,
+  );
+  expect(foreignLogPage.status).toBe(409);
+  expect(await foreignLogPage.json()).toMatchObject({
+    details: { reason: "workspace_log_cursor_invalid" },
+  });
+  const secondCheckout = rebooted.hostState.getWorkspace(second.result.workspace.handle);
+  if (!secondCheckout) throw new Error("second checkout was not retained");
+  const messagePath = join(root, "long-commit-message.txt");
+  await writeFile(messagePath, `${"a".repeat(70_000)}\n`);
+  git(secondCheckout.realPath, "commit", "--allow-empty", "-F", messagePath);
+  const priorHeadPage = await addressedRequest(rebooted, `${logPath}&cursor=${cursor}`);
+  expect(priorHeadPage.status).toBe(409);
+  expect(await priorHeadPage.json()).toMatchObject({
+    details: { reason: "workspace_log_cursor_invalid" },
+  });
+  const oversizedLog = await addressedRequest(rebooted, logPath);
+  expect(oversizedLog.status).toBe(409);
+  expect(await oversizedLog.json()).toMatchObject({
+    details: { reason: "workspace_log_too_large" },
+  });
 }, 30_000);
 
 async function prepareAndRead(

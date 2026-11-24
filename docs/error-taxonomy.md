@@ -970,6 +970,9 @@ and grants no delivery authority.
 | `workspace_requirement_failed` | A required probe failed and its process group retired. The Run records `PRECONDITION`, releases the assignment and retains diagnostic objects. |
 | `workspace_diff_range_invalid` | The owning supervisor cannot verify the requested ancestry or retained checkout. No diff object is returned. |
 | `workspace_diff_too_large` | The Git patch exceeds 64 KiB. No diff object is returned. |
+| `workspace_log_cursor_invalid` | The page cursor is malformed or belongs to a different host, workspace generation or HEAD. Start from the first page. |
+| `workspace_log_too_large` | The Git history page exceeds 64 KiB. Use a smaller page size. |
+| `workspace_log_pending` | Web has no applied runtime-object evidence for the addressed history page yet. |
 | `workspace_input_changed` | The supervisor refuses to spawn when verification of the retained manifest, its files or the authorized context checkout fails. |
 | `addressed_native_settings_unavailable` | The addressed Flow node needs an adapter settings file. The current supervisor capability preparation stops before creating an ACP session. |
 | `workspace_context_authority_required` | Web refuses a context declaration whose launching user or current agent attachment lacks authority. A removed project membership retains the existing `launch_authority_revoked` reason. |
