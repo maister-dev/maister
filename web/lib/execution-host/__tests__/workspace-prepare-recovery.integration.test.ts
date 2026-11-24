@@ -274,6 +274,10 @@ it("C-05/C-08 accepts a pathless board launch and runs its action and command ga
       effectiveExecutionHostId: host.id,
       provenance: "explicit",
     },
+    executionHostOptions: {
+      defaultExecutionHostId: host.id,
+      hosts: [{ id: host.id, displayName: host.displayName }],
+    },
   });
   const accepted = await acceptInteractiveTaskLaunch(
     db,

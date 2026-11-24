@@ -33010,6 +33010,26 @@ components:
           description: Present for addressed repository pages. Null marks the last page.
         executionHostSelection:
           $ref: "#/components/schemas/TaskLaunchHostSelection"
+        executionHostOptions:
+          type: object
+          additionalProperties: false
+          required: [defaultExecutionHostId, hosts]
+          description: Project-eligible supervisor choices for interactive admission. Display names carry no authority and do not participate in the preview token.
+          properties:
+            defaultExecutionHostId:
+              type: string
+              nullable: true
+              minLength: 1
+              maxLength: 256
+            hosts:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, displayName]
+                properties:
+                  id: { type: string, minLength: 1, maxLength: 256 }
+                  displayName: { type: string, minLength: 1 }
         canManagePackages:
           type: boolean
           description: Current manageLocalPackages project action permits explicit package adoption; it does not launch a task.

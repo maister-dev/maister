@@ -408,8 +408,12 @@ project preference revision. First acceptance checks both revisions and
 persists the selection in the intent and its settings digest. Replay checks
 the original request digest under current read authority. Dispatch checks
 current eligibility of the saved host. Direct project Flow launch checks the
-stored preference and configured project eligibility. The board picker,
-shared-root inheritance and actual placement display remain designed.
+stored preference and configured project eligibility. The board picker lists
+the eligible display names with the default choice. Changing the host clears
+the effective preview until the server returns a token for the new selection.
+Interactive admission sends that token with the requested host ID. Entering
+the scheduling form returns to the default choice. Shared-root inheritance
+and actual placement display remain designed.
 
 For an addressed selection the Flow preview reads up to 100 branch names
 from the approved source on that supervisor. The response exposes

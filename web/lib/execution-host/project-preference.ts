@@ -43,6 +43,12 @@ export type TaskLaunchHostSelection = Readonly<{
 export type TaskLaunchPlacement = Readonly<{
   selection: TaskLaunchHostSelection;
   preferenceRevision: number;
+  hostOptions: TaskLaunchHostOptions;
+}>;
+
+export type TaskLaunchHostOptions = Readonly<{
+  defaultExecutionHostId: string | null;
+  hosts: readonly Pick<ExecutionHost, "id" | "displayName">[];
 }>;
 
 function eligibleForProject(projectId: string, host: ExecutionHost): boolean {
@@ -54,13 +60,11 @@ function eligibleForProject(projectId: string, host: ExecutionHost): boolean {
   );
 }
 
-async function eligibleHostIds(
-  tx: Db,
-  projectId: string,
-): Promise<readonly string[]> {
+function selectedEndpointHosts(db: Db) {
   const endpoint = configuredSelectedExecutionEndpoint();
-  if (!endpoint) return [];
-  const [host] = await tx
+  if (!endpoint) return null;
+
+  return db
     .select()
     .from(executionHosts)
     .where(
@@ -68,10 +72,13 @@ async function eligibleHostIds(
         eq(executionHosts.hostKey, endpoint.hostKey),
         isNull(executionHosts.retiredAt),
       ),
-    )
-    .for("share");
+    );
+}
 
-  return host && eligibleForProject(projectId, host) ? [host.id] : [];
+async function eligibleHostIds(db: Db, projectId: string): Promise<readonly string[]> {
+  const candidates = (await selectedEndpointHosts(db)?.for("share")) ?? [];
+
+  return candidates.filter((host) => eligibleForProject(projectId, host)).map(({ id }) => id);
 }
 
 function projectHostSettings(
@@ -121,13 +128,19 @@ export async function resolveTaskLaunchPlacement(
     !requested
   )
     return null;
-  const eligibleIds = await eligibleHostIds(db, project.id);
-  const effective =
-    requested ?? project.defaultExecutionHostId ?? eligibleIds[0];
+  const candidates = (await selectedEndpointHosts(db)) ?? [];
+  const eligible = candidates.filter((host) => eligibleForProject(project.id, host));
+  const eligibleIds = eligible.map(({ id }) => id);
+  const defaultExecutionHostId = project.defaultExecutionHostId ?? eligibleIds[0] ?? null;
+  const effective = requested ?? defaultExecutionHostId;
   if (!effective || !eligibleIds.includes(effective)) throw ineligibleHost();
 
   return {
     preferenceRevision: project.executionHostPreferenceRevision,
+    hostOptions: {
+      defaultExecutionHostId,
+      hosts: eligible.map(({ id, displayName }) => ({ id, displayName })),
+    },
     selection: {
       requestedExecutionHostId: requested ?? null,
       effectiveExecutionHostId: effective,
@@ -146,7 +159,13 @@ export function bindTaskLaunchPlacementToken(
   placement: TaskLaunchPlacement | null,
 ): string {
   return placement
-    ? workspaceEvidenceDigest({ settingsToken, placement })
+    ? workspaceEvidenceDigest({
+        settingsToken,
+        placement: {
+          selection: placement.selection,
+          preferenceRevision: placement.preferenceRevision,
+        },
+      })
     : settingsToken;
 }
 

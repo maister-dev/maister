@@ -1,6 +1,7 @@
 "use client";
 
 import type { FlowRunnerDraft } from "@/lib/tasks/launch-schema";
+import type { TaskLaunchHostOptions } from "@/lib/execution-host/project-preference";
 import type { Key, ReactElement } from "react";
 import type { FlowRunnerSlotPreview } from "@/lib/acp-runners/flow-preflight";
 import type { ConsensusRunnerSlotPreview } from "@/lib/acp-runners/consensus-preflight";
@@ -145,6 +146,7 @@ type LaunchVerdict = {
 
 type LaunchOptions = {
   enforcementRefusal?: NodeEnforcementRefusal | null;
+  executionHostOptions?: TaskLaunchHostOptions;
   primarySessionName?: string;
   launchability: {
     launchable: boolean;
@@ -226,6 +228,7 @@ const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
 type LaunchPreviewSelection = {
   flowId: string;
   runnerId: string;
+  executionHostId?: string;
   packageVersions?: string;
   draftKey?: string;
 };
@@ -237,6 +240,7 @@ export function launchPreviewMatches(
   return (
     preview?.flowId === selection.flowId &&
     preview.runnerId === selection.runnerId &&
+    preview.executionHostId === selection.executionHostId &&
     (preview.packageVersions ?? "") === (selection.packageVersions ?? "") &&
     (preview.draftKey ?? "") === (selection.draftKey ?? "")
   );
@@ -704,6 +708,7 @@ export function LaunchPopover({
     Record<string, "saving" | "saved" | "failed" | "unknown">
   >({});
   const [flowId, setFlowId] = useState("");
+  const [executionHostId, setExecutionHostId] = useState<string>();
   const [flowRunnerDraft, setFlowRunnerDraft] =
     useState<FlowRunnerDraft | null>(null);
   const draftKey = flowRunnerDraft ? JSON.stringify(flowRunnerDraft) : "";
@@ -713,6 +718,7 @@ export function LaunchPopover({
     setBindingFeedback({});
     setOptions(null);
     setPreviewSelection(null);
+    setExecutionHostId(undefined);
     setScheduleMode(false);
     setOpen(false);
   };
@@ -902,6 +908,7 @@ export function LaunchPopover({
       launchPreviewMatches(previewSelection, {
         flowId,
         runnerId,
+        executionHostId,
         packageVersions: packagePreview,
         draftKey,
       })
@@ -912,6 +919,7 @@ export function LaunchPopover({
     const query = new URLSearchParams({ taskId });
 
     if (flowId) query.set("flowId", flowId);
+    if (executionHostId) query.set("executionHostId", executionHostId);
     if (packagePreview) query.set("packageVersions", packagePreview);
 
     const request = flowRunnerDraft
@@ -921,6 +929,7 @@ export function LaunchPopover({
           body: JSON.stringify({
             taskId,
             flowId,
+            ...(executionHostId ? { executionHostId } : {}),
             ...(packagePreview
               ? { packageVersions: JSON.parse(packagePreview) }
               : {}),
@@ -962,6 +971,7 @@ export function LaunchPopover({
         setPreviewSelection({
           flowId,
           runnerId: resolvedRunnerId,
+          executionHostId,
           packageVersions: packagePreview,
           draftKey,
         });
@@ -977,6 +987,7 @@ export function LaunchPopover({
     previewSelection,
     flowId,
     runnerId,
+    executionHostId,
     packagePreview,
     draftKey,
     flowRunnerDraft,
@@ -1102,6 +1113,7 @@ export function LaunchPopover({
     !launchPreviewMatches(previewSelection, {
       flowId,
       runnerId,
+      executionHostId,
       packageVersions: packagePreview,
       draftKey,
     });
@@ -1369,6 +1381,7 @@ export function LaunchPopover({
 
     await intent.submit(endpoint, {
       ...selection,
+      ...(executionHostId ? { executionHostId } : {}),
       ...(flowRunnerDraft ? { flowRunnerDraft } : {}),
       ...(allowFlowPublication ? { allowFlowPublication } : {}),
       expectedTaskRevision: options.task.revision,
@@ -1465,6 +1478,23 @@ export function LaunchPopover({
     : [];
   const branchOptions: Array<SelectOption<string>> =
     options?.branches.map((branch) => ({ id: branch, label: branch })) ?? [];
+  const defaultHost = options?.executionHostOptions?.hosts.find(
+    ({ id }) => id === options.executionHostOptions?.defaultExecutionHostId,
+  );
+  const hostOptions: Array<SelectOption<string>> = options?.executionHostOptions
+    ? [
+        {
+          id: "default",
+          label: defaultHost
+            ? t("executionHostDefaultNamed", { name: defaultHost.displayName })
+            : t("executionHostDefault"),
+        },
+        ...options.executionHostOptions.hosts.map(({ id, displayName }) => ({
+          id,
+          label: displayName,
+        })),
+      ]
+    : [];
   const strategyOptions: Array<SelectOption<DeliveryPolicyStrategy>> = [
     { id: "merge", label: t("strategyMerge") },
     { id: "rebase_merge", label: t("strategyRebaseMerge") },
@@ -1859,6 +1889,23 @@ export function LaunchPopover({
                     ) : null}
 
                     <div className="grid gap-3 md:grid-cols-2">
+                      {hostOptions.length > 1 && !scheduleMode ? (
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("executionHost")}
+                          </span>
+                          <LaunchSelect
+                            disabled={busy || pending || savingBinding !== null}
+                            label={t("executionHost")}
+                            options={hostOptions}
+                            value={executionHostId ?? "default"}
+                            onChange={(value) => {
+                              setOptionsError(false);
+                              setExecutionHostId(value === "default" ? undefined : value);
+                            }}
+                          />
+                        </div>
+                      ) : null}
                       <label className="flex flex-col gap-1">
                         <span className={fieldLabelClass}>
                           {t("flow")}
@@ -2713,6 +2760,7 @@ export function LaunchPopover({
                           if (scheduleMode) {
                             void scheduleLaunch();
                           } else {
+                            setExecutionHostId(undefined);
                             setScheduleMode(true);
                           }
                         }}

@@ -913,7 +913,12 @@ async function finalizeLaunchOptions(
             ),
           }
         : {}),
-      ...(placement ? { executionHostSelection: placement.selection } : {}),
+      ...(placement
+        ? {
+            executionHostSelection: placement.selection,
+            executionHostOptions: placement.hostOptions,
+          }
+        : {}),
       ...branchPage,
       availablePackageVersions,
     },
