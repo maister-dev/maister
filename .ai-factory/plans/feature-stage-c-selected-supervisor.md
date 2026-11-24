@@ -291,7 +291,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   process applied the original event and receipt once. The 53 Web and
   52 supervisor integration cases cover these boundaries and adjacent
   regressions. Workspace inputs and session permission enforcement are T06.
-- [ ] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
+- [x] **T06 · Inputs / host materialization (after T05H).** Move execution-dependent writes from `context-mounts/service.ts`, `capabilities/materialize.ts` and `materialize-bundle.ts` behind the host contract. Verify revision/content hashes, enforce read-only mounts and inter-project access. Keep vault reads under current grants. Resolve MCP facade executable and runtime credentials on B with the correct Web base URL. Prove a pinned package survives an install update and a revoked grant cannot start work. Log digests and capability IDs.
 
   **C-07 capture and transport checkpoint.** On Darwin arm64 and Node
   24.15.0 the RED host test received 404 for materialization. A second
@@ -364,8 +364,18 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   the actual host hook for an allowed and a denied path, and waited for the
   fixture to acknowledge the `plan` mode before sending the first prompt.
   The case used the normal board Run, PostgreSQL, the selected supervisor, its
-  prepared Git checkout and a local ACP fixture. Repository role binding is
-  still open.
+  prepared Git checkout and a local ACP fixture.
+
+  RED for repository roles failed at the manager-worktree requirement before
+  launching ACP. GREEN froze the trusted role at workspace reservation,
+  replaced its installed source, and still delivered the original definition
+  to the selected supervisor as a native Claude subagent. Changing the
+  role's current enablement before sending the pending workload resulted in
+  zero workload commands. Re-enabling it let the original Run reach Review.
+  Seven Web integrations and nine ownership inventory tests passed on
+  Darwin arm64 with Node 24.15.0. Both workspace typechecks passed. The
+  C-07 checks use the selected-host boundary. G2 separately qualifies the
+  second registered supervisor in the two-host topology.
 - [ ] **T07 · Flow / command execution (after T06).** Migrate CLI, command-check, requirement probe, setup and cancellation call sites in `web/lib/flows/runner-cli.ts`, `requirements-check.ts` and `graph/gates-exec.ts`. Host owns process group, cwd, environment allow-list and limits. Deliver declared output through `graph/node-output.ts` and runtime objects. Test filtered env, timeout, partial output, death before/after acceptance and wrong epoch. A real project check executes on B and Web can read the result without opening its filesystem. Log process ownership, exit and object reference. **Checkpoint 2:** remote filesystem boundary for checkout, inputs and execution.
 
   **C-08 workload transport checkpoint.** RED reached a 404 when a

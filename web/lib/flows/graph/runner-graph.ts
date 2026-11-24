@@ -2352,12 +2352,19 @@ async function materializeNodeCapabilities(
     permissions: "claudePermissions" in m ? m.claudePermissions ?? null : null,
     pathGuard: capabilityArgs.hooksConfig?.pathGuard ?? null,
   } : undefined;
+  const addressedRole = addressed && (node.nodeType === "ai_coding" || node.nodeType === "orchestrator")
+    ? (settings && "agent" in settings ? settings.agent : undefined) ?? loaded.run.agentId
+    : null;
   const plan: MaterializationPlan = {
     // Fold the enforcement profile into the digest so the long-lived-session
     // consistency guard catches a mid-session enforcement change (D4).
     profileDigest: foldEnforcementProfileIntoDigest(
-      nativePolicy?.permissions || nativePolicy?.pathGuard
-        ? workspaceEvidenceDigest({ profileDigest: profile.profileDigest, nativePolicy })
+      nativePolicy?.permissions || nativePolicy?.pathGuard || addressedRole
+        ? workspaceEvidenceDigest({
+          profileDigest: profile.profileDigest,
+          nativePolicy: nativePolicy ?? null,
+          addressedRole: addressedRole ?? null,
+        })
         : profile.profileDigest,
       enforcementProfile,
     ),

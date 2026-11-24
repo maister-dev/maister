@@ -7,6 +7,8 @@ import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 import { WORKSPACE_CONTEXT_INPUT } from "../../../runtime/workspace-context-input";
+import { WORKSPACE_FLOW_PERSONAS_FILE } from "../../../runtime/workspace-flow-persona";
+import { assertAddressedFlowPersonaAuthority, decodeAddressedFlowPersonas } from "@/lib/agents/addressed-flow-persona";
 
 import { configuredSelectedExecutionEndpoint } from "./selected-endpoint";
 
@@ -48,6 +50,10 @@ export async function assertWorkspaceRunAuthority(
       context: sql<string | null>`(
         SELECT entry->>'base64' FROM jsonb_array_elements(${workspaceInputCaptures.files}) entry
         WHERE entry->>'path' = ${WORKSPACE_CONTEXT_INPUT}
+      )`,
+      personas: sql<string | null>`(
+        SELECT entry->>'base64' FROM jsonb_array_elements(${workspaceInputCaptures.files}) entry
+        WHERE entry->>'path' = ${WORKSPACE_FLOW_PERSONAS_FILE}
       )`,
     })
     .from(runs)
@@ -127,6 +133,8 @@ export async function assertWorkspaceRunAuthority(
         { details: { reason: "launch_authority_revoked" } },
       );
   }
+  if (run.personas !== null)
+    await assertAddressedFlowPersonaAuthority(db, run.projectId, decodeAddressedFlowPersonas(run.personas));
   if (run.context !== null)
     await assertContextAuthority(db, {
       encoded: run.context,

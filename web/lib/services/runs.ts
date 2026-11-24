@@ -157,6 +157,8 @@ import { executionDataPlaneModeForHost } from "@/lib/execution-host/data-plane-c
 import { configuredSelectedExecutionEndpoint } from "@/lib/execution-host/selected-endpoint";
 import { assertBoundTaskLaunchHost, assertProjectExecutionHost } from "@/lib/execution-host/project-preference";
 import { captureWorkspaceBundles, captureWorkspaceFlowAssets } from "@/lib/execution-host/workspace-input-capture";
+import { captureAddressedFlowPersonas } from "@/lib/agents/addressed-flow-persona";
+import { usesStructuredKnowledgeContext } from "@/lib/run-results/contract";
 import { captureAddressedFlowContexts } from "@/lib/context-mounts/addressed-capture";
 import { addressedFlowUsesPackageAssets, captureAddressedFlowWorkloads } from "@/lib/flows/addressed-workload-input";
 import {
@@ -2030,10 +2032,20 @@ async function* executeFlowLaunch(
           "Selected supervisor setup requires a trusted, frozen Flow setup.sh",
           { details: { reason: "workspace_setup_unavailable" } },
         );
+      const [parentCapture] = hostPreparesWorkspace && input.parentRunId
+        ? await (_db as ExecutionDb).select({ knowledgeAccess: runs.knowledgeAccess })
+            .from(runs).where(eq(runs.id, input.parentRunId))
+        : [];
+      const personaScope = input.specialistAssignment ||
+        usesStructuredKnowledgeContext({ resultContract, knowledgeAccess: parentCapture?.knowledgeAccess })
+        ? "structured" : "ordinary";
       const workspaceInputs = hostPreparesWorkspace
         ? [
             ...captureAddressedFlowWorkloads(compiled, manifest.requirements, setupRevisionId),
             ...flowAssets,
+            ...await captureAddressedFlowPersonas(
+              _db as ExecutionDb, project.id, compiled, agentId ?? null, personaScope,
+            ),
             ...await captureAddressedFlowContexts(
               _db as ExecutionDb,
               Array.from(compiled.nodes.values(), (node) => ({

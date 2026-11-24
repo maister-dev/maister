@@ -422,7 +422,10 @@ class LifecycleAgent {
       process.env.ANTHROPIC_MODEL !== expectedNativeModel
     )) throw new Error("The addressed Claude session did not receive its explicit model pin");
     if (expectClaudeNative) {
-      const settings = request._meta?.claudeCode?.options?.settings;
+      const options = request._meta?.claudeCode?.options;
+      const settings = options?.settings;
+      if (options?.agents?.facade?.prompt !== "Use the pinned role bytes.")
+        throw new Error("Addressed Claude did not receive the pinned repository role");
       const hook = settings?.hooks?.PreToolUse?.[0]?.hooks?.[0];
       if (!settings?.permissions?.allow?.includes("Read") || typeof hook?.command !== "string")
         throw new Error("Addressed Claude permissions or native path guard are missing");

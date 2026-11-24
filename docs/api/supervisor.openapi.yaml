@@ -190,7 +190,12 @@ paths:
       tags: [execution-host]
       operationId: stageCMaterialize
       summary: Accept a sealed input generation for an owned workspace
-      description: The first object is the sealed manifest. The remaining objects must belong to the exact assignment and match the manifest.
+      description: >
+        The first object is the sealed manifest. The remaining objects must
+        belong to the exact assignment and match the manifest. A Flow persona
+        entry binds the node, agent, installation and definition digest. At
+        session creation the host selects only the current node's subagent
+        from that verified generation.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCMaterializeRequest
       parameters:
         - { name: X-Maister-Execution-Host-Key, in: header, required: true, schema: { type: string } }

@@ -6,6 +6,7 @@ import type {
 import type { HostState, HostRuntimeObjectRow } from "./host-state";
 import type { RuntimeObjectRegistry } from "./runtime-objects";
 import type { ContextMount } from "./types";
+import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
 
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
@@ -36,6 +37,11 @@ import {
   WORKSPACE_INPUT_MAX_FILES,
 } from "../../runtime/workspace-input-policy";
 import { workspaceEvidenceDigest } from "../../runtime/workspace-prepare";
+import {
+  WORKSPACE_FLOW_PERSONAS_FILE,
+  WORKSPACE_FLOW_PERSONAS_MAX_BYTES,
+  WORKSPACE_FLOW_ROLE_STEM,
+} from "../../runtime/workspace-flow-persona";
 
 import { withSqliteFileLock } from "./sqlite-file-lock";
 import { SupervisorError } from "./types";
@@ -284,7 +290,32 @@ type WorkspaceSessionInputs = Readonly<{
   readOnlyCheckout?: true;
   contextMounts: ContextMount[];
   packageInstructions?: string;
+  claudeSubagent?: WorkspaceClaudeSubagent;
 }>;
+
+const personaDescriptors = z.array(z.object({
+  stepId: z.string().min(1).max(128),
+  mode: z.enum(["session", "subagent"]),
+  stem: z.string().regex(WORKSPACE_FLOW_ROLE_STEM),
+  description: z.string().min(1),
+  prompt: z.string().min(1),
+})).max(128);
+
+async function workspaceSubagent(
+  directory: string,
+  manifest: InputManifest,
+  stepId: string,
+): Promise<WorkspaceClaudeSubagent | undefined> {
+  const file = manifest.files.find(({ path }) => path === WORKSPACE_FLOW_PERSONAS_FILE);
+  if (!file) return undefined;
+  const bytes = await readVerifiedInputFile(directory, file, WORKSPACE_FLOW_PERSONAS_MAX_BYTES);
+  const matches = personaDescriptors.parse(JSON.parse(bytes.toString("utf8")))
+    .filter((role) => role.stepId === stepId);
+  if (matches.length > 1) throw rejectInput("Retained Flow node has multiple role bindings");
+  const persona = matches[0];
+  if (persona?.mode !== "subagent") return undefined;
+  return { stem: persona.stem, description: persona.description, prompt: persona.prompt };
+}
 
 function packagedSkillInstructions(
   directory: string,
@@ -366,6 +397,7 @@ export async function verifyWorkspaceSessionInputs(
         ? { readOnlyCheckout: true as const } : {}),
       contextMounts,
       packageInstructions: packagedSkillInstructions(directory, manifest.files),
+      claudeSubagent: await workspaceSubagent(directory, manifest, stepId),
     };
   } catch (cause) {
     throw new SupervisorError(

@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
 import type { HostState, WorkspaceRow } from "./host-state";
 import type {
   AdoptWorkspacePayload,
@@ -32,6 +33,7 @@ export type WorkspaceResolution = {
   ownershipKind?: "host_owned";
   readOnlyCheckout?: true;
   packageInstructions?: string;
+  claudeSubagent?: WorkspaceClaudeSubagent;
 };
 
 export type ResolveForSessionInput = {

@@ -1365,6 +1365,17 @@ async function resolveFlowRolePrompt(
   prompt: string,
   ctx: RunAgentStepCtx,
 ): Promise<{ prompt: string; personaId: string | null }> {
+  const agentId = ctx.agentBinding?.id ?? ctx.runPersonaAgentId;
+  if (!ctx.worktreePath && agentId) {
+    const { attestAddressedFlowPersona, readAddressedFlowPersona } = await import("@/lib/agents/addressed-flow-persona");
+    const persona = await readAddressedFlowPersona(ctx.db, ctx.runId, ctx.stepId, agentId);
+    const rolePrompt = usesStructuredKnowledgeContext(ctx)
+      ? await attestAddressedFlowPersona(ctx.db, { runId: ctx.runId, nodeAttemptId: ctx.nodeAttemptId, persona })
+      : persona.prompt;
+    return persona.mode === "session"
+      ? { prompt: `${rolePrompt}\n\n## Task\n\n${prompt}`, personaId: agentId }
+      : { prompt, personaId: null };
+  }
   let promptTemplate = prompt;
   let personaId: string | null = null;
 

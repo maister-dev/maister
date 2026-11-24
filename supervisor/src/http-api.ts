@@ -3007,7 +3007,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
             : { ...resolvedWorkspace, ...workspaceInputs };
           const adapter = request.runner?.adapter ?? request.executor.agent;
           const addressedClaude = workspace.ownershipKind === "host_owned" && adapter === "claude";
-          if (request.claudePermissions && !addressedClaude)
+          if ((request.claudePermissions || workspace.claudeSubagent) && !addressedClaude)
             throw new SupervisorError("PRECONDITION", "Native Claude permissions require an addressed Claude workspace", {
               details: { reason: "command_invariant_conflict" },
             });
@@ -3179,6 +3179,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
               logger,
               adapter,
               claudeSettings,
+              claudeSubagent: workspace.claudeSubagent,
               model: request.runner?.model ?? request.executor.model,
               mcpServers,
               resumeSessionId: request.resumeSessionId,

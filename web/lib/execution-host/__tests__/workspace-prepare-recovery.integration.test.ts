@@ -60,6 +60,7 @@ import { runCliStep } from "@/lib/flows/runner-cli";
 import { loadGitState } from "@/lib/workbench-git/read-model";
 import {
   artifactInstances,
+  agents,
   flows,
   flowRevisions,
   gateResults,
@@ -79,6 +80,7 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { seedProjectRow, seedRun } from "@/test-support/execution-host-seed";
 import { git, initRepo } from "@/test-support/git-fixture";
 import { seedTaskLaunchFixture } from "@/test-support/task-launch-admission";
+import { seedTaskAgentFlowFacadeFixture } from "@/test-support/task-agent-flow-facade";
 import {
   addProjectMember,
   removeProjectMember,
@@ -201,6 +203,12 @@ it.each([
     await db.update(platformAcpRunners).set(runner)
       .where(eq(platformAcpRunners.id, runnerId));
     const commit = (await git(source, "rev-parse", "HEAD")).trim();
+    const role = refusedRoot ? null : await seedTaskAgentFlowFacadeFixture(database, { root, projectId, flowId });
+    const roleSource = role ? join(role.installedPath, "maister-agents", "facade.md") : null;
+    if (role && roleSource) {
+      await writeFile(roleSource, `---\nname: Host review\ndescription: Reviews the selected host checkout\nworkspace: worktree\nmode: subagent\ntriggers: [flow]\nrisk_tier: read_only\n---\nUse the pinned role bytes.\n`);
+      await db.update(agents).set({ mode: "subagent", triggers: ["flow"] }).where(eq(agents.id, role.agentId));
+    }
     const installedScript = join(root, "flow", "scripts", "check.sh");
     await mkdir(join(root, "flow", "scripts"), { recursive: true });
     const setupPath = join(root, "flow", "setup.sh");
@@ -232,6 +240,7 @@ it.each([
           type: "ai_coding",
           ...(!refusedRoot ? {
             settings: {
+              agent: role?.agentId,
               permissionMode: "deny",
               tools: { claude: ["Read"] },
               hooks: { pathGuard: { allowedPaths: ["src/**"] } },
@@ -377,6 +386,7 @@ it.each([
       snapshot: { baseCommit: commit },
     });
     if (!bound.runId) throw new Error("board intent did not bind a Run");
+    if (roleSource) await writeFile(roleSource, "a later replacement");
     await writeFile(installedScript, "#!/bin/sh\nexit 73\n");
     if (!refusedRoot) await writeFile(setupPath, "exit 74\n");
     const { runId } = bound;
@@ -454,6 +464,15 @@ it.each([
       .toEqual(["workspace.prepare", "workspace.materialize"]);
     await db.update(flowRevisions).set({ execTrust: "trusted" })
       .where(eq(flowRevisions.flowRefId, flowId));
+    if (role) {
+      await db.update(agents).set({ enabled: false }).where(eq(agents.id, role.agentId));
+      await expect(advanceAddressedWorkspaceAdmission(db, runId)).rejects.toMatchObject({
+        details: { reason: "launch_authority_revoked", agentId: role.agentId },
+      });
+      expect((await listCommandsForRun(db, runId)).some(({ kind }) => kind === "workspace.run"))
+        .toBe(false);
+      await db.update(agents).set({ enabled: true }).where(eq(agents.id, role.agentId));
+    }
     await advanceAddressedWorkspaceAdmission(db, runId);
     const setup = (await listCommandsForRun(db, runId)).find(
       ({ kind, payload }) => kind === "workspace.run" && payload.workload === "setup",

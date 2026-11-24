@@ -1013,8 +1013,9 @@ objects. The supervisor resolves both references against the Run, assignment,
 epoch and object kind before exposing its local paths to ACP. The same MCP
 trust and enforcement checks apply before creating the session. Addressed
 Claude sessions receive the node's typed native permissions and the
-supervisor's path-guard command over ACP. Repository role installation still
-requires addressed support.
+supervisor's path-guard command over ACP. The supervisor also reads a
+subagent definition for that exact node from the sealed input generation
+and registers it with Claude's native session options.
 The graph driver uses that attempt ID for the CLI operation and the persisted
 evaluation ID for a command-check gate. A new driver for the same assignment
 can resume either operation with its existing receipt. Web applies the action

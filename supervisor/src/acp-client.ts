@@ -5,6 +5,7 @@ import type {
 } from "node:stream";
 import type { Logger } from "pino";
 import type { AcpContextFailureReason } from "../../runtime/acp-context-failure";
+import type { WorkspaceClaudeSubagent } from "../../runtime/workspace-flow-persona";
 
 import { randomUUID } from "node:crypto";
 
@@ -81,6 +82,7 @@ export type CreateAcpConnectionArgs = {
   /** Effective declared model, also supplied for executor-only legacy requests. */
   model?: string;
   claudeSettings?: ReturnType<typeof addressedClaudeSettings>;
+  claudeSubagent?: WorkspaceClaudeSubagent;
   pendingPermissions?: PendingPermissionRegistry;
   mcpServers?: McpServerInput[];
   // When set, resume the prior ACP session via the `session/resume` call
@@ -1195,12 +1197,17 @@ export async function createAcpConnection(
     };
   });
 
+  const subagent = args.claudeSubagent;
   const claudeOptions = {
     ...claudeModelOptions(args.runner?.model ?? args.model),
     ...(record.enforcementProfile || record.readOnlySession
       ? claudeToolArbitrationOptions()
       : {}),
     ...(args.claudeSettings?.settings ? { settings: args.claudeSettings.settings } : {}),
+    ...(subagent ? { agents: { [subagent.stem]: {
+      description: subagent.description,
+      prompt: subagent.prompt,
+    } } } : {}),
   };
   const sessionMeta =
     args.adapter === "claude" && Object.keys(claudeOptions).length > 0

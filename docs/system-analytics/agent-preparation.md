@@ -206,6 +206,14 @@ requested permission mode before a prompt. Strict tool arbitration takes
 precedence over bypass mode. Capability instructions use the same sealed
 objects as on other adapters. The node's reuse digest includes native policy.
 
+Project Flow role bindings pin the agent ID, installation, definition
+digest, mode and prompt in the workspace input capture. The current project
+attachment and the pinned installation must both retain trust. Web uses the
+captured prompt for a session persona. The supervisor provides a subagent's
+sealed description and prompt to Claude through its native session options.
+Each node sees its own declared role. Structured knowledge also requires
+the existing exact actor and assignment checks.
+
 The manager resolves approved package, skill, instructions, capabilities,
 memory references and mounted context revisions. The supervisor verifies
 the captured digests, stages the inputs in a private directory and publishes
