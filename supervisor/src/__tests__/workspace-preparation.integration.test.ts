@@ -705,7 +705,7 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   if (prepared.phase !== "completed") throw new Error("fixture owns no checkout");
   const { handle, generation } = prepared.result.workspace;
   const checkout = host.hostState.getWorkspace(handle);
-  if (!checkout) throw new Error("fixture checkout was not retained");
+  if (!checkout?.repoPath) throw new Error("fixture checkout was not retained");
   const file = join(checkout.realPath, "input.txt");
   const untracked = join(checkout.realPath, "untracked.txt");
   const attemptNotes = join(checkout.realPath, "attempt-notes.txt");
@@ -766,6 +766,27 @@ it("C-09 restores a retained Git checkpoint once without replacing later work on
   );
   expect(foreignDiff.status).toBe(409);
   expect(await foreignDiff.json()).toMatchObject({ details: { reason: "workspace_diff_range_invalid" } });
+  // Apply the stronger author-approved policy from the same retained checkpoint.
+  const ignored = join(checkout.realPath, "local-build-cache");
+  await writeFile(join(checkout.repoPath, ".git", "info", "exclude"), "local-build-cache\n");
+  await writeFile(ignored, "cache");
+  const freshId = randomUUID();
+  const fresh = { ...restore, command: { ...restore.command, id: freshId }, payload: { ...restore.payload, policy: "fresh-attempt" } };
+  expect((await addressedRequest(restarted, restorePath, fresh)).status).toBe(202);
+  await vi.waitFor(async () => {
+    const receipt = await addressedRequest(restarted, `/v1/commands/${freshId}`);
+    expect(await receipt.json()).toMatchObject({ phase: "completed", result: {
+      generation, checkpointId, tree: captured.result.tree,
+      resultingTree: git(checkout.realPath, "rev-parse", commit + "^{tree}"),
+    } });
+  });
+  expect(await readFile(file, "utf8")).toBe("base\n");
+  await expect(readFile(untracked)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(readFile(attemptNotes)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(ignored, "utf8")).toBe("cache");
+  await writeFile(attemptNotes, "created after the fresh restore");
+  expect((await addressedRequest(restarted, restorePath, fresh)).status).toBe(202);
+  expect(await readFile(attemptNotes, "utf8")).toBe("created after the fresh restore");
 }, 30_000);
 
 function addressedRequest(

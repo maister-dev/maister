@@ -194,7 +194,7 @@ const checkpointSchema = workloadSchema.extend({
 });
 const restoreSchema = workloadSchema.extend({
   command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.restore") }),
-  payload: z.object({ generation, checkpointId: z.string().uuid() }).strict(),
+  payload: z.object({ generation, checkpointId: z.string().uuid(), policy: z.literal("fresh-attempt").optional() }).strict(),
 });
 const publishSchema = workloadSchema.extend({
   command: workloadSchema.shape.command.extend({ kind: z.literal("workspace.publish") }),

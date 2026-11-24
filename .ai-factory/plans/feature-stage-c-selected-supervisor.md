@@ -471,8 +471,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   checkout through a populated SQLite v19 to v20 upgrade. The manager
   read the pathless Run's status through its configured transport. Passed
   26 supervisor and one PostgreSQL/Web integration case, both typechecks,
-  and docs/ERD validation. Diff, log, review and checkpoint/restore still
-  require evidence.
+  and docs/ERD validation.
 
   The existing Run Git panel now reads this status through its member-level
   API. RED reported no worktree and no HEAD for the prepared remote Run.
@@ -490,7 +489,6 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   returned the patch after current repository authorization. A foreign Run
   could not address the object. Revoking membership while the second request
   awaited projection caused a 403 with zero diff bytes returned.
-  Checkpoint/restore and the review/promotion source witness remain open.
   Passed 38 Web integrations, 16 route cases, 24 supervisor integrations,
   both typechecks, contracts and docs/ERD validation.
 
@@ -519,9 +517,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   ACP attempt. A separate real manager/host journey verifies canonical
   checkpoint and restore projection. The populated PostgreSQL 0378 upgrade
   keeps existing command bytes and verifies current-generation ownership,
-  completed checkpoint binding and immutable restore identity. Human
-  takeover, cross-assignment restore and the review source witness remain
-  open.
+  completed checkpoint binding and immutable restore identity.
 
   RED exposed two compatibility gaps. Host rewind removed unrelated files
   created during the failed attempt, and the post-release `last-node` scope
@@ -534,9 +530,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   in Review Diff and Change Summary using one bounded Git snapshot per read.
   Native Git file statistics and the patch share a private index. Tests verify
   the object digest, binary file statistics and a filename with a tab, plus
-  the member-authorized manager read after assignment release. Review
-  feedback admission inside the decision transaction still needs a host
-  witness that can be checked without waiting for the event projector.
+  the member-authorized manager read after assignment release.
 
   **C-09 mutation detection.** RED failed the real pathless board graph at
   the legacy local-filesystem guard. GREEN compared the owning supervisor's
@@ -558,8 +552,7 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   artifact after Review, with the artifact digest matching the sealed bytes.
   RED also exposed the missing default diff for pathless Runs. GREEN creates
   the default artifact against the observed committed HEAD and omits unrelated
-  uncommitted content, while declared working-tree diffs retain it. Human
-  takeover still needs equivalent evidence.
+  uncommitted content, while declared working-tree diffs retain it.
 
   **C-09 inherited workspace.** RED refused the first workload in the next
   assignment epoch because authority was tied to the preparation assignment.
@@ -585,6 +578,14 @@ and its real HTTP command outcomes are qualified in T04–T05H.
   rejects the original preview before claiming a response. Refreshing it
   accepts the same packet, executes the chosen validation workload and
   brings the Run back to Review.
+
+  **C-09 rework workspace policies.** RED the host refused `fresh-attempt`
+  and the graph attempted a Web-local restore. GREEN restores the captured
+  tree for rewind, or resets to the verified checkpoint parent and cleans
+  unignored files for a fresh attempt. Ignored caches and host-owned frozen
+  inputs remain available. A repeated fresh command does not erase later
+  work. The real HITL rework returned to Review with its chosen validation
+  output after the supervisor proved the restored parent tree.
 
   The local A/B supervisor lane passed 148 tests in ten suites on `8b9ac8932`
   (Darwin arm64, Node 24.15.0), with one suite worker.

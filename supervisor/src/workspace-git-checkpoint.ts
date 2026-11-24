@@ -163,9 +163,24 @@ export async function checkpointOwnedWorkspace(
     ]);
     if (!GIT_OBJECT_ID.test(tree)) throw invalidCheckpoint();
 
-    return { generation, checkpointId, tree };
+    const baseTree = await executeWorkspaceGit([
+      ...git,
+      "rev-parse",
+      "--verify",
+      existing + "^1^{tree}",
+    ]);
+    if (!GIT_OBJECT_ID.test(baseTree)) throw invalidCheckpoint();
+
+    return { generation, checkpointId, tree, baseTree };
   }
   const head = await observePreparedGitHead(workspace);
+  const baseTree = await executeWorkspaceGit([
+    ...git,
+    "rev-parse",
+    "--verify",
+    head.commit + "^{tree}",
+  ]);
+  if (!GIT_OBJECT_ID.test(baseTree)) throw invalidCheckpoint();
   const tree = await captureOwnedTree(owned);
   const snapshot = await executeWorkspaceGit([
     ...git,
@@ -199,7 +214,7 @@ export async function checkpointOwnedWorkspace(
     "0".repeat(snapshot.length),
   ]);
 
-  return { generation, checkpointId, tree };
+  return { generation, checkpointId, tree, baseTree };
 }
 
 async function matchesRewoundTree(
@@ -314,6 +329,22 @@ export async function restoreOwnedWorkspace(
     `${snapshot}^`,
   ]);
   if (!GIT_OBJECT_ID.test(base)) throw invalidCheckpoint();
+  const fresh = request.payload.policy === "fresh-attempt";
+  const baseTree = fresh
+    ? await executeWorkspaceGit([
+        ...git,
+        "rev-parse",
+        "--verify",
+        base + "^{tree}",
+      ])
+    : null;
+  if (
+    baseTree &&
+    (!GIT_OBJECT_ID.test(baseTree) ||
+      (expected.baseTree && baseTree !== expected.baseTree))
+  )
+    throw invalidCheckpoint();
+  const result = baseTree ? { ...expected, resultingTree: baseTree } : expected;
   const restored = async (): Promise<boolean> =>
     (await observePreparedGitHead(workspace)).commit === base &&
     (await executeWorkspaceGit([
@@ -323,18 +354,24 @@ export async function restoreOwnedWorkspace(
       "--name-only",
       "--",
     ])) === "" &&
-    (await matchesRewoundTree(owned, base, tree));
+    (baseTree
+      ? (await captureOwnedTree(owned)) === baseTree
+      : await matchesRewoundTree(owned, base, tree));
   input.assertOwner();
-  if (owned.replayingClaim) return (await restored()) ? expected : null;
+  if (owned.replayingClaim) return (await restored()) ? result : null;
 
   try {
     await executeWorkspaceGit([...git, "reset", "--hard", base]);
     input.assertOwner();
-    await executeWorkspaceGit([...git, "read-tree", "--reset", "-u", tree]);
+    if (fresh) {
+      await executeWorkspaceGit([...git, "clean", "-fd", "--", "."]);
+    } else {
+      await executeWorkspaceGit([...git, "read-tree", "--reset", "-u", tree]);
+      input.assertOwner();
+      await executeWorkspaceGit([...git, "reset", "--mixed", base]);
+    }
     input.assertOwner();
-    await executeWorkspaceGit([...git, "reset", "--mixed", base]);
-    input.assertOwner();
-    if (await restored()) return expected;
+    if (await restored()) return result;
   } catch (cause) {
     throw new WorkspaceGitEffectUnconfirmed(
       "Git restore must be reconciled against its retained checkpoint",

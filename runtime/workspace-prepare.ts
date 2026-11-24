@@ -188,12 +188,14 @@ export type WorkspaceRestoreRequest = Readonly<{
   workspaceProtocol: 1;
   command: Readonly<{ id: string; kind: "workspace.restore"; issuedAt: string }>;
   owner: WorkspaceAssignmentOwner;
-  payload: Readonly<{ generation: number; checkpointId: string }>;
+  payload: Readonly<{ generation: number; checkpointId: string; policy?: "fresh-attempt" }>;
 }>;
 export type WorkspaceGitCheckpointResult = Readonly<{
   generation: number;
   checkpointId: string;
   tree: string;
+  baseTree?: string;
+  resultingTree?: string;
 }>;
 
 export type WorkspaceOperationOwner = Readonly<{

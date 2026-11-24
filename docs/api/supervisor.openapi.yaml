@@ -283,7 +283,7 @@ paths:
       tags: [execution-host]
       operationId: stageCRestore
       summary: Restore a retained Git checkpoint on its owning generation
-      description: Restore requires the completed checkpoint for this exact assignment and generation. Replay of a terminal command returns its original receipt. An interrupted mutation retains the writer fence until the resulting tree can be proved.
+      description: Restore requires a completed checkpoint for the retained workspace and generation. Rewind restores the captured snapshot. A fresh attempt resets to the checkpoint parent, removes unignored work and preserves ignored caches. Replay of a terminal command returns its original receipt. An interrupted mutation retains the writer fence until the resulting tree can be proved.
       x-stage-c-schema: stage-c-workspace.schema.yaml#/definitions/StageCRestoreRequest
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, pattern: '^ws_[a-f0-9]{32}$' } }

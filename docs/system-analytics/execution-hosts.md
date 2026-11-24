@@ -1141,6 +1141,14 @@ the retained owner and generation without publishing an object or event.
 The response transaction recomputes the digest while holding the Run and
 HITL rows, so stale source or feedback refuses without claiming the decision.
 
+Addressed graph rework and retry use the checkpoint command under the
+current assignment, including a checkpoint inherited from an earlier
+epoch on that workspace. Rewind restores the snapshot. Fresh attempt resets
+to its parent, removes unignored changes and verifies the resulting parent
+tree. Frozen inputs live under the host's run directory, outside the Git
+checkout. Restore retries recheck retained evidence without repeating a
+settled mutation.
+
 A retained publication command binds the registered host, workspace handle,
 generation, claim ID and monotonic publication fence. PostgreSQL 0380 binds
 the command to its historical assignment and a held promotion or workbench

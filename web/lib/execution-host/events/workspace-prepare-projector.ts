@@ -316,13 +316,19 @@ export async function applyWorkspaceEvidence(
     if (!workspace || target.handle !== assignment.executionWorkspaceId || result.generation !== target.generation ||
         result.checkpointId !== (receipt.operationId === "stageCCheckpoint" ? command.id : command.payload.checkpointId))
       throw inconsistent();
+    if (receipt.operationId === "stageCCheckpoint" && result.resultingTree !== undefined) throw inconsistent();
     if (receipt.operationId === "stageCRestore") {
       const [original] = await tx.select({ result: executionCommands.result }).from(executionCommands)
         .where(and(eq(executionCommands.id, result.checkpointId), eq(executionCommands.kind, "workspace.checkpoint"),
           eq(executionCommands.runId, run.id), eq(executionCommands.executionHostId, assignment.executionHostId),
           lte(executionCommands.assignmentEpoch, assignment.epoch),
           eq(executionCommands.targetSessionId, target.handle), eq(executionCommands.state, "succeeded")));
-      if (original?.result?.tree !== result.tree || original.result.generation !== target.generation) throw inconsistent();
+      const fresh = command.payload.policy === "fresh-attempt";
+      if (original?.result?.tree !== result.tree || original.result.generation !== target.generation ||
+          original.result.baseTree !== result.baseTree ||
+          (fresh !== (result.resultingTree !== undefined)) ||
+          (fresh && result.baseTree !== undefined && result.resultingTree !== result.baseTree))
+        throw inconsistent();
     }
     const transition = await markSucceeded(tx, command.id, null, { ...result, eventId: event.id, outcomeSha256: receipt.outcomeSha256 });
     if (!transition.changed) throw inconsistent();

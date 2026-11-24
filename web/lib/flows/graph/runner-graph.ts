@@ -2977,6 +2977,45 @@ export async function runGraph(
     return { runId, assignmentId: driver.claim.assignmentId, signal: driver.signal,
       assertDriver: (tx: Db) => assertFlowDriverClaim(tx, driver.claim) };
   };
+  const applyGraphWorkspacePolicy = async (
+    policy: Exclude<WorkspacePolicy, "keep">,
+    checkpointRef: string | null,
+    operationKey: string,
+  ): Promise<void> => {
+    if (addressedProject) {
+      if (!checkpointRef?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX))
+        throw new MaisterError("CHECKPOINT", "The selected workspace requires a retained checkpoint for this policy",
+          { details: { reason: "workspace_checkpoint_unknown" } });
+      const owner = addressedGitOwner();
+      await runAddressedGitOperation(rootDb, {
+        ...owner,
+        kind: "workspace.restore",
+        operationKey,
+        checkpointId: checkpointRef.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length),
+        ...(policy === "fresh-attempt" ? { policy } : {}),
+      }, owner.signal);
+
+      return;
+    }
+    const checkpointWorktree = requireFlowWorktree(worktreePath);
+    if (!checkpointRef)
+      throw new MaisterError("CHECKPOINT", "The workspace checkpoint is unavailable");
+    const project = requireProjectFlowRun(loaded);
+    await applyWorkspacePolicy({
+      policy,
+      worktreePath: checkpointWorktree,
+      checkpointRef,
+      rematerialize: policy === "fresh-attempt"
+        ? () => materializeProjectBundlesIntoWorktree({
+            runId,
+            projectId: project.run.projectId,
+            worktreePath: checkpointWorktree,
+            baseBranch: project.workspace.baseBranch ?? "main",
+            db,
+          })
+        : undefined,
+    });
+  };
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
@@ -3024,42 +3063,21 @@ export async function runGraph(
       return explicit ? "fail" : "escalate";
     }
 
-    if (addressedProject && retryPolicy.workspace === "rewind-to-node-checkpoint") {
-      const checkpoint = state.attemptCheckpointRef;
-      if (!checkpoint?.startsWith(WORKSPACE_GIT_CHECKPOINT_PREFIX)) return "fail";
-      const owner = addressedGitOwner();
-      await runAddressedGitOperation(rootDb, { ...owner, kind: "workspace.restore",
-        operationKey: `rewind:${checkpoint}`, checkpointId: checkpoint.slice(WORKSPACE_GIT_CHECKPOINT_PREFIX.length),
-      }, owner.signal);
-    } else if (retryPolicy.workspace !== "keep") {
-      requireFlowWorktree(worktreePath);
-      if (!state.attemptCheckpointRef) {
+    if (retryPolicy.workspace !== "keep") {
+      if (!state.attemptCheckpointRef && !addressedProject) {
+        requireFlowWorktree(worktreePath);
         log2.warn(
           { nodeId: node.id, workspacePolicy: retryPolicy.workspace },
           "[retry] no checkpoint_ref — workspace policy degraded to keep",
         );
       } else {
         try {
-          await applyWorkspacePolicy({
-            policy: retryPolicy.workspace,
-            worktreePath: requireProjectFlowRun(loaded).workspace.worktreePath,
-            checkpointRef: state.attemptCheckpointRef,
-            rematerialize:
-              retryPolicy.workspace === "fresh-attempt"
-                ? () =>
-                    materializeProjectBundlesIntoWorktree({
-                      runId,
-                      projectId: requireProjectFlowRun(loaded).run.projectId,
-                      worktreePath:
-                        requireProjectFlowRun(loaded).workspace.worktreePath,
-                      baseBranch:
-                        requireProjectFlowRun(loaded).workspace.baseBranch ??
-                        "main",
-                      db,
-                    })
-                : undefined,
-          });
+          await applyGraphWorkspacePolicy(
+            retryPolicy.workspace, state.attemptCheckpointRef,
+            `rewind:${state.attemptCheckpointRef}`,
+          );
         } catch (err) {
+          if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
           log2.error(
             { nodeId: node.id, err: asError(err).message },
             "[retry] workspace apply failed — retry abandoned (normal failure)",
@@ -4626,7 +4644,6 @@ export async function runGraph(
           const mismatchRework = node.rework;
 
           if (onMismatchPolicy !== "keep") {
-            const checkpointWorktree = requireFlowWorktree(worktreePath);
             const targetAttempt = await latestAttemptForNode(
               runId,
               reworkTarget,
@@ -4634,7 +4651,8 @@ export async function runGraph(
             );
             const checkpointRef = targetAttempt?.checkpointRef ?? null;
 
-            if (!checkpointRef) {
+            if (!checkpointRef && !addressedProject) {
+              requireFlowWorktree(worktreePath);
               log2.warn(
                 {
                   nodeId: node.id,
@@ -4657,25 +4675,7 @@ export async function runGraph(
                 break;
               }
               try {
-                await applyWorkspacePolicy({
-                  policy: onMismatchPolicy,
-                  worktreePath: checkpointWorktree,
-                  checkpointRef,
-                  rematerialize:
-                    onMismatchPolicy === "fresh-attempt"
-                      ? () =>
-                          materializeProjectBundlesIntoWorktree({
-                            runId,
-                            projectId:
-                              requireProjectFlowRun(loaded).run.projectId,
-                            worktreePath: checkpointWorktree,
-                            baseBranch:
-                              requireProjectFlowRun(loaded).workspace
-                                .baseBranch ?? "main",
-                            db,
-                          })
-                      : undefined,
-                });
+                await applyGraphWorkspacePolicy(onMismatchPolicy, checkpointRef, `mismatch:${nodeAttemptId}:${reworkTarget}`);
                 log2.info(
                   {
                     nodeId: node.id,
@@ -4686,6 +4686,7 @@ export async function runGraph(
                   "[checkpoint] on_mismatch apply policy",
                 );
               } catch (err) {
+                if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
                 const e = isMaisterError(err)
                   ? err
                   : new MaisterError("CHECKPOINT", asError(err).message, {
@@ -5778,13 +5779,13 @@ export async function runGraph(
             : null;
 
         if (chosenPolicy !== "keep") {
-          const checkpointWorktree = requireFlowWorktree(worktreePath);
           const targetAttempt = target
             ? await latestAttemptForNode(runId, target, db)
             : null;
           const checkpointRef = targetAttempt?.checkpointRef ?? null;
 
-          if (!checkpointRef) {
+          if (!checkpointRef && !addressedProject) {
+            requireFlowWorktree(worktreePath);
             // Pre-M30 rows / degraded capture: no checkpoint to apply
             // against — observable degrade, never a guess.
             log2.warn(
@@ -5809,27 +5810,7 @@ export async function runGraph(
             // the review attempt still open — re-deciding the review re-runs
             // an idempotent apply against the same checkpoint.
             try {
-              await applyWorkspacePolicy({
-                policy: chosenPolicy,
-                worktreePath: checkpointWorktree,
-                checkpointRef,
-                rematerialize:
-                  chosenPolicy === "fresh-attempt"
-                    ? () =>
-                        materializeProjectBundlesIntoWorktree({
-                          runId,
-                          projectId:
-                            requireProjectFlowRun(loaded).run.projectId,
-                          worktreePath: checkpointWorktree,
-                          // Pre-M30 workspaces may lack base_branch; the
-                          // override only seeds AIF's base-branch hint.
-                          baseBranch:
-                            requireProjectFlowRun(loaded).workspace
-                              .baseBranch ?? "main",
-                          db,
-                        })
-                    : undefined,
-              });
+              await applyGraphWorkspacePolicy(chosenPolicy, checkpointRef, `review:${nodeAttemptId}:${target}`);
               log2.info(
                 {
                   nodeId: node.id,
@@ -5840,6 +5821,7 @@ export async function runGraph(
                 "[checkpoint] apply policy",
               );
             } catch (err) {
+              if (err instanceof FlowWorkloadContinuationPending || isFencedError(err) || isFlowDriverClaimLost(err)) throw err;
               const e = isMaisterError(err)
                 ? err
                 : new MaisterError("CHECKPOINT", asError(err).message, {

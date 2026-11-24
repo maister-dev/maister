@@ -583,6 +583,7 @@ definitions:
     properties:
       generation: *a1
       checkpointId: *a2
+      policy: { const: fresh-attempt, description: Reset to the checkpoint parent and clean unignored work. Omit to rewind to the captured tree. }
   CheckoutExpectation:
     type: object
     additionalProperties: false
@@ -736,6 +737,8 @@ definitions:
       generation: *a1
       checkpointId: *a2
       tree: *a4
+      baseTree: { $ref: "#/definitions/GitObjectId", description: Verified parent tree for new checkpoint receipts. }
+      resultingTree: { $ref: "#/definitions/GitObjectId", description: Verified clean parent tree after a fresh attempt. }
   WorkspaceGitReview:
     type: object
     additionalProperties: false

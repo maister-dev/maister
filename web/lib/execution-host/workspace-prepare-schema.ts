@@ -247,8 +247,15 @@ export const WorkspaceCancelWorkloadPayloadSchema = z
   .object({ generation })
   .strict();
 export const WorkspaceCheckpointPayloadSchema = z.object({ generation }).strict();
-export const WorkspaceRestorePayloadSchema = WorkspaceCheckpointPayloadSchema.extend({ checkpointId: z.string().uuid() });
-export const WorkspaceGitCheckpointResultSchema = WorkspaceRestorePayloadSchema.extend({ tree: gitObject });
+const CheckpointIdentitySchema = WorkspaceCheckpointPayloadSchema.extend({ checkpointId: z.string().uuid() });
+export const WorkspaceRestorePayloadSchema = CheckpointIdentitySchema.extend({
+  policy: z.literal("fresh-attempt").optional(),
+});
+export const WorkspaceGitCheckpointResultSchema = CheckpointIdentitySchema.extend({
+  tree: gitObject,
+  baseTree: gitObject.optional(),
+  resultingTree: gitObject.optional(),
+});
 const workloadObject = z
   .object({ objectId: z.string().uuid(), sha256: digest })
   .strict();

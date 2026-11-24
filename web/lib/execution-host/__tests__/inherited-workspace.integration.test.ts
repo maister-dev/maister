@@ -3,7 +3,7 @@ import type { StartedPostgresTestDb } from "@/test-support/pg-container";
 import type { RealSupervisor } from "@/test-support/real-supervisor";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,7 +12,10 @@ import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { WORKSPACE_WORKLOAD_FILE } from "../../../../runtime/workspace-prepare";
+import {
+  WORKSPACE_GIT_CHECKPOINT_PREFIX,
+  WORKSPACE_WORKLOAD_FILE,
+} from "../../../../runtime/workspace-prepare";
 
 import { closeDb } from "@/lib/db/client";
 import {
@@ -138,7 +141,7 @@ async function prepareWorkspaceFixture() {
           },
           rework: {
             allowedTargets: ["validate"],
-            workspacePolicies: ["keep"],
+            workspacePolicies: ["keep", "fresh-attempt"],
             maxLoops: 2,
             commentsVar: "review_comments",
           },
@@ -329,13 +332,36 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
     initial,
     runId,
     readWorkspace,
+    settle,
     supervisor: owningHost,
   } = await prepareWorkspaceFixture();
-  startCanonicalProjectionWorker();
   await db
     .update(runs)
     .set({ status: "NeedsInput", currentStepId: "review" })
     .where(eq(runs.id, runId));
+  const workspace = await readWorkspace();
+  if (!workspace.executionWorkspaceId)
+    throw new Error("The preview fixture has no retained handle");
+  const path = privateCheckoutPath(owningHost, workspace.executionWorkspaceId);
+  await writeFile(join(path, "README.md"), "pre-attempt worktree state\n");
+  const checkpoint = await reserveWorkspaceGitOperation(db, {
+    runId,
+    assignmentId: initial.id,
+    kind: "workspace.checkpoint",
+    operationKey: "review-target",
+  });
+  await settle(checkpoint.id);
+  await db.insert(nodeAttempts).values({
+    id: randomUUID(),
+    runId,
+    nodeId: "validate",
+    nodeType: "cli",
+    attempt: 1,
+    status: "Succeeded",
+    executionAssignmentId: initial.id,
+    checkpointRef: WORKSPACE_GIT_CHECKPOINT_PREFIX + checkpoint.id,
+  });
+  startCanonicalProjectionWorker();
   const hitlRequestId = randomUUID();
   await db.insert(nodeAttempts).values({
     id: randomUUID(),
@@ -357,7 +383,7 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
       allowedDecisions: ["approve", "rework"],
       transitions: { approve: "done", rework: "validate" },
       reworkTargets: ["validate"],
-      workspacePolicies: ["keep"],
+      workspacePolicies: ["keep", "fresh-attempt"],
       commentsVar: "review_comments",
     },
   });
@@ -369,7 +395,7 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
   const response = {
     decision: "rework",
     comments: "Exercise empty input.",
-    workspacePolicy: "keep",
+    workspacePolicy: "fresh-attempt",
   };
   const request = (action: string, body: unknown) =>
     new NextRequest(
@@ -394,10 +420,6 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
     };
   };
   const original = await fingerprints();
-  const workspace = await readWorkspace();
-  if (!workspace.executionWorkspaceId)
-    throw new Error("The preview fixture has no retained handle");
-  const path = privateCheckoutPath(owningHost, workspace.executionWorkspaceId);
   const privateState = new DatabaseSync(
     join(owningHost.stateDir, "state.sqlite"),
     { readOnly: true },
@@ -454,15 +476,18 @@ it("C-09 rejects stale rework feedback after an addressed checkout changes and a
         .where(eq(nodeAttempts.runId, runId));
       expect(attempts).toEqual(
         expect.arrayContaining([
-        expect.objectContaining({
-          nodeId: "validate",
-          status: "Succeeded",
-          stdout: expect.stringContaining("Exercise empty input."),
-        }),
+          expect.objectContaining({
+            nodeId: "validate",
+            status: "Succeeded",
+            stdout: expect.stringContaining("Exercise empty input."),
+          }),
         ]),
       );
     },
     { timeout: 15_000, interval: 100 },
+  );
+  expect(await readFile(join(path, "README.md"), "utf8")).toBe(
+    "captured base\n",
   );
 }, 60_000);
 

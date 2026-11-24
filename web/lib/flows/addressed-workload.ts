@@ -108,6 +108,8 @@ export async function runAddressedGitOperation(db: Db, operation: AddressedGitOp
         generation: applied.result?.generation,
         checkpointId: applied.result?.checkpointId,
         tree: applied.result?.tree,
+        baseTree: applied.result?.baseTree,
+        resultingTree: applied.result?.resultingTree,
       });
       if (result.success) return result.data;
       throw new MaisterError("ACP_PROTOCOL", "The applied Git checkpoint receipt is inconsistent");

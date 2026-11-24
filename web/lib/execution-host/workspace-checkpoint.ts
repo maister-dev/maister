@@ -29,7 +29,11 @@ export type AddressedGitOperation = Readonly<
     assertDriver?: (tx: Db) => Promise<void>;
   } & (
     | { kind: "workspace.checkpoint" }
-    | { kind: "workspace.restore"; checkpointId: string }
+    | {
+        kind: "workspace.restore";
+        checkpointId: string;
+        policy?: "fresh-attempt";
+      }
   )
 >;
 
@@ -92,7 +96,11 @@ export async function reserveWorkspaceGitOperation(
     const generation = workspace.generation;
     const payload =
       input.kind === "workspace.restore"
-        ? { generation, checkpointId: input.checkpointId }
+        ? {
+            generation,
+            checkpointId: input.checkpointId,
+            ...(input.policy ? { policy: input.policy } : {}),
+          }
         : { generation };
     if (input.kind === "workspace.restore") {
       const [checkpoint] = await tx
